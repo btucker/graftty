@@ -53,6 +53,7 @@ public final class RemoteMacStore {
                 remoteMac.lastSuccessfulRoute ?? existing.lastSuccessfulRoute
             updated.lastUsedAt = remoteMac.lastUsedAt ?? existing.lastUsedAt
             updated.lastDiscoveredAt = remoteMac.lastDiscoveredAt ?? existing.lastDiscoveredAt
+            updated.maintenanceDestination = remoteMac.maintenanceDestination ?? existing.maintenanceDestination
             next[idx] = updated
         } else {
             next.append(remoteMac)

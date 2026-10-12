@@ -416,9 +416,9 @@ public struct WorktreeListContent: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 if isSidebar, !remoteMacConnections.isEmpty {
                     Button { showsRemoteMacManagement = true } label: {
-                        Label("Remote Macs", systemImage: "server.rack")
+                        Label("Remote Hosts", systemImage: "server.rack")
                     }
-                    .accessibilityLabel("Manage Remote Macs")
+                    .accessibilityLabel("Manage Remote Hosts")
                 }
                 Button {
                     isAddSheetPresented = true
@@ -431,7 +431,7 @@ public struct WorktreeListContent: View {
         .popover(isPresented: $showsRemoteMacManagement) {
             NavigationStack {
                 List { remoteMacConnectionsSection }
-                    .navigationTitle("Remote Macs")
+                    .navigationTitle("Remote Hosts")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
@@ -527,7 +527,7 @@ public struct WorktreeListContent: View {
     @ViewBuilder
     private var remoteMacConnectionsSection: some View {
         if !remoteMacConnections.isEmpty {
-            Section("Remote Macs") {
+            Section("Remote Hosts") {
                 ForEach(remoteMacConnections) { remoteMac in
                     RemoteMacConnectionRow(
                         remoteMac: remoteMac,

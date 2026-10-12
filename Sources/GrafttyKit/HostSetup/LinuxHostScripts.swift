@@ -29,7 +29,7 @@ enum LinuxHostScripts {
     printf '%s\\n' "$ID" "${VERSION_ID:-unknown}" "$(uname -m)" "$HOME" "${XDG_DATA_HOME:-$HOME/.local/share}"
     """
 
-    static func install(staging: String, archiveURL: URL?) -> String {
+    static func install(staging: String, archiveURL: URL?, maintenanceInstaller: String? = nil, maintenancePreflight: String? = nil) -> String {
         let download: String
         if let archiveURL {
             download = """
@@ -66,8 +66,10 @@ enum LinuxHostScripts {
             exit 71
           fi
         done
-        \(ensureLinger)
-        /bin/bash unpacked/install.sh --bind-address 0.0.0.0 --ssh-port 8801 --http-port 8800
+        \(maintenanceInstaller == nil ? ensureLinger : "")
+        \(maintenanceInstaller.map { "printf '%s' " + quote($0) + " > unpacked/install.sh" } ?? "")
+        \(maintenancePreflight.map { "printf '%s' " + quote($0) + " > preflight.sh" } ?? "")
+        \(maintenancePreflight == nil ? "" : "GRAFTTY_MAINTENANCE_PREFLIGHT_FILE=\"$PWD/preflight.sh\" ")/bin/bash unpacked/install.sh \(maintenanceInstaller == nil ? "--bind-address 0.0.0.0 --ssh-port 8801 --http-port 8800" : "--maintenance")
         """
     }
 

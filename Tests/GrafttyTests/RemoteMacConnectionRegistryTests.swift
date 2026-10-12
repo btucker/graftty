@@ -161,6 +161,36 @@ struct RemoteMacConnectionRegistryTests {
         #expect(registry.activeConnectionCount == 1)
     }
 
+    @Test("""
+    @spec REMOTE-22.37: When a caller cancels while sharing another caller's connection attempt, the application shall reject the cancelled caller without cancelling the shared connection.
+    """)
+    func cancelledSharedWaiterPreservesOwner() async throws {
+        let gate = OfferGate()
+        let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n", offerGate: gate)
+        let registry = makeRegistry(
+            signalingTransport: { request, _ in
+                try signalingResponse(url: request.url!, answer: TestSignalingAnswer(sdp: "v=0\nanswer\n"))
+            },
+            connectionFactory: { _, _ in connection }
+        )
+        let remote = try makeRemoteMac()
+        let owner = Task { try await registry.connect(to: remote) }
+        await gate.waitUntilOfferStarted()
+        var waiterEntered = false
+        let waiter = Task {
+            waiterEntered = true
+            return try await registry.connect(to: remote)
+        }
+        while !waiterEntered { await Task.yield() }
+        waiter.cancel()
+        await gate.releaseOffer()
+        let entry = try await owner.value
+        await #expect(throws: CancellationError.self) { try await waiter.value }
+        #expect(registry.activeConnectionCount == 1)
+        #expect(try await registry.connect(to: remote).id == entry.id)
+        #expect(await connection.closeCount == 0)
+    }
+
     @Test("explicit reconnect signs replacement intent into its signaling offer")
     func explicitReconnectSignsReplacementIntent() async throws {
         let captured = CapturedSignalingRequest()

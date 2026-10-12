@@ -5,6 +5,8 @@ public struct RemoteMac: Codable, Sendable, Hashable, Identifiable {
     public let id: RemoteDeviceID
     public var transport: RemoteHostTransport
     public var directEndpoint: DirectSSHEndpoint?
+    /// System OpenSSH destination, never the Graftty direct listener.
+    public var maintenanceDestination: LinuxHostDestination?
     public var label: String
     public var fingerprint: RemoteIdentityFingerprint
     public var lastKnownBaseURL: URL?
@@ -22,6 +24,7 @@ public struct RemoteMac: Codable, Sendable, Hashable, Identifiable {
         lastKnownBaseURL: URL? = nil,
         transport: RemoteHostTransport = .webRTC,
         directEndpoint: DirectSSHEndpoint? = nil,
+        maintenanceDestination: LinuxHostDestination? = nil,
         routes: [RemoteConnectionRoute] = [],
         lastSuccessfulRoute: RemoteConnectionRoute? = nil,
         addedAt: Date = Date(),
@@ -30,6 +33,7 @@ public struct RemoteMac: Codable, Sendable, Hashable, Identifiable {
     ) {
         self.transport = transport
         self.directEndpoint = directEndpoint
+        self.maintenanceDestination = maintenanceDestination
         self.id = id
         self.label = label
         self.fingerprint = fingerprint
@@ -50,6 +54,7 @@ public struct RemoteMac: Codable, Sendable, Hashable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case transport
         case directEndpoint
+        case maintenanceDestination
         case id
         case label
         case fingerprint
@@ -66,6 +71,7 @@ public struct RemoteMac: Codable, Sendable, Hashable, Identifiable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         transport = try container.decodeIfPresent(RemoteHostTransport.self, forKey: .transport) ?? .webRTC
         directEndpoint = try container.decodeIfPresent(DirectSSHEndpoint.self, forKey: .directEndpoint)
+        maintenanceDestination = try container.decodeIfPresent(LinuxHostDestination.self, forKey: .maintenanceDestination)
         id = try container.decode(RemoteDeviceID.self, forKey: .id)
         label = try container.decode(String.self, forKey: .label)
         fingerprint = try container.decode(
