@@ -454,6 +454,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-5.13** When attachment recovery confirms that the previous daemon is gone, the application shall reset shell readiness and exclude the previous shell PID until a replacement shell is observed.
 
+**TERM-5.14** When a terminal surface is torn down with output blocked on the app mailbox, the application shall invalidate queued output, drain the mailbox until active output finishes, suppress callbacks to the retiring view, and keep the native surface alive until then.
+
 ### TERM-6.x — Stopping a Worktree
 
 **TERM-6.1** When the user triggers "Stop" on a running worktree, if any terminal surface has a running process, then the application shall display a confirmation dialog before proceeding.

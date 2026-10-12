@@ -11,6 +11,7 @@
 		09E371CE9DA66BEB41B1DFAD /* AddWorktreeSheetViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B4031DF4D165C5521C42B4 /* AddWorktreeSheetViewTests.swift */; };
 		0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */; };
 		0F0DC07D64128764A6E254A9 /* SessionLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB040F5D6FAA7EDA4C09F34F /* SessionLifecycleTests.swift */; };
+		1151FA2347FE21D01BA9CED4 /* MobileTerminalTeardownTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED17F675220FDB2C3347E8D6 /* MobileTerminalTeardownTests.swift */; };
 		1337A08A8D05C35D0439AA2F /* SSHNIOTransportUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B34B1538B76355DB7D2C21E /* SSHNIOTransportUnitTests.swift */; };
 		1369BAD2AA61E6DE756B5A3C /* MobileWorktreePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2375604B734A298A34CED68 /* MobileWorktreePresentationTests.swift */; };
 		1424F3BDEE73AA89A78610F3 /* IPadAppStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B5DBD2CC8F2E2A00F94D044 /* IPadAppStateTests.swift */; };
@@ -164,6 +165,7 @@
 		E9253D88D71A6DBEE9A8146C /* SSHTerminalLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalLoopbackTests.swift; sourceTree = "<group>"; };
 		E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileNavigationDecisionTests.swift; sourceTree = "<group>"; };
 		EB85606774D95FFBD85C5576 /* MobileAttentionPaneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAttentionPaneTests.swift; sourceTree = "<group>"; };
+		ED17F675220FDB2C3347E8D6 /* MobileTerminalTeardownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileTerminalTeardownTests.swift; sourceTree = "<group>"; };
 		F001274CBA0D57F9215C93F9 /* TerminalReceiveBufferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalReceiveBufferTests.swift; sourceTree = "<group>"; };
 		F13F27BC36EFE7A30792D643 /* RemoteConnectionReconnectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteConnectionReconnectTests.swift; sourceTree = "<group>"; };
 		F926FB896E74D9503480EE19 /* SSHAuthLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAuthLoopbackTests.swift; sourceTree = "<group>"; };
@@ -264,6 +266,7 @@
 		5326D4D06134BD55FD5087CF /* Terminal */ = {
 			isa = PBXGroup;
 			children = (
+				ED17F675220FDB2C3347E8D6 /* MobileTerminalTeardownTests.swift */,
 				91C85B2EFEF3B277843C1777 /* SurfaceProxyTests.swift */,
 				14155C510E994202A1F09C31 /* TerminalControllerThemeTests.swift */,
 				145BC9EAEE084FEC37D18D8D /* TerminalFontSizeStoreTests.swift */,
@@ -577,6 +580,7 @@
 				839D7F3737A06952FBB49FAC /* MobileAttentionPaneTests.swift in Sources */,
 				D6E07827478D558EA22701E3 /* MobileNavigationDecisionTests.swift in Sources */,
 				9CAB4286C051BF25058BBD67 /* MobilePaneAttentionTests.swift in Sources */,
+				1151FA2347FE21D01BA9CED4 /* MobileTerminalTeardownTests.swift in Sources */,
 				1369BAD2AA61E6DE756B5A3C /* MobileWorktreePresentationTests.swift in Sources */,
 				FBA39AD9402E9419991768C0 /* MultiPaneDetailViewTests.swift in Sources */,
 				4DEC9D1F8FA408618FE8EFB4 /* NativeFilePreviewTests.swift in Sources */,
