@@ -46,20 +46,31 @@ public enum GhosttyConfigReader {
                 if value.hasPrefix("?") { value.removeFirst() }
                 value = unquoted(value)
                 guard !value.isEmpty else { continue }
-                value = (value as NSString).expandingTildeInPath
-                let url = value.hasPrefix("/")
-                    ? URL(fileURLWithPath: value)
-                    : URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent(value)
-                includes.append(url.standardizedFileURL.path)
+                // Ghostty preserves absolute spellings, expands only ~/,
+                // and resolves relative includes through their symlink target.
+                if value.hasPrefix("/") {
+                    includes.append(value)
+                } else if value.hasPrefix("~/") {
+                    let home = ProcessInfo.processInfo.environment["HOME"]
+                        ?? FileManager.default.homeDirectoryForCurrentUser.path
+                    includes.append(home + value.dropFirst())
+                } else {
+                    let url = URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent(value)
+                    includes.append(url.resolvingSymlinksInPath().standardizedFileURL.path)
+                }
             }
         }
 
-        // Ghostty loads all root configs first, then walks the include queue.
+        // Ghostty loads all root configs first, then walks the include list.
         // Roots are not pre-seeded in the include set: a cycle can reload a
         // root once before Ghostty rejects an already-loaded include.
         for path in paths { load(path) }
-        while !includes.isEmpty {
-            let path = includes.removeFirst()
+        var index = 0
+        while index < includes.count {
+            let path = includes[index]
+            // A loaded file can clear and replace the list. Ghostty retains
+            // its cursor, so replacement entries before it are not loaded.
+            index += 1
             guard loaded.insert(path).inserted else { continue }
             load(path)
         }
