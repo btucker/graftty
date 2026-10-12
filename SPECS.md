@@ -3440,6 +3440,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-4.8** If a pane session changes during asynchronous port registration, then the application shall discard the obsolete session result without restoring a destroyed pane or invalidating a replacement shell.
 
+**PORTS-4.9** If a pane lifecycle, launcher, or query changes during port PID resolution, then the application shall discard the late result before updating the PID cache or port registration.
+
+**PORTS-4.10** When one port PID consumer cancels, the application shall discard that consumer's result without cancelling the shared live-session query needed by other panes.
+
+**PORTS-4.11** When an initial port PID query is invalidated or its renderer is evicted, the application shall retain pending discovery and resolve the pane on a subsequent scan tick.
+
 ### PORTS-5.x
 
 **PORTS-5.1** When a worktree publishes listening ports, the application shall combine its pane process bindings, deduplicate by port, sort numerically, and exclude bindings from other worktrees.
@@ -3479,6 +3485,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PORTS-5.18** When a mobile user holds an OAuth sign-in link with a local callback, the application shall offer Sign in via Mac without opening unrelated links or stale menu targets.
 
 **PORTS-5.19** While a mobile worktree port row or host browser toolbar is displayed at a compact width, the application shall retain the link and navigation controls while truncating long process and host names.
+
+**PORTS-5.20** While resolving worktree ports, the application shall use shared live-session queries off the main actor without reading historical daemon logs.
 
 ## PROJECT — PROJECT
 

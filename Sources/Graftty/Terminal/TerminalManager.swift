@@ -203,6 +203,10 @@ final class TerminalManager: ObservableObject {
     // an asynchronous replacement is starting and has not written its log yet.
     private var obsoleteShellPIDs: [PaneSlotID: Int32] = [:]
     private var portScanSessionQuery: (id: UUID, launcher: ZmxLauncher, task: Task<[String: Int32]?, Never>)?
+    private var portScanPaneGenerations: [PaneSlotID: UUID] = [:]
+    var shellPIDLogReader: @Sendable (URL, String) -> pid_t? = {
+        ZmxPIDLookup.shellPID(logFile: $0, sessionName: $1)
+    }
 
     /// Theme colors pulled from the ghostty config (background, foreground).
     /// Emitted post-`initialize()` once the config is read; defaults to
@@ -523,23 +527,24 @@ final class TerminalManager: ObservableObject {
         if let cached = cachedShellPIDs[id] { return cached }
         guard let launcher = zmxLauncher, launcher.isAvailable else { return nil }
         guard let sessionName = zmxSessionName(for: id) else { return nil }
-        guard let pid = ZmxPIDLookup.shellPID(
-            logFile: launcher.logFile(forSession: sessionName),
-            sessionName: sessionName
-        ) else { return nil }
+        guard let pid = shellPIDLogReader(launcher.logFile(forSession: sessionName), sessionName) else { return nil }
         guard obsoleteShellPIDs[id] != pid else { return nil }
+        if obsoleteShellPIDs[id] != nil {
+            portScanSessionQuery = nil
+        }
         obsoleteShellPIDs[id] = nil
         cachedShellPIDs[id] = pid
         return pid
     }
 
-    /// Confirm restored sessions and resolve missing log records using the
-    /// daemon's live shell PIDs. Share the query and keep it off the main actor.
+    /// Resolve ports exclusively from the daemon's live shell PIDs. Historical
+    /// logs can be large and can name dead shells, so never read them here.
+    /// Consumers share detached work; cancelling one must not cancel the query.
     func lookupShellPIDForPortScan(for id: PaneSlotID) async -> pid_t? {
-        let requiresLiveSession = rehydratedSurfaces.contains(id) && surfaces[id] == nil
-        if !requiresLiveSession, let pid = lookupShellPID(for: id) { return pid }
         guard let launcher = zmxLauncher,
               let name = zmxSessionName(for: id) else { return nil }
+        let generation = portScanPaneGenerations[id]
+        let obsoletePID = obsoleteShellPIDs[id]
         if portScanSessionQuery?.launcher !== launcher {
             let queryID = UUID()
             let task = Task.detached(priority: .utility) { try? launcher.listSessionShellPIDs() }
@@ -554,14 +559,14 @@ final class TerminalManager: ObservableObject {
         }
         guard let query = portScanSessionQuery,
               let sessions = await query.task.value,
+              !Task.isCancelled,
               portScanSessionQuery?.id == query.id,
               zmxLauncher === launcher,
-              zmxSessionName(for: id) == name else { return nil }
-        if requiresLiveSession, !(rehydratedSurfaces.contains(id) && surfaces[id] == nil) {
-            return lookupShellPID(for: id)
-        }
+              zmxSessionName(for: id) == name,
+              portScanPaneGenerations[id] == generation,
+              obsoleteShellPIDs[id] == obsoletePID else { return nil }
         guard let pid = sessions[name] else {
-            if requiresLiveSession, let previous = lookupShellPID(for: id) {
+            if let previous = cachedShellPIDs[id] {
                 obsoleteShellPIDs[id] = previous
             }
             cachedShellPIDs[id] = nil
@@ -571,6 +576,12 @@ final class TerminalManager: ObservableObject {
         obsoleteShellPIDs[id] = nil
         cachedShellPIDs[id] = pid
         return pid
+    }
+
+    private func invalidatePortScanResolution(for id: PaneSlotID) {
+        portScanPaneGenerations[id] = UUID()
+        // Drop the snapshot without cancelling work that other consumers await.
+        portScanSessionQuery = nil
     }
 
     /// Rebuild the keybind bridge from the current config. Call after
@@ -795,22 +806,27 @@ final class TerminalManager: ObservableObject {
             && configuration?.shellReadySignalAvailable == true
     }
 
-    /// PORTS-4.5: At pane-registration time the zmx daemon may not have
-    /// written its `pty spawned ... pid=N` line yet, so `lookupShellPID`
-    /// can transiently return nil. Register as pending in that case so
+    /// PORTS-4.5: At pane-registration time the zmx daemon may not yet
+    /// appear in the live session listing. Register as pending in that case so
     /// the scanner re-attempts resolution on each tick — otherwise the
     /// pane silently never gets scanned and chips never appear.
     func registerForPortScan(_ terminalID: PaneSlotID, resetting: Bool = false) {
-        if resetting { portScanSessionQuery = nil }
-        guard let scanner = portScanner else { return }
+        if resetting { invalidatePortScanResolution(for: terminalID) }
+        guard let scanner = portScanner,
+              let sessionName = zmxSessionName(for: terminalID) else { return }
+        let launcher = zmxLauncher
+        let generation = portScanPaneGenerations[terminalID]
         Task { @MainActor [weak self] in
-            guard let self, let sessionName = self.zmxSessionName(for: terminalID) else { return }
-            let pid = await self.lookupShellPIDForPortScan(for: terminalID)
-            guard self.zmxSessionName(for: terminalID) == sessionName else { return }
+            guard let self, self.zmxLauncher === launcher,
+                  self.zmxSessionName(for: terminalID) == sessionName,
+                  self.portScanPaneGenerations[terminalID] == generation else { return }
             if resetting { await scanner.unregisterPane(terminalID) }
-            guard self.zmxSessionName(for: terminalID) == sessionName else { return }
-            if let pid { await scanner.registerPane(terminalID, shellPID: pid) }
-            else { await scanner.registerPanePending(terminalID) }
+            guard !Task.isCancelled, self.zmxLauncher === launcher,
+                  self.zmxSessionName(for: terminalID) == sessionName,
+                  self.portScanPaneGenerations[terminalID] == generation else { return }
+            // The scanner validates its registration generation after awaiting
+            // the resolver. Keep the pane pending even if that query is rejected.
+            await scanner.registerPanePending(terminalID)
         }
     }
 
@@ -860,9 +876,9 @@ final class TerminalManager: ObservableObject {
                 obsoleteShellPIDs[terminalID] = previousPID
             }
             cachedShellPIDs[terminalID] = nil
-            registerForPortScan(terminalID, resetting: true)
             shellReadyFired.remove(terminalID)
             clearRehydrated(terminalID)
+            registerForPortScan(terminalID, resetting: true)
             titles.removeValue(forKey: terminalID)
             pwds.removeValue(forKey: terminalID)
             if renderedTitles.removeValue(forKey: terminalID) != nil {
@@ -876,6 +892,7 @@ final class TerminalManager: ObservableObject {
     /// lifecycle labels (firstPaneMarkers, rehydratedSurfaces) outlive
     /// this and are cleaned up separately in `forgetTrackingState`.
     private func forgetSurfaceRuntimeState(for terminalID: PaneSlotID) {
+        invalidatePortScanResolution(for: terminalID)
         surfaces.removeValue(forKey: terminalID)
         titles.removeValue(forKey: terminalID)
         pwds.removeValue(forKey: terminalID)
@@ -1066,6 +1083,7 @@ final class TerminalManager: ObservableObject {
         // Readiness proves a new shell exists, even if its PID was reused.
         if obsoleteShellPIDs.removeValue(forKey: terminalID) != nil {
             cachedShellPIDs[terminalID] = nil
+            portScanSessionQuery = nil
         }
         if let input = pendingShellReadyInitialInput[terminalID] {
             let accepted = surfaces[terminalID]?.writeText(
@@ -1296,7 +1314,9 @@ final class TerminalManager: ObservableObject {
     /// Drop the rehydration label so `defaultCommandDecision` treats a
     /// pane as fresh. Called by `clearRehydratedIfDaemonGone`.
     func clearRehydrated(_ terminalID: PaneSlotID) {
-        rehydratedSurfaces.remove(terminalID)
+        if rehydratedSurfaces.remove(terminalID) != nil {
+            invalidatePortScanResolution(for: terminalID)
+        }
     }
 
     /// Whether a terminal was marked as the first pane of its worktree.
@@ -1431,7 +1451,14 @@ final class TerminalManager: ObservableObject {
         worktreePath: String? = nil,
         hostOwned: Bool = true
     ) {
-        forgetPaneSession(for: terminalID)
+        let previousSession = paneSessionIDs[terminalID]
+        if previousSession != paneSessionID {
+            forgetPaneSession(for: terminalID)
+            cachedShellPIDs[terminalID] = nil
+            obsoleteShellPIDs[terminalID] = nil
+            invalidatePortScanResolution(for: terminalID)
+        }
+        remoteViewerPaneSlots.remove(terminalID)
         paneSessionIDs[terminalID] = paneSessionID
         paneSlotIDsBySessionName[ZmxLauncher.sessionName(for: paneSessionID)] = terminalID
         paneWorktreePaths[terminalID] = worktreePath
@@ -1484,6 +1511,8 @@ final class TerminalManager: ObservableObject {
     }
 
     private func forgetPaneSession(for terminalID: PaneSlotID) {
+        portScanPaneGenerations[terminalID] = nil
+        portScanSessionQuery = nil
         remoteViewerPaneSlots.remove(terminalID)
         paneWorktreePaths.removeValue(forKey: terminalID)
         guard let sessionID = paneSessionIDs.removeValue(forKey: terminalID)

@@ -5,9 +5,83 @@ import Testing
 @testable import Graftty
 @testable import GrafttyKit
 
+private final class PortScanLogReadProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var mainThreadReads: [Bool] = []
+    func record() { lock.withLock { mainThreadReads.append(Thread.isMainThread) } }
+    func values() -> [Bool] { lock.withLock { mainThreadReads } }
+}
+
 @MainActor
 @Suite("TerminalManager.evictSurface")
 struct TerminalManagerEvictionTests {
+
+    @Test("@spec PORTS-5.20: While resolving worktree ports, the application shall use shared live-session queries off the main actor without reading historical daemon logs.", arguments: [false, true], [false, true])
+    func portScanDoesNotReadLargeLogsBeforeLiveListing(restoring: Bool, live: Bool) async throws {
+        actor Runner: LsofRunner {
+            func run(pids: String) async -> String? {
+                pids == "222" ? "node 222 alice 23u IPv4 0x1 0t0 TCP 127.0.0.1:3000 (LISTEN)" : ""
+            }
+        }
+        struct Walker: ProcessTreeWalking {
+            func descendants(of root: pid_t) -> [pid_t] { [root] }
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let pane = PaneSlotID(), session = PaneSessionID()
+        let name = ZmxLauncher.sessionName(for: session)
+        let executable = directory.appendingPathComponent("zmx")
+        let output = live ? "printf 'name=\(name)\\tpid=222\\n'" : "exit 0"
+        try "#!/bin/sh\n/bin/sleep 0.05\n\(output)\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let launcher = ZmxLauncher(executable: executable, zmxDir: directory)
+        let log = launcher.logFile(forSession: name)
+        try Self.writeLargeLog(log, sessionName: name, historicalPID: nil)
+        try Self.writeLargeLog(log.appendingPathExtension("old"), sessionName: name, historicalPID: 111)
+        let reads = PortScanLogReadProbe()
+        let manager = TerminalManager(socketPath: "/tmp/graftty-port-large-log-test.sock")
+        manager.zmxLauncher = launcher
+        manager.recordPaneSession(session, for: pane)
+        if restoring { manager.markRehydrated(pane) }
+        manager.shellPIDLogReader = { url, sessionName in
+            reads.record()
+            return ZmxPIDLookup.shellPID(logFile: url, sessionName: sessionName)
+        }
+        let scanner = PortScanner(runner: Runner(), walker: Walker())
+        await scanner.setPIDResolver { [weak manager] id in await manager?.lookupShellPIDForPortScan(for: id) }
+        var heartbeats = 0
+        let progress = Task { @MainActor in
+            while !Task.isCancelled {
+                heartbeats += 1
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        defer { progress.cancel() }
+        for _ in 0..<5 {
+            // Force resolution on each tick, as happens while panes are pending.
+            manager.registerForPortScan(pane, resetting: true)
+            await scanner.unregisterPane(pane)
+            await scanner.registerPanePending(pane)
+            let before = heartbeats
+            await scanner.tick()
+            #expect(heartbeats > before, "The UI must keep progressing during every repeated query")
+            #expect(await scanner.bindings(for: pane).map(\.port) == (live ? [3000] : []))
+        }
+        #expect(reads.values().isEmpty)
+    }
+
+    private static func writeLargeLog(_ file: URL, sessionName: String, historicalPID: Int32?) throws {
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: file.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+        if let historicalPID {
+            try handle.write(contentsOf: Data("pty spawned session=\(sessionName) pid=\(historicalPID)\n".utf8))
+        }
+        let noise = Data(String(repeating: "synthetic daemon event without a shell PID\n", count: 16_384).utf8)
+        for _ in 0..<12 { try handle.write(contentsOf: noise) }
+    }
 
     @Test("@spec PORTS-5.12: When a pane's daemon log lacks a shell-spawn record, the application shall resolve its shell PID from the live daemon session listing and discover its listening ports.", arguments: [false, true])
     func liveSessionPIDResolvesWithoutSpawnLog(restoring: Bool) async throws {
@@ -105,7 +179,9 @@ struct TerminalManagerEvictionTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let executable = directory.appendingPathComponent("zmx")
         let started = directory.appendingPathComponent("started")
-        try "#!/bin/sh\n[ \"$1\" = list ] || exit 0\n: > '\(started.path)'\n/bin/sleep 0.1\n"
+        let listing = directory.appendingPathComponent("listing")
+        try "".write(to: listing, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\n[ \"$1\" = list ] || exit 0\n/bin/cat '\(listing.path)' > '\(directory.path)/snapshot'\n: > '\(started.path)'\n/bin/sleep 0.1\n/bin/cat '\(directory.path)/snapshot'\n"
             .write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
         let launcher = ZmxLauncher(executable: executable, zmxDir: directory)
@@ -131,7 +207,9 @@ struct TerminalManagerEvictionTests {
             let log = launcher.logFile(forSession: name)
             try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
             try "pty spawned session=\(name) pid=222\n".write(to: log, atomically: true, encoding: .utf8)
-            #expect(await lookup.value == 222)
+            try "name=\(name)\tpid=222\n".write(to: listing, atomically: true, encoding: .utf8)
+            #expect(await lookup.value == nil)
+            #expect(await manager.lookupShellPIDForPortScan(for: pane) == 222)
             #expect(manager.lookupShellPID(for: pane) == 222)
         } else {
             manager.destroySurface(terminalID: pane)
