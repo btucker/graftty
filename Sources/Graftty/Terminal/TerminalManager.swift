@@ -213,6 +213,14 @@ final class TerminalManager: ObservableObject {
     /// `.fallback` before that so views have something to render with.
     @Published var theme: GhosttyTheme = .fallback
 
+    /// Self-contained host presentation for mobile, where named theme files
+    /// and config includes from this Mac are unavailable.
+    func mobilePresentationConfig() -> String {
+        let text = GhosttyConfigReader.portableConfig()
+        guard let config = ghosttyConfig?.config else { return text }
+        return GhosttyPresentationConfig.render(config: config, text: text)
+    }
+
     /// Per-pane titles set by the running program via the OSC-0/OSC-2 escape
     /// sequences (e.g. `\033]0;TITLE\007`). Populated in response to
     /// `GHOSTTY_ACTION_SET_TITLE` after filtering obvious env-assignment

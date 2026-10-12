@@ -2780,7 +2780,7 @@ struct GrafttyApp: App {
                     let presentation = await MainActor.run {
                         RemoteHostPresentation(
                             ghosttyConfig:
-                                GhosttyConfigReader.resolvedConfig(),
+                                terminalManager.mobilePresentationConfig(),
                             keybindings: GhosttyKeybindingsResponse(
                                 chords: terminalManager.keybindBridge.allChords
                             )

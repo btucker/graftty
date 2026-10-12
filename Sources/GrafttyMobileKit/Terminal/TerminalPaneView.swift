@@ -491,9 +491,24 @@ public final class TerminalInputContainerView: UIView,
     }
 
     public func resetStickyModifiers() {
+        setTrayShiftSelected(false)
         #if !targetEnvironment(macCatalyst)
         terminalView.resetStickyModifiers()
         #endif
+    }
+
+    public private(set) var isTrayShiftSelected = false
+    var onTrayShiftSelectionChange: ((Bool) -> Void)?
+
+    public func toggleTrayShift() {
+        guard isCommittedSoftwareInputEligible else { return }
+        setTrayShiftSelected(!isTrayShiftSelected)
+    }
+
+    private func setTrayShiftSelected(_ selected: Bool) {
+        guard isTrayShiftSelected != selected else { return }
+        isTrayShiftSelected = selected
+        onTrayShiftSelectionChange?(selected)
     }
 
     public func setStickyControlActivationChangeHandler(

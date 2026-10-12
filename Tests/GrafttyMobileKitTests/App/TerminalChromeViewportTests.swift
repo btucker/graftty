@@ -237,7 +237,7 @@ private final class ViewportLegacySocket: WebSocketClient, @unchecked Sendable {
 }
 
 @Suite("""
-@spec IOS-6.1: While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, and Hide Keyboard controls. The non-modifier controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl state.
+@spec IOS-6.1: While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, tray Shift, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, and Hide Keyboard controls. The non-modifier controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl and tray Shift state.
 """)
 @MainActor
 struct MobileTerminalControlBarTests {
@@ -247,6 +247,7 @@ struct MobileTerminalControlBarTests {
             .escape,
             .tab,
             .stickyControl,
+            .shift,
             .controlC,
             .controlD,
             .navigationDivider,
@@ -259,6 +260,40 @@ struct MobileTerminalControlBarTests {
             .literalLineFeed,
             .hideKeyboard,
         ])
+    }
+
+    @Test("@spec IOS-6.30: When the user toggles tray Shift, the application shall retain its selection across tray key presses until toggled off, and clear it when terminal input becomes ineligible or sticky modifiers are reset.")
+    func trayShiftSelectionAndReset() {
+        let container = TerminalInputContainerView(frame: .zero)
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        var selections: [Bool] = []
+        container.onTrayShiftSelectionChange = { selections.append($0) }
+
+        container.toggleTrayShift()
+        #expect(container.isTrayShiftSelected)
+        #expect(TerminalTrayKey.left.data(shift: container.isTrayShiftSelected)
+            == Data("\u{1B}[1;2D".utf8))
+        #expect(container.isTrayShiftSelected)
+        container.toggleTrayShift()
+        #expect(!container.isTrayShiftSelected)
+
+        container.toggleTrayShift()
+        container.resetStickyModifiers()
+        #expect(!container.isTrayShiftSelected)
+        container.toggleTrayShift()
+        container.committedSoftwareInput = nil
+        #expect(!container.isTrayShiftSelected)
+        container.toggleTrayShift()
+        #expect(!container.isTrayShiftSelected)
+        #expect(selections == [true, false, true, false, true, false])
+
+        let retainedPane = RetainedMobilePane(client: SessionClient(
+            sessionName: "s",
+            webSocketFactory: { ViewportLegacySocket() }
+        ))
+        retainedPane.container = container
+        retainedPane.detachControls()
+        #expect(container.onTrayShiftSelectionChange == nil)
     }
 
     @Test("sticky Ctrl uses libghostty for arbitrary software-keyboard letters")
