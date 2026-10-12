@@ -51,7 +51,10 @@ public actor ChromeTabBroker {
         guard busy.insert(scope).inserted else { return .init(error: "Chrome is busy. Try again.") }
         defer { busy.remove(scope) }
         if backends[scope] == nil {
-            guard case .launch = request.action else { return .init(state: .init()) }
+            switch request.action {
+            case .launch, .launchOffer: break
+            default: return .init(state: .init())
+            }
             guard backends.count < 4 else { return .init(error: "The prototype supports four active Chrome profiles.") }
             backends[scope] = makeBackend(scope)
         }

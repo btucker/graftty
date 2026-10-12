@@ -66,6 +66,9 @@ public final class RemoteConnectionCoordinator {
     public private(set) var localDeviceID: RemoteDeviceID?
     private var authenticationOffers = RemoteAuthenticationOffers()
 
+    func completeAuthenticationOffer(_ id: UUID) { authenticationOffers.complete(id) }
+    func dismissAuthenticationOffer(_ id: UUID) { authenticationOffers.dismiss(id) }
+
     func deferAuthenticationOffer(_ id: UUID) { authenticationOffers.deferPresentation(of: id) }
 
     func consumeAuthenticationOffer(_ offers: [RemoteOpenOffer], sessionName: String,

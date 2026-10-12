@@ -4,6 +4,7 @@ import Foundation
 public enum ChromeTabAction: Codable, Equatable, Sendable {
     case list
     case launch(url: String)
+    case launchOffer(id: UUID, url: String)
     case select(tabID: String)
     case frame(tabID: String)
     case tap(tabID: String, x: Double, y: Double)
@@ -13,7 +14,7 @@ public enum ChromeTabAction: Codable, Equatable, Sendable {
 
     public var tabID: String? {
         switch self {
-        case .list, .launch: return nil
+        case .list, .launch, .launchOffer: return nil
         case .select(let id), .frame(let id), .tap(let id, _, _), .scroll(let id, _, _, _, _), .text(let id, _), .key(let id, _): return id
         }
     }
@@ -22,7 +23,7 @@ public enum ChromeTabAction: Codable, Equatable, Sendable {
         if let tabID, tabID.isEmpty || tabID.utf8.count > 128 { return false }
         func point(_ x: Double, _ y: Double) -> Bool { x.isFinite && y.isFinite && (0...1).contains(x) && (0...1).contains(y) }
         switch self {
-        case .launch(let raw):
+        case .launch(let raw), .launchOffer(_, let raw):
             guard raw.utf8.count <= 8192, let url = URL(string: raw), let host = url.host, !host.isEmpty else { return false }
             return ["https", "http"].contains(url.scheme?.lowercased() ?? "") && url.user == nil && url.password == nil
         case .tap(_, let x, let y): return point(x, y)

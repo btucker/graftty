@@ -20,19 +20,21 @@ struct RemoteOpenButton: View {
     let isPaneOwner: () -> Bool
     let canPresentAuthentication: () -> Bool
     @State private var operationID = UUID()
+    @State private var presentedOfferID: UUID?
 
     private var pollScope: PollScope {
-        PollScope(worktree: worktree, sessionName: sessionName, ownerDeviceID: ownerDeviceID)
+        PollScope(hostID: host.id, worktree: worktree, sessionName: sessionName, ownerDeviceID: ownerDeviceID)
     }
 
     private struct Preview: Identifiable {
         let id = UUID()
         let url: URL
-        var callbackHost: String? = nil
-        var isAutomatic = false
+        var chromeLaunch: ChromeTabInitialLaunch? = nil
+        var originHost: Host? = nil
     }
 
     private struct PollScope: Equatable {
+        let hostID: UUID
         let worktree: String
         let sessionName: String
         let ownerDeviceID: RemoteDeviceID?
@@ -64,7 +66,10 @@ struct RemoteOpenButton: View {
         }
         .onChange(of: pollScope) { _, _ in
             cancelOperation()
-            if !isPaneOwner(), preview?.isAutomatic == true { preview = nil }
+            if preview?.chromeLaunch != nil {
+                deferAuthenticationPresentation()
+                preview = nil
+            }
         }
         .task(id: pollScope) {
             while !Task.isCancelled {
@@ -88,11 +93,18 @@ struct RemoteOpenButton: View {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
             }
         }
-        .sheet(item: $preview, onDismiss: removeCachedFile) { preview in
-            if preview.url.isFileURL {
+        .sheet(item: $preview, onDismiss: {
+            if let id = presentedOfferID { coordinator.dismissAuthenticationOffer(id) }
+            presentedOfferID = nil
+            removeCachedFile()
+        }) { preview in
+            if let launch = preview.chromeLaunch {
+                ChromeTabViewer(target: launch.target, connectionProvider: { await coordinator.connection(for: preview.originHost ?? host) },
+                                initialLaunch: launch, onLaunch: { coordinator.completeAuthenticationOffer(launch.offerID) })
+            } else if preview.url.isFileURL {
                 NativeFilePreview(url: preview.url)
             } else {
-                HostBrowserView(url: preview.url, host: host, callbackHost: preview.callbackHost,
+                HostBrowserView(url: preview.url, host: host,
                                 connectionProvider: { await coordinator.connection(for: host) })
             }
         }
@@ -105,9 +117,15 @@ struct RemoteOpenButton: View {
         }
         .onDisappear {
             cancelOperation()
+            deferAuthenticationPresentation()
             preview = nil
             removeCachedFile()
         }
+    }
+
+    private func deferAuthenticationPresentation() {
+        if let id = presentedOfferID { coordinator.deferAuthenticationOffer(id) }
+        presentedOfferID = nil
     }
 
     private func cancelOperation() {
@@ -127,28 +145,20 @@ struct RemoteOpenButton: View {
         let currentOperation = operationID
         if let url = offer.url {
             guard !worktree.hasPrefix("relay-worktree-") else {
+                coordinator.deferAuthenticationOffer(offer.id)
                 error = "Connect directly to this resource's host to browse its URLs."
                 return
             }
             if !WorktreeAuthenticationURL.isLoopbackHost(url.host ?? ""), WorktreeAuthenticationURL(url: url) != nil {
-                isDownloading = true
-                download = Task { @MainActor in
-                    defer { if operationID == currentOperation { isDownloading = false } }
-                    do {
-                        let authentication = try await WorktreePortClient.authenticate(url, in: worktree) { request in
-                            try await coordinator.sendWorktreeManagement(request, to: host)
-                        }
-                        guard !Task.isCancelled, operationID == currentOperation,
-                              !automatically || isPaneOwner() else { return }
-                        if automatically && !canPresentAuthentication() {
-                            coordinator.deferAuthenticationOffer(offer.id)
-                            return
-                        }
-                        preview = Preview(url: authentication.url, callbackHost: authentication.callbackHost, isAutomatic: automatically)
-                    } catch {
-                        if !Task.isCancelled, operationID == currentOperation { self.error = error.localizedDescription }
-                    }
+                guard isPaneOwner(), ownerDeviceID != nil,
+                      offer.paneSessionName == sessionName, offer.browserOwnerDeviceID == ownerDeviceID,
+                      canPresentAuthentication() else {
+                    coordinator.deferAuthenticationOffer(offer.id)
+                    if !automatically { error = "Take control of the originating pane before starting sign-in." }
+                    return
                 }
+                presentedOfferID = offer.id
+                preview = Preview(url: url, chromeLaunch: ChromeTabInitialLaunch(offer: offer), originHost: host)
                 return
             }
             preview = Preview(url: url)

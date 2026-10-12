@@ -832,7 +832,7 @@ struct SingleSessionView: View {
                                      sessionName: step.sessionName,
                                      ownerDeviceID: client.isOwner ? coordinator.localDeviceID : nil,
                                      isPaneOwner: { client.isOwner },
-                                     canPresentAuthentication: { authenticationPreview == nil && authenticationTask == nil })
+                                     canPresentAuthentication: { !showingChromeTabs && authenticationPreview == nil && authenticationTask == nil })
                         .padding(.top, 64)
                         .padding(.trailing, 12)
                 }

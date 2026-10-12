@@ -19,7 +19,7 @@ private final class ChromeTabViewerModel {
     private var frameSequence: UInt64?
     private var frameTabID: String?
 
-    func run(target: String, provider: @escaping RemoteConnectionProvider) async {
+    func run(target: String, initialLaunch: ChromeTabInitialLaunch?, onLaunch: () -> Void, provider: @escaping RemoteConnectionProvider) async {
         close()
         let epoch = generation
         do {
@@ -41,7 +41,12 @@ private final class ChromeTabViewerModel {
             defer { driver.close(); if generation == epoch { client = nil; image = nil } }
             let listed = await send(.list, target: target)
             guard listed, !Task.isCancelled, generation == epoch else { return }
-            if let first = state.tabs.first?.id { await send(.select(tabID: first), target: target) }
+            if let initialLaunch {
+                guard await send(initialLaunch.action, target: target),
+                      !Task.isCancelled, generation == epoch,
+                      initialLaunch.accept(.init(state: state)) else { return }
+                onLaunch()
+            } else if let first = state.tabs.first?.id { await send(.select(tabID: first), target: target) }
             while !Task.isCancelled, generation == epoch {
                 try await Task.sleep(for: .milliseconds(250))
                 if pendingCount == 0 {
@@ -97,11 +102,15 @@ private final class ChromeTabViewerModel {
     }
 }
 
-/// Explicit opt-in. Rendering and OAuth callbacks both execute on the host Mac.
+/// Rendering and OAuth callbacks both execute on the host Mac.
 struct ChromeTabViewer: View {
     let target: String
     let connectionProvider: RemoteConnectionProvider
+    var initialLaunch: ChromeTabInitialLaunch? = nil
+    var onLaunch: () -> Void = {}
     @State private var model = ChromeTabViewerModel()
+    @State private var connectionAttempt = 0
+    private struct RunScope: Hashable { let ready: Bool; let attempt: Int }
     @State private var launchURL = ""
     @State private var text = ""
     @FocusState private var textFocused: Bool
@@ -115,6 +124,11 @@ struct ChromeTabViewer: View {
             VStack(spacing: 12) {
                 Text("Dedicated Chrome on your Mac. Tabs stay open when you disconnect.")
                     .font(.footnote).foregroundStyle(.secondary)
+                if initialLaunch != nil, model.error != nil {
+                    Button("Retry sign-in") {
+                        connectionAttempt += 1
+                    }.disabled(model.busy)
+                }
                 HStack {
                     TextField("Launch https://…", text: $launchURL)
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -168,8 +182,8 @@ struct ChromeTabViewer: View {
             }
             .padding().navigationTitle("Chrome on Mac").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
-            .task(id: ready) {
-                if ready { await model.run(target: target, provider: connectionProvider) }
+            .task(id: RunScope(ready: ready, attempt: connectionAttempt)) {
+                if ready { await model.run(target: target, initialLaunch: initialLaunch, onLaunch: onLaunch, provider: connectionProvider) }
                 else { model.close() }
             }
             .onDisappear { model.close() }

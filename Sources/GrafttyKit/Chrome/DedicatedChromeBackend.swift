@@ -17,8 +17,10 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
         let continuation: CheckedContinuation<Data, Error>
         let timeout: Task<Void, Never>
         var send: Task<Void, Never>?
+        var offer: (id: UUID, url: String)?
     }
     private var pending: [Int: Pending] = [:]
+    private var offerLaunches = ChromeOfferLaunchLedger()
     private var selectedTabID: String?
     private var sessionID: String?
     private var latestFrame: ChromeTabFrame?
@@ -67,6 +69,15 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
             let result = try await call("Target.createTarget", params: ["url": url])
             guard let id = result["targetId"] as? String else { throw Failure.launchFailed }
             try await select(id, tabs: try await listTabs())
+        case .launchOffer(let offerID, let url):
+            if let id = try offerLaunches.tab(for: offerID, url: url) {
+                try await select(id, tabs: tabs)
+            } else {
+                guard tabs.count < 32 else { throw Failure.tooManyTabs }
+                let result = try await call("Target.createTarget", params: ["url": url], offer: (offerID, url))
+                guard let id = result["targetId"] as? String else { throw Failure.launchFailed }
+                try await select(id, tabs: try await listTabs())
+            }
         case .select(let id): try await select(id, tabs: tabs)
         case .list: break
         case .frame(let id):
@@ -223,7 +234,7 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
         for entry in entries { entry.timeout.cancel(); entry.send?.cancel(); entry.continuation.resume(throwing: Failure.disconnected) }
     }
 
-    private func call(_ method: String, params: [String: Any] = [:], session: String? = nil, checkAuthorization: Bool = true) async throws -> [String: Any] {
+    private func call(_ method: String, params: [String: Any] = [:], session: String? = nil, checkAuthorization: Bool = true, offer: (id: UUID, url: String)? = nil) async throws -> [String: Any] {
         if checkAuthorization {
             try Task.checkCancellation()
             guard let authorization, await authorization() else { throw Failure.protocolError("Pane ownership changed.") }
@@ -243,7 +254,7 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
                 try? await Task.sleep(for: .seconds(5))
                 if !Task.isCancelled { await self?.expireCommand(id: id, socket: ws) }
             }
-            pending[id] = Pending(continuation: continuation, timeout: timeout, send: nil)
+            pending[id] = Pending(continuation: continuation, timeout: timeout, send: nil, offer: offer)
             pending[id]?.send = Task { [weak self] in
                 await self?.sendCommand(id: id, data: data, socket: ws, session: session, checkAuthorization: checkAuthorization)
             }
@@ -271,6 +282,7 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
             }
             try Task.checkCancellation()
             guard pending[id] != nil, socket === ws else { return }
+            if let offer = pending[id]?.offer { try offerLaunches.dispatched(offer.id, url: offer.url) }
             try await ws.send(.string(String(decoding: data, as: UTF8.self)))
         } catch { fail(id, error: error) }
     }
@@ -296,6 +308,10 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
         switch message { case .data(let value): data = value; case .string(let value): data = Data(value.utf8); @unknown default: return }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         if let id = json["id"] as? Int, let entry = pending.removeValue(forKey: id) {
+            if let offer = entry.offer, let result = json["result"] as? [String: Any], let tabID = result["targetId"] as? String {
+                // Save the receipt before resuming a task that may already be cancelled.
+                offerLaunches.created(offer.id, tabID: tabID)
+            }
             entry.timeout.cancel(); entry.send?.cancel(); entry.continuation.resume(returning: data); return
         }
         guard json["method"] as? String == "Page.screencastFrame",

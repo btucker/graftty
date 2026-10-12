@@ -27,6 +27,43 @@ private final class ChromeSmokePage: ChannelInboundHandler, @unchecked Sendable 
 
 @Suite(.serialized)
 struct DedicatedChromeBackendTests {
+    @Test("@spec CHROME-1.7: When a host Chrome OAuth launch succeeds but its viewer reply is lost, the application shall preserve the original state and callback URL and select the same host tab on reconnection without relaunching it.", .timeLimit(.minutes(1)))
+    func nativeOfferLostReplyReconnect() async throws {
+        let root = URL.temporaryDirectory.appendingPathComponent("graftty-native-offer-\(UUID())")
+        let backend = DedicatedChromeBackend(testProfile: root.appendingPathComponent(String(repeating: "b", count: 64)))
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        let server = try await ServerBootstrap(group: group).childChannelInitializer { channel in
+            channel.pipeline.configureHTTPServerPipeline().flatMap { channel.pipeline.addHandler(ChromeSmokePage()) }
+        }.bind(host: "127.0.0.1", port: 0).get()
+        do {
+            let port = try #require(server.localAddress?.port)
+            let original = "http://127.0.0.1:\(port)/authorize?state=A%2Bb&redirect_uri=http%3A%2F%2Flocalhost%3A4567%2Fcallback"
+            let id = UUID(), viewer = UUID()
+            let broker = ChromeTabBroker(authorize: { _, _ in "/test-worktree" }, makeBackend: { _ in backend })
+            let request = ChromeTabRequest(target: "pane", action: .launchOffer(id: id, url: original))
+            // The host completes, but the viewer never sees this response.
+            let lost = await broker.handle(request, peerID: "trusted", viewerID: viewer)
+            #expect(lost.error == nil)
+            let tab = try #require(lost.state?.selectedTabID)
+            #expect(try await backend.evaluateForTesting("location.href") == original)
+            _ = await broker.handle(.init(target: "pane", action: .text(tabID: tab, text: "")), peerID: "trusted", viewerID: viewer)
+            await broker.disconnect(viewerID: viewer)
+            let retried = await broker.handle(request, peerID: "trusted", viewerID: UUID())
+            #expect(retried.error == nil)
+            #expect(retried.state?.selectedTabID == tab)
+            #expect(retried.state?.tabs.count == lost.state?.tabs.count)
+            #expect(try await backend.evaluateForTesting("location.href") == original)
+        } catch {
+            await backend.shutdownForTesting()
+            try? await server.close().get(); try? await group.shutdownGracefully()
+            try? FileManager.default.removeItem(at: root)
+            throw error
+        }
+        await backend.shutdownForTesting()
+        try await server.close().get(); try await group.shutdownGracefully()
+        try FileManager.default.removeItem(at: root)
+    }
+
     @Test("@spec CHROME-1.4: While an authorized phone controls a dedicated Chrome tab, the application shall stream bounded selected-tab screencast frames, dispatch tap, scroll, text and keyboard input on the host, and retain tab state across viewer reconnects.", .timeLimit(.minutes(1)))
     func nativeCDPVerticalSmoke() async throws {
         let root = URL.temporaryDirectory.appendingPathComponent("graftty-native-chrome-\(UUID())")

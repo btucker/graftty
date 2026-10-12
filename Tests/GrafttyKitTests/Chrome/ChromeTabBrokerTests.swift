@@ -18,6 +18,22 @@ private actor ChromeFixture: ChromeTabBackend {
 }
 
 struct ChromeTabBrokerTests {
+    @Test("@spec CHROME-1.6: If an OAuth offer launch reply is lost, then the application shall bind its identity to the original URL and host tab, return that tab on retry, and refuse an ambiguous launch replay.")
+    func tracksOfferLaunchAtDispatchAndReply() throws {
+        var ledger = ChromeOfferLaunchLedger()
+        let id = UUID(), other = UUID()
+        let raw = "https://example.com/authorize?state=A%2Bb&redirect_uri=http%3A%2F%2Flocalhost%3A4567%2Fcallback"
+        #expect(try ledger.tab(for: id, url: raw) == nil)
+        // Pre-dispatch failures do not register a receipt.
+        #expect(try ledger.tab(for: id, url: raw) == nil)
+        try ledger.dispatched(id, url: raw)
+        #expect(throws: (any Error).self) { try ledger.tab(for: id, url: raw) }
+        ledger.created(id, tabID: "host-tab")
+        #expect(try ledger.tab(for: id, url: raw) == "host-tab")
+        #expect(throws: (any Error).self) { try ledger.tab(for: id, url: raw + "&changed=1") }
+        #expect(try ledger.tab(for: other, url: raw) == nil)
+    }
+
     @Test("@spec CHROME-1.1: If a Chrome request lacks live pane ownership for its authenticated peer, then the application shall reject it before accessing a dedicated profile.")
     func rejectsUnauthorized() async {
         let fixture = ChromeFixture()

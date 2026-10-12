@@ -3126,6 +3126,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-1.5** When a viewer loses pane ownership, the application shall stop its screencast and release its Chrome viewer lease before another owner attaches.
 
+**CHROME-1.6** If an OAuth offer launch reply is lost, then the application shall bind its identity to the original URL and host tab, return that tab on retry, and refuse an ambiguous launch replay.
+
+**CHROME-1.7** When a host Chrome OAuth launch succeeds but its viewer reply is lost, the application shall preserve the original state and callback URL and select the same host tab on reconnection without relaunching it.
+
 ### CHROME-2.x — Phone controls
 
 **CHROME-2.1** When a phone taps a fitted Chrome frame, the application shall map only image pixels to normalized browser coordinates and reject letterbox taps.
@@ -3133,6 +3137,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CHROME-2.2** When a phone tap and text arrive during a frame request, the application shall queue bounded input and dispatch the tap before text on the same tab.
 
 **CHROME-2.3** When a Chrome viewer closes, the application shall cancel queued input before it can reach a replacement connection.
+
+**CHROME-2.4** When an OAuth offer awaits ownership, connection or presentation, the application shall retain its exact original URL and identity until host launch succeeds or the user dismisses it.
+
+**CHROME-2.5** When a Chrome sign-in viewer reconnects after launch acknowledgment, the application shall select its retained host tab without navigating the OAuth URL again.
 
 ### CHROME-3.x — Authenticated transport
 
@@ -3620,7 +3628,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-5.36** When a Mac Graftty pane invokes open with one HTTP(S) URL, the application shall route it through the pane owner without falling back after a routing failure, and shall preserve native open arguments outside a pane or for other invocations.
 
-**PORTS-5.37** When a new OAuth URL is offered by the mobile user's currently owned pane, the application shall open sign-in on that mobile device once and shall ignore offers from other panes, followers, and ordinary URLs.
+**PORTS-5.37** When a new OAuth URL is offered by the mobile user's currently owned pane, the application shall present host Chrome sign-in on that mobile device once and shall ignore offers from other panes, followers, and ordinary URLs.
 
 **PORTS-5.38** When a remote open offer crosses a host connection, the application shall preserve its originating pane session and intended paired mobile device, and decode older offers without those identities as unspecified.
 
