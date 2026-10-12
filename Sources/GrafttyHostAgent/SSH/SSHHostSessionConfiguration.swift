@@ -128,11 +128,33 @@ final class AuthenticatedPeerBox: @unchecked Sendable {
         return _peer?.capabilities.worktreeManagement == .allowed
     }
 
-    /// A port tap grants a narrow approval only after the host resolves a live listener.
+    /// Port and sign-in taps grant narrow approval after resolving a live worktree listener.
     func manage(_ request: WorktreeManagementRequest,
                 using mutator: WorktreeManagementChannelHandler.Mutator,
                 approvals: BrowserTunnelApprovalStore = .shared) async -> WorktreeManagementResponse {
-        guard case .openResource(_, .port(let port)) = request else { return await mutator(request) }
+        guard case .openResource(_, let resource) = request else { return await mutator(request) }
+        if case .authenticate(let url) = resource {
+            guard let peer, peer.capabilities.portTunnel != .disabled else {
+                return .error(code: "authentication-tunnel-disabled", message: "This device needs browser tunnel permission to complete sign-in through the Mac.", forceAllowed: false, shortStatus: nil)
+            }
+            guard let authentication = WorktreeAuthenticationURL(url: url),
+                  !WorktreeAuthenticationURL.isLoopbackHost(url.host ?? "") else {
+                return .error(code: "invalid-authentication", message: "This link has no supported local sign-in callback.", forceAllowed: false, shortStatus: nil)
+            }
+            let response = await mutator(request)
+            guard let currentPeer = self.peer, currentPeer.id == peer.id,
+                  currentPeer.capabilities.portTunnel != .disabled else {
+                return .error(code: "authentication-tunnel-disabled", message: "Browser tunnel permission changed while preparing sign-in.", forceAllowed: false, shortStatus: nil)
+            }
+            if case .openResource(.authentication(let approvedURL, let callbackHost)) = response,
+               approvedURL == url, authentication.resolveCallbackHost(in: [
+                   WorktreePort(port: authentication.callbackPort, scope: .loopback, processName: "", host: callbackHost)
+               ]) == callbackHost {
+                approvals.approve(deviceID: peer.id, host: callbackHost, port: authentication.callbackPort, until: Date().addingTimeInterval(900))
+            }
+            return response
+        }
+        guard case .port(let port) = resource else { return await mutator(request) }
         guard let peer, peer.capabilities.portTunnel != .disabled else {
             return .error(code: "port-tunnel-disabled", message: "Port tunnels are disabled for this paired device.", forceAllowed: false, shortStatus: nil)
         }

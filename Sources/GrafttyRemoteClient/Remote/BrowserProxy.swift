@@ -24,12 +24,13 @@ public final class BrowserProxy: @unchecked Sendable {
         try self.init(localHost: "127.0.0.1", localPort: .any, forwardDestination: nil, connect: connect)
     }
 
-    public convenience init(forwardingTo host: String, port: UInt16,
+    public convenience init(forwardingTo host: String, port: UInt16, localHost: String? = nil,
                             connect: @escaping @Sendable (NWConnection, String, Int) async throws -> Void) throws {
         let normalized = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-        guard Self.isLoopbackHost(normalized), port > 0,
+        let localHost = (localHost ?? host).trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        guard Self.isLoopbackHost(normalized), Self.isLoopbackHost(localHost), port > 0,
               let localPort = NWEndpoint.Port(rawValue: port) else { throw ProxyError.invalidHandshake }
-        try self.init(localHost: normalized, localPort: localPort,
+        try self.init(localHost: localHost, localPort: localPort,
                       forwardDestination: (normalized, Int(port)), connect: connect)
     }
 

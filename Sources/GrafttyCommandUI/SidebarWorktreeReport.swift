@@ -219,13 +219,13 @@ public struct SidebarWorktreePorts: View {
                 Button { onOpen?(port) } label: {
                     HStack(spacing: 8) {
                         Image(systemName: port.scope == .loopback ? "personalhotspot" : "globe")
-                            .frame(width: 16)
-                        Text(":\(String(port.port))").monospacedDigit().fontWeight(.medium)
-                        Text(port.processName).foregroundStyle(.secondary).lineLimit(1)
+                            .fixedSize().frame(width: 24)
+                        Text(":\(String(port.port))").monospacedDigit().fontWeight(.medium).fixedSize()
+                        Text(port.processName).foregroundStyle(.secondary).lineLimit(1).layoutPriority(-1)
                         Spacer(minLength: 0)
-                        Image(systemName: "arrow.up.right").foregroundStyle(.secondary)
+                        Image(systemName: "arrow.up.right").foregroundStyle(.secondary).fixedSize().frame(width: 24)
                     }
-                    .font(.callout).padding(.vertical, 8).contentShape(Rectangle())
+                    .font(.callout).padding(.vertical, 8).padding(.horizontal, 4).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(onOpen == nil || port.url == nil)

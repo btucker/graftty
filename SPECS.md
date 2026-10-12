@@ -3468,6 +3468,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-5.13** When the host browser loads a worktree URL, the application shall send WebKit's HTTP request through the paired host's authenticated tunnel and render the host's response.
 
+**PORTS-5.14** When a host browser sign-in page redirects to its loopback OAuth callback, the application shall forward the unchanged callback path and query through the same paired Mac.
+
+**PORTS-5.15** When a terminal offers an OAuth authorization URL with one HTTP(S) loopback redirect, the application shall preserve the authorization and callback URLs and reject ambiguous or non-loopback redirects.
+
+**PORTS-5.16** When preparing a worktree sign-in browser, the host shall resolve its callback only from that worktree's live listeners and preserve the listener's address.
+
+**PORTS-5.17** When a paired device requests worktree OAuth sign-in, the host shall grant temporary browser approval only after resolving the callback listener and shall honor disabled or loopback-only tunnel permissions.
+
+**PORTS-5.18** When a mobile user holds an OAuth sign-in link with a local callback, the application shall offer Sign in via Mac without opening unrelated links or stale menu targets.
+
+**PORTS-5.19** While a mobile worktree port row or host browser toolbar is displayed at a compact width, the application shall retain the link and navigation controls while truncating long process and host names.
+
 ## PROJECT — PROJECT
 
 ### PROJECT-1.x

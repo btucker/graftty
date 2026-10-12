@@ -20,10 +20,12 @@ public enum RemoteOpenRequest: Codable, Sendable, Equatable {
     case list
     case read(id: UUID, offset: Int)
     case port(UInt16)
+    case authenticate(URL)
 }
 
 public enum RemoteOpenResponse: Codable, Sendable, Equatable {
     case offers([RemoteOpenOffer])
     case chunk(Data)
     case url(URL)
+    case authentication(url: URL, callbackHost: String)
 }

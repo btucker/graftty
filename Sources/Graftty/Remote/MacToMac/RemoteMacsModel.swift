@@ -791,6 +791,9 @@ final class RemoteMacsModel: ObservableObject {
             if case .port = request {
                 return .error(code: "port-route-unavailable", message: "Connect directly to this worktree's Mac to open its ports.", forceAllowed: false, shortStatus: nil)
             }
+            if case .authenticate = request {
+                return .error(code: "authentication-route-unavailable", message: "Connect directly to this worktree's Mac to complete sign-in.", forceAllowed: false, shortStatus: nil)
+            }
             guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
             let response = await forwardManagement(
                 identity: route.identity,

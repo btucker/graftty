@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import GhosttyTerminal
 import GrafttyCommandUI
+import GrafttyProtocol
 import SwiftUI
 import UIKit
 
@@ -104,6 +105,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// (e.g., terminal control-bar buttons) per IOS-11.7.
     public let captureContainer: ((TerminalInputContainerView) -> Void)?
     public let retainedContainer: TerminalInputContainerView?
+    public let onOpenAuthenticationURL: ((URL) -> Void)?
 
     public init(
         session: InMemoryTerminalSession,
@@ -123,7 +125,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         onPasteRequested: (() -> Void)? = nil,
         onBackRequested: (() -> Void)? = nil,
         captureContainer: ((TerminalInputContainerView) -> Void)? = nil,
-        retainedContainer: TerminalInputContainerView? = nil
+        retainedContainer: TerminalInputContainerView? = nil,
+        onOpenAuthenticationURL: ((URL) -> Void)? = nil
     ) {
         self.session = session
         self.controller = controller
@@ -143,6 +146,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.onBackRequested = onBackRequested
         self.captureContainer = captureContainer
         self.retainedContainer = retainedContainer
+        self.onOpenAuthenticationURL = onOpenAuthenticationURL
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
@@ -183,6 +187,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         )
         view.onPasteRequested = onPasteRequested
         view.onBackRequested = onBackRequested
+        view.openAuthenticationURL = onOpenAuthenticationURL
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         captureContainer?(view)
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
@@ -205,6 +210,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         )
         view.onPasteRequested = onPasteRequested
         view.onBackRequested = onBackRequested
+        view.openAuthenticationURL = onOpenAuthenticationURL
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
     }
@@ -620,6 +626,7 @@ public final class TerminalInputContainerView: UIView,
     private var longPressURL: URL?
     private(set) var terminalGridMetrics: TerminalGridMetrics?
     var openURL: (URL) -> Void = { UIApplication.shared.open($0) }
+    var openAuthenticationURL: ((URL) -> Void)?
     /// Paste and edit-menu dismissal are independent UIKit callbacks whose
     /// relative ordering is not part of our contract. Pair them by long-press
     /// menu generation and refocus only after both have happened.
@@ -1295,6 +1302,12 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
                 guard let self, self.longPressMenuGeneration == generation else { return }
                 self.openURL(url)
             }, at: 0)
+            if openAuthenticationURL != nil, WorktreeAuthenticationURL(url: url) != nil {
+                children.insert(UIAction(title: "Sign in via Mac", image: UIImage(systemName: "person.crop.circle")) { [weak self] _ in
+                    guard let self, self.longPressMenuGeneration == generation else { return }
+                    self.openAuthenticationURL?(url)
+                }, at: 0)
+            }
         }
         if hasPasteContent {
             children.append(UIAction(title: "Paste") { [weak self] _ in

@@ -515,6 +515,9 @@ struct SingleSessionView: View {
     /// Latest owner-selected size. Pinch actions already update the live
     /// Ghostty surface; this state preserves that size across configuration updates.
     @State private var preferredFontSize: Float?
+    @State private var authenticationPreview: WorktreePortClient.AuthenticationPreview?
+    @State private var authenticationError: String?
+    @State private var authenticationTask: Task<Void, Never>?
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -674,6 +677,34 @@ struct SingleSessionView: View {
             // Content reserves keyboard clearance independently.
             terminalBackground
             sessionView
+        }
+        .sheet(item: $authenticationPreview) { preview in
+            HostBrowserView(url: preview.url, host: step.host, callbackHost: preview.callbackHost,
+                connectionProvider: { await coordinator?.connection(for: step.host) })
+        }
+        .alert("Could not start sign-in", isPresented: Binding(
+            get: { authenticationError != nil }, set: { if !$0 { authenticationError = nil } }
+        )) { Button("OK") { authenticationError = nil } } message: { Text(authenticationError ?? "") }
+        .onDisappear {
+            authenticationTask?.cancel()
+            paneContainerBox.view?.openAuthenticationURL = nil
+        }
+    }
+
+    private func openAuthenticationURL(_ url: URL) {
+        guard let coordinator, let worktree = step.worktreePath else { return }
+        authenticationTask?.cancel()
+        authenticationTask = Task { @MainActor in
+            do {
+                let preview = try await WorktreePortClient.authenticate(url, in: worktree) { request in
+                    try await coordinator.sendWorktreeManagement(request, to: step.host)
+                }
+                guard !Task.isCancelled else { return }
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                authenticationPreview = preview
+            } catch {
+                if !Task.isCancelled { authenticationError = error.localizedDescription }
+            }
         }
     }
 
@@ -1401,7 +1432,8 @@ struct SingleSessionView: View {
                     }
                 }
             },
-            retainedContainer: retainedPanes?.cached(retainedPaneKey)?.container
+            retainedContainer: retainedPanes?.cached(retainedPaneKey)?.container,
+            onOpenAuthenticationURL: coordinator != nil && step.worktreePath != nil ? openAuthenticationURL : nil
         )
         pane
             .onChange(of: client.isOwner) { wasOwner, isOwner in

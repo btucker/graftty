@@ -44,4 +44,28 @@ struct WorktreePortClientTests {
             }
         }
     }
+    @Test func authenticationPreservesTheURLAndRejectsMismatchedHosts() async throws {
+        let url = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A43210%2Fcallback&state=unchanged")!
+        var sent: WorktreeManagementRequest?
+        let preview = try await WorktreePortClient.authenticate(url, in: "/project") { request in
+            sent = request
+            return .openResource(.authentication(url: url, callbackHost: "127.0.0.1"))
+        }
+        #expect(sent == .openResource(worktreeID: "/project", request: .authenticate(url)))
+        #expect(preview.url == url && preview.callbackHost == "127.0.0.1")
+        for host in ["example.com", "::1"] {
+            await #expect(throws: WorktreePortClient.Failure.self) {
+                try await WorktreePortClient.authenticate(url, in: "/project") { _ in
+                    .openResource(.authentication(url: url, callbackHost: host))
+                }
+            }
+        }
+        await #expect(throws: WorktreePortClient.Failure.self) {
+            try await WorktreePortClient.authenticate(url, in: "relay-worktree-other") { _ in
+                Issue.record("Relayed authentication must not route to the intermediary")
+                return .ok
+            }
+        }
+    }
+
 }

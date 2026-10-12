@@ -2701,6 +2701,28 @@ struct GrafttyApp: App {
                         switch request {
                         case .list:
                             return .openResource(.offers(await RemoteOpenStore.shared.list(worktree: worktreeID)))
+                        case .authenticate(let url):
+                            guard let authentication = WorktreeAuthenticationURL(url: url) else {
+                                return .error(code: "invalid-authentication", message: "This link has no supported local sign-in callback.", forceAllowed: false, shortStatus: nil)
+                            }
+                            let paneIDs = await MainActor.run { () -> [PaneSlotID] in
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running else { return [] }
+                                return worktree.splitTree.allLeaves
+                            }
+                            let bindings = await panesPortScanner.refreshedBindings(for: paneIDs)
+                            let listeners = bindings.map {
+                                WorktreePort(port: $0.port, scope: $0.scope == .lan ? .lan : .loopback,
+                                             processName: $0.processName, host: $0.host)
+                            }
+                            return await MainActor.run {
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running, worktree.splitTree.allLeaves == paneIDs,
+                                      let callbackHost = authentication.resolveCallbackHost(in: listeners) else {
+                                    return .error(code: "authentication-unavailable", message: "The sign-in callback is no longer listening in this worktree. Start re-auth again.", forceAllowed: false, shortStatus: nil)
+                                }
+                                return .openResource(.authentication(url: url, callbackHost: callbackHost))
+                            }
                         case .port(let port):
                             let paneIDs = await MainActor.run { () -> [PaneSlotID] in
                                 guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),

@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import GrafttyProtocol
 import GrafttyRemoteClient
 import Network
 import WebKit
@@ -11,31 +12,69 @@ final class HostBrowserNetwork {
     struct LoopbackEndpoint: Hashable {
         let host: String
         let port: UInt16
+        let destinationHost: String
 
-        init?(url: URL) {
-            guard let host = url.host, BrowserProxy.isLoopbackHost(host),
+        init?(url: URL, destinationHost: String? = nil) {
+            guard let value = url.host, let host = WorktreeAuthenticationURL.canonicalLoopbackHost(value),
                   let port = UInt16(exactly: url.port ?? (url.scheme?.lowercased() == "https" ? 443 : 80)),
                   port > 0 else { return nil }
             self.host = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
             self.port = port
+            guard let destinationHost = WorktreeAuthenticationURL.canonicalLoopbackHost(destinationHost ?? host) else { return nil }
+            self.destinationHost = destinationHost
+        }
+
+        private init(host: String, port: UInt16, destinationHost: String) {
+            self.host = host
+            self.port = port
+            self.destinationHost = destinationHost
+        }
+
+        var localBindings: [Self] {
+            guard host == "localhost" else { return [self] }
+            // WebKit may resolve localhost to either address family. A
+            // hostname-bound NWListener alone does not cover both reliably.
+            return ["127.0.0.1", "::1"].map {
+                Self(host: $0, port: port, destinationHost: destinationHost)
+            }
         }
     }
 
     private var operation: UUID?
     private var proxyLease: HostBrowserListeners.Lease?
-    private var forwarderLease: HostBrowserListeners.Lease?
+    private var forwarderLeases: [HostBrowserListeners.Lease] = []
 
-    func start(url: URL, dataStoreIdentifier: UUID, connect: @escaping Connector) async throws -> WKWebViewConfiguration {
+    func start(url: URL, dataStoreIdentifier: UUID, callbackHost: String? = nil,
+               connect: @escaping Connector) async throws -> WKWebViewConfiguration {
         stop()
         let operation = UUID()
         self.operation = operation
-        var ownedLease: HostBrowserListeners.Lease?
+        var ownedLeases: [HostBrowserListeners.Lease] = []
         var ownedProxyLease: HostBrowserListeners.Lease?
         do {
-            if let endpoint = LoopbackEndpoint(url: url) {
-                ownedLease = try await HostBrowserListeners.shared.acquire(.loopback(endpoint), hostID: dataStoreIdentifier, connect: connect)
+            var endpoints: [LoopbackEndpoint] = []
+            if callbackHost == nil, let endpoint = LoopbackEndpoint(url: url) { endpoints += endpoint.localBindings }
+            if let authentication = WorktreeAuthenticationURL(url: url),
+               let endpoint = LoopbackEndpoint(url: authentication.callbackURL, destinationHost: callbackHost),
+               !endpoints.contains(endpoint) {
+                endpoints += endpoint.localBindings.filter { !endpoints.contains($0) }
+            }
+            for endpoint in endpoints {
+                let lease = try await HostBrowserListeners.shared.acquire(.loopback(endpoint), hostID: dataStoreIdentifier, connect: connect)
+                ownedLeases.append(lease)
                 try checkCurrent(operation)
-                forwarderLease = ownedLease
+                forwarderLeases = ownedLeases
+            }
+            // Sign-in pages use the phone's network. Only the host-verified
+            // callback is tunneled, without changing a normal host browser's
+            // per-host proxy configuration or cookies.
+            if callbackHost != nil {
+                guard WorktreeAuthenticationURL(url: url) != nil, !ownedLeases.isEmpty else {
+                    throw InvalidAuthentication()
+                }
+                let configuration = WKWebViewConfiguration()
+                configuration.websiteDataStore = .nonPersistent()
+                return configuration
             }
             let lease = try await HostBrowserListeners.shared.acquire(.socks(dataStoreIdentifier), hostID: dataStoreIdentifier, connect: connect)
             ownedProxyLease = lease
@@ -45,11 +84,11 @@ final class HostBrowserNetwork {
         } catch {
             // An older start may resume after a replacement has acquired its listeners.
             // Only release the resources owned by this invocation.
-            ownedLease?.release()
+            ownedLeases.forEach { $0.release() }
             ownedProxyLease?.release()
             if self.operation == operation {
                 self.operation = nil
-                forwarderLease = nil
+                forwarderLeases = []
                 proxyLease = nil
             }
             throw error
@@ -58,8 +97,8 @@ final class HostBrowserNetwork {
 
     func stop() {
         operation = nil
-        forwarderLease?.release()
-        forwarderLease = nil
+        forwarderLeases.forEach { $0.release() }
+        forwarderLeases = []
         proxyLease?.release()
         proxyLease = nil
     }
@@ -67,6 +106,10 @@ final class HostBrowserNetwork {
     private func checkCurrent(_ operation: UUID) throws {
         try Task.checkCancellation()
         guard self.operation == operation else { throw CancellationError() }
+    }
+
+    private struct InvalidAuthentication: LocalizedError {
+        var errorDescription: String? { "This sign-in callback is invalid." }
     }
 }
 
@@ -79,6 +122,36 @@ private final class HostBrowserListeners {
     enum Key: Hashable {
         case loopback(HostBrowserNetwork.LoopbackEndpoint)
         case socks(UUID)
+
+        // The local socket identifies a lease. The remote destination is a
+        // compatibility check, not a second socket that can bind this address.
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            switch (lhs, rhs) {
+            case (.loopback(let lhs), .loopback(let rhs)):
+                lhs.host == rhs.host && lhs.port == rhs.port
+            case (.socks(let lhs), .socks(let rhs)):
+                lhs == rhs
+            default:
+                false
+            }
+        }
+
+        func hash(into hasher: inout Hasher) {
+            switch self {
+            case .loopback(let endpoint):
+                hasher.combine(0)
+                hasher.combine(endpoint.host)
+                hasher.combine(endpoint.port)
+            case .socks(let id):
+                hasher.combine(1)
+                hasher.combine(id)
+            }
+        }
+
+        var destinationHost: String? {
+            if case .loopback(let endpoint) = self { return endpoint.destinationHost }
+            return nil
+        }
     }
 
     final class Lease {
@@ -102,14 +175,16 @@ private final class HostBrowserListeners {
     private final class Entry {
         let id: UUID
         let hostID: UUID
+        let destinationHost: String?
         let proxy: BrowserProxy
         let start: Task<UInt16, Error>
         var connectors: [(id: UUID, connect: HostBrowserNetwork.Connector)] = []
         var closing: Task<Void, Never>?
 
-        init(id: UUID, hostID: UUID, proxy: BrowserProxy) {
+        init(id: UUID, hostID: UUID, destinationHost: String?, proxy: BrowserProxy) {
             self.id = id
             self.hostID = hostID
+            self.destinationHost = destinationHost
             self.proxy = proxy
             start = Task { try await proxy.start() }
         }
@@ -125,7 +200,7 @@ private final class HostBrowserListeners {
         }
         let entry: Entry
         if let existing = entries[key] {
-            guard existing.hostID == hostID else {
+            guard existing.hostID == hostID, existing.destinationHost == key.destinationHost else {
                 if case .loopback(let endpoint) = key { throw EndpointInUse(port: endpoint.port) }
                 throw CancellationError()
             }
@@ -135,7 +210,7 @@ private final class HostBrowserListeners {
             let proxy: BrowserProxy
             switch key {
             case .loopback(let endpoint):
-                proxy = try BrowserProxy(forwardingTo: endpoint.host, port: endpoint.port) { [self] socket, host, port in
+                proxy = try BrowserProxy(forwardingTo: endpoint.destinationHost, port: endpoint.port, localHost: endpoint.host) { [self] socket, host, port in
                     try await forward(socket, host: host, port: port, reply: Data(), key: key, entryID: id)
                 }
             case .socks:
@@ -143,7 +218,7 @@ private final class HostBrowserListeners {
                     try await forward(socket, host: host, port: port, reply: BrowserProxy.socksSuccessReply, key: key, entryID: id)
                 }
             }
-            entry = Entry(id: id, hostID: hostID, proxy: proxy)
+            entry = Entry(id: id, hostID: hostID, destinationHost: key.destinationHost, proxy: proxy)
             entries[key] = entry
         }
         let lease = Lease(proxy: entry.proxy) { [self] id in release(id, key: key, entry: entry) }
@@ -188,7 +263,7 @@ private final class HostBrowserListeners {
     private struct EndpointInUse: LocalizedError {
         let port: UInt16
         var errorDescription: String? {
-            "Port \(port) is already open through another Mac. Close that browser and try again."
+            "Port \(port) is already open through another Mac or destination. Close that browser and try again."
         }
     }
 }

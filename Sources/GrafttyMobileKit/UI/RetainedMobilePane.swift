@@ -31,6 +31,7 @@ final class RetainedMobilePane: PanePreviewClienting {
         container?.onUserInteraction = nil
         container?.onPasteRequested = nil
         container?.onBackRequested = nil
+        container?.openAuthenticationURL = nil
         container?.onPhysicalViewportReady = nil
         container?.setStickyControlActivationChangeHandler(nil)
         container?.configureFontSizeObservation(initialFontSize: nil, onChange: nil)

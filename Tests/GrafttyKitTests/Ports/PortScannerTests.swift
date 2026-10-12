@@ -1,6 +1,7 @@
 // Tests/GrafttyKitTests/Ports/PortScannerTests.swift
 import Testing
 import Foundation
+import GrafttyProtocol
 @testable import GrafttyKit
 
 actor StubLsofRunner: LsofRunner {
@@ -21,6 +22,26 @@ struct StubProcessTreeWalker: ProcessTreeWalking {
 
 @Suite("PortScanner")
 struct PortScannerTests {
+    @Test func authenticationRetainsBothListenerAddresses() async throws {
+        let runner = StubLsofRunner(output: """
+        codex 1234 alice 23u IPv4 0x1 0t0 TCP 127.0.0.1:43210 (LISTEN)
+        codex 1234 alice 24u IPv6 0x2 0t0 TCP [::1]:43210 (LISTEN)
+        """)
+        let scanner = PortScanner(runner: runner, walker: StubProcessTreeWalker(result: []))
+        let id = PaneSlotID()
+        await scanner.registerPane(id, shellPID: 1234)
+        let bindings = await scanner.refreshedBindings(for: [id])
+        #expect(Set(bindings.map(\.host)) == ["127.0.0.1", "::1"])
+        #expect(await scanner.bindings(for: id).count == 1)
+        let authorization = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2F%5B0%3A0%3A0%3A0%3A0%3A0%3A0%3A1%5D%3A43210%2Fcallback")!
+        let authentication = try #require(WorktreeAuthenticationURL(url: authorization))
+        #expect(authentication.callbackHost == "::1")
+        let listeners = bindings.map { WorktreePort(port: $0.port, scope: .loopback, processName: $0.processName, host: $0.host) }
+        #expect(authentication.resolveCallbackHost(in: listeners) == "::1")
+        await scanner.unregisterPane(id)
+        #expect(await scanner.refreshedBindings(for: [id]).isEmpty)
+    }
+
     @Test("@spec PORTS-4.6: If a pane is unregistered or its shell is replaced during a port scan, then the application shall discard that scan's obsolete bindings and shall not restore the removed registration.")
     func unregistrationDuringScanDoesNotRestorePorts() async {
         actor SuspendedRunner: LsofRunner {

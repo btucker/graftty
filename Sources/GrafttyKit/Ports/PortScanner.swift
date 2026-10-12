@@ -16,7 +16,11 @@ public actor PortScanner {
     private var registrations: [PaneSlotID: pid_t] = [:]
     private var pending: Set<PaneSlotID> = []
     private var registrationGenerations: [PaneSlotID: UUID] = [:]
-    private var snapshots: [PaneSlotID: [PortBinding]] = [:]
+    private struct Snapshot {
+        let bindings: [PortBinding]
+        let listeners: [PortBinding]
+    }
+    private var snapshots: [PaneSlotID: Snapshot] = [:]
     private var inFlight = false
     private var scanWaiters: [CheckedContinuation<Void, Never>] = []
     private let log = Logger(subsystem: "com.btucker.graftty", category: "PortScanner")
@@ -72,17 +76,21 @@ public actor PortScanner {
     }
 
     public func bindings(for id: PaneSlotID) -> [PortBinding] {
-        snapshots[id] ?? []
+        snapshots[id]?.bindings ?? []
     }
 
     public func refreshedPorts(for paneIDs: [PaneSlotID]) async -> [WorktreePort] {
+        PortBinding.worktreePorts(from: await refreshedBindings(for: paneIDs))
+    }
+
+    public func refreshedBindings(for paneIDs: [PaneSlotID]) async -> [PortBinding] {
         guard !paneIDs.isEmpty else { return [] }
         if inFlight {
             await withCheckedContinuation { scanWaiters.append($0) }
         } else {
             await tick()
         }
-        return PortBinding.worktreePorts(from: paneIDs.flatMap { snapshots[$0] ?? [] })
+        return paneIDs.flatMap { snapshots[$0]?.listeners ?? [] }
     }
 
     public func tick() async {
@@ -133,7 +141,7 @@ public actor PortScanner {
             guard registrationGenerations[id] == scanGenerations[id] else { continue }
             let paneRows = rows.filter { pids.contains($0.pid) }
             let bindings = Self.collapse(paneRows)
-            updateSnapshot(id: id, bindings: bindings)
+            updateSnapshot(id: id, bindings: bindings, listeners: paneRows.map(Self.listenerBinding))
         }
     }
 
@@ -143,12 +151,24 @@ public actor PortScanner {
         }
     }
 
-    private func updateSnapshot(id: PaneSlotID, bindings: [PortBinding]) {
-        let prev = snapshots[id] ?? []
+    private func updateSnapshot(id: PaneSlotID, bindings: [PortBinding], listeners: [PortBinding] = []) {
+        let prev = snapshots[id]?.bindings ?? []
+        snapshots[id] = Snapshot(bindings: bindings, listeners: listeners)
         guard prev != bindings else { return }
-        snapshots[id] = bindings
         let onChange = self.onChange
         Task { @MainActor in onChange?(id, bindings) }
+    }
+
+    private static func listenerBinding(_ row: LsofOutputParser.Row) -> PortBinding {
+        let host: String
+        switch row.address {
+        case "*": host = row.isIPv6 ? "::1" : "127.0.0.1"
+        case "0.0.0.0": host = "127.0.0.1"
+        case "::": host = "::1"
+        default: host = row.address
+        }
+        return PortBinding(port: row.port, scope: scopeFor(address: row.address),
+                           processName: row.processName, pid: row.pid, host: host)
     }
 
     /// Dedupe rows by `(port, scope)` after broadening scope when *any*
@@ -159,13 +179,7 @@ public actor PortScanner {
         for row in rows {
             let key = Key(pid: row.pid, port: row.port)
             let scope = scopeFor(address: row.address)
-            let host: String
-            switch row.address {
-            case "*": host = row.isIPv6 ? "::1" : "127.0.0.1"
-            case "0.0.0.0": host = "127.0.0.1"
-            case "::": host = "::1"
-            default: host = row.address
-            }
+            let host = listenerBinding(row).host
             if let existing = perPidPort[key] {
                 let merged: BindScope = (existing.scope == .lan || scope == .lan) ? .lan : .loopback
                 let preferredHost = min(existing.host, host)

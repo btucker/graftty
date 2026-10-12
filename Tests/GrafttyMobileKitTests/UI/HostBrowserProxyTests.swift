@@ -23,6 +23,96 @@ struct HostBrowserProxyTests {
         try await expectPage("graftty-tunneled-page", url: url, configuration: configuration)
     }
 
+    @Test("@spec PORTS-5.14: When a host browser sign-in page redirects to its loopback OAuth callback, the application shall forward the unchanged callback path and query through the same paired Mac.", .timeLimit(.minutes(1)))
+    func authRedirectReachesTheHostCallback() async throws {
+        let callback = URL(string: "http://127.0.0.1:32135/callback/mcp?code=test-code&state=test-state")!
+        var authorization = URLComponents(string: "http://example.invalid:32134/authorize")!
+        authorization.queryItems = [URLQueryItem(name: "redirect_uri", value: "http://127.0.0.1:32135/callback/mcp")]
+        let network = HostBrowserNetwork()
+        defer { network.stop() }
+        let configuration = try await network.start(url: authorization.url!, dataStoreIdentifier: UUID()) { socket, host, port, reply in
+            if !reply.isEmpty { try await BrowserProxy.send(reply, to: socket) }
+            let request: Data = try await withCheckedThrowingContinuation { continuation in
+                socket.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, _, error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume(returning: data ?? Data()) }
+                }
+            }
+            let text = String(decoding: request, as: UTF8.self)
+            if host == "example.invalid" {
+                #expect(port == 32134)
+                let redirect = "HTTP/1.1 302 Found\r\nLocation: \(callback.absoluteString)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                try await BrowserProxy.send(Data(redirect.utf8), to: socket)
+            } else {
+                #expect(host == "127.0.0.1" && port == 32135)
+                #expect(text.hasPrefix("GET /callback/mcp?code=test-code&state=test-state HTTP/1.1"))
+                let body = "mcp-sign-in-complete"
+                let response = "HTTP/1.1 200 OK\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                try await BrowserProxy.send(Data(response.utf8), to: socket)
+            }
+            socket.cancel()
+        }
+        try await expectPage("mcp-sign-in-complete", url: authorization.url!, configuration: configuration)
+    }
+
+    @Test func signInUsesPhoneNetworkingAndOnlyTunnelsItsCallback() async throws {
+        let provider = try NWListener(using: .tcp, on: 32136)
+        let callback = URL(string: "http://localhost:32137/callback?code=test&state=unchanged")!
+        let queue = DispatchQueue(label: "graftty.auth.phone-provider.test")
+        provider.newConnectionHandler = { socket in
+            socket.start(queue: queue)
+            Task {
+                _ = try await Self.readRequest(from: socket)
+                let response = "HTTP/1.1 302 Found\r\nLocation: \(callback.absoluteString)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                try await BrowserProxy.send(Data(response.utf8), to: socket)
+                socket.cancel()
+            }
+        }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            provider.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    provider.stateUpdateHandler = nil
+                    continuation.resume()
+                case .failed(let error):
+                    provider.stateUpdateHandler = nil
+                    continuation.resume(throwing: error)
+                default: break
+                }
+            }
+            provider.start(queue: queue)
+        }
+        defer { provider.cancel() }
+        // This fixture serves the public provider locally on the simulated
+        // phone. Production worktree auth rejects loopback provider origins.
+        var authorization = URLComponents(string: "http://127.0.0.1:32136/authorize")!
+        authorization.queryItems = [URLQueryItem(name: "redirect_uri", value: "http://localhost:32137/callback")]
+        let network = HostBrowserNetwork()
+        defer { network.stop() }
+        let configuration = try await network.start(url: authorization.url!, dataStoreIdentifier: UUID(), callbackHost: "127.0.0.1") { socket, host, port, reply in
+            #expect(host == "127.0.0.1" && port == 32137)
+            #expect(reply.isEmpty)
+            let request = try await Self.readRequest(from: socket)
+            #expect(String(decoding: request, as: UTF8.self).hasPrefix("GET /callback?code=test&state=unchanged HTTP/1.1"))
+            let body = "scoped-auth-complete"
+            let response = "HTTP/1.1 200 OK\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+            try await BrowserProxy.send(Data(response.utf8), to: socket)
+            socket.cancel()
+        }
+        #expect(configuration.websiteDataStore.proxyConfigurations.isEmpty)
+        #expect(!configuration.websiteDataStore.isPersistent)
+        try await expectPage("scoped-auth-complete", url: authorization.url!, configuration: configuration)
+    }
+
+    private static func readRequest(from socket: NWConnection) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            socket.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, _, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume(returning: data ?? Data()) }
+            }
+        }
+    }
+
     private func expectPage(_ expected: String, url: URL, configuration: WKWebViewConfiguration) async throws {
         let view = WKWebView(frame: .zero, configuration: configuration)
         let navigation = NavigationProbe()
@@ -130,6 +220,28 @@ struct HostBrowserProxyTests {
         }
         let socket = NWConnection(host: "127.0.0.1", port: 32126, using: .tcp)
         socket.start(queue: DispatchQueue(label: "graftty.browser.conflict.test"))
+        defer { socket.cancel() }
+        #expect(try await Self.receive(5, from: socket) == Data("first".utf8))
+    }
+
+    @Test func conflictingCallbackDestinationPreservesTheOpenBrowser() async throws {
+        let first = HostBrowserNetwork(), second = HostBrowserNetwork()
+        defer { first.stop(); second.stop() }
+        let hostID = UUID()
+        _ = try await first.start(url: URL(string: "http://localhost:32138/")!, dataStoreIdentifier: hostID) { socket, host, _, _ in
+            #expect(host == "localhost")
+            try await BrowserProxy.send(Data("first".utf8), to: socket)
+            socket.cancel()
+        }
+        let authorization = URL(string: "https://example.invalid/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A32138%2Fcallback")!
+        do {
+            _ = try await second.start(url: authorization, dataStoreIdentifier: hostID, callbackHost: "127.0.0.1") { socket, _, _, _ in socket.cancel() }
+            Issue.record("A different destination took over the active endpoint")
+        } catch {
+            #expect(error.localizedDescription.contains("already open"))
+        }
+        let socket = NWConnection(host: "127.0.0.1", port: 32138, using: .tcp)
+        socket.start(queue: DispatchQueue(label: "graftty.browser.callback.conflict.test"))
         defer { socket.cancel() }
         #expect(try await Self.receive(5, from: socket) == Data("first".utf8))
     }
