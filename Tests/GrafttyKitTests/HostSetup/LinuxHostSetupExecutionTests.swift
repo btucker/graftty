@@ -3,6 +3,44 @@ import Testing
 @testable import GrafttyKit
 
 struct LinuxHostSetupExecutionTests {
+    @Test("@spec REMOTE-21.16: When an agent CLI already exists in the login shell PATH, Linux setup shall verify it without installing or replacing it.", arguments: [TeamHookRuntime.claude, .codex])
+    func existingLoginCLIThroughSetup(provider: TeamHookRuntime) async throws {
+        let fixture = try AgentInstallFixture()
+        defer { fixture.remove() }
+        try fixture.executable(fixture.profile.appendingPathComponent(provider.rawValue), "echo existing >> \"$HOME/versions\"")
+        try fixture.executable(fixture.local.appendingPathComponent(provider.rawValue), "echo wrong-local >> \"$HOME/versions\"")
+        let staging = fixture.root.appendingPathComponent("graftty/releases/.setup-test1234")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        let ssh = RecordingSetupSSH(dataDirectory: fixture.root.path)
+        let tool = try #require(LinuxHostComponent(rawValue: provider.rawValue))
+        let plan = LinuxHostSetupPlan(destination: try .init("host"), destinationRoot: "/srv/projects", projects: [], archive: .release(version: "1.2.3"), client: .init(deviceID: "mac", displayName: "Mac", publicKey: Data(repeating: 1, count: 32).base64EncodedString()), agentTools: [tool], requireAgentTools: true)
+        _ = try await LinuxHostSetup(executor: SetupConfigExecutor(), ssh: ssh).run(plan: plan)
+        let command = try #require(await ssh.calls.first { $0.arguments.last?.contains(provider == .claude ? "https://claude.ai/install.sh" : "https://chatgpt.com/codex/install.sh") == true }?.arguments.last)
+        let result = try await fixture.runScript(command, provider: provider)
+        #expect(result.exitCode == 0)
+        #expect(fixture.contents("versions").contains("existing"))
+        #expect(!fixture.contents("versions").contains("wrong-local"))
+        #expect(fixture.contents("downloads").isEmpty)
+        #expect(result.stdout.isEmpty)
+    }
+
+    @Test("@spec REMOTE-21.26: When Linux setup reports agent tool outcomes, the application shall bound failure diagnostics and emit concise success messages before serializing the setup result.", arguments: [false, true])
+    func boundedToolOutcomes(fails: Bool) async throws {
+        let noise = "diagnostic-head\n" + String(repeating: "\u{0301}", count: 1_048_576) + "\ndiagnostic-tail"
+        let ssh = RecordingSetupSSH(toolOutput: .init(stdout: noise, stderr: "", exitCode: fails ? 42 : 0))
+        let plan = LinuxHostSetupPlan(destination: try .init("host"), destinationRoot: "/srv/projects", projects: [], archive: .release(version: "1.2.3"), client: .init(deviceID: "mac", displayName: "Mac", publicKey: Data(repeating: 1, count: 32).base64EncodedString()), agentTools: [.codex])
+        let result = try await LinuxHostSetup(executor: SetupConfigExecutor(), ssh: ssh).run(plan: plan)
+        let outcome = try #require(result.toolOutcomes.first)
+        #expect(outcome.status == (fails ? .failed : .succeeded))
+        #expect(outcome.message.utf8.count < 32_768)
+        #expect(try JSONEncoder().encode(result).count < 1_048_576)
+        if fails {
+            #expect(outcome.message.contains("diagnostic-head"))
+            #expect(outcome.message.contains("diagnostic-tail"))
+            #expect(outcome.message.contains("exit status 42"))
+        }
+    }
+
     @Test("@spec REMOTE-22.33: When fresh Linux setup installs selected missing agent tools, the application shall report each tool outcome before later identity or project setup failures, preserving existing installations and keeping sign-in separate.")
     func reportsToolsBeforeLaterSetupFailure() async throws {
         let ssh = RecordingSetupSSH(trustFailure: true, toolFailure: true)
@@ -14,7 +52,8 @@ struct LinuxHostSetupExecutionTests {
         }
         #expect(await outcomes.values.map(\.status) == [.failed, .succeeded])
         let toolCommand = try #require(await ssh.calls.first { $0.arguments.last?.contains("chatgpt.com/codex") == true })
-        #expect(toolCommand.arguments.last?.contains("if command -v codex") == true)
+        #expect(toolCommand.arguments.last?.contains("if command -v") == true)
+        #expect(toolCommand.arguments.last?.contains("agent_path_file=") == true)
     }
     @Test("@spec REMOTE-21.8: When Linux setup installs a release, the application shall use an explicit version and architecture archive, verify its SHA-256 checksum, install a user service, and exchange only public identity over authenticated OpenSSH.")
     func releaseAndPublicTrust() async throws {
@@ -39,6 +78,35 @@ struct LinuxHostSetupExecutionTests {
         #expect(trust.arguments.contains("config-alias"))
         let keys = try #require(JSONSerialization.jsonObject(with: trustData) as? [String: Any])
         #expect(Set(keys.keys) == Set(["deviceID", "displayName", "publicKey"]))
+    }
+
+    @Test("@spec REMOTE-21.20: When CLI Linux auto-setup prepares a host, the application shall ensure Claude Code and Codex are available before pairing, and stop with a provider-specific error if installation fails.")
+    func agentsBeforePairing() async throws {
+        for failedProvider in ["", "claude", "codex"] {
+            let ssh = RecordingSetupSSH(agentFailure: failedProvider)
+            let plan = LinuxHostSetupPlan(destination: try .init("host"), destinationRoot: "/srv/projects", projects: [], archive: .release(version: "1.2.3"), client: .init(deviceID: "mac", displayName: "Mac", publicKey: Data(repeating: 1, count: 32).base64EncodedString()), agentTools: [.claude, .codex], requireAgentTools: true)
+            do {
+                _ = try await LinuxHostSetup(executor: SetupConfigExecutor(), ssh: ssh).run(plan: plan)
+                #expect(failedProvider.isEmpty)
+            } catch let error as LinuxHostSetupError {
+                #expect(!failedProvider.isEmpty)
+                #expect(error.localizedDescription.contains(failedProvider == "claude" ? "Claude Code" : "Codex"))
+                #expect(error.localizedDescription.contains("exit status 43"))
+            }
+            let commands = await ssh.calls.compactMap { $0.arguments.last }
+            let host = try #require(commands.firstIndex { $0.contains("unpacked/install.sh") })
+            let claude = try #require(commands.firstIndex { $0.contains("https://claude.ai/install.sh") })
+            #expect(host < claude)
+            if failedProvider != "claude" {
+                let codex = try #require(commands.firstIndex { $0.contains("https://chatgpt.com/codex/install.sh") })
+                #expect(claude < codex)
+                if failedProvider.isEmpty {
+                    let trust = try #require(commands.firstIndex { $0.contains("trust-client") })
+                    #expect(codex < trust)
+                }
+            }
+            if !failedProvider.isEmpty { #expect(!commands.contains { $0.contains("trust-client") }) }
+        }
     }
 
     @Test("@spec REMOTE-21.9: When a development archive is selected, the application shall transfer that archive over authenticated OpenSSH without fetching a release or transferring private credentials.")
@@ -141,25 +209,29 @@ private actor RecordingSetupSSH: LinuxHostSSHExecuting {
     private(set) var calls: [Call] = []
     private let ubuntuVersion: String
     private let installFailure: CLIOutput?
+    private let agentFailure: String
     private let dataDirectory: String
     private let executeStaging: Bool
     private let trustFailure: Bool
     private let toolFailure: Bool
+    private let toolOutput: CLIOutput?
     private(set) var stagingPath: String?
     private(set) var stagingPermissions: Int?
-    init(ubuntuVersion: String = "24.04", installFailure: CLIOutput? = nil, dataDirectory: String = "/home/developer/.local/share", executeStaging: Bool = false, trustFailure: Bool = false, toolFailure: Bool = false) {
+    init(ubuntuVersion: String = "24.04", agentFailure: String = "", installFailure: CLIOutput? = nil, dataDirectory: String = "/home/developer/.local/share", executeStaging: Bool = false, trustFailure: Bool = false, toolFailure: Bool = false, toolOutput: CLIOutput? = nil) {
         self.ubuntuVersion = ubuntuVersion
+        self.agentFailure = agentFailure
         self.installFailure = installFailure
         self.dataDirectory = dataDirectory
         self.executeStaging = executeStaging
         self.trustFailure = trustFailure
         self.toolFailure = toolFailure
+        self.toolOutput = toolOutput
     }
     func capture(arguments: [String], inputFile: URL?) async throws -> CLIOutput {
         calls.append(.init(arguments: arguments, input: try inputFile.map { try Data(contentsOf: $0) }))
         let command = arguments.last ?? ""
         if command.contains("/etc/os-release") { return .init(stdout: "ubuntu\n\(ubuntuVersion)\naarch64\n/home/developer\n\(dataDirectory)\n", stderr: "", exitCode: 0) }
-        if command.contains("mktemp -d"), command.contains(".setup-") {
+        if command.contains("mktemp -d"), command.contains(".setup-XXXXXXXX") {
             if executeStaging {
                 let result = try await CLIRunner().run(command: "/bin/sh", args: ["-c", command], at: NSHomeDirectory())
                 let path = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -169,11 +241,15 @@ private actor RecordingSetupSSH: LinuxHostSSHExecuting {
             }
             return .init(stdout: dataDirectory + "/graftty/releases/.setup-test1234\n", stderr: "", exitCode: 0)
         }
-        if executeStaging, command.contains("rm -rf --") {
+        if executeStaging, command.hasPrefix("/bin/sh -c 'rm -rf --") {
             return try await CLIRunner().run(command: "/bin/sh", args: ["-c", command], at: NSHomeDirectory())
         }
         if command.contains("unpacked/install.sh"), let installFailure { return installFailure }
+        if !agentFailure.isEmpty, command.contains(agentFailure == "claude" ? "https://claude.ai/install.sh" : "https://chatgpt.com/codex/install.sh") {
+            return .init(stdout: "", stderr: "Installer failed", exitCode: 43)
+        }
         if command.contains("chatgpt.com/codex"), toolFailure { return .init(stdout: "", stderr: "Codex download failed", exitCode: 42) }
+        if command.contains("chatgpt.com/codex"), let toolOutput { return toolOutput }
         if command.contains("trust-client") {
             if trustFailure { return .init(stdout: "invalid identity JSON", stderr: "", exitCode: 0) }
             let identity = LinuxHostIdentity(deviceID: "linux", displayName: "Ubuntu", publicKey: Data(repeating: 2, count: 32).base64EncodedString(), port: 8801)

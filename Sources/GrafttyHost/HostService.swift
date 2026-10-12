@@ -36,9 +36,17 @@ final class HostService {
     nonisolated static func trust(_ request: LinuxHostTrustRequest, publicKeyData: Data, configuration: HostConfiguration) throws {
         try request.validate()
         let key = try RemoteIdentityPublicKey(rawRepresentation: publicKeyData)
-        let peer = TrustedPeer(id: RemoteDeviceID(value: request.deviceID), kind: .mac, publicKey: key,
-            displayName: request.displayName, capabilities: .defaultsAfterPairing, pairedAt: Date(), lastSeenAt: nil)
-        try TrustedPeerStore(directory: configuration.identityDirectory).upsertAfterPairing(peer)
+        let store = TrustedPeerStore(directory: configuration.identityDirectory)
+        let id = RemoteDeviceID(value: request.deviceID)
+        let existing = try store.get(id: id)
+        var capabilities = existing?.capabilities ?? .defaultsAfterPairing
+        // Enrollment over the user's OpenSSH session grants localhost access to this Mac.
+        // Preserve explicit denials and every unrelated permission on an existing peer.
+        if capabilities.portTunnel == .askEachTime { capabilities.portTunnel = .allowedLoopback }
+        let peer = TrustedPeer(id: id, kind: .mac, publicKey: key,
+            displayName: request.displayName, capabilities: capabilities,
+            pairedAt: existing?.pairedAt ?? Date(), lastSeenAt: existing?.lastSeenAt)
+        try store.upsertAfterPairing(peer)
     }
 
     init(configuration: HostConfiguration, enablePairing: Bool) throws {

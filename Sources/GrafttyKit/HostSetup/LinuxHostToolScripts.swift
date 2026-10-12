@@ -1,6 +1,6 @@
 import Foundation
 
-public enum LinuxHostComponent: String, CaseIterable, Sendable, Identifiable {
+public enum LinuxHostComponent: String, Codable, CaseIterable, Sendable, Identifiable {
     case graftty, codex, claude
     public var id: String { rawValue }
     public var title: String {

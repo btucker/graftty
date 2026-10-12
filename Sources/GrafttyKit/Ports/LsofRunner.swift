@@ -16,7 +16,7 @@ public struct SystemLsofRunner: LsofRunner {
         do {
             let output = try await CLIRunner().capture(
                 command: "lsof",
-                args: ["-nP", "-iTCP", "-sTCP:LISTEN", "-p", pids],
+                args: ["-nP", "-a", "-iTCP", "-sTCP:LISTEN", "-p", pids],
                 at: "/"
             )
             return output.stdout

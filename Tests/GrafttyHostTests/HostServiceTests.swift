@@ -43,6 +43,25 @@ struct HostServiceTests {
         func cleanup() { try? FileManager.default.removeItem(at: root) }
     }
 
+    @Test("@spec PORTS-5.12: When Linux setup enrolls a Mac, the application shall permit loopback port forwarding while preserving an existing explicit tunnel denial.")
+    func setupAllowsLoopbackForwarding() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let key = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+        let request = LinuxHostTrustRequest(deviceID: "ports-client", displayName: "Mac", publicKey: key.base64EncodedString())
+        try HostService.trust(request, publicKeyData: key, configuration: fixture.configuration)
+        let store = TrustedPeerStore(directory: fixture.configuration.identityDirectory)
+        var peer = try #require(try store.get(id: RemoteDeviceID(value: request.deviceID)))
+        #expect(peer.capabilities.portTunnel == .allowedLoopback)
+        peer.capabilities.portTunnel = .disabled
+        peer.capabilities.terminalControl = .disabled
+        try store.update(peer)
+        try HostService.trust(request, publicKeyData: key, configuration: fixture.configuration)
+        let preserved = try #require(try store.get(id: peer.id))
+        #expect(preserved.capabilities.portTunnel == .disabled)
+        #expect(preserved.capabilities.terminalControl == .disabled)
+    }
+
     @Test("@spec REMOTE-22.15: When the headless host service starts its direct SSH listener, the application shall immediately serve authenticated team roster requests through the configured runtime handler.", .timeLimit(.minutes(1)))
     func runtimeTeamHandlerIsActiveAtStartup() async throws {
         let fixture = try Fixture()

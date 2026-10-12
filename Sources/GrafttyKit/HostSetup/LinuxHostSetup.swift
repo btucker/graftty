@@ -32,7 +32,7 @@ public struct LinuxHostSetup: Sendable {
             }
             version = nil
         }
-        let total = 4 + plan.projects.count * 2
+        let total = 6 + plan.projects.count * 2
         await progress(.init(message: "Checking SSH destination and Linux dependencies", completed: 0, total: total))
         try Task.checkCancellation()
         let config = try await executor.run(command: "/usr/bin/ssh", args: ["-G", "--", plan.destination.value], at: NSHomeDirectory(), timeout: .seconds(15))
@@ -78,10 +78,23 @@ public struct LinuxHostSetup: Sendable {
         for tool in plan.agentTools {
             await progress(.init(message: "Installing missing \(tool.title)", completed: 2, total: total))
             do {
-                let output = try await remote(plan.destination, operation: "Installing missing \(tool.title)", command: LinuxHostToolScripts.install(tool, onlyIfMissing: true))
-                toolOutcomes.append(.init(component: tool, status: .succeeded, message: output.stdout))
+                let provider: TeamHookRuntime = tool == .claude ? .claude : .codex
+                _ = try await remote(plan.destination, operation: "Installing missing \(tool.title)", command: LinuxHostScripts.ensureAgentCLI(provider: provider, staging: staging))
+                toolOutcomes.append(.init(component: tool, status: .succeeded, message: "\(tool.title) is available."))
             } catch is CancellationError { throw CancellationError() }
-            catch { toolOutcomes.append(.init(component: tool, status: .failed, message: error.localizedDescription)) }
+            catch {
+                let diagnostic = error.localizedDescription
+                let message = diagnostic.utf8.count <= 8192 ? diagnostic
+                    : String(decoding: diagnostic.utf8.prefix(2048), as: UTF8.self)
+                        + "\n[... truncated ...]\n"
+                        + String(decoding: diagnostic.utf8.suffix(6144), as: UTF8.self)
+                let outcome = LinuxHostComponentOutcome(component: tool, status: .failed, message: message)
+                toolOutcomes.append(outcome)
+                if plan.requireAgentTools {
+                    await toolOutcome(outcome)
+                    throw error
+                }
+            }
             if let outcome = toolOutcomes.last { await toolOutcome(outcome) }
         }
         await progress(.init(message: "Exchanging Graftty public identities", completed: 2, total: total))
@@ -96,10 +109,10 @@ public struct LinuxHostSetup: Sendable {
         for (index, project) in plan.projects.enumerated() {
             let path = root + "/" + project.directoryName
             let bundle = staging + "/\(index).bundle"
-            await progress(.init(message: "Importing committed history for \(project.directoryName)", completed: 3 + index * 2, total: total))
+            await progress(.init(message: "Importing committed history for \(project.directoryName)", completed: 5 + index * 2, total: total))
             _ = try await remote(plan.destination, operation: "Uploading committed project history", command: "umask 077; cat > \(LinuxHostScripts.quote(bundle))", inputFile: local.appendingPathComponent("\(index).bundle"))
             _ = try await remote(plan.destination, operation: "Importing committed project history", command: LinuxHostScripts.importRepository(bundle: bundle, destination: path, snapshot: snapshots[index]))
-            await progress(.init(message: "Registering \(project.directoryName)", completed: 4 + index * 2, total: total))
+            await progress(.init(message: "Registering \(project.directoryName)", completed: 6 + index * 2, total: total))
             _ = try await remote(plan.destination, operation: "Registering project", command: "\"$HOME/.local/bin/graftty-host\" project add \(LinuxHostScripts.quote(path)) --json")
             paths.append(path)
         }
