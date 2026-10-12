@@ -78,11 +78,17 @@ public struct LinuxHostSetup: Sendable {
         for tool in plan.agentTools {
             await progress(.init(message: "Installing missing \(tool.title)", completed: 2, total: total))
             do {
-                let output = try await remote(plan.destination, operation: "Installing missing \(tool.title)", command: LinuxHostToolScripts.install(tool, onlyIfMissing: true))
-                toolOutcomes.append(.init(component: tool, status: .succeeded, message: output.stdout))
+                let provider: TeamHookRuntime = tool == .claude ? .claude : .codex
+                _ = try await remote(plan.destination, operation: "Installing missing \(tool.title)", command: LinuxHostScripts.ensureAgentCLI(provider: provider, staging: staging))
+                toolOutcomes.append(.init(component: tool, status: .succeeded, message: "\(tool.title) is available."))
             } catch is CancellationError { throw CancellationError() }
             catch {
-                let outcome = LinuxHostComponentOutcome(component: tool, status: .failed, message: error.localizedDescription)
+                let diagnostic = error.localizedDescription
+                let message = diagnostic.utf8.count <= 8192 ? diagnostic
+                    : String(decoding: diagnostic.utf8.prefix(2048), as: UTF8.self)
+                        + "\n[... truncated ...]\n"
+                        + String(decoding: diagnostic.utf8.suffix(6144), as: UTF8.self)
+                let outcome = LinuxHostComponentOutcome(component: tool, status: .failed, message: message)
                 toolOutcomes.append(outcome)
                 if plan.requireAgentTools {
                     await toolOutcome(outcome)

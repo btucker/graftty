@@ -3,17 +3,6 @@ import Foundation
 import Testing
 
 struct LinuxHostAgentInstallTests {
-    @Test("@spec REMOTE-21.16: When an agent CLI already exists in the login shell PATH, Linux setup shall verify it without installing or replacing it.", arguments: [TeamHookRuntime.claude, .codex])
-    func existingCLI(provider: TeamHookRuntime) async throws {
-        let f = try AgentInstallFixture(); defer { f.remove() }
-        try f.executable(f.profile.appendingPathComponent(provider.rawValue), "echo existing >> \"$HOME/versions\"")
-        let result = try await f.run(provider)
-        #expect(result.exitCode == 0)
-        #expect(f.contents("versions").contains("existing"))
-        #expect(f.contents("downloads").isEmpty)
-        #expect(result.stdout.isEmpty)
-    }
-
     @Test("@spec REMOTE-21.17: When a selected agent CLI is absent, Linux setup shall download its official installer with bounded commands and verify the installed executable before continuing.", arguments: [TeamHookRuntime.claude, .codex])
     func installsMissingCLI(provider: TeamHookRuntime) async throws {
         let f = try AgentInstallFixture(); defer { f.remove() }
@@ -61,7 +50,7 @@ struct LinuxHostAgentInstallTests {
     }
 }
 
-private struct AgentInstallFixture {
+struct AgentInstallFixture {
     let root: URL
     var profile: URL { root.appendingPathComponent("profile bin") }
     var tools: URL { root.appendingPathComponent("tools") }
@@ -111,6 +100,9 @@ private struct AgentInstallFixture {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
     }
     func run(_ provider: TeamHookRuntime, mode: String = "ok") async throws -> CLIOutput {
+        try await runScript(LinuxHostScripts.ensureAgentCLI(provider: provider, staging: staging.path), provider: provider, mode: mode)
+    }
+    func runScript(_ script: String, provider: TeamHookRuntime, mode: String = "ok") async throws -> CLIOutput {
         let environment = """
         export HOME=\(LinuxHostScripts.quote(root.path))
         export XDG_DATA_HOME="$HOME/custom data"
@@ -118,7 +110,7 @@ private struct AgentInstallFixture {
         export PATH="$HOME/tools:/usr/bin:/bin"
         export MODE=\(LinuxHostScripts.quote(mode)) PROVIDER=\(LinuxHostScripts.quote(provider.rawValue))
         """
-        return try await CLIRunner().capture(command: "/bin/sh", args: ["-c", environment + "\n" + LinuxHostScripts.ensureAgentCLI(provider: provider, staging: staging.path)], at: root.path)
+        return try await CLIRunner().capture(command: "/bin/sh", args: ["-c", environment + "\n" + script], at: root.path)
     }
     func contents(_ name: String) -> String { (try? String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)) ?? "" }
     func remove() { try? FileManager.default.removeItem(at: root) }

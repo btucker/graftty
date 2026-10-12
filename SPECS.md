@@ -3002,6 +3002,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-21.25** When CLI Linux setup is cancelled while resolving a project, the application shall stop before subsequent Git probes or remote setup commands.
 
+**REMOTE-21.26** When Linux setup reports agent tool outcomes, the application shall bound failure diagnostics and emit concise success messages before serializing the setup result.
+
 ### REMOTE-22.x
 
 **REMOTE-22.1** When a headless host opens a worktree, the application shall start and persist its zmx pane without waiting for a visible client.
