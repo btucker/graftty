@@ -251,6 +251,7 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
+            'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG GRAFTTY_PAGED_HISTORY' \
             build-for-testing
 
       - name: Save SPM / DerivedData cache

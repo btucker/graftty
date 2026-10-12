@@ -80,6 +80,7 @@
 		E07139A524FE1DC983512192 /* GrafttyRemoteClientExportsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F859A510953425E04054E5 /* GrafttyRemoteClientExportsTests.swift */; };
 		E295FDA42EACEEB0388FA1B6 /* WorktreePickerRefreshContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EE4B20F3DAFB771A60100B3 /* WorktreePickerRefreshContractTests.swift */; };
 		E56BE7F81F6457809FE8C140 /* RemoteConnectionReconnectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F13F27BC36EFE7A30792D643 /* RemoteConnectionReconnectTests.swift */; };
+		E7FAFC8C755B2B577CB93505 /* TerminalTrayKeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AD4F463738364C6CE5A5465 /* TerminalTrayKeyTests.swift */; };
 		E9B500A4DC2C81F8D2D09AB5 /* PinnedHostStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF7A5068D34751DE52E6705E /* PinnedHostStoreTests.swift */; };
 		EFF92B38741A91B2DCF46C0C /* VirtualClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 351F85648DBEE2F8B555AE7F /* VirtualClock.swift */; };
 		F1265680A75FBC8FC81FC5E8 /* GhosttyConfigFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE2551EB151BA762B2AF7663 /* GhosttyConfigFetcherTests.swift */; };
@@ -130,6 +131,7 @@
 		712112670C0A9DDB567FECDB /* TerminalPixelSizeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPixelSizeTests.swift; sourceTree = "<group>"; };
 		7213F905213229A44DC07D77 /* GrafttyMobileKitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GrafttyMobileKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		79B8AF262726BA932EB21841 /* LocalPairingClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPairingClientTests.swift; sourceTree = "<group>"; };
+		7AD4F463738364C6CE5A5465 /* TerminalTrayKeyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalTrayKeyTests.swift; sourceTree = "<group>"; };
 		7B611132035C165929688C4F /* SessionWebSocketURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionWebSocketURLTests.swift; sourceTree = "<group>"; };
 		7BD90DFCAF790E3A5A6E4E10 /* GhosttyKeybindingsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyKeybindingsFetcherTests.swift; sourceTree = "<group>"; };
 		89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReposFetcherTests.swift; sourceTree = "<group>"; };
@@ -273,6 +275,7 @@
 				5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */,
 				30604C1C39FF21FE6B6A74D5 /* TerminalSelectionControllerTests.swift */,
 				10840996E1975837228BFD55 /* TerminalSnapshotCanvasTests.swift */,
+				7AD4F463738364C6CE5A5465 /* TerminalTrayKeyTests.swift */,
 			);
 			path = Terminal;
 			sourceTree = "<group>";
@@ -606,6 +609,7 @@
 				FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */,
 				53C7FACAB0E370E5FD3E208C /* TerminalSelectionControllerTests.swift in Sources */,
 				3E96C780613389DBC12D8F23 /* TerminalSnapshotCanvasTests.swift in Sources */,
+				E7FAFC8C755B2B577CB93505 /* TerminalTrayKeyTests.swift in Sources */,
 				EFF92B38741A91B2DCF46C0C /* VirtualClock.swift in Sources */,
 				6B09571A2AAA3C40657FA4C8 /* WorktreeDetailPreviewPolicyTests.swift in Sources */,
 				D7F58C38889D48E34A565C3C /* WorktreeListContentTests.swift in Sources */,

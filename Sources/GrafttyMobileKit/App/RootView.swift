@@ -400,6 +400,7 @@ struct SingleSessionView: View {
         case escape
         case tab
         case stickyControl
+        case shift
         case controlC
         case controlD
         case navigationDivider
@@ -417,6 +418,7 @@ struct SingleSessionView: View {
         .escape,
         .tab,
         .stickyControl,
+        .shift,
         .controlC,
         .controlD,
         .navigationDivider,
@@ -509,6 +511,7 @@ struct SingleSessionView: View {
     @State private var paneContainerBox = TerminalContainerBox()
     @State private var stickyControlActivation:
         TerminalInputContainerView.StickyControlActivation = .inactive
+    @State private var isTrayShiftSelected = false
     /// The iOS-scaled Mac ghostty config used to build `controller`.
     /// Cached so owner-selected font preferences can be applied without re-fetching.
     @State private var baseConfigText: String?
@@ -873,6 +876,7 @@ struct SingleSessionView: View {
             .onDisappear {
                 paneContainerBox.view?.onBackRequested = nil
                 paneContainerBox.view?.resetStickyModifiers()
+                paneContainerBox.view?.onTrayShiftSelectionChange = nil
                 paneContainerBox.view?.terminalView.resignFirstResponder()
                 if let retainedPanes { retainedPanes.cached(retainedPaneKey)?.detachControls() }
                 else { client?.stop() }
@@ -1266,7 +1270,7 @@ struct SingleSessionView: View {
             }
         case .tab:
             terminalTextControl("Tab", accessibilityLabel: "Tab") {
-                client?.sendTab()
+                client?.sendTab(shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .stickyControl:
             terminalModifierControl(
@@ -1280,6 +1284,14 @@ struct SingleSessionView: View {
             terminalTextControl("^C", accessibilityLabel: "Control C") {
                 client?.sendControl(.c)
             }
+        case .shift:
+            terminalModifierControl(
+                "Shift",
+                accessibilityLabel: "Tray Shift",
+                activation: isTrayShiftSelected ? .locked : .inactive
+            ) {
+                paneContainerBox.view?.toggleTrayShift()
+            }
         case .controlD:
             terminalTextControl("^D", accessibilityLabel: "Control D") {
                 client?.sendControl(.d)
@@ -1288,19 +1300,19 @@ struct SingleSessionView: View {
             Divider().frame(height: 28)
         case .left:
             terminalIconControl("arrow.left", accessibilityLabel: "Left arrow") {
-                client?.sendArrow(.left)
+                client?.sendArrow(.left, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .down:
             terminalIconControl("arrow.down", accessibilityLabel: "Down arrow") {
-                client?.sendArrow(.down)
+                client?.sendArrow(.down, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .up:
             terminalIconControl("arrow.up", accessibilityLabel: "Up arrow") {
-                client?.sendArrow(.up)
+                client?.sendArrow(.up, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .right:
             terminalIconControl("arrow.right", accessibilityLabel: "Right arrow") {
-                client?.sendArrow(.right)
+                client?.sendArrow(.right, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .submitReturn:
             terminalIconControl("return", accessibilityLabel: "Submit return") {
@@ -1385,6 +1397,11 @@ struct SingleSessionView: View {
             onBackRequested: terminalBackSwipeAction,
             captureContainer: { [paneContainerBox, client] view in
                 paneContainerBox.view = view
+                let shiftSelected = view.isTrayShiftSelected
+                DispatchQueue.main.async { isTrayShiftSelected = shiftSelected }
+                view.onTrayShiftSelectionChange = { selected in
+                    DispatchQueue.main.async { isTrayShiftSelected = selected }
+                }
                 retainedPanes?.cached(retainedPaneKey)?.container = view
                 client.additionalHistoryRowCapacity = { [weak view] in
                     view?.snapshotScrollView.additionalHistoryRowCapacity ?? 0
