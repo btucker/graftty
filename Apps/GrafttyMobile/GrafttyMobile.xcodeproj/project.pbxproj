@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A68E490B8C83486D9F6C7101 /* LocalBrowserSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A68E490B8C83486D9F6C7102 /* LocalBrowserSessionTests.swift */; };
 		CB319BE603AF40F2AB935C01 /* ChromeTabViewerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB319BE603AF40F2AB935C02 /* ChromeTabViewerTests.swift */; };
 		041BF9199FB26F040781E0F1 /* RemoteHostConnectionLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCEA6370F15FD47532C3E4D8 /* RemoteHostConnectionLoopbackTests.swift */; };
 		0505A5A8BD0FF0B63FEC14D9 /* GrafttyMobileKit in Frameworks */ = {isa = PBXBuildFile; productRef = BB0BD29754E75DAC12BC5F3D /* GrafttyMobileKit */; };
@@ -106,6 +107,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A68E490B8C83486D9F6C7102 /* LocalBrowserSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../Tests/GrafttyMobileKitTests/Session/LocalBrowserSessionTests.swift"; sourceTree = SOURCE_ROOT; };
 		CB319BE603AF40F2AB935C02 /* ChromeTabViewerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChromeTabViewerTests.swift; path = ../../Tests/GrafttyMobileKitTests/UI/ChromeTabViewerTests.swift; sourceTree = "<group>"; };
 		040341B8FB581DF018C96BCC /* FilePreviewDownloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilePreviewDownloadTests.swift; sourceTree = "<group>"; };
 		04F2A25404F63D1B1570705A /* PagedTerminalCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PagedTerminalCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -285,6 +287,7 @@
 				7BD90DFCAF790E3A5A6E4E10 /* GhosttyKeybindingsFetcherTests.swift */,
 				5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */,
 				EE11C4BEF7AC53953B6EEA71 /* RemoteAuthenticationOffersTests.swift */,
+				A68E490B8C83486D9F6C7102 /* LocalBrowserSessionTests.swift */,
 				89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */,
 				3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */,
 				A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */,
@@ -692,6 +695,7 @@
 				81DB8F5B4AA670E833184E67 /* PanePreviewFontSizingTests.swift in Sources */,
 				CAF2F1261BE1D2E9862B28E7 /* PreviewCapTests.swift in Sources */,
 				1DF817BE832A427E531A1428 /* RemoteAuthenticationOffersTests.swift in Sources */,
+				A68E490B8C83486D9F6C7101 /* LocalBrowserSessionTests.swift in Sources */,
 				6423BC64B39FEE6D4D4A3CD1 /* RemoteConnectionCoordinatorTests.swift in Sources */,
 				E56BE7F81F6457809FE8C140 /* RemoteConnectionReconnectTests.swift in Sources */,
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,

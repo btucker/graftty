@@ -518,7 +518,6 @@ struct SingleSessionView: View {
     /// Latest owner-selected size. Pinch actions already update the live
     /// Ghostty surface; this state preserves that size across configuration updates.
     @State private var preferredFontSize: Float?
-    @State private var showingChromeTabs = false
     @State private var authenticationPreview: WorktreePortClient.AuthenticationPreview?
     @State private var authenticationError: String?
     @State private var authenticationTask: Task<Void, Never>?
@@ -683,10 +682,6 @@ struct SingleSessionView: View {
             terminalBackground
             sessionView
         }
-        .sheet(isPresented: $showingChromeTabs) {
-            ChromeTabViewer(target: step.sessionName, connectionProvider: { await coordinator?.connection(for: step.host) })
-        }
-        .onChange(of: client?.isOwner) { _, owner in if owner != true { showingChromeTabs = false } }
         .sheet(item: $authenticationPreview) { preview in
             HostBrowserView(url: preview.url, host: step.host, callbackHost: preview.callbackHost,
                 connectionProvider: { await coordinator?.connection(for: step.host) })
@@ -766,17 +761,6 @@ struct SingleSessionView: View {
         // system sidebar-toggle button stays available, and respects
         // the column's bounds so the sidebar doesn't visually overlap.
         .modifier(FullScreenChrome(enabled: isFullScreen))
-            .overlay(alignment: .topTrailing) {
-                if isPaneFocused, coordinator != nil, client?.isOwner == true {
-                    Button {
-                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                        showingChromeTabs = true
-                    } label: { Label("Chrome", systemImage: "globe").labelStyle(.iconOnly) }
-                    .accessibilityLabel("Open dedicated Chrome tabs on Mac")
-                    .padding(12).background(.regularMaterial, in: Circle())
-                    .modifier(TerminalFloatingControlPlacement())
-                }
-            }
             .overlay(alignment: .topLeading) {
                 if isFullScreen {
                     backButton
@@ -831,11 +815,12 @@ struct SingleSessionView: View {
                                      sessionName: step.sessionName,
                                      ownerDeviceID: client?.isOwner == true ? coordinator.localDeviceID : nil,
                                      isActive: isPaneFocused && scenePhase == .active && gate?.state == .unlocked && connection == .live,
+                                     browserConnectionReady: connection == .live,
                                      isPaneFocused: isPaneFocused,
                                      hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
                                      isPaneOwner: { client?.isOwner == true },
-                                     canPresentAuthentication: { !showingChromeTabs && authenticationPreview == nil && authenticationTask == nil })
-                        .padding(.top, 64)
+                                     canPresentAuthentication: { authenticationPreview == nil && authenticationTask == nil })
+                        .modifier(TerminalFloatingControlPlacement())
                         .padding(.trailing, 12)
                 }
             }

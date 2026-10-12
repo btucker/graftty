@@ -3134,6 +3134,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-1.9** While host Chrome retains OAuth launch receipts, the application shall persist and restore the maximum bounded history and reject new offers or unreadable history without evicting dispatched identities.
 
+**CHROME-1.10** When an authorized viewer requests back, forward, or reload for its selected host tab, the application shall navigate that tab's existing history or reload its document and report available history without creating another tab.
+
+**CHROME-1.11** If a navigation command names a nonselected host tab or pane ownership changes before dispatch, then the application shall reject back, forward, and reload before changing the selected tab's document or history.
+
+**CHROME-1.12** When an authorized viewer resizes its selected host tab, the application shall restart capture with bounded CSS dimensions and a new viewport identity, retain those dimensions on each JPEG, and dispatch normalized input in the new viewport.
+
+**CHROME-1.13** If pane ownership changes during a resize or a viewport frame's capture session, CSS dimensions, or JPEG dimensions differ from the selected viewport, then the application shall discard stale frames and reject input until that viewport has a fresh authorized frame.
+
+**CHROME-1.14** If navigation availability fails because the CDP transport disconnects, times out, or reports an error other than a document-swap attachment gap on the same live session, then the application shall return the failure instead of stale navigation success.
+
+**CHROME-1.15** When a selected host tab exposes a navigable URL of at most 8192 UTF8 bytes, the application shall preserve that exact URL in tab metadata and flag longer URLs as truncated without exceeding the Chrome response limit.
+
+**CHROME-1.16** While a selected host tab exposes an exact navigable URL, the application shall bound other tab URLs to 2048 UTF8 bytes and flag shortened metadata so that JSON escaping and a maximum-size JPEG fit within the Chrome response limit.
+
+**CHROME-1.17** When a high-entropy page produces an oversized JPEG at an allowed host viewport, the application shall provide a frame within 512 KiB without changing its CSS dimensions and allow input after that fresh frame.
+
 ### CHROME-2.x — Phone controls
 
 **CHROME-2.1** When a phone taps a fitted Chrome frame, the application shall map only image pixels to normalized browser coordinates and reject letterbox taps.
@@ -3152,6 +3168,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-2.8** When a sign-in viewer resumes after scene suspension, the application shall reconnect its retained presentation and select the acknowledged host tab without sending another launch URL.
 
+**CHROME-2.9** While the remote browser page is displayed, the application shall use compact browser controls and keep address and keyboard text fields hidden until the user explicitly opens them.
+
+**CHROME-2.10** When the user explicitly chooses Local in the remote browser, the application shall request local presentation once without choosing Local automatically when the remote view appears.
+
+**CHROME-2.11** When browser geometry changes, the application shall block image input immediately and accept only a fresh frame matching the acknowledged viewport and selected tab.
+
+**CHROME-2.12** While a viewport resize is in flight, the application shall retain only the latest requested geometry without canceling the connection, and shall discard pending resize work when the viewer closes.
+
+**CHROME-2.13** When the user requests the browser keyboard, the application shall expose keyboard input through observable presentation state and hide it when the viewer closes.
+
+**CHROME-2.14** While a host Chrome tab selection or navigation awaits acknowledgment, the application shall disable Local browser selection and use the acknowledged selected tab's URL when Local is chosen afterward.
+
 ### CHROME-3.x — Authenticated transport
 
 **CHROME-3.1** When a paired peer opens the Chrome subsystem, the application shall await host acceptance, enforce its management capability, pass its authenticated identity, and carry bounded JPEG responses over framed SSH.
@@ -3159,6 +3187,28 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CHROME-3.2** While Graftty owns a Chrome debug endpoint, the application shall reject its port through the general browser tunnel even for a paired peer with loopback permission.
 
 **CHROME-3.3** When a paired client requests a protected Chrome port through direct-tcpip, the application shall refuse the connection and shall restore ordinary listener access after protection ends.
+
+**CHROME-3.4** When browser navigation crosses the Chrome channel, the application shall encode typed back, forward, and reload actions with their selected-tab identity, reject invalid tab identities, and decode state from hosts without navigation availability.
+
+**CHROME-3.5** When a viewer requests a typed selected-tab viewport, the application shall accept widths from 320 through 1024 and heights from 240 through 1600 within 1500000 pixels and reject other dimensions or invalid tab identities.
+
+**CHROME-3.6** When viewport metadata crosses the Chrome channel, the application shall preserve each frame's CSS width, height, and viewport identity and decode legacy frames and state without that metadata.
+
+**CHROME-3.7** When a host tab URL exceeds its metadata budget, the application shall preserve an optional truncation flag across the Chrome channel and decode legacy tabs without that flag.
+
+**CHROME-3.8** When a Chrome response contains a selected-tab URL bounded to 8192 bytes, 31 other URLs bounded to 2048 bytes, and a maximum-size JPEG, the application shall encode JSON-escaped metadata within the one-megabyte response limit.
+
+### CHROME-4.x
+
+**CHROME-4.1** When Local browser mode is selected, the application shall authorize and prepare the retained original URL before presenting it and shall reject any changed URL.
+
+**CHROME-4.2** If the originating browser scope loses ownership or is dismissed during authorization or listener preparation, then the application shall cancel Local presentation, release callback listeners and require another explicit selection.
+
+**CHROME-4.3** When a Local Safari sign-in redirects to the unchanged localhost callback, the application shall keep its foreground callback leases alive and forward the original request to the authorized host.
+
+**CHROME-4.4** If a canceled Local attempt resumes after another explicit attempt opens its callback, then the application shall preserve the replacement listener and ignore the obsolete transport result.
+
+**CHROME-4.5** When Local browser mode is selected, the application shall use the retained original OAuth offer for sign-in, otherwise use the current selected HTTP(S) page, and reject an authorization page without its originating offer.
 
 ## URL — Worktree URL Handler
 

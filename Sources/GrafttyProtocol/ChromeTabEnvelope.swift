@@ -11,11 +11,15 @@ public enum ChromeTabAction: Codable, Equatable, Sendable {
     case scroll(tabID: String, x: Double, y: Double, deltaX: Double, deltaY: Double)
     case text(tabID: String, text: String)
     case key(tabID: String, key: ChromeTabKey)
+    case back(tabID: String)
+    case forward(tabID: String)
+    case reload(tabID: String)
+    case viewport(tabID: String, width: Int, height: Int)
 
     public var tabID: String? {
         switch self {
         case .list, .launch, .launchOffer: return nil
-        case .select(let id), .frame(let id), .tap(let id, _, _), .scroll(let id, _, _, _, _), .text(let id, _), .key(let id, _): return id
+        case .select(let id), .frame(let id), .tap(let id, _, _), .scroll(let id, _, _, _, _), .text(let id, _), .key(let id, _), .back(let id), .forward(let id), .reload(let id), .viewport(let id, _, _): return id
         }
     }
 
@@ -29,6 +33,8 @@ public enum ChromeTabAction: Codable, Equatable, Sendable {
         case .tap(_, let x, let y): return point(x, y)
         case .scroll(_, let x, let y, let dx, let dy): return point(x, y) && dx.isFinite && dy.isFinite && abs(dx) <= 2000 && abs(dy) <= 2000
         case .text(_, let text): return text.utf8.count <= 4096
+        case .viewport(_, let width, let height):
+            return (320...1024).contains(width) && (240...1600).contains(height) && width * height <= 1_500_000
         default: return true
         }
     }
@@ -44,29 +50,51 @@ public struct ChromeTabRequest: Codable, Equatable, Sendable {
     public static let maximumResponseBytes = 1024 * 1024
 }
 
+/// @spec CHROME-3.7: When a host tab URL exceeds its metadata budget, the application shall preserve an optional truncation flag across the Chrome channel and decode legacy tabs without that flag.
 public struct ChromeTab: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var title: String
     public var url: String
-    public init(id: String, title: String, url: String) { self.id = id; self.title = title; self.url = url }
+    public var urlTruncated: Bool?
+    public init(id: String, title: String, url: String, urlTruncated: Bool? = nil) {
+        self.id = id; self.title = title; self.url = url; self.urlTruncated = urlTruncated
+    }
 }
 
+/// @spec CHROME-3.6: When viewport metadata crosses the Chrome channel, the application shall preserve each frame's CSS width, height, and viewport identity and decode legacy frames and state without that metadata.
 public struct ChromeTabFrame: Codable, Equatable, Sendable {
     public var tabID: String
     public var jpeg: Data
     public var sequence: UInt64
-    public init(tabID: String, jpeg: Data, sequence: UInt64) { self.tabID = tabID; self.jpeg = jpeg; self.sequence = sequence }
+    public var width: Int?
+    public var height: Int?
+    public var viewportID: UInt64?
+    public init(tabID: String, jpeg: Data, sequence: UInt64, width: Int? = nil, height: Int? = nil, viewportID: UInt64? = nil) {
+        self.tabID = tabID; self.jpeg = jpeg; self.sequence = sequence
+        self.width = width; self.height = height; self.viewportID = viewportID
+    }
     public static let maximumJPEGBytes = 512 * 1024
     public static let viewportWidth = 1024
     public static let viewportHeight = 768
 }
 
+/// @spec CHROME-3.4: When browser navigation crosses the Chrome channel, the application shall encode typed back, forward, and reload actions with their selected-tab identity, reject invalid tab identities, and decode state from hosts without navigation availability.
 public struct ChromeTabState: Codable, Equatable, Sendable {
     public var tabs: [ChromeTab]
     public var selectedTabID: String?
     public var frame: ChromeTabFrame?
-    public init(tabs: [ChromeTab] = [], selectedTabID: String? = nil, frame: ChromeTabFrame? = nil) {
+    /// Unspecified when no tab is selected or an older host omits history metadata.
+    public var canGoBack: Bool?
+    public var canGoForward: Bool?
+    public var width: Int?
+    public var height: Int?
+    public var viewportID: UInt64?
+    public init(tabs: [ChromeTab] = [], selectedTabID: String? = nil, frame: ChromeTabFrame? = nil,
+                canGoBack: Bool? = nil, canGoForward: Bool? = nil,
+                width: Int? = nil, height: Int? = nil, viewportID: UInt64? = nil) {
         self.tabs = tabs; self.selectedTabID = selectedTabID; self.frame = frame
+        self.canGoBack = canGoBack; self.canGoForward = canGoForward
+        self.width = width; self.height = height; self.viewportID = viewportID
     }
 }
 

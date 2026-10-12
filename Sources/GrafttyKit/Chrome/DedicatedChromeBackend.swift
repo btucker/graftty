@@ -3,6 +3,7 @@ import Foundation
 import Darwin
 import CryptoKit
 import GrafttyProtocol
+import ImageIO
 
 /// Launches only Graftty's isolated headless profile. Never attaches to personal Chrome.
 public actor DedicatedChromeBackend: ChromeTabBackend {
@@ -23,8 +24,16 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
     private var offerLaunches: ChromeOfferLaunchLedger
     private var selectedTabID: String?
     private var sessionID: String?
+    private var canGoBack: Bool?
+    private var canGoForward: Bool?
+    private var navigationHistoryDirty = false
     private var latestFrame: ChromeTabFrame?
+    private var viewportWidth = ChromeTabFrame.viewportWidth
+    private var viewportHeight = ChromeTabFrame.viewportHeight
+    private var viewportID: UInt64 = 0
     private var sequence: UInt64 = 0
+    /// A bounded CDP source JPEG may exceed the viewer limit before recompression.
+    private static let maximumCaptureJPEGBytes = 1_500_000
     private var busy = false
     private var authorization: (@Sendable () async -> Bool)?
 
@@ -88,20 +97,20 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
             if !tabs.contains(where: { $0.id == id }) { await stopCapture() }
             else { try requireSelected(id, tabs: tabs) }
         case .tap(let id, let x, let y):
-            try requireSelected(id, tabs: tabs)
-            let point: [String: Any] = ["x": x * Double(ChromeTabFrame.viewportWidth), "y": y * Double(ChromeTabFrame.viewportHeight), "button": "left", "clickCount": 1]
+            try requireInputReady(id, tabs: tabs)
+            let point: [String: Any] = ["x": x * Double(viewportWidth), "y": y * Double(viewportHeight), "button": "left", "clickCount": 1]
             var down = point; down["type"] = "mousePressed"
             var up = point; up["type"] = "mouseReleased"
             _ = try await call("Input.dispatchMouseEvent", params: down, session: sessionID)
             _ = try await call("Input.dispatchMouseEvent", params: up, session: sessionID)
         case .scroll(let id, let x, let y, let dx, let dy):
-            try requireSelected(id, tabs: tabs)
-            _ = try await call("Input.dispatchMouseEvent", params: ["type": "mouseWheel", "x": x * Double(ChromeTabFrame.viewportWidth), "y": y * Double(ChromeTabFrame.viewportHeight), "deltaX": dx, "deltaY": dy], session: sessionID)
+            try requireInputReady(id, tabs: tabs)
+            _ = try await call("Input.dispatchMouseEvent", params: ["type": "mouseWheel", "x": x * Double(viewportWidth), "y": y * Double(viewportHeight), "deltaX": dx, "deltaY": dy], session: sessionID)
         case .text(let id, let text):
-            try requireSelected(id, tabs: tabs)
+            try requireInputReady(id, tabs: tabs)
             _ = try await call("Input.insertText", params: ["text": text], session: sessionID)
         case .key(let id, let key):
-            try requireSelected(id, tabs: tabs)
+            try requireInputReady(id, tabs: tabs)
             let values: (String, String, Int)
             switch key {
             case .enter: values = ("Enter", "Enter", 13)
@@ -111,19 +120,95 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
             }
             _ = try await call("Input.dispatchKeyEvent", params: ["type": "keyDown", "key": values.0, "code": values.1, "windowsVirtualKeyCode": values.2, "text": key == .enter ? "\r" : ""], session: sessionID)
             _ = try await call("Input.dispatchKeyEvent", params: ["type": "keyUp", "key": values.0, "code": values.1, "windowsVirtualKeyCode": values.2], session: sessionID)
+        case .back(let id):
+            try requireSelected(id, tabs: tabs)
+            try await navigateHistory(offset: -1)
+        case .forward(let id):
+            try requireSelected(id, tabs: tabs)
+            try await navigateHistory(offset: 1)
+        case .reload(let id):
+            try requireSelected(id, tabs: tabs)
+            _ = try await call("Page.reload", session: sessionID)
+            navigationHistoryDirty = true
+        case .viewport(let id, let width, let height):
+            try requireSelected(id, tabs: tabs)
+            await stopCapture()
+            try Task.checkCancellation()
+            viewportWidth = width; viewportHeight = height; viewportID &+= 1
+            // A new attachment excludes late frames even when returning to a previous size.
+            try await select(id, tabs: tabs)
         }
         tabs = try await listTabs()
         if let id = selectedTabID, !tabs.contains(where: { $0.id == id }) { await stopCapture() }
-        return .init(tabs: tabs, selectedTabID: selectedTabID, frame: latestFrame)
+        try await refreshNavigationAvailability()
+        return .init(tabs: tabs, selectedTabID: selectedTabID, frame: latestFrame,
+                     canGoBack: canGoBack, canGoForward: canGoForward,
+                     width: selectedTabID == nil ? nil : viewportWidth,
+                     height: selectedTabID == nil ? nil : viewportHeight,
+                     viewportID: selectedTabID == nil ? nil : viewportID)
     }
 
     private func requireSelected(_ id: String, tabs: [ChromeTab]) throws {
         guard id == selectedTabID, sessionID != nil, tabs.contains(where: { $0.id == id }) else { throw Failure.invalidTab }
     }
 
+    private func requireInputReady(_ id: String, tabs: [ChromeTab]) throws {
+        try requireSelected(id, tabs: tabs)
+        guard latestFrame?.viewportID == viewportID,
+              latestFrame?.width == viewportWidth, latestFrame?.height == viewportHeight else {
+            throw Failure.protocolError("Waiting for a fresh Chrome viewport frame.")
+        }
+    }
+
+    private func navigationHistory(session: String) async throws -> (index: Int, entries: [[String: Any]]) {
+        let result = try await call("Page.getNavigationHistory", session: session)
+        guard session == sessionID, let index = result["currentIndex"] as? Int,
+              let entries = result["entries"] as? [[String: Any]], entries.indices.contains(index) else {
+            throw Failure.protocolError("Chrome navigation history is unavailable.")
+        }
+        return (index, entries)
+    }
+
+    private func navigateHistory(offset: Int) async throws {
+        guard let session = sessionID else { throw Failure.invalidTab }
+        let history = try await navigationHistory(session: session)
+        let destination = history.index + offset
+        guard history.entries.indices.contains(destination) else { return }
+        guard let entryID = history.entries[destination]["id"] as? Int else {
+            throw Failure.protocolError("Chrome navigation history is unavailable.")
+        }
+        _ = try await call("Page.navigateToHistoryEntry", params: ["entryId": entryID], session: session)
+        navigationHistoryDirty = true
+    }
+
+    private func refreshNavigationAvailability() async throws {
+        guard navigationHistoryDirty, let session = sessionID else { return }
+        // Events arriving while this read is suspended must schedule a later refresh.
+        navigationHistoryDirty = false
+        do {
+            let history = try await navigationHistory(session: session)
+            canGoBack = history.index > 0
+            canGoForward = history.index + 1 < history.entries.count
+        } catch {
+            navigationHistoryDirty = sessionID != nil
+            // A document swap can briefly leave Page history unavailable after
+            // a successful navigation. Refresh on the next poll, but keep
+            // ownership and cancellation failures visible.
+            guard case Failure.protocolError("Not attached to an active page") = error,
+                  session == sessionID, socket?.state == .running else { throw error }
+            try Task.checkCancellation()
+            guard let authorization, await authorization() else {
+                throw Failure.protocolError("Pane ownership changed.")
+            }
+            try Task.checkCancellation()
+            guard session == sessionID, socket?.state == .running else { throw error }
+        }
+    }
+
     public func stopCapture() async {
         let oldSession = sessionID
         sessionID = nil; selectedTabID = nil; latestFrame = nil
+        canGoBack = nil; canGoForward = nil; navigationHistoryDirty = false
         if let oldSession {
             // Cleanup must survive cancellation of the viewer RPC that triggered it.
             await Task { [self] in
@@ -142,9 +227,10 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
         sessionID = session; selectedTabID = id
         do {
             _ = try await call("Target.activateTarget", params: ["targetId": id])
-            _ = try await call("Emulation.setDeviceMetricsOverride", params: ["width": ChromeTabFrame.viewportWidth, "height": ChromeTabFrame.viewportHeight, "deviceScaleFactor": 1, "mobile": false], session: session)
+            _ = try await call("Emulation.setDeviceMetricsOverride", params: ["width": viewportWidth, "height": viewportHeight, "deviceScaleFactor": 1, "mobile": false], session: session)
             _ = try await call("Page.enable", session: session)
-            _ = try await call("Page.startScreencast", params: ["format": "jpeg", "quality": 65, "maxWidth": ChromeTabFrame.viewportWidth, "maxHeight": ChromeTabFrame.viewportHeight, "everyNthFrame": 2, "maxFramesInFlight": 1, "sendLastFrame": true], session: session)
+            navigationHistoryDirty = true
+            _ = try await call("Page.startScreencast", params: ["format": "jpeg", "quality": 65, "maxWidth": viewportWidth, "maxHeight": viewportHeight, "everyNthFrame": 1, "maxFramesInFlight": 1, "sendLastFrame": true], session: session)
         } catch { await stopCapture(); throw error }
     }
 
@@ -153,7 +239,14 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
         let targets = result["targetInfos"] as? [[String: Any]] ?? []
         return targets.filter { $0["type"] as? String == "page" }.prefix(32).compactMap {
             guard let id = $0["targetId"] as? String, id.utf8.count <= 128 else { return nil }
-            return .init(id: id, title: Self.boundedMetadata($0["title"] as? String ?? "", bytes: 256), url: Self.boundedMetadata($0["url"] as? String ?? "", bytes: 2048))
+            let rawURL = $0["url"] as? String ?? ""
+            // Reserve wire space for the JPEG and JSON escaping across all 32 tabs.
+            let urlLimit = id == selectedTabID ? 8192 : 2048
+            var bytes = Data(rawURL.utf8.prefix(urlLimit))
+            // Dropping an incomplete final scalar preserves the byte limit and URL text.
+            while String(data: bytes, encoding: .utf8) == nil { bytes.removeLast() }
+            return .init(id: id, title: Self.boundedMetadata($0["title"] as? String ?? "", bytes: 256),
+                         url: String(decoding: bytes, as: UTF8.self), urlTruncated: rawURL.utf8.count > urlLimit)
         }.sorted { $0.id < $1.id }
     }
 
@@ -234,6 +327,7 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
         socket = nil; receiver?.cancel(); receiver = nil
         ws.cancel(with: .goingAway, reason: nil)
         sessionID = nil; selectedTabID = nil; latestFrame = nil
+        canGoBack = nil; canGoForward = nil; navigationHistoryDirty = false
         let entries = pending.values; pending.removeAll()
         for entry in entries { entry.timeout.cancel(); entry.send?.cancel(); entry.continuation.resume(throwing: Failure.disconnected) }
     }
@@ -331,20 +425,55 @@ public actor DedicatedChromeBackend: ChromeTabBackend {
             }
             entry.timeout.cancel(); entry.send?.cancel(); entry.continuation.resume(returning: data); return
         }
-        guard json["method"] as? String == "Page.screencastFrame",
-              let eventSession = json["sessionId"] as? String,
-              eventSession == sessionID, let tabID = selectedTabID,
+        guard let method = json["method"] as? String,
+              let eventSession = json["sessionId"] as? String, eventSession == sessionID else { return }
+        if method == "Page.navigatedWithinDocument" {
+            navigationHistoryDirty = true
+            return
+        }
+        if method == "Page.frameNavigated" {
+            if let frame = (json["params"] as? [String: Any])?["frame"] as? [String: Any], frame["parentId"] == nil {
+                navigationHistoryDirty = true
+            }
+            return
+        }
+        guard method == "Page.screencastFrame", let tabID = selectedTabID,
               let params = json["params"] as? [String: Any], let ackID = params["sessionId"] as? Int else { return }
-        if let encoded = params["data"] as? String, encoded.utf8.count <= (ChromeTabFrame.maximumJPEGBytes + 2) / 3 * 4,
-           let jpeg = Data(base64Encoded: encoded), jpeg.count <= ChromeTabFrame.maximumJPEGBytes {
+        if let metadata = params["metadata"] as? [String: Any],
+           metadata["deviceWidth"] as? Double == Double(viewportWidth),
+           metadata["deviceHeight"] as? Double == Double(viewportHeight),
+           let encoded = params["data"] as? String, encoded.utf8.count <= (Self.maximumCaptureJPEGBytes + 2) / 3 * 4,
+           let capture = Data(base64Encoded: encoded), capture.count <= Self.maximumCaptureJPEGBytes,
+           let jpeg = Self.boundedViewportJPEG(capture, width: viewportWidth, height: viewportHeight) {
             sequence &+= 1
-            latestFrame = .init(tabID: tabID, jpeg: jpeg, sequence: sequence)
+            latestFrame = .init(tabID: tabID, jpeg: jpeg, sequence: sequence,
+                                width: viewportWidth, height: viewportHeight, viewportID: viewportID)
         }
         // ACK after replacing the one-frame cache, including when an oversized frame is dropped.
         nextID += 1
         if let socket, let ack = try? JSONSerialization.data(withJSONObject: ["id": nextID, "method": "Page.screencastFrameAck", "params": ["sessionId": ackID], "sessionId": eventSession]) {
             try? await socket.send(.string(String(decoding: ack, as: UTF8.self)))
         }
+    }
+
+    private static func boundedViewportJPEG(_ jpeg: Data, width: Int, height: Int) -> Data? {
+        // Chrome can label an old render buffer with new device metrics during resize.
+        guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              properties[kCGImagePropertyPixelWidth] as? Int == width,
+              properties[kCGImagePropertyPixelHeight] as? Int == height else { return nil }
+        if jpeg.count <= ChromeTabFrame.maximumJPEGBytes { return jpeg }
+        // Dimensions are checked before decoding, bounding the bitmap to the allowed viewport.
+        guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        for quality in [0.5, 0.35, 0.2] {
+            let output = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(output, "public.jpeg" as CFString, 1, nil) else { return nil }
+            CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+            if CGImageDestinationFinalize(destination), output.length <= ChromeTabFrame.maximumJPEGBytes {
+                return output as Data
+            }
+        }
+        return nil
     }
 }
 #endif

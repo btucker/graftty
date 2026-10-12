@@ -44,53 +44,64 @@ final class HostBrowserNetwork {
     private var proxyLease: HostBrowserListeners.Lease?
     private var forwarderLeases: [HostBrowserListeners.Lease] = []
 
+    /// Fixed loopback leases for native Safari. Public pages use the phone's network.
+    func startLocalPage(url: URL, hostID: UUID, callbackHost: String? = nil,
+                        connect: @escaping Connector) async throws {
+        _ = try await startForwarders(url: url, hostID: hostID, callbackHost: callbackHost, connect: connect)
+    }
+
     func start(url: URL, dataStoreIdentifier: UUID, callbackHost: String? = nil,
                connect: @escaping Connector) async throws -> WKWebViewConfiguration {
-        stop()
-        let operation = UUID()
-        self.operation = operation
-        var ownedLeases: [HostBrowserListeners.Lease] = []
+        let operation = try await startForwarders(url: url, hostID: dataStoreIdentifier, callbackHost: callbackHost, connect: connect)
+        if callbackHost != nil {
+            let configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = .nonPersistent()
+            return configuration
+        }
         var ownedProxyLease: HostBrowserListeners.Lease?
         do {
-            var endpoints: [LoopbackEndpoint] = []
-            if callbackHost == nil, let endpoint = LoopbackEndpoint(url: url) { endpoints += endpoint.localBindings }
-            if let authentication = WorktreeAuthenticationURL(url: url),
-               let endpoint = LoopbackEndpoint(url: authentication.callbackURL, destinationHost: callbackHost),
-               !endpoints.contains(endpoint) {
-                endpoints += endpoint.localBindings.filter { !endpoints.contains($0) }
-            }
-            for endpoint in endpoints {
-                let lease = try await HostBrowserListeners.shared.acquire(.loopback(endpoint), hostID: dataStoreIdentifier, connect: connect)
-                ownedLeases.append(lease)
-                try checkCurrent(operation)
-                forwarderLeases = ownedLeases
-            }
-            // Sign-in pages use the phone's network. Only the host-verified
-            // callback is tunneled, without changing a normal host browser's
-            // per-host proxy configuration or cookies.
-            if callbackHost != nil {
-                guard WorktreeAuthenticationURL(url: url) != nil, !ownedLeases.isEmpty else {
-                    throw InvalidAuthentication()
-                }
-                let configuration = WKWebViewConfiguration()
-                configuration.websiteDataStore = .nonPersistent()
-                return configuration
-            }
             let lease = try await HostBrowserListeners.shared.acquire(.socks(dataStoreIdentifier), hostID: dataStoreIdentifier, connect: connect)
             ownedProxyLease = lease
             try checkCurrent(operation)
             proxyLease = lease
             return HostBrowserProxyConfiguration.make(proxy: lease.proxy, port: lease.port, dataStoreIdentifier: dataStoreIdentifier)
         } catch {
-            // An older start may resume after a replacement has acquired its listeners.
-            // Only release the resources owned by this invocation.
-            ownedLeases.forEach { $0.release() }
             ownedProxyLease?.release()
-            if self.operation == operation {
-                self.operation = nil
-                forwarderLeases = []
-                proxyLease = nil
+            if self.operation == operation { stop() }
+            throw error
+        }
+    }
+
+    private func startForwarders(url: URL, hostID: UUID, callbackHost: String?,
+                                 connect: @escaping Connector) async throws -> UUID {
+        // An obsolete invocation must not release a replacement's live leases.
+        try Task.checkCancellation()
+        stop()
+        let operation = UUID()
+        self.operation = operation
+        var ownedLeases: [HostBrowserListeners.Lease] = []
+        do {
+            var endpoints: [LoopbackEndpoint] = []
+            if callbackHost == nil, let endpoint = LoopbackEndpoint(url: url) { endpoints += endpoint.localBindings }
+            if let authentication = WorktreeAuthenticationURL(url: url),
+               let endpoint = LoopbackEndpoint(url: authentication.callbackURL, destinationHost: callbackHost) {
+                endpoints += endpoint.localBindings.filter { !endpoints.contains($0) }
             }
+            if callbackHost != nil, WorktreeAuthenticationURL(url: url) == nil || endpoints.isEmpty {
+                throw InvalidAuthentication()
+            }
+            for endpoint in endpoints {
+                let lease = try await HostBrowserListeners.shared.acquire(.loopback(endpoint), hostID: hostID, connect: connect)
+                ownedLeases.append(lease)
+                try checkCurrent(operation)
+                forwarderLeases = ownedLeases
+            }
+            try checkCurrent(operation)
+            return operation
+        } catch {
+            // Release only this invocation's leases after an asynchronous replacement.
+            ownedLeases.forEach { $0.release() }
+            if self.operation == operation { self.operation = nil; forwarderLeases = [] }
             throw error
         }
     }

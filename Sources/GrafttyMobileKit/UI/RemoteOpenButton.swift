@@ -12,6 +12,7 @@ struct RemoteOpenButton: View {
     let sessionName: String
     let ownerDeviceID: RemoteDeviceID?
     let isActive: Bool
+    let browserConnectionReady: Bool
     let isPaneFocused: Bool
     let hasOwnershipSnapshot: Bool
     @State private var offers: [RemoteOpenOffer] = []
@@ -20,6 +21,7 @@ struct RemoteOpenButton: View {
     @State private var preview: Preview?
     @State private var cachedFile: URL?
     @State private var error: String?
+    @State private var choosingResource = false
     let isPaneOwner: () -> Bool
     let canPresentAuthentication: () -> Bool
     @State private var operationID = UUID()
@@ -31,7 +33,10 @@ struct RemoteOpenButton: View {
 
     private struct Preview: Identifiable {
         let id = UUID()
-        let url: URL
+        let url: URL?
+        var browser = false
+        var originSession: String? = nil
+        var originWorktree: String? = nil
         var chromeLaunch: ChromeTabInitialLaunch? = nil
         var originHost: Host? = nil
     }
@@ -49,34 +54,45 @@ struct RemoteOpenButton: View {
     }
 
     var body: some View {
-        ZStack {
-            if isActive {
-                if isDownloading {
-                    ProgressView("Opening resource…")
-                        .padding(12)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                } else if let offer = RemoteOpenPresentation.directBrowserOffer(in: offers) {
-                    Button { open(offer) } label: {
-                        Label("Open", systemImage: "globe")
-                            .padding(10)
-                            .background(.regularMaterial, in: Capsule())
-                    }
-                } else if !offers.isEmpty {
-                    Menu {
-                        ForEach(offers) { offer in
-                            Button(offer.filename) { open(offer) }
+        Group {
+            if isActive, isPaneOwner() || !offers.isEmpty {
+                Button {
+                    if let offer = RemoteOpenPresentation.directBrowserOffer(in: offers) { open(offer) }
+                    else if !offers.isEmpty { choosingResource = true }
+                    else { openChromeTabs() }
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Group {
+                            if isDownloading { ProgressView() }
+                            else { Image(systemName: "globe") }
                         }
-                    } label: {
-                        Label("Open (\(offers.count))", systemImage: "doc")
-                            .padding(10)
-                            .background(.regularMaterial, in: Capsule())
+                        .frame(width: 44, height: 44)
+                        .background(.regularMaterial, in: Circle())
+                        if !offers.isEmpty {
+                            Text("\(offers.count)").font(.caption2.monospacedDigit())
+                                .padding(4).background(.tint, in: Circle()).foregroundStyle(.white)
+                                .offset(x: 4, y: -4)
+                        }
                     }
                 }
+                .accessibilityLabel("Browser")
+                .accessibilityValue("\(offers.count) available resources")
+                .accessibilityAction(named: "Remote Chrome tabs") { openChromeTabs() }
+                .contextMenu {
+                    Button("Remote Chrome tabs", systemImage: "rectangle.on.rectangle") { openChromeTabs() }
+                        .disabled(!isPaneOwner())
+                    ForEach(offers) { offer in Button(offer.filename) { open(offer) } }
+                }
+                .disabled(isDownloading)
             }
+        }
+        .confirmationDialog("Browser resources", isPresented: $choosingResource) {
+            Button("Remote Chrome tabs") { openChromeTabs() }.disabled(!isPaneOwner())
+            ForEach(offers) { offer in Button(offer.filename) { open(offer) } }
         }
         .onChange(of: pollScope) { _, _ in
             cancelOperation()
-            if preview?.chromeLaunch != nil {
+            if preview?.browser == true {
                 deferAuthenticationPresentation()
                 preview = nil
             }
@@ -87,7 +103,7 @@ struct RemoteOpenButton: View {
         .onChange(of: ownerDeviceID) { _, _ in checkOwnership() }
         .onChange(of: hasOwnershipSnapshot) { _, _ in checkOwnership() }
         .onChange(of: isPaneFocused) { _, focused in
-            if !focused, preview?.chromeLaunch != nil { deferAuthenticationPresentation(); preview = nil }
+            if !focused, preview?.browser == true { deferAuthenticationPresentation(); preview = nil }
         }
         .task(id: PollTaskScope(route: pollScope, ownerDeviceID: ownerDeviceID, active: isActive)) {
             guard isActive else { return }
@@ -120,16 +136,27 @@ struct RemoteOpenButton: View {
             }
             removeCachedFile()
         }) { preview in
-            if let launch = preview.chromeLaunch {
-                ChromeTabViewer(target: launch.target, connectionProvider: { await coordinator.connection(for: preview.originHost ?? host) },
-                                initialLaunch: launch, paneReady: isActive && isPaneOwner(), onLaunch: { coordinator.completeAuthenticationOffer(launch.offerID) })
-            } else if preview.url.isFileURL {
-                NativeFilePreview(url: preview.url)
-            } else {
-                HostBrowserView(url: preview.url, host: host,
-                                connectionProvider: { await coordinator.connection(for: host) })
+            if preview.browser {
+                let originHost = preview.originHost ?? host
+                let originWorktree = preview.originWorktree ?? worktree
+                BrowserModeView(target: preview.originSession ?? sessionName, hostID: originHost.id,
+                                connectionProvider: { await coordinator.connection(for: originHost) },
+                                originalURL: preview.url, authenticate: { url in
+                                    try await WorktreePortClient.authenticate(url, in: originWorktree) { request in
+                                        try await coordinator.sendWorktreeManagement(request, to: originHost)
+                                    }
+                                }, isPaneOwner: isPaneOwner, initialLaunch: preview.chromeLaunch,
+                                paneReady: browserConnectionReady && isPaneFocused && isPaneOwner(), onLaunch: {
+                                    if let launch = preview.chromeLaunch { coordinator.completeAuthenticationOffer(launch.offerID) }
+                                })
+            } else if let url = preview.url, url.isFileURL {
+                NativeFilePreview(url: url)
+            } else if let url = preview.url {
+                HostBrowserView(url: url, host: preview.originHost ?? host,
+                                connectionProvider: { await coordinator.connection(for: preview.originHost ?? host) })
             }
         }
+
         .alert("Could not open resource", isPresented: Binding(
             get: { error != nil }, set: { if !$0 { error = nil } }
         )) {
@@ -145,12 +172,18 @@ struct RemoteOpenButton: View {
         }
     }
 
+    private func openChromeTabs() {
+        guard isActive, isPaneOwner(), canPresentAuthentication(), chromePresentation.begin(nil) else { return }
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        preview = Preview(url: nil, browser: true, originSession: sessionName, originWorktree: worktree, originHost: host)
+    }
+
     private func deferAuthenticationPresentation() {
         if let id = chromePresentation.deferCurrent() { coordinator.deferAuthenticationOffer(id) }
     }
 
     private func checkOwnership() {
-        if isActive, hasOwnershipSnapshot, !isPaneOwner(), preview?.chromeLaunch != nil {
+        if isActive, hasOwnershipSnapshot, !isPaneOwner(), preview?.browser == true {
             deferAuthenticationPresentation(); preview = nil
         }
     }
@@ -186,11 +219,15 @@ struct RemoteOpenButton: View {
                     return
                 }
                 guard chromePresentation.begin(offer.id) else { return }
-                preview = Preview(url: url, chromeLaunch: ChromeTabInitialLaunch(offer: offer), originHost: host)
+                preview = Preview(url: url, browser: true, originSession: sessionName, originWorktree: worktree,
+                                  chromeLaunch: ChromeTabInitialLaunch(offer: offer), originHost: host)
                 return
             }
             guard chromePresentation.begin(nil) else { return }
-            preview = Preview(url: url)
+            if isPaneOwner() {
+                preview = Preview(url: url, browser: true, originSession: sessionName, originWorktree: worktree,
+                                  chromeLaunch: ChromeTabInitialLaunch(offer: offer), originHost: host)
+            } else { preview = Preview(url: url, originHost: host) }
             return
         }
         isDownloading = true

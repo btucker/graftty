@@ -2,6 +2,10 @@ import Foundation
 import Testing
 import GrafttyProtocol
 import GrafttyRemoteClient
+#if canImport(UIKit)
+import CoreGraphics
+import ImageIO
+#endif
 @testable import GrafttyMobileKit
 
 struct RemoteAuthenticationOffersTests {
@@ -195,3 +199,188 @@ private final class AmbiguousOfferDriver: ChromeTabChannelDriver, @unchecked Sen
         #expect(presentation.finishDismissal() == .deferred(second))
         #expect(presentation.canPresent)
     }
+
+@MainActor
+struct ChromeViewportModelTests {
+    @Test("@spec CHROME-2.11: When browser geometry changes, the application shall block image input immediately and accept only a fresh frame matching the acknowledged viewport and selected tab.")
+    func resizeRejectsHeldOldFrame() async throws {
+        let model = ChromeTabViewerModel(), driver = ViewportDriver()
+        let run = Task { await model.run(target: "pane", initialLaunch: nil, onLaunch: {}, makeDriver: { driver }) }
+        defer { model.close(); run.cancel() }
+        #expect(try await waitUntil { model.frameInputEnabled })
+        driver.holdNextFrame()
+        let held = Task { await model.send(.frame(tabID: "page"), target: "pane", polling: true) }
+        #expect(try await waitUntil { driver.hasHeldFrame })
+        model.requestViewport(CGSize(width: 390, height: 700), target: "pane")
+        #expect(!model.frameInputEnabled)
+        let tap = Task { await model.send(.tap(tabID: "page", x: 0.5, y: 0.5), target: "pane") }
+        await Task.yield()
+        driver.releaseFrame()
+        _ = await held.value
+        #expect(!(await tap.value))
+        #expect(!model.frameInputEnabled)
+        #expect(try await waitUntil { driver.viewportActions.count == 1 })
+        #expect(try await waitUntil { model.state.width == 390 })
+        #expect(await model.send(.frame(tabID: "page"), target: "pane", polling: true))
+        #expect(model.frameInputEnabled)
+        #expect(model.frameSize == CGSize(width: 390, height: 700))
+        #expect(driver.tapCount == 0)
+        model.close(); run.cancel(); await run.value
+    }
+
+    @Test("@spec CHROME-2.12: While a viewport resize is in flight, the application shall retain only the latest requested geometry without canceling the connection, and shall discard pending resize work when the viewer closes.")
+    func replacesPendingGeometryAndCancelsOnClose() async throws {
+        let model = ChromeTabViewerModel(), driver = ViewportDriver()
+        let run = Task { await model.run(target: "pane", initialLaunch: nil, onLaunch: {}, makeDriver: { driver }) }
+        defer { model.close(); run.cancel() }
+        #expect(try await waitUntil { model.frameInputEnabled })
+        driver.holdNextViewport()
+        model.requestViewport(CGSize(width: 390, height: 700), target: "pane")
+        try #require(try await waitUntil { driver.hasHeldViewport })
+        model.requestViewport(CGSize(width: 320, height: 500), target: "pane")
+        model.requestViewport(CGSize(width: 420, height: 800), target: "pane")
+        #expect(driver.closeCount == 0)
+        driver.releaseViewport()
+        #expect(try await waitUntil { driver.viewportActions.count == 2 })
+        #expect(driver.viewportActions == [.viewport(tabID: "page", width: 390, height: 700),
+                                           .viewport(tabID: "page", width: 420, height: 800)])
+        driver.holdNextViewport()
+        model.requestViewport(CGSize(width: 380, height: 600), target: "pane")
+        try #require(try await waitUntil { driver.hasHeldViewport })
+        model.requestViewport(CGSize(width: 340, height: 550), target: "pane")
+        model.close(); run.cancel(); await run.value
+        #expect(driver.closeCount > 0)
+        #expect(driver.viewportActions.count == 3)
+        #expect(!model.frameInputEnabled)
+    }
+
+    @Test("A selected-tab change retains one tracked pending resize and close cancels its replacement")
+    func selectionRetainsSinglePendingResize() async throws {
+        let model = ChromeTabViewerModel(), driver = ViewportDriver()
+        let run = Task { await model.run(target: "pane", initialLaunch: nil, onLaunch: {}, makeDriver: { driver }) }
+        defer { model.close(); run.cancel() }
+        try #require(try await waitUntil { model.frameInputEnabled })
+        model.requestViewport(CGSize(width: 390, height: 700), target: "pane")
+        #expect(await model.send(.select(tabID: "other"), target: "pane"))
+        driver.holdNextViewport()
+        // The original debounce wakes at 120ms and schedules the selected tab's
+        // replacement; update geometry while that replacement is still pending.
+        try await Task.sleep(for: .milliseconds(160))
+        model.requestViewport(CGSize(width: 430, height: 810), target: "pane")
+        try #require(try await waitUntil { driver.hasHeldViewport })
+        try await Task.sleep(for: .milliseconds(150))
+        driver.releaseViewport()
+        try #require(try await waitUntil { model.state.width == 430 })
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(driver.viewportActions == [.viewport(tabID: "other", width: 430, height: 810)])
+        driver.holdNextViewport()
+        model.requestViewport(CGSize(width: 400, height: 600), target: "pane")
+        try #require(try await waitUntil { driver.hasHeldViewport })
+        model.requestViewport(CGSize(width: 320, height: 500), target: "pane")
+        model.close(); run.cancel(); await run.value
+        #expect(driver.viewportActions.count == 2)
+        #expect(!model.frameInputEnabled)
+    }
+
+    @Test("Unchanged browser geometry is restored after the connection resumes")
+    func unchangedGeometryRestoresAfterReconnect() async throws {
+        let model = ChromeTabViewerModel(), firstDriver = ViewportDriver()
+        model.requestViewport(CGSize(width: 390, height: 700), target: "pane")
+        let first = Task { await model.run(target: "pane", initialLaunch: nil, onLaunch: {}, makeDriver: { firstDriver }) }
+        defer { model.close(); first.cancel() }
+        try #require(try await waitUntil { model.frameInputEnabled && model.frameSize == CGSize(width: 390, height: 700) })
+        model.close(); first.cancel(); await first.value
+        let nextDriver = ViewportDriver()
+        let resumed = Task { await model.run(target: "pane", initialLaunch: nil, onLaunch: {}, makeDriver: { nextDriver }) }
+        defer { model.close(); resumed.cancel() }
+        try #require(try await waitUntil { model.frameInputEnabled && model.frameSize == CGSize(width: 390, height: 700) })
+        #expect(nextDriver.viewportActions == [.viewport(tabID: "page", width: 390, height: 700)])
+        model.close(); resumed.cancel(); await resumed.value
+    }
+
+    @Test("@spec CHROME-2.13: When the user requests the browser keyboard, the application shall expose keyboard input through observable presentation state and hide it when the viewer closes.")
+    func keyboardRequiresAnExplicitAction() {
+        let model = ChromeTabViewerModel()
+        #expect(!model.keyboardPresented)
+        model.toggleKeyboard()
+        #expect(model.keyboardPresented)
+        model.close()
+        #expect(!model.keyboardPresented)
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws -> Bool {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        return condition()
+    }
+}
+
+private final class ViewportDriver: ChromeTabChannelDriver, @unchecked Sendable {
+    private let lock = NSLock()
+    private var actions: [ChromeTabAction] = []
+    private var width = 1024, height = 768
+    private var selectedTabID = "page"
+    private var viewportID: UInt64 = 1
+    private var holdFrame = false, holdViewport = false
+    private var frameWaiter: (CheckedContinuation<ChromeTabResponse, Error>, ChromeTabResponse)?
+    private var viewportWaiter: (CheckedContinuation<ChromeTabResponse, Error>, ChromeTabResponse)?
+    private var closed = false, closes = 0
+    var viewportActions: [ChromeTabAction] { locked { actions.filter { if case .viewport = $0 { return true }; return false } } }
+    var tapCount: Int { locked { actions.filter { if case .tap = $0 { return true }; return false }.count } }
+    var closeCount: Int { locked { closes } }
+    var hasHeldFrame: Bool { locked { frameWaiter != nil } }
+    var hasHeldViewport: Bool { locked { viewportWaiter != nil } }
+    func open() async throws {}
+    func holdNextFrame() { locked { holdFrame = true } }
+    func holdNextViewport() { locked { holdViewport = true } }
+    func releaseFrame() { let entry = locked { let value = frameWaiter; frameWaiter = nil; return value }; entry?.0.resume(returning: entry!.1) }
+    func releaseViewport() { let entry = locked { let value = viewportWaiter; viewportWaiter = nil; return value }; entry?.0.resume(returning: entry!.1) }
+    func close() {
+        let entries = locked {
+            closes += 1; closed = true
+            let values = [frameWaiter, viewportWaiter].compactMap { $0 }
+            frameWaiter = nil; viewportWaiter = nil
+            return values
+        }
+        for entry in entries { entry.0.resume(throwing: CancellationError()) }
+    }
+    func send(_ request: ChromeTabRequest) async throws -> ChromeTabResponse {
+        let plan = locked { () -> (response: ChromeTabResponse, held: Int) in
+            actions.append(request.action)
+            var held = 0, frame = true
+            if case .select(let id) = request.action { selectedTabID = id }
+            if case .viewport(_, let newWidth, let newHeight) = request.action {
+                width = newWidth; height = newHeight; viewportID += 1; frame = false
+                if holdViewport { holdViewport = false; held = 2 }
+            } else if case .frame = request.action, holdFrame { holdFrame = false; held = 1 }
+            let image = frame ? ChromeTabFrame(tabID: selectedTabID, jpeg: Self.jpeg(width: width, height: height), sequence: viewportID,
+                                               width: width, height: height, viewportID: viewportID) : nil
+            return (.init(state: .init(tabs: [.init(id: selectedTabID, title: "Page", url: "https://example.com")],
+                                      selectedTabID: selectedTabID, frame: image, width: width, height: height, viewportID: viewportID)), held)
+        }
+        if plan.held == 0 { return plan.response }
+        return try await withCheckedThrowingContinuation { continuation in
+            locked {
+                if closed { continuation.resume(throwing: CancellationError()) }
+                else if plan.held == 1 { frameWaiter = (continuation, plan.response) }
+                else { viewportWaiter = (continuation, plan.response) }
+            }
+        }
+    }
+    private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
+    private static func jpeg(width: Int, height: Int) -> Data {
+        #if canImport(UIKit)
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let bytes = NSMutableData()
+        let destination = CGImageDestinationCreateWithData(bytes as CFMutableData, "public.jpeg" as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+        _ = CGImageDestinationFinalize(destination)
+        return bytes as Data
+        #else
+        return Data([1])
+        #endif
+    }
+}

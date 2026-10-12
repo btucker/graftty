@@ -3,13 +3,11 @@ import GrafttyProtocol
 
 /// Retained by the presentation, independently of scene-driven viewer connections.
 final class ChromeTabInitialLaunch {
-    let target: String
     let offerID: UUID
     private let originalURL: String
     private var tabID: String?
 
     init(offer: RemoteOpenOffer) {
-        target = offer.paneSessionName ?? ""
         offerID = offer.id
         originalURL = offer.url?.absoluteString ?? ""
     }
