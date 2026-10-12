@@ -3210,6 +3210,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-4.5** When Local browser mode is selected, the application shall use the retained original OAuth offer for sign-in, otherwise use the current selected HTTP(S) page, and reject an authorization page without its originating offer.
 
+### CHROME-5.x
+
+**CHROME-5.1** When the iOS project is regenerated, the application shall place Chrome rendering tests only in the foreground browser test host and retain ordinary session tests in the unhosted unit bundle.
+
+**CHROME-5.2** When the browser test host metadata is regenerated, the application shall retain its launch-screen declaration so native keyboard and viewport tests use modern scene geometry.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x
