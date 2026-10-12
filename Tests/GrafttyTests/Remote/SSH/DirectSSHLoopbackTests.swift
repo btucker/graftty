@@ -9,6 +9,9 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
 import Testing
+#if canImport(Network)
+import Network
+#endif
 
 @Suite(.serialized)
 struct DirectSSHLoopbackTests {
@@ -21,12 +24,12 @@ struct DirectSSHLoopbackTests {
         var fingerprint: RemoteIdentityFingerprint {
             get throws { RemoteIdentityFingerprint(of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)) }
         }
-        func peer(key: Curve25519.Signing.PrivateKey, id: String = "client", allowed: Bool = true, managementAllowed: Bool = true) throws -> TrustedPeer {
+        func peer(key: Curve25519.Signing.PrivateKey, id: String = "client", allowed: Bool = true, managementAllowed: Bool = true, tunnelAllowed: Bool = false) throws -> TrustedPeer {
             TrustedPeer(id: RemoteDeviceID(value: id), kind: .mac,
                         publicKey: try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation),
                         displayName: id,
                         capabilities: PairedDeviceCapabilities(terminalControl: allowed ? .allowed : .disabled,
-                            portTunnel: .disabled, screenView: .disabled, screenControl: .disabled,
+                            portTunnel: tunnelAllowed ? .allowedLoopback : .disabled, screenView: .disabled, screenControl: .disabled,
                             worktreeManagement: managementAllowed ? .allowed : .disabled),
                         pairedAt: Date(), lastSeenAt: nil)
         }
@@ -44,6 +47,94 @@ struct DirectSSHLoopbackTests {
         }
         func cleanup() { try? FileManager.default.removeItem(at: directory) }
     }
+
+    #if canImport(Network)
+    @Test("@spec PORTS-5.6: When a paired host allows port tunneling, a local port forward shall relay raw TCP bytes and close sockets when stopped or its parent disconnects.", .timeLimit(.minutes(1)), arguments: [false, true])
+    func localPortForwardEchoAndDisconnect(closeParent: Bool) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey, tunnelAllowed: true))
+        let server = f.server()
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        let echo = try ForwardEchoServer()
+        let echoPort = try await echo.start()
+        defer { echo.stop() }
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            let forward = try await client.forwardLocalPort(host: "127.0.0.1", port: Int(echoPort))
+            defer { forward.stop() }
+            let socket = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: forward.localPort)!, using: .tcp)
+            socket.start(queue: DispatchQueue(label: "forward-test-client"))
+            defer { socket.cancel() }
+            let deadline = Task { try? await Task.sleep(for: .seconds(5)); if !Task.isCancelled { socket.cancel() } }
+            defer { deadline.cancel() }
+            let payload = Data("GET / HTTP/1.0\r\n\r\n".utf8)
+            try await BrowserProxy.send(payload, to: socket)
+            let echoed = try await forwardReceive(socket, count: payload.count)
+            #expect(echoed == payload) // A SOCKS greeting must never prefix raw data.
+            let closing = ContinuousClock.now
+            if closeParent { await client.close() } else { forward.stop() }
+            #expect((try? await forwardReceive(socket, count: 1))?.isEmpty != false)
+            #expect(closing.duration(to: .now) < .seconds(3))
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec PORTS-5.8: When a forwarded TCP destination finishes a finite response, the application shall deliver all queued bytes before reporting EOF to the local client.", .timeLimit(.minutes(1)))
+    func localPortForwardDrainsFiniteResponse() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey, tunnelAllowed: true))
+        let server = f.server()
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        let payload = Data(repeating: 0x5a, count: 8 * 1024 * 1024)
+        let echo = try ForwardEchoServer(response: payload)
+        let echoPort = try await echo.start()
+        defer { echo.stop() }
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            let forward = try await client.forwardLocalPort(host: "127.0.0.1", port: Int(echoPort))
+            defer { forward.stop() }
+            let socket = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: forward.localPort)!, using: .tcp)
+            socket.start(queue: DispatchQueue(label: "forward-test-finite"))
+            defer { socket.cancel() }
+            let deadline = Task { try? await Task.sleep(for: .seconds(15)); if !Task.isCancelled { socket.cancel() } }
+            defer { deadline.cancel() }
+            try await BrowserProxy.send(Data("GET / HTTP/1.0\r\n\r\n".utf8), to: socket)
+            var response = Data()
+            while true {
+                let (bytes, complete) = await withCheckedContinuation { (continuation: CheckedContinuation<(Data, Bool), Never>) in
+                    socket.receive(minimumIncompleteLength: 1, maximumLength: 32768) { data, _, complete, error in
+                        continuation.resume(returning: (data ?? Data(), complete || error != nil))
+                    }
+                }
+                response.append(bytes)
+                if complete { break }
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            #expect(response == payload)
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec PORTS-5.7: If a host denies tunneling, local port forwarding shall fail before exposing a listener without bypassing host authorization.", .timeLimit(.minutes(1)))
+    func localPortForwardRejectsDisabledCapability() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey))
+        let server = f.server()
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            do {
+                let forward = try await client.forwardLocalPort(host: "127.0.0.1", port: 1)
+                forward.stop()
+                Issue.record("Denied capability must reject the forward before browser launch")
+            } catch { }
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+    #endif
 
     @Test("@spec REMOTE-20.3: When a paired peer connects over direct SSH, the application shall authenticate and dispatch existing Graftty subsystem channels over TCP.", .timeLimit(.minutes(1)))
     func subsystemRoundTrip() async throws {
@@ -202,3 +293,63 @@ private final class DirectEchoTerminalStream: GrafttyKit.TerminalByteStream, Sen
     func send(_ bytes: Data) async throws { continuation.yield(bytes) }
     func close() async { continuation.finish() }
 }
+
+#if canImport(Network)
+private func forwardReceive(_ socket: NWConnection, count: Int) async throws -> Data {
+    try await withCheckedThrowingContinuation { continuation in
+        socket.receive(minimumIncompleteLength: count, maximumLength: count) { data, _, _, error in
+            if let error { continuation.resume(throwing: error) }
+            else { continuation.resume(returning: data ?? Data()) }
+        }
+    }
+}
+
+private final class ForwardEchoServer: @unchecked Sendable {
+    let listener: NWListener
+    let queue = DispatchQueue(label: "forward-test-echo")
+    private var sockets: [NWConnection] = []
+    private let response: Data?
+    init(response: Data? = nil) throws {
+        self.response = response
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: parameters)
+    }
+    func start() async throws -> UInt16 {
+        try await withCheckedThrowingContinuation { continuation in
+            listener.stateUpdateHandler = { [self] state in
+                if case .ready = state, let port = listener.port {
+                    listener.stateUpdateHandler = nil
+                    continuation.resume(returning: port.rawValue)
+                } else if case .failed(let error) = state {
+                    listener.stateUpdateHandler = nil
+                    continuation.resume(throwing: error)
+                }
+            }
+            listener.newConnectionHandler = { [self] socket in
+                sockets.append(socket)
+                socket.start(queue: queue)
+                socket.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, _, _ in
+                    guard let data, !data.isEmpty else { socket.cancel(); return }
+                    if let response = self.response {
+                        socket.send(content: response, contentContext: .finalMessage, isComplete: true,
+                                    completion: .contentProcessed { _ in })
+                    } else {
+                        socket.send(content: data, completion: .contentProcessed { _ in })
+                    }
+                }
+            }
+            listener.start(queue: queue)
+        }
+    }
+    func stop() {
+        queue.async { [self] in
+            listener.newConnectionHandler = nil
+            listener.stateUpdateHandler = nil
+            listener.cancel()
+            sockets.forEach { $0.cancel() }
+            sockets.removeAll()
+        }
+    }
+}
+#endif

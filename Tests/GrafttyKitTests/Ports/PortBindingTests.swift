@@ -4,7 +4,7 @@ import Testing
 
 @Suite("PortBinding")
 struct PortBindingTests {
-    @Test("PortBinding equality keys on (port, scope, pid, processName)")
+    @Test("PortBinding equality preserves listener identity")
     func equality() {
         let a = PortBinding(port: 3000, scope: .loopback, processName: "node", pid: 100)
         let b = PortBinding(port: 3000, scope: .loopback, processName: "node", pid: 100)

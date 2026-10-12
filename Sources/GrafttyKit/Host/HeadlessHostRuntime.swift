@@ -14,6 +14,11 @@ public final class HeadlessHostRuntime {
     let presence: TeamPresenceStorage
     let recaps = AttentionRecapCoordinator()
     let agentSetup: HostAgentSetup
+    let portScanner: PortScanner
+    var portScanInFlight = false
+    var registeredPortSessions: [PaneSlotID: String] = [:]
+    var portBindingSessions: [PaneSlotID: String] = [:]
+    var portBindingsByPane: [PaneSlotID: [PortBinding]] = [:]
     var projectIconRefreshTask: Task<Void, Never>?
     var projectIcons: [UUID: HostProjectIcon] = [:]
     var projectIconLoads: [UUID: HostProjectIconLoad] = [:]
@@ -30,8 +35,9 @@ public final class HeadlessHostRuntime {
     public var origin: WorktreeOrigin?
 
     public init(configuration: HostConfiguration, terminals: (any HostTerminalDriver)? = nil,
-                initialState: AppState? = nil) throws {
+                initialState: AppState? = nil, portScanner: PortScanner? = nil) throws {
         self.configuration = configuration
+        self.portScanner = portScanner ?? PortScanner()
         agentSetup = HostAgentSetup(configuration: configuration)
         launcher = ZmxLauncher(executable: configuration.zmxExecutable, zmxDir: configuration.zmxDirectory)
         self.terminals = terminals ?? ZmxHostTerminalDriver(launcher: launcher)
@@ -93,6 +99,7 @@ public final class HeadlessHostRuntime {
             }
         }
         try save()
+        await refreshPortBindings()
     }
 
     public func openWorktree(_ path: String, command: String? = nil) async throws -> String {
@@ -126,6 +133,7 @@ public final class HeadlessHostRuntime {
             try? await terminals.kill(launcher.sessionName(for: session))
             throw error
         }
+        await refreshPortBindings()
         return launcher.sessionName(for: session)
     }
 
@@ -151,6 +159,7 @@ public final class HeadlessHostRuntime {
             try? await terminals.kill(launcher.sessionName(for: session))
             throw error
         }
+        await refreshPortBindings()
         return launcher.sessionName(for: session)
     }
 
@@ -169,6 +178,7 @@ public final class HeadlessHostRuntime {
         if worktree.splitTree.leafCount == 0 { worktree.state = .closed }
         state.repos[index.repo].worktrees[index.worktree] = worktree
         try save()
+        await refreshPortBindings()
     }
 
     public func createWorktree(repository: String, name: String, branch: String,
@@ -228,6 +238,7 @@ public final class HeadlessHostRuntime {
         for session in worktree.paneSessions.values { try? await terminals.kill(launcher.sessionName(for: session)) }
         state.removeWorktree(atPath: path)
         try save()
+        await refreshPortBindings()
     }
 
     public func shutdown() throws { deliveryTask?.cancel(); deliveryTask = nil; maintenance?.stop(); maintenance = nil; try save(); terminals.detachAll() }
@@ -235,6 +246,10 @@ public final class HeadlessHostRuntime {
     public func spawn(session: PaneSessionID, path: String, command: String? = nil) -> ZmxSpawnConfiguration {
         var environment = ProcessInfo.processInfo.environment
         for key in ZmxLauncher.leakyEnvKeysToStripAtAppLaunch { environment.removeValue(forKey: key) }
+        #if os(Linux)
+        environment["PATH"] = HostAgentEnvironment.path(
+            inheritedPath: environment["PATH"] ?? "/usr/local/bin:/usr/bin:/bin", home: NSHomeDirectory())
+        #endif
         environment["SHELL"] = configuration.shell
         environment["GRAFTTY_STATE_DIR"] = configuration.stateDirectory.path
         let config = ZmxSpawnConfiguration.make(launcher: launcher, paneSessionID: session, worktreePath: path,
@@ -289,7 +304,7 @@ public final class HeadlessHostRuntime {
                     attentionTimestamp: worktree.attention?.timestamp,
                     layout: worktree.state == .running ? worktree.splitTree.root.flatMap { layout($0, worktree: worktree) } : nil,
                     origin: origin, sidebar: SidebarHostNavigation.metadata(for: worktree, projectID: repo.path,
-                        folders: [], repositoryPath: repo.path))
+                        folders: [], repositoryPath: repo.path), portBindings: wirePortBindings(for: worktree))
             }
         }
     }

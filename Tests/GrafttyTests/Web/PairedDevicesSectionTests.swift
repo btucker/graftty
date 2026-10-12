@@ -60,6 +60,24 @@ struct PairedDevicesSectionPerformRemoveTests {
         )
     }
 
+    @Test("@spec PORTS-5.13: When the host changes a paired device's port permission, the application shall persist that permission before closing its existing connection, and shall not close a connection after a failed update.")
+    func updatesPortPermissionBeforeRevocation() async throws {
+        let directory = Self.tempDir()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TrustedPeerStore(directory: directory)
+        let peer = Self.makePeer(id: RemoteDeviceID(value: "ports-peer"))
+        try store.add(peer)
+        let error = await PairedDevicesSection.performPortPermissionUpdate(peerID: peer.id,
+            permission: .allowedLoopback, store: store) { id in
+                #expect(id == peer.id)
+                #expect((try? store.get(id: id)?.capabilities.portTunnel) == .allowedLoopback)
+            }
+        #expect(error == nil)
+        let missing = await PairedDevicesSection.performPortPermissionUpdate(peerID: .init(value: "missing"),
+            permission: .disabled, store: store) { _ in Issue.record("Must not revoke after failed update") }
+        #expect(missing != nil)
+    }
+
     @Test("on a successful store removal, revokes the peer's live connection AFTER it leaves the store")
     func revokesAfterSuccessfulRemoval() async throws {
         let store = TrustedPeerStore(directory: Self.tempDir())

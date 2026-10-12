@@ -7,8 +7,8 @@ private enum LinuxHostMaintenanceFailure: Error, LocalizedError {
     }
 }
 
-public struct LinuxHostComponentOutcome: Sendable, Equatable, Identifiable {
-    public enum Status: Sendable { case succeeded, failed, unknown, skipped }
+public struct LinuxHostComponentOutcome: Codable, Sendable, Equatable, Identifiable {
+    public enum Status: String, Codable, Sendable { case succeeded, failed, unknown, skipped }
     public let component: LinuxHostComponent
     public let status: Status
     public let message: String

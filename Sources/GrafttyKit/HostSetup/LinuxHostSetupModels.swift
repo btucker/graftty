@@ -21,7 +21,7 @@ public struct LinuxHostDestination: Codable, Sendable, Hashable {
     }
 }
 
-public struct LinuxHostResolvedSSH: Sendable, Equatable {
+public struct LinuxHostResolvedSSH: Codable, Sendable, Equatable {
     public let hostname: String
     public let user: String
     public let port: Int
@@ -85,14 +85,16 @@ public struct LinuxHostSetupPlan: Sendable, Equatable {
     public let archive: LinuxHostArchive
     public let client: LinuxHostTrustRequest
     public let agentTools: [LinuxHostComponent]
+    public let requireAgentTools: Bool
 
-    public init(destination: LinuxHostDestination, destinationRoot: String, projects: [LinuxHostProject], archive: LinuxHostArchive, client: LinuxHostTrustRequest, agentTools: [LinuxHostComponent] = []) {
+    public init(destination: LinuxHostDestination, destinationRoot: String, projects: [LinuxHostProject], archive: LinuxHostArchive, client: LinuxHostTrustRequest, agentTools: [LinuxHostComponent] = [], requireAgentTools: Bool = false) {
         self.destination = destination
         self.destinationRoot = destinationRoot
         self.projects = projects
         self.archive = archive
         self.client = client
         self.agentTools = agentTools.filter { $0 != .graftty }
+        self.requireAgentTools = requireAgentTools
     }
 }
 
@@ -108,7 +110,7 @@ public struct LinuxHostSetupProgress: Sendable, Equatable {
     }
 }
 
-public struct LinuxHostSetupResult: Sendable, Equatable {
+public struct LinuxHostSetupResult: Codable, Sendable, Equatable {
     public let identity: LinuxHostIdentity
     public let openSSH: LinuxHostResolvedSSH
     public let destination: LinuxHostDestination
