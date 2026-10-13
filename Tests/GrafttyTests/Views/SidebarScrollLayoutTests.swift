@@ -311,13 +311,14 @@ struct SidebarScrollLayoutTests {
     private final class NativeMenuDispatch {
         let window: NSWindow
         let event: NSEvent
+        let releaseEvent: NSEvent
         let popup: NSPopUpButton
         let selectionItem: NSMenuItem
         var attemptedSelection = false
         var didRun = false
         var fallbackFired = false
-        init(window: NSWindow, event: NSEvent, popup: NSPopUpButton, selectionItem: NSMenuItem) {
-            self.window = window; self.event = event; self.popup = popup
+        init(window: NSWindow, event: NSEvent, releaseEvent: NSEvent, popup: NSPopUpButton, selectionItem: NSMenuItem) {
+            self.window = window; self.event = event; self.releaseEvent = releaseEvent; self.popup = popup
             self.selectionItem = selectionItem
         }
         func perform() {
@@ -356,6 +357,9 @@ struct SidebarScrollLayoutTests {
                 NotificationCenter.default.removeObserver(observer)
             }
             NSApp.finishLaunching()
+            // mouseDown enters native menu tracking synchronously. Its
+            // matching release must already be available to that event loop.
+            NSApp.postEvent(releaseEvent, atStart: true)
             window.sendEvent(event)
             didRun = true
             CFRunLoopStop(CFRunLoopGetCurrent())
@@ -421,10 +425,9 @@ struct SidebarScrollLayoutTests {
                 let selectionItem = try XCTUnwrap(popup.menu?.items.first {
                     $0.title == (mode == .manual ? "Manual Order" : "Recent Activity")
                 })
-                let dispatch = NativeMenuDispatch(window: window, event: down, popup: popup,
+                let dispatch = NativeMenuDispatch(window: window, event: down, releaseEvent: up, popup: popup,
                     selectionItem: selectionItem)
                 dispatch.perform()
-                window.sendEvent(up)
                 XCTAssertTrue(dispatch.didRun)
                 XCTAssertTrue(dispatch.attemptedSelection)
                 XCTAssertFalse(dispatch.fallbackFired, "Native menu selection timed out at probe \(probe)")
