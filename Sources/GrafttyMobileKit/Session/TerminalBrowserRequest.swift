@@ -2,6 +2,7 @@ import Foundation
 import GrafttyProtocol
 
 /// A user gesture retains its original route independently of mutable pane views.
+/// @spec CHROME-2.15: When a terminal link is activated, the application shall retain its exact URL and user-request identity, present through the existing browser only in its active originating owned pane, and reject stale host, worktree, session or owner scope.
 struct TerminalBrowserRequest: Identifiable, Equatable {
     struct Scope: Hashable {
         let hostID: UUID

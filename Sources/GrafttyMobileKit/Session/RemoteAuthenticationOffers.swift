@@ -2,6 +2,21 @@ import Foundation
 import GrafttyProtocol
 
 enum RemoteOpenPresentation {
+    /// @spec CHROME-2.17: If the host, worktree, pane or owner changes while a browser offer list awaits refresh, then the application shall hide the old list instead of opening its URLs in the replacement scope.
+    struct ScopedOffers {
+        private var scope: TerminalBrowserRequest.Scope?
+        private var values: [RemoteOpenOffer] = []
+
+        mutating func update(_ offers: [RemoteOpenOffer], in scope: TerminalBrowserRequest.Scope) {
+            self.scope = scope
+            values = offers
+        }
+
+        func offers(in current: TerminalBrowserRequest.Scope) -> [RemoteOpenOffer] {
+            scope == current ? values : []
+        }
+    }
+
     static func belongsToPane(_ offer: RemoteOpenOffer, sessionName: String, ownerDeviceID: RemoteDeviceID?) -> Bool {
         guard let url = offer.url, ChromeTabAction.launchOffer(id: offer.id, url: url.absoluteString).isValid else { return false }
         // Only explicit ordinary browsing may use an older offer without scope.

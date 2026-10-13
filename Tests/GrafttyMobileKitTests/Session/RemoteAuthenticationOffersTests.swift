@@ -9,6 +9,24 @@ import ImageIO
 @testable import GrafttyMobileKit
 
 struct RemoteAuthenticationOffersTests {
+    @Test("@spec CHROME-2.17: If the host, worktree, pane or owner changes while a browser offer list awaits refresh, then the application shall hide the old list instead of opening its URLs in the replacement scope.")
+    func offerListsRemainBoundToTheirOriginalScope() {
+        let scope = TerminalBrowserRequest.Scope(hostID: UUID(), worktree: "/project", sessionName: "same-pane", ownerDeviceID: .init(value: "same-phone"))
+        let offer = RemoteOpenOffer(id: UUID(), filename: "Page", byteCount: 0, url: URL(string: "https://old-host.example/"),
+                                   paneSessionName: scope.sessionName, browserOwnerDeviceID: scope.ownerDeviceID)
+        var snapshot = RemoteOpenPresentation.ScopedOffers()
+        snapshot.update([offer], in: scope)
+        #expect(snapshot.offers(in: scope) == [offer])
+        for replacement in [
+            TerminalBrowserRequest.Scope(hostID: UUID(), worktree: scope.worktree, sessionName: scope.sessionName, ownerDeviceID: scope.ownerDeviceID),
+            .init(hostID: scope.hostID, worktree: "/other", sessionName: scope.sessionName, ownerDeviceID: scope.ownerDeviceID),
+            .init(hostID: scope.hostID, worktree: scope.worktree, sessionName: "other", ownerDeviceID: scope.ownerDeviceID),
+            .init(hostID: scope.hostID, worktree: scope.worktree, sessionName: scope.sessionName, ownerDeviceID: .init(value: "other")),
+        ] { #expect(snapshot.offers(in: replacement).isEmpty) }
+        snapshot.update([], in: scope)
+        #expect(snapshot.offers(in: scope).isEmpty)
+    }
+
     @Test("@spec PORTS-5.43: When the mobile Open control has one HTTP or HTTPS resource offer, the application shall open that offer directly, and shall retain the resource menu for files or multiple offers.")
     func singleBrowserOfferOpensDirectly() throws {
         func offer(_ url: String?) throws -> RemoteOpenOffer {
