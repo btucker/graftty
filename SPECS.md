@@ -2582,6 +2582,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-15.16** If another display client owns a Mac pane before its percent picker is dismissed, then the application shall discard the buffered token without taking display control back or sending stale input.
 
+**TEAM-15.17** While agent completion is idle, the application shall invalidate its input boundary without publishing unchanged picker state or triggering a terminal view refresh.
+
 ## INSTR — Agent Instruction Files
 
 ### INSTR-1.x

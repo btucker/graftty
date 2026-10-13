@@ -1,9 +1,30 @@
+import Combine
 import Testing
 import GrafttyProtocol
 @testable import GrafttyCommandUI
 
 @Suite @MainActor
 struct AgentCompletionModelTests {
+    @Test("@spec TEAM-15.17: While agent completion is idle, the application shall invalidate its input boundary without publishing unchanged picker state or triggering a terminal view refresh.")
+    func idleBoundaryInvalidationDoesNotPublish() {
+        let model = AgentCompletionModel()
+        model.loadCandidates = { [] }
+        model.onInsertText = { _ in }
+        var publications = 0
+        let observation = model.objectWillChange.sink { publications += 1 }
+        defer { observation.cancel() }
+        model.invalidateBoundary()
+        model.invalidateBoundary()
+        model.cancel(preserveLiteral: true)
+        #expect(publications == 0)
+        #expect(!model.handleText("%"), "An idle reset must still invalidate the word boundary")
+        model.cancel(preserveLiteral: false)
+        #expect(publications == 0)
+        #expect(model.handleText("%"), "A deliberate cancel must still restore a clean word boundary")
+        #expect(publications > 0, "Opening the picker must publish changed state")
+        model.cancel(preserveLiteral: false)
+    }
+
     private func candidate(_ name: String, project: String = "/repo", host: String = "This Mac") -> AgentCompletionCandidate {
         .init(address: "/repo/\(name)#codex", projectPath: project, projectName: "Project", worktreePath: "/repo/\(name)", worktreeName: name, hostName: host, runtime: "codex")
     }

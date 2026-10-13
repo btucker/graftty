@@ -443,7 +443,7 @@ public final class TerminalInputContainerView: UIView,
             if let newValue {
                 storedCommittedSoftwareInput = newValue
                 isCommittedSoftwareInputEligible = true
-                terminalView.isKeyboardInputEnabled = true
+                if !terminalView.isKeyboardInputEnabled { terminalView.isKeyboardInputEnabled = true }
             } else {
                 if wasEligible {
                     agentCompletion?.invalidateBoundary()
@@ -451,7 +451,9 @@ public final class TerminalInputContainerView: UIView,
                     terminalView.resetTextContext()
                 }
                 isCommittedSoftwareInputEligible = false
-                terminalView.isKeyboardInputEnabled = false
+                // The renderer resigns on every false assignment, even when
+                // already disabled. Avoid another input-boundary callback.
+                if terminalView.isKeyboardInputEnabled { terminalView.isKeyboardInputEnabled = false }
                 terminalView.stopHardwareArrowRepeat()
                 storedCommittedSoftwareInput = nil
             }
