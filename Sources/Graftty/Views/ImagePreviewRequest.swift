@@ -39,7 +39,7 @@ enum ImagePreviewRequest {
                     return .error("The image request or its display leader changed before delivery. Retry graftty image.")
                 }
             case .mac:
-                previews.present(snapshot.image, filename: url.lastPathComponent, for: scope.pane)
+                previews.present(snapshot.image, filename: url.lastPathComponent, sourceURL: url, for: scope.pane)
             case .unavailable:
                 return .error("The pane's display leader cannot receive a native image preview. Take Control on this Mac or use graftty open.")
             }

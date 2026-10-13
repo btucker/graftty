@@ -3348,7 +3348,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-1.3** When a pane requests a native image preview, the application shall replace only that pane's preview, retain a bounded number of previews, and dismiss only the requested pane.
 
-**IMAGE-1.4** When a native image tray renders, the application shall overlay at most 45 percent of the pane height and 360 points without resizing the terminal, fit the image with its aspect ratio, and bound zoom from fit to eight times fit.
+**IMAGE-1.4** When a native image tray renders, the application shall initially overlay at most 45 percent of the pane height and 360 points without resizing the terminal, fit the image with its aspect ratio, and bound zoom from fit to eight times fit.
 
 **IMAGE-1.5** When the application loads an image preview, it shall reject missing, nonregular, invalid, or larger than 20 MB files and decode only the oriented first frame with a maximum edge of 2048 pixels.
 
@@ -3367,6 +3367,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IMAGE-1.12** When a mobile leader receives an image request, the application shall offer the validated file snapshot for its originating pane, replacing that pane's previous image offer without rereading a changed file.
 
 **IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes to an iOS pane leader and leave the host tray unchanged, while unavailable leaders and invalid origins shall return errors.
+
+**IMAGE-1.14** While the native image tray toolbar is visible, the application shall use native zoom controls, keep Fit legible, and expose Preview through a labeled button or a compact icon without clipping either action.
+
+**IMAGE-1.15** When the user selects Open in Preview from an image tray, the application shall open the originating file specifically in Preview.app and report missing-file, unavailable-app, or launch errors without dismissing the tray.
+
+**IMAGE-1.16** When the user drags the image tray header or resize grip, the application shall move or resize the tray within the terminal content bounds while retaining usable controls and an unobscured terminal region, without resizing the terminal grid.
+
+**IMAGE-1.17** While a user moves or resizes the image tray through pointer input, the application shall keep its native controls operable and allow clicks outside the tray to reach the unchanged terminal surface.
+
+**IMAGE-1.18** When the user clicks the native image tray zoom, Fit, or Close control, the application shall perform that action without starting a header drag, and restore terminal focus when closing a focused preview.
 
 ## AGENT — AGENT
 

@@ -17,9 +17,10 @@ struct ImagePreviewTests {
         let image = try fixture()
         store.present(image, filename: "a.png", for: a)
         store.present(image, filename: "b.png", for: b)
-        store.present(image, filename: "new.png", for: a)
+        store.present(image, filename: "new.png", sourceURL: URL(fileURLWithPath: "/tmp/new.png"), for: a)
         #expect(store.previews.count == 2)
         #expect(store.previews[a]?.filename == "new.png")
+        #expect(store.previews[a]?.sourceURL?.path == "/tmp/new.png")
         #expect(store.previews[b]?.filename == "b.png")
         store.dismiss(a)
         #expect(store.previews[a] == nil)
@@ -28,7 +29,7 @@ struct ImagePreviewTests {
         #expect(store.previews.count == ImagePreviewStore.maximumPreviews)
     }
 
-    @Test("@spec IMAGE-1.4: When a native image tray renders, the application shall overlay at most 45 percent of the pane height and 360 points without resizing the terminal, fit the image with its aspect ratio, and bound zoom from fit to eight times fit.")
+    @Test("@spec IMAGE-1.4: When a native image tray renders, the application shall initially overlay at most 45 percent of the pane height and 360 points without resizing the terminal, fit the image with its aspect ratio, and bound zoom from fit to eight times fit.")
     func boundsLayoutAndZoom() {
         #expect(ImagePreviewLayout.trayHeight(paneHeight: 800) == 360)
         #expect(ImagePreviewLayout.trayHeight(paneHeight: 200) == 90)
@@ -110,7 +111,7 @@ struct ImagePreviewTests {
         #expect(tray.scrollView.documentVisibleRect.width < tray.scrollView.contentSize.width)
         tray.fit()
         #expect(tray.scrollView.magnification == 1)
-        #expect(tray.scrollView.frame.height == 234)
+        #expect(tray.scrollView.frame.height == 226)
         tray.updatePreview(.init(image: try fixture(width: 30, height: 40), filename: "second.png"))
         #expect(tray.ownsFocus)
         #expect(tray.scrollView.magnification == 1)

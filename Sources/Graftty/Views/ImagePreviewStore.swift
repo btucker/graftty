@@ -12,6 +12,13 @@ final class ImagePreviewStore: ObservableObject {
         let id = UUID()
         let image: CGImage
         let filename: String
+        let sourceURL: URL?
+
+        init(image: CGImage, filename: String, sourceURL: URL? = nil) {
+            self.image = image
+            self.filename = filename
+            self.sourceURL = sourceURL
+        }
     }
 
     @Published private(set) var previews: [PaneSlotID: Preview] = [:]
@@ -35,10 +42,10 @@ final class ImagePreviewStore: ObservableObject {
         if isCurrent(generation, for: pane) { generations.removeValue(forKey: pane) }
     }
 
-    func present(_ image: CGImage, filename: String, for pane: PaneSlotID) {
+    func present(_ image: CGImage, filename: String, sourceURL: URL? = nil, for pane: PaneSlotID) {
         order.removeAll { $0 == pane }
         if order.count >= Self.maximumPreviews, let oldest = order.first { dismiss(oldest) }
-        previews[pane] = Preview(image: image, filename: filename)
+        previews[pane] = Preview(image: image, filename: filename, sourceURL: sourceURL)
         order.append(pane)
     }
 
