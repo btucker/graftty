@@ -1,6 +1,27 @@
 import AppKit
 import SwiftUI
 import GrafttyKit
+import GrafttyCommandUI
+
+/// The question owns its click so the block's drag target cannot replace
+/// navigation to the requesting pane with worktree-only selection.
+struct SidebarWorktreeQuestionTarget: View {
+    let context: SidebarWorktreeContext
+    let onOpen: () -> Void
+
+    var body: some View {
+        if context.question != nil {
+            Button(action: onOpen) {
+                SidebarWorktreeQuestion(context: context)
+                    .padding(.leading, 33).padding(.trailing, 8)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Open the worktree and focus the requesting pane")
+            .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.question: $0] }
+        }
+    }
+}
 
 /// One sidebar worktree block: the heading button, the pane rows beneath
 /// it, the unified active highlight and drop stroke, and the block-level

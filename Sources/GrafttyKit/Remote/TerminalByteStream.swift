@@ -61,8 +61,9 @@ public typealias TerminalByteStreamFactory = @Sendable (String) async throws -> 
 /// REMOTE-9.4) probe for conformance with `as?` instead of requiring it
 /// on every `TerminalByteStream`.
 public protocol TerminalSizeReporting: AnyObject {
-    /// Invoked whenever the underlying PTY's size changes (and, for
-    /// `ZmxAttachEngine`, once more on initial attach). May be called
+    /// Invoked when a source grid becomes known. `ZmxAttachEngine` reports
+    /// the snapshot grid before initial replay; pre-snapshot daemons retain
+    /// legacy PTY-size polling as a compatibility fallback. May be called
     /// off the caller's thread — implementations document their own
     /// threading contract. Setting to `nil` removes any installed callback.
     var onPTYSize: ((_ cols: UInt16, _ rows: UInt16) -> Void)? { get set }

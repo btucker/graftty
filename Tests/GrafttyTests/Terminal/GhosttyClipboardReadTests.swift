@@ -72,7 +72,7 @@ struct GhosttyClipboardReadTests {
         #expect(provider.reads > 0)
     }
 
-    @Test("@spec TERM-12.34: When a renderer requests clipboard text together with available types and display control can be reclaimed, the application shall return both the exact text bytes and available types after reclaiming control.")
+    @Test("@spec TERM-12.35: When a renderer requests clipboard text together with available types and display control can be reclaimed, the application shall return both the exact text bytes and available types after reclaiming control.")
     func combinedTextAndTypeListingReclaimsAndReturnsContents() {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }

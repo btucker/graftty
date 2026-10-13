@@ -910,7 +910,9 @@ struct SidebarView: View {
             }
             if let route = context.questionPaneID,
                worktree.paneSessions[terminalID].map(ZmxLauncher.sessionName(for:)) == route {
-                SidebarWorktreeQuestion(context: context).padding(.leading, 33).padding(.trailing, 8)
+                SidebarWorktreeQuestionTarget(context: context) {
+                    Task { _ = await openReport(context) }
+                }
             }
         }
         WorktreeBlock(
@@ -930,7 +932,9 @@ struct SidebarView: View {
             panes
             if Self.showsWorktreeQuestion(questionPaneID: context.questionPaneID,
                                           displayedPaneSessions: paneLeaves.compactMap { worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)) }) {
-                SidebarWorktreeQuestion(context: context).padding(.leading, 33).padding(.trailing, 8)
+                SidebarWorktreeQuestionTarget(context: context) {
+                    Task { _ = await openReport(context) }
+                }
             }
         }
     }
