@@ -835,6 +835,20 @@ final class RemoteMacsModel: ObservableObject {
         _ request: WorktreeManagementRequest
     ) async -> WorktreeManagementResponse? {
         switch request {
+        case .worktreeAgentCompletions(let worktreeID):
+            guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
+            let response = await forwardManagement(identity: route.identity,
+                request: .worktreeAgentCompletions(worktreeID: route.path))
+            guard case .agentCompletions(let candidates) = response else { return response }
+            // Match the viewer's opaque current-worktree ID while leaving
+            // inserted addresses relative to the terminal-owning host.
+            return .agentCompletions(candidates.map { candidate in
+                AgentCompletionCandidate(address: candidate.address, projectPath: candidate.projectPath,
+                    projectName: candidate.projectName,
+                    worktreePath: candidate.worktreePath == route.path ? worktreeID : candidate.worktreePath,
+                    worktreeName: candidate.worktreeName, hostName: candidate.hostName, runtime: candidate.runtime,
+                    isCurrentProject: candidate.isCurrentProject)
+            })
         case let .openResource(worktreeID, request):
             if case .port = request {
                 return .error(code: "port-route-unavailable", message: "Connect directly to this worktree's Mac to open its ports.", forceAllowed: false, shortStatus: nil)
@@ -855,7 +869,7 @@ final class RemoteMacsModel: ObservableObject {
             }
             return response
 
-        case .hostPresentation, .listRemoteMacConnections, .moveProject,
+        case .agentCompletions, .hostPresentation, .listRemoteMacConnections, .moveProject,
              .connectRemoteMac:
             return nil
 

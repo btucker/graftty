@@ -55,6 +55,11 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     private var requestRefresh: () -> Void
     private let displayClientID = DisplayClientID(UUID().uuidString)
     private var ownershipSnapshot: DisplayOwnershipSnapshot?
+    private var ownershipLost: (() -> Void)?
+
+    func bindOwnershipLoss(_ handler: @escaping () -> Void) {
+        lock.withLock { ownershipLost = handler }
+    }
     private var pendingInput: [Data] = []
     private var pendingInputBytes = 0
     private var takeoverRequested = false
@@ -535,6 +540,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         var pending: [Data] = []
         var ownerResize: (epoch: UInt64, cols: UInt16, rows: UInt16)?
         let refresh: () -> Void
+        let ownershipLoss: (() -> Void)?
         lock.lock()
         if let previous = ownershipSnapshot {
             if snapshot.epoch < previous.epoch
@@ -544,7 +550,9 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
                 return
             }
         }
+        let wasOwner = isOwnerLocked
         ownershipSnapshot = snapshot
+        ownershipLoss = wasOwner && !isOwnerLocked ? ownershipLost : nil
         if isOwnerLocked {
             let grid = currentGridLocked()
             if !client.supportsPagedHistory, !isRestoringGridLocked,
@@ -558,6 +566,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         }
         refresh = requestRefresh
         lock.unlock()
+        ownershipLoss?()
 
         if ownerResize != nil || !pending.isEmpty {
             let pendingFrames = pending

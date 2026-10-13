@@ -323,11 +323,13 @@ final class GhosttyApp {
                     pasteboard: pasteboardForClipboard(clipboardEnum),
                     reclaimControl: { }
                 ) { completion in
+                    if !listOnly { (handle.view as? SurfaceNSView)?.agentCompletion.invalidateBoundary() }
                     ghostty_surface_complete_clipboard_request(handle.surface, completion, state)
                 }
             }
             return GHOSTTY_CLIPBOARD_READ_STARTED
         }
+
         rtConfig.confirm_read_clipboard_cb = { _, _, _, _ in
             // OSC 52 clipboard-read confirmation. Security-sensitive — no-op
             // until we build a proper confirmation prompt. Terminals that

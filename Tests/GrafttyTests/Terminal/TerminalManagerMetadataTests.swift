@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import GhosttyKit
 import Testing
 @testable import Graftty
 @testable import GrafttyKit
@@ -7,6 +8,29 @@ import Testing
 @MainActor
 @Suite("TerminalManager pane metadata")
 struct TerminalManagerMetadataTests {
+    @Test("@spec TEAM-15.15: When a native Mac pane is reassigned to another tracked worktree, the application shall dismiss pending completion and use the pane's new worktree context for subsequent agent discovery.")
+    func completionContextFollowsPaneReassignment() async throws {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-completion-move.sock")
+        let slot = PaneSlotID()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(terminalID: slot, app: fakeApp(), worktreePath: "/project-a/fix",
+            socketPath: "/tmp/graftty-completion-move.sock", terminalManager: manager, surfaceFactory: harness.factory))
+        manager.insertSurfaceForTesting(handle, for: slot)
+        let view = try #require(handle.view as? SurfaceNSView)
+        view.surfaceOperations.text = { _, _ in }
+        view.surfaceOperations.imeRect = { _ in .zero }
+        var loadedPath: String?
+        manager.agentCompletionLoader = { path, _ in loadedPath = path; return [] }
+        #expect(view.agentCompletion.handleText("%"))
+        manager.recordPaneSession(PaneSessionID(), for: slot, worktreePath: "/project-b/fix")
+        #expect(!view.agentCompletion.isActive)
+        #expect(view.agentCompletion.currentWorktreePath == "/project-b/fix")
+        #expect(!view.agentCompletion.handleText(" "))
+        #expect(view.agentCompletion.handleText("%"))
+        await view.agentCompletion.waitForLoad()
+        #expect(loadedPath == "/project-b/fix")
+        view.agentCompletion.cancel(preserveLiteral: false)
+    }
     @Test("@spec PERSIST-3.8: When Graftty quits and reopens with running worktrees, the application shall restore each pane's last title or PWD label and preserve title-over-PWD precedence as fresh metadata arrives.")
     func paneTitlesSurviveStateRoundTrip() throws {
         let namedSlot = PaneSlotID()
