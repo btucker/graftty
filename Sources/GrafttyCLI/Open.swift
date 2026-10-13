@@ -18,7 +18,7 @@ struct Open: ParsableCommand {
         try CLIEnv.expectOk(CLIEnv.sendRequest(Self.request(
             path: worktree, target: path, environment: environment
         )))
-        print("Resource routed for review.")
+        // Enqueue acknowledgment is not browser or authentication completion.
     }
 
     // The host resolves registered pane membership, even after the shell changes cwd.

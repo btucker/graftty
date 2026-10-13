@@ -28,6 +28,7 @@
     "INSTR",
     "EDITOR",
     "REMOTE",
+    "CHROME",
     "URL",
     "IMAGE"
   ],
@@ -59,10 +60,14 @@
     "INSTR": "Agent Instruction Files",
     "EDITOR": "Editor Integration",
     "REMOTE": "Secure Remote Access",
+    "CHROME": "Dedicated Chrome tabs",
     "URL": "Worktree URL Handler",
     "IMAGE": "Inline Image Display"
   },
   "subsections": {
+    "CHROME.1": "Host profiles and ownership",
+    "CHROME.2": "Phone controls",
+    "CHROME.3": "Authenticated transport",
     "LAYOUT.1": "Window Structure",
     "LAYOUT.2": "Sidebar — Repository List",
     "LAYOUT.3": "Adding Repositories",

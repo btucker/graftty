@@ -287,8 +287,8 @@ struct SessionClientTests {
         func close() {}
     }
 
-    @Test("Cached panes retain ownership and render output while detached")
-    func retainedPaneKeepsRendererAndOwnership() async throws {
+    @Test("@spec IOS-11.26: When a retained terminal pane detaches its controls, the application shall discard browser callbacks and cached link actions while preserving its renderer and ownership.", arguments: [true, false])
+    func retainedPaneKeepsRendererAndOwnership(hasContext: Bool) async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         let pane = RetainedMobilePane(client: client)
@@ -310,11 +310,36 @@ struct SessionClientTests {
         pane.container = container
         let surface = container.terminalView.surface
         container.onBackRequested = { }
-        container.openAuthenticationURL = { _ in }
+        var opened: [URL] = []
+        var copied: [URL] = []
+        container.openURL = { opened.append($0) }
+        container.copyLink = { copied.append($0) }
+        container.linkContext = hasContext ? AnyHashable("original pane") : nil
+        let grid = try #require(container.terminalGridMetrics)
+        // Build saved actions with unambiguous synthetic cell coordinates;
+        // the live renderer stays mounted and keeps its original native grid.
+        container.terminalDidResize(TerminalGridMetrics(
+            columns: grid.columns, rows: grid.rows,
+            widthPixels: UInt32(grid.columns) * grid.cellWidthPixels,
+            heightPixels: UInt32(grid.rows) * grid.cellHeightPixels,
+            cellWidthPixels: grid.cellWidthPixels, cellHeightPixels: grid.cellHeightPixels))
+        let scale = Double(container.terminalView.contentScaleFactor)
+        let point = CGPoint(x: Double(grid.cellWidthPixels) * 10.5 / scale, y: Double(grid.cellHeightPixels) / (2 * scale))
+        container.prepareLongPressMenu(at: point, text: "https://example.com/detached")
+        let actions = container.longPressMenuForTesting(hasPasteContent: false).children
+            .compactMap { $0 as? UIAction }.filter { ["Open Link", "Copy Link"].contains($0.title) }
+        #expect(actions.count == 2)
+        container.terminalDidResize(grid)
+        let menuButton = UIButton()
+        for action in actions { menuButton.addAction(action, for: .touchUpInside) }
         container.removeFromSuperview()
         pane.detachControls()
         #expect(container.onBackRequested == nil)
-        #expect(container.openAuthenticationURL == nil)
+        menuButton.sendActions(for: .touchUpInside)
+        #expect(copied.isEmpty)
+        container.terminalDidRequestOpenURL("https://example.com/detached", kind: .text)
+        #expect(opened.isEmpty)
+        #expect(container.linkContext == nil)
         client.session.receive("output while away")
         try await waitUntil("output on detached surface") {
             client.session.readViewportText()?.contains("output while away") == true

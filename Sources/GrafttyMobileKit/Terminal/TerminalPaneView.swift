@@ -106,7 +106,10 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// (e.g., terminal control-bar buttons) per IOS-11.7.
     public let captureContainer: ((TerminalInputContainerView) -> Void)?
     public let retainedContainer: TerminalInputContainerView?
-    public let onOpenAuthenticationURL: ((URL) -> Void)?
+    /// Routes an explicit native or menu link activation to the owning pane.
+    public let onOpenURL: ((URL) -> Void)?
+    /// Change when the origin or owner changes to invalidate captured menu actions.
+    public let linkContext: AnyHashable?
 
     public init(
         session: InMemoryTerminalSession,
@@ -128,7 +131,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         onBackRequested: (() -> Void)? = nil,
         captureContainer: ((TerminalInputContainerView) -> Void)? = nil,
         retainedContainer: TerminalInputContainerView? = nil,
-        onOpenAuthenticationURL: ((URL) -> Void)? = nil
+        onOpenURL: ((URL) -> Void)? = nil,
+        linkContext: AnyHashable? = nil
     ) {
         self.session = session
         self.controller = controller
@@ -149,7 +153,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.onBackRequested = onBackRequested
         self.captureContainer = captureContainer
         self.retainedContainer = retainedContainer
-        self.onOpenAuthenticationURL = onOpenAuthenticationURL
+        self.onOpenURL = onOpenURL
+        self.linkContext = linkContext
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
@@ -191,7 +196,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         )
         view.onPasteRequested = onPasteRequested
         view.onBackRequested = onBackRequested
-        view.openAuthenticationURL = onOpenAuthenticationURL
+        view.openURL = onOpenURL ?? { _ in }
+        view.linkContext = linkContext
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         captureContainer?(view)
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
@@ -215,7 +221,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         )
         view.onPasteRequested = onPasteRequested
         view.onBackRequested = onBackRequested
-        view.openAuthenticationURL = onOpenAuthenticationURL
+        view.openURL = onOpenURL ?? { _ in }
+        view.linkContext = linkContext
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
     }
@@ -678,8 +685,31 @@ public final class TerminalInputContainerView: UIView,
     private var lastLongPressPoint: CGPoint = .zero
     private var longPressURL: URL?
     private(set) var terminalGridMetrics: TerminalGridMetrics?
-    var openURL: (URL) -> Void = { UIApplication.shared.open($0) }
-    var openAuthenticationURL: ((URL) -> Void)?
+    var openURL: (URL) -> Void = { _ in }
+    var copyLink: (URL) -> Void = { UIPasteboard.general.string = $0.absoluteString }
+    var linkContext: AnyHashable? {
+        didSet {
+            guard oldValue != linkContext else { return }
+            invalidateLinkMenu()
+        }
+    }
+    func detachBrowserControls() {
+        openURL = { _ in }
+        linkContext = nil
+        // Even a context-free caller can hold actions capturing its old route.
+        invalidateLinkMenu()
+    }
+
+    private func invalidateLinkMenu() {
+        longPressURL = nil
+        longPressMenuGeneration &+= 1
+        pendingPasteRefocusGeneration = nil
+        completedLongPressMenuDismissalGeneration = nil
+        longPressMenu.dismissMenu()
+    }
+
+    private var probingLink = false
+    private var probedLink: String?
     /// Paste and edit-menu dismissal are independent UIKit callbacks whose
     /// relative ordering is not part of our contract. Pair them by long-press
     /// menu generation and refocus only after both have happened.
@@ -837,6 +867,26 @@ public final class TerminalInputContainerView: UIView,
         prepareLongPressMenu(
             at: request.sourcePoint, text: request.text
         )
+        // Text alone cannot distinguish an OSC8 display label from its target.
+        // Verify through native metadata only when pointer motion is safe.
+        longPressURL = nil
+        // Native lookup uses the real terminal cell map, including OSC8.
+        // Never synthesize pointer motion in a mouse-reporting application
+        // or while a selection drag owns the mouse button.
+        if let surface = terminalView.surface, !surface.isMouseCaptured, !selectionController.isActive, !surface.hasSelection() {
+            longPressURL = TerminalLinkResolver.url(in: request.text, anchor: request.anchorRange)
+            probingLink = true
+            probedLink = nil
+            surface.sendMousePos(x: -1, y: -1, modifiers: .super_)
+            surface.sendMousePos(x: Double(request.sourcePoint.x), y: Double(request.sourcePoint.y), modifiers: .super_)
+            let link = probedLink
+            probingLink = false
+            surface.sendMousePos(x: Double(request.sourcePoint.x), y: Double(request.sourcePoint.y))
+            if let link {
+                // An unsupported OSC8 target must not fall back to its label.
+                longPressURL = TerminalLinkResolver.webURL(link)
+            }
+        }
         let config = UIEditMenuConfiguration(
             identifier: longPressMenuIdentifier(for: longPressMenuGeneration),
             sourcePoint: convert(request.sourcePoint, from: terminalView)
@@ -1308,6 +1358,17 @@ extension TerminalInputContainerView: TerminalSurfaceTextSelectionRequestDelegat
     }
 }
 
+extension TerminalInputContainerView: TerminalSurfaceOpenURLDelegate, TerminalSurfaceHoverLinkDelegate {
+    public func terminalDidRequestOpenURL(_ value: String, kind: TerminalOpenURLKind) {
+        guard let url = TerminalLinkResolver.webURL(value) else { return }
+        openURL(url)
+    }
+
+    public func terminalDidUpdateHoverLink(_ value: String?) {
+        if probingLink { probedLink = value }
+    }
+}
+
 extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
     public func terminalDidAttachSurface(_ surface: TerminalSurface) {
         refreshFirstLineClearance()
@@ -1401,16 +1462,15 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
             UIAction(title: "Select All") { [weak self] _ in self?.performSelectAll() },
         ]
         if let url = longPressURL {
+            let open = openURL
+            children.insert(UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                guard let self, self.longPressMenuGeneration == generation else { return }
+                self.copyLink(url)
+            }, at: 0)
             children.insert(UIAction(title: "Open Link", image: UIImage(systemName: "safari")) { [weak self] _ in
                 guard let self, self.longPressMenuGeneration == generation else { return }
-                self.openURL(url)
+                open(url)
             }, at: 0)
-            if openAuthenticationURL != nil, WorktreeAuthenticationURL(url: url) != nil {
-                children.insert(UIAction(title: "Sign in via Mac", image: UIImage(systemName: "person.crop.circle")) { [weak self] _ in
-                    guard let self, self.longPressMenuGeneration == generation else { return }
-                    self.openAuthenticationURL?(url)
-                }, at: 0)
-            }
         }
         if hasPasteContent {
             children.append(UIAction(title: "Paste") { [weak self] _ in

@@ -1,8 +1,15 @@
 #if canImport(UIKit)
 @testable import GhosttyTerminal
+import GhosttyKit
 import Testing
 @testable import GrafttyMobileKit
 import UIKit
+
+private final class LinkTestLongPress: UILongPressGestureRecognizer {
+    var point: CGPoint = .zero
+    override var state: UIGestureRecognizer.State { get { .began } set {} }
+    override func location(in view: UIView?) -> CGPoint { point }
+}
 
 private final class NilInputKeyCommand: UIKeyCommand {
     override var input: String? { nil }
@@ -48,6 +55,8 @@ private final class TerminalResponseRecorder: @unchecked Sendable {
     func append(_ data: Data) {
         lock.withLock { self.data.append(data) }
     }
+
+    func snapshot() -> Data { lock.withLock { data } }
 
     func contains(_ response: String) -> Bool {
         lock.withLock { data.range(of: Data(response.utf8)) != nil }
@@ -501,7 +510,7 @@ struct TerminalPaneViewTests {
         }
     }
 
-    @Test("@spec IOS-11.13: When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and open the complete URL in the system browser when chosen. Pressing ordinary text shall not offer Open Link.")
+    @Test("@spec IOS-11.13: When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and offer Copy Link and route the complete URL through the originating pane browser when Open Link is chosen. Pressing ordinary text shall not offer link actions.")
     func longPressOpensTheCompleteURLUnderThePressedWord() throws {
         let container = TerminalInputContainerView(frame: .zero)
         let text = "See https://example.com/first and https://example.org/path?q=hello#part."
@@ -517,7 +526,7 @@ struct TerminalPaneViewTests {
             text: text
         )
         #expect(container.longPressMenuActionTitlesForTesting(hasPasteContent: false) == [
-            "Open Link", "Select", "Select All",
+            "Open Link", "Copy Link", "Select", "Select All",
         ])
         let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
             .children.compactMap { $0 as? UIAction }.first { $0.title == "Open Link" })
@@ -535,6 +544,30 @@ struct TerminalPaneViewTests {
         ])
         button.sendActions(for: .touchUpInside)
         #expect(opened.count == 1, "A dismissed menu must not open a stale URL")
+    }
+
+    @Test("@spec IOS-11.24: If a terminal link menu outlives its originating session or ownership context, then the application shall discard its Open and Copy actions instead of invoking callbacks for a replacement pane.")
+    func staleLinkMenuCannotUseReplacementContext() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        container.terminalView.contentScaleFactor = 1
+        container.linkContext = "owned-first-pane"
+        container.terminalDidResize(TerminalGridMetrics(columns: 100, rows: 1, widthPixels: 1000, heightPixels: 20, cellWidthPixels: 10, cellHeightPixels: 20))
+        var opened = 0
+        var copied = 0
+        container.openURL = { _ in opened += 1 }
+        container.copyLink = { _ in copied += 1 }
+        container.prepareLongPressMenu(at: CGPoint(x: 105, y: 10), text: "https://example.com/first")
+        let actions = container.longPressMenuForTesting(hasPasteContent: false).children.compactMap { $0 as? UIAction }.filter { $0.title.contains("Link") }
+        try #require(actions.count == 2)
+        container.linkContext = "unowned-first-pane"
+        container.linkContext = "owned-replacement-pane"
+        for action in actions {
+            let button = UIButton()
+            button.addAction(action, for: .touchUpInside)
+            button.sendActions(for: .touchUpInside)
+        }
+        #expect(opened == 0)
+        #expect(copied == 0)
     }
 
     @Test
@@ -571,6 +604,17 @@ struct TerminalPaneViewTests {
     }
 
     @Test
+    func nativeAnchorsRequireFullURLContainment() {
+        let text = "● 🧪 https://one.example/same?q=first https://two.example/same?q=A%2Bb#part"
+        let full = text as NSString
+        let anchor = full.range(of: "A%2Bb")
+        #expect(TerminalLinkResolver.url(in: text, anchor: anchor)?.absoluteString == "https://two.example/same?q=A%2Bb#part")
+        #expect(TerminalLinkResolver.url(in: text, anchor: full.range(of: "●")) == nil)
+        #expect(TerminalLinkResolver.url(in: text, anchor: NSRange(location: anchor.location, length: full.length)) == nil)
+        #expect(TerminalLinkResolver.webURL("https://user:secret@example.com/") == nil)
+    }
+
+    @Test
     func terminalLinksRequireEveryPossiblePaddedCellToMatch() {
         let grid = TerminalGridMetrics(
             columns: 40, rows: 10, widthPixels: 420, heightPixels: 200,
@@ -593,8 +637,18 @@ struct TerminalPaneViewTests {
         ) == nil, "A possible top margin must not count as the URL's first row")
     }
 
-    @Test
-    func realSurfaceLinksResolveAfterWrappedOutput() async throws {
+    @Test("@spec IOS-11.23: When a native terminal long-press or Cmd-click targets a plain or OSC8 link in an unselected terminal without mouse capture after Unicode output and soft wraps, the application shall recognize and route the exact hyperlink target without installing another gesture.", arguments: [0, 1, 2, 5, 6])
+    func realSurfaceLinksResolveAfterWrappedOutput(fixture: Int) async throws {
+        try await verifyRealSurfaceLinks(fixture: fixture)
+    }
+
+    @Test("@spec IOS-11.25: While a terminal application captures mouse input or a native selection is active, the application shall retain text-selection actions and omit long-press link actions whose OSC8 target cannot be verified without changing that input state.", arguments: [3, 4, 7, 8])
+    func protectedNativeLinksRetainSelection(fixture: Int) async throws {
+        try await verifyRealSurfaceLinks(fixture: fixture)
+    }
+
+    private func verifyRealSurfaceLinks(fixture: Int) async throws {
+        let osc8 = fixture == 1 || fixture >= 5
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
         let host = UIViewController()
         window.rootViewController = host
@@ -603,7 +657,7 @@ struct TerminalPaneViewTests {
         container.layoutIfNeeded()
         let responses = TerminalResponseRecorder()
         let session = InMemoryTerminalSession(write: { responses.append($0) }, resize: { _ in })
-        let renderer = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        let renderer = MobileTerminalControllerFactory.make(configText: "font-size = 14\nlink-previews = \(fixture != 2 && fixture != 5 && fixture != 6)")
         container.terminalView.configuration = .init(backend: .inMemory(session))
         container.terminalView.controller = renderer
         host.view.addSubview(container)
@@ -623,9 +677,13 @@ struct TerminalPaneViewTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         try #require(responses.contains(bottomRight))
-        let prefix = String(repeating: "a", count: Int(grid.columns) + 5)
-        session.receive("\u{1b}[H\u{1b}[2J" + prefix + "\r\n\r\nhttps://one.example/same\r\nhttps://two.example/same")
-        for _ in 0..<100 where session.readViewportText()?.contains("https://two.example/same") != true {
+        let prefix = "● 🧪 Unicode prompt " + String(repeating: "a", count: Int(grid.columns) - 14)
+        let target = fixture == 6 ? "file:///tmp/private-fixture.txt"
+            : "https://two.example/" + String(repeating: "path", count: Int(grid.columns) / 2) + "?q=A%2Bb#part"
+        let label = fixture >= 5 ? "https://label.example/advertised" : (osc8 ? "Sign in to second service" : target)
+        let link = osc8 ? "\u{1b}]8;;\(target)\u{1b}\\\(label)\u{1b}]8;;\u{1b}\\" : target
+        session.receive("\u{1b}[H\u{1b}[2J" + prefix + "\r\n\r\nhttps://one.example/same\r\n" + link)
+        for _ in 0..<100 where session.readViewportText()?.contains(label) != true {
             try await Task.sleep(for: .milliseconds(10))
         }
         let text = try #require(session.readViewportText())
@@ -639,19 +697,72 @@ struct TerminalPaneViewTests {
             x: CGFloat(grid.cellWidthPixels) * 15.5 / scale,
             y: (cellHeight * 4 + (cellHeight + unusedHeight) / 2) / scale
         )
+        let surface = try #require(container.terminalView.surface)
+        if fixture == 3 || fixture == 7 {
+            surface.sendMousePos(x: -1, y: -1)
+            session.receive("\u{1b}[?1003h\u{1b}[?1006h")
+            for _ in 0..<100 where !surface.isMouseCaptured { try await Task.sleep(for: .milliseconds(10)) }
+            try #require(surface.isMouseCaptured)
+        } else if fixture == 4 || fixture == 8 {
+            container.selectionController.beginSelection(at: CGPoint(x: 20, y: 10))
+            try #require(container.selectionController.isActive)
+        }
+        let before = responses.snapshot().count
         var opened: URL?
         container.openURL = { opened = $0 }
-        container.prepareLongPressMenu(at: point, text: text)
+        let gesture = LinkTestLongPress()
+        gesture.point = point
+        container.terminalView.handleLongPressForSelection(gesture)
+        if [3, 4, 7, 8].contains(fixture) {
+            let titles = container.longPressMenuActionTitlesForTesting(hasPasteContent: false)
+            #expect(!titles.contains("Open Link"))
+            #expect(!titles.contains("Copy Link"))
+            #expect(titles.contains("Select"))
+            if fixture == 3 || fixture == 7 {
+                try await Task.sleep(for: .milliseconds(20))
+                let report = String(decoding: responses.snapshot().dropFirst(before), as: UTF8.self)
+                #expect(report.components(separatedBy: "\u{1b}[<").count - 1 == 1,
+                        "Only the wrapper's original move may report to the mouse-capturing application")
+            } else { #expect(container.selectionController.isActive) }
+            return
+        }
+        if fixture == 6 {
+            #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Open Link"))
+            #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Copy Link"))
+            surface.sendMousePos(x: -1, y: -1, modifiers: .super_)
+            surface.sendMousePos(x: Double(point.x), y: Double(point.y), modifiers: .super_)
+            _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT, modifiers: .super_)
+            _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT, modifiers: .super_)
+            #expect(opened == nil, "Unsupported OSC8 targets must neither open nor fall back to the visible label URL")
+            return
+        }
         let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
             .children.compactMap { $0 as? UIAction }.first { $0.title == "Open Link" })
         let button = UIButton()
         button.addAction(action, for: .touchUpInside)
         button.sendActions(for: .touchUpInside)
-        #expect(opened?.absoluteString == "https://two.example/same")
+        #expect(opened?.absoluteString == target)
+        var copied: URL?
+        container.copyLink = { copied = $0 }
+        let copy = try #require(container.longPressMenuForTesting(hasPasteContent: false)
+            .children.compactMap { $0 as? UIAction }.first { $0.title == "Copy Link" })
+        let copyButton = UIButton()
+        copyButton.addAction(copy, for: .touchUpInside)
+        copyButton.sendActions(for: .touchUpInside)
+        #expect(copied?.absoluteString == target)
+        if osc8 {
+            opened = nil
+            let surface = try #require(container.terminalView.surface)
+            surface.sendMousePos(x: -1, y: -1, modifiers: .super_)
+            surface.sendMousePos(x: Double(point.x), y: Double(point.y), modifiers: .super_)
+            _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT, modifiers: .super_)
+            _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT, modifiers: .super_)
+            #expect(opened?.absoluteString == target, "Actual native OSC8 Cmd-click must invoke the Graftty callback")
+        }
     }
 
-    @Test("@spec PORTS-5.18: When a mobile user holds an OAuth sign-in link with a local callback, the application shall offer Sign in via Mac without opening unrelated links or stale menu targets.")
-    func authLinksOfferWorktreeSignIn() throws {
+    @Test("@spec PORTS-5.18: When a mobile user opens an OAuth terminal link, the application shall route its exact URL through the originating pane browser without a separate sign-in action or stale menu targets.")
+    func authLinksUsePaneBrowser() throws {
         let container = TerminalInputContainerView(frame: .zero)
         container.terminalView.contentScaleFactor = 1
         container.terminalDidResize(TerminalGridMetrics(
@@ -660,10 +771,11 @@ struct TerminalPaneViewTests {
         ))
         let url = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A43210%2Fcallback&state=test")!
         var opened: [URL] = []
-        container.openAuthenticationURL = { opened.append($0) }
+        container.openURL = { opened.append($0) }
         container.prepareLongPressMenu(at: CGPoint(x: 105, y: 10), text: url.absoluteString)
         let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
-            .children.compactMap { $0 as? UIAction }.first { $0.title == "Sign in via Mac" })
+            .children.compactMap { $0 as? UIAction }.first { $0.title == "Open Link" })
+        #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Sign in via Mac"))
         let button = UIButton()
         button.addAction(action, for: .touchUpInside)
         button.sendActions(for: .touchUpInside)

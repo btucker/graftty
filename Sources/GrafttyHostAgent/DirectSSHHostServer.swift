@@ -33,6 +33,8 @@ public actor DirectSSHHostServer {
         panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
         worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator? = nil,
+        chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil,
+        chromeTabOnDisconnect: @escaping ChromeTabChannelHandler.OnDisconnect = { _ in },
         displayOwnershipStore: SessionDisplayOwnershipStore,
         sshConnectionRegistry: SSHConnectionRegistry = SSHConnectionRegistry()
     ) {
@@ -48,6 +50,7 @@ public actor DirectSSHHostServer {
             worktreeManagementMutator: worktreeManagementMutator ?? { _ in
                 .error(code: "unavailable", message: "worktree management is unavailable", forceAllowed: false, shortStatus: nil)
             },
+            chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
             ownershipStore: displayOwnershipStore,
             ownershipBroadcaster: DisplayOwnershipBroadcaster(store: displayOwnershipStore),
             teamHandler: nil, teamOnConnect: { _, _ in }, teamOnDisconnect: { _, _ in }
@@ -63,6 +66,7 @@ public actor DirectSSHHostServer {
             streamFactory: c.streamFactory, pagedFactory: c.pagedFactory,
             panesStateSubscribe: c.panesStateSubscribe, panesStateV2Subscribe: c.panesStateV2Subscribe,
             paneControlMutator: c.paneControlMutator, worktreeManagementMutator: c.worktreeManagementMutator,
+            chromeTabMutator: c.chromeTabMutator, chromeTabOnDisconnect: c.chromeTabOnDisconnect,
             ownershipStore: c.ownershipStore, ownershipBroadcaster: c.ownershipBroadcaster,
             teamHandler: handler, teamOnConnect: onConnect, teamOnDisconnect: onDisconnect
         )

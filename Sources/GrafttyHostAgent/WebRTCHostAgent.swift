@@ -54,6 +54,8 @@ public actor WebRTCHostAgent {
     /// transport's coordinator) caused it, so two broadcaster instances
     /// fanning out from the same store already gives full cross-transport
     /// propagation without sharing the instance itself.
+    private let chromeTabMutator: ChromeTabChannelHandler.Mutator?
+    private let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect
     private let displayOwnershipStore: SessionDisplayOwnershipStore
     private let displayOwnershipBroadcaster: DisplayOwnershipBroadcaster
     private var sshTransport: SSHNIOTransport?
@@ -194,6 +196,8 @@ public actor WebRTCHostAgent {
         panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
         worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator? = nil,
+        chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil,
+        chromeTabOnDisconnect: @escaping ChromeTabChannelHandler.OnDisconnect = { _ in },
         displayOwnershipStore: SessionDisplayOwnershipStore,
         sshConnectionRegistry: SSHConnectionRegistry = SSHConnectionRegistry()
     ) {
@@ -213,6 +217,8 @@ public actor WebRTCHostAgent {
                 shortStatus: nil
             )
         }
+        self.chromeTabMutator = chromeTabMutator
+        self.chromeTabOnDisconnect = chromeTabOnDisconnect
         self.displayOwnershipStore = displayOwnershipStore
         self.displayOwnershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
         self.sshConnectionRegistry = sshConnectionRegistry
@@ -713,6 +719,7 @@ public actor WebRTCHostAgent {
                     streamFactory: factory, pagedFactory: pagedFactory,
                     panesStateSubscribe: panesStateSubscribe, panesStateV2Subscribe: panesStateV2Subscribe,
                     paneControlMutator: paneControlMutator, worktreeManagementMutator: worktreeManagementMutator,
+                    chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
                     ownershipStore: ownershipStore, ownershipBroadcaster: ownershipBroadcaster,
                     teamHandler: teamHandler, teamOnConnect: teamOnConnect, teamOnDisconnect: teamOnDisconnect
                 )

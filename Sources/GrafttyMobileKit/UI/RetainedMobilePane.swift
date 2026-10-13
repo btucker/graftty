@@ -32,7 +32,7 @@ final class RetainedMobilePane: PanePreviewClienting {
         container?.onUserInteraction = nil
         container?.onPasteRequested = nil
         container?.onBackRequested = nil
-        container?.openAuthenticationURL = nil
+        container?.detachBrowserControls()
         container?.onPhysicalViewportReady = nil
         container?.setStickyControlActivationChangeHandler(nil)
         container?.onTrayShiftSelectionChange = nil

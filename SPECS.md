@@ -2116,7 +2116,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.12** When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and re-focus the eligible `UITerminalView` after UIKit's edit-menu dismissal completes, so the dismissal cannot subsequently resign the terminal and leave the user without keyboard control.
 
-**IOS-11.13** When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and open the complete URL in the system browser when chosen. Pressing ordinary text shall not offer Open Link.
+**IOS-11.13** When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and offer Copy Link and route the complete URL through the originating pane browser when Open Link is chosen. Pressing ordinary text shall not offer link actions.
 
 **IOS-11.14** When a terminal selection drag ends or is cancelled at a viewport edge, the application shall stop selection autoscrolling while preserving the selection anchor for another drag.
 
@@ -2136,6 +2136,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.22** While an image paste awaits host confirmation, the mobile application shall queue subsequent terminal input in order and send it only after a successful confirmation; if image paste fails or the input queue exceeds its limit, then the application shall discard queued input and explain the failure.
 
+**IOS-11.23** When a native terminal long-press or Cmd-click targets a plain or OSC8 link in an unselected terminal without mouse capture after Unicode output and soft wraps, the application shall recognize and route the exact hyperlink target without installing another gesture.
+
+**IOS-11.24** If a terminal link menu outlives its originating session or ownership context, then the application shall discard its Open and Copy actions instead of invoking callbacks for a replacement pane.
+
+**IOS-11.25** While a terminal application captures mouse input or a native selection is active, the application shall retain text-selection actions and omit long-press link actions whose OSC8 target cannot be verified without changing that input state.
+
+**IOS-11.26** When a retained terminal pane detaches its controls, the application shall discard browser callbacks and cached link actions while preserving its renderer and ownership.
+
 ### IOS-12.x
 
 **IOS-12.1** When graftty open offers a regular file, the application shall retain a bounded temporary snapshot scoped to the caller's worktree and allow paired clients to retrieve only that offered snapshot in bounded chunks.
@@ -2153,6 +2161,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-12.7** When an offered file has a native Quick Look preview, the application shall show it with Quick Look; otherwise, it shall present the system sharing and Open In interface.
 
 **IOS-12.8** When graftty open runs in a pane led by GrafttyMobile, the host shall offer its resource to mobile; when Mac or another client leads or no pane session is supplied, the host shall open it with macOS.
+
+**IOS-12.9** When graftty open successfully enqueues a resource, the CLI shall stay quiet without claiming browser completion, and shall propagate host rejection and transport failures.
 
 ## IPAD — iPad Layout
 
@@ -3168,6 +3178,130 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-23.11** When Linux panes allocate PTYs concurrently, the application shall resolve each master's own slave path without sharing mutable lookup storage.
 
+## CHROME — Dedicated Chrome tabs
+
+### CHROME-1.x — Host profiles and ownership
+
+**CHROME-1.1** If a Chrome request lacks live pane ownership for its authenticated peer, then the application shall reject it before accessing a dedicated profile.
+
+**CHROME-1.2** When an authorized viewer reconnects, the application shall list the persistent host tabs without relaunching Chrome.
+
+**CHROME-1.3** If a viewer sends an unsupported launch URL or oversized input, then the application shall reject it before calling Chrome.
+
+**CHROME-1.4** While an authorized phone controls a dedicated Chrome tab, the application shall stream bounded selected-tab screencast frames, dispatch tap, scroll, text and keyboard input on the host, and retain tab state across viewer reconnects.
+
+**CHROME-1.5** When a viewer loses pane ownership, the application shall stop its screencast and release its Chrome viewer lease before another owner attaches.
+
+**CHROME-1.6** If an OAuth offer launch reply is lost, then the application shall bind its identity to the original URL and host tab, return that tab on retry, and refuse an ambiguous launch replay.
+
+**CHROME-1.7** When a host Chrome OAuth launch succeeds but its viewer reply is lost, the application shall preserve the original state and callback URL and select the same host tab on reconnection without relaunching it.
+
+**CHROME-1.8** If pane ownership changes while an OAuth dispatch receipt is persisted, then the application shall recheck ownership before Chrome navigation and release the unsent receipt for a later authorized retry.
+
+**CHROME-1.9** While host Chrome retains OAuth launch receipts, the application shall persist and restore the maximum bounded history and reject new offers or unreadable history without evicting dispatched identities.
+
+**CHROME-1.10** When an authorized viewer requests back, forward, or reload for its selected host tab, the application shall navigate that tab's existing history or reload its document and report available history without creating another tab.
+
+**CHROME-1.11** If a navigation command names a nonselected host tab or pane ownership changes before dispatch, then the application shall reject back, forward, and reload before changing the selected tab's document or history.
+
+**CHROME-1.12** When an authorized viewer resizes its selected host tab, the application shall restart capture with bounded CSS dimensions and a new viewport identity, retain those dimensions on each JPEG, and dispatch normalized input in the new viewport.
+
+**CHROME-1.13** If pane ownership changes during a resize or a viewport frame's capture session, CSS dimensions, or JPEG dimensions differ from the selected viewport, then the application shall discard stale frames and reject input until that viewport has a fresh authorized frame.
+
+**CHROME-1.14** If navigation availability fails because the CDP transport disconnects, times out, or reports an error other than a document-swap attachment gap on the same live session, then the application shall return the failure instead of stale navigation success.
+
+**CHROME-1.15** When a selected host tab exposes a navigable URL of at most 8192 UTF8 bytes, the application shall preserve that exact URL in tab metadata and flag longer URLs as truncated without exceeding the Chrome response limit.
+
+**CHROME-1.16** While a selected host tab exposes an exact navigable URL, the application shall bound other tab URLs to 2048 UTF8 bytes and flag shortened metadata so that JSON escaping and a maximum-size JPEG fit within the Chrome response limit.
+
+**CHROME-1.17** When a high-entropy page produces an oversized JPEG at an allowed host viewport, the application shall provide a frame within 512 KiB without changing its CSS dimensions and allow input after that fresh frame.
+
+### CHROME-2.x — Phone controls
+
+**CHROME-2.1** When a phone taps a fitted Chrome frame, the application shall map only image pixels to normalized browser coordinates and reject letterbox taps.
+
+**CHROME-2.2** When a phone tap and text arrive during a frame request, the application shall queue bounded input and dispatch the tap before text on the same tab.
+
+**CHROME-2.3** When a Chrome viewer closes, the application shall cancel queued input before it can reach a replacement connection.
+
+**CHROME-2.4** When an OAuth offer awaits ownership, connection or presentation, the application shall retain its exact original URL and identity until host launch succeeds or the user dismisses it.
+
+**CHROME-2.5** When a Chrome sign-in viewer reconnects after launch acknowledgment, the application shall select its retained host tab without navigating the OAuth URL again.
+
+**CHROME-2.6** If an initial OAuth launch has an ambiguous result, then the application shall preserve working host tab selection and an explicit launch error without navigating again.
+
+**CHROME-2.7** While a Chrome sign-in sheet is closing, the application shall retain its presentation identity, defer automatic offers across scene interruptions, and complete only the dismissed offer before accepting another.
+
+**CHROME-2.8** When a sign-in viewer resumes after scene suspension, the application shall reconnect its retained presentation and select the acknowledged host tab without sending another launch URL.
+
+**CHROME-2.9** While the remote browser page is displayed, the application shall use compact browser controls and keep address and keyboard text fields hidden until the user explicitly opens them.
+
+**CHROME-2.10** When the user explicitly chooses Local in the remote browser, the application shall request local presentation once without choosing Local automatically when the remote view appears.
+
+**CHROME-2.11** When browser geometry changes, the application shall block image input immediately and accept only a fresh frame matching the acknowledged viewport and selected tab.
+
+**CHROME-2.12** While a viewport resize is in flight, the application shall retain only the latest requested geometry without canceling the connection, and shall discard pending resize work when the viewer closes.
+
+**CHROME-2.13** When the user requests the browser keyboard, the application shall expose keyboard input through observable presentation state and hide it when the viewer closes.
+
+**CHROME-2.14** While a host Chrome tab selection or navigation awaits acknowledgment, the application shall disable Local browser selection and use the acknowledged selected tab's URL when Local is chosen afterward.
+
+**CHROME-2.15** When a terminal link is activated, the application shall retain its exact URL and user-request identity, present through the existing browser only in its active originating owned pane, and reject stale host, worktree, session or owner scope.
+
+**CHROME-2.16** When a mobile user selects an identified browser offer, the application shall reject another pane or paired device's offer instead of launching it in the currently focused pane, and shall retain explicit ordinary browsing for legacy offers without identities.
+
+**CHROME-2.17** If the host, worktree, pane or owner changes while a browser offer list awaits refresh, then the application shall hide the old list instead of opening its URLs in the replacement scope.
+
+**CHROME-2.18** While the terminal browser control is visible, the application shall use the same primary glyph, plain button and translucent circle styling as Back while preserving its available-resource badge, busy indication and accessibility.
+
+**CHROME-2.19** When a browser presentation is canceled before its sheet mounts, the application shall release its reservation and defer the same offer for an authorized retry without requiring a dismissal callback.
+
+**CHROME-2.20** If an abandoned browser sheet sends a late mount or dismissal callback, then the application shall ignore that callback without releasing or consuming its replacement presentation.
+
+**CHROME-2.21** If a manual browser action is rejected for unavailable presentation or stale pane authorization, then the application shall display actionable feedback instead of silently ignoring the tap.
+
+**CHROME-2.22** When the badged browser control has an abandoned presentation reservation, the application shall allow an authorized retry to present the originating browser after foreground or follower-to-owner transitions.
+
+**CHROME-2.23** When the user taps the globe or its visible available-resource badge, the application shall invoke the same browser action.
+
+**CHROME-2.24** When tab selection changes during a pending viewport resize, the application shall resize only the selected tab, apply the latest requested geometry without duplicate requests, and cancel remaining resize work on close.
+
+### CHROME-3.x — Authenticated transport
+
+**CHROME-3.1** When a paired peer opens the Chrome subsystem, the application shall await host acceptance, enforce its management capability, pass its authenticated identity, and carry bounded JPEG responses over framed SSH.
+
+**CHROME-3.2** While Graftty owns a Chrome debug endpoint, the application shall reject its port through the general browser tunnel even for a paired peer with loopback permission.
+
+**CHROME-3.3** When a paired client requests a protected Chrome port through direct-tcpip, the application shall refuse the connection and shall restore ordinary listener access after protection ends.
+
+**CHROME-3.4** When browser navigation crosses the Chrome channel, the application shall encode typed back, forward, and reload actions with their selected-tab identity, reject invalid tab identities, and decode state from hosts without navigation availability.
+
+**CHROME-3.5** When a viewer requests a typed selected-tab viewport, the application shall accept widths from 320 through 1024 and heights from 240 through 1600 within 1500000 pixels and reject other dimensions or invalid tab identities.
+
+**CHROME-3.6** When viewport metadata crosses the Chrome channel, the application shall preserve each frame's CSS width, height, and viewport identity and decode legacy frames and state without that metadata.
+
+**CHROME-3.7** When a host tab URL exceeds its metadata budget, the application shall preserve an optional truncation flag across the Chrome channel and decode legacy tabs without that flag.
+
+**CHROME-3.8** When a Chrome response contains a selected-tab URL bounded to 8192 bytes, 31 other URLs bounded to 2048 bytes, and a maximum-size JPEG, the application shall encode JSON-escaped metadata within the one-megabyte response limit.
+
+### CHROME-4.x
+
+**CHROME-4.1** When Local browser mode is selected, the application shall authorize and prepare the retained original URL before presenting it and shall reject any changed URL.
+
+**CHROME-4.2** If the originating browser scope loses ownership or is dismissed during authorization or listener preparation, then the application shall cancel Local presentation, release callback listeners and require another explicit selection.
+
+**CHROME-4.3** When a Local Safari sign-in redirects to the unchanged localhost callback, the application shall keep its foreground callback leases alive and forward the original request to the authorized host.
+
+**CHROME-4.4** If a canceled Local attempt resumes after another explicit attempt opens its callback, then the application shall preserve the replacement listener and ignore the obsolete transport result.
+
+**CHROME-4.5** When Local browser mode is selected, the application shall use the retained original OAuth offer for sign-in, otherwise use the current selected HTTP(S) page, and reject an authorization page without its originating offer.
+
+### CHROME-5.x
+
+**CHROME-5.1** When the iOS project is regenerated, the application shall place Chrome rendering tests only in the foreground browser test host and retain ordinary session tests in the unhosted unit bundle.
+
+**CHROME-5.2** When the browser test host metadata is regenerated, the application shall retain its launch-screen declaration so native keyboard and viewport tests use modern scene geometry.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x
@@ -3608,7 +3742,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-5.17** When a paired device requests worktree OAuth sign-in, the host shall grant temporary browser approval only after resolving the callback listener and shall honor disabled or loopback-only tunnel permissions.
 
-**PORTS-5.18** When a mobile user holds an OAuth sign-in link with a local callback, the application shall offer Sign in via Mac without opening unrelated links or stale menu targets.
+**PORTS-5.18** When a mobile user opens an OAuth terminal link, the application shall route its exact URL through the originating pane browser without a separate sign-in action or stale menu targets.
 
 **PORTS-5.19** While a mobile worktree port row or host browser toolbar is displayed at a compact width, the application shall retain the link and navigation controls while truncating long process and host names.
 
@@ -3646,7 +3780,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-5.36** When a Mac Graftty pane invokes open with one HTTP(S) URL, the application shall route it through the pane owner without falling back after a routing failure, and shall preserve native open arguments outside a pane or for other invocations.
 
-**PORTS-5.37** When a new OAuth URL is offered by the mobile user's currently owned pane, the application shall open sign-in on that mobile device once and shall ignore offers from other panes, followers, and ordinary URLs.
+**PORTS-5.37** When a new HTTP or HTTPS URL is offered by the mobile user's focused owned pane, the application shall present its host Chrome tab once and shall ignore offers from other panes, devices and followers.
 
 **PORTS-5.38** When a remote open offer crosses a host connection, the application shall preserve its originating pane session and intended paired mobile device, and decode older offers without those identities as unspecified.
 

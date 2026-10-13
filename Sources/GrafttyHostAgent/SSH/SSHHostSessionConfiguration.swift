@@ -18,6 +18,8 @@ struct SSHHostSessionConfiguration: Sendable {
     let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
     let paneControlMutator: PaneControlChannelHandler.Mutator
     let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator
+    var chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil
+    var chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { _ in }
     let ownershipStore: SessionDisplayOwnershipStore
     let ownershipBroadcaster: DisplayOwnershipBroadcaster
     let teamHandler: TeamChannelHandler.Handler?
@@ -72,6 +74,16 @@ struct SSHHostSessionConfiguration: Sendable {
                         worktreeManagementMutator: { request in
                             await peerBox.manage(request, using: worktreeManagementMutator)
                         },
+                        chromeTabMutator: chromeTabMutator.map { mutator -> ChromeTabChannelHandler.Mutator in
+                            { @Sendable request, deviceID, viewerID in
+                                guard peerBox.deviceID == deviceID, peerBox.worktreeManagementAllowed else {
+                                    await chromeTabOnDisconnect(viewerID)
+                                    return .init(error: "Chrome control permission was revoked.")
+                                }
+                                return await mutator(request, deviceID, viewerID)
+                            }
+                        },
+                        chromeTabOnDisconnect: chromeTabOnDisconnect,
                         ownershipStore: ownershipStore,
                         ownershipBroadcaster: ownershipBroadcaster,
                         deviceIDProvider: { peerBox.deviceID },
@@ -170,7 +182,8 @@ final class AuthenticatedPeerBox: @unchecked Sendable {
         return response
     }
 
-    func browserTunnelAllowed(host: String, port: Int) -> Bool {
+    func browserTunnelAllowed(host: String, port: Int, protectedChromePorts: ChromeDebugPortRegistry = .shared) -> Bool {
+        guard !protectedChromePorts.contains(port: port) else { return false }
         lock.lock()
         defer { lock.unlock() }
         guard let peer = _peer else { return false }
