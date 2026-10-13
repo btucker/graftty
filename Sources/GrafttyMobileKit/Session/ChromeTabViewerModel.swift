@@ -42,6 +42,7 @@ final class ChromeTabViewerModel {
     private var lastAppliedOrdinal = 0
     private var frameSequence: UInt64?
     private var frameTabID: String?
+    private var reconnectTabID: String?
 
     func toggleKeyboard() { keyboardPresented.toggle() }
 
@@ -82,8 +83,9 @@ final class ChromeTabViewerModel {
 
     func run(target: String, initialLaunch: ChromeTabInitialLaunch?, onLaunch: () -> Void,
              makeDriver: () async throws -> any ChromeTabChannelDriver) async {
-        let selectedBeforeReconnect = state.selectedTabID
+        let selectedBeforeReconnect = state.selectedTabID ?? reconnectTabID
         close()
+        reconnectTabID = selectedBeforeReconnect
         let epoch = generation
         do {
             let driver = try await makeDriver()
@@ -165,6 +167,7 @@ final class ChromeTabViewerModel {
             if pendingSelectionOrdinal == ordinal { pendingSelectionOrdinal = nil }
             guard let next = reply.state else { invalidateFrame(); return false }
             state = next
+            if reply.error == nil, let selected = next.selectedTabID { reconnectTabID = selected }
             updateImage(next)
             scheduleResize(target: target)
             return reply.error == nil
@@ -216,11 +219,14 @@ final class ChromeTabViewerModel {
 
     func suspend() {
         let retained = state
+        let selected = state.selectedTabID ?? reconnectTabID
         close()
         state = retained
+        reconnectTabID = selected
     }
 
     func close() {
+        reconnectTabID = nil
         generation = UUID(); resizeTask?.cancel(); resizeTask = nil
         client?.cancel(); client = nil; isConnected = false; pendingSelectionOrdinal = nil
         invalidateFrame(); state = .init(); pendingCount = 0; inputCount = 0

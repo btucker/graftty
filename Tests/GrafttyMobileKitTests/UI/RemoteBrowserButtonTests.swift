@@ -74,6 +74,34 @@ struct RemoteBrowserButtonTests {
         try await waitUntil { fixture.host.presentedViewController == nil }
     }
 
+    @Test("@spec CHROME-2.28: While a retained mobile browser sheet's biometric gate is locked, the application shall hide its page, address, tab metadata, and browser controls until the gate unlocks.")
+    func retainedBrowserHidesControlsWhenBiometricGateLocks() async throws {
+        let gate = BiometricGate(authenticator: BrowserUnlockAuthenticator(), idleTimeout: 0)
+        gate.applicationWillEnterForeground()
+        await gate.authenticate()
+        try #require(gate.state == .unlocked)
+        let fixture = try makeButtonFixture(owner: true)
+        defer { close(fixture) }
+        fixture.state.gate = gate
+        try await waitUntil { accessibilityObjects(in: fixture.host.view).contains { $0.accessibilityLabel == "Browser" } }
+        try activateBrowser(in: fixture.host.view)
+        try await waitUntil { fixture.host.presentedViewController != nil }
+        let sheet = try #require(fixture.host.presentedViewController)
+        try await waitUntil { accessibilityObjects(in: sheet.view).contains { $0.accessibilityLabel == "Open address" } }
+        gate.applicationDidEnterBackground()
+        gate.applicationWillEnterForeground()
+        try #require(gate.state == .locked)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(Bool(fixture.host.presentedViewController === sheet))
+        #expect(!accessibilityObjects(in: sheet.view).contains { $0.accessibilityLabel == "Open address" || $0.accessibilityLabel == "Tabs" })
+        await gate.authenticate()
+        try await waitUntil { accessibilityObjects(in: sheet.view).contains { $0.accessibilityLabel == "Open address" } }
+    }
+
+    private struct BrowserUnlockAuthenticator: BiometricAuthenticator {
+        func authenticate() async -> Result<Void, Error> { .success(()) }
+    }
+
     @Test("@spec IMAGE-2.4: When a mobile image request arrives, the application shall preserve typing and show an Images action that presents native Quick Look only after a tap, without automatically reopening a dismissed offer.", .timeLimit(.minutes(1)))
     func imagesArriveWithoutInterruptingTypingAndOpenOnTap() async throws {
         let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false)
@@ -358,6 +386,7 @@ struct RemoteBrowserButtonTests {
         var active = true
         var ready = true
         var hasSnapshot = true
+        var gate: BiometricGate?
         var visible = true
         var offers: [RemoteOpenOffer] = []
         var slowRead = false
@@ -448,6 +477,7 @@ struct RemoteBrowserButtonTests {
                     isPaneOwner: { state.owner }, canPresentAuthentication: { true }, terminalRequest: .constant(nil), chromePresentation: initialPresentation)
                     .environment(\.scenePhase, state.active ? .active : .background)
                     .environment(\.accessibilityEnabled, true)
+                    .environment(\.biometricGate, state.gate)
                 if let paneWidth {
                     Color.black.frame(width: paneWidth, height: 200)
                         .overlay(alignment: .topTrailing) {

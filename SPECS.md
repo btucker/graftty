@@ -3280,11 +3280,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-2.24** When tab selection changes during a pending viewport resize, the application shall resize only the selected tab, apply the latest requested geometry without duplicate requests, and cancel remaining resize work on close.
 
-**CHROME-2.25** While the selected remote HTTP(S) page has no rendered frame or a browser error, the application shall hide the Local/Remote toggle; when that page renders successfully, the application shall offer Local only through the toggle without a Try Local button or explanatory copy.
+**CHROME-2.25** While the selected remote HTTP(S) page has no rendered frame or a current remote browser error, the application shall hide the Local/Remote toggle; when that page renders successfully, the application shall offer Local only through the toggle without a Try Local button or explanatory copy.
 
 **CHROME-2.26** When the mobile remote browser reconnects after suspension, the application shall restore its selected tab if it still exists and shall not repeat a successfully acknowledged initial URL launch.
 
 **CHROME-2.27** When a mounted mobile browser backgrounds and its ownership snapshot clears during transport suspension, the application shall retain the browser sheet until explicit dismissal or confirmed ownership loss.
+
+**CHROME-2.28** While a retained mobile browser sheet's biometric gate is locked, the application shall hide its page, address, tab metadata, and browser controls until the gate unlocks.
 
 ### CHROME-3.x — Authenticated transport
 
@@ -3317,6 +3319,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CHROME-4.5** When Local browser mode is selected, the application shall use the retained original OAuth offer for sign-in, otherwise use the current selected HTTP(S) page, and reject an authorization page without its originating offer.
 
 **CHROME-4.6** When an established Local browser backgrounds or waits for foreground transport reconnection, the application shall retain the same Safari presentation and callback listener, resume callbacks through the current host connection when ready, and cancel unfinished Local preparation.
+
+**CHROME-4.7** While multiple Local browsers share a Mac callback endpoint, the application shall skip a suspended browser's retained connector and forward through an active browser before writing socket data.
 
 ### CHROME-5.x
 

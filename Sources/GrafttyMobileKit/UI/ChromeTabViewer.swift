@@ -32,7 +32,7 @@ struct ChromeTabViewer: View {
     private var ready: Bool { paneReady && LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) }
     private var selectedTab: ChromeTab? { model.state.tabs.first { $0.id == model.state.selectedTabID } }
     private var localPageURL: URL? {
-        guard model.image != nil, model.error == nil, model.initialLaunchError == nil,
+        guard model.image != nil, model.error == nil,
               let tab = selectedTab, tab.urlTruncated != true,
               tab.urlTruncated != nil || tab.url.utf8.count < 2048,
               ChromeTabAction.launch(url: tab.url).isValid else { return nil }
@@ -61,19 +61,29 @@ struct ChromeTabViewer: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                header
-                status
-                page
+                if gate.isUnlocked {
+                    header
+                    status
+                    page
+                } else {
+                    ContentUnavailableView {
+                        Label("Graftty is locked", systemImage: "lock.fill")
+                    } actions: {
+                        Button("Unlock Graftty") { Task { await gate?.authenticate() } }
+                    }
+                }
             }
             .background(Color(uiColor: .systemBackground))
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(spacing: 0) {
-                    if model.keyboardPresented { keyboardInput }
-                    browserControls
+                if gate.isUnlocked {
+                    VStack(spacing: 0) {
+                        if model.keyboardPresented { keyboardInput }
+                        browserControls
+                    }
+                    .background(.bar)
+                    .overlay(alignment: .top) { Divider() }
                 }
-                .background(.bar)
-                .overlay(alignment: .top) { Divider() }
             }
             .alert("Open a new tab", isPresented: $showingAddress) {
                 TextField("https://", text: $launchURL)
@@ -93,6 +103,9 @@ struct ChromeTabViewer: View {
             }
             .onChange(of: ready) { _, active in
                 if !active { model.keyboardPresented = false; textFocused = false }
+            }
+            .onChange(of: gate.isUnlocked) { _, unlocked in
+                if !unlocked { showingAddress = false; launchURL = ""; text = "" }
             }
             .onChange(of: model.keyboardPresented) { _, visible in
                 if !visible { textFocused = false }

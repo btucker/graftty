@@ -136,10 +136,18 @@ final class LocalBrowserController {
                     try self.checkCurrent(attempt)
                     do {
                         try await self.network.startLocalPage(url: approved, hostID: hostID, callbackHost: callbackHost) { [weak self] socket, host, port, reply in
-                            guard let self, await self.callbackAllowed(attempt) else { throw CancellationError() }
+                            try Task.checkCancellation()
+                            guard let self, await self.callbackAllowed(attempt) else {
+                                throw RemoteHostConnection.ConnectionError.notConnected
+                            }
                             do {
-                                guard let currentTunnel = await makeTunnel() else { throw CancellationError() }
-                                try await self.checkCurrent(attempt)
+                                guard let currentTunnel = await makeTunnel() else {
+                                    throw RemoteHostConnection.ConnectionError.notConnected
+                                }
+                                try Task.checkCancellation()
+                                guard await self.callbackAllowed(attempt) else {
+                                    throw RemoteHostConnection.ConnectionError.notConnected
+                                }
                                 try await currentTunnel.connect(socket, host, port, reply)
                             } catch {
                                 await self.callbackFailed(attempt)

@@ -338,6 +338,31 @@ struct HostBrowserProxyTests {
 
     }
 
+    @Test("@spec CHROME-4.7: While multiple Local browsers share a Mac callback endpoint, the application shall skip a suspended browser's retained connector and forward through an active browser before writing socket data.", .timeLimit(.minutes(1)))
+    func suspendedLocalLeaseFallsBackToActiveWindow() async throws {
+        let first = LocalBrowserController(), second = LocalBrowserController()
+        first.allowed = true; second.allowed = true
+        defer { first.stop(); second.stop() }
+        let url = URL(string: "http://127.0.0.1:32188/")!, hostID = UUID()
+        let tunnel = LocalBrowserTunnel(isConnected: { true }, connect: { socket, _, _, _ in
+            try await BrowserProxy.send(Data("alive".utf8), to: socket)
+            socket.cancel()
+        })
+        for local in [first, second] {
+            local.open(url: url, hostID: hostID, makeTunnel: { tunnel },
+                       authenticate: { .init(url: $0, callbackHost: "localhost") }, isPaneOwner: { true })
+            let deadline = ContinuousClock.now + .seconds(3)
+            while local.session.url == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            try #require(local.session.url == url)
+        }
+        second.allowed = false
+        let socket = NWConnection(host: "127.0.0.1", port: 32188, using: .tcp)
+        socket.start(queue: DispatchQueue(label: "graftty.safari.active-window.test"))
+        defer { socket.cancel() }
+        #expect(try await Self.receive(5, from: socket) == Data("alive".utf8))
+        #expect(second.session.url == url)
+    }
+
     @MainActor @Observable
     final class BrowserLifecycleState {
         var active = true

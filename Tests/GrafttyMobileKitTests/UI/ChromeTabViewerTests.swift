@@ -35,6 +35,8 @@ struct ChromeTabViewerTests {
         await first.value
         model.suspend()
         #expect(!model.isConnected && model.state.selectedTabID == "second")
+        struct ReconnectFailure: Error {}
+        await model.run(target: "pane", initialLaunch: launch, onLaunch: {}, makeDriver: { throw ReconnectFailure() })
         let second = Task { await model.run(target: "pane", initialLaunch: launch, onLaunch: {}, makeDriver: { driver }) }
         defer { second.cancel(); model.close() }
         let resumedDeadline = ContinuousClock.now + .seconds(3)
@@ -99,7 +101,7 @@ struct ChromeTabViewerRenderingTests {
         #expect(views.compactMap { $0 as? UISegmentedControl }.isEmpty)
     }
 
-    @Test("@spec CHROME-2.25: While the selected remote HTTP(S) page has no rendered frame or a browser error, the application shall hide the Local/Remote toggle; when that page renders successfully, the application shall offer Local only through the toggle without a Try Local button or explanatory copy.")
+    @Test("@spec CHROME-2.25: While the selected remote HTTP(S) page has no rendered frame or a current remote browser error, the application shall hide the Local/Remote toggle; when that page renders successfully, the application shall offer Local only through the toggle without a Try Local button or explanatory copy.")
     func localToggleWaitsForRenderedRemotePage() async throws {
         let model = ChromeTabViewerModel()
         let viewer = ChromeTabViewer(target: "pane", connectionProvider: { nil }, paneReady: false,
@@ -111,6 +113,7 @@ struct ChromeTabViewerRenderingTests {
         model.state = .init(tabs: [.init(id: "page", title: "Page", url: "https://example.com")], selectedTabID: "page")
         try await Task.sleep(for: .milliseconds(100))
         #expect(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.isEmpty)
+        model.initialLaunchError = "Earlier launch was ambiguous. Select an existing tab."
         model.image = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 240)).image { _ in }
         try await Task.sleep(for: .milliseconds(100))
         let modes = try #require(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.first)
