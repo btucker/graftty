@@ -81,53 +81,6 @@ struct SidebarScrollLayoutTests {
         }
     }
 
-    @Test("@spec LAYOUT-2.151: When the user clicks the macOS sidebar search field, the application shall focus an editable search control below the native toolbar and filter worktrees as the user types, including after resizing.", arguments: [false, true], [false, true])
-    func searchReceivesClicksBelowToolbar(rail: Bool, compactToolbar: Bool) async throws {
-        let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
-        defer { hosted.tearDown() }
-        hosted.window.toolbarStyle = compactToolbar ? .unifiedCompact : .unified
-        for width in [900.0, 720.0] {
-            hosted.window.setContentSize(NSSize(width: width, height: 540))
-            try await hosted.settle()
-            let search = try #require(Self.find(NSTextField.self, in: hosted.hosting).first {
-                $0.placeholderString == "Search projects and worktrees"
-            })
-            let toggle = try hosted.sidebarToggle()
-            let toolbar = try #require(toggle.superview)
-            let searchFrame = search.convert(search.bounds, to: hosted.hosting)
-            #expect(searchFrame.minY >= toolbar.convert(toolbar.bounds, to: hosted.hosting).maxY)
-            #expect(searchFrame.height >= 28)
-            let chrome = try #require(hosted.window.contentView?.superview)
-            let location = search.convert(CGPoint(x: search.bounds.midX, y: search.bounds.midY), to: nil)
-            let hit = try #require(chrome.hitTest(chrome.superview?.convert(location, from: nil) ?? location))
-            #expect(hit === search || hit.isDescendant(of: search))
-            let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: hosted.window)
-            let up = try NSEvent.syntheticClick(.leftMouseUp, at: location, in: hosted.window)
-            hosted.window.sendEvent(down)
-            hosted.window.sendEvent(up)
-            let editor = try #require(search.currentEditor() as? NSTextView)
-            #expect(hosted.window.firstResponder === editor)
-            editor.selectAll(nil)
-            editor.insertText("task-29", replacementRange: editor.selectedRange())
-            try await hosted.settle()
-            let visible = Self.find(WorktreeDragSourceView.self, in: hosted.hosting)
-            let target = try #require(hosted.harness.state.repos[0].worktrees.first { $0.branch == "task-29" })
-            #expect(search.stringValue == "task-29")
-            #expect(visible.count == 1)
-            #expect(hosted.harness.selections.isEmpty)
-            // Search disables reordering, so these rows have no drag payload.
-            // Resolve the remaining row through its selection action instead.
-            try #require(visible.first).onClick?()
-            #expect(hosted.harness.selections == [target.path])
-            hosted.harness.selections.removeAll()
-            editor.selectAll(nil)
-            editor.insertText("", replacementRange: editor.selectedRange())
-            try await hosted.settle()
-            _ = try hosted.dragView(named: "pinned-0")
-            #expect(hosted.harness.selections.isEmpty)
-        }
-    }
-
     @Test("@spec LAYOUT-2.123: While a macOS pinned section has no preceding rows, the application shall give its disclosure header a 20-point click target without extra top padding.")
     func pinnedDisclosureRetainsTopEdgeClickTarget() async throws {
         let header = NSHostingView(rootView: SidebarWorktreeSectionHeader("Pinned Agents",
@@ -532,8 +485,66 @@ struct SidebarScrollLayoutTests {
             }
         }
     }
-    private static func find<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+    fileprivate static func find<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
         ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { find(type, in: $0) }
+    }
+}
+
+/// Native text selection tracking uses XCTest because it can stop the
+/// Swift Testing async-main run loop, just like native menu tracking.
+@MainActor
+final class SidebarSearchNativeTests: XCTestCase {
+    /// @spec LAYOUT-2.151: When the user clicks the macOS sidebar search field, the application shall focus an editable search control below the native toolbar and filter worktrees as the user types, including after resizing.
+    func testSearchReceivesClicksBelowToolbar() async throws {
+        for rail in [false, true] {
+            for compactToolbar in [false, true] {
+                let hosted = try await SidebarScrollLayoutTests.Hosted.make(pinnedCount: 1, rail: rail)
+                defer { hosted.tearDown() }
+                hosted.window.toolbarStyle = compactToolbar ? .unifiedCompact : .unified
+                for width in [900.0, 720.0] {
+                    hosted.window.setContentSize(NSSize(width: width, height: 540))
+                    try await hosted.settle()
+                    let search = try XCTUnwrap(SidebarScrollLayoutTests.find(NSTextField.self, in: hosted.hosting).first {
+                        $0.placeholderString == "Search projects and worktrees"
+                    })
+                    let toggle = try hosted.sidebarToggle()
+                    let toolbar = try XCTUnwrap(toggle.superview)
+                    let searchFrame = search.convert(search.bounds, to: hosted.hosting)
+                    XCTAssertGreaterThanOrEqual(searchFrame.minY, toolbar.convert(toolbar.bounds, to: hosted.hosting).maxY)
+                    XCTAssertGreaterThanOrEqual(searchFrame.height, 28)
+                    let chrome = try XCTUnwrap(hosted.window.contentView?.superview)
+                    let location = search.convert(CGPoint(x: search.bounds.midX, y: search.bounds.midY), to: nil)
+                    let hit = try XCTUnwrap(chrome.hitTest(chrome.superview?.convert(location, from: nil) ?? location))
+                    XCTAssertTrue(hit === search || hit.isDescendant(of: search))
+                    let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: hosted.window)
+                    let up = try NSEvent.syntheticClick(.leftMouseUp, at: location, in: hosted.window)
+                    // NSTextView may synchronously track selection until mouse-up.
+                    // Queue the release before entering that native tracking loop.
+                    NSApp.postEvent(up, atStart: true)
+                    hosted.window.sendEvent(down)
+                    let editor = try XCTUnwrap(search.currentEditor() as? NSTextView)
+                    XCTAssertTrue(hosted.window.firstResponder === editor)
+                    editor.selectAll(nil)
+                    editor.insertText("task-29", replacementRange: editor.selectedRange())
+                    try await hosted.settle()
+                    let visible = SidebarScrollLayoutTests.find(WorktreeDragSourceView.self, in: hosted.hosting)
+                    let target = try XCTUnwrap(hosted.harness.state.repos[0].worktrees.first { $0.branch == "task-29" })
+                    XCTAssertEqual(search.stringValue, "task-29")
+                    XCTAssertEqual(visible.count, 1)
+                    XCTAssertTrue(hosted.harness.selections.isEmpty)
+                    // Search disables reordering, so these rows have no drag payload.
+                    // Resolve the remaining row through its selection action instead.
+                    try XCTUnwrap(visible.first).onClick?()
+                    XCTAssertEqual(hosted.harness.selections, [target.path])
+                    hosted.harness.selections.removeAll()
+                    editor.selectAll(nil)
+                    editor.insertText("", replacementRange: editor.selectedRange())
+                    try await hosted.settle()
+                    _ = try hosted.dragView(named: "pinned-0")
+                    XCTAssertTrue(hosted.harness.selections.isEmpty)
+                }
+            }
+        }
     }
 }
 
