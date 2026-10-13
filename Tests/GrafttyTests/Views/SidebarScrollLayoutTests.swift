@@ -240,10 +240,14 @@ struct SidebarScrollLayoutTests {
             #expect(pinned.contentView.bounds.origin.y == 100)
             #expect(ordinary.contentView.bounds.origin == oldOrdinaryOrigin)
             #expect(sort.convert(sort.bounds, to: hosted.hosting) == sortFrame)
-            hosted.window.setContentSize(NSSize(width: 900, height: 340))
-            try await hosted.settle()
-            #expect(pinned.contentView.bounds.height - pinned.contentInsets.top <= hosted.hosting.bounds.height / 2)
-            #expect(ordinary.contentView.bounds.height >= 96)
+            for height in [340.0, 280.0] {
+                hosted.window.setContentSize(NSSize(width: 900, height: height))
+                try await hosted.settle()
+                #expect(pinned.contentView.bounds.height - pinned.contentInsets.top <= hosted.hosting.bounds.height / 2)
+                // Fixed chrome can leave less than 96pt in a short window.
+                // In that case pinned rows must surrender all their space.
+                #expect(ordinary.contentView.bounds.height >= 96 || pinned.bounds.height <= 1)
+            }
         }
     }
 
