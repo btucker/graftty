@@ -12,7 +12,7 @@ import Testing
 struct MacPagedTerminalTests {
     @Test("@spec TERM-12.36: When a detached local Mac pane is mounted again, the application shall retain every history line, including history shorter than one viewport, through native paging or legacy replay.", .timeLimit(.minutes(1)), arguments: MacPagedTerminalRenderer.isSupported ? [false, true] : [true], [40, 10000])
     func mountedPaneRestoresDetachedHistory(legacy: Bool, lineCount: Int) async throws {
-        let fixture = try await HistoryDaemon.make(lineCount: lineCount)
+        let fixture = try await HistoryDaemon.make(lineCount: lineCount, redrawPrompt: legacy)
         defer { fixture.close() }
         _ = NSApplication.shared
         #expect(ghostty_init(0, nil) == 0)
@@ -80,10 +80,13 @@ struct MacPagedTerminalTests {
                     restoredText = text.text.map { String(decoding: Data(bytes: $0, count: Int(text.text_len)), as: UTF8.self) } ?? ""
                     ghostty_surface_free_text(handle.surface, &text)
                 }
-                if restoredText.contains(expected), handle.presentationGrid == nil { break }
+                if restoredText.contains(expected),
+                   !legacy || restoredText.contains("history-prompt> "),
+                   handle.presentationGrid == nil { break }
                 try await Task.sleep(for: .milliseconds(10))
             } while ContinuousClock.now < deadline
             #expect(restoredText.contains(expected))
+            if legacy { #expect(restoredText.contains("history-prompt> ")) }
         }
         let rows = Set(restoredText.split(whereSeparator: \.isNewline).map(String.init))
         let missingRows = (0..<lineCount).filter { !rows.contains(String(format: "history-row-%06d", $0)) }
@@ -262,8 +265,8 @@ struct MacPagedTerminalTests {
         let seed: NativePtySession
         private let output: HistoryOutput
 
-        private init(lineCount: Int) throws {
-            output = HistoryOutput(lastRow: lineCount - 1)
+        private init(lineCount: Int, redrawPrompt: Bool) throws {
+            output = HistoryOutput(marker: redrawPrompt ? "history-prompt> " : String(format: "history-row-%06d", lineCount - 1))
             let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             let dir = URL(fileURLWithPath: "/private/tmp/mac-paging-\(UUID().uuidString.prefix(8))")
@@ -272,15 +275,16 @@ struct MacPagedTerminalTests {
             // Keep the shell alive after producing the fixture; the client reader
             // drains the PTY so this setup cannot block on its output buffer.
             let output = output
+            let prompt = redrawPrompt ? "printf '\\033]133;A;redraw=1\\007history-prompt> \\033]133;B\\007'; " : ""
             seed = NativePtySession(argv: [launcher.executable.path, "attach", "history", "/bin/sh", "-c",
-                "i=0; while [ $i -lt \(lineCount) ]; do printf 'history-row-%06d\\n' $i; i=$((i+1)); done; while read value; do printf 'live-%s\\n' \"$value\"; done"],
+                "i=0; while [ $i -lt \(lineCount) ]; do printf 'history-row-%06d\\n' $i; i=$((i+1)); done; \(prompt)while read value; do printf 'live-%s\\n' \"$value\"; done"],
                 env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment),
                 workingDirectory: dir, initialSize: .init(cols: 80, rows: 24),
                 writeToSurface: { output.append($0) }, processExited: { _, _ in }, spawnFailed: { _ in })
         }
 
-        static func make(lineCount: Int = 10000) async throws -> HistoryDaemon {
-            let fixture = try HistoryDaemon(lineCount: lineCount)
+        static func make(lineCount: Int = 10000, redrawPrompt: Bool = false) async throws -> HistoryDaemon {
+            let fixture = try HistoryDaemon(lineCount: lineCount, redrawPrompt: redrawPrompt)
             do {
                 try fixture.seed.start()
                 let deadline = ContinuousClock.now.advanced(by: .seconds(10))
@@ -303,11 +307,11 @@ struct MacPagedTerminalTests {
     private final class HistoryOutput: @unchecked Sendable {
         private let lock = NSLock()
         private var bytes = Data()
-        private let finalRow: String
-        init(lastRow: Int) { finalRow = String(format: "history-row-%06d", lastRow) }
+        private let marker: String
+        init(marker: String) { self.marker = marker }
         func append(_ data: Data) { lock.withLock { bytes.append(data) } }
         var finished: Bool {
-            lock.withLock { String(decoding: bytes, as: UTF8.self).contains(finalRow) }
+            lock.withLock { String(decoding: bytes, as: UTF8.self).contains(marker) }
         }
     }
 }

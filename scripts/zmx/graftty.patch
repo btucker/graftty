@@ -158,7 +158,7 @@ index a43b5a7..4bf7951 100644
  }
 
 diff --git a/src/loop.zig b/src/loop.zig
-index 4509ec0..0ffe899 100644
+index 4509ec0..52db61a 100644
 --- a/src/loop.zig
 +++ b/src/loop.zig
 @@ -20,7 +20,7 @@ pub fn clientLoop(
@@ -256,7 +256,7 @@ index 4509ec0..0ffe899 100644
                              if (snapshot_mode) {
                                  try stdout_buf.appendSlice(gpa, msg.payload);
                              } else {
-@@ -176,12 +222,27 @@ pub fn clientLoop(
+@@ -176,12 +222,31 @@ pub fn clientLoop(
                                      var restored_term = mut_res.terminal;
                                      defer restored_term.deinit(gpa);
                                      while (snapshot.pumpHistory(gpa, &mut_res.decoder, &restored_term) catch false) {}
@@ -264,6 +264,10 @@ index 4509ec0..0ffe899 100644
 +                                    // before replay so the cursor follows the same content.
 +                                    // Grid-aware hosts instead receive the source dimensions.
 +                                    if (!replay_grid) {
++                                        // This snapshot has no shell to redraw erased prompts.
++                                        const saved_prompt_redraw = restored_term.flags.shell_redraws_prompt;
++                                        restored_term.flags.shell_redraws_prompt = .false;
++                                        defer restored_term.flags.shell_redraws_prompt = saved_prompt_redraw;
 +                                        const replay_size = ipc.getTerminalSize(lib_posix.STDOUT_FILENO);
 +                                        try restored_term.resize(gpa, .{ .cols = replay_size.cols, .rows = replay_size.rows });
 +                                    }
@@ -284,7 +288,7 @@ index 4509ec0..0ffe899 100644
                                  } else |err| {
                                      std.log.warn("failed to import snapshot in client err={s}", .{@errorName(err)});
                                  }
-@@ -192,12 +253,25 @@ pub fn clientLoop(
+@@ -192,12 +257,25 @@ pub fn clientLoop(
                          // daemon is asking for the client's window size usually in response
                          // to this client being set as leader.
                          const next_size = ipc.getTerminalSize(lib_posix.STDOUT_FILENO);
@@ -316,7 +320,7 @@ index 4509ec0..0ffe899 100644
                      },
                      .Switch => {
                          std.log.info("switch session", .{});
-@@ -251,6 +325,83 @@ pub fn clientLoop(
+@@ -251,6 +329,83 @@ pub fn clientLoop(
      }
  }
 
@@ -400,7 +404,7 @@ index 4509ec0..0ffe899 100644
  /// dameonLoop is what the daemon runs to send and receive ipc commands from its corresponding
  /// clients.  It uses poll() as its non-blocking mechanism.
  fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_fd: lib_posix.socket_t, pty_fd: i32) !void {
-@@ -265,10 +416,15 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -265,10 +420,15 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
      var term = try ghostty_vt.Terminal.init(io, gpa, .{
          .cols = init_size.cols,
          .rows = init_size.rows,
@@ -417,7 +421,7 @@ index 4509ec0..0ffe899 100644
      defer vt_stream.deinit();
 
      // Carries the tail of the previous PTY read so the task-exit marker
-@@ -309,7 +465,20 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -309,7 +469,20 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
 
          try poll_fds.append(gpa, .{ .fd = signal.sig_pipe[0], .events = lib_posix.POLL.IN, .revents = 0 });
 
@@ -438,7 +442,7 @@ index 4509ec0..0ffe899 100644
              var events: i16 = lib_posix.POLL.IN;
              if (client.has_pending_output) {
                  events |= lib_posix.POLL.OUT;
-@@ -321,7 +490,11 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -321,7 +494,11 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
              });
          }
 
@@ -451,7 +455,7 @@ index 4509ec0..0ffe899 100644
 
          if (poll_fds.items[2].revents & lib_posix.POLL.IN != 0) {
              signal.drainSignalPipe();
-@@ -346,6 +519,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -346,6 +523,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
              client.* = Client{
                  .alloc = gpa,
                  .socket_fd = client_fd,
@@ -459,7 +463,7 @@ index 4509ec0..0ffe899 100644
                  .read_buf = try ipc.SocketBuffer.init(gpa),
                  .write_buf = undefined,
              };
-@@ -354,6 +528,16 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -354,6 +532,16 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
              // buffer is userspace-only: it drains via POLLOUT to the client socket,
              // which has no corresponding kernel-imposed per-write limit.
              client.write_buf = try std.ArrayList(u8).initCapacity(client.alloc, 65536);
@@ -476,7 +480,7 @@ index 4509ec0..0ffe899 100644
              try daemon.clients.append(gpa, client);
              std.log.info(
                  "client connected fd={d} total={d}",
-@@ -361,6 +545,23 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -361,6 +549,23 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
              );
          }
 
@@ -500,7 +504,7 @@ index 4509ec0..0ffe899 100644
          const inp_flags = lib_posix.POLL.IN | lib_posix.POLL.HUP | lib_posix.POLL.ERR | lib_posix.POLL.NVAL;
          if (poll_fds.items[1].revents & inp_flags != 0) {
              // Read from PTY. Buffer is sized to N_TTY_BUF_SIZE (4096): the hard
-@@ -434,14 +635,13 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -434,14 +639,13 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                      const broadcast_data = util.rewritePromptRedraw(gpa, buf[0..n]) orelse buf[0..n];
                      defer if (broadcast_data.ptr != buf[0..n].ptr) gpa.free(broadcast_data);
                      for (daemon.clients.items) |client| {
@@ -516,7 +520,7 @@ index 4509ec0..0ffe899 100644
                      }
                  }
              }
-@@ -465,7 +665,6 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -465,7 +669,6 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
          // Only iterate over clients that were present when poll_fds was constructed
          // poll_fds contains [server, pty, sig_pipe, client0, client1, ...]
          // So number of clients in poll_fds is poll_fds.items.len - 3
@@ -524,7 +528,7 @@ index 4509ec0..0ffe899 100644
          if (i > num_polled_clients) {
              // If we have more clients than polled (i.e. we just accepted one), start from the
              // polled ones
-@@ -495,13 +694,26 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -495,13 +698,26 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                      if (last) break :daemon_loop;
                      continue;
                  }
@@ -552,7 +556,7 @@ index 4509ec0..0ffe899 100644
                          .Switch => try daemon.handleSwitch(gpa, msg.payload),
                          .Resize => try daemon.handleResize(gpa, client, pty_fd, &term, msg.payload),
                          .Detach => {
-@@ -519,8 +731,14 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -519,8 +735,14 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                          .LabelGet => try daemon.handleLabelGet(gpa, client),
                          .LabelSet => try daemon.handleLabelSet(gpa, client, msg.payload),
                          .LabelClear => try daemon.handleLabelClear(gpa, client),
@@ -568,7 +572,7 @@ index 4509ec0..0ffe899 100644
                          .History => try daemon.handleHistory(gpa, client, &term, msg.payload),
                          .Run => try daemon.handleRun(gpa, io, client, msg.payload),
                          .Ack, .TaskComplete, .LabelData, .EnvData, .Snapshot => {},
-@@ -572,11 +790,24 @@ const ClientResult = struct {
+@@ -572,11 +794,24 @@ const ClientResult = struct {
  /// Client represents each terminal that has connected to a session.
  ///
  /// Multiple Clients can connect to a single session.
@@ -593,7 +597,7 @@ index 4509ec0..0ffe899 100644
      read_buf: ipc.SocketBuffer,
      write_buf: std.ArrayList(u8),
      env_str: ?[]u8 = null,
-@@ -585,9 +816,77 @@ pub const Client = struct {
+@@ -585,9 +820,77 @@ pub const Client = struct {
          lib_posix.close(self.socket_fd);
          self.read_buf.deinit();
          self.write_buf.deinit(self.alloc);
@@ -671,7 +675,7 @@ index 4509ec0..0ffe899 100644
      fn setEnv(self: *Client, gpa: std.mem.Allocator, env_str: []const u8) !void {
          if (self.env_str) |s| gpa.free(s);
          self.env_str = if (env_str.len > 0) try gpa.dupe(u8, env_str) else null;
-@@ -724,7 +1023,7 @@ pub const Daemon = struct {
+@@ -724,7 +1027,7 @@ pub const Daemon = struct {
      /// and run the clientLoop.  If it's the daemon then we need to bail since
      /// the daemonLoop is created inside this fn and when it returns that means
      /// the daemon stopped and needs to exit.
@@ -680,7 +684,7 @@ index 4509ec0..0ffe899 100644
          const sesh_name = self.session_name;
          std.log.info("ensure session session={s}", .{sesh_name});
          var dir = try std.Io.Dir.openDirAbsolute(io, self.cfg.socket_dir, .{});
-@@ -765,10 +1064,16 @@ pub const Daemon = struct {
+@@ -765,10 +1068,16 @@ pub const Daemon = struct {
              return false;
          }
 
@@ -699,7 +703,7 @@ index 4509ec0..0ffe899 100644
          std.log.info("creating session={s}", .{sesh_name});
          const server_sock_fd: lib_posix.socket_t = try socket.createSocket(self.socket_path);
          const log_fd = log.log_system.file.?.handle;
-@@ -799,11 +1104,12 @@ pub const Daemon = struct {
+@@ -799,11 +1108,12 @@ pub const Daemon = struct {
          ) catch |err| {
              switch (err) {
                  error.IsClientProc => {
@@ -717,7 +721,7 @@ index 4509ec0..0ffe899 100644
                      lib_posix.close(server_sock_fd);
                      return false;
                  },
-@@ -986,9 +1292,23 @@ pub const Daemon = struct {
+@@ -986,9 +1296,23 @@ pub const Daemon = struct {
          client: *Client,
          pty_fd: i32,
          term: *ghostty_vt.Terminal,
@@ -741,7 +745,7 @@ index 4509ec0..0ffe899 100644
 
          if (self.leader_client_fd == null) {
              try self.setLeader(gpa, client);
-@@ -1004,8 +1324,14 @@ pub const Daemon = struct {
+@@ -1004,8 +1328,14 @@ pub const Daemon = struct {
              const resize = std.mem.bytesToValue(ipc.Resize, payload);
              rows = resize.rows;
              cols = resize.cols;
@@ -756,7 +760,7 @@ index 4509ec0..0ffe899 100644
          } else {
              var reader: std.Io.Reader = .fixed(payload);
              if (snapshot.startImport(gpa, io, &reader, 1024 * 1024)) |import_res| {
-@@ -1018,6 +1344,8 @@ pub const Daemon = struct {
+@@ -1018,6 +1348,8 @@ pub const Daemon = struct {
                  cols = imported_term.cols;
                  xpixel = @as(u16, @intCast(@min(std.math.maxInt(u16), imported_term.width_px)));
                  ypixel = @as(u16, @intCast(@min(std.math.maxInt(u16), imported_term.height_px)));
@@ -765,7 +769,7 @@ index 4509ec0..0ffe899 100644
 
                  // First client attaching seeds the base session theme, cursor style/blink, modes, and pixel geometry
                  if (!self.has_had_client) {
-@@ -1034,55 +1362,56 @@ pub const Daemon = struct {
+@@ -1034,55 +1366,56 @@ pub const Daemon = struct {
              }
          }
 
@@ -856,7 +860,7 @@ index 4509ec0..0ffe899 100644
              // Disable prompt_redraw before resize. The daemon's internal terminal
              // would otherwise clear prompt lines expecting the shell to redraw them,
              // but the shell's redraw goes to the PTY (forwarded to clients), not to
-@@ -1099,10 +1428,55 @@ pub const Daemon = struct {
+@@ -1099,10 +1432,55 @@ pub const Daemon = struct {
              // Mark that we've had a client init, so subsequent clients get terminal state
              self.has_had_client = true;
 
@@ -913,7 +917,7 @@ index 4509ec0..0ffe899 100644
      pub fn handleResize(
          self: *Daemon,
          gpa: std.mem.Allocator,
-@@ -1111,18 +1485,32 @@ pub const Daemon = struct {
+@@ -1111,18 +1489,32 @@ pub const Daemon = struct {
          term: *ghostty_vt.Terminal,
          payload: []const u8,
      ) !void {
@@ -951,7 +955,7 @@ index 4509ec0..0ffe899 100644
      }
 
      pub fn handleDetach(self: *Daemon, gpa: std.mem.Allocator, client: *Client, i: usize) void {
-@@ -1229,6 +1617,8 @@ pub const Daemon = struct {
+@@ -1229,6 +1621,8 @@ pub const Daemon = struct {
      }
 
      pub fn handleRun(self: *Daemon, gpa: std.mem.Allocator, io: std.Io, client: *Client, payload: []const u8) !void {
@@ -960,7 +964,7 @@ index 4509ec0..0ffe899 100644
          // Reset task tracking so the new command's exit marker is detected.
          // Without this, a second `zmx run` on the same session is ignored
          // because task_exit_code is still set from the first run.
-@@ -1315,8 +1705,7 @@ pub const Daemon = struct {
+@@ -1315,8 +1709,7 @@ pub const Daemon = struct {
          self.setPwd(term);
          self.has_pty_output = true;
          for (self.clients.items) |client| {
@@ -1182,7 +1186,7 @@ index 23daed6..277ce73 100644
  pub fn sigaction(sig: SIG, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) void {
      switch (errno(system.sigaction(sig, act, oact))) {
 diff --git a/src/util.zig b/src/util.zig
-index d96f5a1..f7d3626 100644
+index d96f5a1..ae27670 100644
 --- a/src/util.zig
 +++ b/src/util.zig
 @@ -780,78 +780,52 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
@@ -1194,7 +1198,7 @@ index d96f5a1..f7d3626 100644
 +    const had_wraparound = term.modes.get(.wraparound);
 +    term.modes.set(.wraparound, true);
 +    defer term.modes.set(.wraparound, had_wraparound);
-+    builder.writer.writeAll("\x1b[?7h") catch return null;
++    builder.writer.writeAll("\x1b[0m\x1b[?7h") catch return null;
 +
      // If state contains color override, restore it.
      writeColorOverrides(&builder.writer, term);
@@ -1317,7 +1321,7 @@ index d96f5a1..f7d3626 100644
      writePwd(&builder.writer, term);
 
      // The formatter has no title extra and never emits OSC 0/1/2, so the title
-@@ -2191,3 +2167,90 @@ test "stripAnsi: only escape sequences" {
+@@ -2191,3 +2167,108 @@ test "stripAnsi: only escape sequences" {
      defer alloc.free(result);
      try testing.expectEqualStrings("", result);
  }
@@ -1407,4 +1411,22 @@ index d96f5a1..f7d3626 100644
 +            try testing.expectEqualStrings(expected.written(), actual.written());
 +        }
 +    }
++}
++
++test "serializeTerminalState resets inherited text style before replay" {
++    const alloc = testing.allocator;
++    const io = testing.io;
++    var source = try testCreateTerminal(alloc, io, 8, 3, "one\r\ntwo\r\nthree\r\nfour");
++    defer source.deinit(alloc);
++    const replay = serializeTerminalState(alloc, &source) orelse return error.SerializationFailed;
++    defer alloc.free(replay);
++    var restored = try testCreateTerminal(alloc, io, 8, 3, "\x1b[31m");
++    defer restored.deinit(alloc);
++    var stream = restored.vtStream();
++    defer stream.deinit();
++    stream.nextSlice(replay);
++    try expectScreensMatch(alloc, &source, &restored);
++    const pages = &restored.screens.active.pages;
++    try testing.expectEqual(@as(u16, 0), pages.getTopLeft(.screen).rowAndCell().cell.style_id);
++    try testing.expectEqual(@as(u16, 0), pages.getTopLeft(.active).rowAndCell().cell.style_id);
 +}
