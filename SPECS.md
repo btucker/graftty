@@ -626,6 +626,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.33** When a mobile follower has no live native scrollbar query, the application shall accept native navigation without waiting for a local row acknowledgement.
 
+**TERM-12.34** While a mobile follower displays full-width scrollback rows, the application shall preserve each row's columns and order across repeated history refreshes.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
