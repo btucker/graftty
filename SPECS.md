@@ -2128,6 +2128,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.25** While a terminal application captures mouse input or a native selection is active, the application shall retain text-selection actions and omit long-press link actions whose OSC8 target cannot be verified without changing that input state.
 
+**IOS-11.26** When a retained terminal pane detaches its controls, the application shall discard browser callbacks and cached link actions while preserving its renderer and ownership.
+
 ### IOS-12.x
 
 **IOS-12.1** When graftty open offers a regular file, the application shall retain a bounded temporary snapshot scoped to the caller's worktree and allow paired clients to retrieve only that offered snapshot in bounded chunks.
@@ -3676,7 +3678,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-5.17** When a paired device requests worktree OAuth sign-in, the host shall grant temporary browser approval only after resolving the callback listener and shall honor disabled or loopback-only tunnel permissions.
 
-**PORTS-5.18** When a mobile user holds an OAuth sign-in link with a local callback, the application shall offer Sign in via Mac without opening unrelated links or stale menu targets.
+**PORTS-5.18** When a mobile user opens an OAuth terminal link, the application shall route its exact URL through the originating pane browser without a separate sign-in action or stale menu targets.
 
 **PORTS-5.19** While a mobile worktree port row or host browser toolbar is displayed at a compact width, the application shall retain the link and navigation controls while truncating long process and host names.
 

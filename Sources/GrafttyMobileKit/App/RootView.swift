@@ -685,9 +685,7 @@ struct SingleSessionView: View {
         )) { Button("OK") { terminalBrowserError = nil } } message: { Text(terminalBrowserError ?? "") }
         .onDisappear {
             terminalBrowserRequest = nil
-            paneContainerBox.view?.openAuthenticationURL = nil
-            paneContainerBox.view?.openURL = { _ in }
-            paneContainerBox.view?.linkContext = nil
+            paneContainerBox.view?.detachBrowserControls()
         }
     }
 

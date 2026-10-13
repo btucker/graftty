@@ -761,8 +761,8 @@ struct TerminalPaneViewTests {
         }
     }
 
-    @Test("@spec PORTS-5.18: When a mobile user holds an OAuth sign-in link with a local callback, the application shall offer Sign in via Mac without opening unrelated links or stale menu targets.")
-    func authLinksOfferWorktreeSignIn() throws {
+    @Test("@spec PORTS-5.18: When a mobile user opens an OAuth terminal link, the application shall route its exact URL through the originating pane browser without a separate sign-in action or stale menu targets.")
+    func authLinksUsePaneBrowser() throws {
         let container = TerminalInputContainerView(frame: .zero)
         container.terminalView.contentScaleFactor = 1
         container.terminalDidResize(TerminalGridMetrics(
@@ -771,10 +771,11 @@ struct TerminalPaneViewTests {
         ))
         let url = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A43210%2Fcallback&state=test")!
         var opened: [URL] = []
-        container.openAuthenticationURL = { opened.append($0) }
+        container.openURL = { opened.append($0) }
         container.prepareLongPressMenu(at: CGPoint(x: 105, y: 10), text: url.absoluteString)
         let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
-            .children.compactMap { $0 as? UIAction }.first { $0.title == "Sign in via Mac" })
+            .children.compactMap { $0 as? UIAction }.first { $0.title == "Open Link" })
+        #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Sign in via Mac"))
         let button = UIButton()
         button.addAction(action, for: .touchUpInside)
         button.sendActions(for: .touchUpInside)

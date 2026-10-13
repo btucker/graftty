@@ -105,7 +105,6 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// (e.g., terminal control-bar buttons) per IOS-11.7.
     public let captureContainer: ((TerminalInputContainerView) -> Void)?
     public let retainedContainer: TerminalInputContainerView?
-    public let onOpenAuthenticationURL: ((URL) -> Void)?
     /// Routes an explicit native or menu link activation to the owning pane.
     public let onOpenURL: ((URL) -> Void)?
     /// Change when the origin or owner changes to invalidate captured menu actions.
@@ -130,7 +129,6 @@ public struct TerminalPaneView: UIViewRepresentable {
         onBackRequested: (() -> Void)? = nil,
         captureContainer: ((TerminalInputContainerView) -> Void)? = nil,
         retainedContainer: TerminalInputContainerView? = nil,
-        onOpenAuthenticationURL: ((URL) -> Void)? = nil,
         onOpenURL: ((URL) -> Void)? = nil,
         linkContext: AnyHashable? = nil
     ) {
@@ -152,7 +150,6 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.onBackRequested = onBackRequested
         self.captureContainer = captureContainer
         self.retainedContainer = retainedContainer
-        self.onOpenAuthenticationURL = onOpenAuthenticationURL
         self.onOpenURL = onOpenURL
         self.linkContext = linkContext
     }
@@ -195,7 +192,6 @@ public struct TerminalPaneView: UIViewRepresentable {
         )
         view.onPasteRequested = onPasteRequested
         view.onBackRequested = onBackRequested
-        view.openAuthenticationURL = onOpenAuthenticationURL
         view.openURL = onOpenURL ?? { _ in }
         view.linkContext = linkContext
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
@@ -220,7 +216,6 @@ public struct TerminalPaneView: UIViewRepresentable {
         )
         view.onPasteRequested = onPasteRequested
         view.onBackRequested = onBackRequested
-        view.openAuthenticationURL = onOpenAuthenticationURL
         view.openURL = onOpenURL ?? { _ in }
         view.linkContext = linkContext
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
@@ -657,16 +652,26 @@ public final class TerminalInputContainerView: UIView,
     var linkContext: AnyHashable? {
         didSet {
             guard oldValue != linkContext else { return }
-            longPressURL = nil
-            longPressMenuGeneration &+= 1
-            pendingPasteRefocusGeneration = nil
-            completedLongPressMenuDismissalGeneration = nil
-            longPressMenu.dismissMenu()
+            invalidateLinkMenu()
         }
     }
+    func detachBrowserControls() {
+        openURL = { _ in }
+        linkContext = nil
+        // Even a context-free caller can hold actions capturing its old route.
+        invalidateLinkMenu()
+    }
+
+    private func invalidateLinkMenu() {
+        longPressURL = nil
+        longPressMenuGeneration &+= 1
+        pendingPasteRefocusGeneration = nil
+        completedLongPressMenuDismissalGeneration = nil
+        longPressMenu.dismissMenu()
+    }
+
     private var probingLink = false
     private var probedLink: String?
-    var openAuthenticationURL: ((URL) -> Void)?
     /// Paste and edit-menu dismissal are independent UIKit callbacks whose
     /// relative ordering is not part of our contract. Pair them by long-press
     /// menu generation and refocus only after both have happened.
@@ -1370,7 +1375,6 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
         ]
         if let url = longPressURL {
             let open = openURL
-            let authenticate = openAuthenticationURL
             children.insert(UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
                 guard let self, self.longPressMenuGeneration == generation else { return }
                 self.copyLink(url)
@@ -1379,12 +1383,6 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
                 guard let self, self.longPressMenuGeneration == generation else { return }
                 open(url)
             }, at: 0)
-            if openAuthenticationURL != nil, WorktreeAuthenticationURL(url: url) != nil {
-                children.insert(UIAction(title: "Sign in via Mac", image: UIImage(systemName: "person.crop.circle")) { [weak self] _ in
-                    guard let self, self.longPressMenuGeneration == generation else { return }
-                    authenticate?(url)
-                }, at: 0)
-            }
         }
         if hasPasteContent {
             children.append(UIAction(title: "Paste") { [weak self] _ in
