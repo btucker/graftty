@@ -25,6 +25,77 @@ struct HostBrowserProxyTests {
         try await expectPage("graftty-tunneled-page", url: url, configuration: configuration)
     }
 
+    @Test("The browser HTTP fixture handles unused and fragmented connections", .timeLimit(.minutes(1)), arguments: [false, true])
+    func pageFixtureHandlesTCPBoundaries(fragmented: Bool) async throws {
+        let listener = try NWListener(using: .tcp, on: .any)
+        let queue = DispatchQueue(label: "graftty.browser.http-fixture.test")
+        let (accepted, acceptContinuation) = AsyncStream<NWConnection>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        listener.newConnectionHandler = { socket in
+            socket.start(queue: queue)
+            acceptContinuation.yield(socket)
+            acceptContinuation.finish()
+        }
+        let acceptDeadline = DispatchWorkItem {
+            listener.cancel()
+            acceptContinuation.finish()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: acceptDeadline)
+        defer { acceptDeadline.cancel(); listener.cancel(); acceptContinuation.finish() }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    listener.stateUpdateHandler = nil
+                    continuation.resume()
+                case .failed(let error):
+                    listener.stateUpdateHandler = nil
+                    continuation.resume(throwing: error)
+                case .cancelled:
+                    listener.stateUpdateHandler = nil
+                    continuation.resume(throwing: ExpectedFailure())
+                default: break
+                }
+            }
+            listener.start(queue: queue)
+        }
+        let client = NWConnection(host: "127.0.0.1", port: try #require(listener.port), using: .tcp)
+        defer { client.cancel() }
+        client.stateUpdateHandler = { state in
+            if case .failed = state { acceptContinuation.finish() }
+        }
+        client.start(queue: queue)
+        var acceptedIterator = accepted.makeAsyncIterator()
+        let server = try #require(await acceptedIterator.next(), "HTTP fixture socket pair did not connect")
+        defer { server.cancel() }
+        let (chunks, observation) = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let serving = Task {
+            defer { observation.finish() }
+            try await Self.servePage("fixture-page", socket: server, reply: Data(), observeRequest: { observation.yield($0) })
+        }
+        defer { serving.cancel() }
+        if fragmented {
+            try await BrowserProxy.send(Data("GE".utf8), to: client)
+            var chunkIterator = chunks.makeAsyncIterator()
+            var observed = Data()
+            while observed.count < 2 {
+                observed = try #require(await chunkIterator.next(), "The server must receive the first fragment before the rest is sent")
+            }
+            try #require(observed == Data("GE".utf8))
+            try await BrowserProxy.send(Data("T / HTTP/1.1\r\nHost: fixture\r\n\r\n".utf8), to: client)
+            let expected = Data("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 12\r\nConnection: close\r\n\r\nfixture-page".utf8)
+            #expect(try await Self.receive(expected.count, from: client) == expected)
+        } else {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                client.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume() }
+                })
+            }
+            #expect(try await Self.readRequest(from: client).isEmpty)
+        }
+        try await serving.value
+    }
+
     @Test("@spec PORTS-5.14: When a host browser sign-in page redirects to its loopback OAuth callback, the application shall forward the unchanged callback path and query through the same paired Mac.", .timeLimit(.minutes(1)))
     func authRedirectReachesTheHostCallback() async throws {
         let callback = URL(string: "http://127.0.0.1:32135/callback/mcp?code=test-code&state=test-state")!
@@ -343,7 +414,9 @@ struct HostBrowserProxyTests {
             previousKeyWindow?.makeKey()
         }
         view.load(URLRequest(url: url))
-        let deadline = ContinuousClock.now + .seconds(15)
+        // CI can take several seconds to launch its first WebContent process.
+        // Keep the load bounded without accepting a failed navigation or missing page.
+        let deadline = ContinuousClock.now + .seconds(30)
         while !navigation.finished, navigation.failure == nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
@@ -353,18 +426,40 @@ struct HostBrowserProxyTests {
         #expect(body == expected)
     }
 
-    private static func servePage(_ body: String, socket: NWConnection, reply: Data) async throws {
+    private static func servePage(_ body: String, socket: NWConnection, reply: Data, observeRequest: (@Sendable (Data) -> Void)? = nil) async throws {
+        defer { socket.cancel() }
+        // Bound a pending receive too: cancellation resumes Network's continuation.
+        let deadline = DispatchWorkItem { socket.cancel() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: deadline)
+        defer { deadline.cancel() }
         if !reply.isEmpty { try await BrowserProxy.send(reply, to: socket) }
-        let request: Data = try await withCheckedThrowingContinuation { continuation in
-            socket.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, _, error in
-                if let error { continuation.resume(throwing: error) }
-                else { continuation.resume(returning: data ?? Data()) }
+        var request = Data()
+        let headerEnd = Data("\r\n\r\n".utf8)
+        while request.range(of: headerEnd) == nil {
+            try #require(request.count < 16_384, "HTTP fixture headers exceed 16 KiB")
+            let remaining = 16_384 - request.count
+            let (chunk, complete): (Data, Bool)
+            do {
+                (chunk, complete) = try await withCheckedThrowingContinuation { continuation in
+                    socket.receive(minimumIncompleteLength: 1, maximumLength: remaining) { data, _, complete, error in
+                        if let error { continuation.resume(throwing: error) }
+                        else { continuation.resume(returning: (data ?? Data(), complete)) }
+                    }
+                }
+            } catch {
+                if !request.isEmpty { Issue.record("HTTP fixture receive failed after a partial request: \(error)") }
+                throw error
             }
+            request.append(chunk)
+            observeRequest?(request)
+            // WebKit can open a speculative connection then close it without
+            // sending HTTP. It must receive no response and cannot satisfy expectPage.
+            if complete && request.isEmpty { return }
+            try #require(!complete || request.range(of: headerEnd) != nil, "HTTP fixture received truncated headers")
         }
-        #expect(String(decoding: request, as: UTF8.self).hasPrefix("GET /"))
+        try #require(String(decoding: request, as: UTF8.self).hasPrefix("GET /"))
         let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
         try await BrowserProxy.send(Data(response.utf8), to: socket)
-        socket.cancel()
     }
 
     @Test func browserWindowsShareTheSameHostEndpoint() async throws {
