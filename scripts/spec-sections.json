@@ -62,7 +62,7 @@
     "REMOTE": "Secure Remote Access",
     "CHROME": "Dedicated Chrome tabs",
     "URL": "Worktree URL Handler",
-    "IMAGE": "Inline Image Display"
+    "IMAGE": "Native Image Preview"
   },
   "subsections": {
     "CHROME.1": "Host profiles and ownership",

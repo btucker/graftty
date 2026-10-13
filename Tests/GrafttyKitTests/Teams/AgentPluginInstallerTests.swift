@@ -254,7 +254,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.50: When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, draw terminal images only with graftty image, explains the reserved padding below the image, forbids imgcat, kitten icat, direct tty writes, and terminal queries, and falls back to graftty open when the command fails or the client does not display the image correctly.
+    @spec AGENT-6.50: When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, show images with graftty image in a native tray, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures or missing previews without claiming delivery before falling back to graftty open.
     """)
     func preparesImageSkillForBothProviders() throws {
         for skill in try preparedSkillTexts(named: "graftty-image") {
@@ -263,7 +263,9 @@ struct AgentPluginInstallerTests {
             #expect(skill.contains("![Refined sidebar](</absolute/path with spaces/sidebar.png>)"))
             #expect(skill.contains("containing Markdown file's directory"))
             #expect(skill.contains("graftty image"))
-            #expect(skill.contains("padding"))
+            #expect(skill.contains("native tray"))
+            #expect(skill.contains("!["))
+            #expect(skill.contains("acknowledges"))
             #expect(skill.contains("imgcat"))
             #expect(skill.contains("kitten icat"))
             #expect(skill.contains("/dev/tty"))
@@ -273,13 +275,22 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec IMAGE-1.6: When Graftty installs the graftty-image skill, the skill shall state that inline images draw on whichever device leads the pane, including Graftty Mobile, and shall fall back to graftty open when the leading client reports no pixel geometry.
+    @spec IMAGE-1.6: When Graftty installs the graftty-image skill, the skill shall describe the movable and resizable macOS tray and the owning Mobile pane's Images control for native Quick Look, explain fit, zoom, close, and Preview.app controls, and acknowledge requests without claiming the user saw the image.
     """)
-    func imageSkillDrawsOnLeadingDeviceIncludingMobile() throws {
+    func imageSkillDescribesNativePreviewOnLeadingDevice() throws {
         for skill in try preparedSkillTexts(named: "graftty-image") {
-            #expect(skill.contains("whichever device leads the pane, including Graftty Mobile"))
-            #expect(skill.contains("pixel geometry"))
-            #expect(!skill.contains("Inline images appear only on the Mac"))
+            #expect(skill.contains("Graftty Mobile"))
+            #expect(skill.contains("focused owning pane"))
+            #expect(skill.contains("Images control"))
+            #expect(skill.contains("Quick Look with zoom and sharing"))
+            #expect(skill.contains("Image arrival leaves terminal typing unchanged"))
+            #expect(skill.contains("Drag the header"))
+            #expect(skill.contains("resize"))
+            #expect(skill.contains("Preview.app"))
+            #expect(skill.contains("Fit"))
+            #expect(skill.contains("zoom"))
+            #expect(skill.contains("Close"))
+            #expect(!skill.contains("Drew <name>"))
         }
     }
 

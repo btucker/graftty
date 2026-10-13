@@ -238,8 +238,12 @@ struct WorktreeStatsStorePollTickTests {
                 store.isInFlightRepoForTesting($0.path)
             }.count
             try #require(claimedRepoCount == 4)
-            try await waitUntil(timeout: 3.0) {
+            // The injected fetch records its completion before the store
+            // resumes on MainActor and releases the corresponding slot.
+            // A subsequent tick needs both boundaries to have completed.
+            try await waitUntilMainActor(timeout: 3.0) {
                 fetch.completedCount == expectedCompletedCount
+                    && repos.allSatisfy { !store.isInFlightRepoForTesting($0.path) }
             }
         }
 
@@ -542,6 +546,9 @@ private final class ConcurrencyRecordingFetch: @unchecked Sendable {
                 self.activeCount -= 1
                 self._completedCount += 1
             }
+            // Recording completion precedes the store's MainActor cleanup.
+            // Keep that boundary observable instead of assuming it is atomic.
+            try await Task.sleep(for: .milliseconds(50))
         }
     }
 }

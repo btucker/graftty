@@ -83,6 +83,7 @@ public struct TeamInboxPageRequest: Sendable, Equatable {
 public enum NotificationMessage: Sendable, Equatable {
     case linuxSetupIdentity
     case completeLinuxSetup(LinuxHostSetupResult)
+    case previewImage(path: String, target: String, paneSessionName: String? = nil)
     case offerResource(path: String, target: String, paneSessionName: String? = nil)
     case notify(path: String, text: String, clearAfter: TimeInterval? = nil, paneSessionName: String? = nil)
     case clear(path: String, paneSessionName: String? = nil)
@@ -228,6 +229,11 @@ extension NotificationMessage: Codable {
         case .completeLinuxSetup(let result):
             try container.encode("complete_linux_setup", forKey: .type)
             try container.encode(result, forKey: .result)
+        case let .previewImage(path, target, paneSessionName):
+            try container.encode("preview_image", forKey: .type)
+            try container.encode(path, forKey: .path)
+            try container.encode(target, forKey: .target)
+            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
         case let .offerResource(path, target, paneSessionName):
             try container.encode("open_resource", forKey: .type)
             try container.encode(path, forKey: .path)
@@ -424,6 +430,12 @@ extension NotificationMessage: Codable {
             self = .linuxSetupIdentity
         case "complete_linux_setup":
             self = .completeLinuxSetup(try container.decode(LinuxHostSetupResult.self, forKey: .result))
+        case "preview_image":
+            self = .previewImage(
+                path: try container.decode(String.self, forKey: .path),
+                target: try container.decode(String.self, forKey: .target),
+                paneSessionName: try container.decodeIfPresent(String.self, forKey: .paneSessionName)
+            )
         case "open_resource":
             self = .offerResource(
                 path: try container.decode(String.self, forKey: .path),

@@ -20,9 +20,17 @@ struct RemoteOpenButton: View {
     private var browserScope: TerminalBrowserRequest.Scope {
         .init(hostID: host.id, worktree: worktree, sessionName: sessionName, ownerDeviceID: ownerDeviceID)
     }
-    private var offers: [RemoteOpenOffer] { offerSnapshot.offers(in: browserScope) }
+    private var allOffers: [RemoteOpenOffer] { offerSnapshot.offers(in: browserScope) }
+    private var offers: [RemoteOpenOffer] { RemoteImageOffers.browserResources(in: allOffers) }
+    private var imageOffer: RemoteOpenOffer? { RemoteImageOffers.latest(in: allOffers, scope: browserScope) }
+    private var imageScopeReady: Bool {
+        isPaneFocused && hasOwnershipSnapshot && isPaneOwner() && ownerDeviceID != nil
+    }
+    private var imageReady: Bool { isActive && browserConnectionReady && imageScopeReady }
+    private var imagePresentationReady: Bool { chromePresentation.isMounted ? imageScopeReady : imageReady }
     @State private var download: Task<Void, Never>?
     @State private var isDownloading = false
+    @State private var imageDownload: RemoteImageOffers.Request?
     @State private var preview: Preview?
     @State private var showingPreview = false
     @State private var cachedFile: URL?
@@ -46,6 +54,7 @@ struct RemoteOpenButton: View {
         var originWorktree: String? = nil
         var chromeLaunch: ChromeTabInitialLaunch? = nil
         var originHost: Host? = nil
+        var imageRequest: RemoteImageOffers.Request? = nil
     }
 
     private struct PollScope: Equatable {
@@ -76,26 +85,10 @@ struct RemoteOpenButton: View {
             .accessibilityValue("\(availableCount) available resources")
     }
 
-    var body: some View {
+    @ViewBuilder
+    private var resourceControls: some View {
         let actionID = operationID
-        ZStack {
-            Color.clear.frame(width: 44, height: 44)
-                .allowsHitTesting(false).accessibilityHidden(true)
-            if isActive, isPaneOwner() || !offers.isEmpty {
-                Self.floatingControl(availableCount: offers.count, isBusy: isDownloading) {
-                    if let offer = RemoteOpenPresentation.directBrowserOffer(in: offers) { open(offer, actionID: actionID) }
-                    else if !offers.isEmpty { choosingResource = true }
-                    else { openChromeTabs(actionID: actionID) }
-                }
-                .accessibilityAction(named: "Remote Chrome tabs") { openChromeTabs(actionID: actionID) }
-                .contextMenu {
-                    Button("Remote Chrome tabs", systemImage: "rectangle.on.rectangle") { openChromeTabs(actionID: actionID) }
-                        .disabled(!isPaneOwner())
-                    ForEach(offers) { offer in Button(offer.filename) { open(offer, actionID: actionID) } }
-                }
-                .disabled(isDownloading)
-            }
-        }
+        floatingControls(actionID: actionID)
         .confirmationDialog("Browser resources", isPresented: $choosingResource) {
             Button("Remote Chrome tabs") { openChromeTabs(actionID: actionID) }.disabled(!isPaneOwner())
             ForEach(offers) { offer in Button(offer.filename) { open(offer, actionID: actionID) } }
@@ -109,25 +102,35 @@ struct RemoteOpenButton: View {
             offerSnapshot = .init()
             choosingResource = false
             cancelOperation()
-            if preview?.browser == true {
+            if preview?.browser == true || preview?.imageRequest != nil {
                 cancelPresentation()
             }
         }
         .onChange(of: isActive) { _, active in
             if active { checkOwnership() } else {
-                offerSnapshot = .init(); choosingResource = false; cancelOperation()
+                // A mounted native preview and its share sheet still own their
+                // local file while the source scene is temporarily inactive.
+                if preview?.imageRequest == nil || !chromePresentation.isMounted { offerSnapshot = .init() }
+                choosingResource = false; cancelOperation()
                 if !chromePresentation.isMounted { cancelPresentation() }
             }
         }
         .onChange(of: ownerDeviceID) { _, _ in
             offerSnapshot = .init(); choosingResource = false; cancelOperation()
-            if preview?.browser == true { cancelPresentation() }
+            if preview?.browser == true || preview?.imageRequest != nil { cancelPresentation() }
             checkOwnership()
         }
         .onChange(of: hasOwnershipSnapshot) { _, _ in checkOwnership() }
         .onChange(of: isPaneFocused) { _, focused in
             if !focused, preview?.browser == true { cancelPresentation() }
+            cancelStaleImage()
         }
+        .onChange(of: imageOffer) { _, _ in cancelStaleImage() }
+        .onChange(of: imageReady) { _, _ in cancelStaleImage() }
+    }
+
+    var body: some View {
+        resourceControls
         .task(id: PollTaskScope(route: pollScope, ownerDeviceID: ownerDeviceID, active: isActive)) {
             guard isActive else { return }
             while !Task.isCancelled {
@@ -138,7 +141,7 @@ struct RemoteOpenButton: View {
                     guard !Task.isCancelled else { return }
                     if case .openResource(.offers(let value)) = response {
                         offerSnapshot.update(value, in: browserScope)
-                        let authentication = coordinator.consumeAuthenticationOffer(value, sessionName: sessionName,
+                        let authentication = coordinator.consumeAuthenticationOffer(RemoteImageOffers.browserResources(in: value), sessionName: sessionName,
                                                                            ownerDeviceID: ownerDeviceID,
                                                                            canPresent: isPaneFocused && isPaneOwner() && preview == nil && chromePresentation.canPresent && !isDownloading && error == nil && canPresentAuthentication())
                         if let authentication { open(authentication, automatically: true) }
@@ -167,9 +170,10 @@ struct RemoteOpenButton: View {
             guard let id = preview?.id else { return }
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
             guard preview?.id == id, !chromePresentation.isMounted else { return }
+            let resourceName = preview?.imageRequest == nil ? "Browser" : "Images"
             cancelPresentation()
             if isActive {
-                error = "The resource could not be presented. Close any other dialog and tap Browser to try again."
+                error = "The resource could not be presented. Close any other dialog and tap \(resourceName) to try again."
             }
         }
 
@@ -180,14 +184,64 @@ struct RemoteOpenButton: View {
         } message: {
             Text(error ?? "")
         }
-        .onAppear {
-            if preview == nil, !chromePresentation.isMounted { apply(chromePresentation.cancelPending()) }
-        }
+        .onAppear(perform: preparePresentation)
         .onDisappear {
             cancelOperation()
             // SwiftUI also relays disappearance while the mounted sheet or a
             // system modal covers its source. Attachment owns mounted cleanup.
             if !chromePresentation.isMounted { cancelPresentation() }
+        }
+    }
+
+    private func preparePresentation() {
+        if preview == nil, !chromePresentation.isMounted { apply(chromePresentation.cancelPending()) }
+    }
+
+    @ViewBuilder
+    private func floatingControls(actionID: UUID) -> some View {
+        ViewThatFits {
+            HStack(spacing: 12) { resourceButtons(actionID: actionID) }.fixedSize()
+            VStack(spacing: 12) { resourceButtons(actionID: actionID) }.fixedSize()
+            ScrollView(.vertical) {
+                VStack(spacing: 12) { resourceButtons(actionID: actionID) }
+                    .fixedSize().frame(maxWidth: .infinity)
+            }
+            .frame(minWidth: 44)
+        }
+    }
+
+    @ViewBuilder
+    private func resourceButtons(actionID: UUID) -> some View {
+        if imageReady, let offer = imageOffer {
+            TerminalFloatingGlyphButton(systemName: "photo", accessibilityLabel: "Images",
+                                        isBusy: imageDownload != nil) {
+                open(offer, actionID: actionID)
+            }
+            .accessibilityValue(offer.filename)
+            .accessibilityHint("Preview the latest image from this pane")
+            .overlay(alignment: .topTrailing) {
+                Circle().fill(.tint).frame(width: 8, height: 8)
+                    .accessibilityHidden(true).allowsHitTesting(false)
+            }
+            .disabled(isDownloading)
+        }
+        ZStack {
+            Color.clear.frame(width: 44, height: 44)
+                .allowsHitTesting(false).accessibilityHidden(true)
+            if isActive, isPaneOwner() || !offers.isEmpty {
+                Self.floatingControl(availableCount: offers.count, isBusy: isDownloading && imageDownload == nil) {
+                    if let offer = RemoteOpenPresentation.directBrowserOffer(in: offers) { open(offer, actionID: actionID) }
+                    else if !offers.isEmpty { choosingResource = true }
+                    else { openChromeTabs(actionID: actionID) }
+                }
+                .accessibilityAction(named: "Remote Chrome tabs") { openChromeTabs(actionID: actionID) }
+                .contextMenu {
+                    Button("Remote Chrome tabs", systemImage: "rectangle.on.rectangle") { openChromeTabs(actionID: actionID) }
+                        .disabled(!isPaneOwner())
+                    ForEach(offers) { offer in Button(offer.filename) { open(offer, actionID: actionID) } }
+                }
+                .disabled(isDownloading)
+            }
         }
     }
 
@@ -206,6 +260,8 @@ struct RemoteOpenButton: View {
                             paneReady: browserConnectionReady && isPaneFocused && isPaneOwner(), onLaunch: {
                                 if let launch = preview.chromeLaunch { coordinator.completeAuthenticationOffer(launch.offerID) }
                             })
+        } else if let url = preview.url, preview.imageRequest != nil {
+            NativeImagePreview(url: url, dismiss: { if self.preview?.id == preview.id { showingPreview = false } })
         } else if let url = preview.url, url.isFileURL {
             NativeFilePreview(url: url)
         } else if let url = preview.url {
@@ -241,14 +297,15 @@ struct RemoteOpenButton: View {
         present(Preview(url: nil, browser: true, originSession: sessionName, originWorktree: worktree, originHost: host), offerID: nil)
     }
 
-    private func canBegin(actionID: UUID? = nil, automatically: Bool = false, offerID: UUID? = nil) -> Bool {
+    private func canBegin(actionID: UUID? = nil, automatically: Bool = false, offerID: UUID? = nil,
+                          resourceName: String = "Browser") -> Bool {
         let reason: String?
         if let actionID, actionID != operationID {
-            reason = "This browser action changed. Tap Browser again to refresh it."
+            reason = "This resource action changed. Tap \(resourceName) again to refresh it."
         } else if !isActive || !isPaneFocused || !browserConnectionReady || !canPresentAuthentication() {
-            reason = "Reconnect and unlock the originating pane, then tap Browser again."
+            reason = "Reconnect and unlock the originating pane, then tap \(resourceName) again."
         } else if preview != nil || !chromePresentation.canPresent {
-            reason = "A resource is opening or closing. Wait a moment and tap Browser again."
+            reason = "A resource is opening or closing. Wait a moment and tap \(resourceName) again."
         } else { reason = nil }
         guard let reason else { return true }
         if let offerID { coordinator.deferAuthenticationOffer(offerID) }
@@ -269,6 +326,11 @@ struct RemoteOpenButton: View {
 
     private func markMounted(_ item: Preview) -> Bool {
         guard preview?.id == item.id else { return false }
+        if let request = item.imageRequest,
+           !request.isCurrent(latest: imageOffer, scope: browserScope, isReady: imagePresentationReady) {
+            cancelPresentation()
+            return false
+        }
         guard isActive || chromePresentation.isMounted, !item.browser || (isPaneFocused && isPaneOwner()) else {
             cancelPresentation()
             return false
@@ -304,6 +366,18 @@ struct RemoteOpenButton: View {
         if isActive, hasOwnershipSnapshot, !isPaneOwner(), preview?.browser == true {
             cancelPresentation()
         }
+        cancelStaleImage()
+    }
+
+    private func cancelStaleImage() {
+        if let request = imageDownload,
+           !request.isCurrent(latest: imageOffer, scope: browserScope, isReady: imageReady) {
+            cancelOperation()
+        }
+        if let request = preview?.imageRequest,
+           !request.isCurrent(latest: imageOffer, scope: browserScope, isReady: imagePresentationReady) {
+            cancelPresentation()
+        }
     }
 
     private func cancelOperation() {
@@ -311,6 +385,7 @@ struct RemoteOpenButton: View {
         download?.cancel()
         download = nil
         isDownloading = false
+        imageDownload = nil
     }
 
     private func removeCachedFile() {
@@ -319,10 +394,16 @@ struct RemoteOpenButton: View {
     }
 
     private func open(_ offer: RemoteOpenOffer, automatically: Bool = false, actionID: UUID? = nil) {
-        guard canBegin(actionID: actionID, automatically: automatically, offerID: offer.id) else { return }
-        guard offers.contains(offer) else {
+        let imageRequest = offer.previewKind == "image" ? RemoteImageOffers.Request(offer: offer, scope: browserScope) : nil
+        let resourceName = imageRequest == nil ? "Browser" : "Images"
+        guard canBegin(actionID: actionID, automatically: automatically, offerID: offer.id, resourceName: resourceName) else { return }
+        if let imageRequest, !imageRequest.isCurrent(latest: imageOffer, scope: browserScope, isReady: imageReady) {
+            error = "Take control of the originating pane and tap Images again. If the image expired, run graftty image again."
+            return
+        }
+        guard allOffers.contains(offer) else {
             coordinator.deferAuthenticationOffer(offer.id)
-            if !automatically { error = "This resource is no longer available. Wait for the list to refresh and tap Browser again." }
+            if !automatically { error = "This resource is no longer available. Wait for the list to refresh and tap \(resourceName) again." }
             return
         }
         cancelOperation()
@@ -357,8 +438,9 @@ struct RemoteOpenButton: View {
             return
         }
         isDownloading = true
+        imageDownload = imageRequest
         download = Task { @MainActor in
-            defer { if operationID == currentOperation { isDownloading = false } }
+            defer { if operationID == currentOperation { isDownloading = false; imageDownload = nil } }
             do {
                 let file = try await FilePreviewDownload.download(offer) { offset in
                     let response = try await sendWorktreeManagement(
@@ -372,16 +454,30 @@ struct RemoteOpenButton: View {
                     }
                 }
                 guard isActive, !Task.isCancelled, operationID == currentOperation else { FilePreviewDownload.remove(file); return }
+                if let imageRequest {
+                    guard imageRequest.isCurrent(latest: imageOffer, scope: browserScope, isReady: imageReady) else {
+                        FilePreviewDownload.remove(file)
+                        return
+                    }
+                    guard QLPreviewController.canPreview(file as NSURL) else {
+                        FilePreviewDownload.remove(file)
+                        self.error = "This image could not be previewed. Run graftty image again with a supported image."
+                        return
+                    }
+                }
                 guard chromePresentation.canPresent, preview == nil else {
                     FilePreviewDownload.remove(file)
-                    self.error = "Another resource is opening. Tap Browser again after it closes."
+                    self.error = "Another resource is opening. Tap \(resourceName) again after it closes."
                     return
                 }
                 removeCachedFile()
                 cachedFile = file
-                present(Preview(url: file), offerID: nil)
+                present(Preview(url: file, imageRequest: imageRequest), offerID: nil)
             } catch {
-                if !Task.isCancelled, operationID == currentOperation { self.error = error.localizedDescription }
+                if !Task.isCancelled, operationID == currentOperation {
+                    self.error = imageRequest == nil ? error.localizedDescription
+                        : "Could not download image: \(error.localizedDescription) Tap Images to retry or run graftty image again."
+                }
             }
         }
     }
@@ -489,6 +585,37 @@ struct NativeFilePreview: UIViewControllerRepresentable {
         func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem {
             url as NSURL
         }
+    }
+}
+
+/// Quick Look owns image gestures and sharing; the navigation bar exposes Done.
+struct NativeImagePreview: UIViewControllerRepresentable {
+    let url: URL
+    let dismiss: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(url: url, dismiss: dismiss) }
+    func makeUIViewController(context: Context) -> UINavigationController {
+        Self.makeController(coordinator: context.coordinator)
+    }
+    func updateUIViewController(_ controller: UINavigationController, context: Context) {}
+
+    static func makeController(coordinator: Coordinator) -> UINavigationController {
+        let preview = QLPreviewController()
+        preview.dataSource = coordinator.source
+        let done = UIBarButtonItem(title: "Done", style: .done, target: coordinator, action: #selector(Coordinator.done))
+        done.accessibilityLabel = "Done"
+        preview.navigationItem.leftBarButtonItem = done
+        return UINavigationController(rootViewController: preview)
+    }
+
+    final class Coordinator: NSObject {
+        let source: NativeFilePreview.Coordinator
+        private let dismiss: () -> Void
+        init(url: URL, dismiss: @escaping () -> Void) {
+            source = NativeFilePreview.Coordinator(url: url)
+            self.dismiss = dismiss
+        }
+        @objc func done() { dismiss() }
     }
 }
 #endif

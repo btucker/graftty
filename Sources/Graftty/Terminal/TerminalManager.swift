@@ -1215,6 +1215,7 @@ final class TerminalManager: ObservableObject {
     }
 
     func destroySurface(terminalID: PaneSlotID) {
+        ImagePreviewStore.shared.dismiss(terminalID)
         _ = wakePane(terminalID)
         if let scanner = portScanner {
             Task { await scanner.unregisterPane(terminalID) }

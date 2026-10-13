@@ -30,10 +30,7 @@ struct ShellStartupCommandTests {
         first.onPTYData = { _ in }
         try first.start()
         defer { first.close() }
-        let deadline = ContinuousClock.now + .seconds(3)
-        while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitForContents("started", at: marker)
         #expect(try String(contentsOf: marker, encoding: .utf8) == "started")
         #expect(FileManager.default.fileExists(atPath: receipt.path))
         await first.close()
@@ -71,10 +68,7 @@ struct ShellStartupCommandTests {
         engine.onPTYData = { _ in }
         try engine.start()
         defer { engine.close() }
-        let deadline = ContinuousClock.now + .seconds(3)
-        while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitForContents("yes", at: marker)
         #expect(try String(contentsOf: marker, encoding: .utf8) == "yes")
     }
 
@@ -119,19 +113,26 @@ struct ShellStartupCommandTests {
                 processEnv: ["SHELL": "/bin/" + shell, "PATH": "/usr/bin:/bin", "HOME": home.path,
                              "__GRAFTTY_BASH_PROFILE_SOURCED": "1"],
                 bundleURL: root, ghosttyResourcesDir: nil, agentHooksDisabled: true, agentHooksRoot: hooks,
-                initialCommand: "test \"$GRAFTTY_INIT_COMPLETE/$GRAFTTY_PROMPT_COMPLETE\" = yes/yes && printf '%s\\n' \"a 'quoted' task\" >> " + WorktreeAgentLaunchCommand.shellLiteral(marker.path) + "; /bin/" + shell + " -ic true"
+                // File creation precedes writing. Exercise that interval rather
+                // than relying on printf finishing before the polling reader.
+                initialCommand: ": >> " + WorktreeAgentLaunchCommand.shellLiteral(marker.path) + "; /bin/sleep 0.05; test \"$GRAFTTY_INIT_COMPLETE/$GRAFTTY_PROMPT_COMPLETE\" = yes/yes && printf '%s\\n' \"a 'quoted' task\" >> " + WorktreeAgentLaunchCommand.shellLiteral(marker.path) + "; /bin/" + shell + " -ic true"
             )
             let engine = ZmxAttachEngine(config: .init(zmxExecutable: zmx, zmxDir: root,
                 sessionName: config.sessionName, workingDirectory: root, spawnConfiguration: config))
             engine.onPTYData = { _ in }
             try engine.start()
             defer { engine.close() }
-            let deadline = ContinuousClock.now + .seconds(3)
-            while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(10))
-            }
+            try await waitForContents("a 'quoted' task\n", at: marker)
             #expect(try String(contentsOf: marker, encoding: .utf8) == "a 'quoted' task\n")
             #expect(config.env["GRAFTTY_AGENT_HOOKS_BIN"] == nil)
+        }
+    }
+
+    private func waitForContents(_ expected: String, at marker: URL) async throws {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while (try? String(contentsOf: marker, encoding: .utf8)) != expected,
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
         }
     }
 }

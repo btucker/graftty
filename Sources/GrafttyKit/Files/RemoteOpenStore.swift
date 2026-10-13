@@ -15,12 +15,13 @@ public actor RemoteOpenStore {
         let worktree: String
         let bytes: Data
         let expires: Date
+        let previewRevision: UInt64?
     }
     private var entries: [Entry] = []
     public init() {}
 
     public enum Failure: LocalizedError {
-        case invalidFile, invalidBrowserOwner, tooLarge, expired, invalidOffset
+        case invalidFile, invalidBrowserOwner, tooLarge, expired, invalidOffset, superseded
         public var errorDescription: String? {
             switch self {
             case .invalidFile: "Choose a readable regular file."
@@ -28,6 +29,7 @@ public actor RemoteOpenStore {
             case .tooLarge: "File previews are limited to 20 MB."
             case .expired: "This file offer expired. Run graftty open again."
             case .invalidOffset: "Invalid file download offset."
+            case .superseded: "A newer image request already replaced this preview."
             }
         }
     }
@@ -52,7 +54,7 @@ public actor RemoteOpenStore {
             if entries.count >= 20 { entries.removeFirst() }
             let offer = RemoteOpenOffer(id: UUID(), filename: file.absoluteString, byteCount: 0, url: file,
                                         paneSessionName: paneSessionName, browserOwnerDeviceID: deviceID)
-            entries.append(Entry(offer: offer, worktree: worktree, bytes: Data(), expires: expires))
+            entries.append(Entry(offer: offer, worktree: worktree, bytes: Data(), expires: expires, previewRevision: nil))
             return offer
         }
         // O_NONBLOCK prevents a named pipe from hanging the request before fstat.
@@ -67,13 +69,39 @@ public actor RemoteOpenStore {
         guard info.st_size <= RemoteOpenOffer.maxBytes else { throw Failure.tooLarge }
         let bytes = try handle.read(upToCount: RemoteOpenOffer.maxBytes + 1) ?? Data()
         guard bytes.count <= RemoteOpenOffer.maxBytes else { throw Failure.tooLarge }
+        return try offerSnapshot(bytes: bytes, filename: file.lastPathComponent, worktree: worktree,
+                                 paneSessionName: paneSessionName, now: now)
+    }
+
+    /// Offers bytes already read and validated by a native preview loader.
+    public func offerSnapshot(bytes: Data, filename: String, worktree: String,
+                              paneSessionName: String? = nil, previewRevision: UInt64? = nil,
+                              previewKind: String? = nil, previewOwnerDeviceID: RemoteDeviceID? = nil,
+                              now: Date = Date()) throws -> RemoteOpenOffer {
+        guard bytes.count <= RemoteOpenOffer.maxBytes else { throw Failure.tooLarge }
+        guard !filename.isEmpty, URL(fileURLWithPath: filename).lastPathComponent == filename else { throw Failure.invalidFile }
         purge(now: now)
+        if let previewRevision, let paneSessionName {
+            let priorPreviews = entries.filter {
+                $0.worktree == worktree && $0.offer.paneSessionName == paneSessionName && $0.previewRevision != nil
+            }
+            guard !priorPreviews.contains(where: { ($0.previewRevision ?? 0) > previewRevision }) else { throw Failure.superseded }
+            entries.removeAll {
+                $0.worktree == worktree && $0.offer.paneSessionName == paneSessionName && $0.previewRevision != nil
+            }
+        }
         while entries.count >= 20 || entries.reduce(0, { $0 + $1.bytes.count }) + bytes.count > 50 * 1024 * 1024 {
             entries.removeFirst()
         }
-        let offer = RemoteOpenOffer(id: UUID(), filename: file.lastPathComponent, byteCount: bytes.count)
-        entries.append(Entry(offer: offer, worktree: worktree, bytes: bytes, expires: now.addingTimeInterval(900)))
+        let offer = RemoteOpenOffer(id: UUID(), filename: filename, byteCount: bytes.count, paneSessionName: paneSessionName,
+                                    previewKind: previewKind, previewOwnerDeviceID: previewOwnerDeviceID)
+        entries.append(Entry(offer: offer, worktree: worktree, bytes: bytes, expires: now.addingTimeInterval(900),
+                             previewRevision: previewRevision))
         return offer
+    }
+
+    public func withdraw(id: UUID, worktree: String) {
+        entries.removeAll { $0.offer.id == id && $0.worktree == worktree }
     }
 
     public func list(worktree: String, now: Date = Date()) -> [RemoteOpenOffer] {

@@ -2,6 +2,53 @@ import UIKit
 import XCTest
 
 final class BrowserControlInteractionTests: XCTestCase {
+    // Complements IMAGE-2.11 with actual touches and native scrolling, since
+    // in-process UIKit traversal cannot inspect SwiftUI's scroll portals.
+    func testShortClippedImagePaneKeepsBothActionsReachable() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--image-controls-fixture"]
+        app.launch()
+        defer { app.terminate() }
+        let pane = app.otherElements["Image pane"]
+        XCTAssertTrue(pane.waitForExistence(timeout: 5))
+        XCTAssertEqual(pane.frame.width, 78, accuracy: 0.5)
+        XCTAssertEqual(pane.frame.height, 78, accuracy: 0.5)
+        // Retain the fixed pane's bounds independently of the changing nested
+        // accessibility containers in the adaptive controls.
+        let bounds = pane.frame
+        let images = app.buttons["Images"]
+        XCTAssertTrue(images.waitForExistence(timeout: 5))
+        assertFullTarget(images, in: bounds)
+        tapCenter(images, in: app)
+        let done = app.buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "Images must open native Quick Look")
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 5))
+        let scroll = app.scrollViews.firstMatch
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(scroll.frame.height, 66.5)
+        scroll.swipeUp()
+        let browser = app.buttons["Browser"]
+        XCTAssertTrue(browser.waitForExistence(timeout: 5))
+        assertFullTarget(browser, in: bounds)
+        tapCenter(browser, in: app)
+        XCTAssertTrue(app.segmentedControls.firstMatch.waitForExistence(timeout: 5), "Browser must retain its independent action")
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+    }
+
+    private func assertFullTarget(_ control: XCUIElement, in bounds: CGRect) {
+        XCTAssertGreaterThanOrEqual(control.frame.width, 43.99)
+        XCTAssertGreaterThanOrEqual(control.frame.height, 43.99)
+        XCTAssertTrue(bounds.insetBy(dx: -0.5, dy: -0.5).contains(control.frame))
+        XCTAssertTrue(control.isHittable)
+    }
+
+    private func tapCenter(_ control: XCUIElement, in app: XCUIApplication) {
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: control.frame.midX, dy: control.frame.midY)).tap()
+    }
+
     /// @spec CHROME-2.23: When the user taps the globe or its visible available-resource badge, the application shall invoke the same browser action.
     func testGlobeAndVisibleBadgeActivateTheSameControl() throws {
         for badge in [false, true] {
