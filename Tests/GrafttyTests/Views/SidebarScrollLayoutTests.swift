@@ -63,7 +63,7 @@ private struct HostedSidebarScrollView: View {
 @Suite("Sidebar scroll layout", .serialized)
 @MainActor
 struct SidebarScrollLayoutTests {
-    @Test("@spec LAYOUT-2.122: While the macOS sidebar shares the title-bar strip with native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.", arguments: [false, true], [false, true])
+    @Test("@spec LAYOUT-2.122: While the macOS sidebar is displayed below native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.", arguments: [false, true], [false, true])
     func pinnedContentClearsNativeToolbar(rail: Bool, compactToolbar: Bool) async throws {
         let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
         defer { hosted.tearDown() }
@@ -78,6 +78,53 @@ struct SidebarScrollLayoutTests {
             let pinned = try #require(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
             let document = try #require(pinned.documentView)
             #expect(document.convert(document.bounds, to: hosted.hosting).minY >= toolbarFrame.maxY)
+        }
+    }
+
+    @Test("@spec LAYOUT-2.151: When the user clicks the macOS sidebar search field, the application shall focus an editable search control below the native toolbar and filter worktrees as the user types, including after resizing.", arguments: [false, true], [false, true])
+    func searchReceivesClicksBelowToolbar(rail: Bool, compactToolbar: Bool) async throws {
+        let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
+        defer { hosted.tearDown() }
+        hosted.window.toolbarStyle = compactToolbar ? .unifiedCompact : .unified
+        for width in [900.0, 720.0] {
+            hosted.window.setContentSize(NSSize(width: width, height: 540))
+            try await hosted.settle()
+            let search = try #require(Self.find(NSTextField.self, in: hosted.hosting).first {
+                $0.placeholderString == "Search projects and worktrees"
+            })
+            let toggle = try hosted.sidebarToggle()
+            let toolbar = try #require(toggle.superview)
+            let searchFrame = search.convert(search.bounds, to: hosted.hosting)
+            #expect(searchFrame.minY >= toolbar.convert(toolbar.bounds, to: hosted.hosting).maxY)
+            #expect(searchFrame.height >= 28)
+            let chrome = try #require(hosted.window.contentView?.superview)
+            let location = search.convert(CGPoint(x: search.bounds.midX, y: search.bounds.midY), to: nil)
+            let hit = try #require(chrome.hitTest(chrome.superview?.convert(location, from: nil) ?? location))
+            #expect(hit === search || hit.isDescendant(of: search))
+            let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: hosted.window)
+            let up = try NSEvent.syntheticClick(.leftMouseUp, at: location, in: hosted.window)
+            hosted.window.sendEvent(down)
+            hosted.window.sendEvent(up)
+            let editor = try #require(search.currentEditor() as? NSTextView)
+            #expect(hosted.window.firstResponder === editor)
+            editor.selectAll(nil)
+            editor.insertText("task-29", replacementRange: editor.selectedRange())
+            try await hosted.settle()
+            let visible = Self.find(WorktreeDragSourceView.self, in: hosted.hosting)
+            let target = try #require(hosted.harness.state.repos[0].worktrees.first { $0.branch == "task-29" })
+            #expect(search.stringValue == "task-29")
+            #expect(visible.count == 1)
+            #expect(hosted.harness.selections.isEmpty)
+            // Search disables reordering, so these rows have no drag payload.
+            // Resolve the remaining row through its selection action instead.
+            try #require(visible.first).onClick?()
+            #expect(hosted.harness.selections == [target.path])
+            hosted.harness.selections.removeAll()
+            editor.selectAll(nil)
+            editor.insertText("", replacementRange: editor.selectedRange())
+            try await hosted.settle()
+            _ = try hosted.dragView(named: "pinned-0")
+            #expect(hosted.harness.selections.isEmpty)
         }
     }
 
@@ -112,7 +159,7 @@ struct SidebarScrollLayoutTests {
         #expect(hosted.harness.selections.isEmpty)
     }
 
-    @Test("@spec LAYOUT-2.120: While the macOS sidebar displays pinned agents, the application shall start their content directly below the search strip without an extra title-bar inset and separate it from the fixed sort row with a horizontal divider.", arguments: [false, true], [1, 2])
+    @Test("@spec LAYOUT-2.120: While the macOS sidebar displays pinned agents, the application shall start their content below the dedicated search row without an extra title-bar inset and separate it from the fixed sort row with a horizontal divider.", arguments: [false, true], [1, 2])
     func pinnedContentStartsBelowSearchStrip(rail: Bool, bitmapScale: Int) async throws {
         let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
         defer { hosted.tearDown() }
@@ -120,13 +167,14 @@ struct SidebarScrollLayoutTests {
         let document = try #require(pinned.documentView)
         let content = document.convert(document.bounds, to: hosted.hosting)
         let search = try #require(Self.find(NSTextField.self, in: hosted.hosting).first {
-            $0.placeholderString == "Find any project or worktree"
+            $0.placeholderString == "Search projects and worktrees"
         })
         let searchFrame = search.convert(search.bounds, to: hosted.hosting)
         let toggle = try hosted.sidebarToggle()
         let toolbarItem = try #require(toggle.superview)
         let toolbarFrame = toolbarItem.convert(toolbarItem.bounds, to: hosted.hosting)
-        #expect(abs(content.minY - toolbarFrame.maxY) <= 1)
+        #expect(searchFrame.minY >= toolbarFrame.maxY)
+        #expect(content.minY - searchFrame.maxY <= 12)
         #expect(content.minY >= searchFrame.maxY)
         let divider = try #require(Self.find(NSBox.self, in: hosted.hosting).first {
             $0.accessibilityIdentifier() == "Worktree list divider"

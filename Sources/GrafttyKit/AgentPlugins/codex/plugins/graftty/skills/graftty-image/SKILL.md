@@ -1,6 +1,6 @@
 ---
 name: graftty-image
-description: Use when the user asks to see, show, display, preview, or render an image, screenshot, diagram, chart, or photo inline in the terminal pane, or when a finished image should be shown in place in the pane. Also use before reaching for imgcat, kitten icat, chafa, or hand-written Kitty graphics escapes.
+description: Use when the user asks to see, show, display, preview, or render an image, screenshot, diagram, chart, or photo, including Markdown image references, or when a finished image should be shown in place in the pane. Also use before reaching for imgcat, kitten icat, chafa, or hand-written Kitty graphics escapes.
 ---
 
 # Graftty image
@@ -10,6 +10,20 @@ Run `graftty image` to draw an image file inline in the current Graftty pane:
 ```sh
 graftty image './output/chart.png'
 ```
+
+## Markdown images
+
+Treat a Markdown image such as `![Chart](./output/chart.png)` or `![Sidebar](</path with spaces/sidebar.png>)` as an image reference. Extract the destination, removing Markdown angle brackets and any optional title. Resolve a relative destination against the containing Markdown file's directory, or the current worktree for a chat reference. Pass the resulting local file path to `graftty image` as a quoted argument, not the entire Markdown expression. A remote HTTP(S) image URL can be opened with `graftty open`; do not pass it to `graftty image` as a file path.
+
+When including the preview in an agent response, use a Markdown image embed with descriptive alt text and the actual image path:
+
+```markdown
+![Refined sidebar](</absolute/path with spaces/sidebar.png>)
+```
+
+This lets chat clients that support Markdown images display it and preserves the reference in the transcript. A plain link, `view_image` tool result, or image-generation tool result alone does not establish that the user can see the image. In a Graftty terminal pane, also run `graftty image`; Markdown text does not replace drawing the image. If asked to show an image again, use the existing file rather than regenerating it.
+
+## Terminal display
 
 It works from an agent tool shell that has no tty of its own, scales the image to the pane width, and reserves blank padding rows below the image so a TUI such as Claude Code or Codex repaints only the padding. On success it prints `Drew <name> at <cols>x<rows> cells.`; relay that line and tell the user the image sits above the current prompt and scrolls with the transcript. If the user reports text overlapping the image's bottom edge, redraw with a larger `--pad`. See `graftty help image` for the accepted formats and flags.
 

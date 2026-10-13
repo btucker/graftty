@@ -252,11 +252,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.119** If pinned agents exceed the available sidebar height, then the application shall scroll them independently within at most half the usable sidebar height, keep the sort line fixed, reserve 96 points for ordinary worktrees when space permits, and fit short pinned sections to their content.
 
-**LAYOUT-2.120** While the macOS sidebar displays pinned agents, the application shall start their content directly below the search strip without an extra title-bar inset and separate it from the fixed sort row with a horizontal divider.
+**LAYOUT-2.120** While the macOS sidebar displays pinned agents, the application shall start their content below the dedicated search row without an extra title-bar inset and separate it from the fixed sort row with a horizontal divider.
 
 **LAYOUT-2.121** When the user first clicks a pinned-agent heading in an inactive macOS window, the application shall select that agent on the same click without requiring a second click.
 
-**LAYOUT-2.122** While the macOS sidebar shares the title-bar strip with native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.
+**LAYOUT-2.122** While the macOS sidebar is displayed below native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.
 
 **LAYOUT-2.123** While a macOS pinned section has no preceding rows, the application shall give its disclosure header a 20-point click target without extra top padding.
 
@@ -305,6 +305,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.149** When a worktree is added while recent activity order is selected, the application shall place its creating row first among temporary worktrees, retain its creation time across completion and relaunch, and allow later activity to move other worktrees above it.
 
 **LAYOUT-2.150** While a stopped agent request remains pending, the application shall display its inline question and attention count even in the selected worktree when pane liveness still reports busy, until the request is dismissed or its provider reports progress.
+
+**LAYOUT-2.151** When the user clicks the macOS sidebar search field, the application shall focus an editable search control below the native toolbar and filter worktrees as the user types, including after resizing.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -3582,7 +3584,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.49** If Graftty is unreachable, busy, or reports an error for a SessionStart hook run inside a Graftty terminal, the CLI shall still emit the Graftty skill guidance; outside a Graftty terminal, and for every other event, it shall emit an empty hook result.
 
-**AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to draw inline images only with graftty image, explains the reserved padding below the image, forbids imgcat, kitten icat, direct tty writes, and terminal queries, and falls back to graftty open when the command cannot draw.
+**AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, draw terminal images only with graftty image, explains the reserved padding below the image, forbids imgcat, kitten icat, direct tty writes, and terminal queries, and falls back to graftty open when the command cannot draw.
 
 ## CLI — CLI
 
