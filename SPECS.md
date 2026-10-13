@@ -3264,6 +3264,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-2.23** When the user taps the globe or its visible available-resource badge, the application shall invoke the same browser action.
 
+**CHROME-2.24** When tab selection changes during a pending viewport resize, the application shall resize only the selected tab, apply the latest requested geometry without duplicate requests, and cancel remaining resize work on close.
+
 ### CHROME-3.x — Authenticated transport
 
 **CHROME-3.1** When a paired peer opens the Chrome subsystem, the application shall await host acceptance, enforce its management capability, pass its authenticated identity, and carry bounded JPEG responses over framed SSH.

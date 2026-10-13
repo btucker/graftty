@@ -323,32 +323,45 @@ struct ChromeViewportModelTests {
         #expect(!model.frameInputEnabled)
     }
 
-    @Test("A selected-tab change retains one tracked pending resize and close cancels its replacement")
-    func selectionRetainsSinglePendingResize() async throws {
+    @Test("@spec CHROME-2.24: When tab selection changes during a pending viewport resize, the application shall resize only the selected tab, apply the latest requested geometry without duplicate requests, and cancel remaining resize work on close.", arguments: [true, false])
+    func selectionRetainsSinglePendingResize(geometryBeforeFirstDispatch: Bool) async throws {
         let model = ChromeTabViewerModel(), driver = ViewportDriver()
         let run = Task { await model.run(target: "pane", initialLaunch: nil, onLaunch: {}, makeDriver: { driver }) }
         defer { model.close(); run.cancel() }
         try #require(try await waitUntil { model.frameInputEnabled })
-        model.requestViewport(CGSize(width: 390, height: 700), target: "pane")
-        #expect(await model.send(.select(tabID: "other"), target: "pane"))
         driver.holdNextViewport()
-        // The original debounce wakes at 120ms and schedules the selected tab's
-        // replacement; update geometry while that replacement is still pending.
-        try await Task.sleep(for: .milliseconds(160))
-        model.requestViewport(CGSize(width: 430, height: 810), target: "pane")
+        model.requestViewport(CGSize(width: 390, height: 700), target: "pane")
+        // No suspension before this update: the old size cannot be dispatched.
+        if geometryBeforeFirstDispatch {
+            model.requestViewport(CGSize(width: 430, height: 810), target: "pane")
+        }
+        #expect(await model.send(.select(tabID: "other"), target: "pane"))
         try #require(try await waitUntil { driver.hasHeldViewport })
+        let first: ChromeTabAction = .viewport(tabID: "other", width: geometryBeforeFirstDispatch ? 430 : 390,
+                                               height: geometryBeforeFirstDispatch ? 810 : 700)
+        #expect(driver.viewportActions == [first])
+        let latest: ChromeTabAction = .viewport(tabID: "other", width: geometryBeforeFirstDispatch ? 470 : 430,
+                                                height: geometryBeforeFirstDispatch ? 840 : 810)
+        model.requestViewport(CGSize(width: geometryBeforeFirstDispatch ? 470 : 430,
+                                     height: geometryBeforeFirstDispatch ? 840 : 810), target: "pane")
+        // Keep the first reply gated past the debounce so a lost task handle
+        // would queue a duplicate instead of being hidden by a quick reply.
         try await Task.sleep(for: .milliseconds(150))
         driver.releaseViewport()
-        try #require(try await waitUntil { model.state.width == 430 })
+        try #require(try await waitUntil { model.state.width == (geometryBeforeFirstDispatch ? 470 : 430) })
         try await Task.sleep(for: .milliseconds(40))
-        #expect(driver.viewportActions == [.viewport(tabID: "other", width: 430, height: 810)])
+        #expect(driver.viewportActions == [first, latest])
         driver.holdNextViewport()
         model.requestViewport(CGSize(width: 400, height: 600), target: "pane")
         try #require(try await waitUntil { driver.hasHeldViewport })
         model.requestViewport(CGSize(width: 320, height: 500), target: "pane")
         model.close(); run.cancel(); await run.value
-        #expect(driver.viewportActions.count == 2)
+        driver.releaseViewport()
+        await Task.yield()
+        #expect(driver.viewportActions == [first, latest, .viewport(tabID: "other", width: 400, height: 600)])
         #expect(!model.frameInputEnabled)
+        #expect(!model.isConnected)
+        #expect(model.state.selectedTabID == nil && model.state.width == nil)
     }
 
     @Test("Unchanged browser geometry is restored after the connection resumes")
