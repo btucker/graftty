@@ -90,7 +90,14 @@ struct ShellStartupCommandTests {
         let custom = home.appendingPathComponent("custom")
         try FileManager.default.createDirectory(at: custom, withIntermediateDirectories: true)
         let zmx = root.appendingPathComponent("zmx")
-        try "#!/bin/sh\nif [ -n \"$3\" ]; then exec \"$3\" -i; else exec \"$SHELL\" -il; fi\n"
+        try """
+        #!/bin/sh
+        [ "$1" = attach ] || exit 64
+        shift
+        if [ "$1" = --replay-grid ]; then shift; fi
+        shift # session name
+        if [ "$#" -gt 0 ]; then exec "$1" -i; else exec "$SHELL" -il; fi
+        """
             .write(to: zmx, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: zmx.path)
         for shell in ["zsh", "bash"] {
