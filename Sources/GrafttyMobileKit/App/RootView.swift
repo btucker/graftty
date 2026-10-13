@@ -509,6 +509,7 @@ struct SingleSessionView: View {
     /// container so the SwiftUI control-bar buttons can cancel an
     /// active selection per IOS-11.7.
     @State private var paneContainerBox = TerminalContainerBox()
+    @StateObject private var agentCompletion = AgentCompletionModel()
     @State private var stickyControlActivation:
         TerminalInputContainerView.StickyControlActivation = .inactive
     @State private var isTrayShiftSelected = false
@@ -547,6 +548,19 @@ struct SingleSessionView: View {
         keyboardAllowed: Bool = true
     ) -> Bool {
         clientIsOwner && isPaneFocused && keyboardAllowed
+    }
+
+    static func handleAgentCompletionSceneChange(
+        _ phase: ScenePhase,
+        model: AgentCompletionModel,
+        transportIsAvailable: Bool
+    ) {
+        guard phase != .active, model.isActive else { return }
+        if phase == .inactive, transportIsAvailable {
+            model.invalidateBoundary()
+        } else {
+            model.cancel(preserveLiteral: false)
+        }
     }
 
     static func shouldDismissKeyboard(
@@ -734,6 +748,14 @@ struct SingleSessionView: View {
                     VStack(spacing: 0) {
                         terminalContent
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .overlay(alignment: .bottom) {
+                                if agentCompletion.isActive, isPaneFocused {
+                                    AgentCompletionPicker(model: agentCompletion)
+                                        .frame(maxHeight: 240)
+                                        .padding(.horizontal, 8)
+                                        .padding(.bottom, 8)
+                                }
+                            }
                         // While the keyboard is up, the control bar is laid out
                         // in-flow directly below the terminal. Because this VStack
                         // already lives inside the keyboard-reduced area, the bar
@@ -913,6 +935,8 @@ struct SingleSessionView: View {
             }
             .task(id: dialKey) { await observeAttention() }
             .onDisappear {
+                agentCompletion.invalidateBoundary()
+                agentCompletion.loadCandidates = nil
                 paneContainerBox.view?.onBackRequested = nil
                 paneContainerBox.view?.resetStickyModifiers()
                 paneContainerBox.view?.onTrayShiftSelectionChange = nil
@@ -923,6 +947,7 @@ struct SingleSessionView: View {
                 if connection != .ended { connection = .connecting }
             }
             .onChange(of: client?.connectionState) { _, state in
+                if state != .live { agentCompletion.cancel(preserveLiteral: false) }
                 guard state == .ended else { return }
                 retainedPanes?.remove(retainedPaneKey)
                 client?.stop()
@@ -938,6 +963,12 @@ struct SingleSessionView: View {
                     paneContainerBox.view?.resetStickyModifiers()
                     paneContainerBox.view?.terminalView.resignFirstResponder()
                 }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                Self.handleAgentCompletionSceneChange(
+                    phase, model: agentCompletion,
+                    transportIsAvailable: client?.isOwner == true && client?.connectionState == .live
+                )
             }
     }
 
@@ -1304,11 +1335,11 @@ struct SingleSessionView: View {
     private func terminalControlBarItem(_ item: TerminalControlBarItem) -> some View {
         switch item {
         case .escape:
-            terminalTextControl("Esc", accessibilityLabel: "Escape") {
+            terminalTextControl("Esc", accessibilityLabel: "Escape", completionKey: .escape) {
                 client?.sendEscape()
             }
         case .tab:
-            terminalTextControl("Tab", accessibilityLabel: "Tab") {
+            terminalTextControl("Tab", accessibilityLabel: "Tab", completionKey: .accept) {
                 client?.sendTab(shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .stickyControl:
@@ -1342,11 +1373,11 @@ struct SingleSessionView: View {
                 client?.sendArrow(.left, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .down:
-            terminalIconControl("arrow.down", accessibilityLabel: "Down arrow") {
+            terminalIconControl("arrow.down", accessibilityLabel: "Down arrow", completionKey: .down) {
                 client?.sendArrow(.down, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .up:
-            terminalIconControl("arrow.up", accessibilityLabel: "Up arrow") {
+            terminalIconControl("arrow.up", accessibilityLabel: "Up arrow", completionKey: .up) {
                 client?.sendArrow(.up, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .right:
@@ -1354,7 +1385,7 @@ struct SingleSessionView: View {
                 client?.sendArrow(.right, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .submitReturn:
-            terminalIconControl("return", accessibilityLabel: "Submit return") {
+            terminalIconControl("return", accessibilityLabel: "Submit return", completionKey: .accept) {
                 client?.submitReturn()
             }
         case .literalLineFeed:
@@ -1413,10 +1444,16 @@ struct SingleSessionView: View {
                 isPaneFocused: isPaneFocused,
                 keyboardAllowed: keyboardAllowed
             ) ? .init(
-                insertText: { text in client.sendSoftwareKeyboardText(text) },
+                insertText: { text in
+                    // A focus/eligibility update can flush the pending token
+                    // after ownership changed. It must not request takeover.
+                    guard client.isOwner, client.connectionState == .live else { return }
+                    client.sendSoftwareKeyboardText(text)
+                },
                 insertControlByte: { byte in client.sendControlByte(byte) },
                 deleteBackward: { client.deleteBackward() }
             ) : nil,
+            agentCompletion: agentCompletion,
             hardwareKeyboardCommands: isPaneFocused ? ghosttyCommandContext.map {
                     MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: $0)
                 } ?? [] : [],
@@ -1461,7 +1498,21 @@ struct SingleSessionView: View {
             onOpenAuthenticationURL: coordinator != nil && step.worktreePath != nil ? openAuthenticationURL : nil
         )
         pane
+            .onAppear {
+                agentCompletion.currentWorktreePath = step.worktreePath
+                let provider: RemoteConnectionProvider? = coordinator == nil ? nil : makeRemoteConnectionProvider(
+                    coordinator: coordinator, host: step.host, sessionName: step.sessionName
+                )
+                let baseURL = step.host.baseURL
+                let worktreePath = step.worktreePath
+                agentCompletion.loadCandidates = {
+                    try await AgentCompletionsFetcher.fetch(
+                        baseURL: baseURL, provider: provider, worktreePath: worktreePath
+                    )
+                }
+            }
             .onChange(of: client.isOwner) { wasOwner, isOwner in
+                if !isOwner { agentCompletion.cancel(preserveLiteral: false) }
                 if Self.shouldSynchronizeViewportOnOwnerTransition(
                     wasOwner: wasOwner,
                     isOwner: isOwner
@@ -1500,9 +1551,14 @@ struct SingleSessionView: View {
     /// terminal selection is active first cancels the selection
     /// (IOS-11.7). Every entry in `terminalControlBar` routes its
     /// action through this wrapper.
-    private func controlBarAction(_ body: @escaping () -> Void, resetsInputContext: Bool = true) -> () -> Void {
+    private func controlBarAction(
+        _ body: @escaping () -> Void,
+        resetsInputContext: Bool = true,
+        completionKey: AgentCompletionKey? = nil
+    ) -> () -> Void {
         { [paneContainerBox] in
             paneContainerBox.cancelActiveSelectionIfAny()
+            if let completionKey, paneContainerBox.view?.handleAgentCompletionControl(completionKey) == true { return }
             if resetsInputContext { paneContainerBox.view?.terminalView.commitAndResetTextContext() }
             body()
         }
@@ -1511,9 +1567,10 @@ struct SingleSessionView: View {
     private func terminalTextControl(
         _ title: String,
         accessibilityLabel: String,
+        completionKey: AgentCompletionKey? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: controlBarAction(action)) {
+        Button(action: controlBarAction(action, completionKey: completionKey)) {
             Text(title)
                 .font(.footnote.monospaced().weight(.semibold))
                 .foregroundStyle(.primary)
@@ -1564,9 +1621,10 @@ struct SingleSessionView: View {
     private func terminalIconControl(
         _ systemName: String,
         accessibilityLabel: String,
+        completionKey: AgentCompletionKey? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: controlBarAction(action)) {
+        Button(action: controlBarAction(action, completionKey: completionKey)) {
             Image(systemName: systemName)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)

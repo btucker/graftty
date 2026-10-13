@@ -233,7 +233,9 @@ public final class RemoteTeamService {
                             isReachable: agent.isReachable,
                             paneSessionName: agent.paneSessionName
                         )
-                    }
+                    },
+                    projectPath: repo.path,
+                    projectName: repo.displayName
                 )
             }
         }

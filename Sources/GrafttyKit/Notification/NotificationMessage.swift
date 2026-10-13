@@ -799,6 +799,8 @@ public struct TeamListMember: Codable, Sendable, Equatable {
     public let isMainWorktree: Bool
     public let isRunning: Bool
     public let agents: [TeamListAgent]
+    public let projectPath: String?
+    public let projectName: String?
 
     public init(
         name: String,
@@ -806,7 +808,9 @@ public struct TeamListMember: Codable, Sendable, Equatable {
         worktreePath: String,
         isMainWorktree: Bool,
         isRunning: Bool,
-        agents: [TeamListAgent] = []
+        agents: [TeamListAgent] = [],
+        projectPath: String? = nil,
+        projectName: String? = nil
     ) {
         self.name = name
         self.branch = branch
@@ -814,6 +818,8 @@ public struct TeamListMember: Codable, Sendable, Equatable {
         self.isMainWorktree = isMainWorktree
         self.isRunning = isRunning
         self.agents = agents
+        self.projectPath = projectPath
+        self.projectName = projectName
     }
 
     enum CodingKeys: String, CodingKey {
@@ -821,6 +827,8 @@ public struct TeamListMember: Codable, Sendable, Equatable {
         case worktreePath = "worktree_path"
         case isMainWorktree = "is_main_worktree"
         case isRunning = "is_running"
+        case projectPath = "project_path"
+        case projectName = "project_name"
     }
 
     private enum LegacyCodingKeys: String, CodingKey {
@@ -855,7 +863,9 @@ public struct TeamListMember: Codable, Sendable, Equatable {
             worktreePath: try container.decode(String.self, forKey: .worktreePath),
             isMainWorktree: isMainWorktree,
             isRunning: try container.decode(Bool.self, forKey: .isRunning),
-            agents: try container.decodeIfPresent([TeamListAgent].self, forKey: .agents) ?? []
+            agents: try container.decodeIfPresent([TeamListAgent].self, forKey: .agents) ?? [],
+            projectPath: try container.decodeIfPresent(String.self, forKey: .projectPath),
+            projectName: try container.decodeIfPresent(String.self, forKey: .projectName)
         )
     }
 }

@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import GhosttyTerminal
+import GrafttyCommandUI
 import UIKit
 
 /// Keeps libghostty's input handler from echoing UIKit edits back to UIKit.
@@ -10,6 +11,37 @@ import UIKit
 /// Retains software input context so UIKit can find and revise dictation's
 /// previously committed hypotheses. Ghostty still renders and sends input.
 final class MobileTerminalInputView: UITerminalView {
+    var agentCompletion: AgentCompletionModel?
+    private var isHandlingHardwarePress = false
+    private var suppressCompletionSoftwareCallback = false
+
+    func didHandleAgentCompletionHardwareInput() -> Bool {
+        if isHandlingHardwarePress { suppressCompletionSoftwareCallback = true }
+        return true
+    }
+
+    /// Completion bypasses retained dictation context. A locally buffered token
+    /// must never become a hypothesis UIKit can rewrite with terminal DEL bytes.
+    func handleAgentCompletionText(_ text: String) -> Bool {
+        guard isKeyboardInputEnabled, textContext.markedRange == nil else { return false }
+        #if !targetEnvironment(macCatalyst)
+        guard !hasActiveStickyModifiers else {
+            agentCompletion?.invalidateBoundary()
+            return false
+        }
+        #endif
+        if agentCompletion?.isActive == true {
+            switch text {
+            case "\n", "\r", "\t": return agentCompletion?.handleKey(.accept) == true
+            case "\u{1B}": return agentCompletion?.handleKey(.escape) == true
+            default: break
+            }
+        }
+        guard agentCompletion?.handleText(text) == true else { return false }
+        resetTextContext()
+        return true
+    }
+
     private var systemEditDepth = 0
     // Ghostty only retains marked text. Dictation also reads back committed
     // hypotheses; an empty document makes UIKit cancel after the first word.
@@ -17,6 +49,7 @@ final class MobileTerminalInputView: UITerminalView {
     private var textContext = MobileTerminalTextContext()
 
     private var heldArrowPress: UIPress?
+    private var arrowRepeatBeganInCompletion = false
     private var arrowRepeatTimer: Timer?
     private var observesApplicationActivity = false
 
@@ -36,6 +69,7 @@ final class MobileTerminalInputView: UITerminalView {
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard super.gestureRecognizerShouldBegin(gestureRecognizer) else { return false }
         if gestureRecognizer is UIPanGestureRecognizer {
+            agentCompletion?.invalidateBoundary()
             // Finger scrolling has no pointer-hover event. Seed the position
             // before libghostty emits wheel input for mouse-reporting TUIs.
             let point = gestureRecognizer.location(in: self)
@@ -51,6 +85,13 @@ final class MobileTerminalInputView: UITerminalView {
 
     override func insertText(_ text: String) {
         guard isKeyboardInputEnabled else { return }
+        if suppressCompletionSoftwareCallback {
+            suppressCompletionSoftwareCallback = false
+            // Let Ghostty clear its own hardwareKeyHandled suppression too.
+            withSystemEdit { super.insertText(text) }
+            return
+        }
+        if handleAgentCompletionText(text) { return }
         #if !targetEnvironment(macCatalyst)
         if hasActiveStickyModifiers {
             withSystemEdit { super.insertText(text) }
@@ -63,6 +104,7 @@ final class MobileTerminalInputView: UITerminalView {
 
     override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         guard isKeyboardInputEnabled else { return }
+        agentCompletion?.invalidateBoundary()
         #if !targetEnvironment(macCatalyst)
         if hasActiveStickyModifiers {
             withSystemEdit { super.setMarkedText(markedText, selectedRange: selectedRange) }
@@ -79,6 +121,12 @@ final class MobileTerminalInputView: UITerminalView {
 
     override func deleteBackward() {
         guard isKeyboardInputEnabled else { return }
+        if suppressCompletionSoftwareCallback {
+            suppressCompletionSoftwareCallback = false
+            withSystemEdit { super.deleteBackward() }
+            return
+        }
+        if textContext.markedRange == nil, agentCompletion?.handleBackspace() == true { return }
         #if !targetEnvironment(macCatalyst)
         if hasActiveStickyModifiers {
             withSystemEdit { super.deleteBackward() }
@@ -107,6 +155,7 @@ final class MobileTerminalInputView: UITerminalView {
     override func replace(_ range: UITextRange, withText text: String) {
         guard isKeyboardInputEnabled, let range = range as? MobileTerminalTextRange,
               textContext.contains(range.range) else { return }
+        agentCompletion?.invalidateBoundary()
         #if !targetEnvironment(macCatalyst)
         if hasActiveStickyModifiers {
             withSystemEdit { super.replace(range, withText: text) }
@@ -122,6 +171,7 @@ final class MobileTerminalInputView: UITerminalView {
         set {
             guard let range = newValue as? MobileTerminalTextRange,
                   textContext.contains(range.range) else { return }
+            if textContext.selection != range.range { agentCompletion?.invalidateBoundary() }
             textContext.selection = range.range
             if textContext.markedRange != nil {
                 withSystemEdit {
@@ -214,6 +264,8 @@ final class MobileTerminalInputView: UITerminalView {
 
     @discardableResult
     override func resignFirstResponder() -> Bool {
+        agentCompletion?.invalidateBoundary()
+        suppressCompletionSoftwareCallback = false
         stopHardwareArrowRepeat()
         let resigned = super.resignFirstResponder()
         resetTextContext()
@@ -229,6 +281,7 @@ final class MobileTerminalInputView: UITerminalView {
     }
 
     func commitAndResetTextContext() {
+        agentCompletion?.invalidateBoundary()
         withExternalTextEdit {
             unmarkText()
             clearTextContext()
@@ -239,7 +292,9 @@ final class MobileTerminalInputView: UITerminalView {
         // Hardware navigation can move the remote cursor outside our software
         // input context. Ghostty still owns all physical-key translation.
         if textContext.markedRange == nil { resetTextContext(notifyingInputSystem: true) }
+        isHandlingHardwarePress = true
         super.pressesBegan(presses, with: event)
+        isHandlingHardwarePress = false
         guard isKeyboardInputEnabled, textContext.markedRange == nil else { return }
         for press in presses {
             guard let key = press.key, !key.modifierFlags.contains(.command),
@@ -252,21 +307,27 @@ final class MobileTerminalInputView: UITerminalView {
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if let heldArrowPress, presses.contains(heldArrowPress) { stopHardwareArrowRepeat() }
         super.pressesEnded(presses, with: event)
+        suppressCompletionSoftwareCallback = false
     }
 
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if let heldArrowPress, presses.contains(heldArrowPress) { stopHardwareArrowRepeat() }
         super.pressesCancelled(presses, with: event)
+        suppressCompletionSoftwareCallback = false
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window == nil { stopHardwareArrowRepeat() }
+        if window == nil {
+            agentCompletion?.invalidateBoundary()
+            stopHardwareArrowRepeat()
+        }
     }
 
     private func startHardwareArrowRepeat(_ press: UIPress) {
         stopHardwareArrowRepeat()
         heldArrowPress = press
+        arrowRepeatBeganInCompletion = agentCompletion?.isActive == true
         if !observesApplicationActivity {
             NotificationCenter.default.addObserver(self, selector: #selector(stopHardwareArrowRepeat),
                 name: UIApplication.willResignActiveNotification, object: nil)
@@ -284,7 +345,8 @@ final class MobileTerminalInputView: UITerminalView {
     }
 
     private func repeatHardwareArrow() {
-        guard isKeyboardInputEnabled, textContext.markedRange == nil, let heldArrowPress else {
+        guard isKeyboardInputEnabled, textContext.markedRange == nil, let heldArrowPress,
+              !arrowRepeatBeganInCompletion || agentCompletion?.isActive == true else {
             stopHardwareArrowRepeat()
             return
         }
@@ -296,6 +358,7 @@ final class MobileTerminalInputView: UITerminalView {
         arrowRepeatTimer?.invalidate()
         arrowRepeatTimer = nil
         heldArrowPress = nil
+        arrowRepeatBeganInCompletion = false
     }
 
     private func nativePosition(for position: UITextPosition) -> UITextPosition {

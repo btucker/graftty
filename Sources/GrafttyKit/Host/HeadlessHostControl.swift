@@ -35,6 +35,13 @@ public extension HeadlessHostRuntime {
     func manage(_ request: WorktreeManagementRequest) async -> WorktreeManagementResponse {
         do {
             switch request {
+            case .agentCompletions:
+                return .agentCompletions(AgentCompletionCatalog.local(repos: state.repos,
+                    records: (try? presence.listAll()) ?? [], isReachable: TeamAgentReachability.isReachable))
+            case .worktreeAgentCompletions(let worktreeID):
+                let candidates = AgentCompletionCatalog.local(repos: state.repos,
+                    records: (try? presence.listAll()) ?? [], isReachable: TeamAgentReachability.isReachable)
+                return .agentCompletions(AgentCompletionCatalog.contextualized(candidates, worktreePath: worktreeID, repos: state.repos))
             case .listRepositories:
                 return .repositories(await repositoryInfo())
             case .create(let repository, let name, let branch, let source):
