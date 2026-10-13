@@ -42,7 +42,7 @@ zig_build_with_download_retry() {
     # Use musl so zmx itself does not need a particular glibc version.
     zig_build_with_download_retry build test -j2 "-Dtarget=$arch-linux-musl"
     zig_build_with_download_retry build -j2 "-Dtarget=$arch-linux-musl" -Doptimize=ReleaseSafe \
-        "-Dversion=$version-g${commit:0:7}-graftty5" --prefix "$stage/install"
+        "-Dversion=$version-g${commit:0:7}-graftty6" --prefix "$stage/install"
 )
 mkdir -p "$(dirname "$output")"
 install -m 755 "$stage/install/bin/zmx" "$output"

@@ -630,6 +630,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.35** When a renderer requests clipboard text together with available types and display control can be reclaimed, the application shall return both the exact text bytes and available types after reclaiming control.
 
+**TERM-12.36** When a detached local Mac pane is mounted again, the application shall retain every history line, including history shorter than one viewport, through native paging or legacy replay.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery

@@ -144,8 +144,15 @@ struct DedicatedChromeBackendTests {
             }
             #expect(try await backend.evaluateForTesting("field.value") == "Graftty phone input ")
             #expect(try await backend.evaluateForTesting("keys.includes('Enter')") == "1")
-            try await Task.sleep(for: .milliseconds(250))
-            #expect(Int(try await backend.evaluateForTesting("window.scrollY")) ?? 0 > 0)
+            // Wheel acknowledgement can precede the compositor's scroll update.
+            // Read fractional CSS positions without truncating or rejecting them.
+            let scrollDeadline = ContinuousClock.now + .seconds(3)
+            var scrollPosition = try await backend.evaluateForTesting("window.scrollY")
+            while (Double(scrollPosition) ?? 0) <= 0 && ContinuousClock.now < scrollDeadline {
+                try await Task.sleep(for: .milliseconds(50))
+                scrollPosition = try await backend.evaluateForTesting("window.scrollY")
+            }
+            #expect((Double(scrollPosition) ?? 0) > 0, "Expected wheel input to scroll the page; window.scrollY was \(scrollPosition)")
             let otherViewer = await broker.handle(.init(target: "pane", action: .list), peerID: "trusted", viewerID: UUID())
             #expect(otherViewer.error != nil)
             await broker.disconnect(viewerID: viewer)

@@ -261,9 +261,13 @@ struct ChromeTabViewerRenderingTests {
         </style></head><body><main><h1>Sign in to continue</h1><p>Approve access with your account.</p>
         <label>Email<input placeholder="you@example.com"></label><button>Continue</button></main></body></html>
         """, baseURL: URL(string: "https://example.com/sign-in"))
-        let deadline = ContinuousClock.now + .seconds(5)
-        while !navigation.finished, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        try #require(navigation.finished)
+        // The first page in a fresh simulator also starts WebKit's processes.
+        let deadline = ContinuousClock.now + .seconds(30)
+        while !navigation.finished, navigation.error == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        if let error = navigation.error { throw error }
+        try #require(navigation.finished, "WebKit did not finish loading the fixture page within 30 seconds")
         browser.layoutIfNeeded()
         _ = try await browser.callAsyncJavaScript("""
         await Promise.race([
@@ -331,7 +335,17 @@ struct ChromeTabViewerRenderingTests {
     private struct SnapshotFailure: Error {}
     private final class PageNavigation: NSObject, WKNavigationDelegate {
         var finished = false
+        var error: (any Error)?
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished = true }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+            self.error = error
+        }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+            self.error = error
+        }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            error = NSError(domain: WKError.errorDomain, code: WKError.webContentProcessTerminated.rawValue)
+        }
     }
 }
 
