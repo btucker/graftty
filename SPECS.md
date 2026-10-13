@@ -3258,7 +3258,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-2.13** When the user requests the browser keyboard, the application shall expose keyboard input through observable presentation state and hide it when the viewer closes.
 
-**CHROME-2.14** While a host Chrome tab selection or navigation awaits acknowledgment, the application shall disable Local browser selection and use the acknowledged selected tab's URL when Local is chosen afterward.
+**CHROME-2.14** While a host Chrome tab selection or navigation awaits acknowledgment, the application shall prevent Local browser selection and use the acknowledged selected tab's URL when Local is chosen afterward.
 
 **CHROME-2.15** When a terminal link is activated, the application shall retain its exact URL and user-request identity, present through the existing browser only in its active originating owned pane, and reject stale host, worktree, session or owner scope.
 
@@ -3279,6 +3279,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CHROME-2.23** When the user taps the globe or its visible available-resource badge, the application shall invoke the same browser action.
 
 **CHROME-2.24** When tab selection changes during a pending viewport resize, the application shall resize only the selected tab, apply the latest requested geometry without duplicate requests, and cancel remaining resize work on close.
+
+**CHROME-2.25** While the selected remote HTTP(S) page has no rendered frame or a browser error, the application shall hide the Local/Remote toggle; when that page renders successfully, the application shall offer Local only through the toggle without a Try Local button or explanatory copy.
+
+**CHROME-2.26** When the mobile remote browser reconnects after suspension, the application shall restore its selected tab if it still exists and shall not repeat a successfully acknowledged initial URL launch.
+
+**CHROME-2.27** When a mounted mobile browser backgrounds and its ownership snapshot clears during transport suspension, the application shall retain the browser sheet until explicit dismissal or confirmed ownership loss.
 
 ### CHROME-3.x — Authenticated transport
 
@@ -3309,6 +3315,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CHROME-4.4** If a canceled Local attempt resumes after another explicit attempt opens its callback, then the application shall preserve the replacement listener and ignore the obsolete transport result.
 
 **CHROME-4.5** When Local browser mode is selected, the application shall use the retained original OAuth offer for sign-in, otherwise use the current selected HTTP(S) page, and reject an authorization page without its originating offer.
+
+**CHROME-4.6** When an established Local browser backgrounds or waits for foreground transport reconnection, the application shall retain the same Safari presentation and callback listener, resume callbacks through the current host connection when ready, and cancel unfinished Local preparation.
 
 ### CHROME-5.x
 

@@ -82,6 +82,7 @@ final class ChromeTabViewerModel {
 
     func run(target: String, initialLaunch: ChromeTabInitialLaunch?, onLaunch: () -> Void,
              makeDriver: () async throws -> any ChromeTabChannelDriver) async {
+        let selectedBeforeReconnect = state.selectedTabID
         close()
         let epoch = generation
         do {
@@ -106,12 +107,14 @@ final class ChromeTabViewerModel {
             }
             let listed = await send(.list, target: target)
             guard listed, !Task.isCancelled, generation == epoch else { return }
-            if let initialLaunch {
+            if let initialLaunch, case .launchOffer = initialLaunch.action {
                 let launched = await send(initialLaunch.action, target: target)
                 guard !Task.isCancelled, generation == epoch else { return }
                 if launched, initialLaunch.accept(.init(state: state)) { onLaunch() }
                 else { initialLaunchError = error ?? "Could not start sign-in. Retry or select an existing tab." }
-            } else if let first = state.tabs.first?.id { await send(.select(tabID: first), target: target) }
+            } else if let selected = state.tabs.first(where: { $0.id == (selectedBeforeReconnect ?? initialLaunch?.action.tabID) })?.id ?? state.tabs.first?.id {
+                if await send(.select(tabID: selected), target: target), let initialLaunch, initialLaunch.accept(.init(state: state)) { onLaunch() }
+            }
             while !Task.isCancelled, generation == epoch {
                 try await Task.sleep(for: .milliseconds(250))
                 if pendingCount == 0 {
@@ -209,6 +212,12 @@ final class ChromeTabViewerModel {
         frameSize = dimensions.cgSize
         frameSequence = frame.sequence; frameTabID = frame.tabID
         frameInputEnabled = true
+    }
+
+    func suspend() {
+        let retained = state
+        close()
+        state = retained
     }
 
     func close() {

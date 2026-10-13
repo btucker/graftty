@@ -43,8 +43,35 @@ struct RemoteBrowserButtonTests {
         try activateBrowser(in: fixture.host.view)
         try await waitUntil { fixture.host.presentedViewController != nil }
         let sheet = try #require(fixture.host.presentedViewController)
-        try await waitUntil { accessibilityObjects(in: sheet.view).contains { $0 is UISegmentedControl } }
+        try await waitUntil { accessibilityObjects(in: sheet.view).contains { $0.accessibilityLabel == "Done" } }
         try await finishPresentation(in: fixture)
+    }
+
+    @Test("@spec CHROME-2.27: When a mounted mobile browser backgrounds and its ownership snapshot clears during transport suspension, the application shall retain the browser sheet until explicit dismissal or confirmed ownership loss.")
+    func mountedBrowserSurvivesClearedOwnershipDuringBackground() async throws {
+        let fixture = try makeButtonFixture(owner: true)
+        defer { close(fixture) }
+        try await waitUntil { accessibilityObjects(in: fixture.host.view).contains { $0.accessibilityLabel == "Browser" } }
+        try activateBrowser(in: fixture.host.view)
+        try await waitUntil { fixture.host.presentedViewController != nil }
+        let sheet = try #require(fixture.host.presentedViewController)
+        try await waitUntil { !sheet.isBeingPresented && sheet.view.window != nil }
+        fixture.state.active = false
+        fixture.state.ready = false
+        fixture.state.hasSnapshot = false
+        fixture.state.owner = false
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(Bool(fixture.host.presentedViewController === sheet))
+        fixture.state.active = true
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(Bool(fixture.host.presentedViewController === sheet))
+        fixture.state.owner = true
+        fixture.state.hasSnapshot = true
+        fixture.state.ready = true
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(Bool(fixture.host.presentedViewController === sheet))
+        fixture.state.owner = false
+        try await waitUntil { fixture.host.presentedViewController == nil }
     }
 
     @Test("@spec IMAGE-2.4: When a mobile image request arrives, the application shall preserve typing and show an Images action that presents native Quick Look only after a tap, without automatically reopening a dismissed offer.", .timeLimit(.minutes(1)))
@@ -231,7 +258,7 @@ struct RemoteBrowserButtonTests {
         try await waitUntil { fixture.host.presentedViewController != nil }
         let retry = try #require(fixture.host.presentedViewController)
         try await waitUntil { !retry.isBeingPresented && retry.view.window != nil }
-        try await waitUntil { accessibilityObjects(in: retry.view).contains { $0 is UISegmentedControl } }
+        try await waitUntil { accessibilityObjects(in: retry.view).contains { $0.accessibilityLabel == "Done" } }
         let safari = SFSafariViewController(url: URL(string: "http://127.0.0.1:1/")!)
         safari.modalPresentationStyle = .fullScreen
         retry.present(safari, animated: false)
@@ -295,7 +322,7 @@ struct RemoteBrowserButtonTests {
         let sheet = try #require(fixture.host.presentedViewController)
         try await waitUntil { !sheet.isBeingPresented && sheet.view.window != nil }
         #expect(!(sheet is UIAlertController), "Retry must present the browser rather than silently return")
-        #expect(accessibilityObjects(in: sheet.view).contains { $0 is UISegmentedControl })
+        #expect(accessibilityObjects(in: sheet.view).contains { $0.accessibilityLabel == "Done" })
         fixture.state.owner = false
         try await waitUntil { fixture.host.presentedViewController == nil }
         // UIKit removes the controller before SwiftUI delivers its dismissal
@@ -307,7 +334,7 @@ struct RemoteBrowserButtonTests {
         try await waitUntil { fixture.host.presentedViewController != nil }
         let retry = try #require(fixture.host.presentedViewController)
         try await waitUntil { !retry.isBeingPresented && retry.view.window != nil }
-        try await waitUntil { accessibilityObjects(in: retry.view).contains { $0 is UISegmentedControl } }
+        try await waitUntil { accessibilityObjects(in: retry.view).contains { $0.accessibilityLabel == "Done" } }
         try await finishPresentation(in: fixture)
     }
 
@@ -330,6 +357,7 @@ struct RemoteBrowserButtonTests {
         var owner: Bool
         var active = true
         var ready = true
+        var hasSnapshot = true
         var visible = true
         var offers: [RemoteOpenOffer] = []
         var slowRead = false
@@ -416,7 +444,7 @@ struct RemoteBrowserButtonTests {
                             return .openResource(.chunk(state.unsupportedPreview ? Data(repeating: 0, count: imageBytes.count) : imageBytes))
                         }
                         return .openResource(.offers(state.offers))
-                    }, browserConnectionReady: state.ready, isPaneFocused: state.focused, hasOwnershipSnapshot: true,
+                    }, browserConnectionReady: state.ready, isPaneFocused: state.focused, hasOwnershipSnapshot: state.hasSnapshot,
                     isPaneOwner: { state.owner }, canPresentAuthentication: { true }, terminalRequest: .constant(nil), chromePresentation: initialPresentation)
                     .environment(\.scenePhase, state.active ? .active : .background)
                     .environment(\.accessibilityEnabled, true)

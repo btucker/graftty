@@ -62,10 +62,14 @@ struct BrowserModeView: View {
             }
             .onChange(of: ready, initial: true) { _, value in
                 local.allowed = value
-                if !value {
-                    local.stop(reason: local.session.url != nil || local.session.preparing
-                               ? "Local browsing paused. Reconnect with pane control to continue." : local.session.error)
+                if !value, local.session.preparing {
+                    // A pending authorization cannot publish after suspension.
+                    local.stop()
                 }
+                // Established Safari and listeners survive the transport gap.
+            }
+            .onChange(of: gate.isUnlocked, initial: true) { _, unlocked in
+                if !unlocked { local.stop() }
             }
     }
 }
@@ -134,7 +138,9 @@ final class LocalBrowserController {
                         try await self.network.startLocalPage(url: approved, hostID: hostID, callbackHost: callbackHost) { [weak self] socket, host, port, reply in
                             guard let self, await self.callbackAllowed(attempt) else { throw CancellationError() }
                             do {
-                                try await tunnel.connect(socket, host, port, reply)
+                                guard let currentTunnel = await makeTunnel() else { throw CancellationError() }
+                                try await self.checkCurrent(attempt)
+                                try await currentTunnel.connect(socket, host, port, reply)
                             } catch {
                                 await self.callbackFailed(attempt)
                                 throw error
@@ -145,15 +151,18 @@ final class LocalBrowserController {
                     }
                 }
             })
-            if let tunnel, session.url != nil, self.attempt == attempt {
+            if tunnel != nil, session.url != nil, self.attempt == attempt {
                 connectionWatch = Task { [weak self] in
                     while !Task.isCancelled {
                         guard let self, self.attempt == attempt else { return }
-                        let connected = await tunnel.isConnected()
-                        guard !Task.isCancelled, self.attempt == attempt else { return }
-                        if !connected {
-                            self.stop(reason: "Local browsing paused because the Mac disconnected. Select Local after reconnecting.")
-                            return
+                        if self.allowed {
+                            let currentTunnel = await makeTunnel()
+                            let connected = await currentTunnel?.isConnected() == true
+                            guard !Task.isCancelled, self.attempt == attempt else { return }
+                            if self.allowed, !connected {
+                                self.stop(reason: "Local browsing paused because the Mac disconnected. Select Local after reconnecting.")
+                                return
+                            }
                         }
                         do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
                     }
@@ -170,7 +179,7 @@ final class LocalBrowserController {
         self.attempt == attempt && allowed && owner()
     }
     private func callbackFailed(_ attempt: UUID) {
-        guard self.attempt == attempt else { return }
+        guard self.attempt == attempt, allowed else { return }
         stop(reason: "The host callback connection failed. Reconnect and select Local to try again.")
     }
     func stop(reason: String? = nil) {

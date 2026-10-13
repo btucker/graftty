@@ -117,7 +117,10 @@ struct RemoteOpenButton: View {
         }
         .onChange(of: ownerDeviceID) { _, _ in
             offerSnapshot = .init(); choosingResource = false; cancelOperation()
-            if preview?.browser == true || preview?.imageRequest != nil { cancelPresentation() }
+            if preview?.imageRequest != nil { cancelStaleImage() }
+            // A nil owner during suspension is an unknown snapshot. Mounted
+            // browsers wait for a fresh authoritative snapshot before closing.
+            if !chromePresentation.isMounted { cancelPresentation() }
             checkOwnership()
         }
         .onChange(of: hasOwnershipSnapshot) { _, _ in checkOwnership() }
@@ -331,7 +334,8 @@ struct RemoteOpenButton: View {
             cancelPresentation()
             return false
         }
-        guard isActive || chromePresentation.isMounted, !item.browser || (isPaneFocused && isPaneOwner()) else {
+        guard isActive || chromePresentation.isMounted,
+              !item.browser || (isPaneFocused && (isPaneOwner() || chromePresentation.isMounted && !hasOwnershipSnapshot)) else {
             cancelPresentation()
             return false
         }

@@ -32,7 +32,7 @@ final class BrowserControlInteractionTests: XCTestCase {
         XCTAssertTrue(browser.waitForExistence(timeout: 5))
         assertFullTarget(browser, in: bounds)
         tapCenter(browser, in: app)
-        XCTAssertTrue(app.segmentedControls.firstMatch.waitForExistence(timeout: 5), "Browser must retain its independent action")
+        XCTAssertTrue(app.buttons["Open address"].waitForExistence(timeout: 5), "Browser must retain its independent action")
         XCTAssertTrue(done.waitForExistence(timeout: 5))
         done.tap()
     }

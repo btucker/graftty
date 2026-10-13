@@ -31,6 +31,13 @@ struct ChromeTabViewer: View {
     private struct RunScope: Hashable { let ready: Bool; let attempt: Int }
     private var ready: Bool { paneReady && LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) }
     private var selectedTab: ChromeTab? { model.state.tabs.first { $0.id == model.state.selectedTabID } }
+    private var localPageURL: URL? {
+        guard model.image != nil, model.error == nil, model.initialLaunchError == nil,
+              let tab = selectedTab, tab.urlTruncated != true,
+              tab.urlTruncated != nil || tab.url.utf8.count < 2048,
+              ChromeTabAction.launch(url: tab.url).isValid else { return nil }
+        return URL(string: tab.url)
+    }
     private var canNavigate: Bool { ready && model.isConnected && !model.busy && model.state.selectedTabID != nil }
 
     init(target: String, connectionProvider: @escaping RemoteConnectionProvider,
@@ -97,22 +104,23 @@ struct ChromeTabViewer: View {
                         guard let connection = await connectionProvider() else { throw ChromeViewerUnavailable() }
                         return try await connection.makeChromeTabClient()
                     })
-                } else { model.close() }
+                } else { model.suspend() }
             }
         }
     }
 
     private var header: some View {
         HStack(spacing: 8) {
-            Picker("Browser mode", selection: $mode) {
-                Text("Local").tag(BrowserMode.local)
-                Text("Remote").tag(BrowserMode.remote)
+            if onChooseLocal != nil, localPageURL != nil {
+                Picker("Browser mode", selection: $mode) {
+                    Text("Local").tag(BrowserMode.local)
+                    Text("Remote").tag(BrowserMode.remote)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 140)
+                .disabled(!ready || !model.isConnected || localPreparing || model.busy)
+                .accessibilityIdentifier("chrome-browser-mode")
             }
-            .pickerStyle(.segmented)
-            .frame(width: 140)
-            .disabled(onChooseLocal == nil || localPreparing || model.busy)
-            .accessibilityIdentifier("chrome-browser-mode")
-            .accessibilityHint("Local uses separate iPhone cookies and page state.")
 
             Button { showingAddress = true } label: {
                 HStack(spacing: 4) {
@@ -152,9 +160,7 @@ struct ChromeTabViewer: View {
             HStack(spacing: 8) {
                 Text(error).font(.caption).foregroundStyle(.red)
                     .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                if localError != nil, onChooseLocal != nil {
-                    Button("Try Local") { chooseLocal() }.disabled(localPreparing || model.busy)
-                } else if initialLaunch != nil, model.error != nil || model.initialLaunchError != nil {
+                if localError == nil, initialLaunch != nil, model.error != nil || model.initialLaunchError != nil {
                     Button("Retry") { connectionAttempt += 1 }
                         .disabled(model.busy || !ready)
                         .accessibilityLabel("Retry sign-in")
@@ -286,11 +292,7 @@ struct ChromeTabViewer: View {
     private func send(_ action: ChromeTabAction) { Task { await model.send(action, target: target) } }
 
     private func chooseLocal() {
-        guard !model.busy else { return }
-        let page = selectedTab.flatMap { tab -> URL? in
-            guard tab.urlTruncated != true, tab.urlTruncated != nil || tab.url.utf8.count < 2048 else { return nil }
-            return URL(string: tab.url)
-        }
+        guard ready, model.isConnected, !model.busy, !localPreparing, let page = localPageURL else { return }
         onChooseLocal?(page)
     }
 
