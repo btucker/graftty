@@ -275,12 +275,18 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec IMAGE-1.6: When Graftty installs the graftty-image skill, the skill shall describe the macOS tray and Graftty Mobile native preview on the pane leader, explain fit, zoom, and close controls, and acknowledge requests without claiming the user saw the image.
+    @spec IMAGE-1.6: When Graftty installs the graftty-image skill, the skill shall describe the movable and resizable macOS tray and the owning Mobile pane's Images control for native Quick Look, explain fit, zoom, close, and Preview.app controls, and acknowledge requests without claiming the user saw the image.
     """)
     func imageSkillDescribesNativePreviewOnLeadingDevice() throws {
         for skill in try preparedSkillTexts(named: "graftty-image") {
             #expect(skill.contains("Graftty Mobile"))
-            #expect(skill.contains("pane leader"))
+            #expect(skill.contains("focused owning pane"))
+            #expect(skill.contains("Images control"))
+            #expect(skill.contains("Quick Look with zoom and sharing"))
+            #expect(skill.contains("Image arrival leaves terminal typing unchanged"))
+            #expect(skill.contains("Drag the header"))
+            #expect(skill.contains("resize"))
+            #expect(skill.contains("Preview.app"))
             #expect(skill.contains("Fit"))
             #expect(skill.contains("zoom"))
             #expect(skill.contains("Close"))

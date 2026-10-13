@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import GrafttyProtocol
 import Observation
+import QuickLook
 import SafariServices
 import SwiftUI
 import Testing
@@ -10,6 +11,167 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct RemoteBrowserButtonTests {
+    @Test("@spec IMAGE-2.4: When a mobile image request arrives, the application shall preserve typing and show an Images action that presents native Quick Look only after a tap, without automatically reopening a dismissed offer.", .timeLimit(.minutes(1)))
+    func imagesArriveWithoutInterruptingTypingAndOpenOnTap() async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false)
+        defer { close(fixture) }
+        let incoming = imageOffer()
+        let field = UITextField(frame: CGRect(x: 20, y: 40, width: 100, height: 40))
+        fixture.parent.view.addSubview(field)
+        field.becomeFirstResponder()
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(field.isFirstResponder)
+        #expect(!accessibilityObjects(in: fixture.host.view).contains { $0.accessibilityLabel == "Images" })
+        fixture.state.offers = [incoming]
+        try await waitForImages(fixture, filename: "image.png")
+        #expect(field.isFirstResponder, "Receiving an image must preserve the terminal's keyboard focus")
+        #expect(fixture.host.presentedViewController == nil)
+        #expect(accessibilityObjects(in: fixture.host.view).contains {
+            $0.accessibilityLabel == "Browser" && $0.accessibilityValue == "0 available resources"
+        })
+        try activateImages(in: fixture.host.view)
+        try await waitUntil { fixture.host.presentedViewController != nil }
+        let sheet = try #require(fixture.host.presentedViewController)
+        try await waitUntil { quickLook(in: sheet) != nil }
+        let controller = try #require(quickLook(in: sheet))
+        let source = try #require(controller.dataSource)
+        let url = try #require(source.previewController(controller, previewItemAt: 0).previewItemURL)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        try await finishPresentation(in: fixture)
+        try await waitUntil { !FileManager.default.fileExists(atPath: url.path) }
+        try await Task.sleep(for: .seconds(3.2))
+        #expect(fixture.host.presentedViewController == nil)
+        try await waitForImages(fixture)
+        try activateImages(in: fixture.host.view)
+        try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+        fixture.state.owner = false
+        try await waitUntil { fixture.host.presentedViewController == nil }
+    }
+
+    @Test("@spec IMAGE-2.10: While a mobile image preview is mounted, the application shall retain its local file and presentation across temporary scene pauses and system sharing, until actual pane, ownership or offer changes or dismissal.", .timeLimit(.minutes(1)))
+    func mountedImageSurvivesScenePause() async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true)
+        defer { close(fixture) }
+        try await waitForImages(fixture)
+        try activateImages(in: fixture.host.view)
+        try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+        let sheet = try #require(fixture.host.presentedViewController)
+        try await waitUntil { !sheet.isBeingPresented && sheet.view.window != nil }
+        let controller = try #require(quickLook(in: sheet))
+        let url = try #require(controller.dataSource?.previewController(controller, previewItemAt: 0).previewItemURL)
+        let share = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        share.modalPresentationStyle = .fullScreen
+        share.popoverPresentationController?.sourceView = sheet.view
+        sheet.present(share, animated: false)
+        try await waitUntil { share.view.window != nil }
+        fixture.state.active = false
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(Bool(fixture.host.presentedViewController === sheet))
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(Bool(sheet.presentedViewController === share))
+        share.dismiss(animated: false)
+        try await waitUntil { sheet.presentedViewController == nil }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(Bool(fixture.host.presentedViewController === sheet), "Uncovering an already mounted image must not require an active scene")
+        fixture.state.active = true
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(Bool(fixture.host.presentedViewController === sheet))
+        try await finishPresentation(in: fixture)
+        try await waitUntil { !FileManager.default.fileExists(atPath: url.path) }
+    }
+
+    @Test("@spec IMAGE-2.5: If the latest mobile image changes during download or viewing, then the application shall discard stale bytes, close the old preview and leave only the replacement image manually available.", .timeLimit(.minutes(1)))
+    func replacementCancelsStaleDownloadAndMountedPreview() async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true)
+        defer { close(fixture) }
+        fixture.state.slowRead = true
+        try await waitForImages(fixture)
+        try activateImages(in: fixture.host.view)
+        try await waitUntil { fixture.state.reads > 0 }
+        fixture.state.offers = [imageOffer("replacement.png")]
+        try await Task.sleep(for: .seconds(3.3))
+        fixture.state.slowRead = false
+        try await Task.sleep(for: .seconds(1))
+        #expect(fixture.host.presentedViewController == nil)
+        try await waitForImages(fixture)
+        try activateImages(in: fixture.host.view)
+        try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+        let controller = try #require(quickLook(in: fixture.host.presentedViewController))
+        let url = try #require(controller.dataSource?.previewController(controller, previewItemAt: 0).previewItemURL)
+        #expect(url.lastPathComponent == "replacement.png")
+        fixture.state.offers = [imageOffer("newest.png")]
+        try await waitUntil { fixture.host.presentedViewController == nil }
+        try await waitUntil { !FileManager.default.fileExists(atPath: url.path) }
+        try await waitForImages(fixture)
+        #expect(fixture.host.presentedViewController == nil)
+    }
+
+    @Test("@spec IMAGE-2.6: If a mobile image is unavailable or cannot be downloaded or natively previewed, then the application shall show an actionable image error and allow a later retry.", .timeLimit(.minutes(1)), arguments: [false, true])
+    func imageDownloadFailureExplainsRetry(unsupportedPreview: Bool) async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true)
+        defer { close(fixture) }
+        fixture.state.failRead = !unsupportedPreview
+        fixture.state.unsupportedPreview = unsupportedPreview
+        if unsupportedPreview { fixture.state.offers = [imageOffer("image.graftty-unknown-preview")] }
+        try await waitForImages(fixture, filename: unsupportedPreview ? "image.graftty-unknown-preview" : "image.png")
+        try activateImages(in: fixture.host.view)
+        try await waitUntil { fixture.host.presentedViewController is UIAlertController }
+        let alert = try #require(fixture.host.presentedViewController as? UIAlertController)
+        #expect(alert.message?.contains("graftty image") == true)
+        #expect(alert.message?.contains(unsupportedPreview ? "supported image" : "download") == true)
+        try await finishPresentation(in: fixture)
+        fixture.state.failRead = false
+        fixture.state.unsupportedPreview = false
+        if unsupportedPreview { fixture.state.offers = [imageOffer()] }
+        try await waitForImages(fixture, filename: "image.png")
+        try activateImages(in: fixture.host.view)
+        try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+    }
+
+    @Test("Image downloads cancel when the originating pane loses focus or its worktree changes", .timeLimit(.minutes(1)), arguments: [false, true])
+    func imageDownloadCancelsAfterScopeChange(worktreeChanges: Bool) async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true)
+        defer { close(fixture) }
+        fixture.state.slowRead = true
+        try await waitForImages(fixture)
+        try activateImages(in: fixture.host.view)
+        try await waitUntil { fixture.state.reads > 0 }
+        if worktreeChanges { fixture.state.worktree = "/other" }
+        else { fixture.state.focused = false }
+        try await waitUntil { fixture.state.cancelledReads == 1 }
+        #expect(fixture.host.presentedViewController == nil)
+    }
+
+    private func imageOffer(_ name: String = "image.png") -> RemoteOpenOffer {
+        .init(id: UUID(), filename: name, byteCount: imageBytes.count, paneSessionName: "pane",
+              previewKind: "image", previewOwnerDeviceID: .init(value: "fixture-phone"))
+    }
+    private var imageBytes: Data {
+        UIGraphicsImageRenderer(size: CGSize(width: 160, height: 120)).pngData { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 160, height: 120))
+        }
+    }
+    private func quickLook(in controller: UIViewController?) -> QLPreviewController? {
+        guard let controller else { return nil }
+        if let preview = controller as? QLPreviewController { return preview }
+        for child in controller.children { if let preview = quickLook(in: child) { return preview } }
+        return nil
+    }
+    private func waitForImages(_ fixture: ButtonFixture, filename: String? = nil) async throws {
+        try await waitUntil {
+            fixture.host.view.layoutIfNeeded()
+            return accessibilityObjects(in: fixture.host.view).contains {
+                $0.accessibilityLabel == "Images" && (filename == nil || $0.accessibilityValue == filename)
+            }
+        }
+        try await Task.sleep(for: .milliseconds(50))
+    }
+    private func activateImages(in view: UIView) throws {
+        let button = try #require(accessibilityObjects(in: view).first { $0.accessibilityLabel == "Images" })
+        try #require(button.accessibilityActivate())
+    }
+
     @Test("A mounted browser survives scene pauses and remains retryable after its actual host is removed", .timeLimit(.minutes(1)))
     func mountedFreshHostRetainsSheetDuringScenePause() async throws {
         let fixture = try makeButtonFixture(owner: true, authentication: false)
@@ -133,6 +295,14 @@ struct RemoteBrowserButtonTests {
         var active = true
         var ready = true
         var visible = true
+        var offers: [RemoteOpenOffer] = []
+        var slowRead = false
+        var failRead = false
+        var unsupportedPreview = false
+        var reads = 0
+        var cancelledReads = 0
+        var worktree = "/fixture"
+        var focused = true
         init(owner: Bool) { self.owner = owner }
     }
     private struct ButtonFixture {
@@ -144,7 +314,8 @@ struct RemoteBrowserButtonTests {
         let directory: URL
     }
 
-    private func makeButtonFixture(owner: Bool, pending: Bool = false, authentication: Bool = true) throws -> ButtonFixture {
+    private func makeButtonFixture(owner: Bool, pending: Bool = false, authentication: Bool = true,
+                                   image: Bool = false, imageInitiallyAvailable: Bool = true) throws -> ButtonFixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let coordinator = RemoteConnectionCoordinator(directory: directory, connectionsAllowedInitially: false)
@@ -163,7 +334,8 @@ struct RemoteBrowserButtonTests {
         // the abandoned reservation separately from SwiftUI's mount timing.
         if pending { _ = presentation.begin(offer.id) }
         let state = ButtonState(owner: owner)
-        let button = ButtonFixtureView(state: state, coordinator: coordinator, host: host, offer: offer, device: device, initialPresentation: presentation)
+        state.offers = image && !imageInitiallyAvailable ? [] : [image ? imageOffer() : offer]
+        let button = ButtonFixtureView(state: state, coordinator: coordinator, host: host, imageBytes: imageBytes, device: device, initialPresentation: presentation)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
         let previous = scene.windows.first { $0.isKeyWindow }
@@ -183,17 +355,26 @@ struct RemoteBrowserButtonTests {
         let state: ButtonState
         let coordinator: RemoteConnectionCoordinator
         let host: Host
-        let offer: RemoteOpenOffer
+        let imageBytes: Data
         let device: RemoteDeviceID
         let initialPresentation: ChromeOfferPresentation
         var body: some View {
             if state.visible {
-                RemoteOpenButton(host: host, worktree: "/fixture", coordinator: coordinator, sessionName: "pane",
+                RemoteOpenButton(host: host, worktree: state.worktree, coordinator: coordinator, sessionName: "pane",
                     ownerDeviceID: state.owner ? device : nil, isActive: state.active,
-                    managementTransport: { _, requestedHost in
+                    managementTransport: { request, requestedHost in
                         #expect(requestedHost.id == host.id)
-                        return .openResource(.offers([offer]))
-                    }, browserConnectionReady: state.ready, isPaneFocused: true, hasOwnershipSnapshot: true,
+                        if case .openResource(_, .read) = request {
+                            state.reads += 1
+                            if state.slowRead {
+                                do { try await Task.sleep(for: .seconds(4)) }
+                                catch { state.cancelledReads += 1; throw error }
+                            }
+                            if state.failRead { return .error(code: "unavailable", message: "Unavailable", forceAllowed: false, shortStatus: nil) }
+                            return .openResource(.chunk(state.unsupportedPreview ? Data(repeating: 0, count: imageBytes.count) : imageBytes))
+                        }
+                        return .openResource(.offers(state.offers))
+                    }, browserConnectionReady: state.ready, isPaneFocused: state.focused, hasOwnershipSnapshot: true,
                     isPaneOwner: { state.owner }, canPresentAuthentication: { true }, terminalRequest: .constant(nil), chromePresentation: initialPresentation)
                     .environment(\.scenePhase, state.active ? .active : .background)
                     .environment(\.accessibilityEnabled, true)
@@ -222,8 +403,21 @@ struct RemoteBrowserButtonTests {
                     presented.dismiss(animated: false) { continuation.resume() }
                 }
             } else {
-                let button = try #require(accessibilityObjects(in: presented.view).first { $0.accessibilityLabel == "Done" })
-                try #require(button.accessibilityActivate(), "Dismiss using the actual resource Done action")
+                if let image = quickLook(in: presented) {
+                    try await waitUntil { image.view.window != nil && !presented.isBeingPresented }
+                    let navigation = try #require(image.navigationController)
+                    #expect(!navigation.isNavigationBarHidden)
+                    let done = try #require(image.navigationItem.leftBarButtonItem)
+                    #expect(done.title == "Done")
+                    #expect(done.accessibilityLabel == "Done")
+                    let action = try #require(done.action)
+                    try #require(UIApplication.shared.sendAction(action, to: done.target, from: done, for: nil),
+                                 "Dismiss through the mounted native bar button's target/action")
+                } else {
+                    try await waitUntil { accessibilityObjects(in: presented.view).contains { $0.accessibilityLabel == "Done" } }
+                    let button = try #require(accessibilityObjects(in: presented.view).first { $0.accessibilityLabel == "Done" })
+                    try #require(button.accessibilityActivate(), "Dismiss using the actual resource Done action")
+                }
             }
         }
         try await waitUntil { fixture.host.presentedViewController == nil }

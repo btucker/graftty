@@ -76,6 +76,7 @@ public actor RemoteOpenStore {
     /// Offers bytes already read and validated by a native preview loader.
     public func offerSnapshot(bytes: Data, filename: String, worktree: String,
                               paneSessionName: String? = nil, previewRevision: UInt64? = nil,
+                              previewKind: String? = nil, previewOwnerDeviceID: RemoteDeviceID? = nil,
                               now: Date = Date()) throws -> RemoteOpenOffer {
         guard bytes.count <= RemoteOpenOffer.maxBytes else { throw Failure.tooLarge }
         guard !filename.isEmpty, URL(fileURLWithPath: filename).lastPathComponent == filename else { throw Failure.invalidFile }
@@ -92,7 +93,8 @@ public actor RemoteOpenStore {
         while entries.count >= 20 || entries.reduce(0, { $0 + $1.bytes.count }) + bytes.count > 50 * 1024 * 1024 {
             entries.removeFirst()
         }
-        let offer = RemoteOpenOffer(id: UUID(), filename: filename, byteCount: bytes.count, paneSessionName: paneSessionName)
+        let offer = RemoteOpenOffer(id: UUID(), filename: filename, byteCount: bytes.count, paneSessionName: paneSessionName,
+                                    previewKind: previewKind, previewOwnerDeviceID: previewOwnerDeviceID)
         entries.append(Entry(offer: offer, worktree: worktree, bytes: bytes, expires: now.addingTimeInterval(900),
                              previewRevision: previewRevision))
         return offer

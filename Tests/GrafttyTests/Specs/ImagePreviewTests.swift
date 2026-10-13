@@ -227,7 +227,7 @@ struct ImagePreviewTests {
         #expect(await store.list(worktree: "/a") == [other, fileOffer])
     }
 
-    @Test("@spec IMAGE-1.13: When an image request reaches the application, it shall offer validated bytes to an iOS pane leader and leave the host tray unchanged, while unavailable leaders and invalid origins shall return errors.")
+    @Test("@spec IMAGE-1.13: When an image request reaches the application, it shall offer validated bytes with explicit image intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, while unmappable recipients, unavailable leaders, and invalid origins shall return errors.")
     func applicationRoutesMobileWithoutHostTray() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -242,7 +242,8 @@ struct ImagePreviewTests {
         let manager = TerminalManager(socketPath: "/tmp/unused-image-test-socket")
         let ownership = SessionDisplayOwnershipStore()
         manager.displayOwnershipStore = ownership
-        let phone = DisplayClientID("phone"), grid = try DisplayGrid(cols: 80, rows: 24)
+        let phoneDevice = "image-phone-\(UUID().uuidString)"
+        let phone = DisplayClientID("ssh-\(phoneDevice)-\(UUID().uuidString)"), grid = try DisplayGrid(cols: 80, rows: 24)
         _ = ownership.attachClient(sessionName: name, clientID: phone, kind: .ios, role: .interactive, visible: true, grid: grid)
         _ = ownership.claimOwner(sessionName: name, clientID: phone, kind: .ios, grid: grid)
         let response = await ImagePreviewRequest.handle(path: worktree.path, target: url.path, paneSessionName: name,
@@ -252,12 +253,25 @@ struct ImagePreviewTests {
         let offers = await RemoteOpenStore.shared.list(worktree: worktree.path)
         let offer = try #require(offers.first)
         #expect(offer.paneSessionName == name)
+        let metadata = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(offer)) as? [String: Any])
+        #expect(metadata["previewKind"] as? String == "image")
+        #expect((metadata["previewOwnerDeviceID"] as? [String: Any])?["value"] as? String == phoneDevice)
+        #expect(offer.browserOwnerDeviceID == nil)
         #expect(try await RemoteOpenStore.shared.read(id: offer.id, worktree: worktree.path, offset: 0) == bytes)
         await RemoteOpenStore.shared.withdraw(id: offer.id, worktree: worktree.path)
         _ = ownership.releaseOwner(sessionName: name, clientID: phone)
         let unavailable = await ImagePreviewRequest.handle(path: worktree.path, target: url.path, paneSessionName: name,
                                                            state: { state }, terminalManager: manager)
         guard case .error = unavailable else { Issue.record("Absent local surface should fail closed"); return }
+        let unmappable = DisplayClientID("unrecognized-phone")
+        _ = ownership.attachClient(sessionName: name, clientID: unmappable, kind: .ios, role: .interactive, visible: true, grid: grid)
+        _ = ownership.claimOwner(sessionName: name, clientID: unmappable, kind: .ios, grid: grid)
+        let unsupportedRecipient = await ImagePreviewRequest.handle(path: worktree.path, target: url.path, paneSessionName: name,
+                                                                    state: { state }, terminalManager: manager)
+        if case .error = unsupportedRecipient {} else { Issue.record("Unmappable mobile recipient should fail closed") }
+        let invalidOffers = await RemoteOpenStore.shared.list(worktree: worktree.path)
+        #expect(invalidOffers.isEmpty)
+        for invalidOffer in invalidOffers { await RemoteOpenStore.shared.withdraw(id: invalidOffer.id, worktree: worktree.path) }
         let unknown = await ImagePreviewRequest.handle(path: worktree.path, target: url.path, paneSessionName: "unknown",
                                                        state: { state }, terminalManager: manager)
         guard case .error = unknown else { Issue.record("Unknown pane should reject preview"); return }

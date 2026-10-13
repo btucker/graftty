@@ -26,9 +26,14 @@ enum ImagePreviewRequest {
             switch ImagePreviewRouting.destination(ownerKind: ownership?.ownerKind,
                                                    macIsFollower: terminalManager.handle(for: scope.pane) == nil || terminalManager.canTakeDisplayControl(for: scope.pane)) {
             case .mobile:
+                guard let ownerClientID = ownership?.ownerClientID,
+                      let deviceID = BrowserTunnelApprovalStore.deviceID(for: ownerClientID) else {
+                    return .error("The mobile pane owner could not be identified. Take Control in Graftty Mobile and retry graftty image.")
+                }
                 let offer = try await RemoteOpenStore.shared.offerSnapshot(bytes: snapshot.bytes, filename: url.lastPathComponent,
                                                                   worktree: scope.worktreePath, paneSessionName: scope.sessionName,
-                                                                  previewRevision: generation.sequence)
+                                                                  previewRevision: generation.sequence,
+                                                                  previewKind: "image", previewOwnerDeviceID: deviceID)
                 let currentOwnership = terminalManager.displayOwnershipStore?.snapshot(sessionName: scope.sessionName)
                 guard previews.isCurrent(generation, for: scope.pane),
                       ImagePreviewRouting.scope(path: scope.worktreePath, paneSessionName: scope.sessionName, state: state()) == scope,

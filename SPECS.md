@@ -3352,7 +3352,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-1.5** When the application loads an image preview, it shall reject missing, nonregular, invalid, or larger than 20 MB files and decode only the oriented first frame with a maximum edge of 2048 pixels.
 
-**IMAGE-1.6** When Graftty installs the graftty-image skill, the skill shall describe the macOS tray and Graftty Mobile native preview on the pane leader, explain fit, zoom, and close controls, and acknowledge requests without claiming the user saw the image.
+**IMAGE-1.6** When Graftty installs the graftty-image skill, the skill shall describe the movable and resizable macOS tray and the owning Mobile pane's Images control for native Quick Look, explain fit, zoom, close, and Preview.app controls, and acknowledge requests without claiming the user saw the image.
 
 **IMAGE-1.7** When an image tray arrives or closes, the application shall preserve terminal focus, and shall dismiss on Escape only when the preview owns focus, restoring its previous responder.
 
@@ -3366,7 +3366,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-1.12** When a mobile leader receives an image request, the application shall offer the validated file snapshot for its originating pane, replacing that pane's previous image offer without rereading a changed file.
 
-**IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes to an iOS pane leader and leave the host tray unchanged, while unavailable leaders and invalid origins shall return errors.
+**IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes with explicit image intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, while unmappable recipients, unavailable leaders, and invalid origins shall return errors.
 
 **IMAGE-1.14** While the native image tray toolbar is visible, the application shall use native zoom controls, keep Fit legible, and expose Preview through a labeled button or a compact icon without clipping either action.
 
@@ -3377,6 +3377,28 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IMAGE-1.17** While a user moves or resizes the image tray through pointer input, the application shall keep its native controls operable and allow clicks outside the tray to reach the unchanged terminal surface.
 
 **IMAGE-1.18** When the user clicks the native image tray zoom, Fit, or Close control, the application shall perform that action without starting a header drag, and restore terminal focus when closing a focused preview.
+
+### IMAGE-2.x
+
+**IMAGE-2.1** When an image offer crosses a host connection, the application shall preserve optional image intent and recipient metadata while decoding absent or unknown intent without treating it as an image request.
+
+**IMAGE-2.2** When image offers arrive for a focused owned mobile pane, the application shall expose only the latest image intended for that pane and device through Images and retain absent or unknown intent in Browser resources.
+
+**IMAGE-2.3** If an image download or presentation loses its original host, worktree, pane, device, focus, ownership or latest offer, then the application shall reject its completion and cancel the stale preview.
+
+**IMAGE-2.4** When a mobile image request arrives, the application shall preserve typing and show an Images action that presents native Quick Look only after a tap, without automatically reopening a dismissed offer.
+
+**IMAGE-2.5** If the latest mobile image changes during download or viewing, then the application shall discard stale bytes, close the old preview and leave only the replacement image manually available.
+
+**IMAGE-2.6** If a mobile image is unavailable or cannot be downloaded or natively previewed, then the application shall show an actionable image error and allow a later retry.
+
+**IMAGE-2.7** When validated image snapshots are offered to mobile, the application shall attach explicit image intent and recipient metadata, preserve revision ordering and replace only older image snapshots in the same worktree and pane.
+
+**IMAGE-2.8** When a mobile image opens, the application shall use a native Quick Look controller in a navigation container with a Done action and the system image zoom and sharing interface.
+
+**IMAGE-2.9** If an image transfer fails or is cancelled after receiving bytes, then the application shall remove its temporary download directory; when its preview closes, the application shall remove the completed local file.
+
+**IMAGE-2.10** While a mobile image preview is mounted, the application shall retain its local file and presentation across temporary scene pauses and system sharing, until actual pane, ownership or offer changes or dismissal.
 
 ## AGENT — AGENT
 
