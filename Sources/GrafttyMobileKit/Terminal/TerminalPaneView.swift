@@ -69,6 +69,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// focus-request counters can mark them consumed.
     public let onFocusRequestsConsumed: (() -> Void)?
     public let committedSoftwareInput: CommittedSoftwareInput?
+    public let agentCompletion: AgentCompletionModel?
     public let hardwareKeyboardCommands: [HardwareKeyboardCommand]
     /// Governs how frequently `UITerminalView` repaints while no host output
     /// is arriving. `.full` (the default) matches display refresh; `.reduced`
@@ -114,6 +115,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         pendingFocusRequests: Int = 0,
         onFocusRequestsConsumed: (() -> Void)? = nil,
         committedSoftwareInput: CommittedSoftwareInput? = nil,
+        agentCompletion: AgentCompletionModel? = nil,
         hardwareKeyboardCommands: [HardwareKeyboardCommand] = [],
         renderPace: TerminalRenderPace = .full,
         onUserInteraction: (() -> Void)? = nil,
@@ -133,6 +135,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.pendingFocusRequests = pendingFocusRequests
         self.onFocusRequestsConsumed = onFocusRequestsConsumed
         self.committedSoftwareInput = committedSoftwareInput
+        self.agentCompletion = agentCompletion
         self.hardwareKeyboardCommands = hardwareKeyboardCommands
         self.renderPace = renderPace
         self.onUserInteraction = onUserInteraction
@@ -173,6 +176,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.controller = controller
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        view.agentCompletion = agentCompletion
         view.committedSoftwareInput = committedSoftwareInput
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
@@ -195,6 +199,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.authoritativeGrid = authoritativeGrid
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        view.agentCompletion = agentCompletion
         view.committedSoftwareInput = committedSoftwareInput
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
@@ -398,6 +403,32 @@ public final class TerminalInputContainerView: UIView,
     }
 
     private var isCommittedSoftwareInputEligible = false
+    var agentCompletion: AgentCompletionModel? {
+        get { terminalView.agentCompletion }
+        set {
+            guard terminalView.agentCompletion !== newValue else { return }
+            terminalView.agentCompletion?.invalidateBoundary()
+            terminalView.agentCompletion?.onInsertText = nil
+            terminalView.agentCompletion = newValue
+            newValue?.onInsertText = { [weak self] text in
+                guard let self, self.isCommittedSoftwareInputEligible else { return }
+                self.terminalView.stopHardwareArrowRepeat()
+                self.terminalView.resetTextContext(notifyingInputSystem: true)
+                self.storedCommittedSoftwareInput?.insertText(text)
+            }
+        }
+    }
+
+    @discardableResult
+    func handleAgentCompletionControl(_ key: AgentCompletionKey) -> Bool {
+        guard isCommittedSoftwareInputEligible else { return false }
+        guard !isTrayShiftSelected, stickyControlActivation == .inactive else {
+            agentCompletion?.invalidateBoundary()
+            return false
+        }
+        return agentCompletion?.handleKey(key) == true
+    }
+
     private var storedCommittedSoftwareInput: TerminalPaneView.CommittedSoftwareInput?
     var committedSoftwareInput: TerminalPaneView.CommittedSoftwareInput? {
         get { storedCommittedSoftwareInput }
@@ -409,6 +440,7 @@ public final class TerminalInputContainerView: UIView,
                 terminalView.isKeyboardInputEnabled = true
             } else {
                 if wasEligible {
+                    agentCompletion?.invalidateBoundary()
                     resetStickyModifiers()
                     terminalView.resetTextContext()
                 }
@@ -479,6 +511,7 @@ public final class TerminalInputContainerView: UIView,
     }
 
     public func toggleStickyControlModifier() {
+        agentCompletion?.invalidateBoundary()
         #if !targetEnvironment(macCatalyst)
         terminalView.toggleStickyModifier(.ctrl)
         #endif
@@ -496,6 +529,7 @@ public final class TerminalInputContainerView: UIView,
 
     public func toggleTrayShift() {
         guard isCommittedSoftwareInputEligible else { return }
+        agentCompletion?.invalidateBoundary()
         setTrayShiftSelected(!isTrayShiftSelected)
     }
 
@@ -593,6 +627,8 @@ public final class TerminalInputContainerView: UIView,
                 modifierFlags: command.modifierFlags,
                 perform: { [weak self] in
                     guard let self, self.isCommittedSoftwareInputEligible else { return }
+                    if command.modifierFlags.isEmpty,
+                       self.terminalView.handleAgentCompletionText(command.text) { return }
                     self.terminalView.commitAndResetTextContext()
                     self.storedCommittedSoftwareInput?.insertText(command.text)
                 }
@@ -606,7 +642,7 @@ public final class TerminalInputContainerView: UIView,
     private lazy var anyTouchObserver: AnyTouchObserverGestureRecognizer = {
         let r = AnyTouchObserverGestureRecognizer()
         r.cancelsTouchesInView = false
-        r.onTouchBegan = { [weak self] in self?.onUserInteraction?() }
+        r.onTouchBegan = { [weak self] changesCursor in self?.handleAnyTouchBegan(changesCursor: changesCursor) }
         return r
     }()
 
@@ -996,7 +1032,16 @@ public final class TerminalInputContainerView: UIView,
 
     /// Internal-visibility access for unit tests: simulates the any-touch
     /// observer's `touchesBegan` callback without a real UIKit touch event.
-    func simulateAnyTouchBeganForTesting() {
+    func simulateAnyTouchBeganForTesting(changesCursor: Bool = false) {
+        handleAnyTouchBegan(changesCursor: changesCursor)
+    }
+
+    private func handleAnyTouchBegan(changesCursor: Bool) {
+        // A finger tap only changes keyboard focus. Keep the initial boundary
+        // so the first percent key can open completion at an empty prompt.
+        if changesCursor || agentCompletion?.isActive == true {
+            agentCompletion?.invalidateBoundary()
+        }
         onUserInteraction?()
     }
 
@@ -1052,6 +1097,43 @@ public final class TerminalInputContainerView: UIView,
     ) -> Bool {
         let normalizedModifiers = event.modifierFlags.appCommandModifiers
         let inputs = hardwareCommandInputs(for: event)
+        // Enabled application shortcuts retain priority over completion.
+        if let command = hardwareKeyboardCommands.first(where: {
+            $0.modifierFlags.appCommandModifiers == normalizedModifiers
+                && inputs.contains(canonicalHardwareCommandInput($0.input))
+        }) {
+            agentCompletion?.invalidateBoundary()
+            command.perform()
+            return true
+        }
+        let isShiftModifierPress = event.usage == UInt16(UIKeyboardHIDUsage.keyboardLeftShift.rawValue)
+            || event.usage == UInt16(UIKeyboardHIDUsage.keyboardRightShift.rawValue)
+        if isCommittedSoftwareInputEligible, terminalView.markedTextRange == nil, !isShiftModifierPress {
+            if normalizedModifiers.isEmpty {
+                let completionKey: AgentCompletionKey?
+                if inputs.contains(UIKeyCommand.inputUpArrow) { completionKey = .up }
+                else if inputs.contains(UIKeyCommand.inputDownArrow) { completionKey = .down }
+                else if inputs.contains("\r") || inputs.contains("\t") { completionKey = .accept }
+                else if inputs.contains(UIKeyCommand.inputEscape) { completionKey = .escape }
+                else { completionKey = nil }
+                if let completionKey, agentCompletion?.handleKey(completionKey) == true {
+                    return terminalView.didHandleAgentCompletionHardwareInput()
+                }
+                if inputs.contains("\u{8}"), agentCompletion?.handleBackspace() == true {
+                    return terminalView.didHandleAgentCompletionHardwareInput()
+                }
+            }
+            let isPrintable = !event.characters.isEmpty && event.characters.unicodeScalars.allSatisfy {
+                $0.properties.generalCategory != .control && $0.value < 0xF700
+            }
+            if normalizedModifiers.subtracting([.shift]).isEmpty, isPrintable {
+                if terminalView.handleAgentCompletionText(event.characters) {
+                    return terminalView.didHandleAgentCompletionHardwareInput()
+                }
+            } else {
+                agentCompletion?.invalidateBoundary()
+            }
+        }
         guard let command = effectiveHardwareKeyboardCommands.first(where: {
             $0.modifierFlags.appCommandModifiers == normalizedModifiers
                 && inputs.contains(canonicalHardwareCommandInput($0.input))
@@ -1154,7 +1236,11 @@ public final class TerminalInputContainerView: UIView,
     }
 
     @objc private func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {
-        matchingHardwareKeyboardCommand(for: command)?.perform()
+        guard let match = matchingHardwareKeyboardCommand(for: command) else { return }
+        if hardwareKeyboardCommands.contains(where: { $0.id == match.id }) {
+            agentCompletion?.invalidateBoundary()
+        }
+        match.perform()
     }
 
     private func matchingHardwareKeyboardCommand(
@@ -1253,10 +1339,10 @@ extension TerminalInputContainerView: TerminalSurfaceGridResizeDelegate {
 /// local scrolling renders without host output, so a finger on the
 /// surface must count as activity.
 final class AnyTouchObserverGestureRecognizer: UIGestureRecognizer {
-    var onTouchBegan: (() -> Void)?
+    var onTouchBegan: ((Bool) -> Void)?
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        onTouchBegan?()
+        onTouchBegan?(touches.contains { $0.type == .indirectPointer })
         state = .failed
     }
 }

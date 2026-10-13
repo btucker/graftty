@@ -1946,7 +1946,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.1** While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, tray Shift, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, and Hide Keyboard controls. The non-modifier controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl and tray Shift state.
 
-**IOS-6.2** `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. Before Ghostty translation it may delegate enabled application commands and the listed transport corrections in `IOS-6.19`; every unmatched key, including arrows, shall flow through libghostty, and GrafttyMobile shall not reimplement general terminal key translation.
+**IOS-6.2** `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. Before Ghostty translation it may delegate enabled application commands, the listed transport corrections in `IOS-6.19`, and active agent completion in `IOS-6.32`; every unmatched key, including arrows, shall flow through libghostty, and GrafttyMobile shall not reimplement general terminal key translation.
 
 **IOS-6.3** When committed software-keyboard input supplies a newline, the application shall translate it to a single CR byte (`0x0D`) before sending it to the server. Bytes emitted by libghostty's terminal session shall otherwise pass through unchanged, including Ctrl+J's LF byte (`0x0A`).
 
@@ -1976,7 +1976,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.17** While a terminal pane is rendered on iPad with a trackpad, indirect pointer scroll gestures shall reach libghostty's terminal scroll/input recognizers on the sole `UITerminalView` touch surface, with no GrafttyMobile keyboard or selection overlay blocking them.
 
-**IOS-6.18** When a hardware press does not match an enabled application command or a Return/quote/Escape/Tab/Ctrl-letter correction in `IOS-6.19`, the sole `UITerminalView` responder shall pass it to libghostty's hardware-key translation. GrafttyMobile shall not install any other per-key handlers; explicit control-bar Escape remains a `SessionClient.sendEscape()` command under `IOS-6.1`.
+**IOS-6.18** When a hardware press does not match an enabled application command, a Return/quote/Escape/Tab/Ctrl-letter correction in `IOS-6.19`, or active agent completion in `IOS-6.32`, the sole `UITerminalView` responder shall pass it to libghostty's hardware-key translation. GrafttyMobile shall not install any other per-key handlers; explicit control-bar Escape shall use active agent completion under `IOS-6.34` or otherwise remain a `SessionClient.sendEscape()` command under `IOS-6.1`.
 
 **IOS-6.19** While an owner terminal pane is the eligible iPad hardware-keyboard target, `UITerminalView` shall offer each physical press to Graftty's hardware-input delegate before Ghostty translation. The delegate shall intercept enabled app commands plus unmodified Return, unmodified apostrophe, Shift-apostrophe, unmodified Escape, unmodified Tab, and Ctrl+A through Ctrl+Z, using logical UIKit characters ahead of suspect HID usage. It shall forward the exact terminal text or ASCII control byte for each correction. An app-level shortcut shall win an exact chord collision. Shift-Return and every other unmatched hardware key shall return to `UITerminalView`, and an ineligible pane shall expose no transport corrections.
 
@@ -1996,11 +1996,25 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.27** While native iOS dictation streams or revises terminal text, the application shall retain the text and UTF-16 positions reported to UIKit across commits, apply revisions without duplicating prior words, and clear that input context when terminal keyboard focus ends.
 
-**IOS-6.28** While a hardware arrow key is held in a mobile terminal, the application shall repeat that key after an initial delay and stop repeating on release, cancellation, keyboard ineligibility, or focus loss.
+**IOS-6.28** While a hardware arrow key is held in a mobile terminal, the application shall repeat that key after an initial delay and stop repeating on release, cancellation, keyboard ineligibility, focus loss, or dismissal of the agent picker that received the held arrow.
 
 **IOS-6.29** While the terminal tray's Shift toggle is selected, the application shall send shifted arrow escape sequences and Shift-Tab as back-tab; while Shift is off, it shall send the unmodified arrow and Tab bytes.
 
 **IOS-6.30** When the user toggles tray Shift, the application shall retain its selection across tray key presses until toggled off, and clear it when terminal input becomes ineligible or sticky modifiers are reset.
+
+**IOS-6.31** When committed iOS terminal input starts a percent agent token, the application shall buffer and edit the token locally, filter the native picker, and accept software Return or Tab without sending a submit byte or deleting remote text.
+
+**IOS-6.32** While an iOS agent picker is active, the application shall consume unmodified hardware arrows, Backspace, Return, Tab and Escape before terminal translation; modified keys and application shortcuts shall preserve their existing behavior.
+
+**IOS-6.33** When iOS terminal composition, sticky Control, keyboard focus loss, or keyboard hiding interrupts agent completion while the original transport remains available, the application shall close the picker and preserve its literal token on the original input transport; marked text shall never open the picker.
+
+**IOS-6.34** While an iOS agent picker is active, the application shall route unmodified tray arrows, Return, Tab and Escape to completion and flush its literal token before other explicit terminal controls.
+
+**IOS-6.35** When an iOS agent picker opens, the application shall load the terminal-owning host's agent catalog using its worktree identifier over its paired management connection or its configured HTTP API, preserve remote candidate addresses, and report failures without falling back from a paired connection to HTTP.
+
+**IOS-6.36** When UIKit offers a software-input callback for a hardware key already consumed by iOS agent completion, the application shall suppress that callback so the token and accepted address are processed exactly once.
+
+**IOS-6.37** When an active iOS agent picker is interrupted by a transient inactive scene while its owned terminal transport remains live, the application shall preserve the literal token before closing the picker; when the application backgrounds or its transport becomes unavailable, the application shall discard the buffered token.
 
 ### IOS-7.x — Lifecycle
 
@@ -2529,6 +2543,40 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-14.37** If native reply forwarding fails, then the application shall notify the bound Claude recipient through its native socket with an explicit message-ID retry command and no reply socket.
 
 **TEAM-14.38** While native reply sockets are available, the application shall bound their count and accepted frame size, omit system-message reply sockets, reuse an existing message binding, and reject new bindings after close.
+
+### TEAM-15.x — Native agent completion
+
+**TEAM-15.1** When a user types a percent prefix at a word boundary in a native Mac or iOS terminal, the application shall buffer the completion token locally, filter agent suggestions, and insert only the selected address without submitting terminal input.
+
+**TEAM-15.2** When percent completion is dismissed or followed by a delimiter, the application shall preserve the literal token, and shall leave percentages within words and pasted text unchanged.
+
+**TEAM-15.3** While agent completion is open, the application shall consume selection and deletion keys, preserve a valid selection after filtering, and ignore catalog replies from a dismissed picker.
+
+**TEAM-15.4** When native agent completion lists candidates, the application shall rank the current project first, match worktree, project, host and provider text case-insensitively, and distinguish identical worktree names by their routing addresses.
+
+**TEAM-15.5** When native agent completion loads the catalog, the application shall include reachable top-level agents from every tracked project, omit stale and untracked agents, and use stable worktree/provider addresses with canonical host routing for remote candidates.
+
+**TEAM-15.6** When a paired client requests agent completions, the application shall round-trip the candidate catalog through the worktree management protocol without changing routing addresses.
+
+**TEAM-15.7** When a Mac terminal accepts percent completion by keyboard, the application shall consume the prefix, query, acceptance press and their releases, and deliver the selected agent address once through the terminal text path.
+
+**TEAM-15.8** If an input-eligible Mac terminal percent picker loses focus or begins composition or modified input, then the application shall flush its buffered literal token before continuing the existing input path and shall not retain a hidden picker.
+
+**TEAM-15.9** When a relayed terminal requests agent completion, the application shall fetch the terminal-owning host's catalog, preserve its routing addresses, and map the current worktree to the viewer's opaque ID for project priority.
+
+**TEAM-15.10** When an authorized web-access client requests agent completion with a worktree query, the application shall pass the decoded worktree ID to the catalog provider and return its candidates as JSON, and shall reject unauthorized clients before loading the catalog.
+
+**TEAM-15.11** While remote agent discovery is pending for a local Mac terminal, the application shall display and permit selection of available local agents and ignore later discovery updates after acceptance.
+
+**TEAM-15.12** When completion opens in a quiet or externally located tracked worktree, the application shall determine current-project priority from registered worktree membership rather than candidate presence or directory nesting.
+
+**TEAM-15.13** When a Mac terminal dismisses percent completion for a cursor key or paste, the application shall flush the literal token through the ordered host input path before forwarding the external edit.
+
+**TEAM-15.14** If a Mac user accepts a picker row while a navigation key remains held, then the application shall consume repeats and release of that picker key until a new physical press.
+
+**TEAM-15.15** When a native Mac pane is reassigned to another tracked worktree, the application shall dismiss pending completion and use the pane's new worktree context for subsequent agent discovery.
+
+**TEAM-15.16** If another display client owns a Mac pane before its percent picker is dismissed, then the application shall discard the buffered token without taking display control back or sending stale input.
 
 ## INSTR — Agent Instruction Files
 

@@ -215,6 +215,7 @@ public final class WebServer {
         /// Source for `GET /repos`. Same fast-snapshot contract as
         /// `sessionsProvider`: read from in-memory AppState, no git.
         public let reposProvider: @Sendable () async -> [RepoInfo]
+        public let agentCompletionsProvider: @Sendable (String?) async -> [AgentCompletionCandidate]
         /// Additional depth-one repositories exposed only to clients that
         /// advertise `remote-worktrees-v1`.
         public let relayedReposProvider: @Sendable () async -> [RepoInfo]
@@ -273,6 +274,7 @@ public final class WebServer {
             sessionWorktreeProvider: @escaping @Sendable (String) async -> String? = { _ in nil },
             sessionSpawnProvider: @escaping @Sendable (String) async -> ZmxSpawnConfiguration? = { _ in nil },
             reposProvider: @escaping @Sendable () async -> [RepoInfo] = { [] },
+            agentCompletionsProvider: @escaping @Sendable (String?) async -> [AgentCompletionCandidate] = { _ in [] },
             relayedReposProvider: @escaping @Sendable () async -> [RepoInfo] = {
                 []
             },
@@ -294,6 +296,7 @@ public final class WebServer {
             self.sessionWorktreeProvider = sessionWorktreeProvider
             self.sessionSpawnProvider = sessionSpawnProvider
             self.reposProvider = reposProvider
+            self.agentCompletionsProvider = agentCompletionsProvider
             self.relayedReposProvider = relayedReposProvider
             self.worktreeCreator = worktreeCreator
             self.defaultBranchPuller = defaultBranchPuller
@@ -652,6 +655,16 @@ public final class WebServer {
                 return
             }
             // WEB-7.1: repo list for the "Add Worktree" picker.
+            if path == "/agent-completions" {
+                let provider = config.agentCompletionsProvider
+                let promise = context.eventLoop.makePromise(of: [AgentCompletionCandidate].self)
+                promise.futureResult.whenComplete { result in
+                    Self.respondEncodable(context: context, items: (try? result.get()) ?? [])
+                }
+                let worktreeID = URLComponents(string: head.uri)?.queryItems?.first { $0.name == "worktree" }?.value
+                Task { promise.succeed(await provider(worktreeID)) }
+                return
+            }
             if path == "/repos" {
                 let provider = config.reposProvider
                 let relayedProvider = config.relayedReposProvider
