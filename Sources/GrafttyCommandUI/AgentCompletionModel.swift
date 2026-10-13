@@ -91,13 +91,15 @@ public final class AgentCompletionModel: ObservableObject {
         generation &+= 1
         loadTask?.cancel()
         loadTask = nil
-        isActive = false
-        query = ""
+        // UIKit can invalidate an already-idle picker during a SwiftUI update.
+        // Publishing equal values here would schedule the same update again.
+        if isActive { isActive = false }
+        if !query.isEmpty { query = "" }
         catalog = []
-        candidates = []
-        selectedID = nil
-        isLoading = false
-        loadFailed = false
+        if !candidates.isEmpty { candidates = [] }
+        if selectedID != nil { selectedID = nil }
+        if isLoading { isLoading = false }
+        if loadFailed { loadFailed = false }
         atWordBoundary = !preserveLiteral
         if let literal { (onInsertLiteral ?? onInsertText)?(literal) }
     }
