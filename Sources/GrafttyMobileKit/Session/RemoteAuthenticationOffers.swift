@@ -2,6 +2,16 @@ import Foundation
 import GrafttyProtocol
 
 enum RemoteOpenPresentation {
+    static func belongsToPane(_ offer: RemoteOpenOffer, sessionName: String, ownerDeviceID: RemoteDeviceID?) -> Bool {
+        guard let url = offer.url, ChromeTabAction.launchOffer(id: offer.id, url: url.absoluteString).isValid else { return false }
+        // Only explicit ordinary browsing may use an older offer without scope.
+        if offer.paneSessionName == nil && offer.browserOwnerDeviceID == nil {
+            return WorktreeAuthenticationURL(url: url) == nil
+        }
+        return ownerDeviceID != nil && offer.paneSessionName == sessionName
+            && offer.browserOwnerDeviceID == ownerDeviceID
+    }
+
     static func directBrowserOffer(in offers: [RemoteOpenOffer]) -> RemoteOpenOffer? {
         guard offers.count == 1, let offer = offers.first,
               let scheme = offer.url?.scheme?.lowercased(),
@@ -36,9 +46,7 @@ struct RemoteAuthenticationOffers {
         guard let offer = offers.last(where: {
             guard $0.paneSessionName == sessionName, seen[$0.id] == nil,
                   $0.browserOwnerDeviceID == ownerDeviceID, let url = $0.url else { return false }
-            return WorktreeAuthenticationURL(url: url) != nil
-                && !WorktreeAuthenticationURL.isLoopbackHost(url.host ?? "")
-                && ChromeTabAction.launchOffer(id: $0.id, url: url.absoluteString).isValid
+            return ChromeTabAction.launchOffer(id: $0.id, url: url.absoluteString).isValid
         }) else { return nil }
         seen[offer.id] = Entry(expires: now.addingTimeInterval(900), completed: false)
         return offer

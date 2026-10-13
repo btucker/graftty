@@ -7,9 +7,13 @@ final class ChromeTabInitialLaunch {
     private let originalURL: String
     private var tabID: String?
 
-    init(offer: RemoteOpenOffer) {
-        offerID = offer.id
-        originalURL = offer.url?.absoluteString ?? ""
+    convenience init(offer: RemoteOpenOffer) {
+        self.init(id: offer.id, url: offer.url?.absoluteString ?? "")
+    }
+
+    init(id: UUID, url: String) {
+        offerID = id
+        originalURL = url
     }
 
     var action: ChromeTabAction {

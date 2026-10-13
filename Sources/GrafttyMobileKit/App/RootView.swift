@@ -518,10 +518,8 @@ struct SingleSessionView: View {
     /// Latest owner-selected size. Pinch actions already update the live
     /// Ghostty surface; this state preserves that size across configuration updates.
     @State private var preferredFontSize: Float?
-    @State private var authenticationPreview: WorktreePortClient.AuthenticationPreview?
-    @State private var authenticationError: String?
-    @State private var authenticationTask: Task<Void, Never>?
-    @State private var authenticationTaskID = UUID()
+    @State private var terminalBrowserRequest: TerminalBrowserRequest?
+    @State private var terminalBrowserError: String?
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -682,36 +680,14 @@ struct SingleSessionView: View {
             terminalBackground
             sessionView
         }
-        .sheet(item: $authenticationPreview) { preview in
-            HostBrowserView(url: preview.url, host: step.host, callbackHost: preview.callbackHost,
-                connectionProvider: { await coordinator?.connection(for: step.host) })
-        }
-        .alert("Could not start sign-in", isPresented: Binding(
-            get: { authenticationError != nil }, set: { if !$0 { authenticationError = nil } }
-        )) { Button("OK") { authenticationError = nil } } message: { Text(authenticationError ?? "") }
+        .alert("Could not open link", isPresented: Binding(
+            get: { terminalBrowserError != nil }, set: { if !$0 { terminalBrowserError = nil } }
+        )) { Button("OK") { terminalBrowserError = nil } } message: { Text(terminalBrowserError ?? "") }
         .onDisappear {
-            authenticationTask?.cancel()
+            terminalBrowserRequest = nil
             paneContainerBox.view?.openAuthenticationURL = nil
-        }
-    }
-
-    private func openAuthenticationURL(_ url: URL) {
-        guard let coordinator, let worktree = step.worktreePath else { return }
-        authenticationTask?.cancel()
-        let taskID = UUID()
-        authenticationTaskID = taskID
-        authenticationTask = Task { @MainActor in
-            defer { if authenticationTaskID == taskID { authenticationTask = nil } }
-            do {
-                let preview = try await WorktreePortClient.authenticate(url, in: worktree) { request in
-                    try await coordinator.sendWorktreeManagement(request, to: step.host)
-                }
-                guard !Task.isCancelled else { return }
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                authenticationPreview = preview
-            } catch {
-                if !Task.isCancelled { authenticationError = error.localizedDescription }
-            }
+            paneContainerBox.view?.openURL = { _ in }
+            paneContainerBox.view?.linkContext = nil
         }
     }
 
@@ -819,7 +795,8 @@ struct SingleSessionView: View {
                                      isPaneFocused: isPaneFocused,
                                      hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
                                      isPaneOwner: { client?.isOwner == true },
-                                     canPresentAuthentication: { authenticationPreview == nil && authenticationTask == nil })
+                                     canPresentAuthentication: { true },
+                                     terminalRequest: $terminalBrowserRequest)
                         .modifier(TerminalFloatingControlPlacement())
                         .padding(.trailing, 12)
                 }
@@ -1461,7 +1438,18 @@ struct SingleSessionView: View {
                 }
             },
             retainedContainer: retainedPanes?.cached(retainedPaneKey)?.container,
-            onOpenAuthenticationURL: coordinator != nil && step.worktreePath != nil ? openAuthenticationURL : nil
+            onOpenURL: { url in
+                guard let coordinator, let worktree = step.worktreePath else {
+                    terminalBrowserError = "Browser links require a tracked worktree on the originating Mac."
+                    return
+                }
+                terminalBrowserRequest = TerminalBrowserRequest(url: url, scope: .init(
+                    hostID: step.host.id, worktree: worktree, sessionName: step.sessionName,
+                    ownerDeviceID: client.isOwner ? coordinator.localDeviceID : nil))
+            },
+            linkContext: AnyHashable(TerminalBrowserRequest.Scope(hostID: step.host.id,
+                worktree: step.worktreePath ?? "", sessionName: step.sessionName,
+                ownerDeviceID: client.isOwner ? coordinator?.localDeviceID : nil))
         )
         pane
             .onChange(of: client.isOwner) { wasOwner, isOwner in

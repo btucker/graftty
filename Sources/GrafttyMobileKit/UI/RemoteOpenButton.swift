@@ -24,6 +24,7 @@ struct RemoteOpenButton: View {
     @State private var choosingResource = false
     let isPaneOwner: () -> Bool
     let canPresentAuthentication: () -> Bool
+    @Binding var terminalRequest: TerminalBrowserRequest?
     @State private var operationID = UUID()
     @State private var chromePresentation = ChromeOfferPresentation()
 
@@ -90,6 +91,11 @@ struct RemoteOpenButton: View {
             Button("Remote Chrome tabs") { openChromeTabs() }.disabled(!isPaneOwner())
             ForEach(offers) { offer in Button(offer.filename) { open(offer) } }
         }
+        .onChange(of: terminalRequest?.id, initial: true) { _, _ in
+            guard let request = terminalRequest else { return }
+            terminalRequest = nil
+            openTerminalLink(request)
+        }
         .onChange(of: pollScope) { _, _ in
             cancelOperation()
             if preview?.browser == true {
@@ -117,7 +123,7 @@ struct RemoteOpenButton: View {
                         offers = value
                         let authentication = coordinator.consumeAuthenticationOffer(value, sessionName: sessionName,
                                                                            ownerDeviceID: ownerDeviceID,
-                                                                           canPresent: preview == nil && chromePresentation.canPresent && !isDownloading && canPresentAuthentication())
+                                                                           canPresent: isPaneFocused && isPaneOwner() && preview == nil && chromePresentation.canPresent && !isDownloading && canPresentAuthentication())
                         if let authentication { open(authentication, automatically: true) }
                     }
                     // Older hosts reject the new operation. Do not keep polling them.
@@ -172,6 +178,21 @@ struct RemoteOpenButton: View {
         }
     }
 
+    private func openTerminalLink(_ request: TerminalBrowserRequest) {
+        let scope = TerminalBrowserRequest.Scope(hostID: host.id, worktree: worktree,
+                                                 sessionName: sessionName, ownerDeviceID: ownerDeviceID)
+        guard request.canPresent(in: scope, isActive: isActive && isPaneFocused, isOwner: isPaneOwner()),
+              canPresentAuthentication(), preview == nil, chromePresentation.begin(nil) else {
+            error = "Take control of the originating pane and try the link again."
+            return
+        }
+        cancelOperation()
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        preview = Preview(url: request.url, browser: true, originSession: request.scope.sessionName,
+                          originWorktree: request.scope.worktree,
+                          chromeLaunch: ChromeTabInitialLaunch(id: request.id, url: request.url.absoluteString), originHost: host)
+    }
+
     private func openChromeTabs() {
         guard isActive, isPaneOwner(), canPresentAuthentication(), chromePresentation.begin(nil) else { return }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -205,6 +226,11 @@ struct RemoteOpenButton: View {
         cancelOperation()
         let currentOperation = operationID
         if let url = offer.url {
+            guard RemoteOpenPresentation.belongsToPane(offer, sessionName: sessionName, ownerDeviceID: ownerDeviceID) else {
+                coordinator.deferAuthenticationOffer(offer.id)
+                if !automatically { error = "Open this link from its originating pane after taking control." }
+                return
+            }
             guard !worktree.hasPrefix("relay-worktree-") else {
                 coordinator.deferAuthenticationOffer(offer.id)
                 error = "Connect directly to this resource's host to browse its URLs."
@@ -223,7 +249,7 @@ struct RemoteOpenButton: View {
                                   chromeLaunch: ChromeTabInitialLaunch(offer: offer), originHost: host)
                 return
             }
-            guard chromePresentation.begin(nil) else { return }
+            guard chromePresentation.begin(offer.id) else { return }
             if isPaneOwner() {
                 preview = Preview(url: url, browser: true, originSession: sessionName, originWorktree: worktree,
                                   chromeLaunch: ChromeTabInitialLaunch(offer: offer), originHost: host)

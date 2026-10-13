@@ -2096,7 +2096,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.12** When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and re-focus the eligible `UITerminalView` after UIKit's edit-menu dismissal completes, so the dismissal cannot subsequently resign the terminal and leave the user without keyboard control.
 
-**IOS-11.13** When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and open the complete URL in the system browser when chosen. Pressing ordinary text shall not offer Open Link.
+**IOS-11.13** When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and offer Copy Link and route the complete URL through the originating pane browser when Open Link is chosen. Pressing ordinary text shall not offer link actions.
 
 **IOS-11.14** When a terminal selection drag ends or is cancelled at a viewport edge, the application shall stop selection autoscrolling while preserving the selection anchor for another drag.
 
@@ -2116,6 +2116,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.22** While an image paste awaits host confirmation, the mobile application shall queue subsequent terminal input in order and send it only after a successful confirmation; if image paste fails or the input queue exceeds its limit, then the application shall discard queued input and explain the failure.
 
+**IOS-11.23** When a native terminal long-press or Cmd-click targets a plain or OSC8 link in an unselected terminal without mouse capture after Unicode output and soft wraps, the application shall recognize and route the exact hyperlink target without installing another gesture.
+
+**IOS-11.24** If a terminal link menu outlives its originating session or ownership context, then the application shall discard its Open and Copy actions instead of invoking callbacks for a replacement pane.
+
+**IOS-11.25** While a terminal application captures mouse input or a native selection is active, the application shall retain text-selection actions and omit long-press link actions whose OSC8 target cannot be verified without changing that input state.
+
 ### IOS-12.x
 
 **IOS-12.1** When graftty open offers a regular file, the application shall retain a bounded temporary snapshot scoped to the caller's worktree and allow paired clients to retrieve only that offered snapshot in bounded chunks.
@@ -2133,6 +2139,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-12.7** When an offered file has a native Quick Look preview, the application shall show it with Quick Look; otherwise, it shall present the system sharing and Open In interface.
 
 **IOS-12.8** When graftty open runs in a pane led by GrafttyMobile, the host shall offer its resource to mobile; when Mac or another client leads or no pane session is supplied, the host shall open it with macOS.
+
+**IOS-12.9** When graftty open successfully enqueues a resource, the CLI shall stay quiet without claiming browser completion, and shall propagate host rejection and transport failures.
 
 ## IPAD — iPad Layout
 
@@ -3180,6 +3188,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-2.14** While a host Chrome tab selection or navigation awaits acknowledgment, the application shall disable Local browser selection and use the acknowledged selected tab's URL when Local is chosen afterward.
 
+**CHROME-2.15** When a terminal link is activated, the application shall retain its exact URL and user-request identity, present through the existing browser only in its active originating owned pane, and reject stale host, worktree, session or owner scope.
+
+**CHROME-2.16** When a mobile user selects an identified browser offer, the application shall reject another pane or paired device's offer instead of launching it in the currently focused pane, and shall retain explicit ordinary browsing for legacy offers without identities.
+
 ### CHROME-3.x — Authenticated transport
 
 **CHROME-3.1** When a paired peer opens the Chrome subsystem, the application shall await host acceptance, enforce its management capability, pass its authenticated identity, and carry bounded JPEG responses over framed SSH.
@@ -3694,7 +3706,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-5.36** When a Mac Graftty pane invokes open with one HTTP(S) URL, the application shall route it through the pane owner without falling back after a routing failure, and shall preserve native open arguments outside a pane or for other invocations.
 
-**PORTS-5.37** When a new OAuth URL is offered by the mobile user's currently owned pane, the application shall present host Chrome sign-in on that mobile device once and shall ignore offers from other panes, followers, and ordinary URLs.
+**PORTS-5.37** When a new HTTP or HTTPS URL is offered by the mobile user's focused owned pane, the application shall present its host Chrome tab once and shall ignore offers from other panes, devices and followers.
 
 **PORTS-5.38** When a remote open offer crosses a host connection, the application shall preserve its originating pane session and intended paired mobile device, and decode older offers without those identities as unspecified.
 

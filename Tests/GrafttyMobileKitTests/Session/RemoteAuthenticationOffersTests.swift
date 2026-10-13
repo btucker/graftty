@@ -26,6 +26,22 @@ struct RemoteAuthenticationOffersTests {
         #expect(RemoteOpenPresentation.directBrowserOffer(in: [http, try offer(nil)]) == nil)
     }
 
+    @Test("@spec CHROME-2.16: When a mobile user selects an identified browser offer, the application shall reject another pane or paired device's offer instead of launching it in the currently focused pane, and shall retain explicit ordinary browsing for legacy offers without identities.")
+    func manualBrowserOffersRetainTheirOrigin() {
+        let owner = RemoteDeviceID(value: "phone")
+        func offer(_ pane: String?, _ device: RemoteDeviceID?) -> RemoteOpenOffer {
+            .init(id: UUID(), filename: "Page", byteCount: 0, url: URL(string: "https://example.com"),
+                  paneSessionName: pane, browserOwnerDeviceID: device)
+        }
+        #expect(RemoteOpenPresentation.belongsToPane(offer("pane", owner), sessionName: "pane", ownerDeviceID: owner))
+        #expect(!RemoteOpenPresentation.belongsToPane(offer("other", owner), sessionName: "pane", ownerDeviceID: owner))
+        #expect(!RemoteOpenPresentation.belongsToPane(offer("pane", .init(value: "other")), sessionName: "pane", ownerDeviceID: owner))
+        #expect(!RemoteOpenPresentation.belongsToPane(offer("pane", owner), sessionName: "pane", ownerDeviceID: nil))
+        #expect(!RemoteOpenPresentation.belongsToPane(offer(nil, owner), sessionName: "pane", ownerDeviceID: owner))
+        #expect(!RemoteOpenPresentation.belongsToPane(offer("pane", nil), sessionName: "pane", ownerDeviceID: owner))
+        #expect(RemoteOpenPresentation.belongsToPane(offer(nil, nil), sessionName: "pane", ownerDeviceID: owner))
+    }
+
     @Test func hostIdentityAndLocalizedPhoneIdentityStillRouteToPhone() {
         let url = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A43210%2Fcallback")!
         let hostOwner = DisplayClientID("ssh-phone-device-\(UUID().uuidString)")
@@ -63,7 +79,7 @@ struct RemoteAuthenticationOffersTests {
         #expect(retainedTracker.consume([offer, secondPane], sessionName: "pane", ownerDeviceID: owner) == nil)
     }
 
-    @Test("@spec PORTS-5.37: When a new OAuth URL is offered by the mobile user's currently owned pane, the application shall present host Chrome sign-in on that mobile device once and shall ignore offers from other panes, followers, and ordinary URLs.")
+    @Test("@spec PORTS-5.37: When a new HTTP or HTTPS URL is offered by the mobile user's focused owned pane, the application shall present its host Chrome tab once and shall ignore offers from other panes, devices and followers.")
     func opensOnlyNewAuthenticationOffersForOwnedPane() throws {
         let url = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A43210%2Fcallback")!
         func offer(_ session: String?, _ url: URL) -> RemoteOpenOffer {
@@ -78,16 +94,49 @@ struct RemoteAuthenticationOffersTests {
                                          url: url, paneSessionName: "current",
                                          browserOwnerDeviceID: RemoteDeviceID(value: "another-phone"))
         var tracker = RemoteAuthenticationOffers()
-        #expect(tracker.consume([other, legacy, ordinary, wrongOwner], sessionName: "current", ownerDeviceID: owner) == nil)
+        #expect(tracker.consume([other, legacy, wrongOwner], sessionName: "current", ownerDeviceID: owner) == nil)
         #expect(tracker.consume([other, authentication], sessionName: "current", ownerDeviceID: owner) == authentication)
         tracker.complete(authentication.id)
         #expect(tracker.consume([authentication], sessionName: "current", ownerDeviceID: owner) == nil)
         let followerOffer = offer("current", url)
         #expect(tracker.consume([followerOffer], sessionName: "current", ownerDeviceID: nil) == nil)
         #expect(tracker.consume([followerOffer], sessionName: "current", ownerDeviceID: owner) == followerOffer)
+        #expect(tracker.consume([ordinary], sessionName: "current", ownerDeviceID: owner) == ordinary)
+        tracker.dismiss(ordinary.id)
+        tracker.deferPresentation(of: ordinary.id)
+        #expect(tracker.consume([ordinary], sessionName: "current", ownerDeviceID: owner) == nil)
         let next = offer("current", url)
         #expect(tracker.consume([next], sessionName: "current", ownerDeviceID: owner) == next)
     }
+    @Test
+    func queuedOrdinaryOfferRechecksOwnerAndDefersReservationBeforeLaunch() throws {
+        let owner = RemoteDeviceID(value: "phone")
+        let offer = RemoteOpenOffer(id: UUID(), filename: "Page", byteCount: 0,
+                                   url: URL(string: "https://example.com/a?state=A%2Bb")!,
+                                   paneSessionName: "pane", browserOwnerDeviceID: owner)
+        var tracker = RemoteAuthenticationOffers()
+        var presentation = ChromeOfferPresentation()
+        // A background pane does not consume or open into the focused pane.
+        #expect(tracker.consume([offer], sessionName: "pane", ownerDeviceID: owner, canPresent: false) == nil)
+        #expect(tracker.consume([offer], sessionName: "other", ownerDeviceID: owner) == nil)
+        #expect(tracker.consume([offer], sessionName: "pane", ownerDeviceID: .init(value: "new-owner")) == nil)
+        // A fresh host list excludes expired offers instead of trusting a queued URL.
+        #expect(tracker.consume([], sessionName: "pane", ownerDeviceID: owner) == nil)
+        let candidate = tracker.consume([offer], sessionName: "pane", ownerDeviceID: owner)
+        let consumed = try #require(candidate)
+        #expect(presentation.begin(consumed.id) == true)
+        let interruptedID = presentation.deferCurrent()
+        let interrupted = try #require(interruptedID)
+        tracker.deferPresentation(of: interrupted)
+        let deferred = presentation.finishDismissal()
+        #expect(deferred == .deferred(offer.id))
+        #expect(tracker.consume([offer], sessionName: "pane", ownerDeviceID: owner) == offer)
+        #expect(presentation.begin(offer.id) == true)
+        if case .dismissed(let id) = presentation.finishDismissal() { tracker.dismiss(id) }
+        #expect(tracker.consume([offer], sessionName: "pane", ownerDeviceID: owner) == nil,
+                "Done remains consumed after a new view/presentation is created")
+    }
+
     @Test("@spec CHROME-2.4: When an OAuth offer awaits ownership, connection or presentation, the application shall retain its exact original URL and identity until host launch succeeds or the user dismisses it.")
     func retainsUnlaunchedAuthenticationOffer() {
         let owner = RemoteDeviceID(value: "phone")
