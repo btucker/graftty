@@ -626,6 +626,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.33** When a mobile follower has no live native scrollbar query, the application shall accept native navigation without waiting for a local row acknowledgement.
 
+**TERM-12.34** While a mobile follower displays full-width scrollback rows, the application shall preserve each row's columns and order across repeated history refreshes.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -1340,6 +1342,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-9.7** When a terminal session is reattached, the application shall preserve soft wraps in replayed text so copied selections omit display-only line breaks while retaining explicit newlines.
 
+**ZMX-9.8** When the legacy attach client decodes a snapshot, the application shall report its source grid before delivering replay bytes, preserve those bytes, and never substitute the outer PTY's requested grid.
+
 ## DIST — Distribution
 
 ### DIST-1.x — Build Bundle
@@ -1452,7 +1456,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-4.3** When the application quits, the application shall stop the server (same tear-down as 15.4.2) as part of normal shutdown.
 
-**WEB-4.4** For each incoming WebSocket, the application shall spawn one child `zmx attach <session>` whose PTY it owns (per §13 naming and ZMX_DIR rules from Phase 1).
+**WEB-4.4** When a WebSocket connects, the application shall spawn one child `zmx attach --replay-grid <session>` whose PTY it owns, using the session naming and ZMX_DIR rules.
 
 **WEB-4.5** When a WebSocket closes, the application shall send SIGTERM to the associated `zmx attach` child, leaving the zmx daemon alive.
 

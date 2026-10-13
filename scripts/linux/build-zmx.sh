@@ -24,7 +24,7 @@ version=$(sed -n 's/^[[:space:]]*\.version = "\([^"]*\)",$/\1/p' "$stage/source/
     # Use musl so zmx itself does not need a particular glibc version.
     zig build test -j2 "-Dtarget=$arch-linux-musl"
     zig build -j2 "-Dtarget=$arch-linux-musl" -Doptimize=ReleaseSafe \
-        "-Dversion=$version-g${commit:0:7}-graftty4" --prefix "$stage/install"
+        "-Dversion=$version-g${commit:0:7}-graftty5" --prefix "$stage/install"
 )
 mkdir -p "$(dirname "$output")"
 install -m 755 "$stage/install/bin/zmx" "$output"

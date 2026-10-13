@@ -180,6 +180,7 @@ class Attach:
         xpixel: int,
         ypixel: int,
         snapshot: bool = False,
+        replay_grid: bool = False,
         separate_output: bool = False,
     ) -> None:
         input_master, input_slave = os.openpty()
@@ -198,6 +199,8 @@ class Attach:
             attach_args = [str(binary), "attach"]
             if snapshot:
                 attach_args.append("--snapshot")
+            if replay_grid:
+                attach_args.append("--replay-grid")
             attach_args.extend((session, "/bin/sh"))
             self.process = subprocess.Popen(
                 attach_args,
@@ -1193,6 +1196,44 @@ def new_daemon_preserves_large_scrollback(legacy: Path, candidate: Path) -> None
         )
 
 
+def replay_grid_precedes_vt(
+    daemon_binary: Path,
+    candidate: Path,
+    expected_grid: tuple[int, int],
+    source_grid: tuple[int, int] = (80, 24),
+    *,
+    separate_output: bool = False,
+) -> None:
+    """Report the snapshot grid while the follower's outer PTY stays 40x40."""
+    directory, env = make_scope()
+    session = "replay-grid"
+    leader = follower = None
+    try:
+        leader = Attach(
+            daemon_binary, env, session, rows=source_grid[1], cols=source_grid[0],
+            xpixel=800, ypixel=480,
+        )
+        leader.drain_for(0.3)
+        # Fill a source row with recognizable text at both edges.
+        row = "LEFT" + "." * (source_grid[0] - 9) + "RIGHT"
+        leader.write("stty -echo; printf '%s\\r\\n' " + shlex.quote(row) + "\n")
+        leader.wait_for(row)
+        leader.drain_for(0.2)
+        follower = Attach(
+            candidate, env, session, rows=40, cols=40, xpixel=400, ypixel=800,
+            replay_grid=True, separate_output=separate_output,
+        )
+        follower.wait_for("RIGHT")
+        follower.drain_for(0.2)
+        output = bytes(follower.output)
+        assert output[:8] == b"GFTGRID1", repr(output[:80])
+        assert struct.unpack("<HH", output[8:12]) == expected_grid, repr(output[:12])
+        assert termios.tcgetwinsize(follower.master) == (40, 40)
+        assert row.encode() in output[12:], repr(output[12:])
+    finally:
+        cleanup_case(directory, env, session, daemon_binary, candidate, daemon_binary, leader, follower)
+
+
 def main() -> None:
     # Convert cancellation into a Python exception so each compatibility
     # case unwinds through its `finally` cleanup instead of abandoning a
@@ -1203,12 +1244,21 @@ def main() -> None:
     parser.add_argument("--legacy", required=True, type=Path)
     parser.add_argument("--candidate", required=True, type=Path)
     parser.add_argument("--expect-cross-version-pixels", action="store_true")
+    parser.add_argument("--expect-legacy-replay-grid", action="store_true")
     args = parser.parse_args()
     legacy = args.legacy.resolve()
     candidate = args.candidate.resolve()
     if not os.access(legacy, os.X_OK) or not os.access(candidate, os.X_OK):
         parser.error("legacy and candidate must both be executable")
 
+    replay_grid_precedes_vt(candidate, candidate, (80, 24))
+    print("  ✓ replay source grid precedes VT on a differently sized follower")
+    replay_grid_precedes_vt(candidate, candidate, (266, 10), (266, 10), separate_output=True)
+    print("  ✓ replay grid binary newline bytes survive the PTY")
+    replay_grid_precedes_vt(
+        legacy, candidate, (80, 24) if args.expect_legacy_replay_grid else (0, 0)
+    )
+    print("  ✓ running old daemon replay grid or explicit unknown")
     old_daemon_new_client(legacy, candidate, args.expect_cross_version_pixels)
     print("  ✓ old daemon → new client")
     new_daemon_old_client(legacy, candidate, args.expect_cross_version_pixels)
