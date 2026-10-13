@@ -203,6 +203,14 @@ public enum SidebarHostNavigation {
                      agentProgressTimes: worktree.agentProgressTimes, emoji: worktree.path == repositoryPath ? nil : worktree.emoji, isPinned: worktree.isPinned)
     }
 
+    /// Sets only the display mode; saved worktree order and pin state survive.
+    @discardableResult
+    public static func setWorktreeOrder(_ mode: WorktreeOrderMode, in state: inout AppState, repositoryID: String) -> Bool {
+        guard let index = state.repos.firstIndex(where: { $0.path == repositoryID && $0.isGitTracked }) else { return false }
+        state.repos[index].worktreeOrderMode = mode
+        return true
+    }
+
     @discardableResult
     public static func moveWorktree(in state: inout AppState, repositoryID: String,
                                     worktreeID: String, relativeTo: String, after: Bool) -> Bool {

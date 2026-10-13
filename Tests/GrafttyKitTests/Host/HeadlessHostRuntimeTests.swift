@@ -48,6 +48,56 @@ struct HeadlessHostRuntimeTests {
         return (root, configuration, state)
     }
 
+    @Test("@spec LAYOUT-2.153: When a remote client changes a repository's worktree order mode, the owning host shall persist the mode and publish that order while preserving pinned order and the saved manual order.")
+    func remoteOrderPersistsAndPublishesHostOrder() async throws {
+        let (root, config, initial) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var state = initial
+        var pinned = WorktreeEntry(path: root.path + "/.worktrees/role", branch: "role")
+        pinned.isPinned = true
+        var older = WorktreeEntry(path: root.path + "/.worktrees/older", branch: "older")
+        older.attention = Attention(text: "Older", timestamp: Date(timeIntervalSince1970: 100))
+        var newer = WorktreeEntry(path: root.path + "/.worktrees/newer", branch: "newer")
+        newer.attention = Attention(text: "Newer", timestamp: Date(timeIntervalSince1970: 200))
+        state.repos[0].worktrees += [pinned, older, newer]
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        func request(_ mode: String, repository: String) throws -> WorktreeManagementRequest {
+            let json: [String: String] = ["type": "set_worktree_order", "repositoryID": repository, "mode": mode]
+            return try JSONDecoder().decode(WorktreeManagementRequest.self, from: JSONSerialization.data(withJSONObject: json))
+        }
+        #expect(await runtime.manage(try request("recentActivity", repository: root.path)) == .ok)
+        #expect(runtime.state.repos[0].worktrees == state.repos[0].worktrees)
+        #expect(try AppState.load(from: root).repos[0].worktreeOrderMode == .recentActivity)
+        #expect(runtime.snapshot().map(\.path) == [root.path, pinned.path, newer.path, older.path])
+        guard case .snapshot(_, let sidebar) = runtime.panesMessage() else { Issue.record("Missing snapshot"); return }
+        let metadata = try #require(sidebar?.projects.first)
+        let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(metadata)) as? [String: Any])
+        #expect(json["worktreeOrderMode"] as? String == "recentActivity")
+        #expect(await runtime.manage(try request("manual", repository: root.path)) == .ok)
+        #expect(runtime.snapshot().map(\.path) == [root.path, pinned.path, older.path, newer.path])
+        #expect(try AppState.load(from: root).repos[0].worktreeOrderMode == .manual)
+        guard case .error = await runtime.manage(try request("recentActivity", repository: "/missing")) else {
+            Issue.record("Unknown repository must fail"); return
+        }
+        #expect(runtime.state.repos == state.repos)
+    }
+
+    @Test func failedOrderPersistenceLeavesHostSnapshotUnchanged() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        // Block atomic state-file replacement without depending on Unix permissions.
+        let blocked = root.appendingPathComponent("state.json")
+        try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: true)
+        try Data("keep".utf8).write(to: blocked.appendingPathComponent("entry"))
+        guard case .error = await runtime.manage(.setWorktreeOrder(repositoryID: root.path, mode: .recentActivity)) else {
+            Issue.record("Expected persistence failure"); return
+        }
+        #expect(runtime.state == state)
+        guard case .snapshot(_, let sidebar) = runtime.panesMessage() else { Issue.record("Missing snapshot"); return }
+        #expect(sidebar?.projects.first?.worktreeOrderMode == .manual)
+    }
+
     @Test("@spec REMOTE-22.18: When a headless host has a project image, the application shall advertise its revision and serve its bytes only for the registered repository and matching revision.")
     func servesProjectLogo() async throws {
         let (root, config, state) = try fixture()

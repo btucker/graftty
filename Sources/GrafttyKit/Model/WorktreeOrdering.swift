@@ -1,10 +1,8 @@
 import Foundation
 
-/// @spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
-public enum WorktreeOrderMode: String, Codable, Sendable, Equatable {
-    case manual
-    case recentActivity
-}
+import GrafttyProtocol
+
+public typealias WorktreeOrderMode = GrafttyProtocol.WorktreeOrderMode
 
 public enum WorktreeOrdering {
     /// Newest `lastActivity` first; worktrees without activity keep their

@@ -308,6 +308,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.151** When the user clicks the macOS sidebar search field, the application shall focus an editable search control below the native toolbar and filter worktrees as the user types, including after resizing.
 
+**LAYOUT-2.152** When a host publishes a project's worktree order mode, the application shall retain that optional mode as its sorting capability while decoding older projects without it as unsupported.
+
+**LAYOUT-2.153** When a remote client changes a repository's worktree order mode, the owning host shall persist the mode and publish that order while preserving pinned order and the saved manual order.
+
+**LAYOUT-2.154** While an editable remote project is connected, the application shall expose Add worktree before repository details are cached, resolve the promoted repository alias to its owning identity, and fetch the captured repository on action or report its error.
+
+**LAYOUT-2.155** When a remote project's sort mode is changed, the application shall route the request to the owning repository and display the host's acknowledged snapshot mode, while disabling sorting for older hosts and retaining the mode after failure.
+
+**LAYOUT-2.156** While a remote project uses recent activity order, the application shall disable temporary worktree reordering and preserve manual pinned worktree reordering.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

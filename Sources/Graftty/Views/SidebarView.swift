@@ -114,6 +114,7 @@ struct SidebarView: View {
     @ObservedObject private var iconStore = SidebarHostController.shared
     @State private var projects: [SidebarProject] = []
     @State private var navigationError: String?
+    @State private var remoteProjectOperationInProgress = false
     @State private var showsRemoteManagement = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -763,15 +764,22 @@ struct SidebarView: View {
            let project = projects.first(where: { $0.id == navigation.selectedProjectID && $0.isAvailable }) {
             let repo = appState.repos.first { localProjectID($0) == project.id }
             let canAdd = canAddWorktree(to: project)
-            if repo != nil || canAdd {
+            if repo != nil || project.owner != nil {
                 let order = Group {
-                    if let repo {
-                        SidebarWorktreeOrderControl(selection: Binding(
-                            get: { appState.repos.first { $0.id == repo.id }?.worktreeOrderMode ?? .manual },
-                            set: { setWorktreeOrderMode($0, for: repo) }
-                        ), color: NSColor(theme.sidebarDimIcon))
-                        .frame(width: 136, height: 28)
-                    }
+                    SidebarWorktreeOrderControl(selection: Binding(
+                        get: {
+                            if let repo { return appState.repos.first { $0.id == repo.id }?.worktreeOrderMode ?? .manual }
+                            return project.worktreeOrderMode ?? .manual
+                        },
+                        set: { mode in
+                            if let repo { setWorktreeOrderMode(mode, for: repo) }
+                            else { setRemoteWorktreeOrderMode(mode, for: project) }
+                        }
+                    ), helpText: repo != nil || project.worktreeOrderMode != nil
+                        ? "Worktree order" : "Update Graftty on the owning host to change worktree order.",
+                        color: NSColor(theme.sidebarDimIcon))
+                    .disabled(repo == nil && (!remoteMacsModel.canSetWorktreeOrder(for: project) || remoteProjectOperationInProgress))
+                    .frame(width: 136, height: 28)
                 }
                 let add = Group {
                     if canAdd {
@@ -780,6 +788,7 @@ struct SidebarView: View {
                                 .font(.system(size: 12, weight: .medium))
                                 .padding(.vertical, 3)
                         }
+                        .disabled(repo == nil && remoteProjectOperationInProgress)
                         .modifier(SidebarAddWorktreeButtonAppearance())
                         .controlSize(.regular)
                         .foregroundStyle(theme.foreground)
@@ -805,11 +814,7 @@ struct SidebarView: View {
         if let repo = appState.repos.first(where: { localProjectID($0) == project.id }) {
             return SidebarMenuVisibility.showsAddWorktree(repo: repo)
         }
-        guard project.supportsWorktreeEditing == true,
-              let ownerID = project.owner?.deviceID,
-              let remoteMac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == ownerID }) else { return false }
-        return remoteMacsModel.repositoriesByRemote[RemoteMacIdentity(remoteMac)]?
-            .contains(where: { $0.id == project.repositoryID }) == true
+        return remoteMacsModel.editableRepositoryTarget(for: project) != nil
     }
 
     private func addWorktreeToSelectedProject() {
@@ -821,12 +826,29 @@ struct SidebarView: View {
             return
         }
 
-        guard project.supportsWorktreeEditing == true,
-              let ownerID = project.owner?.deviceID,
-              let remoteMac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == ownerID }),
-              let repository = remoteMacsModel.repositoriesByRemote[RemoteMacIdentity(remoteMac)]?
-                  .first(where: { $0.id == project.repositoryID }) else { return }
-        onAddRemoteWorktree(remoteMac, repository)
+        guard !remoteProjectOperationInProgress else { return }
+        remoteProjectOperationInProgress = true
+        navigationError = nil
+        Task { @MainActor in
+            defer { remoteProjectOperationInProgress = false }
+            do {
+                let (mac, repository) = try await remoteMacsModel.addWorktreeRepository(for: project)
+                onAddRemoteWorktree(mac, repository)
+            } catch { navigationError = error.localizedDescription }
+        }
+    }
+
+    private func setRemoteWorktreeOrderMode(_ mode: WorktreeOrderMode, for project: SidebarProject) {
+        guard !remoteProjectOperationInProgress else { return }
+        remoteProjectOperationInProgress = true
+        navigationError = nil
+        Task { @MainActor in
+            defer { remoteProjectOperationInProgress = false }
+            do {
+                try await remoteMacsModel.setWorktreeOrder(mode, for: project)
+                await refreshNavigation()
+            } catch { navigationError = error.localizedDescription }
+        }
     }
 
     /// Renders a worktree and its pane children as one visually-unified

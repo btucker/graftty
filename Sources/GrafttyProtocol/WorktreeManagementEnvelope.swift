@@ -166,6 +166,7 @@ public enum WorktreeManagementRequest: Sendable, Equatable {
     case acknowledge(worktreeID: String, paneID: String?)
     case moveProject(id: String, relativeTo: String, after: Bool)
     case moveWorktree(repositoryID: String, worktreeID: String, relativeTo: String, after: Bool)
+    case setWorktreeOrder(repositoryID: String, mode: WorktreeOrderMode)
     case projectIcon(repositoryID: String, revision: String)
     case acknowledgeOccurrence(worktreeID: String, paneID: String?, occurrence: SidebarAttentionOccurrence)
 }
@@ -174,7 +175,7 @@ extension WorktreeManagementRequest: Codable {
     private enum CodingKeys: String, CodingKey {
         case openResource
         case type, repositoryID, worktreeID, worktreeName, branchName,
-             existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence
+             existingSource, force, paneID, deviceID, fingerprint, id, relativeTo, after, revision, occurrence, mode
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -200,6 +201,10 @@ extension WorktreeManagementRequest: Codable {
             try c.encode(worktreeID, forKey: .worktreeID)
             try c.encode(relativeTo, forKey: .relativeTo)
             try c.encode(after, forKey: .after)
+        case let .setWorktreeOrder(repositoryID, mode):
+            try c.encode("set_worktree_order", forKey: .type)
+            try c.encode(repositoryID, forKey: .repositoryID)
+            try c.encode(mode, forKey: .mode)
         case let .projectIcon(repositoryID, revision):
             try c.encode("project_icon", forKey: .type)
             try c.encode(repositoryID, forKey: .repositoryID)
@@ -254,6 +259,8 @@ extension WorktreeManagementRequest: Codable {
             self = .moveProject(id: try c.decode(String.self, forKey: .id), relativeTo: try c.decode(String.self, forKey: .relativeTo), after: try c.decode(Bool.self, forKey: .after))
         case "move_worktree":
             self = .moveWorktree(repositoryID: try c.decode(String.self, forKey: .repositoryID), worktreeID: try c.decode(String.self, forKey: .worktreeID), relativeTo: try c.decode(String.self, forKey: .relativeTo), after: try c.decode(Bool.self, forKey: .after))
+        case "set_worktree_order":
+            self = .setWorktreeOrder(repositoryID: try c.decode(String.self, forKey: .repositoryID), mode: try c.decode(WorktreeOrderMode.self, forKey: .mode))
         case "project_icon":
             self = .projectIcon(repositoryID: try c.decode(String.self, forKey: .repositoryID), revision: try c.decode(String.self, forKey: .revision))
         case "acknowledge_occurrence":
