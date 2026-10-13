@@ -186,6 +186,41 @@ struct RemoteMacsSidebarTests {
         #expect(RemoteWorktreeReorderPolicy.areSiblings(legacyTask, row("legacy-home", membership: nil, isMain: true)))
     }
 
+    @Test("@spec LAYOUT-2.156: While a remote project uses recent activity order, the application shall disable temporary worktree reordering and preserve manual pinned worktree reordering.")
+    func recentActivityPreventsTemporaryReordering() {
+        func row(_ id: String, pinned: Bool) -> WorktreePanes {
+            WorktreePanes(path: id, displayName: id, repoDisplayName: "Project", repositoryID: "repo", displayBranch: id,
+                state: .closed, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+                sidebar: .init(id: id, projectID: "project", isPinned: pinned))
+        }
+        let task = row("fix", pinned: false)
+        let role = row("architect", pinned: true)
+        #expect(!RemoteWorktreeReorderPolicy.allows(task, editableProjectIDs: ["project"], query: "", orderMode: .recentActivity))
+        #expect(RemoteWorktreeReorderPolicy.allows(role, editableProjectIDs: ["project"], query: "", orderMode: .recentActivity))
+        #expect(RemoteWorktreeReorderPolicy.allows(task, editableProjectIDs: ["project"], query: "", orderMode: .manual))
+        #expect(!RemoteWorktreeReorderPolicy.allows(role, editableProjectIDs: [], query: "", orderMode: .recentActivity))
+    }
+
+    @Test func unsupportedSortingDisablesNativePopupAndExplainsUpdate() async throws {
+        let help = "Update Graftty on the owning host to change worktree order."
+        let hosting = NSHostingView(rootView: SidebarWorktreeOrderControl(selection: .constant(.manual), helpText: help, color: .secondaryLabelColor)
+            .disabled(true).frame(width: 136, height: 28))
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 160, height: 40), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(100))
+        hosting.layoutSubtreeIfNeeded()
+        func find(_ view: NSView) -> NSPopUpButton? {
+            (view as? NSPopUpButton) ?? view.subviews.lazy.compactMap { find($0) }.first
+        }
+        let popup = try #require(find(hosting))
+        #expect(!popup.isEnabled)
+        #expect(popup.toolTip == help)
+        #expect(popup.selectedItem?.title == "Manual Order")
+        #expect(popup.menu?.items.map(\.title) == ["Manual Order", "Recent Activity"])
+    }
+
     @Test("empty sidebar projection still exposes Add Remote Mac")
     func emptyProjectionShowsAddRemoteMacAction() throws {
         let projection = RemoteMacsSidebarProjection.make(

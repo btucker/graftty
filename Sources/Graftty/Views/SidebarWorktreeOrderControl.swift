@@ -5,6 +5,8 @@ import GrafttyKit
 /// A native popup fills the advertised target, including the label and arrow.
 struct SidebarWorktreeOrderControl: NSViewRepresentable {
     @Binding var selection: WorktreeOrderMode
+    @Environment(\.isEnabled) private var isEnabled
+    var helpText: String = "Worktree order"
     var color: NSColor
     static let choices: [(title: String, mode: WorktreeOrderMode)] = [
         ("Manual Order", .manual), ("Recent Activity", .recentActivity),
@@ -26,6 +28,8 @@ struct SidebarWorktreeOrderControl: NSViewRepresentable {
 
     func updateNSView(_ button: NSPopUpButton, context: Context) {
         context.coordinator.selection = $selection
+        button.isEnabled = isEnabled
+        button.toolTip = helpText
         button.contentTintColor = color
         button.selectItem(at: Self.choices.firstIndex { $0.mode == selection } ?? 0)
     }

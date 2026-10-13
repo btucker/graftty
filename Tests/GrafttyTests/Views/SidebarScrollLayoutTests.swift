@@ -63,7 +63,7 @@ private struct HostedSidebarScrollView: View {
 @Suite("Sidebar scroll layout", .serialized)
 @MainActor
 struct SidebarScrollLayoutTests {
-    @Test("@spec LAYOUT-2.122: While the macOS sidebar shares the title-bar strip with native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.", arguments: [false, true], [false, true])
+    @Test("@spec LAYOUT-2.122: While the macOS sidebar is displayed below native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.", arguments: [false, true], [false, true])
     func pinnedContentClearsNativeToolbar(rail: Bool, compactToolbar: Bool) async throws {
         let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
         defer { hosted.tearDown() }
@@ -112,7 +112,7 @@ struct SidebarScrollLayoutTests {
         #expect(hosted.harness.selections.isEmpty)
     }
 
-    @Test("@spec LAYOUT-2.120: While the macOS sidebar displays pinned agents, the application shall start their content directly below the search strip without an extra title-bar inset and separate it from the fixed sort row with a horizontal divider.", arguments: [false, true], [1, 2])
+    @Test("@spec LAYOUT-2.120: While the macOS sidebar displays pinned agents, the application shall start their content below the dedicated search row without an extra title-bar inset and separate it from the fixed sort row with a horizontal divider.", arguments: [false, true], [1, 2])
     func pinnedContentStartsBelowSearchStrip(rail: Bool, bitmapScale: Int) async throws {
         let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
         defer { hosted.tearDown() }
@@ -120,13 +120,14 @@ struct SidebarScrollLayoutTests {
         let document = try #require(pinned.documentView)
         let content = document.convert(document.bounds, to: hosted.hosting)
         let search = try #require(Self.find(NSTextField.self, in: hosted.hosting).first {
-            $0.placeholderString == "Find any project or worktree"
+            $0.placeholderString == "Search projects and worktrees"
         })
         let searchFrame = search.convert(search.bounds, to: hosted.hosting)
         let toggle = try hosted.sidebarToggle()
         let toolbarItem = try #require(toggle.superview)
         let toolbarFrame = toolbarItem.convert(toolbarItem.bounds, to: hosted.hosting)
-        #expect(abs(content.minY - toolbarFrame.maxY) <= 1)
+        #expect(searchFrame.minY >= toolbarFrame.maxY)
+        #expect(content.minY - searchFrame.maxY <= 12)
         #expect(content.minY >= searchFrame.maxY)
         let divider = try #require(Self.find(NSBox.self, in: hosted.hosting).first {
             $0.accessibilityIdentifier() == "Worktree list divider"
@@ -239,10 +240,14 @@ struct SidebarScrollLayoutTests {
             #expect(pinned.contentView.bounds.origin.y == 100)
             #expect(ordinary.contentView.bounds.origin == oldOrdinaryOrigin)
             #expect(sort.convert(sort.bounds, to: hosted.hosting) == sortFrame)
-            hosted.window.setContentSize(NSSize(width: 900, height: 340))
-            try await hosted.settle()
-            #expect(pinned.contentView.bounds.height - pinned.contentInsets.top <= hosted.hosting.bounds.height / 2)
-            #expect(ordinary.contentView.bounds.height >= 96)
+            for height in [340.0, 280.0] {
+                hosted.window.setContentSize(NSSize(width: 900, height: height))
+                try await hosted.settle()
+                #expect(pinned.contentView.bounds.height - pinned.contentInsets.top <= hosted.hosting.bounds.height / 2)
+                // Fixed chrome can leave less than 96pt in a short window.
+                // In that case pinned rows must surrender all their space.
+                #expect(ordinary.contentView.bounds.height >= 96 || pinned.bounds.height <= 1)
+            }
         }
     }
 
@@ -306,13 +311,14 @@ struct SidebarScrollLayoutTests {
     private final class NativeMenuDispatch {
         let window: NSWindow
         let event: NSEvent
+        let releaseEvent: NSEvent
         let popup: NSPopUpButton
         let selectionItem: NSMenuItem
         var attemptedSelection = false
         var didRun = false
         var fallbackFired = false
-        init(window: NSWindow, event: NSEvent, popup: NSPopUpButton, selectionItem: NSMenuItem) {
-            self.window = window; self.event = event; self.popup = popup
+        init(window: NSWindow, event: NSEvent, releaseEvent: NSEvent, popup: NSPopUpButton, selectionItem: NSMenuItem) {
+            self.window = window; self.event = event; self.releaseEvent = releaseEvent; self.popup = popup
             self.selectionItem = selectionItem
         }
         func perform() {
@@ -351,6 +357,9 @@ struct SidebarScrollLayoutTests {
                 NotificationCenter.default.removeObserver(observer)
             }
             NSApp.finishLaunching()
+            // mouseDown enters native menu tracking synchronously. Its
+            // matching release must already be available to that event loop.
+            NSApp.postEvent(releaseEvent, atStart: true)
             window.sendEvent(event)
             didRun = true
             CFRunLoopStop(CFRunLoopGetCurrent())
@@ -416,10 +425,9 @@ struct SidebarScrollLayoutTests {
                 let selectionItem = try XCTUnwrap(popup.menu?.items.first {
                     $0.title == (mode == .manual ? "Manual Order" : "Recent Activity")
                 })
-                let dispatch = NativeMenuDispatch(window: window, event: down, popup: popup,
+                let dispatch = NativeMenuDispatch(window: window, event: down, releaseEvent: up, popup: popup,
                     selectionItem: selectionItem)
                 dispatch.perform()
-                window.sendEvent(up)
                 XCTAssertTrue(dispatch.didRun)
                 XCTAssertTrue(dispatch.attemptedSelection)
                 XCTAssertFalse(dispatch.fallbackFired, "Native menu selection timed out at probe \(probe)")
@@ -484,8 +492,66 @@ struct SidebarScrollLayoutTests {
             }
         }
     }
-    private static func find<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+    fileprivate static func find<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
         ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { find(type, in: $0) }
+    }
+}
+
+/// Native text selection tracking uses XCTest because it can stop the
+/// Swift Testing async-main run loop, just like native menu tracking.
+@MainActor
+final class SidebarSearchNativeTests: XCTestCase {
+    /// @spec LAYOUT-2.151: When the user clicks the macOS sidebar search field, the application shall focus an editable search control below the native toolbar and filter worktrees as the user types, including after resizing.
+    func testSearchReceivesClicksBelowToolbar() async throws {
+        for rail in [false, true] {
+            for compactToolbar in [false, true] {
+                let hosted = try await SidebarScrollLayoutTests.Hosted.make(pinnedCount: 1, rail: rail)
+                defer { hosted.tearDown() }
+                hosted.window.toolbarStyle = compactToolbar ? .unifiedCompact : .unified
+                for width in [900.0, 720.0] {
+                    hosted.window.setContentSize(NSSize(width: width, height: 540))
+                    try await hosted.settle()
+                    let search = try XCTUnwrap(SidebarScrollLayoutTests.find(NSTextField.self, in: hosted.hosting).first {
+                        $0.placeholderString == "Search projects and worktrees"
+                    })
+                    let toggle = try hosted.sidebarToggle()
+                    let toolbar = try XCTUnwrap(toggle.superview)
+                    let searchFrame = search.convert(search.bounds, to: hosted.hosting)
+                    XCTAssertGreaterThanOrEqual(searchFrame.minY, toolbar.convert(toolbar.bounds, to: hosted.hosting).maxY)
+                    XCTAssertGreaterThanOrEqual(searchFrame.height, 28)
+                    let chrome = try XCTUnwrap(hosted.window.contentView?.superview)
+                    let location = search.convert(CGPoint(x: search.bounds.midX, y: search.bounds.midY), to: nil)
+                    let hit = try XCTUnwrap(chrome.hitTest(chrome.superview?.convert(location, from: nil) ?? location))
+                    XCTAssertTrue(hit === search || hit.isDescendant(of: search))
+                    let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: hosted.window)
+                    let up = try NSEvent.syntheticClick(.leftMouseUp, at: location, in: hosted.window)
+                    // NSTextView may synchronously track selection until mouse-up.
+                    // Queue the release before entering that native tracking loop.
+                    NSApp.postEvent(up, atStart: true)
+                    hosted.window.sendEvent(down)
+                    let editor = try XCTUnwrap(search.currentEditor() as? NSTextView)
+                    XCTAssertTrue(hosted.window.firstResponder === editor)
+                    editor.selectAll(nil)
+                    editor.insertText("task-29", replacementRange: editor.selectedRange())
+                    try await hosted.settle()
+                    let visible = SidebarScrollLayoutTests.find(WorktreeDragSourceView.self, in: hosted.hosting)
+                    let target = try XCTUnwrap(hosted.harness.state.repos[0].worktrees.first { $0.branch == "task-29" })
+                    XCTAssertEqual(search.stringValue, "task-29")
+                    XCTAssertEqual(visible.count, 1)
+                    XCTAssertTrue(hosted.harness.selections.isEmpty)
+                    // Search disables reordering, so these rows have no drag payload.
+                    // Resolve the remaining row through its selection action instead.
+                    try XCTUnwrap(visible.first).onClick?()
+                    XCTAssertEqual(hosted.harness.selections, [target.path])
+                    hosted.harness.selections.removeAll()
+                    editor.selectAll(nil)
+                    editor.insertText("", replacementRange: editor.selectedRange())
+                    try await hosted.settle()
+                    _ = try hosted.dragView(named: "pinned-0")
+                    XCTAssertTrue(hosted.harness.selections.isEmpty)
+                }
+            }
+        }
     }
 }
 

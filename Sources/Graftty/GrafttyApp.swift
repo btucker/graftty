@@ -2785,6 +2785,20 @@ struct GrafttyApp: App {
                         appStateBinding.wrappedValue.sidebarNavigation = navigation
                         return .ok
                     }
+                case let .setWorktreeOrder(repositoryID, mode):
+                    return await MainActor.run {
+                        var candidate = appStateBinding.wrappedValue
+                        guard SidebarHostNavigation.setWorktreeOrder(mode, in: &candidate, repositoryID: repositoryID) else {
+                            return .error(code: "repository-unavailable", message: "The repository is no longer available for sorting.", forceAllowed: false, shortStatus: nil)
+                        }
+                        do {
+                            try candidate.save(to: AppState.defaultDirectory)
+                            appStateBinding.wrappedValue = candidate
+                            return .ok
+                        } catch {
+                            return .error(code: "persistence-failed", message: error.localizedDescription, forceAllowed: false, shortStatus: nil)
+                        }
+                    }
                 case let .moveWorktree(repositoryID, worktreeID, relativeTo, after):
                     return await MainActor.run {
                         guard SidebarHostNavigation.moveWorktree(in: &appStateBinding.wrappedValue, repositoryID: repositoryID, worktreeID: worktreeID, relativeTo: relativeTo, after: after) else {
@@ -6427,7 +6441,7 @@ struct GrafttyApp: App {
             return false
         case .create(let repositoryID, _, _, _),
              .pullDefaultBranch(let repositoryID), .projectIcon(let repositoryID, _),
-             .moveWorktree(let repositoryID, _, _, _):
+             .moveWorktree(let repositoryID, _, _, _), .setWorktreeOrder(let repositoryID, _):
             return repositoryID.hasPrefix("relay-repository-")
         case .worktreeAgentCompletions(let worktreeID), .openResource(let worktreeID, _), .open(let worktreeID),
              .delete(let worktreeID, _),

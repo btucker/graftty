@@ -296,7 +296,7 @@ public final class HeadlessHostRuntime {
 
     public func snapshot() -> [WorktreePanes] {
         state.repos.flatMap { repo in
-            repo.worktrees.map { worktree in
+            SidebarHostNavigation.displayedWorktrees(in: repo).map { worktree in
                 WorktreePanes(path: worktree.path, displayName: worktree.displayName(amongSiblingPaths: repo.worktrees.map(\.path)),
                     repoDisplayName: repo.displayName, repositoryID: repo.path, displayBranch: worktree.displayBranch,
                     state: worktree.state.wireState, isMainCheckout: worktree.path == repo.path, prBadge: nil, stats: worktreeStats[worktree.path],

@@ -67,6 +67,13 @@ public extension HeadlessHostRuntime {
                 try save()
             case .hostPresentation:
                 return .hostPresentation(RemoteHostPresentation(ghosttyConfig: "", keybindings: .init(bindings: [:])))
+            case .setWorktreeOrder(let repositoryID, let mode):
+                var candidate = state
+                guard SidebarHostNavigation.setWorktreeOrder(mode, in: &candidate, repositoryID: repositoryID) else {
+                    return .error(code: "repository-unavailable", message: "The repository is no longer available for sorting.", forceAllowed: false, shortStatus: nil)
+                }
+                try candidate.save(to: configuration.stateDirectory)
+                state = candidate
             case .moveWorktree(let repo, let path, let relative, let after):
                 _ = SidebarHostNavigation.moveWorktree(in: &state, repositoryID: repo, worktreeID: path, relativeTo: relative, after: after)
                 try save()

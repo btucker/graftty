@@ -254,11 +254,14 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.50: When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to draw inline images only with graftty image, explains the reserved padding below the image, forbids imgcat, kitten icat, direct tty writes, and terminal queries, and falls back to graftty open when the command cannot draw.
+    @spec AGENT-6.50: When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, draw terminal images only with graftty image, explains the reserved padding below the image, forbids imgcat, kitten icat, direct tty writes, and terminal queries, and falls back to graftty open when the command fails or the client does not display the image correctly.
     """)
     func preparesImageSkillForBothProviders() throws {
         for skill in try preparedSkillTexts(named: "graftty-image") {
             #expect(skill.contains("name: graftty-image"))
+            #expect(skill.contains("![Chart](./output/chart.png)"))
+            #expect(skill.contains("![Refined sidebar](</absolute/path with spaces/sidebar.png>)"))
+            #expect(skill.contains("containing Markdown file's directory"))
             #expect(skill.contains("graftty image"))
             #expect(skill.contains("padding"))
             #expect(skill.contains("imgcat"))

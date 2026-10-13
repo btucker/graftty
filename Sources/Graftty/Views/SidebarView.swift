@@ -5,6 +5,16 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyCommandUI
 
+private struct SidebarAddWorktreeButtonAppearance: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content.buttonStyle(.glass)
+        } else {
+            content.buttonStyle(.bordered)
+        }
+    }
+}
+
 private struct SleepingWorktreeIndicator: View {
     @ObservedObject var state: WorktreeSleepState
     let path: String
@@ -104,6 +114,7 @@ struct SidebarView: View {
     @ObservedObject private var iconStore = SidebarHostController.shared
     @State private var projects: [SidebarProject] = []
     @State private var navigationError: String?
+    @State private var remoteProjectOperationInProgress = false
     @State private var showsRemoteManagement = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -388,7 +399,10 @@ struct SidebarView: View {
         GeometryReader { titleBarGeometry in
         GeometryReader { _ in
         VStack(spacing: 0) {
-        searchRow(height: max(titleBarGeometry.safeAreaInsets.top, Self.searchRowMinimumHeight))
+        Color.clear
+            .frame(height: max(titleBarGeometry.safeAreaInsets.top, 40))
+            .allowsHitTesting(false)
+        searchRow
         HStack(spacing: 0) {
             if showsProjectRail {
                 ProjectNavigationRail(projects: projects, counts: counts.attentionByProject, workingCounts: counts.workingByProject, icons: projectIcons,
@@ -471,9 +485,8 @@ struct SidebarView: View {
         }
         }
         }
-        // The search row shares the title-bar strip with the traffic lights
-        // and the sidebar toggle, so the sidebar extends under the title bar
-        // the same way the detail column does for the breadcrumb.
+        // Reserve the native toolbar hit region above the search field.
+        // Its compact variant extends to 40 points even with a smaller inset.
         .ignoresSafeArea(.container, edges: .top)
         }
         .task {
@@ -549,25 +562,11 @@ struct SidebarView: View {
         }
     }
 
-    /// Clears the three traffic lights plus the sidebar-toggle button that
-    /// macOS parks to their right in the title-bar strip.
-    private static let searchRowLeadingInset: CGFloat = 112
-    /// Fallback when the sidebar is not under a title bar.
-    private static let searchRowMinimumHeight: CGFloat = 38
-    /// Compact native toolbar viewers still hit-test through 40 points.
-    private static let searchStripMinimumHeight: CGFloat = 40
-
-    /// Search worktree identities and retained report content. It lives
-    /// in the title-bar row beside the sidebar toggle, so the list starts
-    /// directly below the toolbar instead of under a search row of its own.
-    private func searchRow(height: CGFloat) -> some View {
-        TextField("Find any project or worktree", text: $navigation.query)
-            .textFieldStyle(.roundedBorder)
-            .controlSize(.small)
-            .padding(.leading, Self.searchRowLeadingInset)
-            .padding(.trailing, 10)
-            .frame(height: height)
-            .frame(minHeight: Self.searchStripMinimumHeight, alignment: .top)
+    private var searchRow: some View {
+        SidebarSearchField(query: $navigation.query)
+            .frame(height: 30)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
     }
 
     private func voiceDictationButton(collapsed: Bool) -> some View {
@@ -765,26 +764,48 @@ struct SidebarView: View {
            let project = projects.first(where: { $0.id == navigation.selectedProjectID && $0.isAvailable }) {
             let repo = appState.repos.first { localProjectID($0) == project.id }
             let canAdd = canAddWorktree(to: project)
-            if repo != nil || canAdd {
-                HStack {
-                    if let repo {
-                        SidebarWorktreeOrderControl(selection: Binding(
-                            get: { appState.repos.first { $0.id == repo.id }?.worktreeOrderMode ?? .manual },
-                            set: { setWorktreeOrderMode($0, for: repo) }
-                        ), color: NSColor(theme.sidebarDimIcon))
-                        .frame(width: 136, height: 28)
-                    }
-                    Spacer()
+            if repo != nil || project.owner != nil {
+                let order = Group {
+                    SidebarWorktreeOrderControl(selection: Binding(
+                        get: {
+                            if let repo { return appState.repos.first { $0.id == repo.id }?.worktreeOrderMode ?? .manual }
+                            return project.worktreeOrderMode ?? .manual
+                        },
+                        set: { mode in
+                            if let repo { setWorktreeOrderMode(mode, for: repo) }
+                            else { setRemoteWorktreeOrderMode(mode, for: project) }
+                        }
+                    ), helpText: repo != nil || project.worktreeOrderMode != nil
+                        ? "Worktree order" : "Update Graftty on the owning host to change worktree order.",
+                        color: NSColor(theme.sidebarDimIcon))
+                    .disabled(repo == nil && (!remoteMacsModel.canSetWorktreeOrder(for: project) || remoteProjectOperationInProgress))
+                    .frame(width: 136, height: 28)
+                }
+                let add = Group {
                     if canAdd {
-                        Button(action: addWorktreeToSelectedProject) { Label("Add worktree", systemImage: "plus") }
-                            .buttonStyle(.plain)
-                            .help("Add worktree to \(project.name)")
-                            .accessibilityLabel("Add worktree to \(project.name)")
+                        Button(action: addWorktreeToSelectedProject) {
+                            Label("Add worktree", systemImage: "plus")
+                                .font(.system(size: 12, weight: .medium))
+                                .padding(.vertical, 3)
+                        }
+                        .disabled(repo == nil && remoteProjectOperationInProgress)
+                        .modifier(SidebarAddWorktreeButtonAppearance())
+                        .controlSize(.regular)
+                        .foregroundStyle(theme.foreground)
+                        .fixedSize()
+                        .help("Add worktree to \(project.name)")
+                        .accessibilityLabel("Add worktree to \(project.name)")
                     }
                 }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(theme.sidebarDimIcon)
-                .padding(.horizontal, 6).frame(height: 44)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { order; Spacer(minLength: 0); add }
+                    VStack(alignment: .leading, spacing: 6) {
+                        order
+                        add.frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
             }
         }
     }
@@ -793,11 +814,7 @@ struct SidebarView: View {
         if let repo = appState.repos.first(where: { localProjectID($0) == project.id }) {
             return SidebarMenuVisibility.showsAddWorktree(repo: repo)
         }
-        guard project.supportsWorktreeEditing == true,
-              let ownerID = project.owner?.deviceID,
-              let remoteMac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == ownerID }) else { return false }
-        return remoteMacsModel.repositoriesByRemote[RemoteMacIdentity(remoteMac)]?
-            .contains(where: { $0.id == project.repositoryID }) == true
+        return remoteMacsModel.editableRepositoryTarget(for: project) != nil
     }
 
     private func addWorktreeToSelectedProject() {
@@ -809,12 +826,29 @@ struct SidebarView: View {
             return
         }
 
-        guard project.supportsWorktreeEditing == true,
-              let ownerID = project.owner?.deviceID,
-              let remoteMac = remoteMacsModel.savedRemoteMacs.first(where: { $0.id == ownerID }),
-              let repository = remoteMacsModel.repositoriesByRemote[RemoteMacIdentity(remoteMac)]?
-                  .first(where: { $0.id == project.repositoryID }) else { return }
-        onAddRemoteWorktree(remoteMac, repository)
+        guard !remoteProjectOperationInProgress else { return }
+        remoteProjectOperationInProgress = true
+        navigationError = nil
+        Task { @MainActor in
+            defer { remoteProjectOperationInProgress = false }
+            do {
+                let (mac, repository) = try await remoteMacsModel.addWorktreeRepository(for: project)
+                onAddRemoteWorktree(mac, repository)
+            } catch { navigationError = error.localizedDescription }
+        }
+    }
+
+    private func setRemoteWorktreeOrderMode(_ mode: WorktreeOrderMode, for project: SidebarProject) {
+        guard !remoteProjectOperationInProgress else { return }
+        remoteProjectOperationInProgress = true
+        navigationError = nil
+        Task { @MainActor in
+            defer { remoteProjectOperationInProgress = false }
+            do {
+                try await remoteMacsModel.setWorktreeOrder(mode, for: project)
+                await refreshNavigation()
+            } catch { navigationError = error.localizedDescription }
+        }
     }
 
     /// Renders a worktree and its pane children as one visually-unified

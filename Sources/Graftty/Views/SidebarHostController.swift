@@ -106,7 +106,7 @@ final class SidebarHostController: ObservableObject {
         if case .initials(let value) = repo.iconOverride { initials = value } else { initials = nil }
         return SidebarProject(id: "\(owner.deviceID.value):\(repo.id.uuidString)", repositoryID: repo.path,
             name: repo.displayName, owner: owner, iconRevision: metadata?.revision,
-            initials: initials, accentHex: metadata?.accentHex, supportsWorktreeEditing: true)
+            initials: initials, accentHex: metadata?.accentHex, supportsWorktreeEditing: repo.isGitTracked, worktreeOrderMode: repo.isGitTracked ? repo.worktreeOrderMode : nil)
     }
 
     /// Inout access to a SwiftUI binding writes back even when the snapshot

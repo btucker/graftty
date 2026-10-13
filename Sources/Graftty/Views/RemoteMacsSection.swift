@@ -29,9 +29,10 @@ struct RemoteWorktreeDragPayload: Codable, Transferable {
 }
 
 enum RemoteWorktreeReorderPolicy {
-    static func allows(_ worktree: WorktreePanes, editableProjectIDs: Set<String>, query: String) -> Bool {
+    static func allows(_ worktree: WorktreePanes, editableProjectIDs: Set<String>, query: String, orderMode: WorktreeOrderMode? = nil) -> Bool {
         query.isEmpty && !worktree.isMainCheckout && !worktree.state.isInFlight
             && editableProjectIDs.contains(SidebarProjection.projectID(worktree))
+            && (orderMode != .recentActivity || isPinned(worktree))
     }
 
     static func areSiblings(_ source: WorktreePanes, _ target: WorktreePanes) -> Bool {
@@ -684,7 +685,8 @@ struct RemoteMacsSection: View {
 
     private func canReorder(_ worktree: WorktreePanes, on remoteMac: RemoteMac) -> Bool {
         model.connectionState(for: RemoteMacIdentity(remoteMac)) == .connected
-            && RemoteWorktreeReorderPolicy.allows(worktree, editableProjectIDs: editableProjectIDs, query: query)
+            && RemoteWorktreeReorderPolicy.allows(worktree, editableProjectIDs: editableProjectIDs, query: query,
+                orderMode: projects.first { $0.id == SidebarProjection.projectID(worktree) }?.worktreeOrderMode)
     }
 
     private func moveRemoteWorktree(_ source: WorktreePanes, relativeTo target: WorktreePanes, after: Bool, remoteMac: RemoteMac) {
