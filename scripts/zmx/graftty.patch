@@ -158,7 +158,7 @@ index a43b5a7..4bf7951 100644
  }
 
 diff --git a/src/loop.zig b/src/loop.zig
-index 4509ec0..db87034 100644
+index 4509ec0..0ffe899 100644
 --- a/src/loop.zig
 +++ b/src/loop.zig
 @@ -20,7 +20,7 @@ pub fn clientLoop(
@@ -256,7 +256,18 @@ index 4509ec0..db87034 100644
                              if (snapshot_mode) {
                                  try stdout_buf.appendSlice(gpa, msg.payload);
                              } else {
-@@ -180,8 +226,16 @@ pub fn clientLoop(
+@@ -176,12 +222,27 @@ pub fn clientLoop(
+                                     var restored_term = mut_res.terminal;
+                                     defer restored_term.deinit(gpa);
+                                     while (snapshot.pumpHistory(gpa, &mut_res.decoder, &restored_term) catch false) {}
++                                    // Plain VT clients render at their PTY's grid. Reflow
++                                    // before replay so the cursor follows the same content.
++                                    // Grid-aware hosts instead receive the source dimensions.
++                                    if (!replay_grid) {
++                                        const replay_size = ipc.getTerminalSize(lib_posix.STDOUT_FILENO);
++                                        try restored_term.resize(gpa, .{ .cols = replay_size.cols, .rows = replay_size.rows });
++                                    }
+                                     if (util.serializeTerminalState(gpa, &restored_term)) |term_output| {
                                          defer gpa.free(term_output);
                                          const restore_data = util.rewritePromptRedraw(gpa, term_output) orelse term_output;
                                          defer if (restore_data.ptr != term_output.ptr) gpa.free(restore_data);
@@ -273,7 +284,7 @@ index 4509ec0..db87034 100644
                                  } else |err| {
                                      std.log.warn("failed to import snapshot in client err={s}", .{@errorName(err)});
                                  }
-@@ -192,12 +246,25 @@ pub fn clientLoop(
+@@ -192,12 +253,25 @@ pub fn clientLoop(
                          // daemon is asking for the client's window size usually in response
                          // to this client being set as leader.
                          const next_size = ipc.getTerminalSize(lib_posix.STDOUT_FILENO);
@@ -305,7 +316,7 @@ index 4509ec0..db87034 100644
                      },
                      .Switch => {
                          std.log.info("switch session", .{});
-@@ -251,6 +318,83 @@ pub fn clientLoop(
+@@ -251,6 +325,83 @@ pub fn clientLoop(
      }
  }
 
@@ -389,7 +400,7 @@ index 4509ec0..db87034 100644
  /// dameonLoop is what the daemon runs to send and receive ipc commands from its corresponding
  /// clients.  It uses poll() as its non-blocking mechanism.
  fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_fd: lib_posix.socket_t, pty_fd: i32) !void {
-@@ -265,10 +409,15 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -265,10 +416,15 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
      var term = try ghostty_vt.Terminal.init(io, gpa, .{
          .cols = init_size.cols,
          .rows = init_size.rows,
@@ -406,7 +417,7 @@ index 4509ec0..db87034 100644
      defer vt_stream.deinit();
 
      // Carries the tail of the previous PTY read so the task-exit marker
-@@ -309,7 +458,20 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -309,7 +465,20 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
 
          try poll_fds.append(gpa, .{ .fd = signal.sig_pipe[0], .events = lib_posix.POLL.IN, .revents = 0 });
 
@@ -427,7 +438,7 @@ index 4509ec0..db87034 100644
              var events: i16 = lib_posix.POLL.IN;
              if (client.has_pending_output) {
                  events |= lib_posix.POLL.OUT;
-@@ -321,7 +483,11 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -321,7 +490,11 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
              });
          }
 
@@ -440,7 +451,7 @@ index 4509ec0..db87034 100644
 
          if (poll_fds.items[2].revents & lib_posix.POLL.IN != 0) {
              signal.drainSignalPipe();
-@@ -346,6 +512,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -346,6 +519,7 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
              client.* = Client{
                  .alloc = gpa,
                  .socket_fd = client_fd,
@@ -448,7 +459,7 @@ index 4509ec0..db87034 100644
                  .read_buf = try ipc.SocketBuffer.init(gpa),
                  .write_buf = undefined,
              };
-@@ -354,6 +521,16 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -354,6 +528,16 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
              // buffer is userspace-only: it drains via POLLOUT to the client socket,
              // which has no corresponding kernel-imposed per-write limit.
              client.write_buf = try std.ArrayList(u8).initCapacity(client.alloc, 65536);
@@ -465,7 +476,7 @@ index 4509ec0..db87034 100644
              try daemon.clients.append(gpa, client);
              std.log.info(
                  "client connected fd={d} total={d}",
-@@ -361,6 +538,23 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -361,6 +545,23 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
              );
          }
 
@@ -489,7 +500,7 @@ index 4509ec0..db87034 100644
          const inp_flags = lib_posix.POLL.IN | lib_posix.POLL.HUP | lib_posix.POLL.ERR | lib_posix.POLL.NVAL;
          if (poll_fds.items[1].revents & inp_flags != 0) {
              // Read from PTY. Buffer is sized to N_TTY_BUF_SIZE (4096): the hard
-@@ -434,14 +628,13 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -434,14 +635,13 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                      const broadcast_data = util.rewritePromptRedraw(gpa, buf[0..n]) orelse buf[0..n];
                      defer if (broadcast_data.ptr != buf[0..n].ptr) gpa.free(broadcast_data);
                      for (daemon.clients.items) |client| {
@@ -505,7 +516,7 @@ index 4509ec0..db87034 100644
                      }
                  }
              }
-@@ -465,7 +658,6 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -465,7 +665,6 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
          // Only iterate over clients that were present when poll_fds was constructed
          // poll_fds contains [server, pty, sig_pipe, client0, client1, ...]
          // So number of clients in poll_fds is poll_fds.items.len - 3
@@ -513,7 +524,7 @@ index 4509ec0..db87034 100644
          if (i > num_polled_clients) {
              // If we have more clients than polled (i.e. we just accepted one), start from the
              // polled ones
-@@ -495,13 +687,26 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -495,13 +694,26 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                      if (last) break :daemon_loop;
                      continue;
                  }
@@ -541,7 +552,7 @@ index 4509ec0..db87034 100644
                          .Switch => try daemon.handleSwitch(gpa, msg.payload),
                          .Resize => try daemon.handleResize(gpa, client, pty_fd, &term, msg.payload),
                          .Detach => {
-@@ -519,8 +724,14 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
+@@ -519,8 +731,14 @@ fn daemonLoop(daemon: *Daemon, gpa: std.mem.Allocator, io: std.Io, server_sock_f
                          .LabelGet => try daemon.handleLabelGet(gpa, client),
                          .LabelSet => try daemon.handleLabelSet(gpa, client, msg.payload),
                          .LabelClear => try daemon.handleLabelClear(gpa, client),
@@ -557,7 +568,7 @@ index 4509ec0..db87034 100644
                          .History => try daemon.handleHistory(gpa, client, &term, msg.payload),
                          .Run => try daemon.handleRun(gpa, io, client, msg.payload),
                          .Ack, .TaskComplete, .LabelData, .EnvData, .Snapshot => {},
-@@ -572,11 +783,24 @@ const ClientResult = struct {
+@@ -572,11 +790,24 @@ const ClientResult = struct {
  /// Client represents each terminal that has connected to a session.
  ///
  /// Multiple Clients can connect to a single session.
@@ -582,7 +593,7 @@ index 4509ec0..db87034 100644
      read_buf: ipc.SocketBuffer,
      write_buf: std.ArrayList(u8),
      env_str: ?[]u8 = null,
-@@ -585,9 +809,77 @@ pub const Client = struct {
+@@ -585,9 +816,77 @@ pub const Client = struct {
          lib_posix.close(self.socket_fd);
          self.read_buf.deinit();
          self.write_buf.deinit(self.alloc);
@@ -660,7 +671,7 @@ index 4509ec0..db87034 100644
      fn setEnv(self: *Client, gpa: std.mem.Allocator, env_str: []const u8) !void {
          if (self.env_str) |s| gpa.free(s);
          self.env_str = if (env_str.len > 0) try gpa.dupe(u8, env_str) else null;
-@@ -724,7 +1016,7 @@ pub const Daemon = struct {
+@@ -724,7 +1023,7 @@ pub const Daemon = struct {
      /// and run the clientLoop.  If it's the daemon then we need to bail since
      /// the daemonLoop is created inside this fn and when it returns that means
      /// the daemon stopped and needs to exit.
@@ -669,7 +680,7 @@ index 4509ec0..db87034 100644
          const sesh_name = self.session_name;
          std.log.info("ensure session session={s}", .{sesh_name});
          var dir = try std.Io.Dir.openDirAbsolute(io, self.cfg.socket_dir, .{});
-@@ -765,10 +1057,16 @@ pub const Daemon = struct {
+@@ -765,10 +1064,16 @@ pub const Daemon = struct {
              return false;
          }
 
@@ -688,7 +699,7 @@ index 4509ec0..db87034 100644
          std.log.info("creating session={s}", .{sesh_name});
          const server_sock_fd: lib_posix.socket_t = try socket.createSocket(self.socket_path);
          const log_fd = log.log_system.file.?.handle;
-@@ -799,11 +1097,12 @@ pub const Daemon = struct {
+@@ -799,11 +1104,12 @@ pub const Daemon = struct {
          ) catch |err| {
              switch (err) {
                  error.IsClientProc => {
@@ -706,7 +717,7 @@ index 4509ec0..db87034 100644
                      lib_posix.close(server_sock_fd);
                      return false;
                  },
-@@ -986,9 +1285,23 @@ pub const Daemon = struct {
+@@ -986,9 +1292,23 @@ pub const Daemon = struct {
          client: *Client,
          pty_fd: i32,
          term: *ghostty_vt.Terminal,
@@ -730,7 +741,7 @@ index 4509ec0..db87034 100644
 
          if (self.leader_client_fd == null) {
              try self.setLeader(gpa, client);
-@@ -1004,8 +1317,14 @@ pub const Daemon = struct {
+@@ -1004,8 +1324,14 @@ pub const Daemon = struct {
              const resize = std.mem.bytesToValue(ipc.Resize, payload);
              rows = resize.rows;
              cols = resize.cols;
@@ -745,7 +756,7 @@ index 4509ec0..db87034 100644
          } else {
              var reader: std.Io.Reader = .fixed(payload);
              if (snapshot.startImport(gpa, io, &reader, 1024 * 1024)) |import_res| {
-@@ -1018,6 +1337,8 @@ pub const Daemon = struct {
+@@ -1018,6 +1344,8 @@ pub const Daemon = struct {
                  cols = imported_term.cols;
                  xpixel = @as(u16, @intCast(@min(std.math.maxInt(u16), imported_term.width_px)));
                  ypixel = @as(u16, @intCast(@min(std.math.maxInt(u16), imported_term.height_px)));
@@ -754,7 +765,7 @@ index 4509ec0..db87034 100644
 
                  // First client attaching seeds the base session theme, cursor style/blink, modes, and pixel geometry
                  if (!self.has_had_client) {
-@@ -1034,55 +1355,56 @@ pub const Daemon = struct {
+@@ -1034,55 +1362,56 @@ pub const Daemon = struct {
              }
          }
 
@@ -845,7 +856,7 @@ index 4509ec0..db87034 100644
              // Disable prompt_redraw before resize. The daemon's internal terminal
              // would otherwise clear prompt lines expecting the shell to redraw them,
              // but the shell's redraw goes to the PTY (forwarded to clients), not to
-@@ -1099,10 +1421,55 @@ pub const Daemon = struct {
+@@ -1099,10 +1428,55 @@ pub const Daemon = struct {
              // Mark that we've had a client init, so subsequent clients get terminal state
              self.has_had_client = true;
 
@@ -902,7 +913,7 @@ index 4509ec0..db87034 100644
      pub fn handleResize(
          self: *Daemon,
          gpa: std.mem.Allocator,
-@@ -1111,18 +1478,32 @@ pub const Daemon = struct {
+@@ -1111,18 +1485,32 @@ pub const Daemon = struct {
          term: *ghostty_vt.Terminal,
          payload: []const u8,
      ) !void {
@@ -940,7 +951,7 @@ index 4509ec0..db87034 100644
      }
 
      pub fn handleDetach(self: *Daemon, gpa: std.mem.Allocator, client: *Client, i: usize) void {
-@@ -1229,6 +1610,8 @@ pub const Daemon = struct {
+@@ -1229,6 +1617,8 @@ pub const Daemon = struct {
      }
 
      pub fn handleRun(self: *Daemon, gpa: std.mem.Allocator, io: std.Io, client: *Client, payload: []const u8) !void {
@@ -949,7 +960,7 @@ index 4509ec0..db87034 100644
          // Reset task tracking so the new command's exit marker is detected.
          // Without this, a second `zmx run` on the same session is ignored
          // because task_exit_code is still set from the first run.
-@@ -1315,8 +1698,7 @@ pub const Daemon = struct {
+@@ -1315,8 +1705,7 @@ pub const Daemon = struct {
          self.setPwd(term);
          self.has_pty_output = true;
          for (self.clients.items) |client| {
@@ -1171,10 +1182,10 @@ index 23daed6..277ce73 100644
  pub fn sigaction(sig: SIG, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) void {
      switch (errno(system.sigaction(sig, act, oact))) {
 diff --git a/src/util.zig b/src/util.zig
-index d96f5a1..1c433e9 100644
+index d96f5a1..f7d3626 100644
 --- a/src/util.zig
 +++ b/src/util.zig
-@@ -780,6 +780,13 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+@@ -780,78 +780,52 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
          term.modes.set(.synchronized_output, false);
      }
 
@@ -1188,33 +1199,116 @@ index d96f5a1..1c433e9 100644
      // If state contains color override, restore it.
      writeColorOverrides(&builder.writer, term);
 
-@@ -806,7 +813,12 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
-             var sb_bottom = sb_bottom_row;
-             sb_bottom.x = @intCast(pages.cols - 1);
-
+-    const pages = &term.screens.active.pages;
+-    const screen_top = pages.getTopLeft(.screen);
+-    const active_top = pages.getTopLeft(.active);
+-    const has_scrollback = !screen_top.eql(active_top);
+-
+-    // Two-phase serialization to preserve scrollback without corrupting
+-    // cursor positions. This matters for nested zmx sessions (zmx→SSH→zmx)
+-    // where the outer daemon's ghostty-vt accumulates inner session scrollback.
+-    //
+-    // Phase 1: Emit scrollback content (plain text with styles, no terminal extras).
+-    // These lines scroll past the visible area into the terminal's scrollback buffer.
+-    // Phase 2: Clear visible screen, then emit visible content with full extras.
+-    // The clear ensures visible content starts from a clean slate regardless of
+-    // how much scrollback preceded it. CUP cursor positioning is then correct.
+-    //
+-    // See: https://github.com/neurosnap/zmx/issues/31
+-
+-    // Phase 1: scrollback only (if any exists)
+-    if (has_scrollback) {
+-        if (active_top.up(1)) |sb_bottom_row| {
+-            var sb_bottom = sb_bottom_row;
+-            sb_bottom.x = @intCast(pages.cols - 1);
+-
 -            var scroll_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .vt);
-+            // Let the receiving terminal recreate soft wraps. Emitting CRLF
-+            // for every display row turns those wraps into clipboard newlines.
-+            var scroll_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .{
-+                .emit = .vt,
-+                .unwrap = true,
-+            });
-             scroll_fmt.content = .{
-                 .selection = ghostty_vt.Selection.init(
-                     screen_top,
-@@ -827,7 +839,10 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
-     }
-
-     // Phase 2: visible screen with full extras (modes, cursor, keyboard, etc.)
+-            scroll_fmt.content = .{
+-                .selection = ghostty_vt.Selection.init(
+-                    screen_top,
+-                    sb_bottom,
+-                    false,
+-                ),
+-            };
+-            scroll_fmt.extra = .none; // no modes, cursor, keyboard — just content
+-            scroll_fmt.format(&builder.writer) catch |err| {
+-                std.log.warn("failed to format scrollback err={s}", .{@errorName(err)});
+-            };
+-        }
+-
+-        // Clear visible screen after scrollback. \x1b[2J clears only the visible
+-        // rows (not the scrollback buffer). \x1b[H homes the cursor. \x1b[0m resets
+-        // SGR style so phase 1 styles don't bleed into phase 2.
+-        builder.writer.writeAll("\x1b[2J\x1b[H\x1b[0m") catch {};
+-    }
+-
+-    // Phase 2: visible screen with full extras (modes, cursor, keyboard, etc.)
 -    var vis_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .vt);
-+    var vis_fmt = ghostty_vt.formatter.TerminalFormatter.init(term, .{
+-
+-    // Restrict content to the active viewport only
+-    const active_tl = pages.pin(.{ .active = .{ .x = 0, .y = 0 } });
+-    const active_br = pages.pin(.{
+-        .active = .{
+-            .x = @intCast(pages.cols - 1),
+-            .y = @intCast(pages.rows - 1),
+-        },
++    // Emit history and the active viewport as one continuous stream. Clearing
++    // the viewport between them discards history that has not scrolled offscreen
++    // yet, and splitting a soft-wrapped line changes its text on replay.
++    // The formatter restores terminal modes and cursor state around the content.
++    var formatter = ghostty_vt.formatter.TerminalFormatter.init(term, .{
 +        .emit = .vt,
 +        .unwrap = true,
-+    });
+     });
++    formatter.extra = .none;
++    formatter.extra.modes = true;
++    formatter.format(&builder.writer) catch return null;
 
-     // Restrict content to the active viewport only
-     const active_tl = pages.pin(.{ .active = .{ .x = 0, .y = 0 } });
-@@ -864,6 +879,8 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+-    if (active_tl != null and active_br != null) {
+-        vis_fmt.content = .{
+-            .selection = ghostty_vt.Selection.init(
+-                active_tl.?,
+-                active_br.?,
+-                false,
+-            ),
+-        };
++    // The formatter trims trailing blank rows. Replay them before restoring
++    // the cursor so history still ends above the complete active viewport.
++    const pages = &term.screens.active.pages;
++    if (pages.getBottomRight(.screen)) |bottom| {
++        var rows = bottom.rowIterator(.left_up, null);
++        var blank_rows: usize = 0;
++        var found_text = false;
++        while (rows.next()) |pin| {
++            const page = pin.node.page();
++            if (ghostty_vt.Cell.hasTextAny(page.getCells(pin.rowAndCell().row))) {
++                found_text = true;
++                break;
++            }
++            blank_rows += 1;
++        }
++        // An entirely blank screen starts on its first row already.
++        if (!found_text) blank_rows -|= 1;
++        for (0..blank_rows) |_| builder.writer.writeAll("\r\n") catch return null;
+     }
+-    // Fallback: if pins are somehow invalid, use null selection (all content)
+
+-    vis_fmt.extra = .{
++    formatter.content = .none;
++    formatter.extra = .{
+         .palette = false,
+-        .modes = true,
++        .modes = false,
+         .scrolling_region = true,
+         .tabstops = false, // tabstop restoration moves cursor after CUP, corrupting position
+         .pwd = false, // emitted below without the sentinel the formatter includes
+@@ -859,11 +833,13 @@ pub fn serializeTerminalState(alloc: std.mem.Allocator, term: *ghostty_vt.Termin
+         .screen = .all,
+     };
+
+-    vis_fmt.format(&builder.writer) catch |err| {
++    formatter.format(&builder.writer) catch |err| {
+         std.log.warn("failed to format terminal state err={s}", .{@errorName(err)});
          return null;
      };
 
@@ -1223,7 +1317,7 @@ index d96f5a1..1c433e9 100644
      writePwd(&builder.writer, term);
 
      // The formatter has no title extra and never emits OSC 0/1/2, so the title
-@@ -2191,3 +2208,57 @@ test "stripAnsi: only escape sequences" {
+@@ -2191,3 +2167,90 @@ test "stripAnsi: only escape sequences" {
      defer alloc.free(result);
      try testing.expectEqualStrings("", result);
  }
@@ -1278,6 +1372,39 @@ index d96f5a1..1c433e9 100644
 +            try expectScreensMatch(alloc, &source, &restored);
 +            try expectCursorAt(&restored, source.screens.active.cursor.y, source.screens.active.cursor.x);
 +            try testing.expectEqual(source_wrap, restored.modes.get(.wraparound));
++        }
++    }
++}
++
++test "serializeTerminalState retains short and long scrollback across repeated attaches" {
++    const alloc = testing.allocator;
++    const io = testing.io;
++    for ([_]usize{ 1, 4, 20 }) |history_lines| {
++        var input: std.Io.Writer.Allocating = .init(alloc);
++        defer input.deinit();
++        for (0..history_lines + 6) |row| try input.writer.print("row-{d}\r\n", .{row});
++        // Leave a wrapped line crossing the history/viewport boundary.
++        try input.writer.writeAll("abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789");
++        var source = try testCreateTerminal(alloc, io, 8, 6, input.written());
++        defer source.deinit(alloc);
++        var restored = try serializeRoundtrip(alloc, io, &source);
++        defer restored.deinit(alloc);
++        var reattached = try serializeRoundtrip(alloc, io, &restored);
++        defer reattached.deinit(alloc);
++        for ([_]*ghostty_vt.Terminal{ &restored, &reattached }) |actual_term| {
++            try expectScreensMatch(alloc, &source, actual_term);
++            try expectCursorAt(actual_term, source.screens.active.cursor.y, source.screens.active.cursor.x);
++            var expected: std.Io.Writer.Allocating = .init(alloc);
++            defer expected.deinit();
++            var actual: std.Io.Writer.Allocating = .init(alloc);
++            defer actual.deinit();
++            var source_fmt = ghostty_vt.formatter.TerminalFormatter.init(&source, .{ .emit = .plain, .unwrap = true });
++            source_fmt.extra = .none;
++            var actual_fmt = ghostty_vt.formatter.TerminalFormatter.init(actual_term, .{ .emit = .plain, .unwrap = true });
++            actual_fmt.extra = .none;
++            try source_fmt.format(&expected.writer);
++            try actual_fmt.format(&actual.writer);
++            try testing.expectEqualStrings(expected.written(), actual.written());
 +        }
 +    }
 +}
