@@ -11,6 +11,42 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct RemoteBrowserButtonTests {
+    @Test("@spec IMAGE-2.11: When the mobile pane lacks horizontal room for Images and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.", .timeLimit(.minutes(1)), arguments: [CGFloat(78), CGFloat(320)])
+    func imageControlsFitClippedPane(paneWidth: CGFloat) async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true, paneWidth: paneWidth)
+        defer { close(fixture) }
+        try await waitForImages(fixture)
+        let bounds = fixture.host.view.convert(fixture.host.view.bounds, to: fixture.window.screen.coordinateSpace)
+        #expect(abs(bounds.width - paneWidth) < 1)
+        let objects = accessibilityObjects(in: fixture.host.view)
+        let images = try #require(objects.first { $0.accessibilityLabel == "Images" })
+        let browser = try #require(objects.first { $0.accessibilityLabel == "Browser" })
+        for control in [images, browser] {
+            let frame = control.accessibilityFrame
+            // Screen-coordinate conversion can round a 44-point frame just below 44.
+            #expect(frame.width >= 43.99 && frame.height >= 43.99)
+            #expect(bounds.insetBy(dx: -0.5, dy: -0.5).contains(frame), "Both full hit targets must remain inside the clipped pane")
+            let point = fixture.window.convert(control.accessibilityActivationPoint, from: fixture.window.screen.coordinateSpace)
+            let hit = try #require(fixture.window.hitTest(point, with: nil))
+            #expect(hit.isDescendant(of: fixture.host.view), "The activation point must hit the pane's actual hosting view")
+        }
+        if paneWidth == 78 {
+            #expect(abs(images.accessibilityFrame.midX - browser.accessibilityFrame.midX) < 1)
+            #expect(browser.accessibilityFrame.minY >= images.accessibilityFrame.maxY)
+        } else {
+            #expect(abs(images.accessibilityFrame.midY - browser.accessibilityFrame.midY) < 1)
+            #expect(browser.accessibilityFrame.minX >= images.accessibilityFrame.maxX)
+        }
+        try #require(images.accessibilityActivate())
+        try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+        try await finishPresentation(in: fixture)
+        try activateBrowser(in: fixture.host.view)
+        try await waitUntil { fixture.host.presentedViewController != nil }
+        let sheet = try #require(fixture.host.presentedViewController)
+        try await waitUntil { accessibilityObjects(in: sheet.view).contains { $0 is UISegmentedControl } }
+        try await finishPresentation(in: fixture)
+    }
+
     @Test("@spec IMAGE-2.4: When a mobile image request arrives, the application shall preserve typing and show an Images action that presents native Quick Look only after a tap, without automatically reopening a dismissed offer.", .timeLimit(.minutes(1)))
     func imagesArriveWithoutInterruptingTypingAndOpenOnTap() async throws {
         let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false)
@@ -315,7 +351,7 @@ struct RemoteBrowserButtonTests {
     }
 
     private func makeButtonFixture(owner: Bool, pending: Bool = false, authentication: Bool = true,
-                                   image: Bool = false, imageInitiallyAvailable: Bool = true) throws -> ButtonFixture {
+                                   image: Bool = false, imageInitiallyAvailable: Bool = true, paneWidth: CGFloat? = nil) throws -> ButtonFixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let coordinator = RemoteConnectionCoordinator(directory: directory, connectionsAllowedInitially: false)
@@ -335,7 +371,8 @@ struct RemoteBrowserButtonTests {
         if pending { _ = presentation.begin(offer.id) }
         let state = ButtonState(owner: owner)
         state.offers = image && !imageInitiallyAvailable ? [] : [image ? imageOffer() : offer]
-        let button = ButtonFixtureView(state: state, coordinator: coordinator, host: host, imageBytes: imageBytes, device: device, initialPresentation: presentation)
+        let button = ButtonFixtureView(state: state, coordinator: coordinator, host: host, imageBytes: imageBytes,
+                                      device: device, initialPresentation: presentation, paneWidth: paneWidth)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
         let previous = scene.windows.first { $0.isKeyWindow }
@@ -348,6 +385,10 @@ struct RemoteBrowserButtonTests {
         let fixture = ButtonFixture(window: window, parent: parent, host: UIHostingController(rootView: AnyView(button)),
                                     state: state, previous: previous, directory: directory)
         attach(fixture)
+        if let paneWidth {
+            fixture.host.view.frame = CGRect(x: 20, y: 100, width: paneWidth, height: 200)
+            fixture.host.view.layoutIfNeeded()
+        }
         return fixture
     }
 
@@ -358,9 +399,10 @@ struct RemoteBrowserButtonTests {
         let imageBytes: Data
         let device: RemoteDeviceID
         let initialPresentation: ChromeOfferPresentation
+        let paneWidth: CGFloat?
         var body: some View {
             if state.visible {
-                RemoteOpenButton(host: host, worktree: state.worktree, coordinator: coordinator, sessionName: "pane",
+                let button = RemoteOpenButton(host: host, worktree: state.worktree, coordinator: coordinator, sessionName: "pane",
                     ownerDeviceID: state.owner ? device : nil, isActive: state.active,
                     managementTransport: { request, requestedHost in
                         #expect(requestedHost.id == host.id)
@@ -378,6 +420,14 @@ struct RemoteBrowserButtonTests {
                     isPaneOwner: { state.owner }, canPresentAuthentication: { true }, terminalRequest: .constant(nil), chromePresentation: initialPresentation)
                     .environment(\.scenePhase, state.active ? .active : .background)
                     .environment(\.accessibilityEnabled, true)
+                if let paneWidth {
+                    Color.black.frame(width: paneWidth, height: 200)
+                        .overlay(alignment: .topTrailing) {
+                            button.modifier(TerminalFloatingControlPlacement()).padding(.trailing, 12)
+                        }
+                        .clipped()
+                        .accessibilityElement(children: .contain)
+                } else { button }
             }
         }
     }

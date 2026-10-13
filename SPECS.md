@@ -3400,6 +3400,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-2.10** While a mobile image preview is mounted, the application shall retain its local file and presentation across temporary scene pauses and system sharing, until actual pane, ownership or offer changes or dismissal.
 
+**IMAGE-2.11** When the mobile pane lacks horizontal room for Images and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.
+
 ## AGENT — AGENT
 
 ### AGENT-1.x

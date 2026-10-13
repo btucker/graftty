@@ -199,37 +199,48 @@ struct RemoteOpenButton: View {
 
     @ViewBuilder
     private func floatingControls(actionID: UUID) -> some View {
-        HStack(spacing: 12) {
-            if imageReady, let offer = imageOffer {
-                TerminalFloatingGlyphButton(systemName: "photo", accessibilityLabel: "Images",
-                                            isBusy: imageDownload != nil) {
-                    open(offer, actionID: actionID)
+        ViewThatFits {
+            HStack(spacing: 12) { resourceButtons(actionID: actionID) }.fixedSize()
+            VStack(spacing: 12) { resourceButtons(actionID: actionID) }.fixedSize()
+            ScrollView(.vertical) {
+                VStack(spacing: 12) { resourceButtons(actionID: actionID) }
+                    .fixedSize().frame(maxWidth: .infinity)
+            }
+            .frame(minWidth: 44)
+        }
+    }
+
+    @ViewBuilder
+    private func resourceButtons(actionID: UUID) -> some View {
+        if imageReady, let offer = imageOffer {
+            TerminalFloatingGlyphButton(systemName: "photo", accessibilityLabel: "Images",
+                                        isBusy: imageDownload != nil) {
+                open(offer, actionID: actionID)
+            }
+            .accessibilityValue(offer.filename)
+            .accessibilityHint("Preview the latest image from this pane")
+            .overlay(alignment: .topTrailing) {
+                Circle().fill(.tint).frame(width: 8, height: 8)
+                    .accessibilityHidden(true).allowsHitTesting(false)
+            }
+            .disabled(isDownloading)
+        }
+        ZStack {
+            Color.clear.frame(width: 44, height: 44)
+                .allowsHitTesting(false).accessibilityHidden(true)
+            if isActive, isPaneOwner() || !offers.isEmpty {
+                Self.floatingControl(availableCount: offers.count, isBusy: isDownloading && imageDownload == nil) {
+                    if let offer = RemoteOpenPresentation.directBrowserOffer(in: offers) { open(offer, actionID: actionID) }
+                    else if !offers.isEmpty { choosingResource = true }
+                    else { openChromeTabs(actionID: actionID) }
                 }
-                .accessibilityValue(offer.filename)
-                .accessibilityHint("Preview the latest image from this pane")
-                .overlay(alignment: .topTrailing) {
-                    Circle().fill(.tint).frame(width: 8, height: 8)
-                        .accessibilityHidden(true).allowsHitTesting(false)
+                .accessibilityAction(named: "Remote Chrome tabs") { openChromeTabs(actionID: actionID) }
+                .contextMenu {
+                    Button("Remote Chrome tabs", systemImage: "rectangle.on.rectangle") { openChromeTabs(actionID: actionID) }
+                        .disabled(!isPaneOwner())
+                    ForEach(offers) { offer in Button(offer.filename) { open(offer, actionID: actionID) } }
                 }
                 .disabled(isDownloading)
-            }
-            ZStack {
-                Color.clear.frame(width: 44, height: 44)
-                    .allowsHitTesting(false).accessibilityHidden(true)
-                if isActive, isPaneOwner() || !offers.isEmpty {
-                    Self.floatingControl(availableCount: offers.count, isBusy: isDownloading && imageDownload == nil) {
-                        if let offer = RemoteOpenPresentation.directBrowserOffer(in: offers) { open(offer, actionID: actionID) }
-                        else if !offers.isEmpty { choosingResource = true }
-                        else { openChromeTabs(actionID: actionID) }
-                    }
-                    .accessibilityAction(named: "Remote Chrome tabs") { openChromeTabs(actionID: actionID) }
-                    .contextMenu {
-                        Button("Remote Chrome tabs", systemImage: "rectangle.on.rectangle") { openChromeTabs(actionID: actionID) }
-                            .disabled(!isPaneOwner())
-                        ForEach(offers) { offer in Button(offer.filename) { open(offer, actionID: actionID) } }
-                    }
-                    .disabled(isDownloading)
-                }
             }
         }
     }
