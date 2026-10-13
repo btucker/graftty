@@ -81,6 +81,7 @@
 		C7FBCF8C3DA2DB5BA749DAAE /* WakeOnLANClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0006D42603096AE4265AD38 /* WakeOnLANClientTests.swift */; };
 		CAF2F1261BE1D2E9862B28E7 /* PreviewCapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6717C8CFDA2A367AD3F5421F /* PreviewCapTests.swift */; };
 		CE7895E804A9365622D8D33C /* SSHTerminalLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9253D88D71A6DBEE9A8146C /* SSHTerminalLoopbackTests.swift */; };
+		D180563748C10B8F2CFCE625 /* RemoteBrowserButtonTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A2E2CD7C1629DD4B74B5A5E /* RemoteBrowserButtonTests.swift */; };
 		D1F96D384D62F05A9560ECF0 /* ChromeTabClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D8188F4BB4A504874737AEB /* ChromeTabClientTests.swift */; };
 		D51C1E9C417EC6CC1180FE22 /* LocalBrowserSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 155F14C63B4E8CCBE4A2885A /* LocalBrowserSessionTests.swift */; };
 		D6E07827478D558EA22701E3 /* MobileNavigationDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */; };
@@ -126,6 +127,7 @@
 		1B4204CA01B233B9F19E518B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1F4055E6D96D1E9CAA59BD55 /* AgentCompletionsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCompletionsFetcherTests.swift; sourceTree = "<group>"; };
 		22D456CE4C8B4DD28A6E843E /* SSHSubsystemReplyWaiterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSubsystemReplyWaiterTests.swift; sourceTree = "<group>"; };
+		2A2E2CD7C1629DD4B74B5A5E /* RemoteBrowserButtonTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RemoteBrowserButtonTests.swift; path = ../../Tests/GrafttyMobileKitTests/UI/RemoteBrowserButtonTests.swift; sourceTree = "<group>"; };
 		2CB56C09547732A7C94AAB02 /* HostBrowserProxyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostBrowserProxyTests.swift; path = ../../Tests/GrafttyMobileKitTests/UI/HostBrowserProxyTests.swift; sourceTree = "<group>"; };
 		2D8188F4BB4A504874737AEB /* ChromeTabClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChromeTabClientTests.swift; sourceTree = "<group>"; };
 		2E297959F982E90ED939C39C /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -393,6 +395,7 @@
 			children = (
 				F5748380A8C491DC269B570B /* ChromeTabViewerTests.swift */,
 				2CB56C09547732A7C94AAB02 /* HostBrowserProxyTests.swift */,
+				2A2E2CD7C1629DD4B74B5A5E /* RemoteBrowserButtonTests.swift */,
 			);
 			name = GrafttyMobileBrowserTests;
 			sourceTree = "<group>";
@@ -754,6 +757,7 @@
 			files = (
 				6B398E06DA82E2584FB5E129 /* ChromeTabViewerTests.swift in Sources */,
 				47453C7702697742D415A0AB /* HostBrowserProxyTests.swift in Sources */,
+				D180563748C10B8F2CFCE625 /* RemoteBrowserButtonTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

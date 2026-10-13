@@ -345,17 +345,20 @@ struct SessionStep: Hashable {
     }
 }
 
-/// Shared floating terminal control used by the fullscreen back button and
-/// the show-keyboard button. Keeping the plain style here prevents SwiftUI's
-/// default accent tint from turning either glyph blue.
+/// Shared floating terminal control for Back, keyboard and browser actions.
+/// The plain style keeps each glyph in the primary foreground.
 struct TerminalFloatingGlyphButton: View {
     let systemName: String
     let accessibilityLabel: String
+    var isBusy = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
+            Group {
+                if isBusy { ProgressView().tint(Color.primary) }
+                else { Image(systemName: systemName) }
+            }
                 .font(.title2)
                 .foregroundStyle(.primary)
                 .padding(10)

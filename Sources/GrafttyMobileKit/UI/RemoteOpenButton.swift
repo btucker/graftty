@@ -58,31 +58,31 @@ struct RemoteOpenButton: View {
         let active: Bool
     }
 
+    static func floatingControl(availableCount: Int, isBusy: Bool,
+                                action: @escaping () -> Void) -> some View {
+        TerminalFloatingGlyphButton(systemName: "globe", accessibilityLabel: "Browser",
+                                    isBusy: isBusy, action: action)
+            .overlay(alignment: .topTrailing) {
+                if availableCount > 0 {
+                    Text("\(availableCount)").font(.caption2.monospacedDigit())
+                        .padding(4).background(.tint, in: Circle()).foregroundStyle(.white)
+                        .offset(x: 4, y: -4)
+                        .accessibilityHidden(true)
+                        .allowsHitTesting(false)
+                }
+            }
+            .accessibilityValue("\(availableCount) available resources")
+    }
+
     var body: some View {
         let actionID = operationID
         Group {
             if isActive, isPaneOwner() || !offers.isEmpty {
-                Button {
+                Self.floatingControl(availableCount: offers.count, isBusy: isDownloading) {
                     if let offer = RemoteOpenPresentation.directBrowserOffer(in: offers) { open(offer, actionID: actionID) }
                     else if !offers.isEmpty { choosingResource = true }
                     else { openChromeTabs(actionID: actionID) }
-                } label: {
-                    ZStack(alignment: .topTrailing) {
-                        Group {
-                            if isDownloading { ProgressView() }
-                            else { Image(systemName: "globe") }
-                        }
-                        .frame(width: 44, height: 44)
-                        .background(.regularMaterial, in: Circle())
-                        if !offers.isEmpty {
-                            Text("\(offers.count)").font(.caption2.monospacedDigit())
-                                .padding(4).background(.tint, in: Circle()).foregroundStyle(.white)
-                                .offset(x: 4, y: -4)
-                        }
-                    }
                 }
-                .accessibilityLabel("Browser")
-                .accessibilityValue("\(offers.count) available resources")
                 .accessibilityAction(named: "Remote Chrome tabs") { openChromeTabs(actionID: actionID) }
                 .contextMenu {
                     Button("Remote Chrome tabs", systemImage: "rectangle.on.rectangle") { openChromeTabs(actionID: actionID) }
