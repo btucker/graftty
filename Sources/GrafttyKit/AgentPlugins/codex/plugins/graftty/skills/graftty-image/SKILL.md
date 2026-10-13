@@ -1,20 +1,28 @@
 ---
 name: graftty-image
-description: Use when the user asks to see, show, display, preview, or render an image, screenshot, diagram, chart, or photo inline in the terminal pane, or when a finished image should be shown in place in the pane. Also use before reaching for imgcat, kitten icat, chafa, or hand-written Kitty graphics escapes.
+description: Use when the user asks to see, show, display, preview, or render an image, screenshot, diagram, chart, or photo in Graftty, or when a finished image should be shown alongside an agent response.
 ---
 
 # Graftty image
 
-Run `graftty image` to draw an image file inline in the current Graftty pane:
+Show a file with `graftty image`:
 
 ```sh
 graftty image './output/chart.png'
 ```
 
-It works from an agent tool shell that has no tty of its own, scales the image to the pane width, and reserves blank padding rows below the image so a TUI such as Claude Code or Codex repaints only the padding. On success it prints `Drew <name> at <cols>x<rows> cells.`; relay that line and tell the user the image sits above the current prompt and scrolls with the transcript. If the user reports text overlapping the image's bottom edge, redraw with a larger `--pad`. See `graftty help image` for the accepted formats and flags.
+On macOS this requests a native tray sliding down from the top of the terminal area. The focused pane's preview appears without moving the terminal grid or stealing keyboard focus. Background pane requests remain scoped to their originating pane. A new request replaces that pane's previous image. Use Fit to reset, zoom in or out to enlarge, scroll to pan, and Close to dismiss. Escape dismisses only while the preview owns focus. Graftty Mobile uses the existing native preview offer on the pane leader. Unsupported display leaders return an error rather than showing an image on the host Mac.
 
-Draw images in a Graftty pane only with this command. `imgcat` speaks the iTerm2 protocol, which ghostty does not implement. `kitten icat`, `chafa`, and hand-written `ESC _ G` escapes place the image at the cursor or at an absolute row with no padding, so the TUI repaints over it or the image covers transcript text. Never write to `/dev/tty*` devices directly, and never send a terminal query from a tool shell: the reply lands in the TUI's input.
+The command works from a tool shell without a tty. It accepts readable PNG, JPEG, HEIC, GIF, WebP, and PDF files up to 20 MB, previews only the first frame or page, and bounds decoded resolution. Legacy `--width` and `--pad` flags are accepted and ignored. The preview is temporary; run the command again if asked.
 
-If `graftty image` exits nonzero, report its message and fall back to `graftty open <path>`, which shows the file on the pane leader's device. Inline images draw on whichever device leads the pane, including Graftty Mobile. If `graftty image` reports that the pane did not report pixel geometry, the leading client does not report it (a web browser or an older app), so fall back to `graftty open`. Images are not restored after a pane reattaches; run the command again if asked.
+A quiet zero exit status acknowledges the request. It does not prove the user saw the image. Include a Markdown image reference in your final response so the conversation keeps the artifact reference:
 
-Locate the CLI as described in the graftty-open skill. If `graftty help image` reports no such subcommand, the app build is too old to draw inline; use `graftty open`.
+```markdown
+![Chart](./output/chart.png)
+```
+
+Use an absolute path when the relative path would be ambiguous. If `graftty image` fails, report its actual error, keep the Markdown reference, and try `graftty open <path>` when a separate native file viewer would help. Do not claim delivery after a failure.
+
+Use only `graftty image` for the native tray. Do not use `imgcat`, `kitten icat`, `chafa`, hand-written Kitty graphics escapes, or padding newlines. Never write to `/dev/tty*` directly and never send a terminal query from a tool shell. Terminal graphics can print raw payloads or cover transcript text.
+
+Locate the CLI as described in the graftty-open skill. If the app reports an unknown command or request, its build is too old for the tray. Report that result and use the fallback above.

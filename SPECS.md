@@ -3324,21 +3324,35 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **URL-3.1** When the iOS app opens a graftty://open URL that resolves against the connected host's worktree-panes snapshot, the application shall select that worktree and focus the resolved pane session.
 
-## IMAGE — Inline Image Display
+## IMAGE — Native Image Preview
 
 ### IMAGE-1.x
 
-**IMAGE-1.1** When the user runs graftty image, the CLI shall locate the pane terminal through the caller's process ancestry and read its cell pixel geometry, and shall exit nonzero with a reason when no terminal or pixel geometry is available.
+**IMAGE-1.1** When graftty image runs without a terminal, the CLI shall send an absolute file path and the originating pane session through app IPC without emitting image bytes, terminal escapes, or padding, and shall propagate rejection and transport failures.
 
-**IMAGE-1.2** When graftty image fits an image, the CLI shall scale it to at most the pane width or the requested width while preserving aspect ratio, derive the occupied cell rows from the pane's cell pixel size, and keep the image rows plus the padding within the pane height so the padding block stays on screen, exiting nonzero when the pane has no room for one image row plus the padding.
+**IMAGE-1.2** When graftty image receives legacy width and pad options, the CLI shall accept them without reserving terminal rows, and shall encode a response-bearing native preview request.
 
-**IMAGE-1.3** When graftty image draws, the CLI shall reserve the image rows plus a padding block of blank rows below the image before placing it with a quiet Kitty graphics PNG transfer that leaves the cursor in place, so a TUI that repaints its live region does not overwrite the image.
+**IMAGE-1.3** When a pane requests a native image preview, the application shall replace only that pane's preview, retain a bounded number of previews, and dismiss only the requested pane.
 
-**IMAGE-1.4** If the terminal does not identify as ghostty, then graftty image shall exit nonzero with a message directing the agent to graftty open.
+**IMAGE-1.4** When a native image tray renders, the application shall overlay at most 45 percent of the pane height and 360 points without resizing the terminal, fit the image with its aspect ratio, and bound zoom from fit to eight times fit.
 
-**IMAGE-1.5** When graftty image receives any ImageIO-readable image, the CLI shall re-encode it as PNG at the fitted pixel width before transfer.
+**IMAGE-1.5** When the application loads an image preview, it shall reject missing, nonregular, invalid, or larger than 20 MB files and decode only the oriented first frame with a maximum edge of 2048 pixels.
 
-**IMAGE-1.6** When Graftty installs the graftty-image skill, the skill shall state that inline images draw on whichever device leads the pane, including Graftty Mobile, and shall fall back to graftty open when the leading client reports no pixel geometry.
+**IMAGE-1.6** When Graftty installs the graftty-image skill, the skill shall describe the macOS tray and Graftty Mobile native preview on the pane leader, explain fit, zoom, and close controls, and acknowledge requests without claiming the user saw the image.
+
+**IMAGE-1.7** When an image tray arrives or closes, the application shall preserve terminal focus, and shall dismiss on Escape only when the preview owns focus, restoring its previous responder.
+
+**IMAGE-1.8** While panes are split or worktrees are switched, the native tray shall show only the focused or visible zoomed pane's image and retain inactive previews without replacing it.
+
+**IMAGE-1.9** When preview decoding finishes after a newer request or dismissal, the application shall discard the older result instead of replacing or resurrecting the pane preview.
+
+**IMAGE-1.10** When graftty image identifies its originating pane, the application shall use registered session membership after directory changes, route iOS leadership to native mobile offers, and reject unsupported or other Mac leaders without opening on the host Mac.
+
+**IMAGE-1.11** While the native image tray is visible, the application shall keep terminal content below it clickable and at its original size.
+
+**IMAGE-1.12** When a mobile leader receives an image request, the application shall offer the validated file snapshot for its originating pane, replacing that pane's previous image offer without rereading a changed file.
+
+**IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes to an iOS pane leader and leave the host tray unchanged, while unavailable leaders and invalid origins shall return errors.
 
 ## AGENT — AGENT
 
@@ -3582,7 +3596,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.49** If Graftty is unreachable, busy, or reports an error for a SessionStart hook run inside a Graftty terminal, the CLI shall still emit the Graftty skill guidance; outside a Graftty terminal, and for every other event, it shall emit an empty hook result.
 
-**AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to draw inline images only with graftty image, explains the reserved padding below the image, forbids imgcat, kitten icat, direct tty writes, and terminal queries, and falls back to graftty open when the command cannot draw.
+**AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to show images with graftty image in a native tray, include a Markdown image reference, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures without claiming delivery.
 
 ## CLI — CLI
 

@@ -3,13 +3,31 @@ import GrafttyKit
 
 /// Recursively renders a SplitTree into terminal surface views.
 struct TerminalContentView: View {
+    @ObservedObject private var imagePreviews = ImagePreviewStore.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var terminalManager: TerminalManager
     let splitTree: Binding<SplitTree>
     let focusedPaneSlotID: PaneSlotID?
     let theme: GhosttyTheme
     let onFocusTerminal: (PaneSlotID) -> Void
 
+    private var previewPane: PaneSlotID? {
+        ImagePreviewLayout.visiblePane(tree: splitTree.wrappedValue, focused: focusedPaneSlotID)
+    }
+
     var body: some View {
+        terminalBody
+            .overlay(alignment: .top) {
+                ImagePreviewOverlay(pane: previewPane,
+                                    preview: previewPane.flatMap { imagePreviews.previews[$0] },
+                                    onDismiss: { if let pane = previewPane { imagePreviews.dismiss(pane) } })
+            }
+            .clipped()
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: previewPane.flatMap { imagePreviews.previews[$0]?.id })
+    }
+
+    @ViewBuilder
+    private var terminalBody: some View {
         // Zoom fast-path: if one pane is zoomed, render only its leaf full-bleed.
         // All sibling surfaces remain alive in TerminalManager.surfaces — we're
         // only changing which views are mounted, not tearing down PTYs.

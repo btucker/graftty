@@ -254,13 +254,15 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.50: When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to draw inline images only with graftty image, explains the reserved padding below the image, forbids imgcat, kitten icat, direct tty writes, and terminal queries, and falls back to graftty open when the command cannot draw.
+    @spec AGENT-6.50: When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to show images with graftty image in a native tray, include a Markdown image reference, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures without claiming delivery.
     """)
     func preparesImageSkillForBothProviders() throws {
         for skill in try preparedSkillTexts(named: "graftty-image") {
             #expect(skill.contains("name: graftty-image"))
             #expect(skill.contains("graftty image"))
-            #expect(skill.contains("padding"))
+            #expect(skill.contains("native tray"))
+            #expect(skill.contains("!["))
+            #expect(skill.contains("acknowledges"))
             #expect(skill.contains("imgcat"))
             #expect(skill.contains("kitten icat"))
             #expect(skill.contains("/dev/tty"))
@@ -270,13 +272,16 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec IMAGE-1.6: When Graftty installs the graftty-image skill, the skill shall state that inline images draw on whichever device leads the pane, including Graftty Mobile, and shall fall back to graftty open when the leading client reports no pixel geometry.
+    @spec IMAGE-1.6: When Graftty installs the graftty-image skill, the skill shall describe the macOS tray and Graftty Mobile native preview on the pane leader, explain fit, zoom, and close controls, and acknowledge requests without claiming the user saw the image.
     """)
-    func imageSkillDrawsOnLeadingDeviceIncludingMobile() throws {
+    func imageSkillDescribesNativePreviewOnLeadingDevice() throws {
         for skill in try preparedSkillTexts(named: "graftty-image") {
-            #expect(skill.contains("whichever device leads the pane, including Graftty Mobile"))
-            #expect(skill.contains("pixel geometry"))
-            #expect(!skill.contains("Inline images appear only on the Mac"))
+            #expect(skill.contains("Graftty Mobile"))
+            #expect(skill.contains("pane leader"))
+            #expect(skill.contains("Fit"))
+            #expect(skill.contains("zoom"))
+            #expect(skill.contains("Close"))
+            #expect(!skill.contains("Drew <name>"))
         }
     }
 
