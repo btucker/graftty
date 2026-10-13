@@ -10,6 +10,90 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct MacPagedTerminalTests {
+    @Test("@spec TERM-12.36: When a detached local Mac pane is mounted again, the application shall retain every history line, including history shorter than one viewport, through native paging or legacy replay.", .timeLimit(.minutes(1)), arguments: MacPagedTerminalRenderer.isSupported ? [false, true] : [true], [40, 10000])
+    func mountedPaneRestoresDetachedHistory(legacy: Bool, lineCount: Int) async throws {
+        let fixture = try await HistoryDaemon.make(lineCount: lineCount, redrawPrompt: legacy)
+        defer { fixture.close() }
+        _ = NSApplication.shared
+        #expect(ghostty_init(0, nil) == 0)
+        weak var mountedView: MacFollowerTerminalView?
+        let app = GhosttyApp(config: GhosttyConfig()) { _, action in
+            if action.tag == GHOSTTY_ACTION_SCROLLBAR {
+                DispatchQueue.main.async { mountedView?.updateScrollbar(action.action.scrollbar) }
+            }
+            return true
+        }
+        var surfaceFactory = SurfaceHandleGhosttySurfaceFactory.live
+        surfaceFactory.free = { surface in
+            ghostty_surface_free(surface)
+            withExtendedLifetime(app) {}
+        }
+        let handle = try #require(SurfaceHandle(
+            terminalID: PaneSlotID(), app: app.app, worktreePath: fixture.launcher.zmxDir.path,
+            socketPath: "/tmp/graftty-history-test.sock", zmxSpawnConfiguration: .init(
+                sessionName: "history", argv: legacy ? [fixture.launcher.executable.path, "attach", "history"] : ["/nonexistent-graftty-legacy-attach"],
+                env: fixture.launcher.subprocessEnv(from: ProcessInfo.processInfo.environment),
+                workingDirectory: fixture.launcher.zmxDir, shellReadySignalAvailable: false
+            ),
+            surfaceFactory: surfaceFactory,
+            zmxBackendFactory: { spawn, size, _, _ in
+                HostManagedZmxBackend(spawnConfiguration: spawn, initialSize: size,
+                    sessionFactory: { surface, configuration, initialSize in
+                        if legacy {
+                            return NativePtySession(surface: surface, argv: configuration.argv,
+                                env: configuration.env, workingDirectory: configuration.workingDirectory,
+                                initialSize: initialSize, spawnFailed: { _ in })
+                        }
+                        return MacPagedZmxSession(surface: surface, configuration: configuration, initialSize: initialSize)
+                    })
+            }
+        ))
+        let terminal = try #require(handle.view as? SurfaceNSView)
+        let view = MacFollowerTerminalView(terminalView: terminal, metrics: { [weak handle] in
+            handle?.queryGridSize() ?? ghostty_surface_size_s()
+        })
+        handle.followerPresentation = view
+        mountedView = view
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 900, height: 600),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = view
+        window.orderBack(nil)
+        defer {
+            handle.disconnectAttachment()
+            window.orderOut(nil)
+            window.contentView = nil
+            withExtendedLifetime(app) {}
+        }
+        var restoredText = ""
+        for expected in [String(format: "history-row-%06d", lineCount - 1), "live-after"] {
+            if expected == "live-after" { #expect(handle.writeText("after\n")) }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+            repeat {
+                view.layout()
+                app.tick()
+                var text = ghostty_text_s()
+                let selection = ghostty_selection_s(
+                    top_left: .init(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+                    bottom_right: .init(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+                    rectangle: false)
+                if ghostty_surface_read_text(handle.surface, selection, &text) {
+                    restoredText = text.text.map { String(decoding: Data(bytes: $0, count: Int(text.text_len)), as: UTF8.self) } ?? ""
+                    ghostty_surface_free_text(handle.surface, &text)
+                }
+                if restoredText.contains(expected),
+                   !legacy || restoredText.contains("history-prompt> "),
+                   handle.presentationGrid == nil { break }
+                try await Task.sleep(for: .milliseconds(10))
+            } while ContinuousClock.now < deadline
+            #expect(restoredText.contains(expected))
+            if legacy { #expect(restoredText.contains("history-prompt> ")) }
+        }
+        let rows = Set(restoredText.split(whereSeparator: \.isNewline).map(String.init))
+        let missingRows = (0..<lineCount).filter { !rows.contains(String(format: "history-row-%06d", $0)) }
+        #expect(missingRows.isEmpty, "Missing restored rows: \(missingRows.prefix(30))")
+        #expect(handle.presentationGrid == nil)
+    }
+
     #if GRAFTTY_PAGED_HISTORY
     @Test("@spec TERM-12.28: When an unloaded local Mac pane attaches to a paging-capable daemon, the default host-managed backend shall use native screen restoration and background history import without replaying history as terminal output.", .timeLimit(.minutes(1)))
     func defaultLocalBackendUsesPaging() async throws {
@@ -174,12 +258,15 @@ struct MacPagedTerminalTests {
         }
     }
 
+    #endif
+
     private final class HistoryDaemon: @unchecked Sendable {
         let launcher: ZmxLauncher
         let seed: NativePtySession
-        private let output = HistoryOutput()
+        private let output: HistoryOutput
 
-        private init() throws {
+        private init(lineCount: Int, redrawPrompt: Bool) throws {
+            output = HistoryOutput(marker: redrawPrompt ? "history-prompt> " : String(format: "history-row-%06d", lineCount - 1))
             let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             let dir = URL(fileURLWithPath: "/private/tmp/mac-paging-\(UUID().uuidString.prefix(8))")
@@ -188,15 +275,16 @@ struct MacPagedTerminalTests {
             // Keep the shell alive after producing the fixture; the client reader
             // drains the PTY so this setup cannot block on its output buffer.
             let output = output
+            let prompt = redrawPrompt ? "printf '\\033]133;A;redraw=1\\007history-prompt> \\033]133;B\\007'; " : ""
             seed = NativePtySession(argv: [launcher.executable.path, "attach", "history", "/bin/sh", "-c",
-                "i=0; while [ $i -lt 10000 ]; do printf 'history-row-%06d\\n' $i; i=$((i+1)); done; while read value; do printf 'live-%s\\n' \"$value\"; done"],
+                "i=0; while [ $i -lt \(lineCount) ]; do printf 'history-row-%06d\\n' $i; i=$((i+1)); done; \(prompt)while read value; do printf 'live-%s\\n' \"$value\"; done"],
                 env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment),
                 workingDirectory: dir, initialSize: .init(cols: 80, rows: 24),
                 writeToSurface: { output.append($0) }, processExited: { _, _ in }, spawnFailed: { _ in })
         }
 
-        static func make() async throws -> HistoryDaemon {
-            let fixture = try HistoryDaemon()
+        static func make(lineCount: Int = 10000, redrawPrompt: Bool = false) async throws -> HistoryDaemon {
+            let fixture = try HistoryDaemon(lineCount: lineCount, redrawPrompt: redrawPrompt)
             do {
                 try fixture.seed.start()
                 let deadline = ContinuousClock.now.advanced(by: .seconds(10))
@@ -219,10 +307,11 @@ struct MacPagedTerminalTests {
     private final class HistoryOutput: @unchecked Sendable {
         private let lock = NSLock()
         private var bytes = Data()
+        private let marker: String
+        init(marker: String) { self.marker = marker }
         func append(_ data: Data) { lock.withLock { bytes.append(data) } }
         var finished: Bool {
-            lock.withLock { String(decoding: bytes, as: UTF8.self).contains("history-row-009999") }
+            lock.withLock { String(decoding: bytes, as: UTF8.self).contains(marker) }
         }
     }
-    #endif
 }

@@ -64,7 +64,7 @@ extension HeadlessHostRuntime {
             if case .initials(let value) = repo.iconOverride { initials = value } else { initials = nil }
             return SidebarProject(id: repo.path, repositoryID: repo.path, name: repo.displayName,
                 owner: origin, iconRevision: currentProjectIcon(for: repo)?.revision, initials: initials,
-                supportsWorktreeEditing: true)
+                supportsWorktreeEditing: repo.isGitTracked, worktreeOrderMode: repo.isGitTracked ? repo.worktreeOrderMode : nil)
         }))
     }
 }

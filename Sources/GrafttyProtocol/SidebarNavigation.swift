@@ -25,6 +25,12 @@ public enum SidebarLayoutPolicy {
     }
 }
 
+/// @spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
+public enum WorktreeOrderMode: String, Codable, Sendable, Equatable {
+    case manual
+    case recentActivity
+}
+
 /// Stable presentation identity is separate from the live, opaque management route.
 public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
     public var id: String
@@ -36,11 +42,13 @@ public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
     public var initials: String?
     public var isAvailable: Bool
     public var supportsWorktreeEditing: Bool?
+    /// A missing mode means the host does not support changing worktree order.
+    public var worktreeOrderMode: WorktreeOrderMode?
 
     public init(id: String, repositoryID: String, name: String, owner: WorktreeOrigin? = nil,
-                iconRevision: String? = nil, initials: String? = nil, accentHex: String? = nil, isAvailable: Bool = true, supportsWorktreeEditing: Bool? = nil) {
+                iconRevision: String? = nil, initials: String? = nil, accentHex: String? = nil, isAvailable: Bool = true, supportsWorktreeEditing: Bool? = nil, worktreeOrderMode: WorktreeOrderMode? = nil) {
         self.id = id; self.repositoryID = repositoryID; self.name = name; self.owner = owner
-        self.iconRevision = iconRevision; self.initials = initials; self.accentHex = accentHex; self.isAvailable = isAvailable; self.supportsWorktreeEditing = supportsWorktreeEditing
+        self.iconRevision = iconRevision; self.initials = initials; self.accentHex = accentHex; self.isAvailable = isAvailable; self.supportsWorktreeEditing = supportsWorktreeEditing; self.worktreeOrderMode = worktreeOrderMode
     }
 
     public var displayInitials: String {

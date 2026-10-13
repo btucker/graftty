@@ -16,6 +16,19 @@ final class RemoteMacsModel: ObservableObject {
         case unknownPaneAlias(String)
         case unexpectedManagementResponse
     }
+    enum ProjectControlError: LocalizedError {
+        case unavailable, unsupportedOrder, missingRepository, host(String), unexpectedResponse
+        var errorDescription: String? {
+            switch self {
+            case .unavailable: return "The owning host or repository is unavailable. Reconnect and try again."
+            case .unsupportedOrder: return "Update Graftty on the owning host to change worktree order."
+            case .missingRepository: return "The repository is no longer available on the owning host."
+            case .host(let message): return message
+            case .unexpectedResponse: return "The owning host returned an unexpected response."
+            }
+        }
+    }
+
     @Published private(set) var savedRemoteMacs: [RemoteMac] = []
     @Published private(set) var trustedLinuxHosts: [RemoteDeviceID: PinnedHost] = [:]
     private let maintenancePins: PinnedHostStore
@@ -650,9 +663,53 @@ final class RemoteMacsModel: ObservableObject {
             request: .listRepositories
         )
         guard case .repositories(let repositories) = response else {
-            throw RelayError.unexpectedManagementResponse
+            if case .error(_, let message, _, _) = response { throw ProjectControlError.host(message) }
+            throw ProjectControlError.unexpectedResponse
         }
         return repositories.filter { ($0.origin?.relayDepth ?? 0) == 0 }
+    }
+
+    /// Resolve management aliases before comparing raw repository IDs. The
+    /// pinned identity must still match the saved host and be connected.
+    func editableRepositoryTarget(for project: SidebarProject) -> RelayedRepositoryTarget? {
+        guard project.isAvailable, project.supportsWorktreeEditing == true,
+              let route = relayRouter.resolveRepository(project.repositoryID),
+              project.owner?.deviceID == route.identity.id,
+              savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == route.identity }),
+              connectionState(for: route.identity) == .connected else { return nil }
+        return route
+    }
+
+    func addWorktreeRepository(for project: SidebarProject) async throws -> (RemoteMac, RemoteRepositoryInfo) {
+        guard let route = editableRepositoryTarget(for: project),
+              let mac = savedRemoteMacs.first(where: { RemoteMacIdentity($0) == route.identity }) else {
+            throw ProjectControlError.unavailable
+        }
+        // Capture the owner and repository before suspension. A selection
+        // change must not retarget the sheet to a different project.
+        let repositories = try await refreshRepositories(on: mac)
+        guard savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == route.identity }),
+              connectionState(for: route.identity) == .connected else { throw ProjectControlError.unavailable }
+        guard let repository = repositories.first(where: { $0.id == route.repositoryID }) else {
+            throw ProjectControlError.missingRepository
+        }
+        return (mac, repository)
+    }
+
+    func canSetWorktreeOrder(for project: SidebarProject) -> Bool {
+        project.worktreeOrderMode != nil && editableRepositoryTarget(for: project) != nil
+    }
+
+    func setWorktreeOrder(_ mode: WorktreeOrderMode, for project: SidebarProject) async throws {
+        guard project.worktreeOrderMode != nil else { throw ProjectControlError.unsupportedOrder }
+        guard let route = editableRepositoryTarget(for: project) else { throw ProjectControlError.unavailable }
+        let response = try await sendWorktreeManagement(identity: route.identity,
+            request: .setWorktreeOrder(repositoryID: route.repositoryID, mode: mode))
+        switch response {
+        case .ok: return
+        case .error(_, let message, _, _): throw ProjectControlError.host(message)
+        default: throw ProjectControlError.unexpectedResponse
+        }
     }
 
     @discardableResult
@@ -943,6 +1000,10 @@ final class RemoteMacsModel: ObservableObject {
         case let .projectIcon(repositoryID, revision):
             guard let route = relayRouter.resolveRepository(repositoryID) else { return nil }
             return await forwardManagement(identity: route.identity, request: .projectIcon(repositoryID: route.repositoryID, revision: revision))
+
+        case let .setWorktreeOrder(repositoryID, mode):
+            guard let route = relayRouter.resolveRepository(repositoryID) else { return nil }
+            return await forwardManagement(identity: route.identity, request: .setWorktreeOrder(repositoryID: route.repositoryID, mode: mode))
 
         case let .moveWorktree(repositoryID, worktreeID, relativeTo, after):
             guard let repo = relayRouter.resolveRepository(repositoryID),
