@@ -56,6 +56,38 @@ targets:
         SWIFT_VERSION: "5.10"
         SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
 
+  GrafttyMobileInteractionHost:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - GrafttyMobileTestHost
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        SWIFT_VERSION: "5.10"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) GRAFTTY_BROWSER_CONTROL_FIXTURE"
+        SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - package: GrafttyMobileKit
+        product: GrafttyMobileKit
+
+  GrafttyMobileInteractionTests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ../../Tests/GrafttyMobileInteractionTests
+    settings:
+      base:
+        SWIFT_VERSION: "5.10"
+        GENERATE_INFOPLIST_FILE: YES
+        SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - target: GrafttyMobileInteractionHost
+
   GrafttyMobileKitTests:
     type: bundle.unit-test
     platform: iOS
@@ -112,6 +144,14 @@ targets:
         product: GrafttyRemoteClient
 
 schemes:
+  GrafttyBrowserInteraction:
+    build:
+      targets:
+        GrafttyMobileInteractionHost: all
+    test:
+      config: Debug
+      targets:
+        - GrafttyMobileInteractionTests
   GrafttyMobile:
     build:
       targets:

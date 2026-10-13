@@ -12,6 +12,7 @@ struct RemoteOpenButton: View {
     let sessionName: String
     let ownerDeviceID: RemoteDeviceID?
     let isActive: Bool
+    var managementTransport: ((WorktreeManagementRequest, Host) async throws -> WorktreeManagementResponse)? = nil
     let browserConnectionReady: Bool
     let isPaneFocused: Bool
     let hasOwnershipSnapshot: Bool
@@ -23,6 +24,7 @@ struct RemoteOpenButton: View {
     @State private var download: Task<Void, Never>?
     @State private var isDownloading = false
     @State private var preview: Preview?
+    @State private var showingPreview = false
     @State private var cachedFile: URL?
     @State private var error: String?
     @State private var choosingResource = false
@@ -30,7 +32,7 @@ struct RemoteOpenButton: View {
     let canPresentAuthentication: () -> Bool
     @Binding var terminalRequest: TerminalBrowserRequest?
     @State private var operationID = UUID()
-    @State private var chromePresentation = ChromeOfferPresentation()
+    @State var chromePresentation = ChromeOfferPresentation()
 
     private var pollScope: PollScope {
         PollScope(hostID: host.id, worktree: worktree, sessionName: sessionName)
@@ -76,7 +78,9 @@ struct RemoteOpenButton: View {
 
     var body: some View {
         let actionID = operationID
-        Group {
+        ZStack {
+            Color.clear.frame(width: 44, height: 44)
+                .allowsHitTesting(false).accessibilityHidden(true)
             if isActive, isPaneOwner() || !offers.isEmpty {
                 Self.floatingControl(availableCount: offers.count, isBusy: isDownloading) {
                     if let offer = RemoteOpenPresentation.directBrowserOffer(in: offers) { open(offer, actionID: actionID) }
@@ -106,25 +110,29 @@ struct RemoteOpenButton: View {
             choosingResource = false
             cancelOperation()
             if preview?.browser == true {
-                deferAuthenticationPresentation()
-                preview = nil
+                cancelPresentation()
             }
         }
         .onChange(of: isActive) { _, active in
-            if active { checkOwnership() } else { offerSnapshot = .init(); choosingResource = false; cancelOperation() }
+            if active { checkOwnership() } else {
+                offerSnapshot = .init(); choosingResource = false; cancelOperation()
+                if !chromePresentation.isMounted { cancelPresentation() }
+            }
         }
         .onChange(of: ownerDeviceID) { _, _ in
-            offerSnapshot = .init(); choosingResource = false; cancelOperation(); checkOwnership()
+            offerSnapshot = .init(); choosingResource = false; cancelOperation()
+            if preview?.browser == true { cancelPresentation() }
+            checkOwnership()
         }
         .onChange(of: hasOwnershipSnapshot) { _, _ in checkOwnership() }
         .onChange(of: isPaneFocused) { _, focused in
-            if !focused, preview?.browser == true { deferAuthenticationPresentation(); preview = nil }
+            if !focused, preview?.browser == true { cancelPresentation() }
         }
         .task(id: PollTaskScope(route: pollScope, ownerDeviceID: ownerDeviceID, active: isActive)) {
             guard isActive else { return }
             while !Task.isCancelled {
                 do {
-                    let response = try await coordinator.sendWorktreeManagement(
+                    let response = try await sendWorktreeManagement(
                         .openResource(worktreeID: worktree, request: .list), to: host
                     )
                     guard !Task.isCancelled else { return }
@@ -132,7 +140,7 @@ struct RemoteOpenButton: View {
                         offerSnapshot.update(value, in: browserScope)
                         let authentication = coordinator.consumeAuthenticationOffer(value, sessionName: sessionName,
                                                                            ownerDeviceID: ownerDeviceID,
-                                                                           canPresent: isPaneFocused && isPaneOwner() && preview == nil && chromePresentation.canPresent && !isDownloading && canPresentAuthentication())
+                                                                           canPresent: isPaneFocused && isPaneOwner() && preview == nil && chromePresentation.canPresent && !isDownloading && error == nil && canPresentAuthentication())
                         if let authentication { open(authentication, automatically: true) }
                     }
                     // Older hosts reject the new operation. Do not keep polling them.
@@ -143,32 +151,25 @@ struct RemoteOpenButton: View {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
             }
         }
-        .sheet(item: $preview, onDismiss: {
-            switch chromePresentation.finishDismissal() {
-            case .dismissed(let id): coordinator.dismissAuthenticationOffer(id)
-            case .deferred(let id): coordinator.deferAuthenticationOffer(id)
-            case nil: break
+        .background {
+            if let item = preview {
+                ResourcePreviewSheet(isPresented: Binding(
+                    get: { preview?.id == item.id && showingPreview },
+                    set: { if preview?.id == item.id { showingPreview = $0 } }
+                ), didMount: { markMounted(item) }, didDismiss: { finishPresentation(item.id) },
+                   didDetach: { if chromePresentation.presentationID == item.id { cancelPresentation(abandon: true) } }) {
+                    previewContent(item)
+                }
+                .id(item.id)
             }
-            removeCachedFile()
-        }) { preview in
-            if preview.browser {
-                let originHost = preview.originHost ?? host
-                let originWorktree = preview.originWorktree ?? worktree
-                BrowserModeView(target: preview.originSession ?? sessionName, hostID: originHost.id,
-                                connectionProvider: { await coordinator.connection(for: originHost) },
-                                originalURL: preview.url, authenticate: { url in
-                                    try await WorktreePortClient.authenticate(url, in: originWorktree) { request in
-                                        try await coordinator.sendWorktreeManagement(request, to: originHost)
-                                    }
-                                }, isPaneOwner: isPaneOwner, initialLaunch: preview.chromeLaunch,
-                                paneReady: browserConnectionReady && isPaneFocused && isPaneOwner(), onLaunch: {
-                                    if let launch = preview.chromeLaunch { coordinator.completeAuthenticationOffer(launch.offerID) }
-                                })
-            } else if let url = preview.url, url.isFileURL {
-                NativeFilePreview(url: url)
-            } else if let url = preview.url {
-                HostBrowserView(url: url, host: preview.originHost ?? host,
-                                connectionProvider: { await coordinator.connection(for: preview.originHost ?? host) })
+        }
+        .task(id: preview?.id) {
+            guard let id = preview?.id else { return }
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            guard preview?.id == id, !chromePresentation.isMounted else { return }
+            cancelPresentation()
+            if isActive {
+                error = "The resource could not be presented. Close any other dialog and tap Browser to try again."
             }
         }
 
@@ -179,42 +180,129 @@ struct RemoteOpenButton: View {
         } message: {
             Text(error ?? "")
         }
+        .onAppear {
+            if preview == nil, !chromePresentation.isMounted { apply(chromePresentation.cancelPending()) }
+        }
         .onDisappear {
             cancelOperation()
-            deferAuthenticationPresentation()
-            preview = nil
-            removeCachedFile()
+            // SwiftUI also relays disappearance while the mounted sheet or a
+            // system modal covers its source. Attachment owns mounted cleanup.
+            if !chromePresentation.isMounted { cancelPresentation() }
         }
+    }
+
+    @ViewBuilder
+    private func previewContent(_ preview: Preview) -> some View {
+        if preview.browser {
+            let originHost = preview.originHost ?? host
+            let originWorktree = preview.originWorktree ?? worktree
+            BrowserModeView(target: preview.originSession ?? sessionName, hostID: originHost.id,
+                            connectionProvider: { await coordinator.connection(for: originHost) },
+                            originalURL: preview.url, authenticate: { url in
+                                try await WorktreePortClient.authenticate(url, in: originWorktree) { request in
+                                    try await sendWorktreeManagement(request, to: originHost)
+                                }
+                            }, isPaneOwner: isPaneOwner, initialLaunch: preview.chromeLaunch,
+                            paneReady: browserConnectionReady && isPaneFocused && isPaneOwner(), onLaunch: {
+                                if let launch = preview.chromeLaunch { coordinator.completeAuthenticationOffer(launch.offerID) }
+                            })
+        } else if let url = preview.url, url.isFileURL {
+            NativeFilePreview(url: url)
+        } else if let url = preview.url {
+            HostBrowserView(url: url, host: preview.originHost ?? host,
+                            connectionProvider: { await coordinator.connection(for: preview.originHost ?? host) })
+        }
+    }
+
+
+    private func sendWorktreeManagement(_ request: WorktreeManagementRequest, to host: Host) async throws -> WorktreeManagementResponse {
+        if let managementTransport { return try await managementTransport(request, host) }
+        return try await coordinator.sendWorktreeManagement(request, to: host)
     }
 
     private func openTerminalLink(_ request: TerminalBrowserRequest) {
-        let scope = browserScope
-        guard request.canPresent(in: scope, isActive: isActive && isPaneFocused, isOwner: isPaneOwner()),
-              canPresentAuthentication(), preview == nil, chromePresentation.begin(nil) else {
+        guard request.canPresent(in: browserScope, isActive: isActive && isPaneFocused, isOwner: isPaneOwner()) else {
             error = "Take control of the originating pane and try the link again."
             return
         }
+        guard canBegin() else { return }
         cancelOperation()
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        preview = Preview(url: request.url, browser: true, originSession: request.scope.sessionName,
-                          originWorktree: request.scope.worktree,
-                          chromeLaunch: ChromeTabInitialLaunch(id: request.id, url: request.url.absoluteString), originHost: host)
+        present(Preview(url: request.url, browser: true, originSession: request.scope.sessionName,
+                        originWorktree: request.scope.worktree,
+                        chromeLaunch: ChromeTabInitialLaunch(id: request.id, url: request.url.absoluteString), originHost: host), offerID: nil)
     }
 
     private func openChromeTabs(actionID: UUID? = nil) {
-        guard actionID == nil || actionID == operationID else { return }
-        guard isActive, isPaneOwner(), canPresentAuthentication(), chromePresentation.begin(nil) else { return }
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        preview = Preview(url: nil, browser: true, originSession: sessionName, originWorktree: worktree, originHost: host)
+        guard canBegin(actionID: actionID) else { return }
+        guard isPaneOwner() else {
+            error = "Take control of this pane before opening its remote browser."
+            return
+        }
+        present(Preview(url: nil, browser: true, originSession: sessionName, originWorktree: worktree, originHost: host), offerID: nil)
     }
 
-    private func deferAuthenticationPresentation() {
-        if let id = chromePresentation.deferCurrent() { coordinator.deferAuthenticationOffer(id) }
+    private func canBegin(actionID: UUID? = nil, automatically: Bool = false, offerID: UUID? = nil) -> Bool {
+        let reason: String?
+        if let actionID, actionID != operationID {
+            reason = "This browser action changed. Tap Browser again to refresh it."
+        } else if !isActive || !isPaneFocused || !browserConnectionReady || !canPresentAuthentication() {
+            reason = "Reconnect and unlock the originating pane, then tap Browser again."
+        } else if preview != nil || !chromePresentation.canPresent {
+            reason = "A resource is opening or closing. Wait a moment and tap Browser again."
+        } else { reason = nil }
+        guard let reason else { return true }
+        if let offerID { coordinator.deferAuthenticationOffer(offerID) }
+        if !automatically { error = reason }
+        return false
+    }
+
+    private func present(_ item: Preview, offerID: UUID?) {
+        guard chromePresentation.begin(offerID, presentationID: item.id) else {
+            error = "A resource is opening or closing. Wait a moment and tap Browser again."
+            if let offerID { coordinator.deferAuthenticationOffer(offerID) }
+            return
+        }
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        preview = item
+        showingPreview = true
+    }
+
+    private func markMounted(_ item: Preview) -> Bool {
+        guard preview?.id == item.id else { return false }
+        guard isActive || chromePresentation.isMounted, !item.browser || (isPaneFocused && isPaneOwner()) else {
+            cancelPresentation()
+            return false
+        }
+        return chromePresentation.markMounted(item.id)
+    }
+
+    private func finishPresentation(_ id: UUID) {
+        guard chromePresentation.presentationID == id else { return }
+        apply(chromePresentation.finishDismissal(id))
+        preview = nil; showingPreview = false
+        removeCachedFile()
+    }
+
+    private func cancelPresentation(abandon: Bool = false) {
+        guard let id = chromePresentation.presentationID else { return }
+        if let offerID = chromePresentation.deferCurrent() { coordinator.deferAuthenticationOffer(offerID) }
+        showingPreview = false
+        if abandon { apply(chromePresentation.finishDismissal(id)) }
+        else { apply(chromePresentation.cancelPending()) }
+        if chromePresentation.canPresent { preview = nil; removeCachedFile() }
+    }
+
+    private func apply(_ dismissal: ChromeOfferPresentation.Dismissal?) {
+        switch dismissal {
+        case .dismissed(let id): coordinator.dismissAuthenticationOffer(id)
+        case .deferred(let id): coordinator.deferAuthenticationOffer(id)
+        case nil: break
+        }
     }
 
     private func checkOwnership() {
         if isActive, hasOwnershipSnapshot, !isPaneOwner(), preview?.browser == true {
-            deferAuthenticationPresentation(); preview = nil
+            cancelPresentation()
         }
     }
 
@@ -231,8 +319,12 @@ struct RemoteOpenButton: View {
     }
 
     private func open(_ offer: RemoteOpenOffer, automatically: Bool = false, actionID: UUID? = nil) {
-        guard actionID == nil || actionID == operationID,
-              offers.contains(offer), isActive, chromePresentation.canPresent else { return }
+        guard canBegin(actionID: actionID, automatically: automatically, offerID: offer.id) else { return }
+        guard offers.contains(offer) else {
+            coordinator.deferAuthenticationOffer(offer.id)
+            if !automatically { error = "This resource is no longer available. Wait for the list to refresh and tap Browser again." }
+            return
+        }
         cancelOperation()
         let currentOperation = operationID
         if let url = offer.url {
@@ -254,16 +346,14 @@ struct RemoteOpenButton: View {
                     if !automatically { error = "Take control of the originating pane before starting sign-in." }
                     return
                 }
-                guard chromePresentation.begin(offer.id) else { return }
-                preview = Preview(url: url, browser: true, originSession: sessionName, originWorktree: worktree,
-                                  chromeLaunch: ChromeTabInitialLaunch(offer: offer), originHost: host)
+                present(Preview(url: url, browser: true, originSession: sessionName, originWorktree: worktree,
+                                chromeLaunch: ChromeTabInitialLaunch(offer: offer), originHost: host), offerID: offer.id)
                 return
             }
-            guard chromePresentation.begin(offer.id) else { return }
             if isPaneOwner() {
-                preview = Preview(url: url, browser: true, originSession: sessionName, originWorktree: worktree,
-                                  chromeLaunch: ChromeTabInitialLaunch(offer: offer), originHost: host)
-            } else { preview = Preview(url: url, originHost: host) }
+                present(Preview(url: url, browser: true, originSession: sessionName, originWorktree: worktree,
+                                chromeLaunch: ChromeTabInitialLaunch(offer: offer), originHost: host), offerID: offer.id)
+            } else { present(Preview(url: url, originHost: host), offerID: offer.id) }
             return
         }
         isDownloading = true
@@ -271,7 +361,7 @@ struct RemoteOpenButton: View {
             defer { if operationID == currentOperation { isDownloading = false } }
             do {
                 let file = try await FilePreviewDownload.download(offer) { offset in
-                    let response = try await coordinator.sendWorktreeManagement(
+                    let response = try await sendWorktreeManagement(
                         .openResource(worktreeID: worktree, request: .read(id: offer.id, offset: offset)),
                         to: host
                     )
@@ -282,10 +372,14 @@ struct RemoteOpenButton: View {
                     }
                 }
                 guard isActive, !Task.isCancelled, operationID == currentOperation else { FilePreviewDownload.remove(file); return }
-                guard chromePresentation.begin(nil) else { FilePreviewDownload.remove(file); return }
+                guard chromePresentation.canPresent, preview == nil else {
+                    FilePreviewDownload.remove(file)
+                    self.error = "Another resource is opening. Tap Browser again after it closes."
+                    return
+                }
                 removeCachedFile()
                 cachedFile = file
-                preview = Preview(url: file)
+                present(Preview(url: file), offerID: nil)
             } catch {
                 if !Task.isCancelled, operationID == currentOperation { self.error = error.localizedDescription }
             }
@@ -295,6 +389,73 @@ struct RemoteOpenButton: View {
     private struct PreviewError: LocalizedError {
         let message: String
         var errorDescription: String? { message }
+    }
+}
+
+/// Each sheet owns immutable callbacks, even if a pending request is abandoned
+/// and its replacement is reserved before SwiftUI delivers the old callbacks.
+private struct ResourcePreviewSheet<Content: View>: View {
+    @Binding var isPresented: Bool
+    let didMount: () -> Bool
+    let didDismiss: () -> Void
+    let didDetach: () -> Void
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        ResourcePreviewAttachment(didDetach: didDetach).frame(width: 0, height: 0)
+            .sheet(isPresented: $isPresented, onDismiss: didDismiss) {
+                MountedResourceContent(didMount: didMount, content: content())
+            }
+    }
+}
+
+/// Actual host removal ends a reservation. Covering the source with a system
+/// modal or changing scene activity does not remove its hosting controller.
+private struct ResourcePreviewAttachment: UIViewControllerRepresentable {
+    let didDetach: () -> Void
+    func makeUIViewController(context: Context) -> Anchor { Anchor() }
+    func updateUIViewController(_ anchor: Anchor, context: Context) { anchor.didDetach = didDetach }
+    static func dismantleUIViewController(_ anchor: Anchor, coordinator: ()) {
+        let callback = anchor.didDetach
+        anchor.didDetach = nil
+        Task { @MainActor in callback?() }
+    }
+
+    final class Anchor: UIViewController {
+        var didDetach: (() -> Void)?
+        private weak var attachedWindow: UIWindow?
+        private var wasAttached = false
+        override func loadView() {
+            let view = AttachmentView()
+            view.windowChanged = { [weak self] in self?.windowChanged() }
+            self.view = view
+        }
+        private func windowChanged() {
+            if let window = view.window { attachedWindow = window; wasAttached = true; return }
+            guard wasAttached else { return }
+            // The parent chain finishes changing after didMoveToWindow(nil).
+            Task { @MainActor [weak self] in
+                guard let self, view.window == nil else { return }
+                if let window = attachedWindow {
+                    var root: UIViewController = self
+                    while let parent = root.parent { root = parent }
+                    guard root !== window.rootViewController else { return }
+                }
+                didDetach?()
+            }
+        }
+    }
+    private final class AttachmentView: UIView {
+        var windowChanged: (() -> Void)?
+        override func didMoveToWindow() { super.didMoveToWindow(); windowChanged?() }
+    }
+}
+
+private struct MountedResourceContent<Content: View>: View {
+    let didMount: () -> Bool
+    let content: Content
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        content.onAppear { if !didMount() { dismiss() } }
     }
 }
 

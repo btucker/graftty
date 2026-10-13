@@ -1,16 +1,24 @@
 import Foundation
 
-/// A nil sheet binding can precede onDismiss. Reserve its identity until that callback.
+/// Reservations carry a sheet identity distinct from the immutable host offer ID.
 struct ChromeOfferPresentation {
     enum Dismissal: Equatable { case dismissed(UUID), deferred(UUID) }
+    private(set) var presentationID: UUID?
+    private(set) var isMounted = false
     private var offerID: UUID?
     private var deferred = false
-    private var presenting = false
-    var canPresent: Bool { !presenting }
+    var canPresent: Bool { presentationID == nil }
 
-    mutating func begin(_ id: UUID?) -> Bool {
+    mutating func begin(_ id: UUID?, presentationID: UUID = UUID()) -> Bool {
         guard canPresent else { return false }
-        offerID = id; deferred = false; presenting = true
+        self.presentationID = presentationID
+        offerID = id; deferred = false; isMounted = false
+        return true
+    }
+
+    mutating func markMounted(_ id: UUID) -> Bool {
+        guard presentationID == id, !deferred else { return false }
+        isMounted = true
         return true
     }
 
@@ -19,9 +27,16 @@ struct ChromeOfferPresentation {
         return offerID
     }
 
-    mutating func finishDismissal() -> Dismissal? {
+    mutating func cancelPending() -> Dismissal? {
+        guard !isMounted, let id = presentationID else { return nil }
+        deferred = true
+        return finishDismissal(id)
+    }
+
+    mutating func finishDismissal(_ id: UUID) -> Dismissal? {
+        guard presentationID == id else { return nil }
         let result = offerID.map { deferred ? Dismissal.deferred($0) : Dismissal.dismissed($0) }
-        offerID = nil; deferred = false; presenting = false
+        presentationID = nil; offerID = nil; deferred = false; isMounted = false
         return result
     }
 }

@@ -3254,6 +3254,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-2.18** While the terminal browser control is visible, the application shall use the same primary glyph, plain button and translucent circle styling as Back while preserving its available-resource badge, busy indication and accessibility.
 
+**CHROME-2.19** When a browser presentation is canceled before its sheet mounts, the application shall release its reservation and defer the same offer for an authorized retry without requiring a dismissal callback.
+
+**CHROME-2.20** If an abandoned browser sheet sends a late mount or dismissal callback, then the application shall ignore that callback without releasing or consuming its replacement presentation.
+
+**CHROME-2.21** If a manual browser action is rejected for unavailable presentation or stale pane authorization, then the application shall display actionable feedback instead of silently ignoring the tap.
+
+**CHROME-2.22** When the badged browser control has an abandoned presentation reservation, the application shall allow an authorized retry to present the originating browser after foreground or follower-to-owner transitions.
+
+**CHROME-2.23** When the user taps the globe or its visible available-resource badge, the application shall invoke the same browser action.
+
 ### CHROME-3.x — Authenticated transport
 
 **CHROME-3.1** When a paired peer opens the Chrome subsystem, the application shall await host acceptance, enforce its management capability, pass its authenticated identity, and carry bounded JPEG responses over framed SSH.

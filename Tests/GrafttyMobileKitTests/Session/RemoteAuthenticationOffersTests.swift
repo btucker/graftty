@@ -146,11 +146,13 @@ struct RemoteAuthenticationOffersTests {
         let interruptedID = presentation.deferCurrent()
         let interrupted = try #require(interruptedID)
         tracker.deferPresentation(of: interrupted)
-        let deferred = presentation.finishDismissal()
+        let interruptedSheet = try #require(presentation.presentationID)
+        let deferred = presentation.finishDismissal(interruptedSheet)
         #expect(deferred == .deferred(offer.id))
         #expect(tracker.consume([offer], sessionName: "pane", ownerDeviceID: owner) == offer)
         #expect(presentation.begin(offer.id) == true)
-        if case .dismissed(let id) = presentation.finishDismissal() { tracker.dismiss(id) }
+        let completedSheet = try #require(presentation.presentationID)
+        if case .dismissed(let id) = presentation.finishDismissal(completedSheet) { tracker.dismiss(id) }
         #expect(tracker.consume([offer], sessionName: "pane", ownerDeviceID: owner) == nil,
                 "Done remains consumed after a new view/presentation is created")
     }
@@ -254,16 +256,16 @@ private final class AmbiguousOfferDriver: ChromeTabChannelDriver, @unchecked Sen
     @Test("@spec CHROME-2.7: While a Chrome sign-in sheet is closing, the application shall retain its presentation identity, defer automatic offers across scene interruptions, and complete only the dismissed offer before accepting another.")
     func dismissalCannotConsumeReplacementOffer() {
         var presentation = ChromeOfferPresentation()
-        let first = UUID(), second = UUID()
-        #expect(presentation.begin(first) == true)
+        let first = UUID(), second = UUID(), firstSheet = UUID(), secondSheet = UUID()
+        #expect(presentation.begin(first, presentationID: firstSheet) == true)
         // Scene readiness changes stop polling and transport without ending presentation.
         #expect(!presentation.canPresent)
         #expect(presentation.begin(second) == false)
-        #expect(presentation.finishDismissal() == .dismissed(first))
-        #expect(presentation.begin(second) == true)
+        #expect(presentation.finishDismissal(firstSheet) == .dismissed(first))
+        #expect(presentation.begin(second, presentationID: secondSheet) == true)
         #expect(presentation.deferCurrent() == second)
         #expect(!presentation.canPresent)
-        #expect(presentation.finishDismissal() == .deferred(second))
+        #expect(presentation.finishDismissal(secondSheet) == .deferred(second))
         #expect(presentation.canPresent)
     }
 
@@ -449,5 +451,39 @@ private final class ViewportDriver: ChromeTabChannelDriver, @unchecked Sendable 
         #else
         return Data([1])
         #endif
+    }
+}
+
+struct ChromeOfferPresentationTests {
+    @Test("@spec CHROME-2.19: When a browser presentation is canceled before its sheet mounts, the application shall release its reservation and defer the same offer for an authorized retry without requiring a dismissal callback.", arguments: [UUID(), nil] as [UUID?])
+    func canceledPendingSheetIsRetryable(offer: UUID?) {
+        var presentation = ChromeOfferPresentation()
+        let first = UUID(), retry = UUID()
+        let expected = offer.map(ChromeOfferPresentation.Dismissal.deferred)
+        #expect(presentation.begin(offer, presentationID: first) == true)
+        #expect(presentation.cancelPending() == expected)
+        #expect(presentation.canPresent)
+        #expect(presentation.begin(offer, presentationID: retry) == true)
+        #expect(presentation.markMounted(retry) == true)
+        #expect(presentation.cancelPending() == nil)
+        #expect(!presentation.canPresent)
+        #expect(presentation.deferCurrent() == offer)
+        #expect(presentation.finishDismissal(retry) == expected)
+        #expect(presentation.canPresent)
+    }
+
+    @Test("@spec CHROME-2.20: If an abandoned browser sheet sends a late mount or dismissal callback, then the application shall ignore that callback without releasing or consuming its replacement presentation.")
+    func staleSheetCallbacksCannotAffectReplacement() {
+        var presentation = ChromeOfferPresentation()
+        let firstOffer = UUID(), secondOffer = UUID(), first = UUID(), second = UUID()
+        #expect(presentation.begin(firstOffer, presentationID: first) == true)
+        _ = presentation.cancelPending()
+        #expect(presentation.begin(secondOffer, presentationID: second) == true)
+        #expect(presentation.markMounted(first) == false)
+        #expect(presentation.finishDismissal(first) == nil)
+        #expect(!presentation.canPresent)
+        #expect(presentation.presentationID == second)
+        #expect(presentation.markMounted(second) == true)
+        #expect(presentation.finishDismissal(second) == .dismissed(secondOffer))
     }
 }
