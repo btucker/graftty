@@ -42,6 +42,7 @@ final class ChromeTabViewerModel {
     private var lastAppliedOrdinal = 0
     private var frameSequence: UInt64?
     private var frameTabID: String?
+    private var reconnectTabID: String?
 
     func toggleKeyboard() { keyboardPresented.toggle() }
 
@@ -82,7 +83,9 @@ final class ChromeTabViewerModel {
 
     func run(target: String, initialLaunch: ChromeTabInitialLaunch?, onLaunch: () -> Void,
              makeDriver: () async throws -> any ChromeTabChannelDriver) async {
+        let selectedBeforeReconnect = state.selectedTabID ?? reconnectTabID
         close()
+        reconnectTabID = selectedBeforeReconnect
         let epoch = generation
         do {
             let driver = try await makeDriver()
@@ -106,12 +109,14 @@ final class ChromeTabViewerModel {
             }
             let listed = await send(.list, target: target)
             guard listed, !Task.isCancelled, generation == epoch else { return }
-            if let initialLaunch {
+            if let initialLaunch, case .launchOffer = initialLaunch.action {
                 let launched = await send(initialLaunch.action, target: target)
                 guard !Task.isCancelled, generation == epoch else { return }
                 if launched, initialLaunch.accept(.init(state: state)) { onLaunch() }
                 else { initialLaunchError = error ?? "Could not start sign-in. Retry or select an existing tab." }
-            } else if let first = state.tabs.first?.id { await send(.select(tabID: first), target: target) }
+            } else if let selected = state.tabs.first(where: { $0.id == (selectedBeforeReconnect ?? initialLaunch?.action.tabID) })?.id ?? state.tabs.first?.id {
+                if await send(.select(tabID: selected), target: target), let initialLaunch, initialLaunch.accept(.init(state: state)) { onLaunch() }
+            }
             while !Task.isCancelled, generation == epoch {
                 try await Task.sleep(for: .milliseconds(250))
                 if pendingCount == 0 {
@@ -162,6 +167,7 @@ final class ChromeTabViewerModel {
             if pendingSelectionOrdinal == ordinal { pendingSelectionOrdinal = nil }
             guard let next = reply.state else { invalidateFrame(); return false }
             state = next
+            if reply.error == nil, let selected = next.selectedTabID { reconnectTabID = selected }
             updateImage(next)
             scheduleResize(target: target)
             return reply.error == nil
@@ -211,7 +217,16 @@ final class ChromeTabViewerModel {
         frameInputEnabled = true
     }
 
+    func suspend() {
+        let retained = state
+        let selected = state.selectedTabID ?? reconnectTabID
+        close()
+        state = retained
+        reconnectTabID = selected
+    }
+
     func close() {
+        reconnectTabID = nil
         generation = UUID(); resizeTask?.cancel(); resizeTask = nil
         client?.cancel(); client = nil; isConnected = false; pendingSelectionOrdinal = nil
         invalidateFrame(); state = .init(); pendingCount = 0; inputCount = 0

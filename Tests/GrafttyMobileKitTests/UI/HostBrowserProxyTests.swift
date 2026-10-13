@@ -2,6 +2,7 @@
 import Foundation
 import GrafttyRemoteClient
 import Network
+import Observation
 import SafariServices
 import SwiftUI
 import Testing
@@ -265,6 +266,120 @@ struct HostBrowserProxyTests {
         #expect(anchor.presentedViewController === browserSheet)
         #expect(local.session.url == nil)
 
+    }
+
+    @Test("@spec CHROME-4.6: When an established Local browser backgrounds or waits for foreground transport reconnection, the application shall retain the same Safari presentation and callback listener, resume callbacks through the current host connection when ready, and cancel unfinished Local preparation.", arguments: [false, true])
+    func localSafariSurvivesBackgroundAndReconnect(loopback: Bool) async throws {
+        let local = LocalBrowserController()
+        let state = BrowserLifecycleState()
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        let host = UIHostingController(rootView: BrowserLifecycleFixture(state: state, local: local))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { local.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !local.allowed, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        try #require(local.allowed)
+        let url = URL(string: loopback ? "http://127.0.0.1:32186/" : "https://example.com")!
+        local.open(url: url, hostID: UUID(), makeTunnel: {
+            let generation = state.generation
+            return LocalBrowserTunnel(isConnected: { await MainActor.run { state.generation == generation } },
+                                      connect: { socket, _, _, _ in
+                await MainActor.run { state.lastConnected = generation }
+                try await BrowserProxy.send(Data("alive".utf8), to: socket)
+                socket.cancel()
+            })
+        }, authenticate: { .init(url: $0, callbackHost: "localhost") }, isPaneOwner: { state.owner })
+        while host.presentedViewController == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        let safari = try #require(host.presentedViewController as? SFSafariViewController)
+        state.active = false; state.ready = false; state.owner = false
+        state.generation += 1
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(local.session.url == url)
+        #expect(Bool(host.presentedViewController === safari))
+        state.active = true
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(local.session.url == url)
+        state.owner = true; state.ready = true
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(local.allowed && local.session.url == url)
+        #expect(Bool(host.presentedViewController === safari))
+        if loopback {
+            let socket = NWConnection(host: "127.0.0.1", port: 32186, using: .tcp)
+            socket.start(queue: DispatchQueue(label: "graftty.safari.resumed-callback.test"))
+            defer { socket.cancel() }
+            #expect(try await Self.receive(5, from: socket) == Data("alive".utf8))
+            #expect(state.lastConnected == state.generation)
+        }
+        safari.delegate?.safariViewControllerDidFinish?(safari)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(local.session.url == nil)
+        // Suspension cancels preparation rather than publishing a late approval.
+        var approval: CheckedContinuation<WorktreePortClient.AuthenticationPreview, Never>?
+        let authorization = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A32187%2Fcallback")!
+        local.open(url: authorization, hostID: UUID(), makeTunnel: {
+            Issue.record("Canceled preparation must not bind a callback listener.")
+            return nil
+        }, authenticate: { _ in await withCheckedContinuation { approval = $0 } }, isPaneOwner: { state.owner })
+        let approvalDeadline = ContinuousClock.now + .seconds(3)
+        while approval == nil, ContinuousClock.now < approvalDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        let pending = try #require(approval)
+        state.active = false; state.ready = false
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!local.session.preparing)
+        pending.resume(returning: .init(url: authorization, callbackHost: "localhost"))
+        state.active = true; state.ready = true
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(local.session.url == nil)
+
+    }
+
+    @Test("@spec CHROME-4.7: While multiple Local browsers share a Mac callback endpoint, the application shall skip a suspended browser's retained connector and forward through an active browser before writing socket data.", .timeLimit(.minutes(1)))
+    func suspendedLocalLeaseFallsBackToActiveWindow() async throws {
+        let first = LocalBrowserController(), second = LocalBrowserController()
+        first.allowed = true; second.allowed = true
+        defer { first.stop(); second.stop() }
+        let url = URL(string: "http://127.0.0.1:32188/")!, hostID = UUID()
+        let tunnel = LocalBrowserTunnel(isConnected: { true }, connect: { socket, _, _, _ in
+            try await BrowserProxy.send(Data("alive".utf8), to: socket)
+            socket.cancel()
+        })
+        for local in [first, second] {
+            local.open(url: url, hostID: hostID, makeTunnel: { tunnel },
+                       authenticate: { .init(url: $0, callbackHost: "localhost") }, isPaneOwner: { true })
+            let deadline = ContinuousClock.now + .seconds(3)
+            while local.session.url == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            try #require(local.session.url == url)
+        }
+        second.allowed = false
+        let socket = NWConnection(host: "127.0.0.1", port: 32188, using: .tcp)
+        socket.start(queue: DispatchQueue(label: "graftty.safari.active-window.test"))
+        defer { socket.cancel() }
+        #expect(try await Self.receive(5, from: socket) == Data("alive".utf8))
+        #expect(second.session.url == url)
+    }
+
+    @MainActor @Observable
+    final class BrowserLifecycleState {
+        var active = true
+        var ready = true
+        var owner = true
+        var generation = 1
+        var lastConnected: Int?
+    }
+    private struct BrowserLifecycleFixture: View {
+        let state: BrowserLifecycleState
+        let local: LocalBrowserController
+        var body: some View {
+            BrowserModeView(target: "pane", hostID: UUID(), connectionProvider: { nil },
+                            originalURL: nil, authenticate: { .init(url: $0, callbackHost: "localhost") },
+                            isPaneOwner: { state.owner }, paneReady: state.ready, local: local)
+                .environment(\.scenePhase, state.active ? .active : .background)
+        }
     }
 
     @Test("@spec CHROME-4.4: If a canceled Local attempt resumes after another explicit attempt opens its callback, then the application shall preserve the replacement listener and ignore the obsolete transport result.", .timeLimit(.minutes(1)))

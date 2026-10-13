@@ -19,6 +19,34 @@ struct ChromeTabViewerTests {
         #expect(ChromeTabCoordinates.normalized(.zero, in: .zero) == nil)
     }
 
+    @MainActor
+    @Test("@spec CHROME-2.26: When the mobile remote browser reconnects after suspension, the application shall restore its selected tab if it still exists and shall not repeat a successfully acknowledged initial URL launch.", arguments: [false, true])
+    func reconnectRestoresSelectionWithoutRelaunch(initialURL: Bool) async throws {
+        let model = ChromeTabViewerModel()
+        let driver = ResumeSelectionDriver()
+        let launch = initialURL ? ChromeTabInitialLaunch(id: UUID(), url: "https://example.com/first") : nil
+        let first = Task { await model.run(target: "pane", initialLaunch: launch, onLaunch: {}, makeDriver: { driver }) }
+        defer { first.cancel(); model.close() }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while model.state.selectedTabID == nil || model.busy, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        try #require(model.state.selectedTabID != nil && !model.busy)
+        #expect(await model.send(.select(tabID: "second"), target: "pane"))
+        first.cancel()
+        await first.value
+        model.suspend()
+        #expect(!model.isConnected && model.state.selectedTabID == "second")
+        struct ReconnectFailure: Error {}
+        await model.run(target: "pane", initialLaunch: launch, onLaunch: {}, makeDriver: { throw ReconnectFailure() })
+        let second = Task { await model.run(target: "pane", initialLaunch: launch, onLaunch: {}, makeDriver: { driver }) }
+        defer { second.cancel(); model.close() }
+        let resumedDeadline = ContinuousClock.now + .seconds(3)
+        while driver.listCount < 2 || model.state.selectedTabID == nil || model.busy, ContinuousClock.now < resumedDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(model.state.selectedTabID == "second")
+        #expect(driver.launchCount == (initialURL ? 1 : 0))
+        second.cancel()
+        await second.value
+    }
+
     @Test("Adaptive portrait frames map their actual dimensions and reject legacy letterboxes")
     func mapsPortraitFrames() {
         let portrait = CGSize(width: 390, height: 700)
@@ -27,6 +55,32 @@ struct ChromeTabViewerTests {
         #expect(ChromeTabCoordinates.normalized(CGPoint(x: 195, y: 10), in: portrait) == nil)
         #expect(ChromeTabCoordinates.normalized(.zero, in: portrait, imageSize: .zero) == nil)
     }
+}
+
+private final class ResumeSelectionDriver: ChromeTabChannelDriver, @unchecked Sendable {
+    private let lock = NSLock()
+    private var lists = 0
+    private var launches = 0
+    private var selected: String?
+    var listCount: Int { locked { lists } }
+    var launchCount: Int { locked { launches } }
+    func open() async throws {}
+    func close() {}
+    func send(_ request: ChromeTabRequest) async throws -> ChromeTabResponse {
+        locked {
+            switch request.action {
+            case .list: lists += 1; selected = nil
+            case .select(let id): selected = id
+            case .launch, .launchOffer: launches += 1; selected = "first"
+            default: break
+            }
+            return .init(state: .init(tabs: [
+                .init(id: "first", title: "First", url: "https://example.com/first"),
+                .init(id: "second", title: "Second", url: "https://example.com/second")
+            ], selectedTabID: selected))
+        }
+    }
+    private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
 }
 
 #if canImport(UIKit)
@@ -44,12 +98,35 @@ struct ChromeTabViewerRenderingTests {
 
         let views = descendants(of: fixture.host.view)
         #expect(views.compactMap { $0 as? UITextField }.isEmpty)
-        let modes = try #require(views.compactMap { $0 as? UISegmentedControl }.first)
-        #expect(modes.numberOfSegments == 2)
-        #expect(modes.titleForSegment(at: 0) == "Local")
-        #expect(modes.titleForSegment(at: 1) == "Remote")
-        #expect(modes.selectedSegmentIndex == 1)
-        #expect(modes.bounds.height <= 44)
+        #expect(views.compactMap { $0 as? UISegmentedControl }.isEmpty)
+    }
+
+    @Test("@spec CHROME-2.25: While the selected remote HTTP(S) page has no rendered frame or a current remote browser error, the application shall hide the Local/Remote toggle; when that page renders successfully, the application shall offer Local only through the toggle without a Try Local button or explanatory copy.")
+    func localToggleWaitsForRenderedRemotePage() async throws {
+        let model = ChromeTabViewerModel()
+        let viewer = ChromeTabViewer(target: "pane", connectionProvider: { nil }, paneReady: false,
+                                     onChooseLocal: { _ in }, localError: "Local browser unavailable.", model: model)
+        let fixture = try makeFixture(viewer)
+        defer { close(fixture) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.isEmpty)
+        model.state = .init(tabs: [.init(id: "page", title: "Page", url: "https://example.com")], selectedTabID: "page")
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.isEmpty)
+        model.initialLaunchError = "Earlier launch was ambiguous. Select an existing tab."
+        model.image = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 240)).image { _ in }
+        try await Task.sleep(for: .milliseconds(100))
+        let modes = try #require(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.first)
+        #expect(modes.numberOfSegments == 2 && modes.selectedSegmentIndex == 1)
+        #expect(modes.titleForSegment(at: 0) == "Local" && modes.titleForSegment(at: 1) == "Remote")
+        #expect(!descendants(of: fixture.host.view).contains { $0.accessibilityLabel == "Try Local" })
+        model.error = "Remote browser failed."
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.isEmpty)
+        model.error = nil
+        model.state.tabs[0].url = "about:blank"
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.isEmpty)
     }
 
     @Test("@spec CHROME-2.10: When the user explicitly chooses Local in the remote browser, the application shall request local presentation once without choosing Local automatically when the remote view appears.")
@@ -59,15 +136,16 @@ struct ChromeTabViewerRenderingTests {
                                    url: URL(string: "https://example.com/authorize?state=unchanged"), paneSessionName: "pane")
         let launch = ChromeTabInitialLaunch(offer: offer)
         let model = ChromeTabViewerModel()
+        let driver = RenderedPageDriver(page: UIImage())
         let viewer = ChromeTabViewer(target: "pane", connectionProvider: { nil }, initialLaunch: launch,
-                                     paneReady: false, onChooseLocal: { requests.append($0) }, model: model)
-        let fixture = try makeFixture(viewer)
+                                     onChooseLocal: { requests.append($0) }, model: model, driverProvider: { driver })
+        let fixture = try makeFixture(viewer, scenePhase: .active)
         defer { close(fixture) }
-        try await Task.sleep(for: .milliseconds(100))
+        let frameDeadline = ContinuousClock.now + .seconds(3)
+        while model.image == nil, ContinuousClock.now < frameDeadline { try await Task.sleep(for: .milliseconds(20)) }
+        try #require(model.image != nil)
         fixture.host.view.layoutIfNeeded()
-        let current = URL(string: "https://example.com/challenge")!
-        model.state = .init(tabs: [.init(id: "page", title: "Challenge", url: current.absoluteString)], selectedTabID: "page",
-                            canGoBack: false, canGoForward: false)
+        let current = URL(string: "https://example.com/sign-in")!
         #expect(requests.isEmpty)
         let modes = try #require(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.first)
         #expect(modes.isEnabled)
@@ -76,7 +154,7 @@ struct ChromeTabViewerRenderingTests {
         let deadline = ContinuousClock.now + .seconds(2)
         while requests.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(requests == [current])
-        #expect(launch.action == .launchOffer(id: offer.id, url: offer.url!.absoluteString))
+        #expect(launch.action == .select(tabID: "page"))
         #expect(descendants(of: fixture.host.view).compactMap { $0 as? UITextField }.isEmpty)
     }
 
@@ -141,7 +219,7 @@ struct ChromeTabViewerRenderingTests {
         try await Task.sleep(for: .seconds(3))
     }
 
-    @Test("@spec CHROME-2.14: While a host Chrome tab selection or navigation awaits acknowledgment, the application shall disable Local browser selection and use the acknowledged selected tab's URL when Local is chosen afterward.")
+    @Test("@spec CHROME-2.14: While a host Chrome tab selection or navigation awaits acknowledgment, the application shall prevent Local browser selection and use the acknowledged selected tab's URL when Local is chosen afterward.")
     func localSelectionWaitsForHostAcknowledgment() async throws {
         let driver = LocalChoiceDriver(), model = ChromeTabViewerModel()
         var requests: [URL?] = []
@@ -162,16 +240,13 @@ struct ChromeTabViewerRenderingTests {
         try #require(driver.hasHeldSelection)
         try await Task.sleep(for: .milliseconds(50))
         fixture.host.view.layoutIfNeeded()
-        let modes = try #require(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.first)
-        #expect(!modes.isEnabled)
-        modes.selectedSegmentIndex = 0
-        modes.sendActions(for: .valueChanged)
-        try await Task.sleep(for: .milliseconds(50))
+        #expect(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.isEmpty)
         #expect(requests.isEmpty)
         driver.releaseSelection()
         #expect(await selection.value)
         try await Task.sleep(for: .milliseconds(50))
         fixture.host.view.layoutIfNeeded()
+        let modes = try #require(descendants(of: fixture.host.view).compactMap { $0 as? UISegmentedControl }.first)
         #expect(modes.isEnabled)
         modes.selectedSegmentIndex = 0
         modes.sendActions(for: .valueChanged)
@@ -399,6 +474,12 @@ private final class LocalChoiceDriver: ChromeTabChannelDriver, @unchecked Sendab
         continuation?.resume(throwing: CancellationError())
     }
     func send(_ request: ChromeTabRequest) async throws -> ChromeTabResponse {
+        let bytes = await MainActor.run {
+            let format = UIGraphicsImageRendererFormat(); format.scale = 1
+            return UIGraphicsImageRenderer(size: CGSize(width: 1024, height: 768), format: format)
+                .image { context in UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1024, height: 768)) }
+                .jpegData(compressionQuality: 0.5)!
+        }
         let plan = locked { () -> (ChromeTabResponse, Bool) in
             var shouldHold = false
             if case .select(let id) = request.action {
@@ -407,7 +488,7 @@ private final class LocalChoiceDriver: ChromeTabChannelDriver, @unchecked Sendab
             }
             return (.init(state: .init(tabs: [.init(id: selected, title: selected,
                                                   url: "https://example.com/" + selected, urlTruncated: false)],
-                                      selectedTabID: selected)), shouldHold)
+                                      selectedTabID: selected, frame: .init(tabID: selected, jpeg: bytes, sequence: 1))), shouldHold)
         }
         if !plan.1 { return plan.0 }
         return try await withCheckedThrowingContinuation { continuation in
