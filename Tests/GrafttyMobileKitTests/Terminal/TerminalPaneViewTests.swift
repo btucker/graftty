@@ -319,9 +319,10 @@ struct TerminalPaneViewTests {
         #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
     }
 
-    @Test("@spec IOS-6.28: While a hardware arrow key is held in a mobile terminal, the application shall repeat that key after an initial delay and stop repeating on release, cancellation, keyboard ineligibility, focus loss, or dismissal of the agent picker that received the held arrow.", arguments: [UIKeyboardHIDUsage.keyboardLeftArrow, .keyboardRightArrow, .keyboardUpArrow, .keyboardDownArrow])
+    @Test("@spec IOS-6.28: While a hardware arrow key is held in a mobile terminal, the application shall use its own repeat scheduler with libghostty's automatic repeat disabled, repeat that key after an initial delay, and stop repeating on release, cancellation, keyboard ineligibility, focus loss, or dismissal of the agent picker that received the held arrow.", arguments: [UIKeyboardHIDUsage.keyboardLeftArrow, .keyboardRightArrow, .keyboardUpArrow, .keyboardDownArrow])
     func heldArrowRepeatsAndStops(usage: UIKeyboardHIDUsage) async throws {
         let container = TerminalInputContainerView(frame: .zero)
+        #expect(!container.terminalView.automaticallyRepeatsHardwareKeys)
         container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
         var delivered = 0
         let press = ArrowTestPress()
@@ -647,6 +648,30 @@ struct TerminalPaneViewTests {
         button.addAction(action, for: .touchUpInside)
         button.sendActions(for: .touchUpInside)
         #expect(opened?.absoluteString == "https://two.example/same")
+    }
+
+    @Test("@spec PORTS-5.18: When a mobile user holds an OAuth sign-in link with a local callback, the application shall offer Sign in via Mac without opening unrelated links or stale menu targets.")
+    func authLinksOfferWorktreeSignIn() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        container.terminalView.contentScaleFactor = 1
+        container.terminalDidResize(TerminalGridMetrics(
+            columns: 200, rows: 1, widthPixels: 2000, heightPixels: 20,
+            cellWidthPixels: 10, cellHeightPixels: 20
+        ))
+        let url = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A43210%2Fcallback&state=test")!
+        var opened: [URL] = []
+        container.openAuthenticationURL = { opened.append($0) }
+        container.prepareLongPressMenu(at: CGPoint(x: 105, y: 10), text: url.absoluteString)
+        let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
+            .children.compactMap { $0 as? UIAction }.first { $0.title == "Sign in via Mac" })
+        let button = UIButton()
+        button.addAction(action, for: .touchUpInside)
+        button.sendActions(for: .touchUpInside)
+        #expect(opened == [url])
+        container.prepareLongPressMenu(at: CGPoint(x: 105, y: 10), text: "https://example.com/ordinary-link")
+        #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Sign in via Mac"))
+        button.sendActions(for: .touchUpInside)
+        #expect(opened == [url])
     }
 
     @Test("When the terminal surface is replaced, selection and cached link targets are discarded")

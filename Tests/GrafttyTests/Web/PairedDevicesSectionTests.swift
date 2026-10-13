@@ -60,7 +60,7 @@ struct PairedDevicesSectionPerformRemoveTests {
         )
     }
 
-    @Test("@spec PORTS-5.13: When the host changes a paired device's port permission, the application shall persist that permission before closing its existing connection, and shall not close a connection after a failed update.")
+    @Test("@spec PORTS-5.33: When the host changes a paired device's port permission, the application shall persist that permission before closing its existing connection, and shall not close a connection after a failed update.")
     func updatesPortPermissionBeforeRevocation() async throws {
         let directory = Self.tempDir()
         defer { try? FileManager.default.removeItem(at: directory) }

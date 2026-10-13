@@ -3,21 +3,51 @@ import Foundation
 import Network
 
 /// A loopback-only, authenticated SOCKS5 listener for one mobile browser sheet.
-/// DNS names are passed unchanged to the paired host.
+/// DNS names are passed unchanged to the paired host. A fixed loopback
+/// forwarder carries one selected host endpoint when WebKit bypasses SOCKS.
 public final class BrowserProxy: @unchecked Sendable {
+    public static let socksSuccessReply = Data([5, 0, 0, 1, 0, 0, 0, 0, 0, 0])
     public let username = UUID().uuidString
     public let password = UUID().uuidString
     private let queue = DispatchQueue(label: "graftty.browser.proxy")
     private let listener: NWListener
     private let connect: @Sendable (NWConnection, String, Int) async throws -> Void
+    private let forwardDestination: (host: String, port: Int)?
     private var ready: CheckedContinuation<UInt16, Error>?
     private var connections: [UUID: NWConnection] = [:]
     private var stopped = false
+    private var started = false
+    private var listenerCancelled = false
+    private var stopWaiters: [CheckedContinuation<Void, Never>] = []
 
-    public init(connect: @escaping @Sendable (NWConnection, String, Int) async throws -> Void) throws {
+    public convenience init(connect: @escaping @Sendable (NWConnection, String, Int) async throws -> Void) throws {
+        try self.init(localHost: "127.0.0.1", localPort: .any, forwardDestination: nil, connect: connect)
+    }
+
+    public convenience init(forwardingTo host: String, port: UInt16, localHost: String? = nil,
+                            connect: @escaping @Sendable (NWConnection, String, Int) async throws -> Void) throws {
+        let normalized = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        let localHost = (localHost ?? host).trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        guard Self.isLoopbackHost(normalized), Self.isLoopbackHost(localHost), port > 0,
+              let localPort = NWEndpoint.Port(rawValue: port) else { throw ProxyError.invalidHandshake }
+        try self.init(localHost: localHost, localPort: localPort,
+                      forwardDestination: (normalized, Int(port)), connect: connect)
+    }
+
+    public static func isLoopbackHost(_ host: String) -> Bool {
+        let host = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if host == "localhost" { return true }
+        if let address = IPv4Address(host) { return address.rawValue.first == 127 }
+        return IPv6Address(host) == IPv6Address.loopback
+    }
+
+    private init(localHost: String, localPort: NWEndpoint.Port,
+                 forwardDestination: (host: String, port: Int)?,
+                 connect: @escaping @Sendable (NWConnection, String, Int) async throws -> Void) throws {
         self.connect = connect
+        self.forwardDestination = forwardDestination
         let parameters = NWParameters.tcp
-        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(localHost), port: localPort)
         listener = try NWListener(using: parameters)
     }
 
@@ -38,16 +68,36 @@ public final class BrowserProxy: @unchecked Sendable {
                         self.ready?.resume(throwing: error)
                         self.ready = nil
                         self.stopOnQueue()
+                    case .cancelled:
+                        self.listenerCancelled = true
+                        self.stopWaiters.forEach { $0.resume() }
+                        self.stopWaiters.removeAll()
                     default: break
                     }
                 }
                 self.listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+                self.started = true
                 self.listener.start(queue: self.queue)
             }
         }
     }
 
     public func stop() { queue.async { self.stopOnQueue() } }
+
+    /// Wait until Network.framework has released the bound endpoint before rebinding it.
+    public func stopAndWait() async {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                if !started || listenerCancelled {
+                    stopOnQueue()
+                    continuation.resume()
+                } else {
+                    stopWaiters.append(continuation)
+                    stopOnQueue()
+                }
+            }
+        }
+    }
 
     private func stopOnQueue() {
         guard !stopped else { return }
@@ -77,6 +127,11 @@ public final class BrowserProxy: @unchecked Sendable {
         Task {
             var connectRequestReceived = false
             do {
+                if let destination = self.forwardDestination {
+                    try await self.connect(connection, destination.host, destination.port)
+                    deadline.cancel()
+                    return
+                }
                 let greeting = try await Self.read(2, from: connection)
                 guard greeting[0] == 5, greeting[1] > 0 else { throw ProxyError.invalidHandshake }
                 let methods = try await Self.read(Int(greeting[1]), from: connection)

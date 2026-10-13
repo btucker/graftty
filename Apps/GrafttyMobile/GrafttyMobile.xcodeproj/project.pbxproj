@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		041BF9199FB26F040781E0F1 /* RemoteHostConnectionLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCEA6370F15FD47532C3E4D8 /* RemoteHostConnectionLoopbackTests.swift */; };
+		0505A5A8BD0FF0B63FEC14D9 /* GrafttyMobileKit in Frameworks */ = {isa = PBXBuildFile; productRef = BB0BD29754E75DAC12BC5F3D /* GrafttyMobileKit */; };
 		09E371CE9DA66BEB41B1DFAD /* AddWorktreeSheetViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B4031DF4D165C5521C42B4 /* AddWorktreeSheetViewTests.swift */; };
 		0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */; };
 		0F0DC07D64128764A6E254A9 /* SessionLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB040F5D6FAA7EDA4C09F34F /* SessionLifecycleTests.swift */; };
@@ -17,11 +18,14 @@
 		1424F3BDEE73AA89A78610F3 /* IPadAppStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B5DBD2CC8F2E2A00F94D044 /* IPadAppStateTests.swift */; };
 		16F9774F4AD6CAB9EB7BA47C /* RootViewSizeClassTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A4E23E7D15FDB354063BF2C /* RootViewSizeClassTests.swift */; };
 		1979A63164CFEDFAA56AD475 /* SessionReconnectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */; };
+		1DF817BE832A427E531A1428 /* RemoteAuthenticationOffersTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE11C4BEF7AC53953B6EEA71 /* RemoteAuthenticationOffersTests.swift */; };
 		23013C727DA7ACAAE5DC93B3 /* FilePreviewDownloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040341B8FB581DF018C96BCC /* FilePreviewDownloadTests.swift */; };
+		25E291BD6878283DECF2801B /* GrafttyMobileTestHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E2D199D4324F6F86505317 /* GrafttyMobileTestHost.swift */; };
 		260F499C5621E4995F3E56C4 /* SurfaceProxyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91C85B2EFEF3B277843C1777 /* SurfaceProxyTests.swift */; };
 		2AE3E873CEBC645A93D9D3EF /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1B4204CA01B233B9F19E518B /* Assets.xcassets */; };
 		2E416266017DFF6D47BFED05 /* BiometricGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */; };
 		3E96C780613389DBC12D8F23 /* TerminalSnapshotCanvasTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10840996E1975837228BFD55 /* TerminalSnapshotCanvasTests.swift */; };
+		47453C7702697742D415A0AB /* HostBrowserProxyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CB56C09547732A7C94AAB02 /* HostBrowserProxyTests.swift */; };
 		480B794EC612E67A6073B77D /* SessionRenderPaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BC9CD23B5D3CA7F71AF6EDC /* SessionRenderPaceTests.swift */; };
 		483FFAA6EA930913E3847B04 /* PanePreviewClientPoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */; };
 		4B38C2405596292D4C4B6686 /* SignalingClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D413CBEB234098C16C875AD8 /* SignalingClientTests.swift */; };
@@ -37,6 +41,7 @@
 		618513DC62CA4653461F5A2D /* SessionWebSocketURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B611132035C165929688C4F /* SessionWebSocketURLTests.swift */; };
 		6423BC64B39FEE6D4D4A3CD1 /* RemoteConnectionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B42AEDB030E5EC0C2629DFD2 /* RemoteConnectionCoordinatorTests.swift */; };
 		64E9C62E3509B5F9F6CE55D5 /* GrafttyMobileKit in Frameworks */ = {isa = PBXBuildFile; productRef = 961E5DC72693D5319AE8805F /* GrafttyMobileKit */; };
+		6600F72F53EE9C925338B369 /* MobileAgentCompletionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09B94F2E87E155BCBDD62F1A /* MobileAgentCompletionTests.swift */; };
 		67FA72D35A82F03F6CF62CB3 /* WorktreeManagementRequestLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 995CDEF66B2812D45A5AB90D /* WorktreeManagementRequestLifecycleTests.swift */; };
 		69A3E70C24956F734A8B75EE /* GrafttyMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E56F1F52D5AD50167862DB5 /* GrafttyMobileApp.swift */; };
 		69F41A1619CE2E9E47C44B7A /* SSHPanesAndControlLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EF293AD452A963492BD9292 /* SSHPanesAndControlLoopbackTests.swift */; };
@@ -58,10 +63,10 @@
 		9FC5E92497F5755C7182F797 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 2E297959F982E90ED939C39C /* LaunchScreen.storyboard */; };
 		A15C2184ACE671D1B5A9E657 /* SSHAuthLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F926FB896E74D9503480EE19 /* SSHAuthLoopbackTests.swift */; };
 		A2A8FAB0407FCC81AF649074 /* TerminalPixelSizeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712112670C0A9DDB567FECDB /* TerminalPixelSizeTests.swift */; };
-		A77DDE00B4FF88B06FF11917 /* HostBrowserProxyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5626A070A0C3905C8C2046 /* HostBrowserProxyTests.swift */; };
 		A9B90654E94B1FE3C676A16F /* TerminalChromeViewportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AA1FECA7E436D882E2E782F /* TerminalChromeViewportTests.swift */; };
 		A9FEA136B7551DDE79950AD5 /* IPadWorktreeNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51649842CE2E7ACBA47F9ACA /* IPadWorktreeNavigationTests.swift */; };
 		AA14A2ACD895768E8B7A2E2B /* HostControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */; };
+		ABC5BF921DEEF66F510A779F /* WorktreePortClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B894D5BB6730A439CDE68122 /* WorktreePortClientTests.swift */; };
 		AE45F85A0C40C5B9135961E1 /* TerminalFontSizeStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145BC9EAEE084FEC37D18D8D /* TerminalFontSizeStoreTests.swift */; };
 		B803FA26B311180F52B5B40D /* HostPickerViewCallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A1E0255EB1F41513A753E8A /* HostPickerViewCallbackTests.swift */; };
 		BB7882D5CC303A99F96AA5D9 /* GhosttyKeybindingsFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD90DFCAF790E3A5A6E4E10 /* GhosttyKeybindingsFetcherTests.swift */; };
@@ -80,6 +85,7 @@
 		E07139A524FE1DC983512192 /* GrafttyRemoteClientExportsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F859A510953425E04054E5 /* GrafttyRemoteClientExportsTests.swift */; };
 		E295FDA42EACEEB0388FA1B6 /* WorktreePickerRefreshContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EE4B20F3DAFB771A60100B3 /* WorktreePickerRefreshContractTests.swift */; };
 		E56BE7F81F6457809FE8C140 /* RemoteConnectionReconnectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F13F27BC36EFE7A30792D643 /* RemoteConnectionReconnectTests.swift */; };
+		E6F53921536905AAFDA87200 /* AgentCompletionsFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F4055E6D96D1E9CAA59BD55 /* AgentCompletionsFetcherTests.swift */; };
 		E7FAFC8C755B2B577CB93505 /* TerminalTrayKeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AD4F463738364C6CE5A5465 /* TerminalTrayKeyTests.swift */; };
 		E9B500A4DC2C81F8D2D09AB5 /* PinnedHostStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF7A5068D34751DE52E6705E /* PinnedHostStoreTests.swift */; };
 		EFF92B38741A91B2DCF46C0C /* VirtualClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 351F85648DBEE2F8B555AE7F /* VirtualClock.swift */; };
@@ -90,9 +96,20 @@
 		FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		750AEE262C5BE02F51200D44 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E6F225A85409AFF3934ED137 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2439EF0F2D077F06C5BC773D;
+			remoteInfo = GrafttyMobileTestHost;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		040341B8FB581DF018C96BCC /* FilePreviewDownloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilePreviewDownloadTests.swift; sourceTree = "<group>"; };
 		04F2A25404F63D1B1570705A /* PagedTerminalCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PagedTerminalCoordinatorTests.swift; sourceTree = "<group>"; };
+		09B94F2E87E155BCBDD62F1A /* MobileAgentCompletionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAgentCompletionTests.swift; sourceTree = "<group>"; };
 		0AA1FECA7E436D882E2E782F /* TerminalChromeViewportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalChromeViewportTests.swift; sourceTree = "<group>"; };
 		0EF293AD452A963492BD9292 /* SSHPanesAndControlLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHPanesAndControlLoopbackTests.swift; sourceTree = "<group>"; };
 		10840996E1975837228BFD55 /* TerminalSnapshotCanvasTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSnapshotCanvasTests.swift; sourceTree = "<group>"; };
@@ -102,14 +119,15 @@
 		1631CB3656B9A78D026B2910 /* WorktreePickerGroupingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreePickerGroupingTests.swift; sourceTree = "<group>"; };
 		194EE3FE3BE63175CDFFFD56 /* MobilePaneAttentionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobilePaneAttentionTests.swift; sourceTree = "<group>"; };
 		1B4204CA01B233B9F19E518B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		1F4055E6D96D1E9CAA59BD55 /* AgentCompletionsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCompletionsFetcherTests.swift; sourceTree = "<group>"; };
 		22D456CE4C8B4DD28A6E843E /* SSHSubsystemReplyWaiterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSubsystemReplyWaiterTests.swift; sourceTree = "<group>"; };
+		2CB56C09547732A7C94AAB02 /* HostBrowserProxyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostBrowserProxyTests.swift; path = ../../Tests/GrafttyMobileKitTests/UI/HostBrowserProxyTests.swift; sourceTree = "<group>"; };
 		2E297959F982E90ED939C39C /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricGateTests.swift; sourceTree = "<group>"; };
 		30604C1C39FF21FE6B6A74D5 /* TerminalSelectionControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSelectionControllerTests.swift; sourceTree = "<group>"; };
 		31624370E81298A9DD5E284B /* GrafttyRemoteClientTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GrafttyRemoteClientTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsFetcherTests.swift; sourceTree = "<group>"; };
 		351F85648DBEE2F8B555AE7F /* VirtualClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualClock.swift; sourceTree = "<group>"; };
-		6EC6E95570392C0A1884DF59 /* grafttymobile-paging */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "grafttymobile-paging"; path = ../..; sourceTree = SOURCE_ROOT; };
 		3974D39288562C9FBF43166F /* SSHOverWebRTCLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHOverWebRTCLoopbackTests.swift; sourceTree = "<group>"; };
 		3A4E23E7D15FDB354063BF2C /* RootViewSizeClassTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewSizeClassTests.swift; sourceTree = "<group>"; };
 		3B34B1538B76355DB7D2C21E /* SSHNIOTransportUnitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHNIOTransportUnitTests.swift; sourceTree = "<group>"; };
@@ -119,6 +137,7 @@
 		467A322DC90A1B2460F86C93 /* WorktreeListContentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeListContentTests.swift; sourceTree = "<group>"; };
 		4725DB60C50A64BC035E70BB /* IPadRootLayoutSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadRootLayoutSelectionTests.swift; sourceTree = "<group>"; };
 		4A52344F5699042983845BC7 /* MultiPaneDetailViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiPaneDetailViewTests.swift; sourceTree = "<group>"; };
+		4DDBE5B8D50AFB2EA47A9AB0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		51649842CE2E7ACBA47F9ACA /* IPadWorktreeNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadWorktreeNavigationTests.swift; sourceTree = "<group>"; };
 		55ACC7CB64EC668F86941A9E /* ClientIdentityStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientIdentityStoreTests.swift; sourceTree = "<group>"; };
 		5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostControllerTests.swift; sourceTree = "<group>"; };
@@ -134,6 +153,7 @@
 		7AD4F463738364C6CE5A5465 /* TerminalTrayKeyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalTrayKeyTests.swift; sourceTree = "<group>"; };
 		7B611132035C165929688C4F /* SessionWebSocketURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionWebSocketURLTests.swift; sourceTree = "<group>"; };
 		7BD90DFCAF790E3A5A6E4E10 /* GhosttyKeybindingsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyKeybindingsFetcherTests.swift; sourceTree = "<group>"; };
+		7C3BF0DC42A2FE0E2FA11C2F /* GrafttyMobileBrowserTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GrafttyMobileBrowserTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReposFetcherTests.swift; sourceTree = "<group>"; };
 		8A1E0255EB1F41513A753E8A /* HostPickerViewCallbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPickerViewCallbackTests.swift; sourceTree = "<group>"; };
 		8B854EA2B7542A1A9A7DD8E5 /* WorktreePickerSwipeActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreePickerSwipeActionTests.swift; sourceTree = "<group>"; };
@@ -154,6 +174,7 @@
 		B4C480112057912027AD9650 /* GrafttyMobile.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GrafttyMobile.entitlements; sourceTree = "<group>"; };
 		B60664EC7D11D766F8995393 /* GhosttyThemeParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyThemeParsingTests.swift; sourceTree = "<group>"; };
 		B654B738DE930881ED5BE5C5 /* PaneControlClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneControlClientTests.swift; sourceTree = "<group>"; };
+		B894D5BB6730A439CDE68122 /* WorktreePortClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreePortClientTests.swift; sourceTree = "<group>"; };
 		BC1E7C1FDDDE3B01E21079EA /* PairingFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingFlowTests.swift; sourceTree = "<group>"; };
 		C87848F72F811BF6F1CB9191 /* NativeFilePreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFilePreviewTests.swift; sourceTree = "<group>"; };
 		CACB0C8C5BC2E635F2AA70BC /* PanePreviewFontApplicationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewFontApplicationTests.swift; sourceTree = "<group>"; };
@@ -163,17 +184,20 @@
 		DD13ED88F7628AD90AB80522 /* DeleteWorktreeClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteWorktreeClientTests.swift; sourceTree = "<group>"; };
 		DDEDB7E8E23CBF60EAE27AE4 /* ClientPairingSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientPairingSessionTests.swift; sourceTree = "<group>"; };
 		DE2551EB151BA762B2AF7663 /* GhosttyConfigFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyConfigFetcherTests.swift; sourceTree = "<group>"; };
+		DEAFDCA2135A779F886374A3 /* GrafttyMobileTestHost.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GrafttyMobileTestHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E0006D42603096AE4265AD38 /* WakeOnLANClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeOnLANClientTests.swift; sourceTree = "<group>"; };
+		E3E2D199D4324F6F86505317 /* GrafttyMobileTestHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrafttyMobileTestHost.swift; sourceTree = "<group>"; };
 		E9253D88D71A6DBEE9A8146C /* SSHTerminalLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalLoopbackTests.swift; sourceTree = "<group>"; };
 		E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileNavigationDecisionTests.swift; sourceTree = "<group>"; };
 		EB85606774D95FFBD85C5576 /* MobileAttentionPaneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAttentionPaneTests.swift; sourceTree = "<group>"; };
 		ED17F675220FDB2C3347E8D6 /* MobileTerminalTeardownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileTerminalTeardownTests.swift; sourceTree = "<group>"; };
+		EE11C4BEF7AC53953B6EEA71 /* RemoteAuthenticationOffersTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteAuthenticationOffersTests.swift; sourceTree = "<group>"; };
 		F001274CBA0D57F9215C93F9 /* TerminalReceiveBufferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalReceiveBufferTests.swift; sourceTree = "<group>"; };
 		F13F27BC36EFE7A30792D643 /* RemoteConnectionReconnectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteConnectionReconnectTests.swift; sourceTree = "<group>"; };
+		F1EB8B8F047F3F5728A5CA6E /* port-tunneling */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "port-tunneling"; path = ../..; sourceTree = SOURCE_ROOT; };
 		F926FB896E74D9503480EE19 /* SSHAuthLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAuthLoopbackTests.swift; sourceTree = "<group>"; };
 		F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateWorktreeClientTests.swift; sourceTree = "<group>"; };
 		FCEA6370F15FD47532C3E4D8 /* RemoteHostConnectionLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteHostConnectionLoopbackTests.swift; sourceTree = "<group>"; };
-		FF5626A070A0C3905C8C2046 /* HostBrowserProxyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostBrowserProxyTests.swift; sourceTree = "<group>"; };
 		FF7A5068D34751DE52E6705E /* PinnedHostStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedHostStoreTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -202,9 +226,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B6CB974C69A53E30C65BD368 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0505A5A8BD0FF0B63FEC14D9 /* GrafttyMobileKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0A379083AF16EC70EFAF3BF7 /* GrafttyMobileTestHost */ = {
+			isa = PBXGroup;
+			children = (
+				E3E2D199D4324F6F86505317 /* GrafttyMobileTestHost.swift */,
+				4DDBE5B8D50AFB2EA47A9AB0 /* Info.plist */,
+			);
+			path = GrafttyMobileTestHost;
+			sourceTree = "<group>";
+		};
 		1694309529DAE1B693C4F1BC /* GrafttyRemoteClientTests */ = {
 			isa = PBXGroup;
 			children = (
@@ -239,17 +280,20 @@
 		2E51D47314D16FBA8059B04C /* Session */ = {
 			isa = PBXGroup;
 			children = (
+				1F4055E6D96D1E9CAA59BD55 /* AgentCompletionsFetcherTests.swift */,
 				F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */,
 				DD13ED88F7628AD90AB80522 /* DeleteWorktreeClientTests.swift */,
 				040341B8FB581DF018C96BCC /* FilePreviewDownloadTests.swift */,
 				DE2551EB151BA762B2AF7663 /* GhosttyConfigFetcherTests.swift */,
 				7BD90DFCAF790E3A5A6E4E10 /* GhosttyKeybindingsFetcherTests.swift */,
 				5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */,
+				EE11C4BEF7AC53953B6EEA71 /* RemoteAuthenticationOffersTests.swift */,
 				89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */,
 				3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */,
 				A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */,
 				9BC9CD23B5D3CA7F71AF6EDC /* SessionRenderPaceTests.swift */,
 				340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */,
+				B894D5BB6730A439CDE68122 /* WorktreePortClientTests.swift */,
 			);
 			path = Session;
 			sourceTree = "<group>";
@@ -258,7 +302,9 @@
 			isa = PBXGroup;
 			children = (
 				2C883EECF2A825471F9DADF9 /* GrafttyMobile */,
+				93462A075A51F752E59709DD /* GrafttyMobileBrowserTests */,
 				958EE75DBB9E04AE95F25F17 /* GrafttyMobileKitTests */,
+				0A379083AF16EC70EFAF3BF7 /* GrafttyMobileTestHost */,
 				1694309529DAE1B693C4F1BC /* GrafttyRemoteClientTests */,
 				EBBD8BB4335B09E0E1E21C3F /* Packages */,
 				613F14AB8D46A81479D6B00A /* Products */,
@@ -268,6 +314,7 @@
 		5326D4D06134BD55FD5087CF /* Terminal */ = {
 			isa = PBXGroup;
 			children = (
+				09B94F2E87E155BCBDD62F1A /* MobileAgentCompletionTests.swift */,
 				ED17F675220FDB2C3347E8D6 /* MobileTerminalTeardownTests.swift */,
 				91C85B2EFEF3B277843C1777 /* SurfaceProxyTests.swift */,
 				14155C510E994202A1F09C31 /* TerminalControllerThemeTests.swift */,
@@ -284,7 +331,9 @@
 			isa = PBXGroup;
 			children = (
 				D0E517DBD6A521AB367A54A6 /* GrafttyMobile.app */,
+				7C3BF0DC42A2FE0E2FA11C2F /* GrafttyMobileBrowserTests.xctest */,
 				7213F905213229A44DC07D77 /* GrafttyMobileKitTests.xctest */,
+				DEAFDCA2135A779F886374A3 /* GrafttyMobileTestHost.app */,
 				31624370E81298A9DD5E284B /* GrafttyRemoteClientTests.xctest */,
 			);
 			name = Products;
@@ -294,7 +343,6 @@
 			isa = PBXGroup;
 			children = (
 				10B4031DF4D165C5521C42B4 /* AddWorktreeSheetViewTests.swift */,
-				FF5626A070A0C3905C8C2046 /* HostBrowserProxyTests.swift */,
 				51649842CE2E7ACBA47F9ACA /* IPadWorktreeNavigationTests.swift */,
 				EB85606774D95FFBD85C5576 /* MobileAttentionPaneTests.swift */,
 				E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */,
@@ -328,6 +376,14 @@
 				0AA1FECA7E436D882E2E782F /* TerminalChromeViewportTests.swift */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		93462A075A51F752E59709DD /* GrafttyMobileBrowserTests */ = {
+			isa = PBXGroup;
+			children = (
+				2CB56C09547732A7C94AAB02 /* HostBrowserProxyTests.swift */,
+			);
+			name = GrafttyMobileBrowserTests;
 			sourceTree = "<group>";
 		};
 		958EE75DBB9E04AE95F25F17 /* GrafttyMobileKitTests */ = {
@@ -376,7 +432,7 @@
 		EBBD8BB4335B09E0E1E21C3F /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				6EC6E95570392C0A1884DF59 /* grafttymobile-paging */,
+				F1EB8B8F047F3F5728A5CA6E /* port-tunneling */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -420,6 +476,26 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		13BBA3B52D019052EBDC09F0 /* GrafttyMobileBrowserTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A7071A46D188ABA192B3EADC /* Build configuration list for PBXNativeTarget "GrafttyMobileBrowserTests" */;
+			buildPhases = (
+				DFCC74CFC55485ABF90D1CF5 /* Sources */,
+				B6CB974C69A53E30C65BD368 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F6CDB49CFDD5FBC7AA585EE1 /* PBXTargetDependency */,
+			);
+			name = GrafttyMobileBrowserTests;
+			packageProductDependencies = (
+				BB0BD29754E75DAC12BC5F3D /* GrafttyMobileKit */,
+			);
+			productName = GrafttyMobileBrowserTests;
+			productReference = 7C3BF0DC42A2FE0E2FA11C2F /* GrafttyMobileBrowserTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		166B2D45AF993D5EE3956B3E /* GrafttyMobileKitTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2603CDCCF56E48E27CAFBCBD /* Build configuration list for PBXNativeTarget "GrafttyMobileKitTests" */;
@@ -438,6 +514,23 @@
 			productName = GrafttyMobileKitTests;
 			productReference = 7213F905213229A44DC07D77 /* GrafttyMobileKitTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		2439EF0F2D077F06C5BC773D /* GrafttyMobileTestHost */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 936145CE3D68CCBB4AA7E68E /* Build configuration list for PBXNativeTarget "GrafttyMobileTestHost" */;
+			buildPhases = (
+				4039E14FB772F3087A8ACC2D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GrafttyMobileTestHost;
+			packageProductDependencies = (
+			);
+			productName = GrafttyMobileTestHost;
+			productReference = DEAFDCA2135A779F886374A3 /* GrafttyMobileTestHost.app */;
+			productType = "com.apple.product-type.application";
 		};
 		46A32AB2D4468CA8DA2B08BA /* GrafttyRemoteClientTests */ = {
 			isa = PBXNativeTarget;
@@ -511,7 +604,9 @@
 			projectRoot = "";
 			targets = (
 				9C4899B8EF5E97558B0302C3 /* GrafttyMobile */,
+				13BBA3B52D019052EBDC09F0 /* GrafttyMobileBrowserTests */,
 				166B2D45AF993D5EE3956B3E /* GrafttyMobileKitTests */,
+				2439EF0F2D077F06C5BC773D /* GrafttyMobileTestHost */,
 				46A32AB2D4468CA8DA2B08BA /* GrafttyRemoteClientTests */,
 			);
 		};
@@ -530,6 +625,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		4039E14FB772F3087A8ACC2D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				25E291BD6878283DECF2801B /* GrafttyMobileTestHost.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		5C9A5571871B385F87781BD8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -563,6 +666,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				09E371CE9DA66BEB41B1DFAD /* AddWorktreeSheetViewTests.swift in Sources */,
+				E6F53921536905AAFDA87200 /* AgentCompletionsFetcherTests.swift in Sources */,
 				2E416266017DFF6D47BFED05 /* BiometricGateTests.swift in Sources */,
 				4D8D21035BA80B090DB04260 /* ClockTests.swift in Sources */,
 				0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */,
@@ -571,7 +675,6 @@
 				F1265680A75FBC8FC81FC5E8 /* GhosttyConfigFetcherTests.swift in Sources */,
 				BB7882D5CC303A99F96AA5D9 /* GhosttyKeybindingsFetcherTests.swift in Sources */,
 				818C33108CDA5E06C84AA5E4 /* GhosttyThemeParsingTests.swift in Sources */,
-				A77DDE00B4FF88B06FF11917 /* HostBrowserProxyTests.swift in Sources */,
 				AA14A2ACD895768E8B7A2E2B /* HostControllerTests.swift in Sources */,
 				B803FA26B311180F52B5B40D /* HostPickerViewCallbackTests.swift in Sources */,
 				6E3698272F39E3D8665B41E7 /* HostStoreTests.swift in Sources */,
@@ -580,6 +683,7 @@
 				A9FEA136B7551DDE79950AD5 /* IPadWorktreeNavigationTests.swift in Sources */,
 				9869112A7E35C04E54A7395A /* KeyboardFrameInsetTests.swift in Sources */,
 				C55600CC2CAE99D7769B31A8 /* LaunchScreenTests.swift in Sources */,
+				6600F72F53EE9C925338B369 /* MobileAgentCompletionTests.swift in Sources */,
 				839D7F3737A06952FBB49FAC /* MobileAttentionPaneTests.swift in Sources */,
 				D6E07827478D558EA22701E3 /* MobileNavigationDecisionTests.swift in Sources */,
 				9CAB4286C051BF25058BBD67 /* MobilePaneAttentionTests.swift in Sources */,
@@ -592,6 +696,7 @@
 				BFAB69C16EF825DE58B94270 /* PanePreviewFontApplicationTests.swift in Sources */,
 				81DB8F5B4AA670E833184E67 /* PanePreviewFontSizingTests.swift in Sources */,
 				CAF2F1261BE1D2E9862B28E7 /* PreviewCapTests.swift in Sources */,
+				1DF817BE832A427E531A1428 /* RemoteAuthenticationOffersTests.swift in Sources */,
 				6423BC64B39FEE6D4D4A3CD1 /* RemoteConnectionCoordinatorTests.swift in Sources */,
 				E56BE7F81F6457809FE8C140 /* RemoteConnectionReconnectTests.swift in Sources */,
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
@@ -616,6 +721,7 @@
 				79F452007688FF1DC62A7C1B /* WorktreePickerGroupingTests.swift in Sources */,
 				E295FDA42EACEEB0388FA1B6 /* WorktreePickerRefreshContractTests.swift in Sources */,
 				DCF1F771B6F6D69405FC0250 /* WorktreePickerSwipeActionTests.swift in Sources */,
+				ABC5BF921DEEF66F510A779F /* WorktreePortClientTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -627,9 +733,86 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		DFCC74CFC55485ABF90D1CF5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				47453C7702697742D415A0AB /* HostBrowserProxyTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		F6CDB49CFDD5FBC7AA585EE1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2439EF0F2D077F06C5BC773D /* GrafttyMobileTestHost */;
+			targetProxy = 750AEE262C5BE02F51200D44 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		054362ACB7B875CFF7859DCD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.graftty.GrafttyMobileBrowserTests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GrafttyMobileTestHost.app/GrafttyMobileTestHost";
+			};
+			name = Release;
+		};
+		34749A607AF23AE629C4056E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GrafttyMobileTestHost/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.graftty.GrafttyMobileTestHost;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		57C19A1FCE611324587B35B1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.graftty.GrafttyMobileBrowserTests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GrafttyMobileTestHost.app/GrafttyMobileTestHost";
+			};
+			name = Debug;
+		};
 		6AEC14D3B227610AC6BB8CE9 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -711,6 +894,27 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
+		};
+		78D35B9ACE714A6F5F698EA8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GrafttyMobileTestHost/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.graftty.GrafttyMobileTestHost;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
 		};
 		8146272DE7DA8B352C5FEDB0 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -907,6 +1111,24 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		936145CE3D68CCBB4AA7E68E /* Build configuration list for PBXNativeTarget "GrafttyMobileTestHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				34749A607AF23AE629C4056E /* Debug */,
+				78D35B9ACE714A6F5F698EA8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A7071A46D188ABA192B3EADC /* Build configuration list for PBXNativeTarget "GrafttyMobileBrowserTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				57C19A1FCE611324587B35B1 /* Debug */,
+				054362ACB7B875CFF7859DCD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		F9253B3E4D0E7E28D5E0F3B3 /* Build configuration list for PBXNativeTarget "GrafttyMobile" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -935,6 +1157,10 @@
 			productName = GrafttyMobileKit;
 		};
 		961E5DC72693D5319AE8805F /* GrafttyMobileKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = GrafttyMobileKit;
+		};
+		BB0BD29754E75DAC12BC5F3D /* GrafttyMobileKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = GrafttyMobileKit;
 		};

@@ -174,7 +174,8 @@ struct SidebarView: View {
         navigation.worktreeContext(sidebarLocalWorktree(worktree, repo: repo, owner: owner,
             displayName: displayName, titles: terminalManager.displayTitles,
             liveness: claudeSessionRegistry.livenessBySession,
-            prBadge: prStatusStore.infos[worktree.path].map { PRBadge(from: $0) }))
+            prBadge: prStatusStore.infos[worktree.path].map { PRBadge(from: $0) },
+            ports: worktree.state == .running ? portBindings.ports(for: worktree.splitTree.allLeaves) : []))
     }
 
     private func displayedWorktrees(in repo: RepoEntry) -> [WorktreeEntry] {

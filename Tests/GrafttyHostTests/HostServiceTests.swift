@@ -43,7 +43,7 @@ struct HostServiceTests {
         func cleanup() { try? FileManager.default.removeItem(at: root) }
     }
 
-    @Test("@spec PORTS-5.12: When Linux setup enrolls a Mac, the application shall permit loopback port forwarding while preserving an existing explicit tunnel denial.")
+    @Test("@spec PORTS-5.32: When Linux setup enrolls a Mac, the application shall permit loopback port forwarding while preserving an existing explicit tunnel denial.")
     func setupAllowsLoopbackForwarding() throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

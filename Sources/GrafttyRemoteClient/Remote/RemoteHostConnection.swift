@@ -486,9 +486,10 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     }
 
     /// The TCP destination and DNS lookup both live on the paired host.
-    public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int) async throws {
+    public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int,
+                                  handshakeReply: Data = BrowserProxy.socksSuccessReply) async throws {
         let transport = try await socketTransport()
-        _ = try await transport.bridge(socket, host: host, port: port, socksReply: true)
+        _ = try await transport.bridge(socket, host: host, port: port, handshakeReply: handshakeReply)
     }
 
     public func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward {

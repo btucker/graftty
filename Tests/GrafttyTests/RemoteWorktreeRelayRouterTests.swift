@@ -8,12 +8,46 @@ import Testing
 @Suite("Remote worktree one-hop relay")
 @MainActor
 struct RemoteWorktreeRelayRouterTests {
+    @Test("@spec REMOTE-13.29: When a relayed terminal receives a burst of small output frames within its byte and event limits, the application shall preserve all output in order and shall keep the attachment open until the source ends.")
+    func pagedRelayKeepsSmallOutputBurstsConnected() async throws {
+        let client = RelayWebSocketClient()
+        client.supportsPagedHistory = true
+        let stream = try RelayedPagedTerminalStream(client: client)
+        let sizes = LockedRelaySizes()
+        stream.onPTYSize = { sizes.append(cols: $0, rows: $1) }
+        var expected = Data()
+        for index in 0..<1_000 {
+            let byte = UInt8(index % 256)
+            expected.append(byte)
+            client.deliver(.binary(Data([byte])))
+        }
+        client.deliver(.text(try PagedTerminalEnvelope(event: .grid(cols: 91, rows: 17)).encoded()))
+        client.deliver(.binary(Data("tail".utf8)))
+        try await waitUntil { client.didClose || sizes.values().last?.cols == 91 }
+        #expect(!client.didClose)
+        client.deliverEnd(status: 0)
+        var output = Data()
+        var controls: [PagedTerminalEvent] = []
+        for await event in stream.events {
+            if case .output(let data) = event { output.append(data) }
+            else {
+                if case .grid = event { #expect(output == expected) }
+                controls.append(event)
+            }
+        }
+        expected.append(Data("tail".utf8))
+        #expect(output == expected)
+        #expect(controls == [.grid(cols: 91, rows: 17), .ended(0)])
+        await stream.close()
+    }
+
     @Test("@spec REMOTE-13.28: When a paged relay receives process exit while its bounded output queue is full, the application shall retain and deliver the exit status after the queued terminal events.")
     func pagedRelayRetainsExitWhenQueueIsFull() async throws {
         let client = RelayWebSocketClient()
         client.supportsPagedHistory = true
         let stream = try RelayedPagedTerminalStream(client: client)
-        for _ in 0..<256 { client.deliver(.binary(Data("output".utf8))) }
+        let grid = WebSocketFrame.text(try PagedTerminalEnvelope(event: .grid(cols: 91, rows: 17)).encoded())
+        for _ in 0..<256 { client.deliver(grid) }
         client.deliverEnd(status: 7)
         try await waitUntil { client.didReceiveEnd }
         // Keep the consumer stalled while the relay handles the received EOF.
@@ -25,15 +59,87 @@ struct RemoteWorktreeRelayRouterTests {
         await stream.close()
     }
 
-    @Test("@spec REMOTE-13.27: If a paged relay's output exceeds its bounded queue while the mobile receiver is stalled, then the application shall close the attachment instead of dropping terminal events or retaining unlimited output.")
-    func pagedRelayClosesWhenReceiverStalls() async throws {
+    @Test("@spec REMOTE-13.27: If a paged relay's output exceeds its bounded queue while the mobile receiver is stalled, then the application shall close the attachment instead of dropping terminal events or retaining unlimited output.", arguments: ["events", "bytes"])
+    func pagedRelayClosesWhenReceiverStalls(limit: String) async throws {
         let client = RelayWebSocketClient()
         client.supportsPagedHistory = true
         let stream = try RelayedPagedTerminalStream(client: client)
-        for _ in 0..<300 { client.deliver(.binary(Data("output".utf8))) }
+        let frame: WebSocketFrame = limit == "bytes"
+            ? .binary(Data(repeating: 42, count: 16 * 1024))
+            : .text(try PagedTerminalEnvelope(event: .grid(cols: 91, rows: 17)).encoded())
+        for _ in 0..<300 { client.deliver(frame) }
         try await waitUntil { client.didClose }
         #expect(client.didClose)
         await stream.close()
+    }
+
+    @Test func closingRelayReleasesWaitingEventConsumer() async throws {
+        let client = RelayWebSocketClient()
+        client.supportsPagedHistory = true
+        let stream = try RelayedPagedTerminalStream(client: client)
+        let next = Task {
+            var events = stream.events.makeAsyncIterator()
+            return await events.next()
+        }
+        await Task.yield()
+        await stream.close()
+        #expect(await next.value == nil)
+    }
+
+    @Test func cancellingRelayEventConsumerDoesNotHang() async throws {
+        let client = RelayWebSocketClient()
+        client.supportsPagedHistory = true
+        let stream = try RelayedPagedTerminalStream(client: client)
+        let next = Task {
+            var events = stream.events.makeAsyncIterator()
+            return await events.next()
+        }
+        await Task.yield()
+        next.cancel()
+        #expect(await next.value == nil)
+        await stream.close()
+    }
+
+    @Test func outputBatchingPreservesEveryPagingBarrier() async {
+        let buffer = RelayedPagedEventBuffer()
+        let request = PagedTerminalHistoryRequest(incarnation: 1, checkpointID: 2, requestID: 3, ordinal: 0, screen: 0)
+        let barriers: [PagedTerminalEvent] = [
+            .checkpoint(.init(incarnation: 1, id: 2, cols: 80, rows: 24, ready: Data([1]), hasPrimaryHistory: true, hasAlternateHistory: false)),
+            .page(.init(incarnation: 1, checkpointID: 2, requestID: 3, ordinal: 0, screen: 0, data: Data([2]), complete: true)),
+            .grid(cols: 90, rows: 30),
+            .unavailable(.init(request: request, reason: .expired)),
+        ]
+        var expected: [PagedTerminalEvent] = []
+        for barrier in barriers {
+            #expect(buffer.enqueue(.output(Data("a".utf8))) == .accepted)
+            #expect(buffer.enqueue(.output(Data("b".utf8))) == .accepted)
+            #expect(buffer.enqueue(barrier) == .accepted)
+            expected.append(.output(Data("ab".utf8)))
+            expected.append(barrier)
+        }
+        buffer.finish(exitStatus: 7)
+        expected.append(.ended(7))
+        var actual: [PagedTerminalEvent] = []
+        while let event = await buffer.next() { actual.append(event) }
+        #expect(actual == expected)
+    }
+
+    @Test(arguments: ["checkpoint", "history"])
+    func snapshotPayloadsConsumeAndReleaseTheirByteBudget(kind: String) async {
+        let buffer = RelayedPagedEventBuffer()
+        let size = kind == "checkpoint" ? PagedTerminalLimits.readyBytes : PagedTerminalLimits.pageBytes
+        let bytes = Data(repeating: 42, count: size)
+        let event: PagedTerminalEvent = kind == "checkpoint"
+            ? .checkpoint(.init(incarnation: 1, id: 2, cols: 80, rows: 24, ready: bytes, hasPrimaryHistory: true, hasAlternateHistory: false))
+            : .page(.init(incarnation: 1, checkpointID: 2, requestID: 3, ordinal: 0, screen: 0, data: bytes, complete: true))
+        for _ in 0..<(RelayedPagedEventBuffer.byteLimit / size) {
+            #expect(buffer.enqueue(event) == .accepted)
+        }
+        #expect(buffer.enqueue(.output(Data([1]))) == .overflow)
+        #expect(await buffer.next() == event)
+        #expect(buffer.enqueue(.output(Data([1]))) == .accepted)
+        buffer.cancel()
+        #expect(await buffer.next() == nil)
     }
 
     @Test("@spec REMOTE-13.26: When a relayed session has never had a display owner, the application shall preserve its reported source grid rather than publish the ownerless hello's echoed client dimensions.")

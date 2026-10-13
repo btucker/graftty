@@ -831,6 +831,7 @@ struct RemoteMacsModelTests {
             deviceID: remote.id,
             fingerprint: remote.fingerprint
         ) == .ok)
+        // Keep the replacement in flight through the second request's host-pin refresh.
         await replacementGate.waitUntilStarted()
         #expect(await model.reconnectRemoteMac(
             deviceID: remote.id,

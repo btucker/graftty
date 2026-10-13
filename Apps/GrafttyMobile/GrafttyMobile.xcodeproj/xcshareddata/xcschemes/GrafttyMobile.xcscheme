@@ -55,6 +55,17 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "13BBA3B52D019052EBDC09F0"
+               BuildableName = "GrafttyMobileBrowserTests.xctest"
+               BlueprintName = "GrafttyMobileBrowserTests"
+               ReferencedContainer = "container:GrafttyMobile.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "46A32AB2D4468CA8DA2B08BA"
                BuildableName = "GrafttyRemoteClientTests.xctest"
                BlueprintName = "GrafttyRemoteClientTests"

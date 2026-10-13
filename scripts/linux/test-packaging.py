@@ -136,6 +136,101 @@ sys.exit(subprocess.call([{native_install!r}] + sys.argv[1:]))
         self.assertIn("absolute", result.stderr)
         self.assertFalse((self.repo / "relative-cache").exists())
 
+class ZmxBuildTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="graftty-zmx-build-")
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name)
+        scripts = self.repo / "scripts/linux"
+        scripts.mkdir(parents=True)
+        shutil.copy(ROOT / "build-zmx.sh", scripts / "build-zmx.sh")
+        pins = self.repo / "scripts/zmx"
+        pins.mkdir()
+        for name in ("ZIG_VERSION", "UPSTREAM_COMMIT", "graftty.patch", "paging.patch"):
+            shutil.copy(ROOT.parent / "zmx" / name, pins / name)
+        self.tools = self.repo / "tools"
+        self.tools.mkdir()
+        self.calls = self.repo / "calls"
+        self.env = {**os.environ, "PATH": str(self.tools) + os.pathsep + os.environ["PATH"],
+                    "GRAFTTY_TEST_ZMX_CALLS": str(self.calls),
+                    "GRAFTTY_TEST_ZIG_VERSION": (pins / "ZIG_VERSION").read_text().strip()}
+        self.output = self.repo / "out/zmx"
+        self.executable("git", r"""
+import sys
+from pathlib import Path
+if sys.argv[1] == 'clone':
+    root = Path(sys.argv[-1])
+    root.mkdir()
+    (root / 'build.zig.zon').write_text('.version = "0.7.0",\n')
+""")
+        self.executable("sleep", "pass\n")
+        self.executable("zig", r"""
+import os, sys
+from pathlib import Path
+args = sys.argv[1:]
+if args == ['version']:
+    print(os.environ['GRAFTTY_TEST_ZIG_VERSION'])
+elif args[0] == 'build':
+    calls = Path(os.environ['GRAFTTY_TEST_ZMX_CALLS'])
+    previous = calls.read_text().splitlines() if calls.exists() else []
+    step = 'test' if args[1] == 'test' else 'release'
+    with calls.open('a') as handle: handle.write(step + '\n')
+    mode = os.environ['GRAFTTY_TEST_ZMX_FAILURE']
+    if mode in ('compiler', 'compiler-http', 'test'):
+        diagnostics = {'compiler': 'src/main.zig:1:1: error: invalid syntax',
+                       'compiler-http': 'src/main.zig:1:1: error: HTTP response read failure: ConnectionResetByPeer',
+                       'test': '1/1 example.test...FAIL'}
+        print(diagnostics[mode], file=sys.stderr)
+        sys.exit(42)
+    if mode == 'permanent' or step not in previous:
+        print('build.zig.zon:14:20: error: HTTP response read failure: ConnectionResetByPeer', file=sys.stderr)
+        sys.exit(43)
+    if step == 'release':
+        output = Path(args[args.index('--prefix') + 1]) / 'bin/zmx'
+        output.parent.mkdir(parents=True)
+        output.write_text('#!/bin/sh\nexit 0\n')
+""")
+
+    def executable(self, name, source):
+        path = self.tools / name
+        path.write_text(f"#!{sys.executable}\n" + source)
+        path.chmod(0o755)
+
+    def run_build(self, mode):
+        return subprocess.run(["bash", str(self.repo / "scripts/linux/build-zmx.sh"), "aarch64", str(self.output)],
+                              env={**self.env, "GRAFTTY_TEST_ZMX_FAILURE": mode}, capture_output=True, text=True, timeout=15)
+
+    def test_transient_dependency_failure_is_retried_in_both_steps(self):
+        result = self.run_build("transient")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), ["test", "test", "release", "release"])
+        self.assertTrue(self.output.exists())
+
+    def test_dependency_retries_are_bounded_and_preserve_failure(self):
+        result = self.run_build("permanent")
+        self.assertEqual(result.returncode, 43, result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), ["test", "test", "test"])
+        self.assertIn("ConnectionResetByPeer", result.stderr)
+        self.assertFalse(self.output.exists())
+
+    def test_compiler_failure_is_not_retried(self):
+        result = self.run_build("compiler")
+        self.assertEqual(result.returncode, 42, result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), ["test"])
+        self.assertFalse(self.output.exists())
+
+    def test_test_failure_is_not_retried(self):
+        result = self.run_build("test")
+        self.assertEqual(result.returncode, 42, result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), ["test"])
+        self.assertFalse(self.output.exists())
+
+    def test_compiler_diagnostic_with_download_text_is_not_retried(self):
+        result = self.run_build("compiler-http")
+        self.assertEqual(result.returncode, 42, result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), ["test"])
+        self.assertFalse(self.output.exists())
+
 class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="graftty-installer-")

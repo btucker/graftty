@@ -310,9 +310,11 @@ struct SessionClientTests {
         pane.container = container
         let surface = container.terminalView.surface
         container.onBackRequested = { }
+        container.openAuthenticationURL = { _ in }
         container.removeFromSuperview()
         pane.detachControls()
         #expect(container.onBackRequested == nil)
+        #expect(container.openAuthenticationURL == nil)
         client.session.receive("output while away")
         try await waitUntil("output on detached surface") {
             client.session.readViewportText()?.contains("output while away") == true

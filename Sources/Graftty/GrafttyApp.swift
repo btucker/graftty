@@ -809,7 +809,7 @@ struct GrafttyApp: App {
     /// 2s cadence for `portScanner.tick()`. A user starting `npm run
     /// dev` should see the chip appear within a couple seconds without
     /// the chip noticeably flickering on/off across rebuilds.
-    private let portsTicker = PollingTicker(interval: .seconds(2))
+    private let portsTicker = PollingTicker(interval: .seconds(2), pauseWhenInactive: { false })
 
     // SwiftUI re-fires `.onAppear` on dock-reopen and File → New Window
     // because the WindowGroup content closure reruns; `startup()` is
@@ -1225,13 +1225,13 @@ struct GrafttyApp: App {
             // spawned` log line need their PID resolved later.
             // `[weak]` breaks the cycle through TerminalManager.portScanner.
             await portScanner.setPIDResolver { [weak tmRef = tmRef] id in
-                await tmRef?.lookupShellPID(for: id)
+                await tmRef?.lookupShellPIDForPortScan(for: id)
             }
         }
 
         // 2s cadence for port-binding scans. Cheap (one batched lsof
         // across all registered shell PIDs per tick) and only meaningful
-        // while the app is up; pause when inactive is the default.
+        // while the app is up, including while a mobile client is using it.
         portsTicker.start { [portScanner] in
             await portScanner.tick()
         }
@@ -2172,6 +2172,7 @@ struct GrafttyApp: App {
         let panesPortBindings = portBindingsModel
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
+        let panesPortScanner = portScanner
         let panesClaudeRegistry = services.claudeSessionRegistry
         let localWorktreeOrigin = WorktreeOrigin(
             deviceID: AppServices.localRemoteDeviceID(),
@@ -2222,6 +2223,7 @@ struct GrafttyApp: App {
                         origin: localWorktreeOrigin,
                         sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
                             folders: ancestry[wt.id]?.map(\.name) ?? [], repositoryPath: repo.path, folderIDs: ancestry[wt.id]?.map(\.id)),
+                        ports: wt.state == .running ? panesPortBindings.ports(for: wt.splitTree.allLeaves) : [],
                         portBindings: wt.state == .running ? Dictionary(uniqueKeysWithValues: wt.splitTree.allLeaves.compactMap { slot in
                             guard let session = wt.paneSessions[slot], let bindings = panesPortBindings.bindings[slot], !bindings.isEmpty else { return nil }
                             return (ZmxLauncher.sessionName(for: session), bindings)
@@ -2729,6 +2731,43 @@ struct GrafttyApp: App {
                         switch request {
                         case .list:
                             return .openResource(.offers(await RemoteOpenStore.shared.list(worktree: worktreeID)))
+                        case .authenticate(let url):
+                            guard let authentication = WorktreeAuthenticationURL(url: url) else {
+                                return .error(code: "invalid-authentication", message: "This link has no supported local sign-in callback.", forceAllowed: false, shortStatus: nil)
+                            }
+                            let paneIDs = await MainActor.run { () -> [PaneSlotID] in
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running else { return [] }
+                                return worktree.splitTree.allLeaves
+                            }
+                            let bindings = await panesPortScanner.refreshedBindings(for: paneIDs)
+                            let listeners = bindings.map {
+                                WorktreePort(port: $0.port, scope: $0.scope == .lan ? .lan : .loopback,
+                                             processName: $0.processName, host: $0.host)
+                            }
+                            return await MainActor.run {
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running, worktree.splitTree.allLeaves == paneIDs,
+                                      let callbackHost = authentication.resolveCallbackHost(in: listeners) else {
+                                    return .error(code: "authentication-unavailable", message: "The sign-in callback is no longer listening in this worktree. Start re-auth again.", forceAllowed: false, shortStatus: nil)
+                                }
+                                return .openResource(.authentication(url: url, callbackHost: callbackHost))
+                            }
+                        case .port(let port):
+                            let paneIDs = await MainActor.run { () -> [PaneSlotID] in
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running else { return [] }
+                                return worktree.splitTree.allLeaves
+                            }
+                            let listeners = await panesPortScanner.refreshedPorts(for: paneIDs)
+                            return await MainActor.run {
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running, worktree.splitTree.allLeaves == paneIDs,
+                                      let url = listeners.first(where: { $0.port == port })?.url else {
+                                    return .error(code: "port-unavailable", message: "This port is no longer listening in this worktree.", forceAllowed: false, shortStatus: nil)
+                                }
+                                return .openResource(.url(url))
+                            }
                         case let .read(id, offset):
                             return .openResource(.chunk(try await RemoteOpenStore.shared.read(id: id, worktree: worktreeID, offset: offset)))
                         }
@@ -3788,6 +3827,7 @@ struct GrafttyApp: App {
         // so surviving zmx sessions never receive another default command.
         for leafID in worktree.splitTree.allLeaves {
             terminalManager.markRehydrated(leafID)
+            terminalManager.registerForPortScan(leafID)
         }
         // If zmx reports a session missing, createSurfaces clears only that
         // leaf's rehydration marker. Retaining one primary marker lets the
@@ -4025,7 +4065,12 @@ struct GrafttyApp: App {
         remoteMacsModel: RemoteMacsModel
     ) async -> ResponseMessage? {
         switch message {
-        case .offerResource(let path, _, _), .addPane(let path, _, _), .closePane(let path, _),
+        case .offerResource(let path, _, let session):
+            guard let worktree = OpenResourceRouting.worktree(path: path, paneSessionName: session, state: appState.wrappedValue) else {
+                return .error("The originating pane is unavailable. Run graftty open from a tracked worktree.")
+            }
+            guard terminalManager.wakeWorktree(worktree.path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
+        case .addPane(let path, _, _), .closePane(let path, _),
              .showPane(let path, _, _), .sendPane(let path, _, _, _):
             guard terminalManager.wakeWorktree(path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
         default: break
@@ -4056,7 +4101,7 @@ struct GrafttyApp: App {
                 return .ok
             } catch { return .error(LinuxHostSetupError.message(for: error)) }
         case let .offerResource(path, target, paneSessionName):
-            guard let worktree = appState.wrappedValue.worktree(forPath: path) else {
+            guard let worktree = OpenResourceRouting.worktree(path: path, paneSessionName: paneSessionName, state: appState.wrappedValue) else {
                 return .error("Run graftty open from a tracked worktree.")
             }
             do {
@@ -4077,7 +4122,8 @@ struct GrafttyApp: App {
                         terminalManager.displayOwnershipStore?.snapshot(sessionName: $0).ownerClientID
                     }
                     _ = try await RemoteOpenStore.shared.offer(
-                        file: url, worktree: path, browserOwnerClientID: ownerClientID
+                        file: url, worktree: worktree.path, browserOwnerClientID: ownerClientID,
+                        paneSessionName: paneSessionName
                     )
                 case .mac:
                     guard NSWorkspace.shared.open(url) else {

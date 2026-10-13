@@ -4,7 +4,7 @@ import GrafttyProtocol
 @testable import Graftty
 
 struct RemoteWorktreePortTargetTests {
-    @Test("@spec PORTS-5.11: When opening a remote worktree port, the application shall forward only a currently advertised listener belonging to that pane on the directly connected host.")
+    @Test("@spec PORTS-5.31: When opening a remote worktree port, the application shall forward only a currently advertised listener belonging to that pane on the directly connected host.")
     func validatesPaneAndDestination() throws {
         let binding = PortBinding(port: 3000, scope: .loopback, processName: "node", pid: 123, targetHost: "127.0.0.1")
         func worktree(relayed: Bool = false, bindings: [PortBinding] = []) -> WorktreePanes {

@@ -8,7 +8,7 @@ import NIOSSH
 import Testing
 
 struct NetworkSSHTCPBridgeTests {
-    @Test("@spec PORTS-5.9: When SSH upload writes fail with EOF after response reads, the TCP bridge shall drain the queued response before closing.", .timeLimit(.minutes(1)))
+    @Test("@spec PORTS-5.29: When SSH upload writes fail with EOF after response reads, the TCP bridge shall drain the queued response before closing.", .timeLimit(.minutes(1)))
     func uploadEOFDrainsResponse() async throws {
         let listener = try NWListener(using: .tcp, on: .any)
         let queue = DispatchQueue(label: "bridge-eof-test")
@@ -55,7 +55,7 @@ struct NetworkSSHTCPBridgeTests {
         #expect(response == payload)
         _ = try? await channel.finish(acceptAlreadyClosed: true)
     }
-    @Test("@spec PORTS-5.10: While a TCP bridge drains queued bytes after SSH closes, its tunnel capacity slot shall remain reserved until the TCP connection terminates.", .timeLimit(.minutes(1)))
+    @Test("@spec PORTS-5.30: While a TCP bridge drains queued bytes after SSH closes, its tunnel capacity slot shall remain reserved until the TCP connection terminates.", .timeLimit(.minutes(1)))
     func capacityRemainsReservedDuringDrain() async throws {
         let capacity = TunnelCapacity(limit: 1)
         let listener = try NWListener(using: .tcp, on: .any)

@@ -49,7 +49,7 @@ struct DirectSSHLoopbackTests {
     }
 
     #if canImport(Network)
-    @Test("@spec PORTS-5.6: When a paired host allows port tunneling, a local port forward shall relay raw TCP bytes and close sockets when stopped or its parent disconnects.", .timeLimit(.minutes(1)), arguments: [false, true])
+    @Test("@spec PORTS-5.26: When a paired host allows port tunneling, a local port forward shall relay raw TCP bytes and close sockets when stopped or its parent disconnects.", .timeLimit(.minutes(1)), arguments: [false, true])
     func localPortForwardEchoAndDisconnect(closeParent: Bool) async throws {
         let f = Fixture(); defer { f.cleanup() }
         try f.store.add(f.peer(key: f.clientKey, tunnelAllowed: true))
@@ -80,7 +80,7 @@ struct DirectSSHLoopbackTests {
         await client.close(); await server.close()
     }
 
-    @Test("@spec PORTS-5.8: When a forwarded TCP destination finishes a finite response, the application shall deliver all queued bytes before reporting EOF to the local client.", .timeLimit(.minutes(1)))
+    @Test("@spec PORTS-5.28: When a forwarded TCP destination finishes a finite response, the application shall deliver all queued bytes before reporting EOF to the local client.", .timeLimit(.minutes(1)))
     func localPortForwardDrainsFiniteResponse() async throws {
         let f = Fixture(); defer { f.cleanup() }
         try f.store.add(f.peer(key: f.clientKey, tunnelAllowed: true))
@@ -117,7 +117,7 @@ struct DirectSSHLoopbackTests {
         await client.close(); await server.close()
     }
 
-    @Test("@spec PORTS-5.7: If a host denies tunneling, local port forwarding shall fail before exposing a listener without bypassing host authorization.", .timeLimit(.minutes(1)))
+    @Test("@spec PORTS-5.27: If a host denies tunneling, local port forwarding shall fail before exposing a listener without bypassing host authorization.", .timeLimit(.minutes(1)))
     func localPortForwardRejectsDisabledCapability() async throws {
         let f = Fixture(); defer { f.cleanup() }
         try f.store.add(f.peer(key: f.clientKey))

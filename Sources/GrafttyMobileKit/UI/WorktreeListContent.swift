@@ -900,7 +900,8 @@ public struct WorktreeListContent: View {
                                                 navigation.dismissRequest(in: context)
                                                 closeReport()
                                             },
-                                            onClose: { if reportWorktreeID == wt.path { closeReport() } })
+                                            onClose: { if reportWorktreeID == wt.path { closeReport() } },
+                                            host: host, remoteConnectionProvider: remoteConnectionProvider)
                                             .presentationCompactAdaptation(.sheet)
                                         }
                                         .id(wt.sidebar?.id ?? wt.path)

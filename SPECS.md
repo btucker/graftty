@@ -628,6 +628,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.34** While a mobile follower displays full-width scrollback rows, the application shall preserve each row's columns and order across repeated history refreshes.
 
+**TERM-12.35** When a renderer requests clipboard text together with available types and display control can be reclaimed, the application shall return both the exact text bytes and available types after reclaiming control.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -1390,6 +1392,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-4.6** When Linux installers run concurrently for the same user, the installer shall serialize release and service changes through completion or rollback so a failed install cannot remove a successful replacement.
 
+**DIST-4.7** If Linux zmx builds encounter a transient dependency download failure, then the release scripts shall retry at most three times, preserve exhausted failures, and stop immediately for compiler or test failures.
+
 ## WEB — Web Access
 
 ### WEB-1.x — Binding
@@ -1996,7 +2000,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.27** While native iOS dictation streams or revises terminal text, the application shall retain the text and UTF-16 positions reported to UIKit across commits, apply revisions without duplicating prior words, and clear that input context when terminal keyboard focus ends.
 
-**IOS-6.28** While a hardware arrow key is held in a mobile terminal, the application shall repeat that key after an initial delay and stop repeating on release, cancellation, keyboard ineligibility, focus loss, or dismissal of the agent picker that received the held arrow.
+**IOS-6.28** While a hardware arrow key is held in a mobile terminal, the application shall use its own repeat scheduler with libghostty's automatic repeat disabled, repeat that key after an initial delay, and stop repeating on release, cancellation, keyboard ineligibility, focus loss, or dismissal of the agent picker that received the held arrow.
 
 **IOS-6.29** While the terminal tray's Shift toggle is selected, the application shall send shifted arrow escape sequences and Shift-Tab as back-tab; while Shift is off, it shall send the unmodified arrow and Tab bytes.
 
@@ -2148,7 +2152,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-12.7** When an offered file has a native Quick Look preview, the application shall show it with Quick Look; otherwise, it shall present the system sharing and Open In interface.
 
-**IOS-12.8** When graftty open runs in a pane led by GrafttyMobile, the host shall offer its resource to mobile; when Mac or another client leads or the pane is unknown, the host shall open it with macOS.
+**IOS-12.8** When graftty open runs in a pane led by GrafttyMobile, the host shall offer its resource to mobile; when Mac or another client leads or no pane session is supplied, the host shall open it with macOS.
 
 ## IPAD — iPad Layout
 
@@ -2578,6 +2582,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-15.16** If another display client owns a Mac pane before its percent picker is dismissed, then the application shall discard the buffered token without taking display control back or sending stale input.
 
+**TEAM-15.17** While agent completion is idle, the application shall invalidate its input boundary without publishing unchanged picker state or triggering a terminal view refresh.
+
 ## INSTR — Agent Instruction Files
 
 ### INSTR-1.x
@@ -2732,11 +2738,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-4.x — Port Tunnels
 
-**REMOTE-4.1** If a paired client requests a port tunnel under the default ask-each-time policy, then the host shall require an active approval created by graftty open URL before connecting to the target.
+**REMOTE-4.1** If a paired client requests a port tunnel under the default ask-each-time policy, then the host shall require an active approval created by graftty open URL or a discovered worktree port tap before connecting to the target.
 
 **REMOTE-4.2** While a paired client has loopback-only port-tunnel permission, the host shall reject non-loopback targets before connecting to them.
 
 **REMOTE-4.3** When graftty open offers a URL to a mobile pane, the application shall approve browser tunnels only for the paired device owning that pane until the offer expires.
+
+**REMOTE-4.4** When a paired device opens a discovered worktree port, the application shall approve only that device's connections to the advertised listening endpoint until the approval expires.
 
 ### REMOTE-5.x — Web Terminal Endpoint (`/ws`)
 
@@ -2953,6 +2961,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-13.27** If a paged relay's output exceeds its bounded queue while the mobile receiver is stalled, then the application shall close the attachment instead of dropping terminal events or retaining unlimited output.
 
 **REMOTE-13.28** When a paged relay receives process exit while its bounded output queue is full, the application shall retain and deliver the exit status after the queued terminal events.
+
+**REMOTE-13.29** When a relayed terminal receives a burst of small output frames within its byte and event limits, the application shall preserve all output in order and shall keep the attachment open until the source ends.
 
 ### REMOTE-14.x — Shared project navigation
 
@@ -3506,13 +3516,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### PORTS-1.x
 
-**PORTS-1.1** When a pane's foreground process is non-shell, the application shall scan that process subtree's TCP listening sockets every 2 seconds.
-
-**PORTS-1.2** While a pane's foreground process is the shell, the application shall not invoke `lsof` for that pane.
+**PORTS-1.1** While a pane is registered, the application shall scan its process subtree's TCP listening sockets every 2 seconds even when the Mac application is inactive.
 
 **PORTS-1.3** Tick during in-flight scan is dropped (single-flight invariant)
 
 **PORTS-1.4** Lsof failure leaves snapshot empty
+
+**PORTS-1.5** When scanning worktree ports, the application shall exclude established connections, UDP sockets, regular files, and port zero from the listening port list.
 
 ### PORTS-2.x
 
@@ -3550,35 +3560,111 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-4.5** When a pane is registered before its shell PID can be resolved (e.g., the zmx daemon log has not yet written the `pty spawned` line), the application shall record the pane as pending and re-attempt resolution on each scan tick until it succeeds; once resolved, the pane shall begin participating in scans.
 
+**PORTS-4.6** If a pane is unregistered or its shell is replaced during a port scan, then the application shall discard that scan's obsolete bindings and shall not restore the removed registration.
+
+**PORTS-4.7** If a pending pane is unregistered and registered again while its PID is resolving, then the application shall discard the old resolution and resolve the new registration independently.
+
+**PORTS-4.8** If a pane session changes during asynchronous port registration, then the application shall discard the obsolete session result without restoring a destroyed pane or invalidating a replacement shell.
+
+**PORTS-4.9** If a pane lifecycle, launcher, or query changes during port PID resolution, then the application shall discard the late result before updating the PID cache or port registration.
+
+**PORTS-4.10** When one port PID consumer cancels, the application shall discard that consumer's result without cancelling the shared live-session query needed by other panes.
+
+**PORTS-4.11** When an initial port PID query is invalidated or its renderer is evicted, the application shall retain pending discovery and resolve the pane on a subsequent scan tick.
+
 ### PORTS-5.x
 
-**PORTS-5.1** When pane port metadata is sent, the application shall preserve session-scoped bindings and safe loopback targets while decoding older snapshots without port metadata.
+**PORTS-5.1** When a worktree publishes listening ports, the application shall combine its pane process bindings, deduplicate by port, sort numerically, and exclude bindings from other worktrees.
 
-**PORTS-5.2** While scanning Linux panes, the application shall discover only TCP listeners owned by the requested process subtree from procfs without requiring lsof, ignoring missing processes and unowned sockets.
+**PORTS-5.2** When a worktree snapshot includes listening ports, the application shall preserve their process names, bind scopes, and listener addresses on the wire and treat absent ports from older hosts as an empty list.
 
-**PORTS-5.3** When listener rows are collapsed, the application shall retain a reachable IPv4 or IPv6 loopback target and shall not invent a loopback route for a specific LAN address.
+**PORTS-5.3** While a worktree report popover is displayed, the application shall show each discovered listening port with its process name and a separate browser action without opening a terminal or acknowledging attention.
 
-**PORTS-5.4** When a pane is removed or its shell PID changes during port discovery, the application shall discard the old scan rather than publish stale listeners.
+**PORTS-5.4** When an iPhone or iPad user taps a worktree port, the application shall request approval for that worktree's listener and open the returned URL in the paired host browser through the authenticated connection.
 
-**PORTS-5.5** While a headless pane is running, the application shall discover listeners from its current zmx shell subtree, publish them under its session name, retry missing PIDs, and clear bindings when the session closes or its PID disappears.
+**PORTS-5.5** If a worktree port is stale, denied, or belongs to a relayed Mac without a browser route, then the application shall report the failure and shall not open a URL on the wrong host.
 
-**PORTS-5.6** When a paired host allows port tunneling, a local port forward shall relay raw TCP bytes and close sockets when stopped or its parent disconnects.
+**PORTS-5.6** When a worktree process listens only on a specific host interface, the application shall retain that listener's address for opening the port rather than assume localhost.
 
-**PORTS-5.7** If a host denies tunneling, local port forwarding shall fail before exposing a listener without bypassing host authorization.
+**PORTS-5.7** When opening a worktree port, the application shall refresh discovery before resolving the listener and reject ports whose processes stopped after the last published snapshot.
 
-**PORTS-5.8** When a forwarded TCP destination finishes a finite response, the application shall deliver all queued bytes before reporting EOF to the local client.
+**PORTS-5.8** When different worktrees listen on the same port on separate IPv4 and IPv6 addresses, the application shall preserve each listener's exact address so opening one worktree cannot resolve to the other.
 
-**PORTS-5.9** When SSH upload writes fail with EOF after response reads, the TCP bridge shall drain the queued response before closing.
+**PORTS-5.9** While a running worktree retains its pane sessions after restoration or surface eviction, the application shall continue discovering its listening ports independently of whether its terminal views are loaded.
 
-**PORTS-5.10** While a TCP bridge drains queued bytes after SSH closes, its tunnel capacity slot shall remain reserved until the TCP connection terminates.
+**PORTS-5.10** When restoring an unselected worktree whose pane session is absent, the application shall exclude historical shell PIDs from port discovery until a live session is confirmed.
 
-**PORTS-5.11** When opening a remote worktree port, the application shall forward only a currently advertised listener belonging to that pane on the directly connected host.
+**PORTS-5.11** While resolving restored pane ports, the application shall share live-session queries across panes and perform those queries off the main actor.
 
-**PORTS-5.12** When Linux setup enrolls a Mac, the application shall permit loopback port forwarding while preserving an existing explicit tunnel denial.
+**PORTS-5.12** When a pane's daemon log lacks a shell-spawn record, the application shall resolve its shell PID from the live daemon session listing and discover its listening ports.
 
-**PORTS-5.13** When the host changes a paired device's port permission, the application shall persist that permission before closing its existing connection, and shall not close a connection after a failed update.
+**PORTS-5.13** When the host browser loads a worktree URL, the application shall send WebKit's HTTP request through the paired host's authenticated tunnel and render the host's response.
 
-**PORTS-5.14** If a peer's authenticated identity or permissions change before SSH registration completes, then the application shall close the stale connection while preserving connections whose only changes are descriptive metadata.
+**PORTS-5.14** When a host browser sign-in page redirects to its loopback OAuth callback, the application shall forward the unchanged callback path and query through the same paired Mac.
+
+**PORTS-5.15** When a terminal offers an OAuth authorization URL with one HTTP(S) loopback redirect, the application shall preserve the authorization and callback URLs and reject ambiguous or non-loopback redirects.
+
+**PORTS-5.16** When preparing a worktree sign-in browser, the host shall resolve its callback only from that worktree's live listeners and preserve the listener's address.
+
+**PORTS-5.17** When a paired device requests worktree OAuth sign-in, the host shall grant temporary browser approval only after resolving the callback listener and shall honor disabled or loopback-only tunnel permissions.
+
+**PORTS-5.18** When a mobile user holds an OAuth sign-in link with a local callback, the application shall offer Sign in via Mac without opening unrelated links or stale menu targets.
+
+**PORTS-5.19** While a mobile worktree port row or host browser toolbar is displayed at a compact width, the application shall retain the link and navigation controls while truncating long process and host names.
+
+**PORTS-5.20** While resolving worktree ports, the application shall use shared live-session queries off the main actor without reading historical daemon logs.
+
+**PORTS-5.21** When pane port metadata is sent, the application shall preserve session-scoped bindings and safe loopback targets while decoding older snapshots without port metadata.
+
+**PORTS-5.22** While scanning Linux panes, the application shall discover only TCP listeners owned by the requested process subtree from procfs without requiring lsof, ignoring missing processes and unowned sockets.
+
+**PORTS-5.23** When listener rows are collapsed, the application shall retain a reachable IPv4 or IPv6 loopback target and shall not invent a loopback route for a specific LAN address.
+
+**PORTS-5.24** When a pane is removed or its shell PID changes during port discovery, the application shall discard the old scan rather than publish stale listeners.
+
+**PORTS-5.25** While a headless pane is running, the application shall discover listeners from its current zmx shell subtree, publish them under its session name, retry missing PIDs, and clear bindings when the session closes or its PID disappears.
+
+**PORTS-5.26** When a paired host allows port tunneling, a local port forward shall relay raw TCP bytes and close sockets when stopped or its parent disconnects.
+
+**PORTS-5.27** If a host denies tunneling, local port forwarding shall fail before exposing a listener without bypassing host authorization.
+
+**PORTS-5.28** When a forwarded TCP destination finishes a finite response, the application shall deliver all queued bytes before reporting EOF to the local client.
+
+**PORTS-5.29** When SSH upload writes fail with EOF after response reads, the TCP bridge shall drain the queued response before closing.
+
+**PORTS-5.30** While a TCP bridge drains queued bytes after SSH closes, its tunnel capacity slot shall remain reserved until the TCP connection terminates.
+
+**PORTS-5.31** When opening a remote worktree port, the application shall forward only a currently advertised listener belonging to that pane on the directly connected host.
+
+**PORTS-5.32** When Linux setup enrolls a Mac, the application shall permit loopback port forwarding while preserving an existing explicit tunnel denial.
+
+**PORTS-5.33** When the host changes a paired device's port permission, the application shall persist that permission before closing its existing connection, and shall not close a connection after a failed update.
+
+**PORTS-5.34** If a peer's authenticated identity or permissions change before SSH registration completes, then the application shall close the stale connection while preserving connections whose only changes are descriptive metadata.
+
+**PORTS-5.35** When worktree port metadata crosses a host connection, the application shall preserve both mobile listener addresses and session-scoped forwarding targets, including legacy bindings without a listener address.
+
+**PORTS-5.36** When a Mac Graftty pane invokes open with one HTTP(S) URL, the application shall route it through the pane owner without falling back after a routing failure, and shall preserve native open arguments outside a pane or for other invocations.
+
+**PORTS-5.37** When a new OAuth URL is offered by the mobile user's currently owned pane, the application shall open sign-in on that mobile device once and shall ignore offers from other panes, followers, and ordinary URLs.
+
+**PORTS-5.38** When a remote open offer crosses a host connection, the application shall preserve its originating pane session and intended paired mobile device, and decode older offers without those identities as unspecified.
+
+**PORTS-5.39** When a pane opens a resource after changing directory, the application shall resolve its originating worktree from the pane session and reject an unknown session instead of opening on another device.
+
+**PORTS-5.40** While a mobile resource preview is busy, the application shall defer new sign-in offers until presentation is available and retain consumption across pane focus changes.
+
+**PORTS-5.41** When a Mac pane launches a wrapper-managed Codex TUI and an installed browser-hook TUI matches its native Codex version, the application shall route HTTP(S) TUI browser URLs through the pane's Graftty helper, retain the original app-server binary, and use the original TUI outside a pane or after a version mismatch.
+
+**PORTS-5.42** When a wrapper-managed browser-hook Codex TUI offers an authorization URL, the application shall send the unchanged URL and pane session through Graftty open while its app-server continues to run the original native Codex binary.
+
+**PORTS-5.43** When the mobile Open control has one HTTP or HTTPS resource offer, the application shall open that offer directly, and shall retain the resource menu for files or multiple offers.
+
+**PORTS-5.44** When browser-hook Codex builds share a cache directory or output directory, the application shall serialize access to shared build artifacts and published executables.
+
+**PORTS-5.45** When an already patched Codex source tree is supplied, the patch tool shall reject repeated application without modifying source and preserve successful patch validation.
+
+**PORTS-5.46** When successive TUI browser handoffs overlap, the application shall enqueue them without blocking the TUI and preserve submission order even when the first helper stalls.
 
 ## PROJECT — PROJECT
 

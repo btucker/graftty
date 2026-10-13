@@ -16,7 +16,7 @@ private final class PortHostTerminalFake: HostTerminalDriver {
 
 @MainActor
 struct HeadlessHostPortTests {
-    @Test("@spec PORTS-5.5: While a headless pane is running, the application shall discover listeners from its current zmx shell subtree, publish them under its session name, retry missing PIDs, and clear bindings when the session closes or its PID disappears.")
+    @Test("@spec PORTS-5.25: While a headless pane is running, the application shall discover listeners from its current zmx shell subtree, publish them under its session name, retry missing PIDs, and clear bindings when the session closes or its PID disappears.")
     func runtimeTracksSessionPorts() async throws {
         let root = URL(fileURLWithPath: "/tmp").appendingPathComponent("ports-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

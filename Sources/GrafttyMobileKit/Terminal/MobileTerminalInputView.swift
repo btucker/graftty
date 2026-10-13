@@ -53,6 +53,19 @@ final class MobileTerminalInputView: UITerminalView {
     private var arrowRepeatTimer: Timer?
     private var observesApplicationActivity = false
 
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        // This view owns held-arrow repetition; avoid a second upstream timer.
+        automaticallyRepeatsHardwareKeys = false
+        // Retained dictation context already supplies zero-based document positions.
+        usesTextInputDocumentAnchor = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard super.gestureRecognizerShouldBegin(gestureRecognizer) else { return false }
         if gestureRecognizer is UIPanGestureRecognizer {

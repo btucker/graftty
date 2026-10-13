@@ -58,7 +58,9 @@ public struct LinuxProcSocketScanner: PortSocketScanning {
                 let local = fields[1].split(separator: ":")
                 guard local.count == 2, let port = UInt16(local[1], radix: 16), port > 0,
                       let address = Self.address(String(local[0]), ipv6: table == "tcp6") else { continue }
-                for (pid, name) in processes { result.append(.init(processName: name, pid: pid, address: address, port: port)) }
+                for (pid, name) in processes {
+                    result.append(.init(processName: name, pid: pid, address: address, port: port, isIPv6: table == "tcp6"))
+                }
             }
         }
         return readable ? result : nil

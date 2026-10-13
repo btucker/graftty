@@ -36,18 +36,56 @@ targets:
       - package: GrafttyMobileKit
         product: GrafttyMobileKit
 
+  GrafttyMobileTestHost:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - GrafttyMobileTestHost
+    info:
+      path: GrafttyMobileTestHost/Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsInWebContent: true
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        SWIFT_VERSION: "5.10"
+        SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+
   GrafttyMobileKitTests:
     type: bundle.unit-test
     platform: iOS
     deploymentTarget: "17.0"
     sources:
       - path: ../../Tests/GrafttyMobileKitTests
+        excludes:
+          - UI/HostBrowserProxyTests.swift
     settings:
       base:
         SWIFT_VERSION: "5.10"
         SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
+      - package: GrafttyMobileKit
+        product: GrafttyMobileKit
+
+  GrafttyMobileBrowserTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ../../Tests/GrafttyMobileKitTests/UI/HostBrowserProxyTests.swift
+        group: GrafttyMobileBrowserTests
+    settings:
+      base:
+        SWIFT_VERSION: "5.10"
+        SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: GrafttyMobileTestHost
       - package: GrafttyMobileKit
         product: GrafttyMobileKit
 
@@ -78,6 +116,7 @@ schemes:
       config: Debug
       targets:
         - GrafttyMobileKitTests
+        - GrafttyMobileBrowserTests
         - GrafttyRemoteClientTests
     profile:
       config: Release

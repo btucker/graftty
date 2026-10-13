@@ -4,7 +4,7 @@ import Testing
 import GrafttyProtocol
 
 struct LinuxProcSocketScannerTests {
-    @Test("@spec PORTS-5.1: When pane port metadata is sent, the application shall preserve session-scoped bindings and safe loopback targets while decoding older snapshots without port metadata.")
+    @Test("@spec PORTS-5.21: When pane port metadata is sent, the application shall preserve session-scoped bindings and safe loopback targets while decoding older snapshots without port metadata.")
     func wireRoundTrip() throws {
         let old = Data(#"{"path":"/repo","displayName":"main","repoDisplayName":"repo"}"#.utf8)
         #expect(try JSONDecoder().decode(WorktreePanes.self, from: old).portBindings == nil)
@@ -15,7 +15,7 @@ struct LinuxProcSocketScannerTests {
         #expect(try JSONDecoder().decode(PortBinding.self, from: legacy).targetHost == nil)
     }
 
-    @Test("@spec PORTS-5.2: While scanning Linux panes, the application shall discover only TCP listeners owned by the requested process subtree from procfs without requiring lsof, ignoring missing processes and unowned sockets.")
+    @Test("@spec PORTS-5.22: While scanning Linux panes, the application shall discover only TCP listeners owned by the requested process subtree from procfs without requiring lsof, ignoring missing processes and unowned sockets.")
     func procSocketOwnershipAndAddresses() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -44,7 +44,7 @@ struct LinuxProcSocketScannerTests {
         #expect(await scanner.listeningSockets(pids: [999]) == [])
     }
 
-    @Test("@spec PORTS-5.3: When listener rows are collapsed, the application shall retain a reachable IPv4 or IPv6 loopback target and shall not invent a loopback route for a specific LAN address.")
+    @Test("@spec PORTS-5.23: When listener rows are collapsed, the application shall retain a reachable IPv4 or IPv6 loopback target and shall not invent a loopback route for a specific LAN address.")
     func loopbackTargets() {
         for (address, target, scope) in [("127.0.0.2", "127.0.0.2" as String?, BindScope.loopback), ("::1", "::1", .loopback), ("0.0.0.0", "127.0.0.1", .lan), ("::", "::1", .lan), ("192.0.2.4", nil, .lan)] {
             let rows = LsofOutputParser.parse("node 123 user 3u IPv6 0x0 0t0 TCP [\(address)]:3000 (LISTEN)")
@@ -68,7 +68,7 @@ private actor SuspendedPortRunner: LsofRunner {
 }
 
 extension LinuxProcSocketScannerTests {
-    @Test("@spec PORTS-5.4: When a pane is removed or its shell PID changes during port discovery, the application shall discard the old scan rather than publish stale listeners.")
+    @Test("@spec PORTS-5.24: When a pane is removed or its shell PID changes during port discovery, the application shall discard the old scan rather than publish stale listeners.")
     func staleScanCannotResurrectPane() async throws {
         let runner = SuspendedPortRunner()
         let scanner = PortScanner(runner: runner, walker: StubProcessTreeWalker(result: []))

@@ -125,10 +125,11 @@ public actor DirectSSHHostConnection {
     }
 
     #if canImport(Network)
-    public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int) async throws {
+    public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int,
+                                  handshakeReply: Data = BrowserProxy.socksSuccessReply) async throws {
         let (parent, handler) = try connectedTransport()
         _ = try await SSHSocketTransport(parent: parent, handler: handler.handler)
-            .bridge(socket, host: host, port: port, socksReply: true)
+            .bridge(socket, host: host, port: port, handshakeReply: handshakeReply)
     }
 
     public func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward {

@@ -26,7 +26,7 @@ public final class LocalPortForward: Sendable {
         try? await probe.close().get()
         try Task.checkCancellation()
         let listener = try LocalForwardListener { socket in
-            try await transport.bridge(socket, host: host, port: port, socksReply: false)
+            try await transport.bridge(socket, host: host, port: port, handshakeReply: Data())
         }
         transport.parent.closeFuture.whenComplete { [weak listener] _ in listener?.stop() }
         do {
@@ -54,15 +54,15 @@ struct SSHSocketTransport: @unchecked Sendable {
             closeParentOnTimeout: false) { child, _ in initializer(child) }
     }
 
-    func bridge(_ socket: NWConnection, host: String, port: Int, socksReply: Bool) async throws -> Channel {
+    func bridge(_ socket: NWConnection, host: String, port: Int, handshakeReply: Data) async throws -> Channel {
         let bridge = SSHTCPBridge(connection: socket, startsConnection: false)
         let child = try await openChannel(host: host, port: port) { channel in
             channel.setOption(ChannelOptions.autoRead, value: false).flatMap { channel.pipeline.addHandler(bridge) }
         }
         do {
             try Task.checkCancellation()
-            if socksReply {
-                try await BrowserProxy.send(Data([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]), to: socket)
+            if !handshakeReply.isEmpty {
+                try await BrowserProxy.send(handshakeReply, to: socket)
             }
             try await child.eventLoop.submit { bridge.activate() }.get()
             try Task.checkCancellation()

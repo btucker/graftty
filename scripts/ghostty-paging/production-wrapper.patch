@@ -1,223 +1,45 @@
 diff --git a/Ghostty.ref b/Ghostty.ref
-index d3b575c..9c4d683 100644
+index becba24..9c4d683 100644
 --- a/Ghostty.ref
 +++ b/Ghostty.ref
 @@ -1 +1 @@
--35e1a0160c4f6797e1bb1ef8e7a2b8c6b114ab58
+-1e9e14af5df14211892f5fc15fd21a49c7d94868
 +8af6897c0afc63037a8a3efee4162a380e3a4572
-diff --git a/Sources/GhosttyTerminal/Controller/TerminalClipboardText.swift b/Sources/GhosttyTerminal/Controller/TerminalClipboardText.swift
-new file mode 100644
-index 0000000..95ed507
---- /dev/null
-+++ b/Sources/GhosttyTerminal/Controller/TerminalClipboardText.swift
-@@ -0,0 +1,50 @@
-+import Foundation
-+import GhosttyKit
-+
-+/// Adapts existing text clipboard support to the renderer's length-based ABI.
-+enum TerminalClipboardText {
-+    static func string(from contents: UnsafePointer<ghostty_clipboard_content_s>?, count: Int) -> String? {
-+        guard let contents, count > 0 else { return nil }
-+        for content in UnsafeBufferPointer(start: contents, count: count) {
-+            guard let mime = content.mime, String(cString: mime) == "text/plain",
-+                  let data = content.data else { continue }
-+            let bytes = UnsafeRawPointer(data).assumingMemoryBound(to: UInt8.self)
-+            return String(decoding: UnsafeBufferPointer(start: bytes, count: content.len), as: UTF8.self)
-+        }
-+        return nil
-+    }
-+
-+    static func accepts(_ mimes: UnsafePointer<UnsafePointer<CChar>?>?, count: Int) -> Bool {
-+        guard let mimes, count > 0 else { return false }
-+        return UnsafeBufferPointer(start: mimes, count: count).contains { mime in
-+            mime.map { String(cString: $0) == "text/plain" } ?? false
-+        }
-+    }
-+
-+    static func withCompletion<Result>(
-+        text: String,
-+        confirmed: Bool,
-+        listOnly: Bool = false,
-+        _ body: (UnsafePointer<ghostty_clipboard_complete_s>) -> Result
-+    ) -> Result {
-+        "text/plain".withCString { mime in
-+            text.withCString { data in
-+                var content = ghostty_clipboard_content_s(mime: mime, data: data, len: text.utf8.count)
-+                return withUnsafePointer(to: &content) { contentPointer in
-+                    let available: [UnsafePointer<CChar>?] = [mime]
-+                    return available.withUnsafeBufferPointer { types in
-+                        var completion = ghostty_clipboard_complete_s(
-+                            contents: listOnly ? nil : contentPointer,
-+                            contents_len: listOnly ? 0 : 1,
-+                            available: types.baseAddress,
-+                            available_len: types.count,
-+                            confirmed: confirmed,
-+                            remember: false
-+                        )
-+                        return withUnsafePointer(to: &completion, body)
-+                    }
-+                }
-+            }
-+        }
-+    }
-+}
-diff --git a/Sources/GhosttyTerminal/Controller/TerminalController+Callbacks.swift b/Sources/GhosttyTerminal/Controller/TerminalController+Callbacks.swift
-index 55d2c1b..a70c162 100644
---- a/Sources/GhosttyTerminal/Controller/TerminalController+Callbacks.swift
-+++ b/Sources/GhosttyTerminal/Controller/TerminalController+Callbacks.swift
-@@ -63,10 +63,7 @@ private enum TerminalCallbacks {
-         contentsLen: Int,
-         confirm _: Bool
-     ) {
--        guard contentsLen > 0 else { return }
--        guard let content = contents?.pointee else { return }
--        guard let data = content.data else { return }
--        let string = String(cString: data)
-+        guard let string = TerminalClipboardText.string(from: contents, count: contentsLen) else { return }
- 
-         #if canImport(UIKit)
-             UIPasteboard.general.string = string
-@@ -80,49 +77,62 @@ private enum TerminalCallbacks {
-     static func readClipboard(
-         userdata: UnsafeMutableRawPointer?,
-         clipboard _: ghostty_clipboard_e,
--        opaquePtr: UnsafeMutableRawPointer?
--    ) -> Bool {
--        guard let userdata, let opaquePtr else { return false }
-+        opaquePtr: UnsafeMutableRawPointer?,
-+        mimes: UnsafePointer<UnsafePointer<CChar>?>?,
-+        mimeCount: Int,
-+        list: Bool
-+    ) -> ghostty_clipboard_read_result_e {
-+        guard let userdata, let opaquePtr else { return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE }
-+        guard list || TerminalClipboardText.accepts(mimes, count: mimeCount) else {
-+            return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
-+        }
- 
-         let bridge = Unmanaged<TerminalCallbackBridge>
-             .fromOpaque(userdata)
-             .takeUnretainedValue()
--        guard let surface = bridge.rawSurface else { return false }
-+        guard let surface = bridge.rawSurface else { return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE }
- 
-+        // Type-list requests must not read the clipboard contents.
-         #if canImport(UIKit)
--            let string = UIPasteboard.general.string
-+            let string = list ? (UIPasteboard.general.hasStrings ? "" : nil) : UIPasteboard.general.string
-         #elseif canImport(AppKit)
--            let string = NSPasteboard.general.string(forType: .string)
-+            let pasteboard = NSPasteboard.general
-+            let string = list ? (pasteboard.availableType(from: [.string]) != nil ? "" : nil) : pasteboard.string(forType: .string)
-         #endif
- 
-         guard let string else {
-             TerminalDebugLog.log(.input, "clipboard paste read empty")
--            return false
-+            return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
-         }
-         TerminalDebugLog.log(
-             .input,
-             "clipboard paste read bytes=\(string.utf8.count) lines=\(TerminalInputText.lineCount(in: string))"
-         )
--        string.withCString { cString in
--            ghostty_surface_complete_clipboard_request(surface, cString, opaquePtr, false)
-+        TerminalClipboardText.withCompletion(text: string, confirmed: false, listOnly: list) { completion in
-+            ghostty_surface_complete_clipboard_request(surface, completion, opaquePtr)
-         }
-         TerminalDebugLog.log(.input, "clipboard paste complete")
--        return true
-+        return GHOSTTY_CLIPBOARD_READ_STARTED
+diff --git a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalPendingOperations.swift b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalPendingOperations.swift
+index 448da4e..4c2875a 100644
+--- a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalPendingOperations.swift
++++ b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalPendingOperations.swift
+@@ -9,6 +9,7 @@ import Foundation
+ struct InMemoryTerminalPendingOperations {
+     enum Operation {
+         case write(Data)
++        case custom((@Sendable () -> Void)?)
+         case processExit(exitCode: UInt32, runtimeMilliseconds: UInt64)
      }
- 
-     static func confirmReadClipboard(
-         userdata: UnsafeMutableRawPointer?,
--        string: UnsafePointer<CChar>?,
-+        payload: UnsafePointer<ghostty_clipboard_confirm_s>?,
-         opaquePtr: UnsafeMutableRawPointer?,
-         request: ghostty_clipboard_request_e
-     ) {
--        guard let userdata, let string, let opaquePtr else { return }
-+        guard let userdata, let payload, let opaquePtr else { return }
- 
-         let bridge = Unmanaged<TerminalCallbackBridge>
-             .fromOpaque(userdata)
-             .takeUnretainedValue()
--        let text = String(cString: string)
--        guard let kind = TerminalClipboardRequestKind(request) else { return }
-+        guard let kind = TerminalClipboardRequestKind(request),
-+              let text = TerminalClipboardText.string(from: payload.pointee.contents, count: payload.pointee.contents_len) else {
-+            if let surface = bridge.rawSurface {
-+                ghostty_surface_deny_clipboard_request(surface, opaquePtr)
-+            }
-+            return
+
+@@ -83,6 +84,15 @@ struct InMemoryTerminalPendingOperations {
+         return nil
+     }
+
++    /// Release old-generation snapshot closures without disturbing live
++    /// output order or the sequence numbers used by output barriers.
++    mutating func discardCustomOperations() {
++        for index in head..<storage.count {
++            guard case .custom? = storage[index]?.operation else { continue }
++            storage[index]?.operation = .custom(nil)
 +        }
-         let requestState = UInt(bitPattern: opaquePtr)
-         TerminalDebugLog.log(
-             .input,
-@@ -138,14 +148,12 @@ private enum TerminalCallbacks {
-                 kind: kind
-             ) { allowed in
-                 guard bridge.rawSurface == surface else { return }
--                let completedText = allowed ? text : ""
--                completedText.withCString { cString in
--                    ghostty_surface_complete_clipboard_request(
--                        surface,
--                        cString,
--                        opaquePtr,
--                        true
--                    )
-+                if allowed {
-+                    TerminalClipboardText.withCompletion(text: text, confirmed: true) { completion in
-+                        ghostty_surface_complete_clipboard_request(surface, completion, opaquePtr)
-+                    }
-+                } else {
-+                    ghostty_surface_deny_clipboard_request(surface, opaquePtr)
-                 }
-                 TerminalDebugLog.log(
-                     .input,
-@@ -194,24 +202,30 @@ func terminalControllerWriteClipboardCallback(
- func terminalControllerReadClipboardCallback(
-     userdata: UnsafeMutableRawPointer?,
-     clipboard: ghostty_clipboard_e,
--    opaquePtr: UnsafeMutableRawPointer?
--) -> Bool {
-+    opaquePtr: UnsafeMutableRawPointer?,
-+    mimes: UnsafePointer<UnsafePointer<CChar>?>?,
-+    mimeCount: Int,
-+    list: Bool
-+) -> ghostty_clipboard_read_result_e {
-     TerminalCallbacks.readClipboard(
-         userdata: userdata,
-         clipboard: clipboard,
--        opaquePtr: opaquePtr
-+        opaquePtr: opaquePtr,
-+        mimes: mimes,
-+        mimeCount: mimeCount,
-+        list: list
-     )
- }
- 
- func terminalControllerConfirmReadClipboardCallback(
-     userdata: UnsafeMutableRawPointer?,
--    string: UnsafePointer<CChar>?,
-+    payload: UnsafePointer<ghostty_clipboard_confirm_s>?,
-     opaquePtr: UnsafeMutableRawPointer?,
-     request: ghostty_clipboard_request_e
- ) {
-     TerminalCallbacks.confirmReadClipboard(
-         userdata: userdata,
--        string: string,
-+        payload: payload,
-         opaquePtr: opaquePtr,
-         request: request
-     )
++    }
++
+     /// Drops the oldest queued bytes past `limit`; process exits are kept.
+     mutating func trimWrites(toLimit limit: Int) {
+         var excess = writeByteCount - limit
 diff --git a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSession.swift b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSession.swift
-index 9f5f4c4..69fd768 100644
+index 02fd9f8..e722bdc 100644
 --- a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSession.swift
 +++ b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSession.swift
 @@ -12,7 +12,8 @@ public final class InMemoryTerminalSession: @unchecked Sendable {
      private static let slowSurfaceWriteThreshold: TimeInterval = 0.5
- 
+
      private let resizeLock = NSLock()
 -    private let surfaceAccess: InMemoryTerminalSurfaceAccess
 +    let surfaceAccess: InMemoryTerminalSurfaceAccess
@@ -232,14 +54,12 @@ index 9f5f4c4..69fd768 100644
 +        snapshotOperations = .live
          surfaceAccess = InMemoryTerminalSurfaceAccess(
              write: Self.writeToSurface,
-             processExit: Self.reportProcessExit
-@@ -51,11 +53,13 @@ public final class InMemoryTerminalSession: @unchecked Sendable {
-         suppressesPixelOnlyResizes: Bool = false,
-         surfaceWrite: @escaping InMemoryTerminalSurfaceAccess.Write,
+             processExit: Self.reportProcessExit,
+@@ -56,10 +58,12 @@ public final class InMemoryTerminalSession: @unchecked Sendable {
          processExit: @escaping InMemoryTerminalSurfaceAccess.ProcessExit =
--            InMemoryTerminalSession.reportProcessExit
-+            InMemoryTerminalSession.reportProcessExit,
-+        snapshotOperations: InMemoryTerminalSnapshotOperations = .live
+             InMemoryTerminalSession.reportProcessExit,
+         tick: @escaping InMemoryTerminalSurfaceAccess.Tick = { _ in },
++        snapshotOperations: InMemoryTerminalSnapshotOperations = .live,
      ) {
          writeHandler = write
          resizeHandler = resize
@@ -247,7 +67,7 @@ index 9f5f4c4..69fd768 100644
 +        self.snapshotOperations = snapshotOperations
          surfaceAccess = InMemoryTerminalSurfaceAccess(
              write: surfaceWrite,
-             processExit: processExit
+             processExit: processExit,
 diff --git a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSnapshot.swift b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSnapshot.swift
 new file mode 100644
 index 0000000..a371dd2
@@ -391,131 +211,294 @@ index 0000000..a371dd2
 +    }
 +}
 diff --git a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSurfaceAccess.swift b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSurfaceAccess.swift
-index fbe2880..8e6280b 100644
+index 0d45cb4..a5aedb5 100644
 --- a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSurfaceAccess.swift
 +++ b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSurfaceAccess.swift
-@@ -1,12 +1,14 @@
- import Foundation
- import GhosttyKit
- 
--/// Serializes host output while keeping the raw surface alive for each C call.
-+/// Serializes host output and snapshot mutations while keeping each C call
-+/// on a live surface.
- final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
-     /// Recheck retirement between chunks, even for a very large host packet.
+@@ -6,6 +6,7 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
      static let maximumWriteSize = 4096
      typealias Write = @Sendable (ghostty_surface_t, Data) -> Void
      typealias ProcessExit = @Sendable (ghostty_surface_t, UInt32, UInt64) -> Void
 +    typealias MainScheduler = @Sendable (@escaping @Sendable () -> Void) -> Void
- 
+     typealias Tick = @Sendable (ghostty_surface_t) -> Void
+
      private let condition = NSCondition()
-     private let outputQueue = DispatchQueue(
-@@ -15,6 +17,7 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
-     )
+@@ -16,6 +17,9 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
      private let write: Write
      private let processExit: ProcessExit
+     private let tick: Tick
 +    private let scheduleOnMain: MainScheduler
- 
-     /// All lease state is protected by `condition`. The mailbox callback is
-     /// supplied by the main-actor owner and used by main-actor lifecycle calls.
-@@ -36,10 +39,12 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
- 
-     init(
++    private var mainThreadOperations: [UUID: SnapshotMainQueueOperation] = [:]
++    private var queuedOperationCancellations: [UUID: @Sendable () -> Void] = [:]
+
+     /// Lease state is protected by `condition`. Mailbox callbacks run only
+     /// during main-thread waits, with the condition unlocked.
+@@ -79,10 +83,12 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
          write: @escaping Write,
--        processExit: @escaping ProcessExit
-+        processExit: @escaping ProcessExit,
-+        scheduleOnMain: @escaping MainScheduler = { DispatchQueue.main.async(execute: $0) }
+         processExit: @escaping ProcessExit,
+         tick: @escaping Tick = { _ in },
++        scheduleOnMain: @escaping MainScheduler = { DispatchQueue.main.async(execute: $0) },
      ) {
          self.write = write
          self.processExit = processExit
+         self.tick = tick
 +        self.scheduleOnMain = scheduleOnMain
      }
- 
+
      func setSurface(
-@@ -100,7 +105,7 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
-             var offset = data.startIndex
-             while offset < data.endIndex {
-                 let end = offset + min(Self.maximumWriteSize, data.endIndex - offset)
--                guard withSurface(generation: generation, { surface in
-+                guard let _ = withSurface(generation: generation, { surface in
-                     let chunk = data.count <= Self.maximumWriteSize ? data : data.subdata(in: offset..<end)
-                     write(surface, chunk)
-                 }) else { return }
-@@ -124,6 +129,35 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
-         return true
+@@ -92,6 +98,9 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+     ) {
+         condition.lock()
+         let previous = self.surface
++        let cancellations = Array(queuedOperationCancellations.values)
++        queuedOperationCancellations.removeAll()
++        operations.discardCustomOperations()
+         generation &+= 1
+         let replacementGeneration = generation
+         self.surface = nil
+@@ -116,6 +125,7 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+         let backlogChange = takeBacklogChange()
+         condition.unlock()
+         backlogChange?()
++        cancellations.forEach { $0() }
      }
- 
-+    /// Enqueues state restoration and history on the same queue as live bytes.
-+    /// Main-thread work occupies the queue until it finishes, but does not
-+    /// retain a surface while waiting for main to become available. Surface
-+    /// teardown on main can therefore invalidate the pending operation.
+
+     @discardableResult
+@@ -131,7 +141,10 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+         }
+         let matches = surface?.rawValue == expectedSurface
+         let previous = matches ? surface : retiringSurfaces[expectedSurface]
++        let cancellations = matches ? Array(queuedOperationCancellations.values) : []
+         if matches {
++            queuedOperationCancellations.removeAll()
++            operations.discardCustomOperations()
+             generation &+= 1
+             surface = nil
+             retire(previous)
+@@ -140,6 +153,7 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+         // joins its own calls before freeing, without clearing the new one.
+         waitForActiveOperations(on: previous, progress: progress)
+         condition.unlock()
++        cancellations.forEach { $0() }
+         return matches
+     }
+
+@@ -199,6 +213,71 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+         }
+     }
+
++    /// Snapshot/history work shares the bounded host-output queue, so a
++    /// drain batch cannot overtake an installation. Unlike live output,
++    /// these calls belong to the surface generation that queued them.
 +    func enqueueOperation<Result: Sendable>(
 +        onMainThread: Bool = false,
 +        operation: @escaping @Sendable (ghostty_surface_t) -> Result,
 +        completion: @escaping @Sendable (Result?) -> Void
 +    ) {
-+        guard let generation = currentGeneration else {
-+            completion(nil)
++        let result = SnapshotQueueCompletion(completion)
++        let id = UUID()
++        condition.lock()
++        guard surface != nil else {
++            condition.unlock()
++            result.complete(nil)
 +            return
 +        }
-+        outputQueue.async { [self] in
-+            guard onMainThread else {
-+                completion(withSurface(generation: generation, operation))
-+                return
++        let expectedGeneration = generation
++        queuedOperationCancellations[id] = { result.complete(nil) }
++        operations.append(.custom { [self] in
++            guard !result.isCompleted else { return }
++            let run: @Sendable () -> Void = { [self] in
++                result.complete(withSurface(generation: expectedGeneration, operation))
++                condition.lock()
++                queuedOperationCancellations.removeValue(forKey: id)
++                condition.unlock()
 +            }
-+            let finished = DispatchSemaphore(value: 0)
-+            scheduleOnMain { [self] in
-+                // Acquire activeOperations only after entering main. Acquiring
-+                // it before dispatch would deadlock main-thread setSurface.
-+                completion(withSurface(generation: generation, operation))
-+                finished.signal()
++            if onMainThread {
++                let finished = DispatchSemaphore(value: 0)
++                let mainOperation = SnapshotMainQueueOperation { [self] in
++                    // Acquire the lease after entering main. Teardown must
++                    // never wait for a lease whose work is queued on main.
++                    run()
++                    condition.lock()
++                    mainThreadOperations.removeValue(forKey: id)
++                    condition.unlock()
++                    finished.signal()
++                }
++                condition.lock()
++                mainThreadOperations[id] = mainOperation
++                condition.unlock()
++                scheduleOnMain { mainOperation.run() }
++                finished.wait()
++            } else {
++                run()
 +            }
-+            finished.wait()
++        })
++        scheduleDrain()
++        condition.unlock()
++    }
++
++    private func withSurface<Result>(
++        generation expectedGeneration: UInt64,
++        _ operation: (ghostty_surface_t) -> Result
++    ) -> Result? {
++        condition.lock()
++        guard generation == expectedGeneration, let surface else {
++            condition.unlock()
++            return nil
 +        }
++        surface.activeOperations += 1
++        condition.unlock()
++        defer { finishOperation(on: surface) }
++        return operation(surface.rawValue)
 +    }
 +
      func withCurrentSurface<Result>(
-         _ operation: (ghostty_surface_t) -> Result
+         _ operation: (ghostty_surface_t) -> Result,
      ) -> Result? {
-@@ -150,21 +184,20 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
-     }
- 
-     @discardableResult
--    private func withSurface(
-+    private func withSurface<Result>(
-         generation expectedGeneration: UInt64,
--        _ operation: (ghostty_surface_t) -> Void
--    ) -> Bool {
-+        _ operation: (ghostty_surface_t) -> Result
-+    ) -> Result? {
+@@ -262,10 +341,14 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+     private func tickCurrentSurface() {
          condition.lock()
-         guard generation == expectedGeneration, let surface else {
-             condition.unlock()
--            return false
-+            return nil
+         let current = surface
++        let pendingMain = Array(mainThreadOperations.values)
+         condition.unlock()
+         if let current {
+             current.processMailbox()
          }
++        // A synchronous main-thread output barrier must also make progress
++        // on snapshot work already dispatched to main, not only native ticks.
++        pendingMain.forEach { $0.run() }
+     }
+
+     /// Called with the lock held. Each operation goes to the surface
+@@ -297,11 +380,18 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+             condition.unlock()
+             return false
+         }
++        if case let .custom(run) = operation {
++            condition.unlock()
++            run?()
++            return true
++        }
          surface.activeOperations += 1
          condition.unlock()
- 
+
          defer { finishOperation(on: surface) }
--        operation(surface.rawValue)
--        return true
-+        return operation(surface.rawValue)
+         switch operation {
++        case .custom:
++            preconditionFailure("Custom operations run without retaining a surface")
+         case let .write(data):
+             write(surface.rawValue, data)
+         case let .processExit(exitCode, runtimeMilliseconds):
+@@ -364,3 +454,42 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
+         }
      }
- 
-     private func finishOperation(on surface: SurfaceLease) {
+ }
++
++/// Generation invalidation and queue execution can race; a continuation
++/// must still be resumed exactly once, outside all surface-access locks.
++private final class SnapshotQueueCompletion<Result: Sendable>: @unchecked Sendable {
++    private let lock = NSLock()
++    private var completion: (@Sendable (Result?) -> Void)?
++    init(_ completion: @escaping @Sendable (Result?) -> Void) {
++        self.completion = completion
++    }
++    var isCompleted: Bool {
++        lock.lock()
++        defer { lock.unlock() }
++        return completion == nil
++    }
++    func complete(_ value: Result?) {
++        lock.lock()
++        let callback = completion
++        completion = nil
++        lock.unlock()
++        callback?(value)
++    }
++}
++
++/// Main can run this work during a synchronous barrier before its scheduled
++/// callback fires. The later callback must not execute it a second time.
++private final class SnapshotMainQueueOperation: @unchecked Sendable {
++    private let lock = NSLock()
++    private var operation: (@Sendable () -> Void)?
++    init(_ operation: @escaping @Sendable () -> Void) {
++        self.operation = operation
++    }
++    func run() {
++        lock.lock()
++        let callback = operation
++        operation = nil
++        lock.unlock()
++        callback?()
++    }
++}
 diff --git a/Tests/GhosttyKitTest/InMemoryTerminalSnapshotQueueTests.swift b/Tests/GhosttyKitTest/InMemoryTerminalSnapshotQueueTests.swift
 new file mode 100644
-index 0000000..50265b6
+index 0000000..36f90fa
 --- /dev/null
 +++ b/Tests/GhosttyKitTest/InMemoryTerminalSnapshotQueueTests.swift
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,187 @@
 +@testable import GhosttyTerminal
 +import Foundation
 +import GhosttyKit
 +import Testing
 +
 +struct InMemoryTerminalSnapshotQueueTests {
++    @Test @MainActor
++    func `snapshot stays between earlier and later bytes across drain batches`() async {
++        let events = SnapshotLockedValues<Int>()
++        let started = DispatchSemaphore(value: 0)
++        let finish = DispatchSemaphore(value: 0)
++        let access = InMemoryTerminalSurfaceAccess(
++            write: { _, data in
++                let value = Int(String(decoding: data, as: UTF8.self))!
++                if value == 0 {
++                    started.signal()
++                    finish.wait()
++                }
++                events.append(value)
++            }, processExit: { _, _, _ in }
++        )
++        access.setSurface(UnsafeMutableRawPointer(bitPattern: 1)!)
++        access.enqueueWrite(Data("0".utf8))
++        #expect(snapshotQueueSignal(started))
++        for value in 1..<130 { access.enqueueWrite(Data("\(value)".utf8)) }
++        let installed: Bool? = await withCheckedContinuation { continuation in
++            access.enqueueOperation(onMainThread: true, operation: { _ in
++                events.append(130)
++                return true
++            }, completion: { continuation.resume(returning: $0) })
++            access.enqueueWrite(Data("131".utf8))
++            finish.signal()
++        }
++        await drainSnapshotQueue(access)
++        #expect(installed == true)
++        #expect(events.values == Array(0...131))
++    }
++
++    @Test @MainActor
++    func `main-thread output barriers execute scheduled snapshot work once`() {
++        let mainScheduled = DispatchSemaphore(value: 0)
++        let pendingMain = SnapshotLockedValues<@Sendable () -> Void>()
++        let events = SnapshotLockedValues<String>()
++        let access = InMemoryTerminalSurfaceAccess(
++            write: { _, _ in }, processExit: { _, _, _ in },
++            scheduleOnMain: { operation in
++                pendingMain.append(operation)
++                mainScheduled.signal()
++            }
++        )
++        access.setSurface(UnsafeMutableRawPointer(bitPattern: 1)!)
++        access.enqueueOperation(onMainThread: true, operation: { _ in
++            #expect(Thread.isMainThread)
++            events.append("installed")
++            return true
++        }, completion: { _ in events.append("completed") })
++        #expect(mainScheduled.wait(timeout: .now() + 2) == .success)
++        #expect(access.waitForPendingOutput())
++        pendingMain.values.first?()
++        #expect(events.values == ["installed", "completed"])
++    }
++
 +    @Test @MainActor
 +    func `snapshot installation runs on main and orders history with live writes`() async {
 +        let events = SnapshotLockedValues<String>()
@@ -596,7 +579,7 @@ index 0000000..50265b6
 +        access.setSurface(UnsafeMutableRawPointer(bitPattern: 4)!)
 +        access.enqueueWrite(Data([1]))
 +        let result: Int? = await withCheckedContinuation { continuation in
-+            #expect(started.wait(timeout: .now() + 2) == .success)
++            #expect(snapshotQueueSignal(started))
 +            access.enqueueOperation(operation: { _ in
 +                Issue.record("History must not reach a replacement surface")
 +                return 1
@@ -636,6 +619,10 @@ index 0000000..50265b6
 +        storage.append(value)
 +        lock.unlock()
 +    }
++}
++
++private func snapshotQueueSignal(_ semaphore: DispatchSemaphore) -> Bool {
++    semaphore.wait(timeout: .now() + 2) == .success
 +}
 diff --git a/Tests/GhosttyKitTest/InMemoryTerminalSnapshotTests.swift b/Tests/GhosttyKitTest/InMemoryTerminalSnapshotTests.swift
 new file mode 100644
@@ -762,50 +749,16 @@ index 0000000..5f0f286
 +        }
 +    }
 +}
-diff --git a/Tests/GhosttyKitTest/TerminalClipboardPayloadTests.swift b/Tests/GhosttyKitTest/TerminalClipboardPayloadTests.swift
-new file mode 100644
-index 0000000..e3bb69d
---- /dev/null
-+++ b/Tests/GhosttyKitTest/TerminalClipboardPayloadTests.swift
-@@ -0,0 +1,41 @@
-+@testable import GhosttyTerminal
-+import Foundation
-+import GhosttyKit
-+import Testing
-+
-+struct TerminalClipboardPayloadTests {
-+    @Test
-+    func `clipboard text respects explicit byte length without terminator`() {
-+        let bytes: [CChar] = [65, 0, 66, 67]
-+        "text/plain".withCString { mime in
-+            bytes.withUnsafeBufferPointer { data in
-+                var content = ghostty_clipboard_content_s(mime: mime, data: data.baseAddress, len: 3)
-+                withUnsafePointer(to: &content) { pointer in
-+                    #expect(TerminalClipboardText.string(from: pointer, count: 1) == "A\0B")
-+                }
-+            }
-+        }
-+    }
-+
-+    @Test
-+    func `clipboard completion preserves text bytes and confirmation`() {
-+        TerminalClipboardText.withCompletion(text: "A\0B", confirmed: true) { pointer in
-+            let completion = pointer.pointee
-+            #expect(completion.confirmed)
-+            #expect(!completion.remember)
-+            #expect(completion.contents_len == 1)
-+            #expect(completion.contents?.pointee.len == 3)
-+            #expect(TerminalClipboardText.string(from: completion.contents, count: completion.contents_len) == "A\0B")
-+            #expect(TerminalClipboardText.accepts(completion.available, count: completion.available_len))
-+        }
-+    }
-+
-+    @Test
-+    func `clipboard type listing contains no clipboard data`() {
-+        TerminalClipboardText.withCompletion(text: "contents", confirmed: false, listOnly: true) { pointer in
-+            #expect(pointer.pointee.contents == nil)
-+            #expect(pointer.pointee.contents_len == 0)
-+            #expect(TerminalClipboardText.accepts(pointer.pointee.available, count: pointer.pointee.available_len))
-+        }
-+    }
-+}
+diff --git a/Tests/GhosttyKitTest/Session/InMemoryTerminalPendingOperationsTests.swift b/Tests/GhosttyKitTest/Session/InMemoryTerminalPendingOperationsTests.swift
+index 75128e3..7afb64b 100644
+--- a/Tests/GhosttyKitTest/Session/InMemoryTerminalPendingOperationsTests.swift
++++ b/Tests/GhosttyKitTest/Session/InMemoryTerminalPendingOperationsTests.swift
+@@ -63,6 +63,8 @@ struct InMemoryTerminalPendingOperationsTests {
+             String(decoding: data, as: UTF8.self)
+         case let .processExit(exitCode, _)?:
+             "exit:\(exitCode)"
++        case .custom?:
++            "operation"
+         case nil:
+             nil
+         }

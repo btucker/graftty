@@ -11,8 +11,10 @@ struct OpenResourceTargetTests {
         let store = RemoteOpenStore()
         let now = Date()
         let owner = DisplayClientID("ssh-test-device-\(UUID().uuidString)")
-        let offer = try await store.offer(file: url, worktree: "/project", browserOwnerClientID: owner, now: now)
+        let offer = try await store.offer(file: url, worktree: "/project", browserOwnerClientID: owner, paneSessionName: "pane", now: now)
         #expect(offer.url == url)
+        #expect(offer.paneSessionName == "pane")
+        #expect(offer.browserOwnerDeviceID == RemoteDeviceID(value: "test-device"))
         #expect(await store.list(worktree: "/project") == [offer])
         #expect(BrowserTunnelApprovalStore.shared.isApproved(
             deviceID: RemoteDeviceID(value: "test-device"), now: now.addingTimeInterval(899)

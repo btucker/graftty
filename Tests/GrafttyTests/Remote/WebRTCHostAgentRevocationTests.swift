@@ -20,7 +20,7 @@ import GrafttyProtocol
 @Suite("WebRTCHostAgent re-verifies trust after the register Task-hop (REMOTE-3.1)")
 struct WebRTCHostAgentRevocationTests {
 
-    @Test("@spec PORTS-5.14: If a peer's authenticated identity or permissions change before SSH registration completes, then the application shall close the stale connection while preserving connections whose only changes are descriptive metadata.",
+    @Test("@spec PORTS-5.34: If a peer's authenticated identity or permissions change before SSH registration completes, then the application shall close the stale connection while preserving connections whose only changes are descriptive metadata.",
           arguments: ["port", "terminal", "key", "kind", "metadata"])
     func closesWhenAuthenticatedTrustChangesDuringRegistration(change: String) async throws {
         let directory = Self.tempDir()

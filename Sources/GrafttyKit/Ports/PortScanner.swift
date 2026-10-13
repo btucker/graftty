@@ -1,20 +1,25 @@
 // Sources/GrafttyKit/Ports/PortScanner.swift
 import Foundation
+import GrafttyProtocol
 
-/// @spec PORTS-1.1: When a pane's foreground process is non-shell, the application shall scan that process subtree's TCP listening sockets every 2 seconds.
+/// @spec PORTS-1.1: While a pane is registered, the application shall scan its process subtree's TCP listening sockets every 2 seconds even when the Mac application is inactive.
 //
 /// @spec PORTS-4.3: When a pane is dragged to another worktree, the application shall preserve its registration and binding snapshot (`PaneSlotID` is stable).
 //
 /// @spec PORTS-4.5: When a pane is registered before its shell PID can be resolved, the application shall record it as pending and re-attempt resolution on each scan tick.
 public actor PortScanner {
     private let socketScanner: any PortSocketScanning
-    private var generations: [PaneSlotID: UInt64] = [:]
-    private var nextGeneration: UInt64 = 0
     private let walker: any ProcessTreeWalking
     private var registrations: [PaneSlotID: pid_t] = [:]
     private var pending: Set<PaneSlotID> = []
-    private var snapshots: [PaneSlotID: [PortBinding]] = [:]
+    private var registrationGenerations: [PaneSlotID: UUID] = [:]
+    private struct Snapshot {
+        let bindings: [PortBinding]
+        let listeners: [PortBinding]
+    }
+    private var snapshots: [PaneSlotID: Snapshot] = [:]
     private var inFlight = false
+    private var scanWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// Closure invoked on the main actor whenever a pane's binding set
     /// changes. Wired by `GrafttyApp` to push into `PortBindingsModel`.
@@ -44,11 +49,6 @@ public actor PortScanner {
         walker = ProcessTreeWalker()
     }
 
-    private func advanceGeneration(_ id: PaneSlotID) {
-        nextGeneration &+= 1
-        generations[id] = nextGeneration
-    }
-
     public func setOnChange(_ callback: @escaping @MainActor @Sendable (PaneSlotID, [PortBinding]) -> Void) {
         self.onChange = callback
     }
@@ -58,7 +58,9 @@ public actor PortScanner {
     }
 
     public func registerPane(_ id: PaneSlotID, shellPID: pid_t) {
-        if registrations[id] != shellPID { advanceGeneration(id); updateSnapshot(id: id, bindings: []) }
+        guard registrations[id] != shellPID else { return }
+        unregisterPane(id)
+        registrationGenerations[id] = UUID()
         pending.remove(id)
         registrations[id] = shellPID
     }
@@ -68,13 +70,13 @@ public actor PortScanner {
     /// The scanner re-attempts resolution via `pidResolver` on each tick
     /// and promotes the pane to a normal registration once it succeeds.
     public func registerPanePending(_ id: PaneSlotID) {
-        guard registrations[id] == nil, !pending.contains(id) else { return }
-        advanceGeneration(id)
+        guard registrationGenerations[id] == nil else { return }
+        registrationGenerations[id] = UUID()
         pending.insert(id)
     }
 
     public func unregisterPane(_ id: PaneSlotID) {
-        generations[id] = nil
+        registrationGenerations.removeValue(forKey: id)
         pending.remove(id)
         registrations.removeValue(forKey: id)
         if snapshots.removeValue(forKey: id) != nil {
@@ -84,20 +86,39 @@ public actor PortScanner {
     }
 
     public func bindings(for id: PaneSlotID) -> [PortBinding] {
-        snapshots[id] ?? []
+        snapshots[id]?.bindings ?? []
+    }
+
+    public func refreshedPorts(for paneIDs: [PaneSlotID]) async -> [WorktreePort] {
+        PortBinding.worktreePorts(from: await refreshedBindings(for: paneIDs))
+    }
+
+    public func refreshedBindings(for paneIDs: [PaneSlotID]) async -> [PortBinding] {
+        guard !paneIDs.isEmpty else { return [] }
+        if inFlight {
+            await withCheckedContinuation { scanWaiters.append($0) }
+        } else {
+            await tick()
+        }
+        return paneIDs.flatMap { snapshots[$0]?.listeners ?? [] }
     }
 
     public func tick() async {
         guard !inFlight else { return }
         inFlight = true
-        defer { inFlight = false }
+        defer {
+            inFlight = false
+            let waiters = scanWaiters
+            scanWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
 
         if let resolver = pidResolver, !pending.isEmpty {
+            let pendingGenerations = registrationGenerations
             for id in pending {
-                let generation = generations[id]
-                let pid = await resolver(id)
-                guard pending.contains(id), generations[id] == generation else { continue }
-                if let pid, pid > 0 {
+                if let pid = await resolver(id), pid > 0 {
+                    guard pending.contains(id),
+                          registrationGenerations[id] == pendingGenerations[id] else { continue }
                     pending.remove(id)
                     registrations[id] = pid
                 }
@@ -105,7 +126,7 @@ public actor PortScanner {
         }
 
         let scanRegistrations = registrations
-        let scanGenerations = generations
+        let scanGenerations = registrationGenerations
         let roots = Array(scanRegistrations.values)
         let descendantsByRoot = walker.descendants(rootedAt: roots)
         var paneToPIDs: [PaneSlotID: Set<pid_t>] = [:]
@@ -121,10 +142,11 @@ public actor PortScanner {
         }
         let rows = await socketScanner.listeningSockets(pids: allPIDs) ?? []
         for (id, pids) in paneToPIDs {
-            guard registrations[id] == scanRegistrations[id], generations[id] == scanGenerations[id] else { continue }
+            guard registrations[id] == scanRegistrations[id],
+                  registrationGenerations[id] == scanGenerations[id] else { continue }
             let paneRows = rows.filter { pids.contains($0.pid) }
             let bindings = Self.collapse(paneRows)
-            updateSnapshot(id: id, bindings: bindings)
+            updateSnapshot(id: id, bindings: bindings, listeners: paneRows.map(Self.listenerBinding))
         }
     }
 
@@ -134,28 +156,42 @@ public actor PortScanner {
         }
     }
 
-    private func updateSnapshot(id: PaneSlotID, bindings: [PortBinding]) {
-        let prev = snapshots[id] ?? []
+    private func updateSnapshot(id: PaneSlotID, bindings: [PortBinding], listeners: [PortBinding] = []) {
+        let prev = snapshots[id]?.bindings ?? []
+        snapshots[id] = Snapshot(bindings: bindings, listeners: listeners)
         guard prev != bindings else { return }
-        snapshots[id] = bindings
         let onChange = self.onChange
         Task { @MainActor in onChange?(id, bindings) }
+    }
+
+    private static func listenerBinding(_ row: LsofOutputParser.Row) -> PortBinding {
+        let host: String
+        switch row.address {
+        case "*": host = row.isIPv6 ? "::1" : "127.0.0.1"
+        case "0.0.0.0": host = "127.0.0.1"
+        case "::": host = "::1"
+        default: host = row.address
+        }
+        return PortBinding(port: row.port, scope: scopeFor(address: row.address),
+                           processName: row.processName, pid: row.pid, host: host, targetHost: targetFor(address: row.address))
     }
 
     /// Dedupe rows by `(port, scope)` after broadening scope when *any*
     /// row for that pid+port is non-loopback. Choose lowest PID for ties.
     static func collapse(_ rows: [LsofOutputParser.Row]) -> [PortBinding] {
         struct Key: Hashable { let pid: pid_t; let port: UInt16 }
-        var perPidPort: [Key: (scope: BindScope, name: String, target: String?)] = [:]
+        var perPidPort: [Key: (scope: BindScope, name: String, host: String, target: String?)] = [:]
         for row in rows {
             let key = Key(pid: row.pid, port: row.port)
             let scope = scopeFor(address: row.address)
-            let target = targetFor(address: row.address)
+            let host = listenerBinding(row).host
             if let existing = perPidPort[key] {
                 let merged: BindScope = (existing.scope == .lan || scope == .lan) ? .lan : .loopback
-                perPidPort[key] = (merged, existing.name, [existing.target, target].compactMap { $0 }.sorted().first)
+                let preferredHost = min(existing.host, host)
+                perPidPort[key] = (merged, existing.name, preferredHost,
+                                   [existing.target, targetFor(address: row.address)].compactMap { $0 }.sorted().first)
             } else {
-                perPidPort[key] = (scope, row.processName, target)
+                perPidPort[key] = (scope, row.processName, host, targetFor(address: row.address))
             }
         }
         struct GKey: Hashable { let port: UInt16; let scope: BindScope }
@@ -167,6 +203,7 @@ public actor PortScanner {
                 scope: value.scope,
                 processName: value.name,
                 pid: key.pid,
+                host: value.host,
                 targetHost: value.target
             )
             if let existing = grouped[gk] {

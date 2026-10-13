@@ -3,6 +3,7 @@ import Foundation
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
+import os
 
 struct RelayedPaneTarget: Sendable, Equatable {
     let identity: RemoteMacIdentity
@@ -61,7 +62,7 @@ final class RemoteWorktreeRelayRouter {
             attentionText: worktree.attentionText, attentionSource: worktree.attentionSource,
             attentionTimestamp: worktree.attentionTimestamp, layout: worktree.layout,
             origin: worktree.origin ?? WorktreeOrigin(deviceID: ownerID, deviceLabel: ownerLabel, relayDepth: 0),
-            route: worktree.route, sidebar: .init(id: "\(projectID):\(worktree.path)", projectID: projectID), portBindings: worktree.portBindings)
+            route: worktree.route, sidebar: .init(id: "\(projectID):\(worktree.path)", projectID: projectID), ports: worktree.ports, portBindings: worktree.portBindings)
     }
 
     func promotedWorktrees(
@@ -148,7 +149,9 @@ final class RemoteWorktreeRelayRouter {
                         repositoryID: repositoryAlias,
                         worktreeID: worktreeAlias
                     ),
-                    sidebar: sidebar
+                    sidebar: sidebar,
+                    ports: worktree.ports,
+                    portBindings: worktree.portBindings
                 ))
             }
         }
@@ -417,7 +420,8 @@ final class RelayedTerminalByteStream:
 
     private let client: any WebSocketClient & Sendable
     private let continuation: AsyncStream<Data>.Continuation
-    private let pagedContinuation: AsyncStream<PagedTerminalEvent>.Continuation
+    private let pagedBuffer = RelayedPagedEventBuffer()
+    private static let trace = Logger(subsystem: "com.quotably.graftty", category: "terminal-relay")
     private let paged: Bool
     private let lock = NSLock()
     private var receiveTask: Task<Void, Never>?
@@ -446,9 +450,8 @@ final class RelayedTerminalByteStream:
     init(client: any WebSocketClient & Sendable, paged: Bool = false) {
         self.client = client
         self.paged = paged
-        let events = AsyncStream<PagedTerminalEvent>.makeStream(bufferingPolicy: .bufferingOldest(256))
-        self.pagedEvents = events.stream
-        self.pagedContinuation = events.continuation
+        let buffer = pagedBuffer
+        self.pagedEvents = AsyncStream(unfolding: { await buffer.next() }, onCancel: { buffer.cancel() })
         var continuation: AsyncStream<Data>.Continuation!
         self.inboundBytes = AsyncStream { continuation = $0 }
         self.continuation = continuation
@@ -481,10 +484,12 @@ final class RelayedTerminalByteStream:
                     }
                 } catch {
                     if paged, case TerminalSessionClient.ClientError.sessionEnded(let status) = error {
-                        await self.enqueuePagedExit(Int32(clamping: status))
+                        self.pagedBuffer.finish(exitStatus: Int32(clamping: status))
+                    } else if !Task.isCancelled {
+                        Self.trace.error("Downstream terminal receive failed: \(String(describing: error), privacy: .public)")
                     }
                     self.continuation.finish()
-                    self.pagedContinuation.finish()
+                    self.pagedBuffer.finish()
                     return
                 }
             }
@@ -559,21 +564,12 @@ final class RelayedTerminalByteStream:
         case .grid(let cols, let rows): reportPTYSize(cols: cols, rows: rows)
         default: break
         }
-        switch pagedContinuation.yield(event) {
-        case .enqueued: return true
-        case .dropped, .terminated: return false
-        @unknown default: return false
-        }
-    }
-
-    private func enqueuePagedExit(_ status: Int32) async {
-        // EOF cannot use the output-overflow reconnect path: doing so can
-        // recreate an exited session. Retain it until the consumer catches up
-        // or the attachment is cancelled; only this final event may wait.
-        while !Task.isCancelled {
-            guard case .dropped = pagedContinuation.yield(.ended(status)) else { return }
-            do { try await Task.sleep(for: .milliseconds(10)) }
-            catch { return }
+        switch pagedBuffer.enqueue(event) {
+        case .accepted: return true
+        case .finished: return false
+        case .overflow:
+            Self.trace.error("Relayed terminal output exceeded its bounded queue")
+            return false
         }
     }
 
@@ -639,7 +635,7 @@ final class RelayedTerminalByteStream:
         task?.cancel()
         client.close()
         continuation.finish()
-        pagedContinuation.finish()
+        pagedBuffer.finish()
     }
 
     fileprivate func request(_ request: PagedTerminalRequest) async throws {
