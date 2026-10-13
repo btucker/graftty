@@ -46,6 +46,8 @@ private struct PositionedImagePreview: View {
             switch kind {
             case .move: requestedFrame = ImagePreviewGeometry.moving(start, by: translation, in: viewport)
             case .resize: requestedFrame = ImagePreviewGeometry.resizing(start, by: translation, in: viewport)
+            case .resizeHeight:
+                requestedFrame = ImagePreviewGeometry.resizing(start, by: CGSize(width: 0, height: translation.height), in: viewport)
             }
         case .ended: interactionStart = nil
         }
@@ -72,14 +74,16 @@ struct ImagePreviewTray: NSViewRepresentable {
 @MainActor
 final class NativeImagePreviewTray: NSVisualEffectView {
     static let headerHeight: CGFloat = 44
+    static let bottomEdgeHeight: CGFloat = 10
     let scrollView = PreviewScrollView()
     let dragHandle = ImagePreviewGestureHandle(kind: .move)
     let resizeGrip = ImagePreviewGestureHandle(kind: .resize)
+    let bottomEdge = ImagePreviewGestureHandle(kind: .resizeHeight)
     let zoomControls = PreviewZoomControls(labels: ["", "Fit", ""], trackingMode: .momentary, target: nil, action: nil)
     private let canvas = PreviewImageView()
     private let title = PreviewTitleField(labelWithString: "")
     private let zoomLabel = NSTextField(labelWithString: "Fit")
-    private let openButton = PreviewButton(title: "Preview", target: nil, action: nil)
+    private let openButton = PreviewButton(title: "Open…", target: nil, action: nil)
     private let closeButton = PreviewButton(title: "", target: nil, action: nil)
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private weak var priorResponder: NSResponder?
@@ -131,8 +135,6 @@ final class NativeImagePreviewTray: NSVisualEffectView {
         zoomControls.previewTray = self
         zoomControls.target = self
         zoomControls.action = #selector(changeZoom)
-        openButton.image = NSImage(systemSymbolName: "arrow.up.forward.app", accessibilityDescription: "Open in Preview")
-        openButton.imagePosition = .imageLeading
         openButton.bezelStyle = .rounded
         openButton.controlSize = .regular
         openButton.toolTip = "Open original file in Preview.app"
@@ -154,6 +156,9 @@ final class NativeImagePreviewTray: NSVisualEffectView {
         resizeGrip.onInteraction = { [weak self] interaction in self?.handleInteraction(interaction) }
         resizeGrip.setAccessibilityLabel("Resize image preview")
         resizeGrip.toolTip = "Drag to resize image preview"
+        bottomEdge.onInteraction = { [weak self] interaction in self?.handleInteraction(interaction) }
+        bottomEdge.setAccessibilityLabel("Resize image preview height")
+        bottomEdge.toolTip = "Drag to resize image preview height"
         scrollView.hasHorizontalScroller = true
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
@@ -169,6 +174,7 @@ final class NativeImagePreviewTray: NSVisualEffectView {
         canvas.setAccessibilityLabel("Image preview")
         scrollView.documentView = canvas
         addSubview(scrollView)
+        addSubview(bottomEdge)
         addSubview(resizeGrip)
         errorLabel.font = .systemFont(ofSize: 11)
         errorLabel.textColor = .labelColor
@@ -205,22 +211,21 @@ final class NativeImagePreviewTray: NSVisualEffectView {
         let compact = bounds.width < 300
         let height = min(compact ? 72 : Self.headerHeight, bounds.height)
         dragHandle.frame = NSRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
-        openButton.title = compact ? "" : "Preview"
-        openButton.imagePosition = compact ? .imageOnly : .imageLeading
-        let buttonWidth = ceil(openButton.intrinsicContentSize.width)
+        let buttonWidth = ceil(max(openButton.intrinsicContentSize.width, openButton.cell?.cellSize.width ?? 0))
         let zoomWidth = ceil(zoomControls.intrinsicContentSize.width)
         let closeX = max(0, bounds.width - 34)
         closeButton.frame = NSRect(x: closeX, y: height - 34, width: 24, height: 24)
-        let openX = compact ? bounds.width - 8 - buttonWidth : closeX - 8 - buttonWidth
+        let openX = compact ? bounds.width - 4 - buttonWidth : closeX - 8 - buttonWidth
         openButton.frame = NSRect(x: openX, y: 10, width: buttonWidth, height: 24)
-        let zoomX = compact ? 8 : openX - 10 - zoomWidth
+        let zoomX = compact ? 4 : openX - 10 - zoomWidth
         zoomControls.frame = NSRect(x: zoomX, y: 10, width: zoomWidth, height: 24)
         // Hide only the redundant percentage in narrow trays, keeping actions legible.
         zoomLabel.isHidden = compact || zoomX < 170
         zoomLabel.frame = NSRect(x: zoomX - 56, y: 13, width: 46, height: 18)
         title.frame = NSRect(x: 12, y: height - 31,
                              width: max(0, compact ? closeX - 20 : zoomX - (zoomLabel.isHidden ? 24 : 78)), height: 18)
-        let newFrame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - height))
+        let newFrame = NSRect(x: 0, y: Self.bottomEdgeHeight, width: bounds.width,
+                              height: max(0, bounds.height - height - Self.bottomEdgeHeight))
         if scrollView.frame != newFrame {
             scrollView.frame = newFrame
             let viewport = scrollView.contentSize
@@ -228,6 +233,7 @@ final class NativeImagePreviewTray: NSVisualEffectView {
             canvas.fittedSize = ImagePreviewLayout.fit(image: imageSize, viewport: viewport)
         }
         resizeGrip.frame = NSRect(x: max(0, bounds.width - 24), y: 0, width: 24, height: 24)
+        bottomEdge.frame = NSRect(x: 0, y: 0, width: max(0, bounds.width - 24), height: Self.bottomEdgeHeight)
         errorLabel.frame = NSRect(x: 12, y: 12, width: max(0, bounds.width - 48), height: 34)
     }
 
@@ -347,6 +353,7 @@ final class ImagePreviewGestureHandle: NSView {
     override func resetCursorRects() {
         let cursor: NSCursor
         if kind == .move { cursor = .openHand }
+        else if kind == .resizeHeight { cursor = .resizeUpDown }
         else if #available(macOS 15, *) { cursor = .frameResize(position: .bottomRight, directions: .all) }
         else { cursor = .crosshair }
         addCursorRect(bounds, cursor: cursor)
@@ -371,6 +378,14 @@ final class ImagePreviewGestureHandle: NSView {
         if kind == .move {
             NSColor.windowBackgroundColor.setFill()
             bounds.fill()
+            return
+        }
+        if kind == .resizeHeight {
+            NSColor.windowBackgroundColor.setFill()
+            bounds.fill()
+            NSColor.tertiaryLabelColor.setFill()
+            NSBezierPath(roundedRect: NSRect(x: bounds.midX - 16, y: bounds.midY - 1,
+                                            width: 32, height: 2), xRadius: 1, yRadius: 1).fill()
             return
         }
         NSColor.tertiaryLabelColor.setStroke()

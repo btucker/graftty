@@ -35,7 +35,7 @@ enum ImagePreviewGeometry {
 }
 
 enum ImagePreviewInteraction {
-    enum Kind { case move, resize }
+    enum Kind { case move, resize, resizeHeight }
     case began(Kind)
     case changed(Kind, CGSize)
     case ended

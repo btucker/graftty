@@ -111,7 +111,7 @@ struct ImagePreviewTests {
         #expect(tray.scrollView.documentVisibleRect.width < tray.scrollView.contentSize.width)
         tray.fit()
         #expect(tray.scrollView.magnification == 1)
-        #expect(tray.scrollView.frame.height == 226)
+        #expect(tray.scrollView.frame.height == 216)
         tray.updatePreview(.init(image: try fixture(width: 30, height: 40), filename: "second.png"))
         #expect(tray.ownsFocus)
         #expect(tray.scrollView.magnification == 1)

@@ -7,7 +7,7 @@ import GrafttyKit
 
 @MainActor
 struct ImagePreviewControlTests {
-    @Test("@spec IMAGE-1.14: While the native image tray toolbar is visible, the application shall use native zoom controls, keep Fit legible, and expose Preview through a labeled button or a compact icon without clipping either action.")
+    @Test("@spec IMAGE-1.14: While the native image tray toolbar is visible, the application shall use native zoom controls and keep the Fit and Open… labels legible without clipping either action.")
     func nativeToolbarDoesNotClipActionLabels() throws {
         _ = NSApplication.shared
         let tray = NativeImagePreviewTray(preview: .init(image: try fixture(), filename: "a long chart filename.png"), onDismiss: {})
@@ -20,7 +20,8 @@ struct ImagePreviewControlTests {
             #expect(zoom.width(forSegment: 1) >= 34)
             let preview = try #require(buttons.first { $0.accessibilityLabel() == "Open in Preview" })
             #expect(preview.frame.width >= preview.intrinsicContentSize.width)
-            #expect(width < 300 ? preview.image != nil : preview.title == "Preview")
+            #expect(preview.title == "Open…")
+            #expect(preview.frame.width >= (preview.cell?.cellSize.width ?? 0))
             let close = try #require(buttons.first { $0.accessibilityLabel() == "Close image preview" })
             #expect(preview.frame.maxX <= width)
             #expect(close.frame.maxX <= width)
@@ -78,7 +79,7 @@ struct ImagePreviewControlTests {
         #expect(opened == [root, root, second])
     }
 
-    @Test("@spec IMAGE-1.16: When the user drags the image tray header or resize grip, the application shall move or resize the tray within the terminal content bounds while retaining usable controls and an unobscured terminal region, without resizing the terminal grid.")
+    @Test("@spec IMAGE-1.16: When the user drags the image tray header, corner grip, or bottom edge, the application shall move or resize the tray within the terminal content bounds while retaining usable controls and an unobscured terminal region, without resizing the terminal grid.")
     func movementAndResizeStayWithinTerminal() {
         let viewport = CGSize(width: 800, height: 600)
         let frame = CGRect(x: 100, y: 50, width: 500, height: 270)
@@ -120,6 +121,13 @@ struct ImagePreviewControlTests {
         try await Task.sleep(for: .milliseconds(20))
         hosted.layoutSubtreeIfNeeded()
         #expect(tray.bounds.size == CGSize(width: 600, height: 330))
+        let bottomPoint = tray.convert(NSPoint(x: tray.bounds.midX, y: 4), to: nil)
+        let bottom = try #require(hosted.hitTest(hosted.superview?.convert(bottomPoint, from: nil) ?? bottomPoint))
+        try #require(bottom.accessibilityLabel() == "Resize image preview height")
+        try drag(bottom, from: bottomPoint, to: NSPoint(x: bottomPoint.x + 100, y: bottomPoint.y - 60), window: window)
+        try await Task.sleep(for: .milliseconds(20))
+        hosted.layoutSubtreeIfNeeded()
+        #expect(tray.bounds.size == CGSize(width: 600, height: 390))
         let headerPoint = tray.dragHandle.convert(NSPoint(x: 40, y: 22), to: nil)
         let header = try #require(hosted.hitTest(hosted.superview?.convert(headerPoint, from: nil) ?? headerPoint))
         try drag(header, from: headerPoint, to: NSPoint(x: headerPoint.x + 100, y: headerPoint.y - 100), window: window)
