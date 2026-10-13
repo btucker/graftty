@@ -17,8 +17,9 @@ import Glibc
 /// same real `ioctl(TIOCSWINSZ)` resize as `/ws`.
 ///
 /// The engine spawns the child on `start()`, spawns a reader thread
-/// that blocks on `read(masterFD)`, and a size-poller thread that
-/// watches the PTY's winsize. It exposes two consumption surfaces:
+/// that blocks on `read(masterFD)` and decodes the client's initial source
+/// grid. A size-poller retains compatibility with pre-snapshot daemons.
+/// It exposes two consumption surfaces:
 ///   - Callbacks (`onPTYData`/`onExit`/`onPTYSize`) plus synchronous
 ///     `write(_:)`/`resize(cols:rows:)`/`close()`, used by `WebSession`.
 ///   - `TerminalByteStream`'s async `send`/`resize`/`close` plus the
@@ -89,9 +90,11 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     /// or error). The caller should initiate WS close.
     public var onExit: (() -> Void)?
 
-    /// Called whenever a size-poll observes the PTY's winsize has
-    /// changed, plus once on initial start after `zmx attach` has
-    /// applied the session's size. The caller forwards this to the
+    /// Called with the decoded snapshot's source grid before replay bytes.
+    /// Daemons without snapshot metadata retain legacy PTY-size polling.
+    /// Once a source grid is known, local PTY resizes cannot overwrite it.
+    /// Ongoing owner grids come from the caller's ownership events.
+    /// The caller forwards this to the
     /// client as a `WebControlEnvelope.grid` text frame so it can size
     /// its rendering surface to match the server.
     ///
@@ -137,6 +140,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     private var readerThread: Thread?
     private var sizePoller: Thread?
     private var lastKnownSize: (cols: UInt16, rows: UInt16)?
+    private var allowsLegacySizePolling = false
     private let stateLock = NSLock()
     private var isClosed = false
 
@@ -234,8 +238,10 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
             env = spawnConfiguration.env
         }
         do {
+            var argv = config.spawnConfiguration?.argv ?? launcher.attachArgv(sessionName: config.sessionName)
+            argv.insert("--replay-grid", at: 2)
             spawned = try PtyProcess.spawn(
-                argv: config.spawnConfiguration?.argv ?? launcher.attachArgv(sessionName: config.sessionName),
+                argv: argv,
                 env: env,
                 currentDirectory: config.workingDirectory
             )
@@ -390,16 +396,37 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         guard let fd = spawned?.masterFD else { return }
         let thread = Thread { [weak self] in
             var buf = [UInt8](repeating: 0, count: 8192)
+            var decoder = ZmxReplayGridDecoder()
             while true {
                 let n = buf.withUnsafeMutableBufferPointer { GrafttyPOSIX.read(fd, $0.baseAddress, $0.count) }
                 if n <= 0 { break }
-                self?.dispatchPTYData(Data(buf[0..<n]))
+                self?.dispatchDecodedOutput(decoder.consume(Data(buf[0..<n])))
             }
+            self?.dispatchDecodedOutput(decoder.consume(Data(), endOfStream: true))
             self?.dispatchExit()
         }
         thread.name = "ZmxAttachEngine.reader(\(config.sessionName))"
         thread.start()
         readerThread = thread
+    }
+
+    private func dispatchDecodedOutput(_ output: ZmxReplayGridDecoder.Output) {
+        if output.started {
+            stateLock.lock()
+            guard !isClosed else { stateLock.unlock(); return }
+            allowsLegacySizePolling = output.grid == nil
+            if let grid = output.grid {
+                lastKnownSize = (grid.cols, grid.rows)
+            } else if let fd = spawned?.masterFD {
+                // Explicit compatibility fallback for pre-snapshot daemons.
+                lastKnownSize = PtyProcess.currentSize(masterFD: fd)
+            }
+            let size = lastKnownSize
+            let callback = _onPTYSize
+            stateLock.unlock()
+            if let size { callback?(size.cols, size.rows) }
+        }
+        if !output.bytes.isEmpty { dispatchPTYData(output.bytes) }
     }
 
     private func dispatchPTYData(_ data: Data) {
@@ -442,7 +469,8 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         continuation.finish()
     }
 
-    /// Polls the PTY winsize on a background thread. Each change is
+    /// For attachments without snapshot metadata, polls the PTY winsize
+    /// on a background thread. Each change is
     /// forwarded to `onPTYSize` so the WebSocket bridge can push a
     /// `grid` control envelope to the client. 250 ms cadence is a
     /// compromise: slow enough to be free CPU-wise, fast enough that a
@@ -467,7 +495,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
                     self.stateLock.unlock()
                     break
                 }
-                let size = PtyProcess.currentSize(masterFD: fd)
+                let size = self.allowsLegacySizePolling ? PtyProcess.currentSize(masterFD: fd) : nil
                 var emit: (UInt16, UInt16)?
                 if let size {
                     let changed = (self.lastKnownSize?.cols != size.cols)

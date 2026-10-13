@@ -128,6 +128,82 @@ private final class TerminalScrollbarRecorder: TerminalSurfaceScrollbarDelegate 
 @MainActor
 struct MountedTerminalSnapshotCanvasTests {
     #if GRAFTTY_PAGED_HISTORY
+    @Test("@spec TERM-12.34: While a mobile follower displays full-width scrollback rows, the application shall preserve each row's columns and order across repeated history refreshes.", arguments: [false, true])
+    func fullWidthHistoryPreservesRows(softWrapped: Bool) async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        let renderer = MobilePagedTerminalRenderer(session: session) { cols, rows in
+            container.authoritativeGrid = .init(cols: cols, rows: rows)
+            container.layoutIfNeeded()
+        }
+        try await renderer.resize(cols: 80, rows: 24)
+        container.snapshotScrollView.showsAdditionalHistory = true
+        for batch in 0..<3 {
+            let lines = (batch * 100..<(batch + 1) * 100).map { row in
+                String(format: "LEFT-%03d", row) + String(repeating: ".", count: 63) + String(format: "RIGHT-%03d", row)
+            }
+            session.receive(Data((lines.joined(separator: softWrapped ? "" : "\r\n") + "\r\n").utf8))
+            #expect(await session.flushOutput())
+            let lastHistoryRow = (batch + 1) * 100 - 24
+            for _ in 0..<200 {
+                container.snapshotScrollView.refreshAdditionalHistory()
+                if container.snapshotScrollView.additionalHistoryTextForTesting?.contains(String(format: "RIGHT-%03d", lastHistoryRow)) == true { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let text = try #require(container.snapshotScrollView.additionalHistoryTextForTesting)
+            let rows = text.split(separator: "\n").map(String.init)
+            #expect(!rows.isEmpty)
+            for (index, row) in rows.enumerated() {
+                let number = lastHistoryRow - rows.count + 1 + index
+                #expect(row == String(format: "LEFT-%03d", number) + String(repeating: ".", count: 63) + String(format: "RIGHT-%03d", number))
+            }
+            #expect(session.gridMatches(columns: 80, rows: 24))
+        }
+    }
+
+    @Test("Follower redraws retain full-width rows across native grid and phone viewport changes")
+    func liveRedrawsPreserveRowsAcrossResizes() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 11")
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        let renderer = MobilePagedTerminalRenderer(session: session) { cols, rows in
+            container.authoritativeGrid = .init(cols: cols, rows: rows)
+            container.layoutIfNeeded()
+        }
+        for columns: UInt16 in [80, 81, 120, 40, 200, 80] {
+            try await renderer.resize(cols: columns, rows: 24)
+            session.receive("\u{1b}[2J\u{1b}[H")
+            for frame in 0..<10 {
+                let line = String(format: "%02d", frame) + String(repeating: "x", count: Int(columns) - 2)
+                session.receive("\u{1b}[H" + line + "\r\n" + line + "\r\n" + line)
+                container.frame.size = frame.isMultiple(of: 2) ? CGSize(width: 393, height: 852) : CGSize(width: 852, height: 393)
+                container.layoutIfNeeded()
+                #expect(await session.flushOutput())
+                let text = try #require(session.readViewportText())
+                #expect(text.hasPrefix([line, line, line].joined(separator: "\n")), "columns=\(columns) frame=\(frame) text=\(text.debugDescription)")
+                #expect(session.gridMatches(columns: columns, rows: 24))
+                await Task.yield()
+            }
+        }
+    }
+
     private static func followerRowHeight(_ container: TerminalInputContainerView) throws -> CGFloat {
         let metrics = try #require(container.terminalGridMetrics)
         let terminal = container.terminalView

@@ -76,7 +76,7 @@ struct WebSessionTests {
     }
 
     @Test("""
-    @spec WEB-4.4: For each incoming WebSocket, the application shall spawn one child `zmx attach <session>` whose PTY it owns (per §13 naming and ZMX_DIR rules from Phase 1).
+    @spec WEB-4.4: When a WebSocket connects, the application shall spawn one child `zmx attach --replay-grid <session>` whose PTY it owns, using the session naming and ZMX_DIR rules.
     """)
     func startSpawnsZmxAttachForSession() throws {
         let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "web-session")
@@ -99,9 +99,7 @@ struct WebSessionTests {
             .split(separator: "\n")
             .map(String.init)
         // ZMX-6.6: attach now relies on zmx's default login spawn (no positional shell).
-        try #require(argv.count == 2)
-        #expect(argv[0] == "attach")
-        #expect(argv[1] == "graftty-abcdef12")
+        #expect(argv == ["attach", "--replay-grid", "graftty-abcdef12"])
 
         let zmxDirText = try String(
             contentsOf: dir.appendingPathComponent("zmx-dir.txt"),

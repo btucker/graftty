@@ -33,9 +33,9 @@ public final class WebSession {
         set { engine.onExit = newValue }
     }
 
-    /// Called whenever a size-poll observes the PTY's winsize has
-    /// changed, plus once on initial start after `zmx attach` has
-    /// applied the session's size. The caller forwards this to the
+    /// Called with the decoded snapshot's source grid before replay bytes.
+    /// Pre-snapshot daemons retain legacy PTY-size polling; subsequent
+    /// owner grids arrive through the ownership protocol. The caller forwards this to the
     /// client as a `WebControlEnvelope.grid` text frame so it can size
     /// its rendering surface to match the server.
     public var onPTYSize: ((_ cols: UInt16, _ rows: UInt16) -> Void)? {
