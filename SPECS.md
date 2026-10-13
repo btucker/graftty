@@ -3584,7 +3584,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.49** If Graftty is unreachable, busy, or reports an error for a SessionStart hook run inside a Graftty terminal, the CLI shall still emit the Graftty skill guidance; outside a Graftty terminal, and for every other event, it shall emit an empty hook result.
 
-**AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, draw terminal images only with graftty image, explains the reserved padding below the image, forbids imgcat, kitten icat, direct tty writes, and terminal queries, and falls back to graftty open when the command cannot draw.
+**AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, draw terminal images only with graftty image, explains the reserved padding below the image, forbids imgcat, kitten icat, direct tty writes, and terminal queries, and falls back to graftty open when the command fails or the client does not display the image correctly.
 
 ## CLI — CLI
 
