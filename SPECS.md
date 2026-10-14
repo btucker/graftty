@@ -2928,6 +2928,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-12.18** When an explicit reconnect arrives during an ordinary connection attempt, the application shall replace the weaker attempt with one signed replacement attempt and shall deduplicate further reconnects while that replacement attempt remains pending.
 
+**REMOTE-12.19** When a Remote Mac receives an ownership snapshot acknowledging its live terminal grid, the application shall suppress matching resize requests from layout and native resize callbacks so the ownership exchange terminates.
+
 ### REMOTE-13.x
 
 **REMOTE-13.1** While a Mac shares worktrees from a directly connected Remote Mac, the application shall preserve the remote split layout, replace resource identifiers with opaque one-hop aliases, and exclude any row that was already relayed by the downstream Mac.

@@ -311,8 +311,9 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         if isRestoringGridLocked { lock.unlock(); return }
         guard case .closed = lifecycle else {
             if client.supportsWebControlTextFrames {
-                if isOwnerLocked {
-                    ownerEpoch = ownershipSnapshot?.epoch
+                if isOwnerLocked, let snapshot = ownershipSnapshot,
+                   snapshot.grid.cols != cols || snapshot.grid.rows != rows {
+                    ownerEpoch = snapshot.epoch
                 }
                 lock.unlock()
                 if let ownerEpoch {
@@ -621,14 +622,20 @@ extension RemoteTerminalSurfaceBackend: SurfaceHandleZmxBackend {
         guard case .running = lifecycle,
               !isRestoringGridLocked,
               isOwnerLocked,
-              let epoch = ownershipSnapshot?.epoch
+              let snapshot = ownershipSnapshot
         else {
             lock.unlock()
             return
         }
         let grid = currentGridLocked()
+        // Presentation layout runs again for every ownership broadcast. Echoing
+        // an acknowledged grid here would request another broadcast forever.
+        guard grid.cols != snapshot.grid.cols || grid.rows != snapshot.grid.rows else {
+            lock.unlock()
+            return
+        }
         lock.unlock()
-        enqueueOwnerResize(epoch: epoch, cols: grid.cols, rows: grid.rows)
+        enqueueOwnerResize(epoch: snapshot.epoch, cols: grid.cols, rows: grid.rows)
     }
 
     func takeControl() -> Bool {
