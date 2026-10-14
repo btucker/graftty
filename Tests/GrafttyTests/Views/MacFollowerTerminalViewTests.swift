@@ -189,7 +189,6 @@ struct MacFollowerTerminalViewTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         for _ in 0..<100 {
-            follower.layout()
             app.tick()
             if let history = follower.historySurfaceForTesting,
                Self.viewportText(history)?.contains("mac-row-049") == true { break }
@@ -219,6 +218,15 @@ struct MacFollowerTerminalViewTests {
         follower.scrollView.reflectScrolledClipView(follower.scrollView.contentView)
         #expect(Self.viewportText(source)?.contains("mac-row-099") == true,
                 "clip=\(follower.scrollView.contentView.bounds) doc=\(follower.scrollView.documentView!.bounds) text=\(Self.viewportText(source)?.suffix(100) ?? "nil")")
+        window.orderOut(nil)
+        let readScrollbar = terminal.surfaceOperations.readScrollbar
+        var hiddenReads = 0
+        terminal.surfaceOperations.readScrollbar = { surface in
+            hiddenReads += 1
+            return readScrollbar(surface)
+        }
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(hiddenReads == 0)
         follower.followerGrid = nil
         follower.layout()
         let pixels = terminal.convertToBacking(terminal.bounds.size)

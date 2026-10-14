@@ -155,23 +155,24 @@ final class MacFollowerTerminalView: NSView {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
-    func updateScrollbar(_ reported: ghostty_action_scrollbar_s) {
+    @discardableResult
+    func updateScrollbar(_ reported: ghostty_action_scrollbar_s) -> Bool {
         // Native state includes imported pages and output that may precede its
         // callback. A delayed callback must not hide that history again.
         let value = followerGrid != nil
             ? terminalView.surface.flatMap(terminalView.surfaceOperations.readScrollbar) ?? reported
             : reported
-        guard value.total != scrollbar.total || value.offset != scrollbar.offset || value.len != scrollbar.len else { return }
+        guard value.total != scrollbar.total || value.offset != scrollbar.offset || value.len != scrollbar.len else { return false }
         let bottom = atBottom
         let within = scrollView.contentView.bounds.minY - CGFloat(nativeRow) * rowHeight
         scrollbar = value
         nativeRow = min(value.offset, historyRows)
         reconcile(wasAtBottom: bottom, withinCanvas: within)
+        return true
     }
 
     override func layout() {
         super.layout()
-        updateScrollbar(scrollbar)
         let bottom = atBottom
         let within = scrollView.contentView.bounds.minY - CGFloat(nativeRow) * rowHeight
         scrollView.frame = bounds
@@ -264,9 +265,8 @@ final class MacFollowerTerminalView: NSView {
         historyTimer = nil
         guard window != nil, followerGrid != nil else { return }
         let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.updateScrollbar(self.scrollbar)
-            self.refreshHistory()
+            guard let self, self.window?.isVisible == true else { return }
+            if !self.updateScrollbar(self.scrollbar) { self.refreshHistory() }
         }
         RunLoop.main.add(timer, forMode: .common)
         historyTimer = timer
