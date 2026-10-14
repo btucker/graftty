@@ -1,11 +1,13 @@
 ---
 name: graftty-open
-description: Open a finished file made for the user's review, or a requested HTTP(S) page, with graftty open. Graftty routes it to the current pane leader's device.
+description: Open finished documents, reports, presentations, spreadsheets, or requested HTTP(S) pages on the pane leader's device, including artifacts produced for review without a separate open request. Use graftty-image for image previews.
 ---
 
 # Graftty open
 
-Run `graftty open` for each finished artifact you made for the user to review, such as a generated image, HTML report, CSV, PDF, or presentation. Do this even when the user has not asked to open it and you do not know which device they are using. Do not open source files you edited as part of a coding task or routine intermediate files. Also use the command when the user asks to open a file or HTTP(S) URL, including a local development site.
+For image previews, including generated images, screenshots, charts, diagrams, and mockups, use the bundled [graftty-image](../graftty-image/SKILL.md) skill and `graftty image` to request the native tray.
+
+Run `graftty open` for each other finished artifact you made for the user to review, such as an HTML report, CSV, PDF, or presentation. Do this even when the user has not asked to open it and you do not know which device they are using. Do not open source files you edited as part of a coding task or routine intermediate files. Also use the command when the user asks to open a file or HTTP(S) URL, including a local development site.
 
 Run the command from the Mac's tracked worktree and pane where you are working. Graftty checks that pane's current display leader when the command runs. If Graftty Mobile leads, it offers the resource in that worktree's Open menu for 15 minutes. Otherwise macOS opens it with the default app or browser. Quote paths and URLs so spaces and shell metacharacters remain literal:
 

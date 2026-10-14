@@ -52,7 +52,7 @@ struct AgentPluginInstallerTests {
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-plugin-refresh-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: destination) }
-        let installer = AgentPluginInstaller()
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
         let plan = try installer.prepare(destinationRoot: destination)
         let codex = #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true}]}"#
         let claude = #"[{"id":"graftty@graftty","scope":"user","enabled":true}]"#
@@ -92,18 +92,21 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.42: When an enabled legacy Graftty Team plugin is installed, the application shall install the renamed Graftty plugin before removing the legacy plugin, and shall preserve the legacy plugin if installation fails.
+    @spec AGENT-6.42: When migrating an enabled legacy Graftty Team plugin, the application shall verify that the renamed plugin is enabled before removing the legacy plugin, verify removal, and report incomplete migration as a retryable failure.
     """)
     func refreshMigratesLegacyPluginAfterSuccessfulInstall() async throws {
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-plugin-migration-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: destination) }
-        let installer = AgentPluginInstaller()
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
         let plan = try installer.prepare(destinationRoot: destination)
         let codex = #"{"installed":[{"pluginId":"graftty-team@graftty","installed":true,"enabled":true}]}"#
         let claude = #"[{"id":"graftty-team@graftty","scope":"user","enabled":true}]"#
 
-        let executor = InventoryPluginCLIExecutor(codex: codex, claude: claude)
+        let executor = InventoryPluginCLIExecutor(
+            codexInventories: [codex, Self.bothCodexPlugins, Self.currentCodexPlugin],
+            claudeInventories: [claude, Self.bothClaudePlugins, Self.currentClaudePlugin]
+        )
         let report = await installer.refresh(plan, executor: executor)
         #expect(report.succeeded)
         let mutations = await executor.mutations()
@@ -126,17 +129,17 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.35: When the user installs the renamed Graftty plugin manually, the application shall remove enabled legacy plugins only after the new installation succeeds.
+    @spec AGENT-6.35: When the user installs the renamed Graftty plugin manually, the application shall remove installed legacy plugins only after verifying that the new installation is enabled, and verify that the legacy registration is gone.
     """)
     func manualInstallMigratesLegacyPlugins() async throws {
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-plugin-manual-migration-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: destination) }
-        let installer = AgentPluginInstaller()
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
         let plan = try installer.prepare(destinationRoot: destination)
         let codex = #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true},{"pluginId":"graftty-team@graftty","installed":true,"enabled":true}]}"#
         let claude = #"[{"id":"graftty@graftty","scope":"user","enabled":true},{"id":"graftty-team@graftty","scope":"user","enabled":true}]"#
-        let executor = InventoryPluginCLIExecutor(codex: codex, claude: claude)
+        let executor = InventoryPluginCLIExecutor(codexInventories: [codex, Self.currentCodexPlugin], claudeInventories: [claude, Self.currentClaudePlugin])
 
         let report = await installer.installReplacingLegacy(plan, executor: executor)
 
@@ -146,12 +149,206 @@ struct AgentPluginInstallerTests {
             ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"],
         ])
 
-        let failing = InventoryPluginCLIExecutor(codex: codex, claude: claude, failingMutation: 1)
+        let failing = InventoryPluginCLIExecutor(codexInventories: [codex], claudeInventories: [claude, Self.currentClaudePlugin], failingMutation: 1)
         let failed = await installer.installReplacingLegacy(plan, executor: failing)
         #expect(!failed.succeeded)
         #expect(await failing.mutations().map(\.arguments) == plan.installSteps.map(\.arguments) + [
             ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"],
         ])
+    }
+
+    private static let currentCodexPlugin = #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true}]}"#
+    private static let currentClaudePlugin = #"[{"id":"graftty@graftty","scope":"user","enabled":true}]"#
+    private static let bothCodexPlugins = #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true},{"pluginId":"graftty-team@graftty","installed":true,"enabled":true}]}"#
+    private static let bothClaudePlugins = #"[{"id":"graftty@graftty","scope":"user","enabled":true},{"id":"graftty-team@graftty","scope":"user","enabled":true}]"#
+
+    @Test("A successful install command cannot remove the legacy plugin until the replacement is enabled.")
+    func migrationRejectsUnverifiedReplacement() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
+        let plan = try installer.prepare(destinationRoot: destination)
+        let old = Self.bothCodexPlugins.replacingOccurrences(of: #"{"pluginId":"graftty@graftty","installed":true,"enabled":true},"#, with: "")
+        let executor = InventoryPluginCLIExecutor(codex: old, claude: "[]")
+        let report = await installer.refresh(plan, executor: executor)
+        #expect(!report.succeeded)
+        #expect(report.results.contains { $0.errorDescription?.contains("not enabled") == true })
+        #expect(await executor.mutations().contains { $0.arguments.prefix(2) == ["plugin", "remove"] } == false)
+    }
+
+    @Test("A successful uninstall command that leaves a legacy registration must remain retryable.")
+    func migrationVerifiesRemovalAndRetries() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
+        let plan = try installer.prepare(destinationRoot: destination)
+        let executor = InventoryPluginCLIExecutor(codex: Self.bothCodexPlugins, claude: "[]")
+        let report = await installer.refresh(plan, executor: executor)
+        #expect(!report.succeeded)
+        #expect(report.results.contains { $0.errorDescription?.contains("still installed") == true })
+
+        let retry = InventoryPluginCLIExecutor(
+            codexInventories: [Self.bothCodexPlugins, Self.bothCodexPlugins, Self.currentCodexPlugin],
+            claudeInventories: ["[]"]
+        )
+        #expect(await installer.refresh(plan, executor: retry).succeeded)
+    }
+
+    @Test("Disabled legacy registrations are removed when their replacement is enabled.")
+    func removesDisabledLegacyRegistration() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
+        let plan = try installer.prepare(destinationRoot: destination)
+        let disabled = Self.bothCodexPlugins.replacingOccurrences(of: #""graftty-team@graftty","installed":true,"enabled":true"#, with: #""graftty-team@graftty","installed":true,"enabled":false"#)
+        let executor = InventoryPluginCLIExecutor(
+            codexInventories: [disabled, disabled, Self.currentCodexPlugin], claudeInventories: ["[]"]
+        )
+        #expect(await installer.refresh(plan, executor: executor).succeeded)
+        #expect(await executor.mutations().contains { $0.arguments == ["plugin", "remove", "graftty-team@graftty"] })
+    }
+
+    @Test("A provider-specific install never queries or removes the unselected provider's plugins.")
+    func migrationStaysWithinSelectedProvider() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
+        let full = try installer.prepare(destinationRoot: destination)
+        let selected = AgentPluginSetupPlan(rootDirectory: full.rootDirectory, installSteps: full.installSteps.filter { $0.provider == .codex })
+        let executor = InventoryPluginCLIExecutor(codex: Self.currentCodexPlugin, claude: "missing-cli")
+        #expect(await installer.installReplacingLegacy(selected, executor: executor).succeeded)
+    }
+
+    @Test("""
+    @spec AGENT-6.51: If Codex retains an enabled legacy Graftty Team registration that its native plugin inventory omits, then the application shall migrate that registration, preserve an explicitly disabled replacement, and verify that native removal clears the legacy registration.
+    """)
+    func migratesOrphanedCodexRegistration() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let configuration = destination.appendingPathComponent("config.toml")
+        let installer = AgentPluginInstaller(codexConfigurationURL: configuration, claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
+        let plan = try installer.prepare(destinationRoot: destination)
+        let legacy = "[plugins.\"graftty-team@graftty\"]\nenabled = true\n"
+        try Data(legacy.utf8).write(to: configuration)
+        let executor = InventoryPluginCLIExecutor(
+            codexInventories: [#"{"installed":[]}"#, Self.currentCodexPlugin, Self.currentCodexPlugin],
+            claudeInventories: ["[]"], codexConfigurationURL: configuration
+        )
+        #expect(await installer.refresh(plan, executor: executor).succeeded)
+        #expect(await executor.mutations().map(\.arguments) == plan.installSteps.filter { $0.provider == .codex }.map(\.arguments) + [["plugin", "remove", "graftty-team@graftty"]])
+        #expect(try String(contentsOf: configuration, encoding: .utf8).isEmpty)
+
+        // An invisible but still registered plugin must fail verification too.
+        try Data(legacy.utf8).write(to: configuration)
+        let stuck = InventoryPluginCLIExecutor(codex: Self.currentCodexPlugin, claude: "[]")
+        #expect(await installer.refresh(plan, executor: stuck).succeeded == false)
+
+        let disabled = legacy + "[plugins.\"graftty@graftty\"]\nenabled = false\n"
+        try Data(disabled.utf8).write(to: configuration)
+        let optedOut = InventoryPluginCLIExecutor(codex: #"{"installed":[]}"#, claude: "[]")
+        #expect(await installer.refresh(plan, executor: optedOut).succeeded)
+        #expect(await optedOut.mutations().isEmpty)
+    }
+
+    @Test("""
+    @spec AGENT-6.52: If Claude retains a legacy Graftty Team registration in user settings, then the application shall verify that the replacement is enabled, remove the legacy registration even when native inventory omits it, preserve other settings and explicit opt-outs, and report incomplete cleanup as a retryable failure.
+    """, arguments: [true, false])
+    func migratesOrphanedClaudeRegistration(legacyEnabled: Bool) async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let settingsURL = destination.appendingPathComponent("claude-settings.json")
+        let installer = AgentPluginInstaller(
+            codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: settingsURL
+        )
+        let plan = try installer.prepare(destinationRoot: destination)
+        let settings: [String: Any] = [
+            "enabledPlugins": ["graftty-team@graftty": legacyEnabled, "other@example": false],
+            "permissions": ["allow": ["Read"]], "customFutureKey": ["keep": "this"],
+        ]
+        let original = try JSONSerialization.data(withJSONObject: settings)
+        try original.write(to: settingsURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: settingsURL.path)
+        let executor = InventoryPluginCLIExecutor(
+            codexInventories: [#"{"installed":[]}"#],
+            claudeInventories: legacyEnabled ? ["[]", Self.currentClaudePlugin, Self.currentClaudePlugin] : [Self.currentClaudePlugin]
+        )
+        #expect(await installer.refresh(plan, executor: executor).succeeded)
+        let cleaned = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any])
+        let enabled = try #require(cleaned["enabledPlugins"] as? [String: Bool])
+        #expect(enabled == ["other@example": false])
+        #expect(cleaned["permissions"] as? [String: [String]] == ["allow": ["Read"]])
+        #expect(cleaned["customFutureKey"] as? [String: String] == ["keep": "this"])
+        #expect(try FileManager.default.attributesOfItem(atPath: settingsURL.path)[.posixPermissions] as? Int == 0o600)
+        #expect(await executor.mutations().map(\.arguments) == plan.installSteps.filter {
+            $0.provider == .claude && (legacyEnabled || $0.arguments.prefix(2) != ["plugin", "install"])
+        }.map(\.arguments))
+
+        // Never remove the old entry when replacement verification fails.
+        try original.write(to: settingsURL)
+        let missingReplacement = InventoryPluginCLIExecutor(codex: #"{"installed":[]}"#, claude: "[]")
+        if legacyEnabled { #expect(await installer.refresh(plan, executor: missingReplacement).succeeded == false) }
+        #expect(try Data(contentsOf: settingsURL) == original)
+
+        var optedOut = settings
+        optedOut["enabledPlugins"] = ["graftty-team@graftty": true, "graftty@graftty": false]
+        let disabled = try JSONSerialization.data(withJSONObject: optedOut)
+        try disabled.write(to: settingsURL)
+        let disabledReplacement = InventoryPluginCLIExecutor(codex: #"{"installed":[]}"#, claude: Self.currentClaudePlugin)
+        #expect(await installer.refresh(plan, executor: disabledReplacement).succeeded)
+        #expect(await disabledReplacement.mutations().isEmpty)
+        #expect(try Data(contentsOf: settingsURL) == disabled)
+    }
+
+    @Test("Claude cleanup removes a settings entry left behind by a successful native uninstall.")
+    func claudeUninstallClearsResidualSetting() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let settingsURL = destination.appendingPathComponent("claude-settings.json")
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: settingsURL)
+        let plan = try installer.prepare(destinationRoot: destination)
+        try Data(#"{"enabledPlugins":{"graftty-team@graftty":true,"graftty@graftty":true}}"#.utf8).write(to: settingsURL)
+        let executor = InventoryPluginCLIExecutor(
+            codexInventories: [#"{"installed":[]}"#],
+            claudeInventories: [Self.bothClaudePlugins, Self.bothClaudePlugins, Self.currentClaudePlugin, Self.currentClaudePlugin]
+        )
+        #expect(await installer.refresh(plan, executor: executor).succeeded)
+        #expect(await executor.mutations().contains { $0.arguments == ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"] })
+        let cleaned = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any])
+        #expect(cleaned["enabledPlugins"] as? [String: Bool] == ["graftty@graftty": true])
+    }
+
+    @Test("Invalid Claude settings are a retryable failure and remain untouched.")
+    func claudeMigrationRejectsInvalidSettings() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let settingsURL = destination.appendingPathComponent("claude-settings.json")
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: settingsURL)
+        let plan = try installer.prepare(destinationRoot: destination)
+        for contents in ["broken JSON", #"{"enabledPlugins":{"graftty-team@graftty":"true"}}"#] {
+            let original = Data(contents.utf8)
+            try original.write(to: settingsURL)
+            let executor = InventoryPluginCLIExecutor(codex: #"{"installed":[]}"#, claude: Self.currentClaudePlugin)
+            #expect(await installer.refresh(plan, executor: executor).succeeded == false)
+            #expect(await executor.mutations().isEmpty)
+            #expect(try Data(contentsOf: settingsURL) == original)
+        }
+    }
+
+    @Test("Codex plugin switches honor quoted tables, dotted keys, comments, and multiline user text.")
+    func codexPluginRegistrationParsing() {
+        let id = "graftty-team@graftty"
+        for config in [
+            "[plugins.\"graftty-team@graftty\"] # comment\nenabled = true # comment",
+            "[ 'plugins' . 'graftty-team@graftty' ]\n'enabled' = true",
+            "plugins.\"graftty-team@graftty\".enabled=true",
+            "[plugins.\"graftty-team@graftty\"]\r\nenabled = true\r\n",
+            "[plugins]\n\"graftty-team@graftty\".enabled=true",
+        ] {
+            #expect(CodexHomeMirror.pluginEnablement(in: config) == [id: true])
+        }
+        let fake = "instructions = \"\"\"\n[plugins.\"graftty-team@graftty\"]\nenabled = true\n\"\"\"\n[plugins.\"graftty@graftty\"]\nenabled = false"
+        #expect(CodexHomeMirror.pluginEnablement(in: fake) == ["graftty@graftty": false])
+        #expect(CodexHomeMirror.pluginEnablement(in: "[plugins.\"graftty-team@graftty\"]\nenabled = \"true\"").isEmpty)
     }
 
     @Test("""
@@ -695,26 +892,36 @@ private struct Invocation: Equatable, Sendable {
 }
 
 private actor InventoryPluginCLIExecutor: CLIExecutor {
-    let codex: String
-    let claude: String
+    private var inventories: [String: [String]]
     let failingMutation: Int?
+    let codexConfigurationURL: URL?
     private var recorded: [Invocation] = []
 
     init(codex: String, claude: String, failingMutation: Int? = nil) {
-        self.codex = codex
-        self.claude = claude
+        self.codexConfigurationURL = nil
+        self.inventories = ["codex": [codex], "claude": [claude]]
+        self.failingMutation = failingMutation
+    }
+
+    init(codexInventories: [String], claudeInventories: [String], failingMutation: Int? = nil, codexConfigurationURL: URL? = nil) {
+        self.codexConfigurationURL = codexConfigurationURL
+        self.inventories = ["codex": codexInventories, "claude": claudeInventories]
         self.failingMutation = failingMutation
     }
 
     func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
         let listing = args.prefix(2) == ["plugin", "list"]
-        let output = command == "codex" ? codex : claude
+        let output = inventories[command]?.first ?? "missing-cli"
+        if listing, (inventories[command]?.count ?? 0) > 1 { inventories[command]?.removeFirst() }
         if listing, output == "missing-cli" { throw CLIError.notFound(command: command) }
         if !listing {
             recorded.append(Invocation(command: command, arguments: args))
             if recorded.count - 1 == failingMutation {
                 throw CLIError.nonZeroExit(command: command, exitCode: 1, stderr: "fixture failure")
             }
+        }
+        if command == "codex", args == ["plugin", "remove", "graftty-team@graftty"], let codexConfigurationURL {
+            try Data().write(to: codexConfigurationURL)
         }
         return CLIOutput(stdout: listing ? output : "updated", stderr: "", exitCode: 0)
     }

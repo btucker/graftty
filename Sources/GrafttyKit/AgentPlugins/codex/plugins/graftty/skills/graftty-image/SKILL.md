@@ -1,15 +1,21 @@
 ---
 name: graftty-image
-description: Use when the user asks to see, show, display, preview, or render an image, screenshot, diagram, chart, or photo in Graftty, including Markdown image references, or when a finished image should be shown alongside an agent response.
+description: Show images, screenshots, diagrams, charts, and mockups in Graftty's native preview. Use when the user asks to see them, asks to see them again, or when you produce a finished visual for review without a separate preview request.
 ---
 
 # Graftty image
+
+Previewing is part of delivering a finished visual. Before responding with a generated image, mockup, screenshot, chart, or diagram for the user's review, run `graftty image` on the saved file. Do this without waiting for a separate "show me" request. A tool's image output, `view_image`, Markdown embed, or file link alone does not open Graftty's native preview.
+
+For "show these", "let me see it", or "show them again", use the existing files and request the native preview again. This skill displays files; use the task's authoring tools to create them. Ordinary source files and intermediate images used only for internal inspection do not need a preview.
 
 Show a file with `graftty image`:
 
 ```sh
 graftty image './output/chart.png'
 ```
+
+The skill is named `graftty-image`; the CLI command is `graftty image`, with a space. For several visuals that need to be compared together, use a labeled comparison sheet: each native tray request replaces its previous image.
 
 ## Markdown images
 

@@ -25,12 +25,22 @@ private final class HostTerminalFake: HostTerminalDriver {
 
 private actor HostPluginExecutor: CLIExecutor {
     var commands: [String] = []
+    var removedLegacy = false
     let missing: Bool
     init(missing: Bool = false) { self.missing = missing }
     func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
         commands.append(command)
         if missing { throw CLIError.notFound(command: command) }
-        return CLIOutput(stdout: "", stderr: "", exitCode: 0)
+        if args.prefix(2) == ["plugin", "remove"] { removedLegacy = true }
+        let inventory: String
+        if command == "codex" {
+            inventory = removedLegacy
+                ? #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true}]}"#
+                : #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true},{"pluginId":"graftty-team@graftty","installed":true,"enabled":true}]}"#
+        } else {
+            inventory = #"[{"id":"graftty@graftty","scope":"user","enabled":true}]"#
+        }
+        return CLIOutput(stdout: args.prefix(2) == ["plugin", "list"] ? inventory : "", stderr: "", exitCode: 0)
     }
     func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
         try await run(command: command, args: args, at: directory)
@@ -356,16 +366,17 @@ struct HeadlessHostRuntimeTests {
         #expect(HostConfiguration.defaultRuntimeDirectory(environment: ["GRAFTTY_STATE_DIR": "/srv/graftty"]).path == "/srv/graftty")
     }
 
-    @Test("@spec REMOTE-22.13: When headless agent setup is requested for one provider, the application shall install only that provider's Graftty plugin and report actionable errors for a missing provider CLI.")
+    @Test("@spec REMOTE-22.13: When headless agent setup is requested for one provider, the application shall install only that provider's Graftty plugin, migrate its legacy plugin after verifying the replacement, and report actionable errors for a missing provider CLI.")
     func providerSetup() async throws {
         let (root, config, _) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let executor = HostPluginExecutor()
-        try await HostAgentSetup.install(configuration: config, provider: .codex, executor: executor)
+        try await HostAgentSetup.install(configuration: config, provider: .codex, executor: executor, installer: AgentPluginInstaller(codexConfigurationURL: root.appendingPathComponent("codex-config.toml"), claudeSettingsURL: root.appendingPathComponent("claude-settings.json")))
+        #expect(await executor.removedLegacy)
         #expect(Set(await executor.commands) == ["codex"])
         let missing = HostPluginExecutor(missing: true)
         do {
-            try await HostAgentSetup.install(configuration: config, provider: .claude, executor: missing)
+            try await HostAgentSetup.install(configuration: config, provider: .claude, executor: missing, installer: AgentPluginInstaller(codexConfigurationURL: root.appendingPathComponent("codex-config.toml"), claudeSettingsURL: root.appendingPathComponent("claude-settings.json")))
             Issue.record("missing provider accepted")
         } catch {
             #expect(String(describing: error).contains("Install and authenticate"))
@@ -404,7 +415,7 @@ struct HeadlessHostRuntimeTests {
         }
         #expect(try ready.fileHandleForReading.read(upToCount: 1) == Data([49]))
         let executor = HostPluginExecutor()
-        let identity = try await HostSetup.prepare(configuration: config, installAgentPlugins: true, executor: executor)
+        let identity = try await HostSetup.prepare(configuration: config, installAgentPlugins: true, executor: executor, pluginInstaller: AgentPluginInstaller(codexConfigurationURL: root.appendingPathComponent("codex-config.toml"), claudeSettingsURL: root.appendingPathComponent("claude-settings.json")))
         #expect(identity == nil)
         #expect(Set(await executor.commands) == ["codex", "claude"])
         #expect(try Data(contentsOf: configFile) == savedConfig)

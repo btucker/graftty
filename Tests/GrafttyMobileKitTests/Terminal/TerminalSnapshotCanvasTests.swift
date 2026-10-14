@@ -4,16 +4,24 @@ import Testing
 
 @Suite("@spec TERM-12.13: While a mobile terminal displays a paged checkpoint, the application shall preserve its authoritative columns and rows in a canvas fitted to the pane width, allow vertical scrolling through overflow and history, and map touch and selection coordinates through that canvas.")
 struct TerminalSnapshotCanvasTests {
-    @Test("@spec TERM-12.18: While a follower has unused vertical space above its width-fitted live grid and earlier rows are loaded, the application shall fill that space with whole scrollback rows without changing the leader's grid, cursor, or selection, bounded to 262144 additional cells.")
-    func spareHeightShowsOnlyAvailableWholeHistoryRows() {
+    @Test("@spec TERM-12.18: While a follower has unused vertical space above its width-fitted live grid and earlier rows are loaded, the application shall fill that space with available scrollback, clipping the oldest row when needed, without changing the leader's grid, cursor, or selection, bounded to 262144 additional cells.")
+    func spareHeightShowsAvailableHistoryIncludingPartialOldestRow() {
         #expect(TerminalSnapshotCanvas.additionalHistoryRows(
             containerHeight: 701, screenHeight: 200, rowHeight: 4,
+            columns: 200, precedingRows: 1000
+        ) == 126)
+        #expect(TerminalSnapshotCanvas.additionalHistoryRows(
+            containerHeight: 700, screenHeight: 200, rowHeight: 4,
             columns: 200, precedingRows: 1000
         ) == 125)
         #expect(TerminalSnapshotCanvas.additionalHistoryRows(
             containerHeight: 701, screenHeight: 200, rowHeight: 4,
             columns: 200, precedingRows: 12
         ) == 12)
+        #expect(TerminalSnapshotCanvas.additionalHistoryRows(
+            containerHeight: 701, screenHeight: 200, rowHeight: 4,
+            columns: 200, precedingRows: 0
+        ) == 0)
         #expect(TerminalSnapshotCanvas.additionalHistoryRows(
             containerHeight: 199, screenHeight: 200, rowHeight: 4,
             columns: 200, precedingRows: 1000

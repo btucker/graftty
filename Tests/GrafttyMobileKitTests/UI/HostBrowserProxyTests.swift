@@ -297,6 +297,12 @@ struct HostBrowserProxyTests {
         while host.presentedViewController == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
         let safari = try #require(host.presentedViewController as? SFSafariViewController)
         state.active = false; state.ready = false; state.owner = false
+        // Apply the background transition before replacing the transport.
+        let suspensionDeadline = ContinuousClock.now + .seconds(3)
+        while local.allowed, ContinuousClock.now < suspensionDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(!local.allowed)
         state.generation += 1
         try await Task.sleep(for: .milliseconds(300))
         #expect(local.session.url == url)
@@ -305,8 +311,12 @@ struct HostBrowserProxyTests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(local.session.url == url)
         state.owner = true; state.ready = true
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(local.allowed && local.session.url == url)
+        // SwiftUI readiness can arrive later than a fixed delay on CI.
+        let reconnectionDeadline = ContinuousClock.now + .seconds(3)
+        while !local.allowed, ContinuousClock.now < reconnectionDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(local.allowed && local.session.url == url)
         #expect(Bool(host.presentedViewController === safari))
         if loopback {
             let socket = NWConnection(host: "127.0.0.1", port: 32186, using: .tcp)

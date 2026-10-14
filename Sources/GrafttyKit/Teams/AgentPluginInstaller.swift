@@ -117,6 +117,8 @@ public struct AgentPluginInstaller: Sendable {
     private let resourceRoot: URL?
     private let grafttyCLIPath: String
     private let pluginVersion: String?
+    private let codexConfigurationURL: URL
+    private let claudeSettingsURL: URL
 
     /// Native plugin caches key by manifest version. Give every app build a
     /// distinct cache version, including builds with only hook-path changes.
@@ -166,11 +168,25 @@ public struct AgentPluginInstaller: Sendable {
     public init(
         resourceRoot: URL? = nil,
         grafttyCLIPath: String = "graftty",
-        pluginVersion: String? = Self.appBuildPluginVersion
+        pluginVersion: String? = Self.appBuildPluginVersion,
+        codexConfigurationURL: URL? = nil,
+        claudeSettingsURL: URL? = nil
     ) {
         self.resourceRoot = resourceRoot
         self.grafttyCLIPath = grafttyCLIPath
         self.pluginVersion = pluginVersion
+        let configuredHome = ProcessInfo.processInfo.environment["CODEX_HOME"].flatMap {
+            $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true)
+        }
+        let home = configuredHome == CodexHomeMirror.defaultMirrorDirectory()
+            ? CodexHomeMirror.defaultSourceDirectory()
+            : configuredHome ?? CodexHomeMirror.defaultSourceDirectory()
+        self.codexConfigurationURL = codexConfigurationURL ?? home.appendingPathComponent("config.toml")
+        let claudeHome = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let claudeRoot = claudeHome.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
+        self.claudeSettingsURL = claudeSettingsURL ?? claudeRoot.appendingPathComponent("settings.json")
     }
 
     /// Materializes an app-owned marketplace snapshot. Provider configuration
@@ -361,46 +377,11 @@ public struct AgentPluginInstaller: Sendable {
         let installation = await install(plan, executor: executor, timeout: timeout)
         var results = installation.results
         for provider in AgentPluginProvider.allCases {
-            guard installation.results.filter({ $0.step.provider == provider }).allSatisfy(\.succeeded) else {
-                continue
-            }
-            let listStep = Self.listStep(for: provider)
-            do {
-                let output = try await executor.run(
-                    command: listStep.executable,
-                    args: listStep.arguments,
-                    at: plan.rootDirectory.path,
-                    timeout: timeout
-                )
-                let state = try Self.installedPlugins(
-                    for: provider,
-                    data: Data(output.stdout.utf8)
-                )
-                guard state.legacyEnabled else { continue }
-                guard state.currentEnabled else {
-                    results.append(AgentPluginInstallResult(
-                        step: listStep,
-                        output: output,
-                        errorDescription: "new Graftty plugin is not enabled; kept the legacy plugin"
-                    ))
-                    continue
-                }
-                let removal = await install(
-                    AgentPluginSetupPlan(
-                        rootDirectory: plan.rootDirectory,
-                        installSteps: [Self.legacyRemovalStep(for: provider)]
-                    ),
-                    executor: executor,
-                    timeout: timeout
-                )
-                results.append(contentsOf: removal.results)
-            } catch {
-                results.append(AgentPluginInstallResult(
-                    step: listStep,
-                    output: nil,
-                    errorDescription: Self.describe(error)
-                ))
-            }
+            let providerResults = installation.results.filter { $0.step.provider == provider }
+            guard !providerResults.isEmpty, providerResults.allSatisfy(\.succeeded) else { continue }
+            results.append(contentsOf: await verifyAndRemoveLegacy(
+                for: provider, plan: plan, executor: executor, timeout: timeout
+            ))
         }
         return AgentPluginInstallationReport(results: results)
     }
@@ -417,13 +398,8 @@ public struct AgentPluginInstaller: Sendable {
         for provider in AgentPluginProvider.allCases {
             let listStep = Self.listStep(for: provider)
             do {
-                let output = try await executor.run(
-                    command: listStep.executable,
-                    args: listStep.arguments,
-                    at: plan.rootDirectory.path,
-                    timeout: timeout
-                )
-                let state = try Self.installedPlugins(for: provider, data: Data(output.stdout.utf8))
+                guard plan.installSteps.contains(where: { $0.provider == provider }) else { continue }
+                let state = try await installedPlugins(for: provider, plan: plan, executor: executor, timeout: timeout)
                 guard !state.currentDisabled else { continue }
                 guard state.currentEnabled || state.legacyEnabled else { continue }
                 let steps = plan.installSteps.filter {
@@ -435,16 +411,10 @@ public struct AgentPluginInstaller: Sendable {
                     timeout: timeout
                 )
                 results.append(contentsOf: report.results)
-                if report.succeeded && state.legacyEnabled {
-                    let removal = await install(
-                        AgentPluginSetupPlan(
-                            rootDirectory: plan.rootDirectory,
-                            installSteps: [Self.legacyRemovalStep(for: provider)]
-                        ),
-                        executor: executor,
-                        timeout: timeout
-                    )
-                    results.append(contentsOf: removal.results)
+                if report.succeeded {
+                    results.append(contentsOf: await verifyAndRemoveLegacy(
+                        for: provider, plan: plan, executor: executor, timeout: timeout
+                    ))
                 }
             } catch {
                 results.append(AgentPluginInstallResult(
@@ -455,9 +425,140 @@ public struct AgentPluginInstaller: Sendable {
         return AgentPluginInstallationReport(results: results)
     }
 
+    /// Native inventories may omit registrations after a marketplace drops
+    /// their plugin name. Read each provider's durable registration too;
+    /// a successful command alone does not prove the old registration is gone.
+    private func installedPlugins(
+        for provider: AgentPluginProvider,
+        plan: AgentPluginSetupPlan,
+        executor: any CLIExecutor,
+        timeout: Duration
+    ) async throws -> InstalledPlugins {
+        let step = Self.listStep(for: provider)
+        let output = try await executor.run(
+            command: step.executable, args: step.arguments,
+            at: plan.rootDirectory.path, timeout: timeout
+        )
+        var state = try Self.installedPlugins(for: provider, data: Data(output.stdout.utf8))
+        let registrations: [String: Bool]
+        do {
+            switch provider {
+            case .codex:
+                registrations = CodexHomeMirror.pluginEnablement(
+                    in: try String(contentsOf: codexConfigurationURL, encoding: .utf8)
+                )
+            case .claude:
+                registrations = try JSONDecoder().decode(
+                    ClaudePluginSettings.self, from: Data(contentsOf: claudeSettingsURL)
+                ).enabledPlugins ?? [:]
+            }
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            registrations = [:]
+        }
+        state.currentDisabled = state.currentDisabled || registrations["graftty@graftty"] == false
+        if let enabled = registrations["graftty-team@graftty"] {
+            state.legacySettingsOnly = provider == .claude && !state.legacyInstalled
+            state.legacyInstalled = true
+            state.legacyEnabled = enabled
+        }
+        return state
+    }
+
+    private func verifyAndRemoveLegacy(
+        for provider: AgentPluginProvider,
+        plan: AgentPluginSetupPlan,
+        executor: any CLIExecutor,
+        timeout: Duration
+    ) async -> [AgentPluginInstallResult] {
+        let listStep = Self.listStep(for: provider)
+        var results: [AgentPluginInstallResult] = []
+        do {
+            let state = try await installedPlugins(for: provider, plan: plan, executor: executor, timeout: timeout)
+            guard state.currentEnabled, !state.currentDisabled else {
+                throw PluginMigrationError.replacementNotEnabled
+            }
+            guard state.legacyInstalled else { return [] }
+            var verified = state
+            if !state.legacySettingsOnly {
+                let removal = await install(
+                    AgentPluginSetupPlan(rootDirectory: plan.rootDirectory, installSteps: [Self.legacyRemovalStep(for: provider)]),
+                    executor: executor, timeout: timeout
+                )
+                results.append(contentsOf: removal.results)
+                guard removal.succeeded else { return results }
+                verified = try await installedPlugins(for: provider, plan: plan, executor: executor, timeout: timeout)
+            }
+            guard verified.currentEnabled, !verified.currentDisabled else {
+                throw PluginMigrationError.replacementNotEnabled
+            }
+            if verified.legacySettingsOnly {
+                // Claude refuses to uninstall a settings-only orphan because
+                // it has no installed plugin record. Remove only its old flag
+                // after verifying the replacement and native absence.
+                try removeOrphanedClaudeRegistration()
+                verified = try await installedPlugins(for: provider, plan: plan, executor: executor, timeout: timeout)
+            }
+            guard !verified.legacyInstalled else { throw PluginMigrationError.legacyStillInstalled }
+            guard verified.currentEnabled, !verified.currentDisabled else {
+                throw PluginMigrationError.replacementNotEnabled
+            }
+        } catch {
+            results.append(AgentPluginInstallResult(step: listStep, output: nil, errorDescription: Self.describe(error)))
+        }
+        return results
+    }
+
+    private static let claudeSettingsMutationLock = NSLock()
+
+    private func removeOrphanedClaudeRegistration() throws {
+        try Self.claudeSettingsMutationLock.withLock {
+            let original = try Data(contentsOf: claudeSettingsURL)
+            let switches = try JSONDecoder().decode(ClaudePluginSettings.self, from: original).enabledPlugins ?? [:]
+            guard switches["graftty@graftty"] != false else {
+                throw PluginMigrationError.replacementNotEnabled
+            }
+            guard switches["graftty-team@graftty"] != nil else { return }
+            guard var settings = try JSONSerialization.jsonObject(with: original) as? [String: Any],
+                  var plugins = settings["enabledPlugins"] as? [String: Any] else {
+                throw PluginMigrationError.invalidClaudeSettings
+            }
+            plugins.removeValue(forKey: "graftty-team@graftty")
+            settings["enabledPlugins"] = plugins
+            let updated = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            // Detect a settings edit made while encoding before replacing
+            // the file, and retry rather than overwrite that edit.
+            guard try Data(contentsOf: claudeSettingsURL) == original else {
+                throw PluginMigrationError.claudeSettingsChanged
+            }
+            try updated.write(to: claudeSettingsURL, options: .atomic)
+        }
+    }
+
+    private struct ClaudePluginSettings: Decodable {
+        let enabledPlugins: [String: Bool]?
+    }
+
+    private enum PluginMigrationError: Error, CustomStringConvertible {
+        case replacementNotEnabled
+        case legacyStillInstalled
+        case invalidClaudeSettings
+        case claudeSettingsChanged
+
+        var description: String {
+            switch self {
+            case .replacementNotEnabled: "new Graftty plugin is not enabled; migration is incomplete"
+            case .legacyStillInstalled: "legacy Graftty Team plugin is still installed; migration is incomplete"
+            case .invalidClaudeSettings: "Claude user settings are not a JSON object; migration is incomplete"
+            case .claudeSettingsChanged: "Claude user settings changed during cleanup; migration will retry"
+            }
+        }
+    }
+
     private struct InstalledPlugins {
         var currentEnabled: Bool
         var legacyEnabled: Bool
+        var legacyInstalled: Bool
+        var legacySettingsOnly = false
         var currentDisabled: Bool
     }
 
@@ -488,6 +589,7 @@ public struct AgentPluginInstaller: Sendable {
             return InstalledPlugins(
                 currentEnabled: entries.contains { $0.pluginId == "graftty@graftty" && $0.installed && $0.enabled },
                 legacyEnabled: entries.contains { $0.pluginId == "graftty-team@graftty" && $0.installed && $0.enabled },
+                legacyInstalled: entries.contains { $0.pluginId == "graftty-team@graftty" && $0.installed },
                 currentDisabled: entries.contains { $0.pluginId == "graftty@graftty" && $0.installed && !$0.enabled }
             )
         case .claude:
@@ -495,6 +597,7 @@ public struct AgentPluginInstaller: Sendable {
             return InstalledPlugins(
                 currentEnabled: entries.contains { $0.id == "graftty@graftty" && $0.scope == "user" && $0.enabled },
                 legacyEnabled: entries.contains { $0.id == "graftty-team@graftty" && $0.scope == "user" && $0.enabled },
+                legacyInstalled: entries.contains { $0.id == "graftty-team@graftty" && $0.scope == "user" },
                 currentDisabled: entries.contains { $0.id == "graftty@graftty" && $0.scope == "user" && !$0.enabled }
             )
         }
