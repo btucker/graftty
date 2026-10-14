@@ -132,7 +132,7 @@ struct MacFollowerTerminalViewTests {
         terminal.surface = nil
     }
     #if GRAFTTY_PAGED_HISTORY
-    @Test("A mounted Mac follower preserves the native grid and displays preceding styled history without input.")
+    @Test("@spec OWN-2.10: When scrollback becomes available to a taller Mac follower, the application shall fill spare height with preceding history from the current native scrollbar without requiring input or a scrollbar callback.")
     func mountedNativeFollowerDisplaysHistory() async throws {
         _ = NSApplication.shared
         #expect(ghostty_init(0, nil) == 0)
@@ -188,7 +188,6 @@ struct MacFollowerTerminalViewTests {
             if Self.viewportText(source)?.contains("mac-row-099") == true { break }
             try await Task.sleep(for: .milliseconds(10))
         }
-        follower.updateScrollbar(.init(total: 100, offset: 50, len: 50))
         for _ in 0..<100 {
             follower.layout()
             app.tick()
@@ -200,6 +199,9 @@ struct MacFollowerTerminalViewTests {
         #expect(Self.viewportText(history)?.contains("mac-row-049") == true)
         #expect(Self.viewportText(history)?.contains("mac-row-099") == false)
         #expect(Self.viewportText(source)?.contains("mac-row-099") == true)
+        // An earlier callback must not replace the newly sampled history.
+        follower.updateScrollbar(.init(total: 50, offset: 0, len: 50))
+        #expect(follower.historySurfaceForTesting == history)
         #expect(ghostty_surface_size(source).columns == 200)
         #expect(ghostty_surface_size(source).rows == 50)
         let originalFontSize = ghostty_surface_font_size(source)
@@ -207,7 +209,7 @@ struct MacFollowerTerminalViewTests {
         #expect(ghostty_surface_size(source).columns == 200)
         #expect(ghostty_surface_size(source).rows == 50)
         #expect(ghostty_surface_font_size(source) == originalFontSize)
-        #expect(abs(follower.scaledView.frame.width - 900) < 1)
+        #expect(abs(follower.scaledView.frame.width - follower.scrollView.contentSize.width * 1.5) < 1)
         #expect(follower.scrollView.contentView.bounds.minX > 0)
         follower.setFollowerZoomScale(1, around: CGPoint(x: 300, y: 200))
         follower.scrollView.contentView.scroll(to: .zero)

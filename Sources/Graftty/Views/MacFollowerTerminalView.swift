@@ -155,7 +155,12 @@ final class MacFollowerTerminalView: NSView {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
-    func updateScrollbar(_ value: ghostty_action_scrollbar_s) {
+    func updateScrollbar(_ reported: ghostty_action_scrollbar_s) {
+        // Native state includes imported pages and output that may precede its
+        // callback. A delayed callback must not hide that history again.
+        let value = followerGrid != nil
+            ? terminalView.surface.flatMap(terminalView.surfaceOperations.readScrollbar) ?? reported
+            : reported
         guard value.total != scrollbar.total || value.offset != scrollbar.offset || value.len != scrollbar.len else { return }
         let bottom = atBottom
         let within = scrollView.contentView.bounds.minY - CGFloat(nativeRow) * rowHeight
@@ -166,6 +171,7 @@ final class MacFollowerTerminalView: NSView {
 
     override func layout() {
         super.layout()
+        updateScrollbar(scrollbar)
         let bottom = atBottom
         let within = scrollView.contentView.bounds.minY - CGFloat(nativeRow) * rowHeight
         scrollView.frame = bounds
@@ -258,7 +264,9 @@ final class MacFollowerTerminalView: NSView {
         historyTimer = nil
         guard window != nil, followerGrid != nil else { return }
         let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            self?.refreshHistory()
+            guard let self else { return }
+            self.updateScrollbar(self.scrollbar)
+            self.refreshHistory()
         }
         RunLoop.main.add(timer, forMode: .common)
         historyTimer = timer

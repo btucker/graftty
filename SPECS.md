@@ -608,7 +608,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.17** When the renderer requests clipboard types only, the application shall report available text types without reading clipboard contents or taking display control.
 
-**TERM-12.18** While a follower has unused vertical space above its width-fitted live grid and earlier rows are loaded, the application shall fill that space with whole scrollback rows without changing the leader's grid, cursor, or selection, bounded to 262144 additional cells.
+**TERM-12.18** While a follower has unused vertical space above its width-fitted live grid and earlier rows are loaded, the application shall fill that space with available scrollback, clipping the oldest row when needed, without changing the leader's grid, cursor, or selection, bounded to 262144 additional cells.
 
 **TERM-12.19** When a paged attachment receives repeated requests for the same grid, the application shall send one resize until the grid changes, while still answering explicit daemon size requests.
 
@@ -1603,6 +1603,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **OWN-2.8** When a Mac follower is magnified, the application shall scale its entire canvas and allow horizontal scrolling without changing its native grid, then discard the presentation zoom when it becomes leader.
 
 **OWN-2.9** When a Mac terminal receives a zoom command or pinch, the application shall change the native font while leading and change only presentation scale while following, without taking display ownership.
+
+**OWN-2.10** When scrollback becomes available to a taller Mac follower, the application shall fill spare height with preceding history from the current native scrollbar without requiring input or a scrollbar callback.
 
 ## UPDATE — Self-Update
 
