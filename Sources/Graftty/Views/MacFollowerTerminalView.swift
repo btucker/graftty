@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import GhosttyKit
 import GrafttyCommandUI
 import GrafttyProtocol
@@ -11,8 +12,11 @@ private final class FollowerDocumentView: NSView {
 final class MacFollowerTerminalView: NSView {
     let terminalView: SurfaceNSView
     var onFocusTerminal: (() -> Void)?
-    let scrollView = NSScrollView()
+    let scrollView: NSScrollView
     let scaledView = NSView()
+    private let canvasFrameView = NSView()
+    private let canvasShadowLayer = CALayer()
+    var theme: GhosttyTheme = .fallback { didSet { if theme != oldValue { needsLayout = true } } }
     private let document = FollowerDocumentView()
     private let metrics: () -> ghostty_surface_size_s
     private var scrollbar = ghostty_action_scrollbar_s()
@@ -26,6 +30,7 @@ final class MacFollowerTerminalView: NSView {
         target: self, action: #selector(magnifyTerminal(_:))
     )
     private var adjusting = false
+    private var forwardingScrollWheel = false
     private var boundsObserver: NSObjectProtocol?
     private let makeHistorySurface: ((NSView, CGFloat) -> ghostty_surface_t?)?
     private let historyScaledView = NSView()
@@ -50,18 +55,27 @@ final class MacFollowerTerminalView: NSView {
     }
 
     init(terminalView: SurfaceNSView, metrics: @escaping () -> ghostty_surface_size_s,
+         scrollView: NSScrollView = NSScrollView(),
          makeHistorySurface: ((NSView, CGFloat) -> ghostty_surface_t?)? = nil) {
         self.terminalView = terminalView
+        self.scrollView = scrollView
         self.metrics = metrics
         self.makeHistorySurface = makeHistorySurface
         super.init(frame: .zero)
         wantsLayer = true
+        clipsToBounds = true
+        layer?.masksToBounds = true
+        canvasFrameView.wantsLayer = true
+        canvasFrameView.clipsToBounds = true
+        scrollView.wantsLayer = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = true
         scrollView.contentView.postsBoundsChangedNotifications = true
-        addSubview(scrollView)
+        layer?.addSublayer(canvasShadowLayer)
+        addSubview(canvasFrameView)
+        canvasFrameView.addSubview(scrollView)
         scrollView.documentView = document
         document.addSubview(historyScaledView)
         document.addSubview(scaledView)
@@ -72,7 +86,7 @@ final class MacFollowerTerminalView: NSView {
         addGestureRecognizer(magnificationGesture)
         terminalView.followerScrollHandler = { [weak self] event in
             guard let self, self.followerGrid != nil else { return false }
-            self.scrollView.scrollWheel(with: event)
+            self.scrollWheel(with: event)
             return true
         }
         boundsObserver = NotificationCenter.default.addObserver(
@@ -146,11 +160,19 @@ final class MacFollowerTerminalView: NSView {
         guard next != followerZoomScale else { return }
         let offset = scrollView.contentView.bounds.origin
         let oldFrame = scaledView.frame
+        let anchorInPane = scrollView.contentView.convert(
+            CGPoint(x: offset.x + point.x, y: offset.y + point.y), to: self
+        )
         followerZoomScale = next
         layout()
         guard let presentation else { return }
+        let newPoint = scrollView.contentView.convert(anchorInPane, from: self)
+        let newAnchor = CGPoint(x: newPoint.x - scrollView.contentView.bounds.minX,
+                                y: newPoint.y - scrollView.contentView.bounds.minY)
+        let adjustedOffset = CGPoint(x: offset.x + point.x - newAnchor.x,
+                                     y: offset.y + point.y - newAnchor.y)
         scrollView.contentView.scroll(to: presentation.anchoredOffset(
-            from: oldFrame, oldOffset: offset, to: scaledView.frame, anchor: point
+            from: oldFrame, oldOffset: adjustedOffset, to: scaledView.frame, anchor: newAnchor
         ))
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
@@ -175,7 +197,6 @@ final class MacFollowerTerminalView: NSView {
         super.layout()
         let bottom = atBottom
         let within = scrollView.contentView.bounds.minY - CGFloat(nativeRow) * rowHeight
-        scrollView.frame = bounds
         reconcile(wasAtBottom: bottom, withinCanvas: within)
     }
 
@@ -183,7 +204,6 @@ final class MacFollowerTerminalView: NSView {
         guard !adjusting else { return }
         adjusting = true
         defer { adjusting = false }
-        let viewport = scrollView.contentSize
         let size = metrics()
         let pixelScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         guard let grid = followerGrid,
@@ -192,8 +212,10 @@ final class MacFollowerTerminalView: NSView {
                 measuredGrid: CGSize(width: Int(size.columns), height: Int(size.rows)),
                 measuredPixels: CGSize(width: Int(size.width_px), height: Int(size.height_px)),
                 cellPixels: CGSize(width: Int(size.cell_width_px), height: Int(size.cell_height_px)),
-                displayScale: pixelScale, container: viewport
+                displayScale: pixelScale, container: bounds.size
               ) else {
+            positionFrame(canvasWidth: nil, pixelScale: pixelScale)
+            let viewport = scrollView.contentSize
             removeHistory()
             presentation = nil
             scrollView.hasVerticalScroller = false
@@ -207,6 +229,9 @@ final class MacFollowerTerminalView: NSView {
             scrollView.contentView.scroll(to: .zero)
             return
         }
+        positionFrame(canvasWidth: canvas.size.width * min(canvas.scale, 1) * followerZoomScale,
+                      pixelScale: pixelScale)
+        let viewport = scrollView.contentSize
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         let presentation = canvas.presentation(
@@ -235,6 +260,65 @@ final class MacFollowerTerminalView: NSView {
         ))
         scrollView.reflectScrolledClipView(scrollView.contentView)
         refreshHistory()
+    }
+
+    /// Frame the scroll viewport, rather than its live screen, so scrollback
+    /// and terminal output share one stationary edge and shadow.
+    private func positionFrame(canvasWidth: CGFloat?, pixelScale: CGFloat) {
+        let border: CGFloat = 1 / max(1, pixelScale)
+        let radius: CGFloat = 8
+        // Keep all native cells inside the rounded edge even when the user
+        // configured zero terminal padding. This inset never changes its grid.
+        let inset = radius
+        let raised = canvasWidth.map { $0 + inset * 2 + 48 <= bounds.width && bounds.height >= 120 } ?? false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        if raised, let canvasWidth {
+            canvasFrameView.frame = CGRect(x: bounds.midX - canvasWidth / 2 - inset, y: bounds.minY + 20,
+                                          width: canvasWidth + inset * 2, height: bounds.height - 40)
+        } else {
+            canvasFrameView.frame = bounds
+        }
+        let cornerRadius = raised ? radius : 0
+        let frameLayer = canvasFrameView.layer
+        frameLayer?.masksToBounds = raised
+        frameLayer?.backgroundColor = raised ? theme.backgroundNSColor.cgColor : nil
+        frameLayer?.cornerRadius = cornerRadius
+        frameLayer?.borderWidth = raised ? border : 0
+        frameLayer?.borderColor = NSColor(theme.foreground).withAlphaComponent(0.22).cgColor
+        // Keep the shadow outside the AppKit-managed, clipped content layer.
+        canvasShadowLayer.frame = canvasFrameView.frame
+        canvasShadowLayer.contentsScale = pixelScale
+        canvasShadowLayer.isHidden = !raised
+        canvasShadowLayer.backgroundColor = raised ? theme.backgroundNSColor.cgColor : nil
+        canvasShadowLayer.cornerRadius = cornerRadius
+        canvasShadowLayer.shadowColor = NSColor.black.cgColor
+        canvasShadowLayer.shadowOpacity = raised ? (theme.isDark ? 0.42 : 0.18) : 0
+        canvasShadowLayer.shadowRadius = 18
+        canvasShadowLayer.shadowOffset = CGSize(width: 0, height: -5)
+        canvasShadowLayer.shadowPath = raised
+            ? CGPath(roundedRect: canvasShadowLayer.bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+            : nil
+        layer?.backgroundColor = raised
+            ? NSColor(theme.core.sidebarBackground).cgColor : nil
+        scrollView.frame = canvasFrameView.bounds.insetBy(dx: raised ? inset : 0, dy: raised ? inset : 0)
+        scrollView.layer?.cornerRadius = 0
+        scrollView.clipsToBounds = raised
+        scrollView.layer?.masksToBounds = raised
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard followerGrid != nil else { super.mouseDown(with: event); return }
+        onFocusTerminal?()
+        window?.makeFirstResponder(terminalView)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard followerGrid != nil, !forwardingScrollWheel else { super.scrollWheel(with: event); return }
+        forwardingScrollWheel = true
+        defer { forwardingScrollWheel = false }
+        scrollView.scrollWheel(with: event)
     }
 
     private func positionCanvas(_ canvas: FollowerTerminalLayout.Layout) {
