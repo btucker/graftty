@@ -268,7 +268,7 @@ struct HostBrowserProxyTests {
 
     }
 
-    @Test("@spec CHROME-4.6: When an established Local browser backgrounds or waits for foreground transport reconnection, the application shall retain the same Safari presentation and callback listener, resume callbacks through the current host connection when ready, and cancel unfinished Local preparation.", arguments: [false, true])
+    @Test("@spec CHROME-4.6: When an established Local browser backgrounds or waits for foreground transport reconnection, the application shall retain the same Safari presentation and callback listener, resume callbacks through the current host connection when ready, and cancel unfinished Local preparation.", .timeLimit(.minutes(1)), arguments: [false, true])
     func localSafariSurvivesBackgroundAndReconnect(loopback: Bool) async throws {
         let local = LocalBrowserController()
         let state = BrowserLifecycleState()
@@ -281,9 +281,7 @@ struct HostBrowserProxyTests {
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { local.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
-        let deadline = ContinuousClock.now + .seconds(3)
-        while !local.allowed, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        try #require(local.allowed)
+        try await waitForBrowserState("Initial pane readiness must reach the Local controller") { local.allowed }
         let url = URL(string: loopback ? "http://127.0.0.1:32186/" : "https://example.com")!
         local.open(url: url, hostID: UUID(), makeTunnel: {
             let generation = state.generation
@@ -294,28 +292,27 @@ struct HostBrowserProxyTests {
                 socket.cancel()
             })
         }, authenticate: { .init(url: $0, callbackHost: "localhost") }, isPaneOwner: { state.owner })
-        while host.presentedViewController == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        try await waitForBrowserState("Safari must finish presenting") {
+            host.presentedViewController is SFSafariViewController
+        }
         let safari = try #require(host.presentedViewController as? SFSafariViewController)
         state.active = false; state.ready = false; state.owner = false
         // Apply the background transition before replacing the transport.
-        let suspensionDeadline = ContinuousClock.now + .seconds(3)
-        while local.allowed, ContinuousClock.now < suspensionDeadline {
-            try await Task.sleep(for: .milliseconds(20))
+        try await waitForBrowserState("Backgrounding must suspend Local callbacks") {
+            state.renderedReadiness == BrowserLifecycleReadiness(active: false, ready: false) && !local.allowed
         }
-        try #require(!local.allowed)
         state.generation += 1
-        try await Task.sleep(for: .milliseconds(300))
         #expect(local.session.url == url)
         #expect(Bool(host.presentedViewController === safari))
         state.active = true
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(local.session.url == url)
-        state.owner = true; state.ready = true
-        // SwiftUI readiness can arrive later than a fixed delay on CI.
-        let reconnectionDeadline = ContinuousClock.now + .seconds(3)
-        while !local.allowed, ContinuousClock.now < reconnectionDeadline {
-            try await Task.sleep(for: .milliseconds(20))
+        try await waitForBrowserState("Foreground transport reconnection must reach the browser") {
+            state.renderedReadiness == BrowserLifecycleReadiness(active: true, ready: false)
         }
+        #expect(!local.allowed)
+        #expect(local.session.url == url)
+        #expect(Bool(host.presentedViewController === safari))
+        state.owner = true; state.ready = true
+        try await waitForBrowserState("Reconnected foreground readiness must resume Local callbacks") { local.allowed }
         try #require(local.allowed && local.session.url == url)
         #expect(Bool(host.presentedViewController === safari))
         if loopback {
@@ -326,26 +323,50 @@ struct HostBrowserProxyTests {
             #expect(state.lastConnected == state.generation)
         }
         safari.delegate?.safariViewControllerDidFinish?(safari)
-        try await Task.sleep(for: .milliseconds(150))
+        try await waitForBrowserState("Done must clear the Local session and dismiss Safari") {
+            local.session.url == nil && host.presentedViewController == nil
+        }
         #expect(local.session.url == nil)
         // Suspension cancels preparation rather than publishing a late approval.
         var approval: CheckedContinuation<WorktreePortClient.AuthenticationPreview, Never>?
+        var approvalReturned = false
         let authorization = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A32187%2Fcallback")!
+        defer {
+            let pending = approval
+            approval = nil
+            pending?.resume(returning: .init(url: authorization, callbackHost: "localhost"))
+        }
         local.open(url: authorization, hostID: UUID(), makeTunnel: {
             Issue.record("Canceled preparation must not bind a callback listener.")
             return nil
-        }, authenticate: { _ in await withCheckedContinuation { approval = $0 } }, isPaneOwner: { state.owner })
-        let approvalDeadline = ContinuousClock.now + .seconds(3)
-        while approval == nil, ContinuousClock.now < approvalDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        }, authenticate: { _ in
+            let result = await withCheckedContinuation { approval = $0 }
+            approvalReturned = true
+            return result
+        }, isPaneOwner: { state.owner })
+        try await waitForBrowserState("Local preparation must request authentication") { approval != nil }
         let pending = try #require(approval)
         state.active = false; state.ready = false
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForBrowserState("Suspension must cancel unfinished Local preparation") {
+            !local.allowed && !local.session.preparing
+        }
         #expect(!local.session.preparing)
+        approval = nil
         pending.resume(returning: .init(url: authorization, callbackHost: "localhost"))
         state.active = true; state.ready = true
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForBrowserState("Late authentication must return after foreground readiness resumes") {
+            approvalReturned && local.allowed
+        }
         #expect(local.session.url == nil)
 
+    }
+
+    private func waitForBrowserState(_ message: String, until condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(condition(), "\(message)")
     }
 
     @Test("@spec CHROME-4.7: While multiple Local browsers share a Mac callback endpoint, the application shall skip a suspended browser's retained connector and forward through an active browser before writing socket data.", .timeLimit(.minutes(1)))
@@ -380,15 +401,24 @@ struct HostBrowserProxyTests {
         var owner = true
         var generation = 1
         var lastConnected: Int?
+        var renderedReadiness: BrowserLifecycleReadiness?
+    }
+    struct BrowserLifecycleReadiness: Equatable {
+        let active: Bool
+        let ready: Bool
     }
     private struct BrowserLifecycleFixture: View {
         let state: BrowserLifecycleState
         let local: LocalBrowserController
         var body: some View {
+            let readiness = BrowserLifecycleReadiness(active: state.active, ready: state.ready)
             BrowserModeView(target: "pane", hostID: UUID(), connectionProvider: { nil },
                             originalURL: nil, authenticate: { .init(url: $0, callbackHost: "localhost") },
                             isPaneOwner: { state.owner }, paneReady: state.ready, local: local)
                 .environment(\.scenePhase, state.active ? .active : .background)
+                .onChange(of: readiness, initial: true) { _, value in
+                    state.renderedReadiness = value
+                }
         }
     }
 
