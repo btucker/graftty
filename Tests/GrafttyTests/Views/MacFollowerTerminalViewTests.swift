@@ -131,15 +131,143 @@ struct MacFollowerTerminalViewTests {
         #expect(pixels == terminal.convertToBacking(terminal.bounds.size))
         terminal.surface = nil
     }
+    @Test("@spec OWN-2.11: While a Mac follower canvas is narrower than its pane with room for framing, the application shall present the terminal and its scrollback inside one centered, rounded, theme-matched frame with a fine border and soft shadow while preserving the leader's native grid.")
+    func narrowFollowerUsesRaisedCanvas() throws {
+        _ = NSApplication.shared
+        let terminal = SurfaceNSView()
+        terminal.surface = UnsafeMutableRawPointer(bitPattern: 0x1234)!
+        defer { terminal.surface = nil }
+        var pixels: CGSize?
+        terminal.surfaceOperations = .init(
+            setSize: { _, width, height in pixels = CGSize(width: Int(width), height: Int(height)) },
+            size: { _ in .testSize132x43 }, refresh: { _ in }
+        )
+        terminal.surfaceOperations.readScrollbar = { _ in nil }
+        let view = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
+        view.frame = CGRect(x: 0, y: 0, width: 1000, height: 700)
+        view.followerGrid = try DisplayGrid(cols: 45, rows: 43)
+        view.layout()
+        let frame = try #require(view.scrollView.superview)
+        #expect(frame !== view)
+        #expect(frame.frame.minX > 0 && frame.frame.maxX < view.bounds.width)
+        #expect(frame.frame.minY > 0 && frame.frame.maxY < view.bounds.height)
+        #expect(abs(frame.frame.midX - view.bounds.midX) < 0.5)
+        #expect(abs(frame.frame.midY - view.bounds.midY) < 0.5)
+        #expect(frame.layer?.cornerRadius == 8)
+        #expect((frame.layer?.borderWidth ?? 0) > 0)
+        let shadow = try #require(view.layer?.sublayers?.first { $0.shadowOpacity > 0 })
+        #expect(shadow.frame == frame.frame)
+        #expect(shadow.shadowPath != nil)
+        #expect(!shadow.masksToBounds)
+        #expect(frame.layer?.masksToBounds == true)
+        #expect(view.scrollView.layer?.masksToBounds == true)
+        #expect(view.scrollView.contentSize.height >= view.bounds.height - 48)
+        #expect(pixels == CGSize(width: 540, height: 688))
+        #expect(terminal.bounds.size == CGSize(width: 270, height: 344))
+        let before = frame.frame
+        view.updateScrollbar(.init(total: 150, offset: 107, len: 43))
+        #expect(frame.frame == before, "The history and live screen share a stationary frame.")
+        #expect(pixels == CGSize(width: 540, height: 688))
+    }
+
+    @Test("Follower framing clears when the canvas fills the pane and when the Mac takes control.")
+    func raisedCanvasRestoresFullPane() throws {
+        _ = NSApplication.shared
+        let terminal = SurfaceNSView()
+        terminal.surface = UnsafeMutableRawPointer(bitPattern: 0x1234)!
+        defer { terminal.surface = nil }
+        var resizes = 0
+        terminal.surfaceOperations = .init(setSize: { _, _, _ in resizes += 1 }, size: { _ in .testSize132x43 }, refresh: { _ in })
+        terminal.surfaceOperations.readScrollbar = { _ in nil }
+        let view = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
+        view.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
+        view.followerGrid = try DisplayGrid(cols: 45, rows: 70)
+        view.layout()
+        let frame = try #require(view.scrollView.superview)
+        let shadow = try #require(view.layer?.sublayers?.first { $0.shadowOpacity > 0 })
+        let nativeBounds = terminal.bounds
+        let resizeCount = resizes
+        let nativePoint = CGPoint(x: 100, y: 280)
+        let pointInPane = view.scaledView.convert(nativePoint, to: view)
+        let pointInClip = view.scrollView.contentView.convert(pointInPane, from: view)
+        let anchor = CGPoint(x: pointInClip.x - view.scrollView.contentView.bounds.minX,
+                             y: pointInClip.y - view.scrollView.contentView.bounds.minY)
+        view.setFollowerZoomScale(4, around: anchor)
+        let afterZoom = view.scaledView.convert(nativePoint, to: view)
+        #expect(abs(afterZoom.x - pointInPane.x) < 0.5)
+        #expect(abs(afterZoom.y - pointInPane.y) < 0.5)
+        #expect(frame.frame == view.bounds)
+        #expect(frame.layer?.cornerRadius == 0)
+        #expect(frame.layer?.borderWidth == 0)
+        #expect(shadow.shadowOpacity == 0)
+        #expect(terminal.bounds == nativeBounds)
+        #expect(resizes == resizeCount)
+        view.setFollowerZoomScale(1, around: CGPoint(x: 100, y: 100))
+        #expect(shadow.shadowOpacity > 0)
+        view.followerGrid = nil
+        view.layout()
+        #expect(frame.frame == view.bounds)
+        #expect(shadow.shadowOpacity == 0)
+        #expect(frame.layer?.cornerRadius == 0)
+        #expect(terminal.bounds.size == view.bounds.size)
+        #expect(terminal.followerPixelSize == nil)
+    }
+
+    @Test("Raised follower colors follow the terminal theme without resizing the native surface.")
+    func raisedCanvasFollowsTheme() throws {
+        _ = NSApplication.shared
+        let terminal = SurfaceNSView()
+        let view = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
+        view.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
+        view.followerGrid = try DisplayGrid(cols: 45, rows: 43)
+        view.layout()
+        let nativeBounds = terminal.bounds
+        let frame = try #require(view.scrollView.superview)
+        let shadow = try #require(view.layer?.sublayers?.first { $0.shadowOpacity > 0 })
+        let darkShadow = shadow.shadowOpacity
+        view.theme = GhosttyTheme(core: GhosttyThemeColors(backgroundRGB: .init(r: 0.96, g: 0.94, b: 0.90),
+                                                          foregroundRGB: .init(r: 0.12, g: 0.10, b: 0.08)))
+        view.layout()
+        #expect(frame.layer?.backgroundColor == view.theme.backgroundNSColor.cgColor)
+        #expect(view.layer?.backgroundColor != frame.layer?.backgroundColor)
+        #expect(shadow.shadowOpacity < darkShadow)
+        #expect(terminal.bounds == nativeBounds)
+    }
+
+    @Test("Clicking a follower gutter focuses the terminal without sending a terminal click.")
+    func followerGutterFocusesTerminal() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let terminal = SurfaceNSView()
+        let view = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
+        window.contentView = view
+        view.followerGrid = try DisplayGrid(cols: 45, rows: 43)
+        view.layout()
+        var focused = false
+        view.onFocusTerminal = { focused = true }
+        let target = try #require(view.hitTest(CGPoint(x: 10, y: 200)))
+        #expect(target === view)
+        let click = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: CGPoint(x: 10, y: 200), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        target.mouseDown(with: click)
+        #expect(focused)
+        #expect(window.firstResponder === terminal)
+    }
+
     #if GRAFTTY_PAGED_HISTORY
-    @Test("@spec OWN-2.10: When scrollback becomes available to a taller Mac follower, the application shall fill spare height with preceding history from the current native scrollbar without requiring input or a scrollbar callback.")
-    func mountedNativeFollowerDisplaysHistory() async throws {
+    @Test("@spec OWN-2.10: When scrollback becomes available to a taller Mac follower, the application shall fill spare height with preceding history from the current native scrollbar without requiring input or a scrollbar callback.", arguments: [UInt16(200), 80])
+    func mountedNativeFollowerDisplaysHistory(columns: UInt16) async throws {
+        let rows: UInt16 = columns == 200 ? 50 : 24
+        let windowSize = columns == 200 ? CGSize(width: 600, height: 400) : CGSize(width: 1000, height: 700)
+        let lastHistoryRow = String(format: "mac-row-%03d", 99 - Int(rows))
         _ = NSApplication.shared
         #expect(ghostty_init(0, nil) == 0)
-        let app = GhosttyApp(config: GhosttyConfig()) { _, _ in true }
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 400),
+        let config = GhosttyConfig()
+        let app = GhosttyApp(config: config) { _, _ in true }
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: windowSize),
                               styleMask: [.borderless], backing: .buffered, defer: false)
-        let terminal = SurfaceNSView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+        let terminal = SurfaceNSView(frame: CGRect(origin: .zero, size: windowSize))
         let scale = window.backingScaleFactor
         func createSurface(view: NSView, inherited: ghostty_surface_t? = nil) -> ghostty_surface_t? {
             var config = inherited.map { ghostty_surface_inherited_config($0, GHOSTTY_SURFACE_CONTEXT_SPLIT) }
@@ -159,6 +287,7 @@ struct MacFollowerTerminalViewTests {
             terminalView: terminal, metrics: { ghostty_surface_size(source) },
             makeHistorySurface: { view, _ in createSurface(view: view, inherited: source) }
         )
+        follower.theme = GhosttyTheme(config: config)
         window.contentView = follower
         window.orderBack(nil)
         defer {
@@ -170,15 +299,15 @@ struct MacFollowerTerminalViewTests {
             ghostty_surface_free(source)
             withExtendedLifetime(app) {}
         }
-        follower.followerGrid = try DisplayGrid(cols: 200, rows: 50)
+        follower.followerGrid = try DisplayGrid(cols: columns, rows: rows)
         follower.layout()
-        #expect(ghostty_surface_size(source).columns == 200)
-        #expect(ghostty_surface_size(source).rows == 50)
-        for _ in 0..<100 where !ghostty_surface_grid_matches(source, 200, 50) {
+        #expect(ghostty_surface_size(source).columns == columns)
+        #expect(ghostty_surface_size(source).rows == rows)
+        for _ in 0..<100 where !ghostty_surface_grid_matches(source, columns, rows) {
             app.tick()
             try await Task.sleep(for: .milliseconds(10))
         }
-        try #require(ghostty_surface_grid_matches(source, 200, 50))
+        try #require(ghostty_surface_grid_matches(source, columns, rows))
         let data = Data((0..<100).map { String(format: "mac-row-%03d", $0) }.joined(separator: "\r\n").utf8)
         data.withUnsafeBytes { bytes in
             ghostty_surface_write_buffer(source, bytes.baseAddress!.assumingMemoryBound(to: UInt8.self), UInt(bytes.count))
@@ -191,26 +320,42 @@ struct MacFollowerTerminalViewTests {
         for _ in 0..<100 {
             app.tick()
             if let history = follower.historySurfaceForTesting,
-               Self.viewportText(history)?.contains("mac-row-049") == true { break }
+               Self.viewportText(history)?.contains(lastHistoryRow) == true { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         let history = try #require(follower.historySurfaceForTesting)
-        #expect(Self.viewportText(history)?.contains("mac-row-049") == true)
+        #expect(Self.viewportText(history)?.contains(lastHistoryRow) == true)
         #expect(Self.viewportText(history)?.contains("mac-row-099") == false)
         #expect(Self.viewportText(source)?.contains("mac-row-099") == true)
         // An earlier callback must not replace the newly sampled history.
-        follower.updateScrollbar(.init(total: 50, offset: 0, len: 50))
+        follower.updateScrollbar(.init(total: UInt64(rows), offset: 0, len: UInt64(rows)))
         #expect(follower.historySurfaceForTesting == history)
-        #expect(ghostty_surface_size(source).columns == 200)
-        #expect(ghostty_surface_size(source).rows == 50)
+        #expect(ghostty_surface_size(source).columns == columns)
+        #expect(ghostty_surface_size(source).rows == rows)
+        if columns == 80, let directory = ProcessInfo.processInfo.environment["GRAFTTY_FOLLOWER_RENDER_DIR"] {
+            let output = URL(fileURLWithPath: directory, isDirectory: true)
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            follower.layoutSubtreeIfNeeded()
+            for _ in 0..<10 {
+                app.tick()
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            window.displayIfNeeded()
+            let bitmap = try #require(follower.bitmapImageRepForCachingDisplay(in: follower.bounds))
+            follower.cacheDisplay(in: follower.bounds, to: bitmap)
+            try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appendingPathComponent("raised-canvas.png"))
+        }
         let originalFontSize = ghostty_surface_font_size(source)
         follower.setFollowerZoomScale(1.5, around: CGPoint(x: 300, y: 200))
-        #expect(ghostty_surface_size(source).columns == 200)
-        #expect(ghostty_surface_size(source).rows == 50)
+        #expect(ghostty_surface_size(source).columns == columns)
+        #expect(ghostty_surface_size(source).rows == rows)
         #expect(ghostty_surface_font_size(source) == originalFontSize)
-        #expect(abs(follower.scaledView.frame.width - follower.scrollView.contentSize.width * 1.5) < 1)
-        #expect(follower.scrollView.contentView.bounds.minX > 0)
+        if columns == 200 {
+            #expect(abs(follower.scaledView.frame.width - follower.scrollView.contentSize.width * 1.5) < 1)
+            #expect(follower.scrollView.contentView.bounds.minX > 0)
+        }
         follower.setFollowerZoomScale(1, around: CGPoint(x: 300, y: 200))
+        if columns == 80 { #expect(follower.scrollView.frame.width < follower.bounds.width) }
         follower.scrollView.contentView.scroll(to: .zero)
         follower.scrollView.reflectScrolledClipView(follower.scrollView.contentView)
         #expect(Self.viewportText(source)?.contains("mac-row-000") == true)

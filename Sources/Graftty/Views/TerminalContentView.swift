@@ -79,7 +79,7 @@ struct TerminalContentView: View {
         if let handle = terminalManager.handle(for: terminalID) {
             let tm = terminalManager
             return AnyView(
-                SurfaceViewWrapper(handle: handle, onFocusTerminal: {
+                SurfaceViewWrapper(handle: handle, theme: theme, onFocusTerminal: {
                     // AppKit consumes terminal clicks inside the scroll view.
                     // Reconcile model focus directly, without re-focusing all
                     // surfaces on every keystroke in the already active pane.
