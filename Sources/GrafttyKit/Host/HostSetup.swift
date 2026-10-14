@@ -6,10 +6,11 @@ public enum HostSetup {
     public static func prepare(
         configuration: HostConfiguration,
         installAgentPlugins: Bool = false,
-        executor: (any CLIExecutor)? = nil
+        executor: (any CLIExecutor)? = nil,
+        pluginInstaller: AgentPluginInstaller? = nil
     ) async throws -> LinuxHostIdentity? {
         if installAgentPlugins {
-            try await HostAgentSetup.install(configuration: configuration, executor: executor)
+            try await HostAgentSetup.install(configuration: configuration, executor: executor, installer: pluginInstaller)
             return nil
         }
         let lease = try HostProcessLease(configuration: configuration)

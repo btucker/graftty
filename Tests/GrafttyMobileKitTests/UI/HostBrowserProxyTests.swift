@@ -297,10 +297,11 @@ struct HostBrowserProxyTests {
         }
         let safari = try #require(host.presentedViewController as? SFSafariViewController)
         state.active = false; state.ready = false; state.owner = false
-        state.generation += 1
+        // Apply the background transition before replacing the transport.
         try await waitForBrowserState("Backgrounding must suspend Local callbacks") {
             state.renderedReadiness == BrowserLifecycleReadiness(active: false, ready: false) && !local.allowed
         }
+        state.generation += 1
         #expect(local.session.url == url)
         #expect(Bool(host.presentedViewController === safari))
         state.active = true
@@ -312,7 +313,7 @@ struct HostBrowserProxyTests {
         #expect(Bool(host.presentedViewController === safari))
         state.owner = true; state.ready = true
         try await waitForBrowserState("Reconnected foreground readiness must resume Local callbacks") { local.allowed }
-        #expect(local.allowed && local.session.url == url)
+        try #require(local.allowed && local.session.url == url)
         #expect(Bool(host.presentedViewController === safari))
         if loopback {
             let socket = NWConnection(host: "127.0.0.1", port: 32186, using: .tcp)

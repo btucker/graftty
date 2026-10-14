@@ -7,7 +7,9 @@ public enum FollowerTerminalLayout {
                                       precedingRows: UInt64) -> UInt32 {
         guard rowHeight.isFinite, rowHeight > 0, columns > 0,
               containerHeight.isFinite, screenHeight.isFinite else { return 0 }
-        let capacity = max(0, floor((containerHeight - screenHeight) / rowHeight))
+        // Include the oldest partially visible row so fractional spare height
+        // is filled too. The scroll container clips it at the viewport edge.
+        let capacity = max(0, ceil((containerHeight - screenHeight) / rowHeight))
         return UInt32(min(capacity, CGFloat(precedingRows), CGFloat(min(UInt32(UInt16.max), 262144 / UInt32(columns)))))
     }
 

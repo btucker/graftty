@@ -5,6 +5,10 @@ description: Use in Graftty agent sessions to report a short Attention recap bef
 
 # Graftty
 
+## Preview review artifacts
+
+When the user asks to see an image, or you produce a finished visual for review, load [graftty-image](../graftty-image/SKILL.md) and run `graftty image` before responding. Tool images, Markdown embeds, and file links alone do not open the native preview. For other finished review artifacts or requested URLs, load [graftty-open](../graftty-open/SKILL.md). Ordinary source edits and internal inspection files do not need to be opened.
+
 ## Recognize pinned agents
 
 Pinned agents hold an ongoing responsibility across tasks, such as releases or

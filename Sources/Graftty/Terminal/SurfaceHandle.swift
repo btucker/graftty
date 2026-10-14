@@ -873,6 +873,7 @@ struct SurfaceNSViewGhosttySurfaceOperations {
     var size: (ghostty_surface_t) -> ghostty_surface_size_s
     var refresh: (ghostty_surface_t) -> Void
     var setContentScale: ((ghostty_surface_t, Double, Double) -> Void)? = nil
+    var readScrollbar: (ghostty_surface_t) -> ghostty_action_scrollbar_s? = { _ in nil }
     var text: (ghostty_surface_t, String) -> Void = { surface, text in
         text.withCString { ghostty_surface_text(surface, $0, UInt(text.utf8.count)) }
     }
@@ -905,6 +906,15 @@ struct SurfaceNSViewGhosttySurfaceOperations {
         },
         setContentScale: { surface, x, y in
             ghostty_surface_set_content_scale(surface, x, y)
+        },
+        readScrollbar: { surface in
+            #if GRAFTTY_PAGED_HISTORY
+            var scrollbar = ghostty_action_scrollbar_s()
+            ghostty_surface_read_scrollbar(surface, &scrollbar)
+            return scrollbar
+            #else
+            return nil
+            #endif
         }
     )
 }
