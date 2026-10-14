@@ -12,7 +12,7 @@ private final class FollowerDocumentView: NSView {
 final class MacFollowerTerminalView: NSView {
     let terminalView: SurfaceNSView
     var onFocusTerminal: (() -> Void)?
-    let scrollView = NSScrollView()
+    let scrollView: NSScrollView
     let scaledView = NSView()
     private let canvasFrameView = NSView()
     private let canvasShadowLayer = CALayer()
@@ -30,6 +30,7 @@ final class MacFollowerTerminalView: NSView {
         target: self, action: #selector(magnifyTerminal(_:))
     )
     private var adjusting = false
+    private var forwardingScrollWheel = false
     private var boundsObserver: NSObjectProtocol?
     private let makeHistorySurface: ((NSView, CGFloat) -> ghostty_surface_t?)?
     private let historyScaledView = NSView()
@@ -54,8 +55,10 @@ final class MacFollowerTerminalView: NSView {
     }
 
     init(terminalView: SurfaceNSView, metrics: @escaping () -> ghostty_surface_size_s,
+         scrollView: NSScrollView = NSScrollView(),
          makeHistorySurface: ((NSView, CGFloat) -> ghostty_surface_t?)? = nil) {
         self.terminalView = terminalView
+        self.scrollView = scrollView
         self.metrics = metrics
         self.makeHistorySurface = makeHistorySurface
         super.init(frame: .zero)
@@ -83,7 +86,7 @@ final class MacFollowerTerminalView: NSView {
         addGestureRecognizer(magnificationGesture)
         terminalView.followerScrollHandler = { [weak self] event in
             guard let self, self.followerGrid != nil else { return false }
-            self.scrollView.scrollWheel(with: event)
+            self.scrollWheel(with: event)
             return true
         }
         boundsObserver = NotificationCenter.default.addObserver(
@@ -263,21 +266,25 @@ final class MacFollowerTerminalView: NSView {
     /// and terminal output share one stationary edge and shadow.
     private func positionFrame(canvasWidth: CGFloat?, pixelScale: CGFloat) {
         let border: CGFloat = 1 / max(1, pixelScale)
-        let raised = canvasWidth.map { $0 + border * 2 + 48 <= bounds.width && bounds.height >= 120 } ?? false
+        let radius: CGFloat = 8
+        // Keep all native cells inside the rounded edge even when the user
+        // configured zero terminal padding. This inset never changes its grid.
+        let inset = radius
+        let raised = canvasWidth.map { $0 + inset * 2 + 48 <= bounds.width && bounds.height >= 120 } ?? false
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         if raised, let canvasWidth {
-            canvasFrameView.frame = CGRect(x: bounds.midX - canvasWidth / 2 - border, y: bounds.minY + 20,
-                                          width: canvasWidth + border * 2, height: bounds.height - 40)
+            canvasFrameView.frame = CGRect(x: bounds.midX - canvasWidth / 2 - inset, y: bounds.minY + 20,
+                                          width: canvasWidth + inset * 2, height: bounds.height - 40)
         } else {
             canvasFrameView.frame = bounds
         }
-        let radius: CGFloat = raised ? 8 : 0
+        let cornerRadius = raised ? radius : 0
         let frameLayer = canvasFrameView.layer
         frameLayer?.masksToBounds = raised
         frameLayer?.backgroundColor = raised ? theme.backgroundNSColor.cgColor : nil
-        frameLayer?.cornerRadius = radius
+        frameLayer?.cornerRadius = cornerRadius
         frameLayer?.borderWidth = raised ? border : 0
         frameLayer?.borderColor = NSColor(theme.foreground).withAlphaComponent(0.22).cgColor
         // Keep the shadow outside the AppKit-managed, clipped content layer.
@@ -285,18 +292,18 @@ final class MacFollowerTerminalView: NSView {
         canvasShadowLayer.contentsScale = pixelScale
         canvasShadowLayer.isHidden = !raised
         canvasShadowLayer.backgroundColor = raised ? theme.backgroundNSColor.cgColor : nil
-        canvasShadowLayer.cornerRadius = radius
+        canvasShadowLayer.cornerRadius = cornerRadius
         canvasShadowLayer.shadowColor = NSColor.black.cgColor
         canvasShadowLayer.shadowOpacity = raised ? (theme.isDark ? 0.42 : 0.18) : 0
         canvasShadowLayer.shadowRadius = 18
         canvasShadowLayer.shadowOffset = CGSize(width: 0, height: -5)
         canvasShadowLayer.shadowPath = raised
-            ? CGPath(roundedRect: canvasShadowLayer.bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
+            ? CGPath(roundedRect: canvasShadowLayer.bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
             : nil
         layer?.backgroundColor = raised
             ? NSColor(theme.core.sidebarBackground).cgColor : nil
-        scrollView.frame = canvasFrameView.bounds.insetBy(dx: raised ? border : 0, dy: raised ? border : 0)
-        scrollView.layer?.cornerRadius = max(0, radius - border)
+        scrollView.frame = canvasFrameView.bounds.insetBy(dx: raised ? inset : 0, dy: raised ? inset : 0)
+        scrollView.layer?.cornerRadius = 0
         scrollView.clipsToBounds = raised
         scrollView.layer?.masksToBounds = raised
     }
@@ -308,7 +315,9 @@ final class MacFollowerTerminalView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        guard followerGrid != nil else { super.scrollWheel(with: event); return }
+        guard followerGrid != nil, !forwardingScrollWheel else { super.scrollWheel(with: event); return }
+        forwardingScrollWheel = true
+        defer { forwardingScrollWheel = false }
         scrollView.scrollWheel(with: event)
     }
 

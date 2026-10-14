@@ -161,7 +161,11 @@ struct MacFollowerTerminalViewTests {
         #expect(!shadow.masksToBounds)
         #expect(frame.layer?.masksToBounds == true)
         #expect(view.scrollView.layer?.masksToBounds == true)
-        #expect(view.scrollView.contentSize.height >= view.bounds.height - 48)
+        #expect(view.scrollView.contentSize.height >= view.bounds.height - 64)
+        let viewport = view.scrollView.convert(view.scrollView.bounds, to: frame)
+        let radius = try #require(frame.layer?.cornerRadius)
+        #expect(viewport.minX >= radius && viewport.maxX <= frame.bounds.maxX - radius)
+        #expect(viewport.minY >= radius && viewport.maxY <= frame.bounds.maxY - radius)
         #expect(pixels == CGSize(width: 540, height: 688))
         #expect(terminal.bounds.size == CGSize(width: 270, height: 344))
         let before = frame.frame
@@ -253,6 +257,26 @@ struct MacFollowerTerminalViewTests {
         target.mouseDown(with: click)
         #expect(focused)
         #expect(window.firstResponder === terminal)
+    }
+
+    @Test("Unhandled wheel events leave the follower once without cycling through the scroll view.", arguments: [false, true])
+    func followerScrollDoesNotCycle(fromTerminal: Bool) throws {
+        _ = NSApplication.shared
+        let terminal = SurfaceNSView()
+        let scroll = UnhandledFollowerScrollView()
+        let view = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 }, scrollView: scroll)
+        view.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
+        view.followerGrid = try DisplayGrid(cols: 45, rows: 10)
+        view.layout()
+        let cgEvent = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 24, wheel2: 0, wheel3: 0))
+        let event = try #require(NSEvent(cgEvent: cgEvent))
+        if fromTerminal {
+            let forward = try #require(terminal.followerScrollHandler)
+            #expect(forward(event))
+        } else {
+            view.scrollWheel(with: event)
+        }
+        #expect(scroll.deliveries == 1)
     }
 
     #if GRAFTTY_PAGED_HISTORY
@@ -393,4 +417,15 @@ struct MacFollowerTerminalViewTests {
     }
     #endif
 
+}
+
+@MainActor
+private final class UnhandledFollowerScrollView: NSScrollView {
+    var deliveries = 0
+    override func scrollWheel(with event: NSEvent) {
+        deliveries += 1
+        // Model AppKit forwarding an unhandled wheel at a scroll boundary,
+        // bounding the old cycle so the regression fails instead of crashing.
+        if deliveries < 4 { nextResponder?.scrollWheel(with: event) }
+    }
 }
