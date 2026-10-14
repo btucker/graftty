@@ -3120,7 +3120,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.12** When a headless host chooses storage and socket paths, the application shall honor absolute state and XDG overrides and keep fallback CLI socket discovery consistent.
 
-**REMOTE-22.13** When headless agent setup is requested for one provider, the application shall install only that provider's Graftty plugin and report actionable errors for a missing provider CLI.
+**REMOTE-22.13** When headless agent setup is requested for one provider, the application shall install only that provider's Graftty plugin, migrate its legacy plugin after verifying the replacement, and report actionable errors for a missing provider CLI.
 
 **REMOTE-22.14** While the headless host owns its process lease, explicit agent-plugin setup shall remain available without changing host configuration or identity, and plain setup shall remain exclusive.
 
@@ -3624,11 +3624,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.32** When Graftty automatically refreshes provider plugins, the application shall query provider-native installation state, update only installed and enabled user plugins, preserve removals and disabled plugins, and treat inventory failures as retryable errors while continuing with the other provider.
 
-**AGENT-6.33** When an agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination and durable roles, and require a task-specific emoji independently of cached skill instructions.
+**AGENT-6.33** When an agent session starts, the application shall instruct the agent to load Graftty skills for Attention recaps, coordination and durable roles, and native previews of requested or completed review artifacts, and require a task-specific emoji independently of cached skill instructions.
 
 **AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
 
-**AGENT-6.35** When the user installs the renamed Graftty plugin manually, the application shall remove enabled legacy plugins only after the new installation succeeds.
+**AGENT-6.35** When the user installs the renamed Graftty plugin manually, the application shall remove installed legacy plugins only after verifying that the new installation is enabled, and verify that the legacy registration is gone.
 
 **AGENT-6.36** When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct sandboxed agents to request narrowly scoped permission for main control-socket commands.
 
@@ -3642,7 +3642,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.41** When bundled plugin content changes in a development build, the application shall use its content version as the automatic-refresh checkpoint.
 
-**AGENT-6.42** When an enabled legacy Graftty Team plugin is installed, the application shall install the renamed Graftty plugin before removing the legacy plugin, and shall preserve the legacy plugin if installation fails.
+**AGENT-6.42** When migrating an enabled legacy Graftty Team plugin, the application shall verify that the renamed plugin is enabled before removing the legacy plugin, verify removal, and report incomplete migration as a retryable failure.
 
 **AGENT-6.43** When Graftty installs the recap skill, the application shall instruct agents not to mention the Attention report in their response to the user unless the report command fails.
 
@@ -3659,6 +3659,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.49** If Graftty is unreachable, busy, or reports an error for a SessionStart hook run inside a Graftty terminal, the CLI shall still emit the Graftty skill guidance; outside a Graftty terminal, and for every other event, it shall emit an empty hook result.
 
 **AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, show images with graftty image in a native tray, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures or missing previews without claiming delivery before falling back to graftty open.
+
+**AGENT-6.51** If Codex retains an enabled legacy Graftty Team registration that its native plugin inventory omits, then the application shall migrate that registration, preserve an explicitly disabled replacement, and verify that native removal clears the legacy registration.
+
+**AGENT-6.52** If Claude retains a legacy Graftty Team registration in user settings, then the application shall verify that the replacement is enabled, remove the legacy registration even when native inventory omits it, preserve other settings and explicit opt-outs, and report incomplete cleanup as a retryable failure.
 
 ## CLI — CLI
 

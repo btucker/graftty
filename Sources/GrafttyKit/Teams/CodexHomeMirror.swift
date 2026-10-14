@@ -422,6 +422,28 @@ public struct CodexHomeMirror: Sendable {
         return Data(restored.utf8)
     }
 
+    /// Reads explicit plugin switches using the same quote-aware scanner as
+    /// managed config reconciliation. Text inside instructions is not config.
+    static func pluginEnablement(in config: String) -> [String: Bool] {
+        var table: [String] = []
+        var result: [String: Bool] = [:]
+        for scanned in scanningTOMLLines(in: config) where scanned.isStructural {
+            let line = tomlContentBeforeComment(in: scanned.text)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let name = tomlTableName(in: line) {
+                table = name
+            } else if let key = tomlAssignmentKey(in: line) {
+                let path = table + key
+                guard path.count == 3, path[0] == "plugins", path[2] == "enabled" else { continue }
+                let value = line.split(separator: "=", omittingEmptySubsequences: false).last?
+                    .trimmingCharacters(in: .whitespaces)
+                if value == "true" { result[path[1]] = true }
+                if value == "false" { result[path[1]] = false }
+            }
+        }
+        return result
+    }
+
     private static func hooksSettingLine(in config: String) -> String? {
         var inFeatures = false
         for scannedLine in scanningTOMLLines(in: config) {
