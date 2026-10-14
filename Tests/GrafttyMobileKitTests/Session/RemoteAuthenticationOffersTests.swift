@@ -276,10 +276,11 @@ struct ChromeViewportModelTests {
         let model = ChromeTabViewerModel(), driver = ViewportDriver()
         let run = Task { await model.run(target: "pane", initialLaunch: nil, onLaunch: {}, makeDriver: { driver }) }
         defer { model.close(); run.cancel() }
-        #expect(try await waitUntil { model.frameInputEnabled })
+        try #require(try await waitUntil { model.frameInputEnabled })
         driver.holdNextFrame()
         let held = Task { await model.send(.frame(tabID: "page"), target: "pane", polling: true) }
-        #expect(try await waitUntil { driver.hasHeldFrame })
+        try #require(try await waitUntil { driver.hasHeldFrame })
+        driver.holdNextViewport()
         model.requestViewport(CGSize(width: 390, height: 700), target: "pane")
         #expect(!model.frameInputEnabled)
         let tap = Task { await model.send(.tap(tabID: "page", x: 0.5, y: 0.5), target: "pane") }
@@ -288,10 +289,18 @@ struct ChromeViewportModelTests {
         _ = await held.value
         #expect(!(await tap.value))
         #expect(!model.frameInputEnabled)
-        #expect(try await waitUntil { driver.viewportActions.count == 1 })
-        #expect(try await waitUntil { model.state.width == 390 })
-        #expect(await model.send(.frame(tabID: "page"), target: "pane", polling: true))
-        #expect(model.frameInputEnabled)
+        try #require(try await waitUntil { driver.hasHeldViewport })
+        #expect(driver.viewportActions.count == 1)
+        driver.holdNextFrame()
+        driver.releaseViewport()
+        try #require(try await waitUntil { model.state.width == 390 })
+        // Hold the automatic fresh-frame poll so the overlap seen in CI is
+        // guaranteed, rather than depending on the 250 ms polling cadence.
+        try #require(try await waitUntil { driver.hasHeldFrame })
+        #expect(!model.frameInputEnabled)
+        #expect(!(await model.send(.frame(tabID: "page"), target: "pane", polling: true)))
+        driver.releaseFrame()
+        try #require(try await waitUntil { model.frameInputEnabled })
         #expect(model.frameSize == CGSize(width: 390, height: 700))
         #expect(driver.tapCount == 0)
         model.close(); run.cancel(); await run.value
