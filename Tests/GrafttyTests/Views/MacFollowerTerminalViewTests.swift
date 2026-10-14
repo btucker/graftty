@@ -131,11 +131,12 @@ struct MacFollowerTerminalViewTests {
         #expect(pixels == terminal.convertToBacking(terminal.bounds.size))
         terminal.surface = nil
     }
-    @Test("@spec OWN-2.11: While a Mac follower canvas is narrower than its pane with room for framing, the application shall present the terminal and its scrollback inside one centered, rounded, theme-matched frame with a fine border and soft shadow while preserving the leader's native grid.")
-    func narrowFollowerUsesRaisedCanvas() throws {
+    @Test("@spec OWN-2.11: While a Mac follower canvas is narrower than its pane with room for framing, the application shall present the terminal and its scrollback inside one centered, rounded, theme-matched frame with a fine border and soft shadow while preserving the leader's native grid.", arguments: [CGFloat(1), 2])
+    func narrowFollowerUsesRaisedCanvas(displayScale: CGFloat) throws {
         _ = NSApplication.shared
+        let window = FollowerBackingWindow(size: CGSize(width: 1000, height: 700), scale: displayScale)
+        defer { window.close() }
         let terminal = SurfaceNSView()
-        terminal.surface = UnsafeMutableRawPointer(bitPattern: 0x1234)!
         defer { terminal.surface = nil }
         var pixels: CGSize?
         terminal.surfaceOperations = .init(
@@ -144,7 +145,8 @@ struct MacFollowerTerminalViewTests {
         )
         terminal.surfaceOperations.readScrollbar = { _ in nil }
         let view = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
-        view.frame = CGRect(x: 0, y: 0, width: 1000, height: 700)
+        window.contentView = view
+        terminal.surface = UnsafeMutableRawPointer(bitPattern: 0x1234)!
         view.followerGrid = try DisplayGrid(cols: 45, rows: 43)
         view.layout()
         let frame = try #require(view.scrollView.superview)
@@ -167,31 +169,36 @@ struct MacFollowerTerminalViewTests {
         #expect(viewport.minX >= radius && viewport.maxX <= frame.bounds.maxX - radius)
         #expect(viewport.minY >= radius && viewport.maxY <= frame.bounds.maxY - radius)
         #expect(pixels == CGSize(width: 540, height: 688))
-        #expect(terminal.bounds.size == CGSize(width: 270, height: 344))
+        #expect(terminal.bounds.size == CGSize(width: 540 / displayScale, height: 688 / displayScale))
         let before = frame.frame
         view.updateScrollbar(.init(total: 150, offset: 107, len: 43))
         #expect(frame.frame == before, "The history and live screen share a stationary frame.")
         #expect(pixels == CGSize(width: 540, height: 688))
     }
 
-    @Test("Follower framing clears when the canvas fills the pane and when the Mac takes control.")
-    func raisedCanvasRestoresFullPane() throws {
+    @Test("Follower framing clears when the canvas fills the pane and when the Mac takes control.", arguments: [CGFloat(1), 2])
+    func raisedCanvasRestoresFullPane(displayScale: CGFloat) throws {
         _ = NSApplication.shared
+        let window = FollowerBackingWindow(size: CGSize(width: 640, height: 400), scale: displayScale)
+        defer { window.close() }
         let terminal = SurfaceNSView()
-        terminal.surface = UnsafeMutableRawPointer(bitPattern: 0x1234)!
         defer { terminal.surface = nil }
-        var resizes = 0
-        terminal.surfaceOperations = .init(setSize: { _, _, _ in resizes += 1 }, size: { _ in .testSize132x43 }, refresh: { _ in })
+        var resizes: [CGSize] = []
+        terminal.surfaceOperations = .init(
+            setSize: { _, width, height in resizes.append(CGSize(width: Int(width), height: Int(height))) },
+            size: { _ in .testSize132x43 }, refresh: { _ in }
+        )
         terminal.surfaceOperations.readScrollbar = { _ in nil }
         let view = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
-        view.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
+        window.contentView = view
+        terminal.surface = UnsafeMutableRawPointer(bitPattern: 0x1234)!
         view.followerGrid = try DisplayGrid(cols: 45, rows: 70)
         view.layout()
         let frame = try #require(view.scrollView.superview)
         let shadow = try #require(view.layer?.sublayers?.first { $0.shadowOpacity > 0 })
         let nativeBounds = terminal.bounds
-        let resizeCount = resizes
-        let nativePoint = CGPoint(x: 100, y: 280)
+        let nativePixels = try #require(resizes.last)
+        let nativePoint = CGPoint(x: 100, y: nativeBounds.height - 280)
         let pointInPane = view.scaledView.convert(nativePoint, to: view)
         let pointInClip = view.scrollView.contentView.convert(pointInPane, from: view)
         let anchor = CGPoint(x: pointInClip.x - view.scrollView.contentView.bounds.minX,
@@ -205,7 +212,7 @@ struct MacFollowerTerminalViewTests {
         #expect(frame.layer?.borderWidth == 0)
         #expect(shadow.shadowOpacity == 0)
         #expect(terminal.bounds == nativeBounds)
-        #expect(resizes == resizeCount)
+        #expect(resizes.allSatisfy { $0 == nativePixels })
         view.setFollowerZoomScale(1, around: CGPoint(x: 100, y: 100))
         #expect(shadow.shadowOpacity > 0)
         view.followerGrid = nil
@@ -217,12 +224,14 @@ struct MacFollowerTerminalViewTests {
         #expect(terminal.followerPixelSize == nil)
     }
 
-    @Test("Raised follower colors follow the terminal theme without resizing the native surface.")
-    func raisedCanvasFollowsTheme() throws {
+    @Test("Raised follower colors follow the terminal theme without resizing the native surface.", arguments: [CGFloat(1), 2])
+    func raisedCanvasFollowsTheme(displayScale: CGFloat) throws {
         _ = NSApplication.shared
+        let window = FollowerBackingWindow(size: CGSize(width: 640, height: 400), scale: displayScale)
+        defer { window.close() }
         let terminal = SurfaceNSView()
         let view = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
-        view.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
+        window.contentView = view
         view.followerGrid = try DisplayGrid(cols: 45, rows: 43)
         view.layout()
         let nativeBounds = terminal.bounds
@@ -238,11 +247,10 @@ struct MacFollowerTerminalViewTests {
         #expect(terminal.bounds == nativeBounds)
     }
 
-    @Test("Clicking a follower gutter focuses the terminal without sending a terminal click.")
-    func followerGutterFocusesTerminal() throws {
+    @Test("Clicking a follower gutter focuses the terminal without sending a terminal click.", arguments: [CGFloat(1), 2])
+    func followerGutterFocusesTerminal(displayScale: CGFloat) throws {
         _ = NSApplication.shared
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
+        let window = FollowerBackingWindow(size: CGSize(width: 640, height: 400), scale: displayScale)
         defer { window.close() }
         let terminal = SurfaceNSView()
         let view = MacFollowerTerminalView(terminalView: terminal, metrics: { .testSize132x43 })
@@ -428,4 +436,18 @@ private final class UnhandledFollowerScrollView: NSScrollView {
         // bounding the old cycle so the regression fails instead of crashing.
         if deliveries < 4 { nextResponder?.scrollWheel(with: event) }
     }
+}
+
+@MainActor
+private final class FollowerBackingWindow: NSWindow {
+    private let displayScale: CGFloat
+
+    init(size: CGSize, scale: CGFloat) {
+        displayScale = scale
+        super.init(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless],
+                   backing: .buffered, defer: false)
+        isReleasedWhenClosed = false
+    }
+
+    override var backingScaleFactor: CGFloat { displayScale }
 }
