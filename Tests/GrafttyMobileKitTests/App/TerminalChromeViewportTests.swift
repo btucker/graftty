@@ -237,7 +237,7 @@ private final class ViewportLegacySocket: WebSocketClient, @unchecked Sendable {
 }
 
 @Suite("""
-@spec IOS-6.1: While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, tray Shift, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, and Hide Keyboard controls. The non-modifier controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl and tray Shift state.
+@spec IOS-6.1: While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, tray Shift, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, Auto-correct, and Hide Keyboard controls. The terminal key controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl and tray Shift state.
 """)
 @MainActor
 struct MobileTerminalControlBarTests {
@@ -258,6 +258,7 @@ struct MobileTerminalControlBarTests {
             .returnDivider,
             .submitReturn,
             .literalLineFeed,
+            .autocorrection,
             .hideKeyboard,
         ])
     }
