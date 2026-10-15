@@ -41,7 +41,7 @@ GRAFTTY_7F3A91C2
 
 `graftty team broadcast --stdin` uses the same pattern with no recipient. Use it only when every other worktree needs the message. Both commands accept `--urgent` for delivery at the next post-tool hook boundary. Success means accepted, not answered. Do not resend after uncertain delivery.
 
-Reply with the message's supplied ID:
+Reply with the inbox ID from the `id` attribute of `<graftty-peer-message>`. Decode XML entities in envelope attributes before using them:
 
 ```sh
 graftty team reply '<message-id>' --stdin <<'GRAFTTY_REPLY_5D9A7C21'

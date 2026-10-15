@@ -618,7 +618,7 @@ struct TeamInboxRequestHandlerTests {
             #expect(output.contains("`graftty-team` skill"))
             #expect(output.contains("one agent per worktree"))
             #expect(output.contains("queued before launch"))
-            #expect(output.contains("<graftty-peer-message agent=\\\"\\/repo\\\">"))
+            #expect(output.contains("<graftty-peer-message agent=\\\"\\/repo\\\" id=\\\"0001\\\">"))
             #expect(!output.lowercased().contains("untrusted peer"))
             #expect(try inbox.cursor(teamID: "/repo", sessionID: "session-1")?.lastSeenID == "0001")
             #expect(try inbox.worktreeWatermark(

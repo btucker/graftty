@@ -10,7 +10,7 @@ Copy its canonical address. For roster and inbox diagnostics, `--repo` filters r
 
 Preserve complete `graftty-mac://...` addresses for remote recipients. A bare filesystem path targets the Mac running the command.
 
-Older messages have `<graftty-peer-message agent="<exact-address>" fallback-agent="<runtime-address>">` without a reply command. Use `agent` unchanged if reachable in the roster; otherwise use `fallback-agent`. `<graftty-forge-message provider="<provider>">` and `<graftty-system-message>` are notices, not reply addresses.
+For older peer envelopes without `id`, use the supplied Graftty reply command when present. Otherwise, use `agent` unchanged if reachable in the roster, or `fallback-agent` after the exact agent becomes unavailable. `<graftty-forge-message provider="<provider>">` and `<graftty-system-message>` are notices, not reply addresses.
 
 Do not resolve Graftty recipients through provider-native `SendMessage` or `ListAgents`. Identical worktree names on different Macs can name different agents. If a native message supplies an explicit Graftty reply socket, use that socket unchanged, not a display name.
 

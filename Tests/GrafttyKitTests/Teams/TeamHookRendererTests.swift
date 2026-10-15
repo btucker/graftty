@@ -101,7 +101,7 @@ struct TeamHookRendererTests {
 
         #expect(context.contains("unrelated to the tool result"))
         #expect(context.contains("continue your current work"))
-        #expect(context.contains("<graftty-peer-message agent=\"/repo/acme\" fallback-agent=\"/repo/acme#claude\" priority=\"urgent\">"))
+        #expect(context.contains("<graftty-peer-message agent=\"/repo/acme\" fallback-agent=\"/repo/acme#claude\" id=\"m1\" priority=\"urgent\">"))
         #expect(!context.lowercased().contains("untrusted"))
         #expect(context.contains("CI is blocking you"))
     }
@@ -202,7 +202,7 @@ struct TeamHookRendererTests {
         #expect(rendered.contains("RAW-EVENT"))
     }
 
-    @Test("A normal worktree message includes a reply command, canonical attribution, and no event template.")
+    @Test("A normal worktree message includes reply metadata, canonical attribution, and no event template.")
     func formatWorktreeMessage() {
         let msg = message(
             id: "opaque-id",
@@ -213,12 +213,11 @@ struct TeamHookRendererTests {
 
         let rendered = TeamHookRenderer.format(messages: [msg])
 
-        #expect(rendered.hasSuffix("""
-        <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude">
+        #expect(rendered == """
+        <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude" id="opaque-id">
         Please check the parser.
         </graftty-peer-message>
-        """))
-        #expect(rendered.contains("graftty team reply 'opaque-id' --stdin"))
+        """)
         #expect(!rendered.contains("runtime="))
         #expect(!rendered.contains("automated team event"))
     }
@@ -230,7 +229,7 @@ struct TeamHookRendererTests {
         let rendered = TeamHookRenderer.format(messages: [msg])
 
         #expect(rendered.hasSuffix("""
-        <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude" priority="urgent">
+        <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude" id="m1" priority="urgent">
         This blocks the merge.
         </graftty-peer-message>
         """))

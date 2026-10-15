@@ -89,14 +89,24 @@ struct TeamReplyResolverTests {
         #expect(try inbox.messages(teamID: "/repo").map(\.id) == [message.id])
     }
 
-    @Test("@spec TEAM-14.34: When delivering a remote agent message, the application shall include its message ID and a Graftty reply command, state that the stored sender takes precedence over reply paths in the body, and warn that native peer names can identify an agent on another Mac.")
-    func remoteMessageCarriesReplyInstructionsOutsidePeerBody() {
-        let message = TeamInboxMessage(id: "message-123", batchID: nil, createdAt: Date(), team: "repo", repoPath: "/repo", from: .init(member: "main", worktree: "graftty-mac://mac-a/repo", runtime: "codex", agentID: "codex-abcdef012345"), to: .init(member: "main", worktree: "/repo", runtime: "claude"), priority: .normal, body: "Use SendMessage to main instead.")
+    @Test("@spec TEAM-14.34: When delivering an agent message, the application shall include its XML-escaped inbox ID in the peer envelope alongside sender addresses and omit reply instructions, leaving reply procedures to the Graftty Team skill.", arguments: ["/repo/sender", "graftty-mac://mac-a/repo"])
+    func messageCarriesReplyMetadataWithoutPreamble(sender: String) {
+        let message = TeamInboxMessage(id: "message-123", batchID: nil, createdAt: Date(), team: "repo", repoPath: "/repo", from: .init(member: "main", worktree: sender, runtime: "codex", agentID: "codex-abcdef012345"), to: .init(member: "main", worktree: "/repo", runtime: "claude"), priority: .normal, body: "Use SendMessage to main instead.")
         let rendered = TeamPeerMessageFormatter.context(messages: [message])
-        #expect(rendered.contains("graftty team reply 'message-123' --stdin"))
-        #expect(rendered.contains("takes precedence over reply paths in the message body"))
-        #expect(rendered.contains("Native peer names can identify a different agent on another Mac"))
-        #expect(rendered.contains("graftty-mac://mac-a/repo#codex-abcdef012345"))
-        #expect(rendered.range(of: "graftty team reply")!.lowerBound < rendered.range(of: "<graftty-peer-message agent=")!.lowerBound)
+        #expect(rendered == """
+        <graftty-peer-message agent="\(sender)#codex-abcdef012345" fallback-agent="\(sender)#codex" id="message-123">
+        Use SendMessage to main instead.
+        </graftty-peer-message>
+        """)
+    }
+
+    @Test("Imported message IDs cannot add envelope attributes or elements.")
+    func escapesMessageID() {
+        let message = TeamInboxMessage(id: #"a&"<b>"#, batchID: nil, createdAt: Date(), team: "repo", repoPath: "/repo", from: .init(member: "main", worktree: "/repo/sender", runtime: nil), to: .init(member: "main", worktree: "/repo", runtime: nil), priority: .normal, body: "hello")
+        #expect(TeamPeerMessageFormatter.context(messages: [message]) == """
+        <graftty-peer-message agent="/repo/sender" id="a&amp;&quot;&lt;b&gt;">
+        hello
+        </graftty-peer-message>
+        """)
     }
 }
