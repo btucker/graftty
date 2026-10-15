@@ -28,6 +28,7 @@ final class ImagePreviewNativeControlTests: XCTestCase {
         var dismissed = 0, interactions = 0
         let tray = NativeFilePreviewTray(preview: try .init(image: image, filename: "chart.png"), onDismiss: { dismissed += 1 },
                                           onInteraction: { _ in interactions += 1 })
+        defer { tray.tearDown() }
         tray.frame = NSRect(x: 0, y: 330, width: trayWidth, height: 270)
         root.addSubview(tray)
         tray.layoutSubtreeIfNeeded()

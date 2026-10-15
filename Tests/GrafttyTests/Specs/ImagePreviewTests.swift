@@ -48,6 +48,7 @@ struct ImagePreviewTests {
         #expect(window.makeFirstResponder(terminal))
         var dismissed = 0
         let tray = NativeFilePreviewTray(preview: try .init(image: try fixture(), filename: "chart.png"), onDismiss: { dismissed += 1 }, onInteraction: { _ in })
+        defer { tray.tearDown() }
         tray.frame = NSRect(x: 0, y: 330, width: 800, height: 270)
         root.addSubview(tray)
         tray.layoutSubtreeIfNeeded()
