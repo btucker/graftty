@@ -11,6 +11,7 @@ struct FilePreviewCollectionTests {
         _ = NSApplication.shared
         let file = try FilePreviewFile(.init(filename: "long filename.html", bytes: Data()))
         let tray = NativeFilePreviewTray(preview: .init(files: [file]), onDismiss: {}, onInteraction: { _ in })
+        defer { tray.tearDown() }
         for width in [180.0, 240, 320, 800] {
             tray.frame = NSRect(x: 0, y: 0, width: width, height: 240)
             tray.layoutSubtreeIfNeeded()
@@ -35,6 +36,7 @@ struct FilePreviewCollectionTests {
             opened.append($0)
             if shouldFail { throw CocoaError(.fileReadNoSuchFile) }
         })
+        defer { tray.tearDown() }
         await tray.openInDefaultApp()
         #expect(opened == [original])
         #expect(tray.openErrorMessage != nil)
@@ -55,6 +57,7 @@ struct FilePreviewCollectionTests {
         }
         let urls = files.map(\.url)
         let tray = NativeFilePreviewTray(preview: .init(files: files), onDismiss: {}, onInteraction: { _ in })
+        defer { tray.tearDown() }
         #expect(tray.quickLook.previewItem?.previewItemURL == urls[0])
         #expect(!tray.previous.isEnabled && tray.next.isEnabled)
         tray.nextFile()
@@ -101,7 +104,7 @@ struct FilePreviewCollectionTests {
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
-        defer { tray.quickLook.close(); window.orderOut(nil); window.contentView = nil }
+        defer { tray.tearDown(); window.orderOut(nil); window.contentView = nil }
         try await Task.sleep(for: .seconds(3))
         window.displayIfNeeded()
         let bitmap = try #require(tray.bitmapImageRepForCachingDisplay(in: tray.bounds))

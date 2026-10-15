@@ -10,7 +10,7 @@ struct FilePreviewTray: NSViewRepresentable {
         NativeFilePreviewTray(preview: preview, onDismiss: onDismiss, onInteraction: onInteraction)
     }
     static func dismantleNSView(_ view: NativeFilePreviewTray, coordinator: ()) {
-        view.quickLook.close()
+        view.tearDown()
     }
     func updateNSView(_ view: NativeFilePreviewTray, context: Context) {
         view.onDismiss = onDismiss
@@ -30,6 +30,7 @@ final class NativeFilePreviewTray: NSVisualEffectView {
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private let openFile: (URL) async throws -> Void
     private var isOpening = false
+    private var isTornDown = false
     private(set) var openErrorMessage: String?
     let close = FilePreviewButton(title: "", target: nil, action: nil)
     let header = ImagePreviewGestureHandle(kind: .move)
@@ -50,6 +51,9 @@ final class NativeFilePreviewTray: NSVisualEffectView {
         self.onDismiss = onDismiss
         self.onInteraction = onInteraction
         quickLook = QLPreviewView(frame: .zero, style: .normal)
+        // SwiftUI owns teardown. A window close must not independently close
+        // Quick Look before dismantleNSView, since closing it twice aborts.
+        quickLook.shouldCloseWithWindow = false
         super.init(frame: .zero)
         material = .headerView
         blendingMode = .withinWindow
@@ -99,8 +103,15 @@ final class NativeFilePreviewTray: NSVisualEffectView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    func tearDown() {
+        guard !isTornDown else { return }
+        isTornDown = true
+        // Keep the snapshot owners alive until Quick Look releases its item.
+        withExtendedLifetime(preview) { quickLook.close() }
+    }
+
     func update(_ preview: ImagePreviewStore.Preview) {
-        guard preview.id != self.preview.id else { return }
+        guard !isTornDown, preview.id != self.preview.id else { return }
         self.preview = preview
         selectedIndex = 0
         openErrorMessage = nil
@@ -120,7 +131,7 @@ final class NativeFilePreviewTray: NSVisualEffectView {
     }
     @objc private func openSelectedFile() { Task { await openInDefaultApp() } }
     func openInDefaultApp() async {
-        guard !isOpening else { return }
+        guard !isTornDown, !isOpening else { return }
         isOpening = true
         open.isEnabled = false
         let id = preview.id
@@ -130,7 +141,7 @@ final class NativeFilePreviewTray: NSVisualEffectView {
         defer { isOpening = false; open.isEnabled = true }
         do { try await openFile(file.sourceURL ?? file.url) }
         catch {
-            guard id == preview.id, preview.files[selectedIndex].url == file.url else { return }
+            guard !isTornDown, id == preview.id, preview.files[selectedIndex].url == file.url else { return }
             openErrorMessage = error.localizedDescription
             errorLabel.stringValue = "Could not open file: " + error.localizedDescription
             errorLabel.setAccessibilityLabel(errorLabel.stringValue)
@@ -141,7 +152,7 @@ final class NativeFilePreviewTray: NSVisualEffectView {
     @objc func nextFile() { select(selectedIndex + 1) }
     @objc private func selectFile() { select(picker.indexOfSelectedItem) }
     private func select(_ index: Int) {
-        guard preview.files.indices.contains(index) else { return }
+        guard !isTornDown, preview.files.indices.contains(index) else { return }
         claimFocus()
         selectedIndex = index
         openErrorMessage = nil
@@ -175,6 +186,7 @@ final class NativeFilePreviewTray: NSVisualEffectView {
         window?.makeFirstResponder(self)
     }
     @objc func closePreview() {
+        guard !isTornDown else { return }
         if ownsFocus { window?.makeFirstResponder(priorResponder) }
         onDismiss()
     }

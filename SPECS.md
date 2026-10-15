@@ -3446,6 +3446,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-1.4** When a preview file snapshot is released, the application shall remove its private temporary directory without deleting the original file.
 
+**PREVIEW-1.5** When a native macOS preview is dismantled before attachment, after window closure, or more than once, the application shall close Quick Look safely, reject subsequent preview updates, and retain its snapshots until native teardown completes.
+
 ### PREVIEW-2.x
 
 **PREVIEW-2.1** When file preview offers arrive on mobile, the application shall select the latest preview for its owning pane and device, recognize legacy image intent, and exclude both from Browser resources.
