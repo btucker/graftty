@@ -71,6 +71,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     public let onFocusRequestsConsumed: (() -> Void)?
     public let committedSoftwareInput: CommittedSoftwareInput?
     public let agentCompletion: AgentCompletionModel?
+    public let isAutocorrectionEnabled: Bool
     public let hardwareKeyboardCommands: [HardwareKeyboardCommand]
     /// Governs how frequently `UITerminalView` repaints while no host output
     /// is arriving. `.full` (the default) matches display refresh; `.reduced`
@@ -121,6 +122,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         onFocusRequestsConsumed: (() -> Void)? = nil,
         committedSoftwareInput: CommittedSoftwareInput? = nil,
         agentCompletion: AgentCompletionModel? = nil,
+        isAutocorrectionEnabled: Bool = false,
         hardwareKeyboardCommands: [HardwareKeyboardCommand] = [],
         renderPace: TerminalRenderPace = .full,
         onUserInteraction: (() -> Void)? = nil,
@@ -143,6 +145,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.onFocusRequestsConsumed = onFocusRequestsConsumed
         self.committedSoftwareInput = committedSoftwareInput
         self.agentCompletion = agentCompletion
+        self.isAutocorrectionEnabled = isAutocorrectionEnabled
         self.hardwareKeyboardCommands = hardwareKeyboardCommands
         self.renderPace = renderPace
         self.onUserInteraction = onUserInteraction
@@ -186,6 +189,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.terminalView.controller = controller
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         view.agentCompletion = agentCompletion
+        view.terminalView.isAutocorrectionEnabled = isAutocorrectionEnabled
         view.committedSoftwareInput = committedSoftwareInput
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
@@ -211,6 +215,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         view.agentCompletion = agentCompletion
+        view.terminalView.isAutocorrectionEnabled = isAutocorrectionEnabled
         view.committedSoftwareInput = committedSoftwareInput
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace

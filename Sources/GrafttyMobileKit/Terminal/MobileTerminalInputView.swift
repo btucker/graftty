@@ -11,6 +11,18 @@ import UIKit
 /// Retains software input context so UIKit can find and revise dictation's
 /// previously committed hypotheses. Ghostty still renders and sends input.
 final class MobileTerminalInputView: UITerminalView {
+    var isAutocorrectionEnabled = false {
+        didSet {
+            guard oldValue != isAutocorrectionEnabled, isFirstResponder else { return }
+            reloadInputViews()
+        }
+    }
+
+    override var autocorrectionType: UITextAutocorrectionType {
+        get { isAutocorrectionEnabled ? .yes : .no }
+        set { isAutocorrectionEnabled = newValue != .no }
+    }
+
     var agentCompletion: AgentCompletionModel?
     private var isHandlingHardwarePress = false
     private var suppressCompletionSoftwareCallback = false
