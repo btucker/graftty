@@ -345,6 +345,56 @@ struct SessionStep: Hashable {
     }
 }
 
+private struct TerminalControlsGroupedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var terminalControlsGrouped: Bool {
+        get { self[TerminalControlsGroupedKey.self] }
+        set { self[TerminalControlsGroupedKey.self] = newValue }
+    }
+}
+
+struct TerminalFloatingGlass: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.interactive(), in: Capsule())
+        } else {
+            content.background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(.separator.opacity(0.35), lineWidth: 0.5))
+        }
+    }
+}
+
+/// One continuous background; the buttons retain their own touch targets.
+struct TerminalFloatingControlGroup<Content: View>: View {
+    var isVisible = true
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .environment(\.terminalControlsGrouped, true)
+            .background {
+                Capsule().fill(.clear)
+                    .modifier(TerminalFloatingGlass())
+                    .opacity(isVisible ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+    }
+}
+
+private struct TerminalFloatingButtonBackground: ViewModifier {
+    @Environment(\.terminalControlsGrouped) private var grouped
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if grouped { content }
+        else { content.modifier(TerminalFloatingGlass()) }
+    }
+}
+
 /// Shared floating terminal control for Back, keyboard and browser actions.
 /// The plain style keeps each glyph in the primary foreground.
 struct TerminalFloatingGlyphButton: View {
@@ -363,8 +413,8 @@ struct TerminalFloatingGlyphButton: View {
                 .foregroundStyle(.primary)
                 .padding(10)
                 .frame(minWidth: 44, minHeight: 44)
-                .background(.ultraThinMaterial, in: Circle())
-                .shadow(radius: 1)
+                .contentShape(Rectangle())
+                .modifier(TerminalFloatingButtonBackground())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
@@ -1286,11 +1336,7 @@ struct SingleSessionView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.primary)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(
-            Capsule()
-                .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
-        )
+        .modifier(TerminalFloatingGlass())
         .accessibilityLabel("Take Control")
     }
 

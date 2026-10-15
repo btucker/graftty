@@ -296,7 +296,7 @@ struct RemoteBrowserButtonTests {
         try await waitUntil { retry.presentedViewController == nil }
         try await finishPresentation(in: fixture)
     }
-    @Test("@spec CHROME-2.18: While the terminal browser control is visible, the application shall use the same primary glyph, plain button and translucent circle styling as Back while preserving its available-resource badge, busy indication and accessibility.", arguments: [0, 3])
+    @Test("@spec CHROME-2.18: While the terminal browser control is visible, the application shall use the same primary glyph and plain button styling as Back, with Liquid Glass on iOS 26 and newer and translucent material on earlier versions while preserving its available-resource badge, busy indication and accessibility.", arguments: [0, 3])
     func browserUsesSharedFloatingStyle(availableCount: Int) async throws {
         let image = try await render(RemoteOpenButton.floatingControl(
             availableCount: availableCount, isBusy: false, action: {}), name: "browser-\(availableCount)")

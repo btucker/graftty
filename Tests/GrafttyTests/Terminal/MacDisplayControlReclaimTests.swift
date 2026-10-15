@@ -10,8 +10,8 @@ import Testing
 ///
 /// Background: display ownership is claimed by remote clients (iOS/web)
 /// through the shared `SessionDisplayOwnershipStore`. When the remote
-/// owner disconnects, its coordinator detaches and the session becomes
-/// ownerless — the Mac does NOT auto-reclaim. The affordance and the
+/// owner disconnects, its coordinator detaches and retains leadership.
+/// The Mac does NOT auto-reclaim. The affordance and the
 /// key-event reclaim below are what give control back to the Mac.
 @MainActor
 @Suite("Mac display-control reclaim (OWN-2.x)")
@@ -124,13 +124,13 @@ struct MacDisplayControlReclaimTests {
         #expect(fixture.handle.canTakeDisplayControl())
 
         // The remote owner detaches (app backgrounded / channel closed):
-        // the session is ownerless but has history — still offered, so the
+        // the remote device retains leadership — still offered, so the
         // Mac user can reclaim without typing.
         _ = fixture.store.detachClient(
             sessionName: fixture.sessionName,
             clientID: Self.remoteClientID
         )
-        #expect(fixture.store.snapshot(sessionName: fixture.sessionName).ownerClientID == nil)
+        #expect(fixture.store.snapshot(sessionName: fixture.sessionName).ownerClientID == Self.remoteClientID)
         #expect(fixture.handle.canTakeDisplayControl())
     }
 
@@ -160,7 +160,7 @@ struct MacDisplayControlReclaimTests {
         #expect(fixture.backend.writes == [Data([0x7F])])
     }
 
-    @Test("A key press on an ownerless-after-history session shall reclaim for the Mac.")
+    @Test("A key press after the remote leader disconnects shall reclaim for the Mac.")
     func keyDownOnOwnerlessSessionReclaims() throws {
         let fixture = try Self.makeFixture()
         Self.attachAndClaimMac(fixture)
