@@ -635,7 +635,13 @@ struct NativeImagePreview: UIViewControllerRepresentable {
         preview.dataSource = coordinator.source
         let done = UIBarButtonItem(title: "Done", style: .done, target: coordinator, action: #selector(Coordinator.done))
         done.accessibilityLabel = "Done"
-        preview.navigationItem.leftBarButtonItem = done
+        // Quick Look puts its collection picker on the leading side in iOS 26
+        // and the trailing side in iOS 27. Leave that side under its control.
+        if #available(iOS 27, *) {
+            preview.navigationItem.leftBarButtonItem = done
+        } else {
+            preview.navigationItem.rightBarButtonItem = done
+        }
         return UINavigationController(rootViewController: preview)
     }
 

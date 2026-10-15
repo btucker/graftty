@@ -73,6 +73,9 @@ struct RemoteBrowserButtonTests {
         let files = try (0..<2).map { try #require(source.previewController(controller, previewItemAt: $0).previewItemURL) }
         #expect(files.map(\.lastPathComponent) == ["before.png", "after.png"])
         #expect(files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+        // Quick Look refreshes its navigation controls when the selected file changes.
+        controller.currentPreviewItemIndex = 1
+        try await waitUntil { controller.currentPreviewItem?.previewItemURL == files[1] }
         try await finishPresentation(in: fixture)
         try await waitUntil { files.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) } }
     }
@@ -578,7 +581,8 @@ struct RemoteBrowserButtonTests {
                     try await waitUntil { image.view.window != nil && !presented.isBeingPresented }
                     let navigation = try #require(image.navigationController)
                     #expect(!navigation.isNavigationBarHidden)
-                    let done = try #require(image.navigationItem.leftBarButtonItem)
+                    let items = (image.navigationItem.leftBarButtonItems ?? []) + (image.navigationItem.rightBarButtonItems ?? [])
+                    let done = try #require(items.first { $0.accessibilityLabel == "Done" })
                     #expect(done.title == "Done")
                     #expect(done.accessibilityLabel == "Done")
                     let action = try #require(done.action)
