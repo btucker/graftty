@@ -27,6 +27,37 @@ struct WebSocketBridgeOwnershipTests {
     }
 
 
+    @Test
+    func authenticatedReconnectLocalizesLeaderAndRejectsClosedChannelTraffic() throws {
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster(store: store)
+        let oldRecorder = Recorder()
+        let newRecorder = Recorder()
+        func coordinator(_ id: String, recorder: Recorder) -> TerminalAttachCoordinator {
+            TerminalAttachCoordinator(sessionName: sessionName, clientID: .init(id), defaultKind: .ios,
+                ownerIdentity: "paired-phone", ownershipStore: store, broadcaster: broadcaster,
+                sendText: { recorder.send($0) }, resize: { recorder.resize(cols: $0.cols, rows: $0.rows) },
+                write: { recorder.write($0) })
+        }
+        let old = coordinator("old-channel", recorder: oldRecorder)
+        old.handleControl(.hello(clientID: .init("old-protocol"), kind: .ios, role: .interactive,
+                                 visible: true, cols: 80, rows: 24))
+        old.handleControl(.takeControl(clientID: .init("old-protocol"), kind: .ios, cols: 90, rows: 28))
+        old.detach()
+        old.handleBinary(Data("closed channel".utf8))
+        old.handleControl(.takeControl(clientID: .init("old-protocol"), kind: .ios, cols: 100, rows: 40))
+        #expect(oldRecorder.snapshot().writes.isEmpty)
+        let resumed = coordinator("new-channel", recorder: newRecorder)
+        resumed.handleControl(.hello(clientID: .init("new-protocol"), kind: .ios, role: .interactive,
+                                     visible: true, cols: 80, rows: 24))
+        let snapshot = try #require(newRecorder.ownershipSnapshots().last)
+        #expect(snapshot.ownerClientID == .init("new-protocol"))
+        #expect(snapshot.grid == (try DisplayGrid(cols: 90, rows: 28)))
+        resumed.handleBinary(Data("restored input".utf8))
+        #expect(newRecorder.snapshot().writes == [Data("restored input".utf8)])
+        #expect(newRecorder.snapshot().resizes.isEmpty)
+    }
+
     private final class Recorder: @unchecked Sendable {
         private let lock = NSLock()
         private(set) var resizes: [DisplayGrid] = []
@@ -317,7 +348,7 @@ struct WebSocketBridgeOwnershipTests {
     }
 
     @Test
-    func ownerDisconnectEmitsOwnerlessSnapshotAndDoesNotAutoPromoteFollower() throws {
+    func ownerDisconnectRetainsLeadershipAndDoesNotAutoPromoteFollower() throws {
         let store = SessionDisplayOwnershipStore()
         let broadcaster = DisplayOwnershipBroadcaster()
         let owner = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-1"))
@@ -332,7 +363,7 @@ struct WebSocketBridgeOwnershipTests {
         owner.coordinator.detach()
 
         let snapshot = store.snapshot(sessionName: sessionName)
-        #expect(snapshot.isOwnerless)
+        #expect(snapshot.ownerClientID == DisplayClientID("server-web-1"))
         #expect(snapshot.grid == (try DisplayGrid(cols: 100, rows: 30)))
 
         let ownerships = follower.recorder.snapshot().sent.compactMap { envelope -> DisplayOwnershipSnapshot? in
@@ -340,9 +371,9 @@ struct WebSocketBridgeOwnershipTests {
             return snapshot
         }
         let last = try #require(ownerships.last)
-        #expect(last.isOwnerless)
+        #expect(last.ownerClientID == DisplayClientID("server-web-1"))
         #expect(last.grid == (try DisplayGrid(cols: 100, rows: 30)))
-        #expect(last.epoch == 2)
+        #expect(last.epoch == epoch)
     }
 
     @Test

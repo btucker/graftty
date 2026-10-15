@@ -1,7 +1,123 @@
 import UIKit
 import XCTest
 
+final class ScrollbackInteractionTests: XCTestCase {
+    func testLeaderScrollbackGestures() throws { try exerciseScrollback(follower: false) }
+    func testFollowerScrollbackGestures() throws { try exerciseScrollback(follower: true) }
+
+    private func exerciseScrollback(follower: Bool) throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--scrollback-fixture"] + (follower ? ["--follower"] : [])
+        app.launch()
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        let status = app.staticTexts["Scrollback status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        func value(_ key: String) -> Int {
+            let text = status.value as? String ?? ""
+            return text.split(separator: " ").first(where: { $0.hasPrefix(key + "=") })
+                .flatMap { Int($0.dropFirst(key.count + 1)) } ?? -1
+        }
+        func wait(_ message: String, _ condition: @escaping () -> Bool) {
+            let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 8), .completed, message + " " + (status.value as? String ?? ""))
+        }
+        wait("Initial output should reach the bottom") {
+            value("total") >= 500 && value("offset") == value("total") - value("len")
+        }
+        let initial = value("offset")
+        let terminal = app.otherElements["Scrollback terminal"]
+        XCTAssertTrue(terminal.waitForExistence(timeout: 5))
+        let start = terminal.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+        let end = terminal.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+        wait("Dragging down should reveal older output") { value("offset") >= 0 && value("offset") < initial - 5 }
+        let scrolled = value("offset")
+        let before = status.value as? String ?? ""
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = follower ? "Follower scrolled" : "Leader scrolled"
+        shot.lifetime = .keepAlways
+        add(shot)
+        app.buttons["Append"].tap()
+        wait("Appended output should be received") { value("total") >= 550 }
+        XCTAssertEqual(value("offset"), scrolled, "Output must preserve the row being read. Before: \(before)")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        wait("Rotate the terminal to landscape") { terminal.frame.width > terminal.frame.height }
+        XCTAssertEqual(value("offset"), scrolled, "Rotation must preserve the native reading row")
+        XCUIDevice.shared.orientation = .portrait
+        wait("Rotate the terminal to portrait") { terminal.frame.height > terminal.frame.width }
+        XCTAssertEqual(value("offset"), scrolled, "Rotating back must preserve the native reading row")
+        terminal.swipeDown(velocity: .fast)
+        wait("A fast downward fling should reach older output") { value("offset") < scrolled - 5 }
+        let flingRow = value("offset")
+        terminal.swipeUp(velocity: .fast)
+        wait("Reversing the fling should approach live output") { value("offset") > flingRow + 5 }
+        app.buttons["Bottom"].tap()
+        wait("Return to live output") { value("offset") == value("total") - value("len") }
+        app.buttons["Stream"].tap()
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+        wait("Streaming output must not prevent scrolling into history") {
+            value("total") >= 700 && value("offset") < value("total") - value("len") - 10
+        }
+        app.buttons["Top"].tap()
+        wait("Position just before the oldest output") { value("offset") == 5 }
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+        wait("Reach the oldest output") { value("offset") == 0 }
+        let topShot = XCTAttachment(screenshot: app.screenshot())
+        topShot.name = follower ? "Follower oldest history" : "Leader oldest history"
+        topShot.lifetime = .keepAlways
+        add(topShot)
+        XCTAssertLessThanOrEqual(value("gap"), 1, "Loaded history should fill the viewport at the oldest row")
+        app.buttons["Bottom"].tap()
+        wait("Return to live after streaming") { value("offset") == value("total") - value("len") }
+        app.buttons["Switch owner"].tap()
+        wait("Ownership switch should retain history") { value("total") >= 500 }
+        let switched = value("offset")
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+        wait("Dragging should work after ownership changes") { value("offset") < switched - 5 }
+    }
+}
+
 final class BrowserControlInteractionTests: XCTestCase {
+    /// @spec CHROME-2.29: While multiple terminal overlay actions appear on the right, the application shall join their backgrounds into one capsule, using Liquid Glass on iOS 26 and newer, while preserving separate accessible touch targets.
+    func testRightOverlayActionsShareGlassCapsule() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--image-controls-fixture", "--wide-controls"]
+        app.launch()
+        defer { app.terminate() }
+        let images = app.buttons["Images"]
+        let browser = app.buttons["Browser"]
+        XCTAssertTrue(images.waitForExistence(timeout: 5))
+        XCTAssertTrue(browser.waitForExistence(timeout: 5))
+        XCTAssertEqual(images.frame.midY, browser.frame.midY, accuracy: 1)
+        let screenshot = app.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = "Joined overlay controls"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let cg = try XCTUnwrap(screenshot.image.cgImage)
+        let scale = CGFloat(cg.width) / app.frame.width
+        let gap = CGPoint(x: (images.frame.maxX + browser.frame.minX) / 2, y: images.frame.midY)
+        let sample = try XCTUnwrap(cg.cropping(to: CGRect(x: gap.x * scale - 1, y: gap.y * scale - 1, width: 3, height: 3)))
+        var pixel = [UInt8](repeating: 0, count: 4)
+        pixel.withUnsafeMutableBytes { bytes in
+            let context = CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
+                                    bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.draw(sample, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        XCTAssertGreaterThan(Int(pixel[0]) + Int(pixel[1]) + Int(pixel[2]), 30,
+                             "The space between actions must contain the capsule, not the black terminal background")
+        for control in [images, browser] {
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+            tapCenter(control, in: app)
+            let done = app.buttons["Done"]
+            XCTAssertTrue(done.waitForExistence(timeout: 5))
+            done.tap()
+            XCTAssertTrue(done.waitForNonExistence(timeout: 5))
+        }
+    }
+
     // Complements IMAGE-2.11 with actual touches and native scrolling, since
     // in-process UIKit traversal cannot inspect SwiftUI's scroll portals.
     func testShortClippedImagePaneKeepsBothActionsReachable() throws {

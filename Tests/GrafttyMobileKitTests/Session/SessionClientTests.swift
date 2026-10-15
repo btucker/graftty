@@ -661,7 +661,7 @@ struct SessionClientTests {
     }
 
     @Test("""
-@spec IOS-7.8: When a terminal receive or replay fails, the application shall close and discard that channel before reconnecting so failed attachments cannot retain control or accumulate on the host.
+@spec IOS-7.8: When a terminal receive or replay fails, the application shall close and discard that channel before reconnecting so failed attachments cannot submit input or accumulate on the host.
 """)
     func failedReplayClosesChannelBeforeReconnect() async throws {
         let first = DelayedReceiveWS(paged: true)
@@ -1890,9 +1890,9 @@ struct SessionClientTests {
     }
 
     @Test("""
-    @spec IOS-6.15: When a fullscreen iOS session reconnects after suspension, the application shall remain a follower until user input or an explicit Take Control action requests ownership, including when the session is ownerless.
-    """)
-    func reconnectDoesNotAutomaticallyReclaimOwnership() async throws {
+    @spec IOS-6.15: When a fullscreen iOS session reconnects, the application shall adopt the host-confirmed retained leadership or follower state without sending an automatic takeover.
+    """, arguments: ["retained", "other", "ownerless"])
+    func reconnectAdoptsHostLeadershipWithoutTakeover(owner: String) async throws {
         let first = FakeWS()
         let ws = FakeWS()
         let sequence = WebSocketSequence([first, ws])
@@ -1902,16 +1902,47 @@ struct SessionClientTests {
         try await confirmOwner(client, ws: first)
         client.suspend()
         client.resume()
-        _ = try await waitForHelloClientID(ws)
+        let newID = try await waitForHelloClientID(ws)
         ws.clearSent()
-        let ownerless = try ownershipSnapshot(
-            ownerClientID: nil, ownerKind: nil, cols: 120, rows: 40, epoch: 3
+        let resumed = try ownershipSnapshot(
+            ownerClientID: owner == "retained" ? newID : owner == "other" ? DisplayClientID("desktop") : nil,
+            ownerKind: owner == "retained" ? .ios : owner == "other" ? .mac : nil,
+            cols: 120, rows: 40, epoch: 3
         )
-        client.handleTextFrame(WebControlEnvelope.ownership(ownerless).encoded())
+        client.handleTextFrame(WebControlEnvelope.ownership(resumed).encoded())
+        #expect(client.isOwner == (owner == "retained"))
         primeViewport(client, columns: 90, rows: 28)
         try await expectNever("takeover merely from reconnecting or receiving a viewport") {
             envelopes(ws).contains { if case .takeControl = $0 { return true }; return false }
         }
+    }
+
+    @Test
+    func interruptedConnectionResumesLeaderWithoutTakeControl() async throws {
+        let first = DelayedReceiveWS()
+        let second = FakeWS()
+        let sequence = WebSocketSequence([first, second])
+        let client = SessionClient(sessionName: "s", webSocketFactory: { try sequence.next() })
+        client.start()
+        defer { client.stop(); first.fail(CancellationError()) }
+        try await waitUntil("initial connection") { first.receiveCalls == 1 }
+        let firstID = try #require(first.sent.compactMap { frame -> DisplayClientID? in
+            guard case let .text(text) = frame,
+                  let envelope = try? WebControlEnvelope.parse(Data(text.utf8)),
+                  case let .hello(id, _, _, _, _, _) = envelope else { return nil }
+            return id
+        }.last)
+        let initial = try ownershipSnapshot(ownerClientID: firstID, ownerKind: .ios, cols: 80, rows: 24, epoch: 1)
+        client.handleTextFrame(WebControlEnvelope.ownership(initial).encoded())
+        #expect(client.isOwner)
+        first.fail(URLError(.networkConnectionLost))
+        let newID = try await waitForHelloClientID(second)
+        #expect(first.closed)
+        #expect(newID != firstID)
+        let restored = try ownershipSnapshot(ownerClientID: newID, ownerKind: .ios, cols: 80, rows: 24, epoch: 2)
+        client.handleTextFrame(WebControlEnvelope.ownership(restored).encoded())
+        #expect(client.isOwner)
+        #expect(!envelopes(second).contains { if case .takeControl = $0 { return true }; return false })
     }
 
     @Test("""

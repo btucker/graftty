@@ -133,6 +133,7 @@ struct HostManagedZmxOwnership {
                     previousOwnerClientID: previousSnapshot.ownerClientID,
                     previousOwnerKind: previousSnapshot.ownerKind,
                     previousGrid: previousSnapshot.grid,
+                    previousOwnerIdentity: previousSnapshot.ownerIdentity,
                     fallbackGrid: fallbackGrid
                 )
             },
