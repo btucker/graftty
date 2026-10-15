@@ -34,7 +34,6 @@ struct RemoteOpenButton: View {
     @State private var preview: Preview?
     @State private var showingPreview = false
     @State private var cachedFiles: [URL] = []
-    @State var autoOpen = RemotePreviewAutoOpen()
     @State private var error: String?
     @State private var choosingResource = false
     let isPaneOwner: () -> Bool
@@ -177,6 +176,7 @@ struct RemoteOpenButton: View {
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
             guard preview?.id == id, !chromePresentation.isMounted else { return }
             let resourceName = preview?.imageRequest == nil ? "Browser" : "Preview"
+            if let request = preview?.imageRequest { coordinator.completePreviewAutoOpen(request.offer.id) }
             cancelPresentation()
             if isActive {
                 error = "The resource could not be presented. Close any other dialog and tap \(resourceName) to try again."
@@ -323,6 +323,7 @@ struct RemoteOpenButton: View {
         guard chromePresentation.begin(offerID, presentationID: item.id) else {
             error = "A resource is opening or closing. Wait a moment and tap Browser again."
             if let offerID { coordinator.deferAuthenticationOffer(offerID) }
+            if let request = item.imageRequest { coordinator.completePreviewAutoOpen(request.offer.id) }
             return
         }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -342,7 +343,9 @@ struct RemoteOpenButton: View {
             cancelPresentation()
             return false
         }
-        return chromePresentation.markMounted(item.id)
+        guard chromePresentation.markMounted(item.id) else { return false }
+        if let request = item.imageRequest { coordinator.completePreviewAutoOpen(request.offer.id) }
+        return true
     }
 
     private func finishPresentation(_ id: UUID) {
@@ -355,6 +358,7 @@ struct RemoteOpenButton: View {
 
     private func cancelPresentation(abandon: Bool = false) {
         guard let id = chromePresentation.presentationID else { return }
+        if let request = preview?.imageRequest { coordinator.deferPreviewAutoOpen(request.offer.id) }
         if let offerID = chromePresentation.deferCurrent() { coordinator.deferAuthenticationOffer(offerID) }
         showingPreview = false
         if abandon { apply(chromePresentation.finishDismissal(id)) }
@@ -373,7 +377,7 @@ struct RemoteOpenButton: View {
     private func autoOpenPreviewIfReady() {
         let canPresent = preview == nil && chromePresentation.canPresent && !isDownloading
             && error == nil && canPresentAuthentication()
-        guard autoOpen.take(imageOffer, isReady: imageReady, canPresent: canPresent), let offer = imageOffer else { return }
+        guard coordinator.reservePreviewAutoOpen(imageOffer, isReady: imageReady, canPresent: canPresent), let offer = imageOffer else { return }
         open(offer, automatically: true)
     }
 
@@ -396,6 +400,7 @@ struct RemoteOpenButton: View {
     }
 
     private func cancelOperation() {
+        if let request = imageDownload { coordinator.deferPreviewAutoOpen(request.offer.id) }
         operationID = UUID()
         download?.cancel()
         download = nil
@@ -411,12 +416,17 @@ struct RemoteOpenButton: View {
     private func open(_ offer: RemoteOpenOffer, automatically: Bool = false, actionID: UUID? = nil) {
         let imageRequest = offer.isNativePreview ? RemoteImageOffers.Request(offer: offer, scope: browserScope) : nil
         let resourceName = imageRequest == nil ? "Browser" : "Preview"
-        guard canBegin(actionID: actionID, automatically: automatically, offerID: offer.id, resourceName: resourceName) else { return }
+        guard canBegin(actionID: actionID, automatically: automatically, offerID: offer.id, resourceName: resourceName) else {
+            if imageRequest != nil { coordinator.deferPreviewAutoOpen(offer.id) }
+            return
+        }
         if let imageRequest, !imageRequest.isCurrent(latest: imageOffer, scope: browserScope, isReady: imageReady) {
+            coordinator.deferPreviewAutoOpen(offer.id)
             error = "Take control of the originating pane and tap Preview again. If the preview expired, run graftty preview again."
             return
         }
         guard allOffers.contains(offer) else {
+            if imageRequest != nil { coordinator.deferPreviewAutoOpen(offer.id) }
             coordinator.deferAuthenticationOffer(offer.id)
             if !automatically { error = "This resource is no longer available. Wait for the list to refresh and tap \(resourceName) again." }
             return
@@ -473,16 +483,19 @@ struct RemoteOpenButton: View {
                 if let imageRequest {
                     guard imageRequest.isCurrent(latest: imageOffer, scope: browserScope, isReady: imageReady) else {
                         removeFiles()
+                        coordinator.deferPreviewAutoOpen(offer.id)
                         return
                     }
                     guard files.allSatisfy({ QLPreviewController.canPreview($0 as NSURL) }) else {
                         removeFiles()
+                        coordinator.completePreviewAutoOpen(offer.id)
                         self.error = "This file could not be previewed. Run graftty preview again with a Quick Look supported file."
                         return
                     }
                 }
                 guard chromePresentation.canPresent, preview == nil else {
                     removeFiles()
+                    if imageRequest != nil { coordinator.completePreviewAutoOpen(offer.id) }
                     self.error = "Another resource is opening. Tap \(resourceName) again after it closes."
                     return
                 }
@@ -491,6 +504,7 @@ struct RemoteOpenButton: View {
                 present(Preview(url: files.first, imageRequest: imageRequest, files: files), offerID: nil)
             } catch {
                 if !Task.isCancelled, operationID == currentOperation {
+                    if imageRequest != nil { coordinator.completePreviewAutoOpen(offer.id) }
                     self.error = imageRequest == nil ? error.localizedDescription
                         : "Could not download preview: \(error.localizedDescription) Tap Preview to retry or run graftty preview again."
                 }

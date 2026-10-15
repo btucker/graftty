@@ -42,7 +42,18 @@ enum FilePreviewRequest {
                     return .error("The preview request or its display leader changed before delivery. Retry graftty preview.")
                 }
             case .mac:
-                let files = try zip(snapshots, urls).map { try FilePreviewFile($0.0, sourceURL: $0.1) }
+                let files = try await Task.detached(priority: .userInitiated) {
+                    try zip(snapshots, urls).map { try FilePreviewFile($0.0, sourceURL: $0.1) }
+                }.value
+                let currentOwnership = terminalManager.displayOwnershipStore?.snapshot(sessionName: scope.sessionName)
+                guard previews.isCurrent(generation, for: scope.pane),
+                      ImagePreviewRouting.scope(path: scope.worktreePath, paneSessionName: scope.sessionName, state: state()) == scope,
+                      currentOwnership?.ownerClientID == ownership?.ownerClientID,
+                      currentOwnership?.epoch == ownership?.epoch,
+                      ImagePreviewRouting.destination(ownerKind: currentOwnership?.ownerKind,
+                          macIsFollower: terminalManager.handle(for: scope.pane) == nil || terminalManager.canTakeDisplayControl(for: scope.pane)) == .mac else {
+                    return .error("The preview request or its display leader changed before delivery. Retry graftty preview.")
+                }
                 previews.present(files: files, for: scope.pane)
             case .unavailable:
                 return .error("The pane's display leader cannot receive a native preview. Take Control on this Mac or use graftty open.")

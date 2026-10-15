@@ -44,6 +44,6 @@ A quiet zero exit status acknowledges the request. It does not prove that the us
 
 For a Markdown image reference, extract its destination and remove angle brackets or an optional title. Resolve relative paths against the containing Markdown file's directory, or the current worktree for a chat reference. Pass the local path as a quoted argument, not the Markdown expression. Use `graftty open` for remote HTTP(S) URLs.
 
-If `graftty preview` fails, report its actual error and try `graftty open <path>` when a separate native file viewer would help. Do not claim delivery after a failure or a missing preview. If the running app is too old for `preview`, try `graftty image` for images or `graftty open` for other files. Locate the bundled CLI as described in [graftty-open](../graftty-open/SKILL.md).
+If `graftty preview` fails, report its actual error and try `graftty open <path>` when a separate native file viewer would help. Do not claim delivery after a failure or a missing preview. If an older CLI lacks the `preview` command, use `graftty image` for images or `graftty open` for other files. If the running app rejects the new preview request, use `graftty open`; the new CLI's `image` alias sends the same request and cannot downgrade it. Locate the bundled CLI as described in [graftty-open](../graftty-open/SKILL.md).
 
 Do not use `imgcat`, `kitten icat`, `chafa`, hand-written graphics escapes, or padding newlines. Never write directly to `/dev/tty*` or send a terminal query from a tool shell.

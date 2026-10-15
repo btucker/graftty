@@ -11,6 +11,52 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct RemoteBrowserButtonTests {
+    @Test("Dismissed automatic previews stay consumed when the pane view is recreated", .timeLimit(.minutes(1)))
+    func dismissedPreviewStaysClosedAfterViewRecreation() async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true, autoPreview: true)
+        defer { close(fixture) }
+        try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+        try await finishPresentation(in: fixture)
+        let reads = fixture.state.reads
+        fixture.state.visible = false
+        try await Task.sleep(for: .milliseconds(300))
+        fixture.state.visible = true
+        try await waitForImages(fixture)
+        try await Task.sleep(for: .seconds(3.2))
+        #expect(fixture.host.presentedViewController == nil)
+        #expect(fixture.state.reads == reads)
+    }
+
+    @Test("Automatic preview downloads cancelled before presentation retry when focus returns", .timeLimit(.minutes(1)))
+    func cancelledAutomaticPreviewRetriesWhenFocusReturns() async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false, autoPreview: true)
+        defer { close(fixture) }
+        fixture.state.slowRead = true
+        fixture.state.offers = [imageOffer()]
+        try await waitUntil { fixture.state.reads > 0 }
+        fixture.state.focused = false
+        try await waitUntil { fixture.state.cancelledReads == 1 }
+        fixture.state.slowRead = false
+        fixture.state.focused = true
+        try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+    }
+
+    @Test("Failed automatic previews do not retry when the pane view is recreated", .timeLimit(.minutes(1)))
+    func failedAutomaticPreviewDoesNotRepeatAfterViewRecreation() async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false, autoPreview: true)
+        defer { close(fixture) }
+        fixture.state.failRead = true
+        fixture.state.offers = [imageOffer()]
+        try await waitUntil { fixture.host.presentedViewController is UIAlertController }
+        let reads = fixture.state.reads
+        fixture.state.visible = false
+        try await Task.sleep(for: .milliseconds(300))
+        fixture.state.visible = true
+        try await waitForImages(fixture)
+        try await Task.sleep(for: .seconds(3.2))
+        #expect(fixture.state.reads == reads)
+    }
+
     @Test("@spec PREVIEW-2.8: When a multi-file preview arrives for the focused owning mobile pane, the application shall automatically download and present the complete collection in order and remove every local snapshot after dismissal.", .timeLimit(.minutes(1)))
     func collectionAutoOpensAndCleansUpEveryFile() async throws {
         let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false, autoPreview: true)
@@ -441,13 +487,12 @@ struct RemoteBrowserButtonTests {
         if pending { _ = presentation.begin(offer.id) }
         let state = ButtonState(owner: owner)
         state.offers = image && !imageInitiallyAvailable ? [] : [image ? imageOffer() : offer]
-        var autoOpen = RemotePreviewAutoOpen()
         // Most fixtures exercise reopening a preview the user has already dismissed.
         if !autoPreview, image {
-            for offer in state.offers { _ = autoOpen.take(offer, isReady: true, canPresent: true) }
+            for offer in state.offers { coordinator.completePreviewAutoOpen(offer.id) }
         }
         let button = ButtonFixtureView(state: state, coordinator: coordinator, host: host, imageBytes: imageBytes,
-                                      device: device, initialPresentation: presentation, paneWidth: paneWidth, initialAutoOpen: autoOpen)
+                                      device: device, initialPresentation: presentation, paneWidth: paneWidth)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
         let previous = scene.windows.first { $0.isKeyWindow }
@@ -475,7 +520,6 @@ struct RemoteBrowserButtonTests {
         let device: RemoteDeviceID
         let initialPresentation: ChromeOfferPresentation
         let paneWidth: CGFloat?
-        let initialAutoOpen: RemotePreviewAutoOpen
         var body: some View {
             if state.visible {
                 let button = RemoteOpenButton(host: host, worktree: state.worktree, coordinator: coordinator, sessionName: "pane",
@@ -493,7 +537,7 @@ struct RemoteBrowserButtonTests {
                         }
                         return .openResource(.offers(state.offers))
                     }, browserConnectionReady: state.ready, isPaneFocused: state.focused, hasOwnershipSnapshot: state.hasSnapshot,
-                    autoOpen: initialAutoOpen, isPaneOwner: { state.owner }, canPresentAuthentication: { true }, terminalRequest: .constant(nil), chromePresentation: initialPresentation)
+                    isPaneOwner: { state.owner }, canPresentAuthentication: { true }, terminalRequest: .constant(nil), chromePresentation: initialPresentation)
                     .environment(\.scenePhase, state.active ? .active : .background)
                     .environment(\.accessibilityEnabled, true)
                     .environment(\.biometricGate, state.gate)

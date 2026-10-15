@@ -2,7 +2,7 @@ import Foundation
 import GrafttyKit
 
 /// Owns an immutable local copy until the last tray using it is released.
-final class FilePreviewFile {
+final class FilePreviewFile: Sendable {
     let url: URL
     let sourceURL: URL?
     private let directory: URL

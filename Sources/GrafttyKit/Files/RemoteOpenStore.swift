@@ -1,10 +1,5 @@
 import Foundation
 import GrafttyProtocol
-#if canImport(Darwin)
-import Darwin
-#else
-import Glibc
-#endif
 
 /// Holds explicit file offers, never a remotely supplied filesystem path.
 /// Bytes are snapshotted so edits on the host cannot corrupt an in-flight preview.
@@ -57,19 +52,11 @@ public actor RemoteOpenStore {
             entries.append(Entry(offer: offer, worktree: worktree, bytes: Data(), expires: expires, previewRevision: nil))
             return offer
         }
-        // O_NONBLOCK prevents a named pipe from hanging the request before fstat.
-        let fd = GrafttyPOSIX.open(file.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
-        guard fd >= 0 else { throw Failure.invalidFile }
-        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        defer { try? handle.close() }
-        var info = stat()
-        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else {
-            throw Failure.invalidFile
-        }
-        guard info.st_size <= RemoteOpenOffer.maxBytes else { throw Failure.tooLarge }
-        let bytes = try handle.read(upToCount: RemoteOpenOffer.maxBytes + 1) ?? Data()
-        guard bytes.count <= RemoteOpenOffer.maxBytes else { throw Failure.tooLarge }
-        return try offerSnapshot(bytes: bytes, filename: file.lastPathComponent, worktree: worktree,
+        let snapshot: FilePreviewLoader.Snapshot
+        do { snapshot = try FilePreviewLoader.snapshot(file) }
+        catch FilePreviewLoader.Failure.tooLarge { throw Failure.tooLarge }
+        catch { throw Failure.invalidFile }
+        return try offerSnapshot(bytes: snapshot.bytes, filename: snapshot.filename, worktree: worktree,
                                  paneSessionName: paneSessionName, now: now)
     }
 

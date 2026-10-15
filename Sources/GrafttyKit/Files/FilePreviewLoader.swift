@@ -32,18 +32,25 @@ public enum FilePreviewLoader {
         guard (1...maximumFiles).contains(urls.count) else { throw Failure.invalidCollection }
         var total = 0
         return try urls.map { url in
-            guard url.isFileURL else { throw Failure.unreadable }
-            let fd = GrafttyPOSIX.open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
-            guard fd >= 0 else { throw Failure.unreadable }
-            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-            defer { try? handle.close() }
-            var info = stat()
-            guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw Failure.unreadable }
-            guard info.st_size <= RemoteOpenOffer.maxBytes else { throw Failure.tooLarge }
-            let bytes = try handle.read(upToCount: RemoteOpenOffer.maxBytes + 1) ?? Data()
-            total += bytes.count
-            guard bytes.count <= RemoteOpenOffer.maxBytes, total <= maximumTotalBytes else { throw Failure.tooLarge }
-            return Snapshot(filename: url.lastPathComponent, bytes: bytes)
+            let snapshot = try snapshot(url)
+            total += snapshot.bytes.count
+            guard total <= maximumTotalBytes else { throw Failure.tooLarge }
+            return snapshot
         }
+    }
+
+    /// Shares the bounded, nonblocking regular-file read with graftty open.
+    public static func snapshot(_ url: URL) throws -> Snapshot {
+        guard url.isFileURL else { throw Failure.unreadable }
+        let fd = GrafttyPOSIX.open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { throw Failure.unreadable }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var info = stat()
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw Failure.unreadable }
+        guard info.st_size <= RemoteOpenOffer.maxBytes else { throw Failure.tooLarge }
+        let bytes = try handle.read(upToCount: RemoteOpenOffer.maxBytes + 1) ?? Data()
+        guard bytes.count <= RemoteOpenOffer.maxBytes else { throw Failure.tooLarge }
+        return Snapshot(filename: url.lastPathComponent, bytes: bytes)
     }
 }

@@ -3436,7 +3436,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-2.2** When a mobile preview collection is offered, the host shall publish all files atomically with a shared collection identity, preserve their order and recipient, and replace only older previews from that pane.
 
-**PREVIEW-2.3** When a new preview is available on the focused mobile pane the user controls, the application shall open it once when presentation is available, defer while another resource is open, and not reopen it after dismissal or reconnect.
+**PREVIEW-2.3** When a new preview is available on the focused mobile pane the user controls, the application shall open it once when presentation is available, defer while another resource is open, retry after cancellation before presentation, and retain consumption after presentation or failure across navigation and reconnect.
 
 **PREVIEW-2.4** When a mobile preview collection opens, the application shall provide all files to one native Quick Look controller in request order with a Done action.
 
