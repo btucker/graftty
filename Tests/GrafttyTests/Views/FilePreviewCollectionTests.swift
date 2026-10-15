@@ -48,7 +48,7 @@ struct FilePreviewCollectionTests {
     }
 
     @Test("@spec PREVIEW-1.3: When a native file preview collection opens on macOS, the application shall embed Quick Look, navigate files in request order, reset selection on replacement, and retain immutable snapshot files until the tray releases them.")
-    func navigatesCollectionAndRetainsSnapshots() throws {
+    func navigatesCollectionAndRetainsSnapshots() async throws {
         _ = NSApplication.shared
         let files = try ["one.html", "two.csv"].map {
             try FilePreviewFile(.init(filename: $0, bytes: Data("<h1>Preview</h1>".utf8)))
@@ -70,6 +70,7 @@ struct FilePreviewCollectionTests {
         #expect(tray.selectedIndex == 0)
         #expect(tray.quickLook.previewItem?.previewItemURL == replacement.url)
         #expect(!tray.next.isEnabled)
+        try await captureIfRequested()
     }
 
     @Test("@spec PREVIEW-1.4: When a preview file snapshot is released, the application shall remove its private temporary directory without deleting the original file.")
@@ -79,5 +80,33 @@ struct FilePreviewCollectionTests {
         #expect(try Data(contentsOf: url) == Data("hello".utf8))
         file = nil
         #expect(!FileManager.default.fileExists(atPath: url.deletingLastPathComponent().path))
+    }
+
+    private func captureIfRequested() async throws {
+        guard let directory = ProcessInfo.processInfo.environment["GRAFTTY_TEST_SCREENSHOT_DIR"] else { return }
+        let output = URL(fileURLWithPath: directory, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let html = (try? Data(contentsOf: output.appendingPathComponent("explanation.html")))
+            ?? Data("<h1>File previews</h1><p>Explain it visually with HTML, images, and documents in one Quick Look collection.</p>".utf8)
+        let files = try ["explanation.html", "agent-visuals.html"].map {
+            try FilePreviewFile(.init(filename: $0, bytes: html))
+        }
+        let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 900, height: 630),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let tray = NativeFilePreviewTray(preview: .init(files: files), onDismiss: {}, onInteraction: { _ in })
+        window.title = "Graftty file previews"
+        window.contentView = tray
+        NSApp.setActivationPolicy(.regular)
+        NSApp.finishLaunching()
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+        defer { tray.quickLook.close(); window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .seconds(3))
+        window.displayIfNeeded()
+        let bitmap = try #require(tray.bitmapImageRepForCachingDisplay(in: tray.bounds))
+        tray.cacheDisplay(in: tray.bounds, to: bitmap)
+        try #require(bitmap.representation(using: .png, properties: [:]))
+            .write(to: output.appendingPathComponent("mac-preview.png"))
     }
 }
