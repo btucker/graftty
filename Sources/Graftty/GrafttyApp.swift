@@ -1918,8 +1918,9 @@ struct GrafttyApp: App {
             wakeBeforeDelivery: { sleepCoordinator.wake(path: $0) }
         )
         presenceTicker.start {
-            let records = await TeamPresenceMonitor.sweep(storage: presenceStorage)
-            presenceIndex.replace(with: records)
+            let records = await presenceIndex.refresh {
+                await TeamPresenceMonitor.sweep(storage: presenceStorage)
+            }
             refreshDeliveryLiveness(records: records)
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
             await Self.retryNativeDeliveryForPresenceWorktrees(
