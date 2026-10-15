@@ -1,0 +1,138 @@
+diff --git a/src/terminal/PageList.zig b/src/terminal/PageList.zig
+--- a/src/terminal/PageList.zig
++++ b/src/terminal/PageList.zig
+@@ -404,6 +404,11 @@
+ /// A generation at or above it is only potentially valid and must still be
+ /// checked against the live list before its coordinates are used.
+ page_serial_epoch: u64,
++
++/// Invalidates pending history after an explicit history erase, reset, or
++/// automatic retention pruning. Live screen edits and storage-only replacements
++/// preserve this generation. It is local state, not serialized in snapshots.
++history_discard_generation: u64 = 0,
+
+ /// Byte size of the raw backing mappings owned by active page nodes. This is
+ /// logical scrollback accounting and does not change while a mapping is
+@@ -936,6 +941,8 @@
+ /// memory to fit the active area.
+ pub fn reset(self: *PageList) void {
+     defer self.assertIntegrity();
++
++    self.history_discard_generation +%= 1;
+
+     // Reset discards all scrollback, so there is nothing left to compress.
+     self.page_compression.reset();
+@@ -4049,6 +4056,8 @@
+             }
+         }
+
++        self.history_discard_generation +%= 1;
++
+         // Update any tracked pins that point to this page to point to the
+         // new first page to the top-left, and mark them as garbage.
+         const pin_keys = self.tracked_pins.keys();
+@@ -5455,6 +5464,8 @@
+     self: *PageList,
+     bl_pt: ?point.Point,
+ ) void {
++    // Erasing an empty resident prefix must also discard unloaded history.
++    self.history_discard_generation +%= 1;
+     self.eraseRows(.{ .history = .{} }, bl_pt);
+ }
+
+@@ -6995,6 +7006,8 @@
+                 if (p.node == first) p.garbage = true;
+             }
+
++            pagelist.history_discard_generation +%= 1;
++
+             // erasePage updates the list, pin targets, and byte accounting.
+             // Row accounting belongs to the caller because erasePage is also used
+             // by paths that already adjusted total_rows.
+@@ -20428,3 +20441,38 @@
+         try testing.expect(rac.cell.isZero());
+     }
+ }
++
++test "PageList history boundary survives storage replacement but rejects row removal" {
++    const testing = std.testing;
++    var s = try init(testing.allocator, .{ .cols = 80, .rows = 24 });
++    defer s.deinit();
++    const generation = s.history_discard_generation;
++    const original = s.pages.first.?;
++    const replaced = try s.increaseCapacity(original, .styles);
++    try testing.expect(replaced != original);
++    try testing.expectEqual(generation, s.history_discard_generation);
++    _ = try s.compact(replaced);
++    try testing.expectEqual(generation, s.history_discard_generation);
++    s.eraseActive(0);
++    try testing.expectEqual(generation, s.history_discard_generation);
++
++    // Even when the resident screen has no older rows, an explicit history
++    // erase must invalidate the older pages still pending on the transport.
++    s.eraseHistory(null);
++    try testing.expect(s.history_discard_generation != generation);
++    const erased = s.history_discard_generation;
++    s.reset();
++    try testing.expect(s.history_discard_generation != erased);
++}
++
++test "PageList history boundary rejects automatic retention pruning" {
++    const testing = std.testing;
++    var s = try init(testing.allocator, .{ .cols = 80, .rows = 24 });
++    defer s.deinit();
++    try s.growColdPagesForTest(3);
++    const generation = s.history_discard_generation;
++    const rows = s.total_rows;
++    s.setMaxLines(0);
++    try testing.expect(s.total_rows < rows);
++    try testing.expect(s.history_discard_generation != generation);
++}
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -482,7 +482,7 @@
+         screens: std.EnumMap(terminal.ScreenSet.Key, usize),
+         boundaries: std.EnumMap(terminal.ScreenSet.Key, Boundary),
+
+-        const Boundary = struct { pin: terminal.Pin, serial: u64 };
++        const Boundary = struct { generation: u64 };
+     };
+
+     /// Surface initialization options.
+@@ -2017,8 +2017,7 @@
+         var it = io.terminal.screens.all.iterator();
+         while (it.next()) |entry| {
+             screens.put(entry.key, io.terminal.screens.generation(entry.key));
+-            const pin = entry.value.*.pages.getTopLeft(.screen);
+-            boundaries.put(entry.key, .{ .pin = pin, .serial = pin.node.serial });
++            boundaries.put(entry.key, .{ .generation = entry.value.*.pages.history_discard_generation });
+         }
+         surface.snapshot_attachment = .{
+             .generation = generation,
+@@ -2069,11 +2068,11 @@
+         if (t.screens.generation(key) != original_screen) return 2;
+         const screen = t.screens.get(key) orelse return 2;
+         // Live resets, history erasure, and retention pruning can remove the
+-        // adjoining rows even when width and screen generation are unchanged.
+-        // Compare only the live first node; never dereference an old pointer.
++        // older rows even when width and screen generation are unchanged.
++        // Active row edits and page reallocations preserve historical content;
++        // only discarded history invalidates the pending prepend.
+         const boundary = attachment.boundaries.get(key) orelse return 2;
+-        const first = screen.pages.pages.first orelse return 2;
+-        if (first != boundary.pin.node or first.serial != boundary.serial) return 2;
++        if (screen.pages.history_discard_generation != boundary.generation) return 2;
+         if (screen.no_scrollback) return 3;
+         const bounded = terminal.snapshot.attachment;
+         if (len == 0 or len > bounded.max_page_bytes) return -1;
+@@ -2083,8 +2082,7 @@
+             error.MaxSizeExceeded, error.MaxLinesExceeded => return 3,
+             else => return -1,
+         };
+-        const new_boundary = screen.pages.getTopLeft(.screen);
+-        surface.snapshot_attachment.?.boundaries.put(key, .{ .pin = new_boundary, .serial = new_boundary.node.serial });
++        surface.snapshot_attachment.?.boundaries.put(key, .{ .generation = screen.pages.history_discard_generation });
+         t.flags.dirty.clear = true;
+         core.io.terminal_stream.handler.queueRender() catch {};
+         return 1;
