@@ -10,7 +10,7 @@ import GrafttyProtocol
 struct CLIWorktreePinTests {
     @Test("@spec TEAM-4.13: When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree, unpinning, and explicitly removing a pinned worktree, and explain role instruction files and retention after PR or MR resolution.")
     func skillPinningExamplesUseSupportedCLICommands() throws {
-        let skill = try GrafttyTeamSkillText.load()
+        let skill = try GrafttyTeamSkillText.load(reference: "durable-roles")
         let examples = skill.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter {
             $0.hasPrefix("graftty worktree pin") || $0.hasPrefix("graftty worktree unpin") || $0.hasPrefix("graftty worktree remove")
         }

@@ -1,134 +1,47 @@
 ---
 name: graftty-team
-description: Use when coordinating agents through Graftty team commands, rosters, worktree messages, peer forwarding, pinning durable agent roles, or GRAFTTY.md instructions.
+description: Coordinate Graftty agents through rosters, messages, delegated worktrees, durable roles, and GRAFTTY.md instructions.
 ---
 
 # Graftty team
 
-Coordinate Codex and Claude agents through Graftty's durable inbox. Run team commands from the calling agent's tracked worktree. Use these commands directly; consult subcommand `--help` for undocumented options or installed-version mismatches.
+Run commands from your tracked worktree. Use `graftty team` across providers and worktrees; provider-native messaging uses a different roster. Consult subcommand `--help` for version mismatches. Wrappers and hooks own registration.
 
-When the user wants to view a host file or URL on Graftty Mobile, use the bundled `graftty-open` skill.
+## Choose socket permissions first
 
-## Choose control-socket permissions before running commands
+In Codex with restricted network access, use `sandbox_permissions: "require_escalated"` before the first control-socket command, including `graftty team list --json`. Keep each request scoped to the authorized command and separate from unrelated shell work. Use only command-specific reusable prefixes, never a blanket `graftty` rule.
 
-Team, pane, worktree, image, open, and other app-control commands use the main Graftty control socket. In Codex with restricted network access, request permission before the first control-socket command, including the roster query below. A readable socket file or a filesystem write grant does not establish permission to connect to it.
+Keep this execution mode for subsequent control-socket commands. Do not repeat a known denial, change provider sandbox configuration, or enable general networking. If escalation is unavailable or denied, report the limitation and continue independent work. A readable socket or filesystem write grant does not grant connection access.
 
-Use the execution tool's `sandbox_permissions: "require_escalated"` with a short justification scoped to the authorized command. For example, run `graftty team list --json` with a justification to read Graftty's agent roster through its control socket. Keep the command separate from unrelated shell work. Request only a command-specific prefix when a reusable rule is appropriate; do not request a blanket `graftty` rule.
+Team, pane, worktree, image, open, and other app-control commands use the socket. `graftty attention report --stdin`, help, and local-only commands do not need socket permission. Providers that already permit the socket need no elevation. For EPERM, errno 1, or connection failures, read [socket diagnosis](references/socket-diagnosis.md).
 
-Use that execution mode for subsequent control-socket commands in the session. Do not repeat a known sandbox denial to rediscover the same restriction. If escalation is unavailable or denied, report the limitation and continue work that does not need the socket. Do not change provider sandbox configuration or enable general network access to grant socket access.
+## Find a recipient
 
-`graftty attention report --stdin` uses a private file handoff and does not need socket permission. Help and other local-only commands also stay in the sandbox. This Codex guidance does not require elevation for providers whose sandbox already permits the socket.
+Run `graftty team list --json`. In `members[]`, identify `name` and `worktree_path`; in `agents[]`, copy `address` and check `runtime` and `is_reachable`. Worktree `is_running` and pinned status do not establish reachability.
 
-## Inspect the roster
+| Address | Destination |
+| --- | --- |
+| Worktree name or canonical path | Earliest reachable top-level agent there |
+| `<canonical-worktree-path>#<runtime>` | Provider, with messages queued between sessions |
+| `<canonical-worktree-path>#<runtime>-<12hex>` | Exact agent; fails closed when gone |
 
-Run `graftty team list --json` before choosing an agent. In `members[]`, use `name` and `worktree_path` to identify the worktree, then `agents[]` for each agent's `address`, `runtime`, and `is_reachable`. Worktree `is_running` alone does not establish agent reachability.
+Never route by provider display labels, which may be truncated. Native subagents have no independent Graftty address. Prefer a suitable existing agent, including a pinned agent whose shared role covers the task.
 
-To inspect another team, use `graftty team members --worktree '<absolute-worktree-path>' --json`. For roster and inbox diagnostics, `--repo` filters repositories but does not override a tracked caller; use `--worktree` to select a different repository's worktree.
+For another repository, Mac, legacy message envelope, or native reply socket, read [routing details](references/routing.md).
 
-Treat canonical addresses as routing identities:
+## Send and receive
 
-- A worktree name or canonical path selects the earliest reachable top-level agent in that worktree.
-- `<canonical-worktree-path>#<runtime>` targets that provider without pinning one session, so the message remains queued while its agent is between turns.
-- `<canonical-worktree-path>#<runtime>-<12hex>` selects only that exact agent and fails closed if it is gone.
-- Copy exact addresses from the roster. Native provider sender labels are display metadata and may be truncated. Never route by them.
-- Native subagents are not independently routable.
-
-Canonical worktree paths and their provider or exact-agent suffixes can target any tracked local repository. Short worktree names resolve only within the caller's repository. For another repository, inspect it with `graftty team members --worktree '<absolute-worktree-path>' --json` and copy the canonical address.
-
-Send existing agents questions or tasks with context, the requested result, and your reply address. A question alone does not require a new worktree.
-
-Before creating a task agent, check whether a pinned agent's shared role covers
-the work. Prefer that agent when suitable, and confirm reachability in the roster.
-Pinning keeps a worktree; it does not establish whether its agent is available.
-See [Keep a durable agent role](#keep-a-durable-agent-role) for pinning and role setup.
-
-## Delegate work into a new worktree
-
-Each Graftty worktree maps to exactly one agent. Never create a worktree yourself: not with `git worktree add`, provider worktree tools such as Claude's `EnterWorktree`, worktree-isolated subagents, or any other skill or workflow, even when another skill recommends one. Work that needs its own worktree belongs to a new agent there, launched with `graftty worktree add` as shown below. Subagents that stay in your current worktree are fine.
-
-Proactively delegate bounded, independent work while continuing useful parent work. Avoid tiny, sequential, or overlapping tasks. Prefer a suitable existing agent.
-
-`graftty worktree add <name>` alone does not delegate the task. Launch a top-level agent with its task in the first prompt:
-
-```sh
-graftty worktree add <name> --agent <codex|claude> --prompt-stdin <<'GRAFTTY_DELEGATE_7F3A91C2'
-Objective: <one bounded outcome>
-Owned scope: <files or subsystem the child may change>
-Verify: <tests or checks to run>
-Return: send the result, changed paths, verification, and commit hash with graftty team send --stdin.
-Parent exact address: <parent-exact-address>
-Parent fallback address: <parent-runtime-address>
-Use the exact address while it is reachable. After a restart or /clear, use the fallback address.
-GRAFTTY_DELEGATE_7F3A91C2
-```
-
-Before launch, copy the parent's exact canonical address from the roster's `address` field. Form the fallback from its `worktree_path` and `runtime`. Include both as above and use a fresh quoted heredoc delimiter absent from the prompt.
-
-Choose worktree options as needed:
-
-- `--base <ref>` selects a locally resolvable starting revision. Default: repository default branch or `HEAD`. `--base HEAD` uses the caller's current commit, without uncommitted changes.
-- `--branch <branch>` overrides the normalized worktree name as the branch name.
-- `--branch <branch> --existing` uses an existing local branch in a **new directory**. It neither reopens a directory nor restarts an agent. Incompatible with `--base`.
-- `--prompt-stdin` requires `--agent codex` or `--agent claude`; incompatible with `--prompt`. Use `--prompt` only for trusted literal text and `--prompt-stdin` for dynamic or untrusted text.
-- Creation is asynchronous by default. `--async` explicitly selects this mode. The app waits for Git and its hooks, then launches the agent after the CLI exits.
-- `--wait` blocks until Git finishes and the pane accepts the launch command. It does not wait for the agent's task to finish.
-- `--timeout <seconds>` bounds the wait for acceptance, or completion with `--wait`. Default: 300; must be positive. A timeout does not cancel accepted creation.
-
-Delegation within the user's requested repository work needs no separate confirmation. A child agent does not grant new authority.
-
-Save the returned operation ID, worktree path, and `address=...`. The default response starts with `pending`; `--wait` returns `created` after the pane accepts the launch command. The address is the child's stable reply address, and messages sent before the agent is ready are queued. Graftty also saves the initial prompt in that runtime's durable inbox so a later launch can recover it. Pause the delegated scope and use `graftty team list --json` to confirm that a top-level child is reachable there. Once reachable, stop working on that scope and continue only separate work until reviewing and integrating its reply. If launch fails with no reachable child, retain ownership and report the failed handoff.
-
-### Create a worktree on another Mac
-
-Add `--remote '<Mac-name-or-device-ID>'` to the delegation command above. This works in either direction over an active control connection. Both Macs need a Graftty version that supports remote creation.
-
-The destination project defaults to the caller's Git `origin`, regardless of local names or paths. Equivalent GitHub and GitLab SSH and HTTPS URLs match. Both projects must be tracked in Graftty. For another project, a missing origin, or multiple matches, add `--project '<destination-name-or-absolute-repository-path>'`. This override also works outside a local worktree.
-
-Branches and `--base` resolve on the destination. `--base HEAD` uses its main checkout. Local commits, edits, and instruction files are not transferred.
-
-From a tracked local worktree, send a follow-up with `graftty team send --stdin '<returned-address>'`, preserving the full `graftty-mac://...` address. This gives the child your cross-Mac reply address for `graftty team reply`. Your local roster paths cannot route replies across Macs.
-
-After a timeout or lost acknowledgement, inspect the destination's roster and worktrees before retrying. The original creation may still finish.
-
-### Recover a failed launch or use an existing worktree
-
-After a creation error or timeout, inspect `git worktree list` and the Graftty roster before retrying. Failed hooks can leave directories behind. Do not recreate or automatically delete them. If Git lists a worktree that Graftty does not, diagnose registration first.
-
-Open and select the target worktree in Graftty first; a new pane's shell waits for its first visible layout. If it has no suitable agent and new panes have no automatic default command, launch one:
-
-```sh
-graftty pane add '<worktree-name>' --command 'codex -- "Check Graftty messages, then report ready for a task."'
-```
-
-For Claude, replace `codex` with `claude`. `pane add` takes a worktree name and has no `--agent` or `--prompt-stdin`. Confirm reachability, then send the task with `team send --stdin`.
-
-Inspect output with `graftty pane list '<worktree-name>'`, then `graftty pane show '<worktree-name>:<id>' --lines 100`, using its 1-based pane ID. Use `team send` for messages. `graftty pane send` writes directly to the PTY with no inbox or consent layer and presses Return by default; run `graftty pane send --help` first.
-
-### Remove a worktree
-
-`graftty worktree remove <worktree> [--pinned] [--force]` removes a linked worktree but keeps its branch. Removing a pinned worktree requires `--pinned`; dirty files also require `--force`. The flags acknowledge separate conditions, so `--force` alone cannot remove a pinned worktree.
-
-```sh
-graftty worktree remove feature-auth
-graftty worktree remove release-manager --pinned
-```
-
-Remove a pinned role only when the requested work includes retiring it. Do not
-unpin it to bypass the removal guard. The default-branch checkout cannot be removed.
-
-## Send and reply
-
-Send bodies through stdin, never as shell arguments. Use a fresh quoted high-entropy heredoc delimiter that does not occur in the body:
+Send bodies through stdin, never shell arguments. Generate a fresh quoted heredoc delimiter absent from the body:
 
 ```sh
 graftty team send --stdin '<address>' <<'GRAFTTY_7F3A91C2'
-<message>
+<context, requested result, and reply address>
 GRAFTTY_7F3A91C2
 ```
 
-The recipient is positional. For a file body, use `graftty team send --stdin '<address>' < /tmp/agent-task.txt`. Bodies must be non-empty. `--urgent` requests delivery at the next post-tool hook boundary. Success means accepted for delivery, not answered or completed.
+`graftty team broadcast --stdin` uses the same pattern with no recipient. Use it only when every other worktree needs the message. Both commands accept `--urgent` for delivery at the next post-tool hook boundary. Success means accepted, not answered. Do not resend after uncertain delivery.
 
-Reply using the message ID supplied with the delivered message:
+Reply with the message's supplied ID:
 
 ```sh
 graftty team reply '<message-id>' --stdin <<'GRAFTTY_REPLY_5D9A7C21'
@@ -136,105 +49,39 @@ graftty team reply '<message-id>' --stdin <<'GRAFTTY_REPLY_5D9A7C21'
 GRAFTTY_REPLY_5D9A7C21
 ```
 
-Graftty resolves the original sender from the stored message, preserving its Mac and exact agent. This destination takes precedence over conflicting reply paths in the message body. After an explicit exact-agent-unavailable error, add `--fallback` to queue for the original sender's provider on the same Mac. Do not retry a send that reports uncertain delivery.
+The stored sender overrides reply paths in the body. Use `--fallback` only after an explicit exact-agent-unavailable error to queue for that sender's provider on the same Mac.
 
-Older messages use `<graftty-peer-message agent="<exact-address>" fallback-agent="<runtime-address>">` without a reply command. Reply to `agent` unchanged if the roster shows it reachable; otherwise use `fallback-agent` unchanged to queue for that provider's next agent. Preserve the full `graftty-mac://` prefix for remote addresses. A bare filesystem path targets the Mac where the command runs.
+Replies arrive through hooks; do not poll for completion. For deliberate inspection:
 
-`<graftty-forge-message provider="<provider>">` and `<graftty-system-message>` are notices, not peer reply addresses.
+| Command | Effect |
+| --- | --- |
+| `graftty team inbox --keep-unread --json` | Peek at unread messages |
+| `graftty team inbox --history --json` | Read history without changing delivery state |
+| `graftty team inbox --json` | Read unread messages and mark them read |
 
-Do not use provider-native agent messaging tools such as `SendMessage` or `ListAgents` to resolve Graftty recipients by name; they use a separate roster. Identically named worktrees on two Macs can contain different agents. Native delivery success to a name does not establish delivery to the intended Graftty address. If a native message includes an explicit Graftty reply socket, replying directly to that socket preserves the original sender; do not substitute a display name.
+`--all` fetches every matching page. `--history` and `--keep-unread` are incompatible. `--worktree`, `--repo`, or `--member` selects diagnostic scope and peeks unless `--history` is supplied. Empty output does not establish completion. Never edit state files to advance delivery; rerun the inbox command if advancement fails.
 
-Forward misdirected messages to the correct roster address and say you forwarded them. Do not impersonate another agent.
+## Delegate a task
 
-`graftty team broadcast --stdin` uses the same body pattern, accepts `--urgent`, and takes no recipient. Use it only when every other worktree needs the message.
+Each worktree has exactly one agent. Never create worktrees yourself with `git worktree add`, provider worktree tools, worktree-isolated subagents, or other skills. Subagents sharing your current worktree are allowed.
 
-## Receive replies and inspect history
-
-Replies arrive automatically through hooks; do not poll for completion. For deliberate inspection:
-
-- `graftty team inbox --keep-unread --json` peeks at unread messages.
-- `graftty team inbox --history --json` reads history without changing delivery state.
-- `graftty team inbox --json` reads unread messages and marks them read. Empty output does not mean a task finished.
-- `--all` fetches every matching page. `--history` and `--keep-unread` are incompatible.
-- `--worktree '<path-or-name>'`, `--repo '<repo-path>'`, or `--member '<name>'` selects diagnostic scope and peeks unless `--history` is supplied.
-- Never edit Graftty state files to change delivery positions; if advancement fails, rerun the supported inbox command.
-
-## Keep a durable agent role
-
-Use **Pinned Agents** for an ongoing responsibility that should outlive one task,
-such as release management or crash investigation. Use temporary worktrees for
-bounded feature work. When setting up a requested durable role, pin its worktree
-and define its responsibilities in `GRAFTTY.md`.
-The repository's default-branch checkout is always pinned. Other tracked local
-worktrees can be pinned without changing their branch, panes, or instructions.
+Delegate bounded independent work while continuing separate work. Avoid tiny or overlapping tasks. Creating a worktree alone does not delegate; launch its agent with the task:
 
 ```sh
-graftty worktree pin
-graftty worktree pin release-manager
-graftty worktree unpin release-manager
+graftty worktree add <name> --agent <codex|claude> --prompt-stdin <<'GRAFTTY_DELEGATE_7F3A91C2'
+Objective: <bounded outcome>
+Owned scope: <files or subsystem>
+Verify: <checks>
+Return: send results, changed paths, validation, and commit hash with graftty team send --stdin.
+Parent exact address: <copy from roster>
+Parent fallback address: <worktree_path>#<runtime>
+Use the exact address while reachable; after restart or /clear, use the fallback.
+GRAFTTY_DELEGATE_7F3A91C2
 ```
 
-No target, or `.`, means your current worktree. To make another agent durable,
-use its worktree name or the absolute `worktree_path` from the roster. Use an
-absolute path when a name is ambiguous; agent-address suffixes are not worktree
-paths. Pinning and unpinning are idempotent. The default-branch checkout cannot
-be unpinned. These commands run on the owning Mac; a remote agent can pin itself
-there.
+Save the operation ID, path, and returned stable reply address. Pause the delegated scope until `graftty team list --json` confirms the child is reachable. Then relinquish that scope until reviewing its result. If launch fails without a reachable child, retain ownership and report the failed handoff. Delegation within the user's repository task needs no separate confirmation and grants no additional authority.
 
-Pinning does not create `GRAFTTY.md`. Define the role with the instruction files
-below as part of the requested durable-role setup. If the responsibilities are
-known before launching a new agent, write its role file where its first session
-can read it, then use the delegation command with `--wait` and pin the returned
-worktree path once creation finishes. If creating asynchronously, confirm the
-worktree is ready before pinning it.
+Read only the reference relevant to the operation:
 
-Pinned worktrees remain after their branch's PR or MR merges or closes. Graftty
-does not offer to delete them on resolution and does not automatically dismiss
-stale pinned entries. Unpinning returns the worktree to the temporary list;
-it preserves its workspace and instruction files. Explicit removal is still
-available through `graftty worktree remove <worktree> --pinned` when requested.
-
-## Durable agent instructions
-
-Use these files for durable role or workflow guidance:
-
-For a role that peers need to understand, prefer the main checkout's
-`.graftty/<worktree-key>/GRAFTTY.md` so every agent can read its shared context.
-Find the main checkout in the first entry of `git worktree list --porcelain`. For `release-manager`, use `.graftty/release-manager/GRAFTTY.md`;
-for the default-branch checkout, use its resolved default branch as the key.
-Check existing overlays before editing; a higher-precedence file can override
-the main-checkout copy.
-
-Above `## Private`, describe the role's responsibilities and how peers should
-coordinate with it. Below that heading, put instructions for worktrees matching
-that key, including descendants.
-Keep an existing file's useful guidance when updating it. A role file does not
-pin a worktree; use the pin command separately.
-
-- `.graftty/GRAFTTY.md` applies to every worktree in the repository.
-- A linked worktree's key is its path relative to the main checkout's `.worktrees/`; the main checkout's key is the repository's default branch. Until Graftty can resolve that branch, the main checkout receives only `.graftty/GRAFTTY.md`.
-- Worktree key `<parent>/<leaf>` reads `.graftty/<parent>/GRAFTTY.md` and `.graftty/<parent>/<leaf>/GRAFTTY.md`. Each applies to its key and descendants.
-- Text above `## Private` is shared with peers as role context; text below reaches only matching worktrees.
-- For each relative path, the first readable regular file wins: Application Support, current worktree, then main checkout. Current bytes apply at the next session start; no commit is required.
-- To tune a new child, put its exact-worktree `GRAFTTY.md` where its first session can see it: Application Support, the main checkout, or the child's starting tree (for example, commit it and launch with `--base HEAD`).
-- Keep files concise. Create or modify them only when authorized.
-
-## Transport
-
-Always use `graftty team` across providers or worktrees. Do not create channel files.
-
-### Reconnect a paired Remote Mac
-
-For a disconnected or stale connection, run `graftty remote reconnect '<host-name-or-id>'` on the viewing Mac. From a shell on the host Mac, use `graftty remote reconnect-client '<viewer-name-or-id>'` instead; this requires a working control channel and support on both Macs. Use exact paired names or device IDs. Targeting errors list connected viewers.
-
-Graftty must be running; no current worktree is required. Success acknowledges the request; check the viewing Mac's Remote Hosts sidebar for status. Pair again in the app if required. Reconnect does not resend messages; preserve queued messages and do not resend after uncertain delivery.
-
-### Sandboxed control socket access
-
-Attention recaps and Stop events use a private file handoff and do not need this socket. Team, pane, and worktree commands use the main Graftty control socket. If one of those commands reports `EPERM` or `errno 1`:
-
-1. Use read-only checks to confirm `$GRAFTTY_SOCK` exists and a Graftty process owns or listens on it.
-2. Request narrowly scoped elevated permission to use the main socket, then retry the same command outside the sandbox.
-3. Do not delete or recreate the socket, change its permissions, or restart Graftty as a first response.
-
-If retry fails, continue socket diagnosis. Timeouts and connection-refused errors do not establish sandbox denial. Graftty owns native transports; leave queued messages for retry when native delivery is unavailable.
+- [Worktree operations](references/worktrees.md): starting refs, existing branches, wait/timeout behavior, remote creation, launch recovery, pane inspection, removal, and reconnecting paired Macs.
+- [Durable roles](references/durable-roles.md): pinning, retention, and hierarchical `.graftty/**/GRAFTTY.md` instruction files. Read before creating or changing a role or instruction file.

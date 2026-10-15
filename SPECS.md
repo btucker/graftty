@@ -3672,6 +3672,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.53** When a Codex session starts, the application shall instruct the agent to request narrowly scoped elevated permission before its first main control-socket command in a restricted sandbox, retain that choice for subsequent commands, and keep Attention file reports unprivileged.
 
+**AGENT-6.54** When Graftty prepares provider plugins with linked supporting reference directories or files, the application shall materialize those resources so each cached plugin remains self-contained after the source and sibling provider are removed.
+
+**AGENT-6.55** When Graftty packages progressive skill guidance, the application shall retain readable relative links within each independent provider plugin, with supporting procedures reachable from their skill entrypoints.
+
 ## CLI — CLI
 
 ### CLI-1.x

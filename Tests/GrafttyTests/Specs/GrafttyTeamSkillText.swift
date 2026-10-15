@@ -1,18 +1,18 @@
 import Foundation
 
-/// The bundled `graftty-team` provider skill, read from the source tree so
-/// tests never see a stale copy of the shared SwiftPM resource bundle. The
-/// Claude plugin's skill is a symlink to this Codex copy.
+/// Read canonical team guidance or a specific reference directly from source,
+/// avoiding stale copies in the shared SwiftPM resource bundle.
 enum GrafttyTeamSkillText {
-    static func load() throws -> String {
+    static func load(reference: String? = nil) throws -> String {
         var url = URL(fileURLWithPath: #filePath)
         while url.lastPathComponent != "Tests" {
             url.deleteLastPathComponent()
         }
+        let skill = url.deletingLastPathComponent().appendingPathComponent(
+            "Sources/GrafttyKit/AgentPlugins/codex/plugins/graftty/skills/graftty-team"
+        )
         return try String(
-            contentsOf: url.deletingLastPathComponent().appendingPathComponent(
-                "Sources/GrafttyKit/AgentPlugins/codex/plugins/graftty/skills/graftty-team/SKILL.md"
-            ),
+            contentsOf: skill.appendingPathComponent(reference.map { "references/\($0).md" } ?? "SKILL.md"),
             encoding: .utf8
         )
     }
