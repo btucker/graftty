@@ -297,6 +297,7 @@ public final class TeamPresenceIndex: @unchecked Sendable {
     private let lock = NSLock()
     private var records: [TeamPresenceRecord] = []
     private var recordsByPaneSessionName: [String: [TeamPresenceRecord]] = [:]
+    private var revision: UInt64 = 0
 
     public init(records: [TeamPresenceRecord] = []) {
         replace(with: records)
@@ -304,15 +305,34 @@ public final class TeamPresenceIndex: @unchecked Sendable {
 
     public func replace(with records: [TeamPresenceRecord]) {
         lock.lock()
-        self.records = records
-        self.recordsByPaneSessionName = Self.groupByPaneSessionName(records)
+        setRecords(records)
         lock.unlock()
+    }
+
+    private func setRecords(_ records: [TeamPresenceRecord]) {
+        self.records = records
+        recordsByPaneSessionName = Self.groupByPaneSessionName(records)
+        revision &+= 1
     }
 
     public func allRecords() -> [TeamPresenceRecord] {
         lock.lock()
         defer { lock.unlock() }
         return records
+    }
+
+    /// Resume on the main actor so callers can update delivery liveness before
+    /// another foreground refresh runs. Preserve changes made during loading.
+    @MainActor
+    public func refresh(
+        loadRecords: @Sendable () async -> [TeamPresenceRecord]
+    ) async -> [TeamPresenceRecord] {
+        let revision = lock.withLock { self.revision }
+        let records = await loadRecords()
+        return lock.withLock {
+            if self.revision == revision { setRecords(records) }
+            return self.records
+        }
     }
 
     public func records(forPaneSessionName sessionName: String) -> [TeamPresenceRecord] {
@@ -328,13 +348,12 @@ public final class TeamPresenceIndex: @unchecked Sendable {
         paneSessionName: String?
     ) {
         lock.lock()
-        records = records.filter { record in
+        setRecords(records.filter { record in
             !(record.teamID == teamID &&
               record.worktree == worktree &&
               record.runtime == runtime &&
               record.paneSessionName == paneSessionName)
-        }
-        recordsByPaneSessionName = Self.groupByPaneSessionName(records)
+        })
         lock.unlock()
     }
 
@@ -357,6 +376,20 @@ public final class TeamPresenceIndex: @unchecked Sendable {
 /// where the trap never fires and a presence file would otherwise
 /// linger across the dead PID's lifetime.
 public enum TeamPresenceMonitor {
+    /// Complete the periodic disk-backed sweep on the I/O queue. The caller
+    /// applies the returned records to main-actor delivery state.
+    public static func sweep(
+        storage: TeamPresenceStorage,
+        isAlive: @escaping @Sendable (Int32) -> Bool = { TeamPresenceMonitor.kernelIsAlive($0) },
+        eventLog: TeamEventLog? = TeamEventLog.defaultLog()
+    ) async -> [TeamPresenceRecord] {
+        await OffMainIO.run {
+            cleanupStale(storage: storage, isAlive: isAlive, eventLog: eventLog)
+            CodexAppServerSessionMonitor.cleanupOrphans(storage: .init(rootDirectory: storage.rootDirectory))
+            return (try? storage.listAll()) ?? []
+        }
+    }
+
     public static func cleanupStale(
         storage: TeamPresenceStorage,
         isAlive: (Int32) -> Bool = { TeamPresenceMonitor.kernelIsAlive($0) },

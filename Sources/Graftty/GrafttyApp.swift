@@ -1918,11 +1918,9 @@ struct GrafttyApp: App {
             wakeBeforeDelivery: { sleepCoordinator.wake(path: $0) }
         )
         presenceTicker.start {
-            TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
-            CodexAppServerSessionMonitor.cleanupOrphans(storage: CodexAppServerSessionStorage(
-                rootDirectory: TeamPresenceStorage.defaultRoot()
-            ))
-            let records = refreshPresenceIndex()
+            let records = await presenceIndex.refresh {
+                await TeamPresenceMonitor.sweep(storage: presenceStorage)
+            }
             refreshDeliveryLiveness(records: records)
             let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
             await Self.retryNativeDeliveryForPresenceWorktrees(

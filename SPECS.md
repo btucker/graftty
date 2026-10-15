@@ -2510,6 +2510,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.17** When a wrapped Codex TUI exits unsuccessfully, the application shall preserve its app-server log and report its path while preserving the TUI exit status; when it exits successfully, the application shall remove the log.
 
+**TEAM-10.18** When the periodic presence sweep runs, the application shall clean stale presence and orphaned app-server records and load the remaining presence records off the main thread before updating delivery liveness.
+
+**TEAM-10.19** If a periodic presence refresh finishes after a newer foreground presence update or removal, then the application shall preserve the newer records and use them for delivery liveness.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.6** If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.
