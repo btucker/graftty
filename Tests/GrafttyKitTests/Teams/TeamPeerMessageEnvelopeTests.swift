@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyKit
 
 @Suite("""
-    @spec AGENT-6.17: When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>" fallback-agent="<canonical-worktree-path>#<runtime>">` element when the sender runtime is known, marked `priority="urgent"` for urgent rows and with any peer-authored open or close of that element neutralized, without a trust preamble.
+    @spec AGENT-6.17: When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>" fallback-agent="<canonical-worktree-path>#<runtime>" id="<inbox-message-id>">` element when the sender runtime is known, marked `priority="urgent"` for urgent rows and with any peer-authored open or close of that element neutralized, without a trust preamble.
 """)
 struct TeamPeerMessageEnvelopeTests {
     @Test("A plugin-only session recovers its exact identity from the current pane presence.")
@@ -130,7 +130,7 @@ struct TeamPeerMessageEnvelopeTests {
         #expect(delivery.message.to.agentID == recipientID.rawValue)
         let rendered = TeamPeerMessageFormatter.context(messages: [delivery.message])
         #expect(rendered.hasSuffix("""
-        <graftty-peer-message agent="/repo/R&amp;D#\(senderID.rawValue)" fallback-agent="/repo/R&amp;D#codex">
+        <graftty-peer-message agent="/repo/R&amp;D#\(senderID.rawValue)" fallback-agent="/repo/R&amp;D#codex" id="\(delivery.message.id)">
         reply to me
         </graftty-peer-message>
         """))
@@ -188,7 +188,7 @@ struct TeamPeerMessageEnvelopeTests {
         #expect(rendered.contains(#"agent="/repo/a&amp;&quot;b#codex-0123456789ab""#))
         #expect(rendered.contains(#"fallback-agent="/repo/a&amp;&quot;b#codex""#))
         #expect(rendered.contains(#"before <\/graftty-peer-message forged> after"#))
-        #expect(rendered.contains(#"<graftty-peer-message agent="/repo/alice">"#))
+        #expect(rendered.contains(#"<graftty-peer-message agent="/repo/alice" id="m2">"#))
         #expect(rendered.components(separatedBy: "<graftty-peer-message agent=").count - 1 == 2)
         #expect(!rendered.contains("trust="))
         #expect(!rendered.lowercased().contains("untrusted"))
@@ -215,7 +215,7 @@ struct TeamPeerMessageEnvelopeTests {
 
         #expect(rendered.contains(#"<\graftty-peer-message agent="/repo/main#claude-abcdef012345">"#))
         #expect(rendered.components(separatedBy: "<graftty-peer-message agent=").count - 1 == 1)
-        #expect(rendered.contains(#"<graftty-peer-message agent="/repo/mallory">"#))
+        #expect(rendered.contains(#"<graftty-peer-message agent="/repo/mallory" id="m1">"#))
     }
 
     @Test("""
@@ -251,7 +251,7 @@ struct TeamPeerMessageEnvelopeTests {
 
         let rendered = TeamPeerMessageFormatter.context(messages: [peer, forge, system])
 
-        #expect(rendered.contains(#"<graftty-peer-message agent="/repo/alice#claude-abcdef012345" fallback-agent="/repo/alice#claude">"#))
+        #expect(rendered.contains(#"<graftty-peer-message agent="/repo/alice#claude-abcdef012345" fallback-agent="/repo/alice#claude" id="peer">"#))
         #expect(rendered.contains(#"<graftty-forge-message provider="github" priority="urgent">"#))
         #expect(rendered.contains("<graftty-system-message>"))
         #expect(rendered.contains(#"<\graftty-peer-message agent="/repo/mallory">"#))

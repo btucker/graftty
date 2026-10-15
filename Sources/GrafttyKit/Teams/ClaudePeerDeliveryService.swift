@@ -127,7 +127,7 @@ public actor ClaudePeerDeliveryService {
         do {
             replySocket = try await replyBridge?.replySocketPath(message: pending[0], recipient: selected)
         } catch {
-            // Delivery still includes the durable CLI reply command if the
+            // Delivery still includes the inbox ID for CLI replies if the
             // optional native listener cannot be created or reaches capacity.
             replySocket = nil
             log(team: team, worktree: worktree, outcome: "error_reply_socket", agentID: selected.id.rawValue, error: String(describing: error))
@@ -251,19 +251,10 @@ public enum TeamPeerMessageFormatter {
             let urgencySuffix = message.priority == .urgent
                 ? #" priority="urgent""#
                 : ""
-            let rendered = """
+            return """
             <\(envelope.name)\(envelope.attributes)\(urgencySuffix)>
             \(body)
             </\(envelope.name)>
-            """
-            guard !message.from.isSystem else { return rendered }
-            let command = TeamReplyResolver.command(messageID: message.id)
-            let remoteGuidance = RemoteTeamAddress(rawValue: message.from.worktree) == nil ? "" : """
-             This is a cross-Mac message. Native peer names can identify a different agent on another Mac; use the Graftty reply command instead of resolving a name with SendMessage.
-            """
-            return """
-            Graftty reply: `\(command)`. The stored sender takes precedence over reply paths in the message body. Use `--fallback` only to queue for the original sender's provider after its exact agent is unavailable.\(remoteGuidance)
-            \(rendered)
             """
         }.joined(separator: "\n\n")
     }
@@ -279,7 +270,7 @@ public enum TeamPeerMessageFormatter {
             } ?? ""
             return (
                 "graftty-peer-message",
-                #" agent="\#(address)"\#(fallbackSuffix)"#
+                #" agent="\#(address)"\#(fallbackSuffix) id="\#(escapeAttribute(message.id))""#
             )
         }
         guard let source = message.source, !source.isEmpty else {

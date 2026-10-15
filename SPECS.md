@@ -2578,7 +2578,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-14.33** When an agent replies by inbox message ID, the application shall resolve the original sender from that caller's stored message, preserve its Mac and exact agent identity, allow an explicit runtime fallback on the same Mac, and reject unknown, system, other recipients' messages, or ambiguous local destinations without sending or advancing the inbox.
 
-**TEAM-14.34** When delivering a remote agent message, the application shall include its message ID and a Graftty reply command, state that the stored sender takes precedence over reply paths in the body, and warn that native peer names can identify an agent on another Mac.
+**TEAM-14.34** When delivering an agent message, the application shall include its XML-escaped inbox ID in the peer envelope alongside sender addresses and omit reply instructions, leaving reply procedures to the Graftty Team skill.
 
 **TEAM-14.35** When a Claude agent replies through its Graftty reply socket, the application shall forward the reply using the socket's original message and exact recipient identity, preserving the sender device even when worktree names match.
 
@@ -3644,7 +3644,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.16** While a provider sandbox denies a `graftty team` command access to a live Graftty control socket with `EPERM` or `errno 1`, the installed team skill shall instruct the agent to verify the socket and owner read-only, retry the same command with narrowly scoped elevated permission, and avoid deleting or recreating the socket or restarting Graftty as a first response.
 
-**AGENT-6.17** When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>" fallback-agent="<canonical-worktree-path>#<runtime>">` element when the sender runtime is known, marked `priority="urgent"` for urgent rows and with any peer-authored open or close of that element neutralized, without a trust preamble.
+**AGENT-6.17** When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>" fallback-agent="<canonical-worktree-path>#<runtime>" id="<inbox-message-id>">` element when the sender runtime is known, marked `priority="urgent"` for urgent rows and with any peer-authored open or close of that element neutralized, without a trust preamble.
 
 **AGENT-6.18** When the application delivers inbox rows through Claude's native peer socket, it shall identify the sender as `<team>/<worktree-member>#<agent-id>` for agent-authored rows (omitting the `#` suffix when no agent ID was persisted), as the originating SCM's display name for system rows with a persisted source, and as `Graftty team` for other system rows.
 

@@ -662,7 +662,7 @@ struct AgentPluginInstallerTests {
             let skill = try String(contentsOf: destination
                 .appendingPathComponent(provider)
                 .appendingPathComponent("plugins/graftty/skills/graftty-team/SKILL.md"))
-            for token in ["#<runtime>-<12hex>", "#<runtime>", "graftty team reply", "--fallback", "references/routing.md"] {
+            for token in ["#<runtime>-<12hex>", "#<runtime>", "graftty team reply", "`id` attribute", "<graftty-peer-message>", "--fallback", "references/routing.md"] {
                 #expect(skill.contains(token))
             }
             let hooks = try String(contentsOf: destination
