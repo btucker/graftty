@@ -58,12 +58,21 @@ struct ControlSocketDiagnosisTests {
         #expect(reason == .busy)
     }
 
+    @Test("@spec ATTN-3.10: If a control-socket connection fails with EPERM or EACCES, then the CLI shall preserve the denied path and errno, explain that sandbox policy or filesystem permissions may deny access, and avoid retrying or recommending a socket reset.", arguments: [EPERM, EACCES])
+    func classifiesPermissionDenial(errno: Int32) {
+        for exists in [true, false] {
+            #expect(ControlSocketDiagnosis.classifyConnectFailure(
+                errno: errno, socketExists: exists, path: "/tmp/s"
+            ) == .permissionDenied(path: "/tmp/s", errno: errno))
+        }
+    }
+
     @Test func preservesUnexpectedErrno() {
         let reason = ControlSocketDiagnosis.classifyConnectFailure(
-            errno: EACCES,
+            errno: EIO,
             socketExists: true,
             path: "/tmp/s"
         )
-        #expect(reason == .failure(errno: EACCES))
+        #expect(reason == .failure(errno: EIO))
     }
 }

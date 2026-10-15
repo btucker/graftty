@@ -683,7 +683,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.36: When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct sandboxed agents to request narrowly scoped permission for main control-socket commands.
+    @spec AGENT-6.36: When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct Codex agents in a restricted sandbox to request narrowly scoped permission before their first main control-socket command and retain that choice for subsequent commands without changing provider policy.
     """)
     func materializedSkillsSeparateAttentionHandoffFromMainSocket() throws {
         let destination = FileManager.default.temporaryDirectory
@@ -699,6 +699,12 @@ struct AgentPluginInstallerTests {
             #expect(recap.contains("Do not request socket permission for `graftty attention report`"))
             #expect(team.contains("main Graftty control socket"))
             #expect(team.contains("Request narrowly scoped elevated permission to use the main socket"))
+            let permissionGuidance = try #require(team.range(of: "before the first control-socket command"))
+            let roster = try #require(team.range(of: "## Inspect the roster"))
+            #expect(permissionGuidance.lowerBound < roster.lowerBound)
+            #expect(team.contains("sandbox_permissions: \"require_escalated\""))
+            #expect(team.contains("subsequent control-socket commands"))
+            #expect(team.contains("Do not change provider sandbox configuration"))
         }
     }
 

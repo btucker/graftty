@@ -9,6 +9,16 @@ Coordinate Codex and Claude agents through Graftty's durable inbox. Run team com
 
 When the user wants to view a host file or URL on Graftty Mobile, use the bundled `graftty-open` skill.
 
+## Choose control-socket permissions before running commands
+
+Team, pane, worktree, image, open, and other app-control commands use the main Graftty control socket. In Codex with restricted network access, request permission before the first control-socket command, including the roster query below. A readable socket file or a filesystem write grant does not establish permission to connect to it.
+
+Use the execution tool's `sandbox_permissions: "require_escalated"` with a short justification scoped to the authorized command. For example, run `graftty team list --json` with a justification to read Graftty's agent roster through its control socket. Keep the command separate from unrelated shell work. Request only a command-specific prefix when a reusable rule is appropriate; do not request a blanket `graftty` rule.
+
+Use that execution mode for subsequent control-socket commands in the session. Do not repeat a known sandbox denial to rediscover the same restriction. If escalation is unavailable or denied, report the limitation and continue work that does not need the socket. Do not change provider sandbox configuration or enable general network access to grant socket access.
+
+`graftty attention report --stdin` uses a private file handoff and does not need socket permission. Help and other local-only commands also stay in the sandbox. This Codex guidance does not require elevation for providers whose sandbox already permits the socket.
+
 ## Inspect the roster
 
 Run `graftty team list --json` before choosing an agent. In `members[]`, use `name` and `worktree_path` to identify the worktree, then `agents[]` for each agent's `address`, `runtime`, and `is_reachable`. Worktree `is_running` alone does not establish agent reachability.

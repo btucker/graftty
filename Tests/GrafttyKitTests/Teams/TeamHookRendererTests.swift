@@ -4,6 +4,18 @@ import Testing
 
 @Suite("TeamHookRenderer")
 struct TeamHookRendererTests {
+    @Test("@spec AGENT-6.53: When a Codex session starts, the application shall instruct the agent to request narrowly scoped elevated permission before its first main control-socket command in a restricted sandbox, retain that choice for subsequent commands, and keep Attention file reports unprivileged.")
+    func codexSessionExplainsSocketPermissionBeforeFirstCommand() throws {
+        let context = try additionalContext(from: TeamHookRenderer.sessionStart(runtime: .codex))
+        #expect(context.contains("before the first control-socket command"))
+        #expect(context.contains("require_escalated"))
+        #expect(context.contains("subsequent control-socket commands"))
+        #expect(context.contains("graftty attention report"))
+        #expect(context.contains("does not need socket permission"))
+        let claude = try additionalContext(from: TeamHookRenderer.sessionStart(runtime: .claude))
+        #expect(!claude.contains("require_escalated"))
+    }
+
     @Test("@spec AGENT-6.33: When an agent session starts, the application shall instruct the agent to load Graftty skills for Attention recaps, coordination and durable roles, and native previews of requested or completed review artifacts, and require a task-specific emoji independently of cached skill instructions.")
     func managedSessionLoadsGrafttySkill() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
@@ -131,11 +143,12 @@ struct TeamHookRendererTests {
         #expect(!skill.contains("graftty team msg"))
     }
 
-    @Test("Both runtimes produce the identical SessionStart context.")
-    func bothRuntimesAlign() throws {
-        let claude = try TeamHookRenderer.sessionStart(runtime: .claude, instructions: "X")
-        let codex = try TeamHookRenderer.sessionStart(runtime: .codex, instructions: "X")
-        #expect(claude == codex)
+    @Test("Both runtimes preserve shared SessionStart context around Codex socket guidance.")
+    func bothRuntimesPreserveSharedContext() throws {
+        let claude = try additionalContext(from: TeamHookRenderer.sessionStart(runtime: .claude, instructions: "X"))
+        let codex = try additionalContext(from: TeamHookRenderer.sessionStart(runtime: .codex, instructions: "X"))
+        #expect(claude == TeamHookRenderer.skillGuidance + "\n\n\nX")
+        #expect(codex == TeamHookRenderer.skillGuidance + "\n\n\n" + TeamHookRenderer.codexSocketGuidance + "\n\n\nX")
     }
 
     @Test("format(messages:) emits agentPrompt when non-nil.")
