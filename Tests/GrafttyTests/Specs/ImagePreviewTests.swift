@@ -15,9 +15,9 @@ struct ImagePreviewTests {
         let store = ImagePreviewStore()
         let a = PaneSlotID(id: UUID()), b = PaneSlotID(id: UUID())
         let image = try fixture()
-        store.present(image, filename: "a.png", for: a)
-        store.present(image, filename: "b.png", for: b)
-        store.present(image, filename: "new.png", sourceURL: URL(fileURLWithPath: "/tmp/new.png"), for: a)
+        try store.present(image, filename: "a.png", for: a)
+        try store.present(image, filename: "b.png", for: b)
+        try store.present(image, filename: "new.png", sourceURL: URL(fileURLWithPath: "/tmp/new.png"), for: a)
         #expect(store.previews.count == 2)
         #expect(store.previews[a]?.filename == "new.png")
         #expect(store.previews[a]?.sourceURL?.path == "/tmp/new.png")
@@ -25,63 +25,16 @@ struct ImagePreviewTests {
         store.dismiss(a)
         #expect(store.previews[a] == nil)
         #expect(store.previews[b] != nil)
-        for _ in 0..<20 { store.present(image, filename: "x", for: PaneSlotID(id: UUID())) }
+        for _ in 0..<20 { try store.present(image, filename: "x", for: PaneSlotID(id: UUID())) }
         #expect(store.previews.count == ImagePreviewStore.maximumPreviews)
     }
 
-    @Test("@spec IMAGE-1.4: When a native image tray renders, the application shall initially overlay at most 45 percent of the pane height and 360 points without resizing the terminal, fit the image with its aspect ratio, and bound zoom from fit to eight times fit.")
-    func boundsLayoutAndZoom() {
+    @Test("@spec IMAGE-1.4: When a native image tray renders, the application shall initially overlay at most 45 percent of the pane height and 360 points without resizing the terminal, and delegate file rendering, page navigation and zoom to Quick Look.")
+    func boundsLayout() {
         #expect(ImagePreviewLayout.trayHeight(paneHeight: 800) == 360)
         #expect(ImagePreviewLayout.trayHeight(paneHeight: 200) == 90)
         #expect(ImagePreviewLayout.trayHeight(paneHeight: 0) == 0)
-        #expect(ImagePreviewLayout.fit(image: CGSize(width: 800, height: 400), viewport: CGSize(width: 200, height: 200)) == CGSize(width: 200, height: 100))
-        #expect(ImagePreviewLayout.clampZoom(100) == 8)
-        #expect(ImagePreviewLayout.clampZoom(0) == 1)
-    }
 
-    @Test("@spec IMAGE-1.5: When the application loads an image preview, it shall reject missing, nonregular, invalid, or larger than 20 MB files and decode only the oriented first frame with a maximum edge of 2048 pixels.")
-    func boundsDecodeAndRejectsInvalidFiles() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let missing = root.appendingPathComponent("missing.png")
-        #expect(throws: (any Error).self) { try ImagePreviewLoader.load(missing) }
-        #expect(throws: (any Error).self) { try ImagePreviewLoader.load(root) }
-        let invalid = root.appendingPathComponent("invalid.png")
-        try Data("not an image".utf8).write(to: invalid)
-        #expect(throws: (any Error).self) { try ImagePreviewLoader.load(invalid) }
-        let big = root.appendingPathComponent("large.png")
-        try Data(count: 20 * 1024 * 1024 + 1).write(to: big)
-        #expect(throws: (any Error).self) { try ImagePreviewLoader.load(big) }
-        let valid = root.appendingPathComponent("valid.png")
-        let bitmap = NSBitmapImageRep(cgImage: try fixture(width: 3000, height: 100))
-        try #require(bitmap.representation(using: .png, properties: [:])).write(to: valid)
-        let decoded = try ImagePreviewLoader.load(valid)
-        #expect(decoded.width == 2048)
-        #expect(decoded.height < 100)
-        let pdf = root.appendingPathComponent("chart.pdf")
-        var box = CGRect(x: 0, y: 0, width: 200, height: 100)
-        let context = try #require(CGContext(pdf as CFURL, mediaBox: &box, nil))
-        context.beginPDFPage(nil)
-        context.fill(box)
-        context.endPDFPage()
-        context.closePDF()
-        let pdfImage = try ImagePreviewLoader.load(pdf)
-        #expect(pdfImage.width <= 2048)
-        #expect(pdfImage.width == pdfImage.height * 2)
-        let rotated = root.appendingPathComponent("rotated.jpg")
-        let destination = try #require(CGImageDestinationCreateWithURL(rotated as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
-        CGImageDestinationAddImage(destination, try fixture(width: 30, height: 10), [kCGImagePropertyOrientation: 6] as CFDictionary)
-        #expect(CGImageDestinationFinalize(destination))
-        let oriented = try ImagePreviewLoader.load(rotated)
-        #expect(oriented.width == 10 && oriented.height == 30)
-        let animated = root.appendingPathComponent("animated.gif")
-        let gif = try #require(CGImageDestinationCreateWithURL(animated as CFURL, UTType.gif.identifier as CFString, 2, nil))
-        CGImageDestinationAddImage(gif, try fixture(width: 30, height: 10), nil)
-        CGImageDestinationAddImage(gif, try fixture(width: 30, height: 10), nil)
-        #expect(CGImageDestinationFinalize(gif))
-        let first = try ImagePreviewLoader.load(animated)
-        #expect(first.width == 30 && first.height == 10)
     }
 
     @Test("@spec IMAGE-1.7: When an image tray arrives or closes, the application shall preserve terminal focus, and shall dismiss on Escape only when the preview owns focus, restoring its previous responder.")
@@ -94,7 +47,7 @@ struct ImagePreviewTests {
         window.contentView = root
         #expect(window.makeFirstResponder(terminal))
         var dismissed = 0
-        let tray = NativeImagePreviewTray(preview: .init(image: try fixture(), filename: "chart.png"), onDismiss: { dismissed += 1 })
+        let tray = NativeFilePreviewTray(preview: try .init(image: try fixture(), filename: "chart.png"), onDismiss: { dismissed += 1 }, onInteraction: { _ in })
         tray.frame = NSRect(x: 0, y: 330, width: 800, height: 270)
         root.addSubview(tray)
         tray.layoutSubtreeIfNeeded()
@@ -106,15 +59,10 @@ struct ImagePreviewTests {
         #expect(window.firstResponder === terminal)
         tray.claimFocus()
         #expect(tray.ownsFocus)
-        for _ in 0..<20 { tray.zoomIn() }
-        #expect(tray.scrollView.magnification == 8)
-        #expect(tray.scrollView.documentVisibleRect.width < tray.scrollView.contentSize.width)
-        tray.fit()
-        #expect(tray.scrollView.magnification == 1)
-        #expect(tray.scrollView.frame.height == 216)
-        tray.updatePreview(.init(image: try fixture(width: 30, height: 40), filename: "second.png"))
+        #expect(tray.quickLook.previewItem?.previewItemURL == tray.previewURL)
+        #expect(tray.quickLook.frame.height == 216)
+        tray.update(try .init(image: try fixture(width: 30, height: 40), filename: "second.png"))
         #expect(tray.ownsFocus)
-        #expect(tray.scrollView.magnification == 1)
         tray.cancelOperation(nil)
         #expect(dismissed == 2)
         #expect(window.firstResponder === terminal)
@@ -127,8 +75,8 @@ struct ImagePreviewTests {
         let other = SplitTree(root: .leaf(c))
         let store = ImagePreviewStore()
         let image = try fixture()
-        store.present(image, filename: "a", for: a)
-        store.present(image, filename: "b", for: b)
+        try store.present(image, filename: "a", for: a)
+        try store.present(image, filename: "b", for: b)
         #expect(ImagePreviewLayout.visiblePane(tree: tree, focused: a) == a)
         #expect(store.previews[try #require(ImagePreviewLayout.visiblePane(tree: tree, focused: a))]?.filename == "a")
         #expect(ImagePreviewLayout.visiblePane(tree: tree, focused: b) == b)
@@ -143,7 +91,7 @@ struct ImagePreviewTests {
         _ = NSApplication.shared
         let terminal = ImagePreviewTerminalFixture(frame: .zero)
         let pane = PaneSlotID(id: UUID())
-        let preview = ImagePreviewStore.Preview(image: try fixture(), filename: "chart.png")
+        let preview = try ImagePreviewStore.Preview(image: try fixture(), filename: "chart.png")
         let hosted = NSHostingView(rootView: ImagePreviewTerminalRepresentable(view: terminal)
             .overlay(alignment: .top) { ImagePreviewOverlay(pane: pane, preview: preview, onDismiss: {}) })
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
@@ -153,7 +101,7 @@ struct ImagePreviewTests {
         let hit = try #require(hosted.hitTest(point))
         #expect(hit === terminal || hit.isDescendant(of: terminal), "Hit \(type(of: hit)) at \(point)")
         #expect(terminal.bounds.size == CGSize(width: 800, height: 600))
-        let trays = descendants(hosted).compactMap { $0 as? NativeImagePreviewTray }
+        let trays = descendants(hosted).compactMap { $0 as? NativeFilePreviewTray }
         let tray = try #require(trays.first)
         #expect(trays.count == 1)
         #expect(tray.bounds.height == 270)
@@ -164,7 +112,7 @@ struct ImagePreviewTests {
         view.subviews.flatMap { [$0] + descendants($0) }
     }
 
-    @Test("@spec IMAGE-1.9: When preview decoding finishes after a newer request or dismissal, the application shall discard the older result instead of replacing or resurrecting the pane preview.")
+    @Test("@spec IMAGE-1.9: When preview file loading finishes after a newer request or dismissal, the application shall discard the older result instead of replacing or resurrecting the pane preview.")
     func rejectsStaleGeneration() {
         let store = ImagePreviewStore(), pane = PaneSlotID(id: UUID())
         let old = store.beginRequest(for: pane)
@@ -208,7 +156,7 @@ struct ImagePreviewTests {
         let bitmap = NSBitmapImageRep(cgImage: try fixture())
         let bytes = try #require(bitmap.representation(using: .png, properties: [:]))
         try bytes.write(to: root)
-        let snapshot = try ImagePreviewLoader.snapshot(root)
+        let snapshot = try FilePreviewLoader.snapshots([root])[0]
         try Data("changed file".utf8).write(to: root)
         let store = RemoteOpenStore()
         _ = try await store.offerSnapshot(bytes: bytes, filename: "old.png", worktree: "/a", paneSessionName: "pane-a", previewRevision: 1)
@@ -227,7 +175,7 @@ struct ImagePreviewTests {
         #expect(await store.list(worktree: "/a") == [other, fileOffer])
     }
 
-    @Test("@spec IMAGE-1.13: When an image request reaches the application, it shall offer validated bytes with explicit image intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, while unmappable recipients, unavailable leaders, and invalid origins shall return errors.")
+    @Test("@spec IMAGE-1.13: When an image request reaches the application, it shall offer validated bytes with explicit file preview intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, while unmappable recipients, unavailable leaders, and invalid origins shall return errors.")
     func applicationRoutesMobileWithoutHostTray() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -254,7 +202,7 @@ struct ImagePreviewTests {
         let offer = try #require(offers.first)
         #expect(offer.paneSessionName == name)
         let metadata = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(offer)) as? [String: Any])
-        #expect(metadata["previewKind"] as? String == "image")
+        #expect(metadata["previewKind"] as? String == "file")
         #expect((metadata["previewOwnerDeviceID"] as? [String: Any])?["value"] as? String == phoneDevice)
         #expect(offer.browserOwnerDeviceID == nil)
         #expect(try await RemoteOpenStore.shared.read(id: offer.id, worktree: worktree.path, offset: 0) == bytes)

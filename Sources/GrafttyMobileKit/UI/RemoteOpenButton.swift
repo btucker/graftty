@@ -33,7 +33,7 @@ struct RemoteOpenButton: View {
     @State private var imageDownload: RemoteImageOffers.Request?
     @State private var preview: Preview?
     @State private var showingPreview = false
-    @State private var cachedFile: URL?
+    @State private var cachedFiles: [URL] = []
     @State private var error: String?
     @State private var choosingResource = false
     let isPaneOwner: () -> Bool
@@ -55,6 +55,7 @@ struct RemoteOpenButton: View {
         var chromeLaunch: ChromeTabInitialLaunch? = nil
         var originHost: Host? = nil
         var imageRequest: RemoteImageOffers.Request? = nil
+        var files: [URL] = []
     }
 
     private struct PollScope: Equatable {
@@ -128,8 +129,8 @@ struct RemoteOpenButton: View {
             if !focused, preview?.browser == true { cancelPresentation() }
             cancelStaleImage()
         }
-        .onChange(of: imageOffer) { _, _ in cancelStaleImage() }
-        .onChange(of: imageReady) { _, _ in cancelStaleImage() }
+        .onChange(of: imageOffer) { _, _ in cancelStaleImage(); autoOpenPreviewIfReady() }
+        .onChange(of: imageReady) { _, _ in cancelStaleImage(); autoOpenPreviewIfReady() }
     }
 
     var body: some View {
@@ -148,6 +149,7 @@ struct RemoteOpenButton: View {
                                                                            ownerDeviceID: ownerDeviceID,
                                                                            canPresent: isPaneFocused && isPaneOwner() && preview == nil && chromePresentation.canPresent && !isDownloading && error == nil && canPresentAuthentication())
                         if let authentication { open(authentication, automatically: true) }
+                        autoOpenPreviewIfReady()
                     }
                     // Older hosts reject the new operation. Do not keep polling them.
                     if case .error = response { return }
@@ -173,7 +175,8 @@ struct RemoteOpenButton: View {
             guard let id = preview?.id else { return }
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
             guard preview?.id == id, !chromePresentation.isMounted else { return }
-            let resourceName = preview?.imageRequest == nil ? "Browser" : "Images"
+            let resourceName = preview?.imageRequest == nil ? "Browser" : "Preview"
+            if let request = preview?.imageRequest { coordinator.completePreviewAutoOpen(request.offer.id) }
             cancelPresentation()
             if isActive {
                 error = "The resource could not be presented. Close any other dialog and tap \(resourceName) to try again."
@@ -224,12 +227,12 @@ struct RemoteOpenButton: View {
     @ViewBuilder
     private func resourceButtons(actionID: UUID) -> some View {
         if imageReady, let offer = imageOffer {
-            TerminalFloatingGlyphButton(systemName: "photo", accessibilityLabel: "Images",
+            TerminalFloatingGlyphButton(systemName: "doc.richtext", accessibilityLabel: "Preview",
                                         isBusy: imageDownload != nil) {
                 open(offer, actionID: actionID)
             }
             .accessibilityValue(offer.filename)
-            .accessibilityHint("Preview the latest image from this pane")
+            .accessibilityHint("Preview the latest files from this pane")
             .overlay(alignment: .topTrailing) {
                 Circle().fill(.tint).frame(width: 8, height: 8)
                     .accessibilityHidden(true).allowsHitTesting(false)
@@ -272,7 +275,7 @@ struct RemoteOpenButton: View {
                                 if let launch = preview.chromeLaunch { coordinator.completeAuthenticationOffer(launch.offerID) }
                             })
         } else if let url = preview.url, preview.imageRequest != nil {
-            NativeImagePreview(url: url, dismiss: { if self.preview?.id == preview.id { showingPreview = false } })
+            NativeImagePreview(urls: preview.files.isEmpty ? [url] : preview.files, dismiss: { if self.preview?.id == preview.id { showingPreview = false } })
         } else if let url = preview.url, url.isFileURL {
             NativeFilePreview(url: url)
         } else if let url = preview.url {
@@ -328,6 +331,7 @@ struct RemoteOpenButton: View {
         guard chromePresentation.begin(offerID, presentationID: item.id) else {
             error = "A resource is opening or closing. Wait a moment and tap Browser again."
             if let offerID { coordinator.deferAuthenticationOffer(offerID) }
+            if let request = item.imageRequest { coordinator.completePreviewAutoOpen(request.offer.id) }
             return
         }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -347,7 +351,9 @@ struct RemoteOpenButton: View {
             cancelPresentation()
             return false
         }
-        return chromePresentation.markMounted(item.id)
+        guard chromePresentation.markMounted(item.id) else { return false }
+        if let request = item.imageRequest { coordinator.completePreviewAutoOpen(request.offer.id) }
+        return true
     }
 
     private func finishPresentation(_ id: UUID) {
@@ -355,10 +361,12 @@ struct RemoteOpenButton: View {
         apply(chromePresentation.finishDismissal(id))
         preview = nil; showingPreview = false
         removeCachedFile()
+        autoOpenPreviewIfReady()
     }
 
     private func cancelPresentation(abandon: Bool = false) {
         guard let id = chromePresentation.presentationID else { return }
+        if let request = preview?.imageRequest { coordinator.deferPreviewAutoOpen(request.offer.id) }
         if let offerID = chromePresentation.deferCurrent() { coordinator.deferAuthenticationOffer(offerID) }
         showingPreview = false
         if abandon { apply(chromePresentation.finishDismissal(id)) }
@@ -372,6 +380,13 @@ struct RemoteOpenButton: View {
         case .deferred(let id): coordinator.deferAuthenticationOffer(id)
         case nil: break
         }
+    }
+
+    private func autoOpenPreviewIfReady() {
+        let canPresent = preview == nil && chromePresentation.canPresent && !isDownloading
+            && error == nil && canPresentAuthentication()
+        guard coordinator.reservePreviewAutoOpen(imageOffer, isReady: imageReady, canPresent: canPresent), let offer = imageOffer else { return }
+        open(offer, automatically: true)
     }
 
     private func checkOwnership() {
@@ -393,6 +408,7 @@ struct RemoteOpenButton: View {
     }
 
     private func cancelOperation() {
+        if let request = imageDownload { coordinator.deferPreviewAutoOpen(request.offer.id) }
         operationID = UUID()
         download?.cancel()
         download = nil
@@ -401,19 +417,24 @@ struct RemoteOpenButton: View {
     }
 
     private func removeCachedFile() {
-        if let cachedFile { FilePreviewDownload.remove(cachedFile) }
-        cachedFile = nil
+        cachedFiles.forEach(FilePreviewDownload.remove)
+        cachedFiles = []
     }
 
     private func open(_ offer: RemoteOpenOffer, automatically: Bool = false, actionID: UUID? = nil) {
-        let imageRequest = offer.previewKind == "image" ? RemoteImageOffers.Request(offer: offer, scope: browserScope) : nil
-        let resourceName = imageRequest == nil ? "Browser" : "Images"
-        guard canBegin(actionID: actionID, automatically: automatically, offerID: offer.id, resourceName: resourceName) else { return }
+        let imageRequest = offer.isNativePreview ? RemoteImageOffers.Request(offer: offer, scope: browserScope) : nil
+        let resourceName = imageRequest == nil ? "Browser" : "Preview"
+        guard canBegin(actionID: actionID, automatically: automatically, offerID: offer.id, resourceName: resourceName) else {
+            if imageRequest != nil { coordinator.deferPreviewAutoOpen(offer.id) }
+            return
+        }
         if let imageRequest, !imageRequest.isCurrent(latest: imageOffer, scope: browserScope, isReady: imageReady) {
-            error = "Take control of the originating pane and tap Images again. If the image expired, run graftty image again."
+            coordinator.deferPreviewAutoOpen(offer.id)
+            error = "Take control of the originating pane and tap Preview again. If the preview expired, run graftty preview again."
             return
         }
         guard allOffers.contains(offer) else {
+            if imageRequest != nil { coordinator.deferPreviewAutoOpen(offer.id) }
             coordinator.deferAuthenticationOffer(offer.id)
             if !automatically { error = "This resource is no longer available. Wait for the list to refresh and tap \(resourceName) again." }
             return
@@ -454,10 +475,10 @@ struct RemoteOpenButton: View {
         download = Task { @MainActor in
             defer { if operationID == currentOperation { isDownloading = false; imageDownload = nil } }
             do {
-                let file = try await FilePreviewDownload.download(offer) { offset in
+                let collection = imageRequest == nil ? [offer] : RemoteImageOffers.collection(in: allOffers, scope: browserScope)
+                let files = try await FilePreviewDownload.download(collection) { item, offset in
                     let response = try await sendWorktreeManagement(
-                        .openResource(worktreeID: worktree, request: .read(id: offer.id, offset: offset)),
-                        to: host
+                        .openResource(worktreeID: worktree, request: .read(id: item.id, offset: offset)), to: host
                     )
                     switch response {
                     case .openResource(.chunk(let data)): return data
@@ -465,30 +486,35 @@ struct RemoteOpenButton: View {
                     default: throw FilePreviewDownload.Failure.invalidChunk
                     }
                 }
-                guard isActive, !Task.isCancelled, operationID == currentOperation else { FilePreviewDownload.remove(file); return }
+                func removeFiles() { files.forEach(FilePreviewDownload.remove) }
+                guard isActive, !Task.isCancelled, operationID == currentOperation else { removeFiles(); return }
                 if let imageRequest {
                     guard imageRequest.isCurrent(latest: imageOffer, scope: browserScope, isReady: imageReady) else {
-                        FilePreviewDownload.remove(file)
+                        removeFiles()
+                        coordinator.deferPreviewAutoOpen(offer.id)
                         return
                     }
-                    guard QLPreviewController.canPreview(file as NSURL) else {
-                        FilePreviewDownload.remove(file)
-                        self.error = "This image could not be previewed. Run graftty image again with a supported image."
+                    guard files.allSatisfy({ QLPreviewController.canPreview($0 as NSURL) }) else {
+                        removeFiles()
+                        coordinator.completePreviewAutoOpen(offer.id)
+                        self.error = "This file could not be previewed. Run graftty preview again with a Quick Look supported file."
                         return
                     }
                 }
                 guard chromePresentation.canPresent, preview == nil else {
-                    FilePreviewDownload.remove(file)
+                    removeFiles()
+                    if imageRequest != nil { coordinator.completePreviewAutoOpen(offer.id) }
                     self.error = "Another resource is opening. Tap \(resourceName) again after it closes."
                     return
                 }
                 removeCachedFile()
-                cachedFile = file
-                present(Preview(url: file, imageRequest: imageRequest), offerID: nil)
+                cachedFiles = files
+                present(Preview(url: files.first, imageRequest: imageRequest, files: files), offerID: nil)
             } catch {
                 if !Task.isCancelled, operationID == currentOperation {
+                    if imageRequest != nil { coordinator.completePreviewAutoOpen(offer.id) }
                     self.error = imageRequest == nil ? error.localizedDescription
-                        : "Could not download image: \(error.localizedDescription) Tap Images to retry or run graftty image again."
+                        : "Could not download preview: \(error.localizedDescription) Tap Preview to retry or run graftty preview again."
                 }
             }
         }
@@ -591,21 +617,22 @@ struct NativeFilePreview: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 
     final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        let url: URL
-        init(url: URL) { self.url = url }
-        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+        let urls: [URL]
+        init(url: URL) { self.urls = [url] }
+        init(urls: [URL]) { self.urls = urls }
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { urls.count }
         func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem {
-            url as NSURL
+            urls[index] as NSURL
         }
     }
 }
 
 /// Quick Look owns image gestures and sharing; the navigation bar exposes Done.
 struct NativeImagePreview: UIViewControllerRepresentable {
-    let url: URL
+    let urls: [URL]
     let dismiss: () -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(url: url, dismiss: dismiss) }
+    func makeCoordinator() -> Coordinator { Coordinator(urls: urls, dismiss: dismiss) }
     func makeUIViewController(context: Context) -> UINavigationController {
         Self.makeController(coordinator: context.coordinator)
     }
@@ -616,15 +643,24 @@ struct NativeImagePreview: UIViewControllerRepresentable {
         preview.dataSource = coordinator.source
         let done = UIBarButtonItem(title: "Done", style: .done, target: coordinator, action: #selector(Coordinator.done))
         done.accessibilityLabel = "Done"
-        preview.navigationItem.leftBarButtonItem = done
+        // Quick Look puts its collection picker on the leading side in iOS 26
+        // and the trailing side in iOS 27. Leave that side under its control.
+        if #available(iOS 27, *) {
+            preview.navigationItem.leftBarButtonItem = done
+        } else {
+            preview.navigationItem.rightBarButtonItem = done
+        }
         return UINavigationController(rootViewController: preview)
     }
 
     final class Coordinator: NSObject {
         let source: NativeFilePreview.Coordinator
         private let dismiss: () -> Void
-        init(url: URL, dismiss: @escaping () -> Void) {
-            source = NativeFilePreview.Coordinator(url: url)
+        convenience init(url: URL, dismiss: @escaping () -> Void) {
+            self.init(urls: [url], dismiss: dismiss)
+        }
+        init(urls: [URL], dismiss: @escaping () -> Void) {
+            source = NativeFilePreview.Coordinator(urls: urls)
             self.dismiss = dismiss
         }
         @objc func done() { dismiss() }

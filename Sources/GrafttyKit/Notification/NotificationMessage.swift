@@ -83,6 +83,7 @@ public struct TeamInboxPageRequest: Sendable, Equatable {
 public enum NotificationMessage: Sendable, Equatable {
     case linuxSetupIdentity
     case completeLinuxSetup(LinuxHostSetupResult)
+    case previewFiles(path: String, targets: [String], paneSessionName: String? = nil)
     case previewImage(path: String, target: String, paneSessionName: String? = nil)
     case offerResource(path: String, target: String, paneSessionName: String? = nil)
     case notify(path: String, text: String, clearAfter: TimeInterval? = nil, paneSessionName: String? = nil)
@@ -190,6 +191,7 @@ public extension NotificationMessage {
 
 extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
+        case targets
         case type, path, text, clearAfter, direction, command, index, lines
         case target, request, result
         case callerWorktree = "caller_worktree"
@@ -229,6 +231,11 @@ extension NotificationMessage: Codable {
         case .completeLinuxSetup(let result):
             try container.encode("complete_linux_setup", forKey: .type)
             try container.encode(result, forKey: .result)
+        case let .previewFiles(path, targets, paneSessionName):
+            try container.encode("preview_files", forKey: .type)
+            try container.encode(path, forKey: .path)
+            try container.encode(targets, forKey: .targets)
+            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
         case let .previewImage(path, target, paneSessionName):
             try container.encode("preview_image", forKey: .type)
             try container.encode(path, forKey: .path)
@@ -430,6 +437,10 @@ extension NotificationMessage: Codable {
             self = .linuxSetupIdentity
         case "complete_linux_setup":
             self = .completeLinuxSetup(try container.decode(LinuxHostSetupResult.self, forKey: .result))
+        case "preview_files":
+            self = .previewFiles(path: try container.decode(String.self, forKey: .path),
+                                 targets: try container.decode([String].self, forKey: .targets),
+                                 paneSessionName: try container.decodeIfPresent(String.self, forKey: .paneSessionName))
         case "preview_image":
             self = .previewImage(
                 path: try container.decode(String.self, forKey: .path),

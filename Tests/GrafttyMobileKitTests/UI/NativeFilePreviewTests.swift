@@ -8,6 +8,21 @@ import UIKit
 @MainActor
 @Suite("@spec IOS-12.7: When an offered file has a native Quick Look preview, the application shall show it with Quick Look; otherwise, it shall present the system sharing and Open In interface.")
 struct NativeFilePreviewTests {
+    @Test("@spec PREVIEW-2.4: When a mobile preview collection opens, the application shall provide all files to one native Quick Look controller in request order with a Done action.")
+    func collectionUsesNativeNavigation() throws {
+        let urls = ["one.html", "two.csv", "three.pdf"].map { URL(fileURLWithPath: "/tmp/" + $0) }
+        var dismissed = false
+        let coordinator = NativeImagePreview.Coordinator(urls: urls, dismiss: { dismissed = true })
+        let navigation = NativeImagePreview.makeController(coordinator: coordinator)
+        let controller = try #require(navigation.topViewController as? QLPreviewController)
+        #expect(coordinator.source.numberOfPreviewItems(in: controller) == 3)
+        for index in urls.indices {
+            #expect(coordinator.source.previewController(controller, previewItemAt: index).previewItemURL == urls[index])
+        }
+        coordinator.done()
+        #expect(dismissed)
+    }
+
     @Test("@spec IMAGE-2.8: When a mobile image opens, the application shall use a native Quick Look controller in a navigation container with a Done action and the system image zoom and sharing interface.")
     func imageUsesQuickLookWithNativeNavigationAndDone() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
@@ -24,7 +39,8 @@ struct NativeFilePreviewTests {
         let preview = try #require(navigation.topViewController as? QLPreviewController)
         #expect(preview.dataSource === source.source)
         #expect(source.source.previewController(preview, previewItemAt: 0).previewItemURL == url)
-        let done = try #require(preview.navigationItem.leftBarButtonItem)
+        let items = (preview.navigationItem.leftBarButtonItems ?? []) + (preview.navigationItem.rightBarButtonItems ?? [])
+        let done = try #require(items.first { $0.accessibilityLabel == "Done" })
         #expect(done.target === source)
         source.done()
         #expect(dismissed)

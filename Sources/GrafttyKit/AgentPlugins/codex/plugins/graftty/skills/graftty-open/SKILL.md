@@ -1,11 +1,11 @@
 ---
 name: graftty-open
-description: Open finished review documents, reports, spreadsheets, presentations, or requested files and HTTP(S) pages on the pane leader's device. Use graftty-image for image previews.
+description: Open HTTP(S) URLs or files explicitly requested in their default app on the pane leader's device. Use graftty-preview for visual explanations, file previews, and finished review artifacts.
 ---
 
 # Graftty open
 
-Run `graftty open` for each finished artifact made for review, even without a separate open request. Also use it for requested files and HTTP(S) URLs, including local development sites. Use [graftty-image](../graftty-image/SKILL.md) for image previews. Source edits and internal files need no preview.
+Use [graftty-preview](../graftty-preview/SKILL.md) for finished artifacts made for review, including self-contained HTML explanations. Use `graftty open` for HTTP(S) URLs, including local development sites, or when the user explicitly asks to open a file in its default app. Source edits and internal files need no preview.
 
 Run from your tracked worktree and pane. Quote paths and URLs:
 

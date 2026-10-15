@@ -378,7 +378,7 @@ struct AgentPluginInstallerTests {
             "skills/graftty-team/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-team/SKILL.md",
             ".claude-plugin/plugin.json": "../../../../codex/plugins/graftty/.codex-plugin/plugin.json",
             "skills/graftty-open/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-open/SKILL.md",
-            "skills/graftty-image/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-image/SKILL.md",
+            "skills/graftty-preview/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-preview/SKILL.md",
         ]
         for (path, target) in links {
             let link = claudeRoot.appendingPathComponent(path)
@@ -392,7 +392,7 @@ struct AgentPluginInstallerTests {
         let expectedOpenSkill = try Data(contentsOf: claudeRoot
             .appendingPathComponent("skills/graftty-open/SKILL.md"))
         let expectedImageSkill = try Data(contentsOf: claudeRoot
-            .appendingPathComponent("skills/graftty-image/SKILL.md"))
+            .appendingPathComponent("skills/graftty-preview/SKILL.md"))
         let expectedManifest = try Data(contentsOf: claudeRoot
             .appendingPathComponent(".claude-plugin/plugin.json"))
         let destination = temporary.appendingPathComponent("prepared")
@@ -413,7 +413,7 @@ struct AgentPluginInstallerTests {
                 "skills/graftty/SKILL.md": expectedRecapSkill,
                 "skills/graftty-team/SKILL.md": expectedTeamSkill,
                 "skills/graftty-open/SKILL.md": expectedOpenSkill,
-                "skills/graftty-image/SKILL.md": expectedImageSkill,
+                "skills/graftty-preview/SKILL.md": expectedImageSkill,
                 ".\(provider)-plugin/plugin.json": expectedManifest,
             ] {
                 let file = cached.appendingPathComponent(path)
@@ -519,7 +519,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.34: When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
+    @spec AGENT-6.34: When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that routes finished review artifacts through graftty preview and documents external file opening, URL routing, worktree scope and mobile limits.
     """)
     func preparesOpenSkillForBothProviders() throws {
         for skill in try preparedSkillTexts(named: "graftty-open") {
@@ -530,24 +530,43 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.50: When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, show images with graftty image in a native tray, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures or missing previews without claiming delivery before falling back to graftty open.
+    @spec AGENT-6.50: When Graftty prepares provider plugins, the application shall bundle a `graftty-preview` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, show files with graftty preview in a native tray and create self-contained HTML when a visual explains something better, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures or missing previews without claiming delivery before falling back to graftty open.
     """)
     func preparesImageSkillForBothProviders() throws {
-        for skill in try preparedSkillTexts(named: "graftty-image") {
-            for token in ["name: graftty-image", "graftty image", "![", "graftty open", "imgcat", "kitten icat", "/dev/tty"] {
-                #expect(skill.contains(token))
-            }
+        for skill in try preparedSkillTexts(named: "graftty-preview") {
+            #expect(skill.contains("name: graftty-preview"))
+            #expect(skill.contains("![Chart](./output/chart.png)"))
+            #expect(skill.contains("![Refined sidebar](</absolute/path with spaces/sidebar.png>)"))
+            #expect(skill.contains("containing Markdown file's directory"))
+            #expect(skill.contains("graftty preview"))
+            #expect(skill.contains("native tray"))
+            #expect(skill.contains("!["))
+            #expect(skill.contains("acknowledges"))
+            #expect(skill.contains("imgcat"))
+            #expect(skill.contains("kitten icat"))
+            #expect(skill.contains("/dev/tty"))
+            #expect(skill.contains("terminal query"))
+            #expect(skill.contains("graftty open"))
         }
     }
 
     @Test("""
-    @spec IMAGE-1.6: When Graftty installs the graftty-image skill, the skill shall describe the movable and resizable macOS tray and the owning Mobile pane's Images control for native Quick Look, explain fit, zoom, close, and Preview.app controls, and acknowledge requests without claiming the user saw the image.
+    @spec IMAGE-1.6: When Graftty installs the graftty-preview skill, the skill shall describe the movable and resizable macOS tray and the owning Mobile pane's Preview control for native Quick Look, explain collection navigation and automatic mobile opening, and acknowledge requests without claiming the user saw the image.
     """)
     func imageSkillDescribesNativePreviewOnLeadingDevice() throws {
-        for skill in try preparedSkillTexts(named: "graftty-image") {
-            for token in ["references/preview-controls.md", "Quick Look", "Preview.app", "Fit", "Close"] {
-                #expect(skill.contains(token))
-            }
+        for skill in try preparedSkillTexts(named: "graftty-preview") {
+            #expect(skill.contains("Graftty Mobile"))
+            #expect(skill.contains("focused owning pane"))
+            #expect(skill.contains("Preview control"))
+            #expect(skill.contains("Quick Look with zoom and sharing"))
+            #expect(skill.contains("Arrival preserves terminal focus"))
+            #expect(skill.contains("Drag the header"))
+            #expect(skill.contains("resize"))
+            #expect(skill.contains("previous and next"))
+            #expect(skill.contains("self-contained HTML"))
+            #expect(skill.contains("zoom"))
+            #expect(skill.contains("Close"))
+            #expect(!skill.contains("Drew <name>"))
         }
     }
 

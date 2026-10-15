@@ -65,6 +65,14 @@ public final class RemoteConnectionCoordinator {
     private let deviceIDStore: ClientDeviceIDStore
     public private(set) var localDeviceID: RemoteDeviceID?
     private var authenticationOffers = RemoteAuthenticationOffers()
+    private var previewAutoOpen = RemotePreviewAutoOpen()
+
+    func reservePreviewAutoOpen(_ offer: RemoteOpenOffer?, isReady: Bool, canPresent: Bool) -> Bool {
+        previewAutoOpen.take(offer, isReady: isReady, canPresent: canPresent)
+    }
+
+    func completePreviewAutoOpen(_ id: UUID) { previewAutoOpen.complete(id) }
+    func deferPreviewAutoOpen(_ id: UUID) { previewAutoOpen.deferPresentation(of: id) }
 
     func completeAuthenticationOffer(_ id: UUID) { authenticationOffers.complete(id) }
     func dismissAuthenticationOffer(_ id: UUID) { authenticationOffers.dismiss(id) }

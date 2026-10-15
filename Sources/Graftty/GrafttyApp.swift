@@ -4064,7 +4064,7 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .previewImage, .offerResource, .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend, .teamReply,
+        case .previewFiles, .previewImage, .offerResource, .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend, .teamReply,
              .teamBroadcast, .teamHook, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
@@ -4099,7 +4099,7 @@ struct GrafttyApp: App {
         remoteMacsModel: RemoteMacsModel
     ) async -> ResponseMessage? {
         switch message {
-        case .offerResource(let path, _, let session), .previewImage(let path, _, let session):
+        case .offerResource(let path, _, let session), .previewImage(let path, _, let session), .previewFiles(let path, _, let session):
             guard let worktree = OpenResourceRouting.worktree(path: path, paneSessionName: session, state: appState.wrappedValue) else {
                 return .error("The originating pane is unavailable. Run graftty open from a tracked worktree.")
             }
@@ -4134,6 +4134,9 @@ struct GrafttyApp: App {
                 Task { _ = try? await remoteMacsModel.connect(to: saved) }
                 return .ok
             } catch { return .error(LinuxHostSetupError.message(for: error)) }
+        case let .previewFiles(path, targets, paneSessionName):
+            return await FilePreviewRequest.handle(path: path, targets: targets, paneSessionName: paneSessionName,
+                                                   state: { appState.wrappedValue }, terminalManager: terminalManager)
         case let .previewImage(path, target, paneSessionName):
             return await ImagePreviewRequest.handle(path: path, target: target, paneSessionName: paneSessionName,
                                                     state: { appState.wrappedValue }, terminalManager: terminalManager)

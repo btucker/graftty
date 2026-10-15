@@ -225,7 +225,7 @@ public struct AgentPluginInstaller: Sendable {
             try materializeHookCommands(in: staging)
             for path in [
                 "skills/graftty/SKILL.md", "skills/graftty-team/SKILL.md",
-                "skills/graftty-open/SKILL.md", "skills/graftty-image/SKILL.md",
+                "skills/graftty-open/SKILL.md", "skills/graftty-preview/SKILL.md",
                 ".\(provider.rawValue)-plugin/plugin.json",
             ] {
                 let file = staging.appendingPathComponent("plugins/graftty/\(path)")

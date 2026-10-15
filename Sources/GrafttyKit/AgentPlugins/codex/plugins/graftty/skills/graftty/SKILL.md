@@ -29,5 +29,5 @@ If `graftty` is absent from PATH, use `/Applications/Graftty.app/Contents/Helper
 Load these skills when relevant:
 
 - [graftty-team](../graftty-team/SKILL.md) before messaging, delegation, durable roles, or app-control commands. It explains permission selection before the first socket call. Pinned roles outlive PR closure; pinning does not establish agent availability.
-- [graftty-image](../graftty-image/SKILL.md) to show requested or finished review visuals. Run `graftty image`; tool output and Markdown alone do not open the native preview.
-- [graftty-open](../graftty-open/SKILL.md) for other finished review artifacts or requested files and URLs. Source edits and internal inspection files need no preview.
+- [graftty-preview](../graftty-preview/SKILL.md) whenever a visual would explain something better. Create self-contained HTML and run `graftty preview` before responding. Also use it for requested file previews and finished review artifacts; tool output and Markdown alone do not open the native preview.
+- [graftty-open](../graftty-open/SKILL.md) for requested URLs or explicit requests to open files in their default app. Source edits and internal inspection files need no preview.

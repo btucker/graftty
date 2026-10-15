@@ -3374,23 +3374,21 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IMAGE-1.x
 
-**IMAGE-1.1** When graftty image runs without a terminal, the CLI shall send an absolute file path and the originating pane session through app IPC without emitting image bytes, terminal escapes, or padding, and shall propagate rejection and transport failures.
+**IMAGE-1.1** When graftty preview runs without a terminal, the CLI shall send ordered absolute file paths and the originating pane session through app IPC without emitting image bytes, terminal escapes, or padding, and shall propagate rejection and transport failures.
 
 **IMAGE-1.2** When graftty image receives legacy width and pad options, the CLI shall accept them without reserving terminal rows, and shall encode a response-bearing native preview request.
 
 **IMAGE-1.3** When a pane requests a native image preview, the application shall replace only that pane's preview, retain a bounded number of previews, and dismiss only the requested pane.
 
-**IMAGE-1.4** When a native image tray renders, the application shall initially overlay at most 45 percent of the pane height and 360 points without resizing the terminal, fit the image with its aspect ratio, and bound zoom from fit to eight times fit.
+**IMAGE-1.4** When a native image tray renders, the application shall initially overlay at most 45 percent of the pane height and 360 points without resizing the terminal, and delegate file rendering, page navigation and zoom to Quick Look.
 
-**IMAGE-1.5** When the application loads an image preview, it shall reject missing, nonregular, invalid, or larger than 20 MB files and decode only the oriented first frame with a maximum edge of 2048 pixels.
-
-**IMAGE-1.6** When Graftty installs the graftty-image skill, the skill shall describe the movable and resizable macOS tray and the owning Mobile pane's Images control for native Quick Look, explain fit, zoom, close, and Preview.app controls, and acknowledge requests without claiming the user saw the image.
+**IMAGE-1.6** When Graftty installs the graftty-preview skill, the skill shall describe the movable and resizable macOS tray and the owning Mobile pane's Preview control for native Quick Look, explain collection navigation and automatic mobile opening, and acknowledge requests without claiming the user saw the image.
 
 **IMAGE-1.7** When an image tray arrives or closes, the application shall preserve terminal focus, and shall dismiss on Escape only when the preview owns focus, restoring its previous responder.
 
 **IMAGE-1.8** While panes are split or worktrees are switched, the native tray shall show only the focused or visible zoomed pane's image and retain inactive previews without replacing it.
 
-**IMAGE-1.9** When preview decoding finishes after a newer request or dismissal, the application shall discard the older result instead of replacing or resurrecting the pane preview.
+**IMAGE-1.9** When preview file loading finishes after a newer request or dismissal, the application shall discard the older result instead of replacing or resurrecting the pane preview.
 
 **IMAGE-1.10** When graftty image identifies its originating pane, the application shall use registered session membership after directory changes, route iOS leadership to native mobile offers, and reject unsupported or other Mac leaders without opening on the host Mac.
 
@@ -3398,29 +3396,29 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-1.12** When a mobile leader receives an image request, the application shall offer the validated file snapshot for its originating pane, replacing that pane's previous image offer without rereading a changed file.
 
-**IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes with explicit image intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, while unmappable recipients, unavailable leaders, and invalid origins shall return errors.
+**IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes with explicit file preview intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, while unmappable recipients, unavailable leaders, and invalid origins shall return errors.
 
-**IMAGE-1.14** While the native image tray toolbar is visible, the application shall use native zoom controls and keep the Fit and Open… labels legible without clipping either action.
+**IMAGE-1.14** While the native preview tray toolbar is visible, the application shall keep collection navigation, file selection, Open… and Close controls legible and reachable in both wide and narrow panes.
 
-**IMAGE-1.15** When the user selects Open in Preview from an image tray, the application shall open the originating file specifically in Preview.app and report missing-file, unavailable-app, or launch errors without dismissing the tray.
+**IMAGE-1.15** When the user selects Open… from a native preview tray, the application shall open the selected original file in its default application and display launch errors without dismissing the collection.
 
 **IMAGE-1.16** When the user drags the image tray header, corner grip, or bottom edge, the application shall move or resize the tray within the terminal content bounds while retaining usable controls and an unobscured terminal region, without resizing the terminal grid.
 
 **IMAGE-1.17** While a user moves or resizes the image tray through pointer input, the application shall keep its native controls operable and allow clicks outside the tray to reach the unchanged terminal surface.
 
-**IMAGE-1.18** When the user clicks the native image tray zoom, Fit, or Close control, the application shall perform that action without starting a header drag, and restore terminal focus when closing a focused preview.
+**IMAGE-1.18** When the user clicks the native preview tray navigation or Close controls, the application shall perform that action without starting a header drag, and restore terminal focus when closing a focused preview.
 
 ### IMAGE-2.x
 
-**IMAGE-2.1** When an image offer crosses a host connection, the application shall preserve optional image intent and recipient metadata while decoding absent or unknown intent without treating it as an image request.
+**IMAGE-2.1** When a native preview offer crosses a host connection, the application shall preserve optional native preview intent, collection identity and recipient metadata while decoding absent or unknown intent without treating it as a native preview request.
 
 **IMAGE-2.2** When image offers arrive for a focused owned mobile pane, the application shall expose only the latest image intended for that pane and device through Images and retain absent or unknown intent in Browser resources.
 
 **IMAGE-2.3** If an image download or presentation loses its original host, worktree, pane, device, focus, ownership or latest offer, then the application shall reject its completion and cancel the stale preview.
 
-**IMAGE-2.4** When a mobile image request arrives, the application shall preserve typing and show an Images action that presents native Quick Look only after a tap, without automatically reopening a dismissed offer.
+**IMAGE-2.4** When a mobile preview request arrives for the focused owning pane, the application shall automatically present native Quick Look once and retain a Preview action for manual reopening after dismissal.
 
-**IMAGE-2.5** If the latest mobile image changes during download or viewing, then the application shall discard stale bytes, close the old preview and leave only the replacement image manually available.
+**IMAGE-2.5** If the latest mobile image changes during download or viewing, then the application shall discard stale bytes, close the old preview and automatically open the replacement when the pane remains focused and owned.
 
 **IMAGE-2.6** If a mobile image is unavailable or cannot be downloaded or natively previewed, then the application shall show an actionable image error and allow a later retry.
 
@@ -3432,7 +3430,41 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-2.10** While a mobile image preview is mounted, the application shall retain its local file and presentation across temporary scene pauses and system sharing, until actual pane, ownership or offer changes or dismissal.
 
-**IMAGE-2.11** When the mobile pane lacks horizontal room for Images and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.
+**IMAGE-2.11** When the mobile pane lacks horizontal room for Preview and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.
+
+## PREVIEW — Native File Preview
+
+### PREVIEW-1.x
+
+**PREVIEW-1.1** When graftty preview receives a local file path, the CLI shall request a native preview through the same pane-scoped IPC as the legacy image alias.
+
+**PREVIEW-1.2** When files are requested for native preview, the application shall snapshot readable regular files of any type in order and reject empty collections, more than 20 files, files over 20 MB, or collections over 50 MB.
+
+**PREVIEW-1.3** When a native file preview collection opens on macOS, the application shall embed Quick Look, navigate files in request order, reset selection on replacement, and retain immutable snapshot files until the tray releases them.
+
+**PREVIEW-1.4** When a preview file snapshot is released, the application shall remove its private temporary directory without deleting the original file.
+
+### PREVIEW-2.x
+
+**PREVIEW-2.1** When file preview offers arrive on mobile, the application shall select the latest preview for its owning pane and device, recognize legacy image intent, and exclude both from Browser resources.
+
+**PREVIEW-2.2** When a mobile preview collection is offered, the host shall publish all files atomically with a shared collection identity, preserve their order and recipient, and replace only older previews from that pane.
+
+**PREVIEW-2.3** When a new preview is available on the focused mobile pane the user controls, the application shall open it once when presentation is available, defer while another resource is open, retry after cancellation before presentation, and retain consumption after presentation or failure across navigation and reconnect.
+
+**PREVIEW-2.4** When a mobile preview collection opens, the application shall provide all files to one native Quick Look controller in request order with a Done action.
+
+**PREVIEW-2.5** When multiple files share a native preview collection identity, mobile shall retain request order and exclude files from other collections, panes or devices.
+
+**PREVIEW-2.6** If any file in a preview collection fails to download, then mobile shall remove previously downloaded files from that collection and present no partial collection.
+
+**PREVIEW-2.7** When the host evicts or withdraws a preview collection, the application shall remove the whole collection so mobile cannot receive a partial set of files.
+
+**PREVIEW-2.8** When a multi-file preview arrives for the focused owning mobile pane, the application shall automatically download and present the complete collection in order and remove every local snapshot after dismissal.
+
+### PREVIEW-3.x
+
+**PREVIEW-3.1** When an agent session starts, the application shall instruct agents to explain visually useful material with self-contained HTML and deliver it through graftty preview.
 
 ## AGENT — AGENT
 
@@ -3644,7 +3676,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.33** When an agent session starts, the application shall instruct the agent to load Graftty skills for Attention recaps, coordination and durable roles, and native previews of requested or completed review artifacts, and require a task-specific emoji independently of cached skill instructions.
 
-**AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
+**AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that routes finished review artifacts through graftty preview and documents external file opening, URL routing, worktree scope and mobile limits.
 
 **AGENT-6.35** When the user installs the renamed Graftty plugin manually, the application shall remove installed legacy plugins only after verifying that the new installation is enabled, and verify that the legacy registration is gone.
 
@@ -3676,7 +3708,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.49** If Graftty is unreachable, busy, or reports an error for a SessionStart hook run inside a Graftty terminal, the CLI shall still emit the Graftty skill guidance; outside a Graftty terminal, and for every other event, it shall emit an empty hook result.
 
-**AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, show images with graftty image in a native tray, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures or missing previews without claiming delivery before falling back to graftty open.
+**AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-preview` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, show files with graftty preview in a native tray and create self-contained HTML when a visual explains something better, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures or missing previews without claiming delivery before falling back to graftty open.
 
 **AGENT-6.51** If Codex retains an enabled legacy Graftty Team registration that its native plugin inventory omits, then the application shall migrate that registration, preserve an explicitly disabled replacement, and verify that native removal clears the legacy registration.
 
