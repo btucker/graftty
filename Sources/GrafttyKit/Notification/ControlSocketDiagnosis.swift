@@ -18,6 +18,7 @@ public enum ControlSocketDiagnosis {
         case staleSocket(path: String)
         case busy
         case timeout
+        case permissionDenied(path: String, errno: Int32)
         case failure(errno: Int32)
     }
 
@@ -26,6 +27,9 @@ public enum ControlSocketDiagnosis {
         socketExists: Bool,
         path: String
     ) -> Reason {
+        if errno == EPERM || errno == EACCES {
+            return .permissionDenied(path: path, errno: errno)
+        }
         if errno == ECONNREFUSED && socketExists {
             return .staleSocket(path: path)
         }

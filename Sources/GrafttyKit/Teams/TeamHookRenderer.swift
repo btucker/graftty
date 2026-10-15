@@ -9,8 +9,8 @@ public enum TeamHookRenderer {
         instructions: String = "",
         messages: [TeamInboxMessage] = []
     ) throws -> String {
-        _ = runtime
         var sections = [skillGuidance]
+        if runtime == .codex { sections.append(codexSocketGuidance) }
         if !instructions.isEmpty { sections.append(instructions) }
         if !messages.isEmpty {
             sections.append("""
@@ -25,6 +25,8 @@ public enum TeamHookRenderer {
 
     static let skillGuidance = "Load the `graftty` skill for Attention recaps before finishing this session. Each new recap must include a task-specific `emoji`; provide up to three distinct `emojiAlternatives` so Graftty can choose an unused identity. Include these fields even if an older cached skill omits them. Load the `graftty-team` skill for agent coordination and durable roles when you need to message, delegate, or pin an agent. Graftty keeps one agent per worktree: never create a worktree yourself with `git worktree add`, a provider worktree tool, a worktree-isolated subagent, or another skill. To do work in a new worktree, delegate it with `graftty worktree add <name> --agent <codex|claude> --prompt-stdin` as the `graftty-team` skill describes."
         + " Use the `graftty-image` skill when asked to show an image or when producing a finished visual for review. Run `graftty image` before responding; tool images, Markdown embeds, and file links alone do not open Graftty's native preview. Use `graftty-open` for other finished review artifacts or requested URLs."
+
+    static let codexSocketGuidance = "In Codex with restricted network access, request narrowly scoped permission with `sandbox_permissions: \"require_escalated\"` before the first control-socket command, including `graftty team list --json`. Use the same execution mode for subsequent control-socket commands; scope each request to the authorized command. Do not repeat a known sandbox denial. Do not change provider sandbox configuration to grant access. `graftty attention report --stdin` uses a private file handoff and does not need socket permission."
 
     public static func postToolUse(runtime: TeamHookRuntime, messages: [TeamInboxMessage]) throws -> String {
         switch runtime {

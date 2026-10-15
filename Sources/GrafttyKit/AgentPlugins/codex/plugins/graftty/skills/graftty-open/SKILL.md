@@ -1,26 +1,28 @@
 ---
 name: graftty-open
-description: Open finished documents, reports, presentations, spreadsheets, or requested HTTP(S) pages on the pane leader's device, including artifacts produced for review without a separate open request. Use graftty-image for image previews.
+description: Open finished review documents, reports, spreadsheets, presentations, or requested files and HTTP(S) pages on the pane leader's device. Use graftty-image for image previews.
 ---
 
 # Graftty open
 
-For image previews, including generated images, screenshots, charts, diagrams, and mockups, use the bundled [graftty-image](../graftty-image/SKILL.md) skill and `graftty image` to request the native tray.
+Run `graftty open` for each finished artifact made for review, even without a separate open request. Also use it for requested files and HTTP(S) URLs, including local development sites. Use [graftty-image](../graftty-image/SKILL.md) for image previews. Source edits and internal files need no preview.
 
-Run `graftty open` for each other finished artifact you made for the user to review, such as an HTML report, CSV, PDF, or presentation. Do this even when the user has not asked to open it and you do not know which device they are using. Do not open source files you edited as part of a coding task or routine intermediate files. Also use the command when the user asks to open a file or HTTP(S) URL, including a local development site.
-
-Run the command from the Mac's tracked worktree and pane where you are working. Graftty checks that pane's current display leader when the command runs. If Graftty Mobile leads, it offers the resource in that worktree's Open menu for 15 minutes. Otherwise macOS opens it with the default app or browser. Quote paths and URLs so spaces and shell metacharacters remain literal:
+Run from your tracked worktree and pane. Quote paths and URLs:
 
 ```sh
-graftty open './output/chart.png'
+graftty open './output/report.pdf'
 graftty open 'http://localhost:3000'
-graftty open 'https://example.com/report'
 ```
 
-Use the Graftty CLI that matches the running app. If `graftty` is absent from `PATH`, locate that app's bundled CLI and check `graftty help open`. An older app build without the `open` subcommand cannot make the offer.
+The current pane leader determines delivery:
 
-For mobile previews, `graftty open` accepts a readable regular file up to 20 MB. It snapshots that one file for 15 minutes. Graftty Mobile uses iOS Quick Look when available and otherwise offers the share sheet. An HTML file does not bring along its linked assets; serve a multi-file site on the Mac and open its HTTP URL instead.
+- **Mac:** opens with the default app or browser, including its existing session.
+- **Graftty Mobile:** offers the resource in that worktree's Open menu for 15 minutes. Files use Quick Look or the share sheet. HTTP(S) pages use Mobile's browser with separate cookies; connections and DNS go through the directly paired Mac, so `localhost` refers to that Mac. Relay worktrees cannot browse URLs.
 
-For URLs, use HTTP or HTTPS without credentials embedded in the URL. When mobile leads, the page renders in Graftty Mobile's browser, while its connections and DNS go through the directly paired Mac. This lets `localhost` name a server on the Mac and also works for public sites the Mac can reach. A relay worktree cannot browse these URLs. The mobile browser has its own cookies and login state. When Mac leads, the URL opens in the Mac's default browser, including its existing session.
+Mobile accepts one readable regular file up to 20 MB and snapshots it for 15 minutes. Linked HTML assets are not included; serve multi-file sites and open their HTTP URL. URLs must not contain embedded credentials.
 
-On mobile, command success means the resource was offered, not that the user opened it. Tell the user to choose it from the Open menu in that worktree if they are on mobile. If the offer expires, run the command again. Report a command error as an error; do not say the preview is ready.
+On mobile, success means offered, not opened. Point the user to the Open menu; rerun after expiry. Report command errors without claiming the preview is ready.
+
+Use the CLI matching the running app. If absent from PATH, use its bundled helper, such as `/Applications/Graftty.app/Contents/Helpers/graftty`, and check `graftty help open`. An unknown subcommand requires an app update.
+
+For restricted Codex socket access, follow [graftty-team](../graftty-team/SKILL.md) before running the command.

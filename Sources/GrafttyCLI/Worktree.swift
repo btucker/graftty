@@ -402,6 +402,12 @@ struct WorktreeAdd: ParsableCommand {
                         "timed out waiting for worktree creation; operation \(operationID) may still finish"
                     )
                     throw ExitCode(1)
+                case .socketPermissionDenied:
+                    writeError(error.description)
+                    if operationMayExist {
+                        writeError("worktree creation operation \(operationID) may still finish")
+                    }
+                    throw ExitCode(1)
                 case .notInsideWorktree, .appNotRunning, .staleControlSocket,
                      .socketPathTooLong, .responseTooLarge:
                     writeError(error.description)
@@ -617,7 +623,7 @@ enum WorktreeCapability {
                     }
                     CLIEnv.printError(error.description)
                 case .notInsideWorktree, .appNotRunning, .staleControlSocket,
-                     .socketPathTooLong, .responseTooLarge:
+                     .socketPathTooLong, .responseTooLarge, .socketPermissionDenied:
                     CLIEnv.printError(error.description)
                 }
                 throw ExitCode(1)

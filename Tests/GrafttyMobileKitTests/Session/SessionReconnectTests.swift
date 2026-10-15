@@ -238,24 +238,38 @@ struct SessionReconnectTests {
         #expect(factory.creations == beforeForce + 1)
     }
 
-    @Test
-    func stopDuringBackoffCancelsCleanly() async throws {
+    @Test(arguments: [false, true])
+    func stopDuringBackoffCancelsCleanly(slowDial: Bool) async throws {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
         factory.nextProvider = { FailingWS() }
         let client = SessionClient(
             sessionName: "s",
-            webSocketFactory: factory.make,
+            webSocketFactory: {
+                // Exercise a dial that outlasts the former fixed 50ms wait.
+                if slowDial { try await Task.sleep(for: .milliseconds(100)) }
+                return factory.make()
+            },
             clock: clock,
             backoffSchedule: [10]  // long enough we'd never reach it
         )
+        defer { client.stop() }
         client.start()
-        await quiesce()
-        #expect(client.connectionState == .reconnecting(attempt: 1))
-        client.stop()
-        await quiesce()
-        // No additional factory calls after stop.
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 1) &&
+                factory.creations == 1 && clock.hasPendingSleep(for: 10.0)
+        }
+        try #require(client.connectionState == .reconnecting(attempt: 1),
+                     "the initial receive failure must reach backoff before stop")
+        try #require(clock.hasPendingSleep(for: 10.0),
+                     "the virtual backoff must be registered before stop")
         let snapshot = factory.creations
+        #expect(snapshot == 1)
+        client.stop()
+        await waitUntil { !clock.hasPendingSleep(for: 10.0) }
+        try #require(!clock.hasPendingSleep(for: 10.0),
+                     "stop must cancel the registered backoff sleep")
+        // No additional factory calls after stop, even past the retry deadline.
         clock.advance(by: 10.0)
         await quiesce()
         #expect(factory.creations == snapshot)

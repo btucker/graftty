@@ -221,27 +221,28 @@ public struct AgentPluginInstaller: Sendable {
             )
             defer { try? FileManager.default.removeItem(at: staging) }
             try FileManager.default.copyItem(at: source, to: staging)
+            try materializeSymbolicLinks(from: source, into: staging)
             try materializeHookCommands(in: staging)
-            // Source links can cross provider roots; cached plugins cannot.
-            // Read through the original links before replacing staged copies.
             for path in [
-                "plugins/graftty/skills/graftty/SKILL.md",
-                "plugins/graftty/skills/graftty-team/SKILL.md",
-                "plugins/graftty/.\(provider.rawValue)-plugin/plugin.json",
-                "plugins/graftty/skills/graftty-open/SKILL.md",
-                "plugins/graftty/skills/graftty-image/SKILL.md",
+                "skills/graftty/SKILL.md", "skills/graftty-team/SKILL.md",
+                "skills/graftty-open/SKILL.md", "skills/graftty-image/SKILL.md",
+                ".\(provider.rawValue)-plugin/plugin.json",
             ] {
-                var contents = try Data(contentsOf: source.appendingPathComponent(path))
-                if path.hasSuffix("plugin.json"), let pluginVersion {
-                    guard var manifest = try JSONSerialization.jsonObject(with: contents) as? [String: Any] else {
-                        throw AgentPluginInstallerError.invalidPluginManifest
-                    }
-                    manifest["version"] = pluginVersion
-                    contents = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+                let file = staging.appendingPathComponent("plugins/graftty/\(path)")
+                let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+                guard attributes[.type] as? FileAttributeType == .typeRegular else {
+                    throw AgentPluginInstallerError.bundledResourcesMissing
                 }
-                let stagedFile = staging.appendingPathComponent(path)
-                try FileManager.default.removeItem(at: stagedFile)
-                try contents.write(to: stagedFile)
+            }
+            if let pluginVersion {
+                let manifestURL = staging.appendingPathComponent("plugins/graftty/.\(provider.rawValue)-plugin/plugin.json")
+                let contents = try Data(contentsOf: manifestURL)
+                guard var manifest = try JSONSerialization.jsonObject(with: contents) as? [String: Any] else {
+                    throw AgentPluginInstallerError.invalidPluginManifest
+                }
+                manifest["version"] = pluginVersion
+                try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+                    .write(to: manifestURL)
             }
             if FileManager.default.fileExists(atPath: destination.path) {
                 #if os(Linux)
@@ -300,6 +301,37 @@ public struct AgentPluginInstaller: Sendable {
                 ),
             ]
         )
+    }
+
+    /// Resolve source links before traversing them: a provider cache cannot
+    /// depend on another provider's files or linked reference directories.
+    private func materializeSymbolicLinks(
+        from source: URL,
+        into destination: URL,
+        ancestors: Set<URL> = []
+    ) throws {
+        let fm = FileManager.default
+        let attributes = try fm.attributesOfItem(atPath: source.path)
+        let resolved = source.resolvingSymlinksInPath()
+        let resolvedAttributes = try fm.attributesOfItem(atPath: resolved.path)
+        guard resolvedAttributes[.type] as? FileAttributeType != .typeSymbolicLink else {
+            throw CocoaError(.fileReadInvalidFileName, userInfo: [NSFilePathErrorKey: source.path])
+        }
+        if attributes[.type] as? FileAttributeType == .typeSymbolicLink {
+            try fm.removeItem(at: destination)
+            try fm.copyItem(at: resolved, to: destination)
+        }
+        guard resolvedAttributes[.type] as? FileAttributeType == .typeDirectory else { return }
+        guard !ancestors.contains(resolved) else {
+            throw CocoaError(.fileReadInvalidFileName, userInfo: [NSFilePathErrorKey: source.path])
+        }
+        for child in try fm.contentsOfDirectory(at: resolved, includingPropertiesForKeys: nil) {
+            try materializeSymbolicLinks(
+                from: child,
+                into: destination.appendingPathComponent(child.lastPathComponent),
+                ancestors: ancestors.union([resolved])
+            )
+        }
     }
 
     private func materializeHookCommands(in providerRoot: URL) throws {

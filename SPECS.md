@@ -950,6 +950,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-3.9** When a control-socket connect attempt is rejected before dispatch with a transient capacity error, the CLI shall apply the same bounded busy retry used for a structured server rejection, and it shall preserve unexpected connect errno values instead of reporting a receive timeout that did not occur.
 
+**ATTN-3.10** If a control-socket connection fails with EPERM or EACCES, then the CLI shall preserve the denied path and errno, explain that sandbox policy or filesystem permissions may deny access, and avoid retrying or recommending a socket reset.
+
 ### ATTN-4.x — CLI Distribution
 
 **ATTN-4.1** The application shall provide a menu item (Graftty -> Install CLI Tool...) to create or update a symlink at `/usr/local/bin/graftty` pointing to the CLI binary in the app bundle. CLI installation is opt-in via this menu item; the application shall not auto-prompt for installation on launch.
@@ -3646,7 +3648,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.35** When the user installs the renamed Graftty plugin manually, the application shall remove installed legacy plugins only after verifying that the new installation is enabled, and verify that the legacy registration is gone.
 
-**AGENT-6.36** When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct sandboxed agents to request narrowly scoped permission for main control-socket commands.
+**AGENT-6.36** When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct Codex agents in a restricted sandbox to request narrowly scoped permission before their first main control-socket command and retain that choice for subsequent commands without changing provider policy.
 
 **AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
 
@@ -3679,6 +3681,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.51** If Codex retains an enabled legacy Graftty Team registration that its native plugin inventory omits, then the application shall migrate that registration, preserve an explicitly disabled replacement, and verify that native removal clears the legacy registration.
 
 **AGENT-6.52** If Claude retains a legacy Graftty Team registration in user settings, then the application shall verify that the replacement is enabled, remove the legacy registration even when native inventory omits it, preserve other settings and explicit opt-outs, and report incomplete cleanup as a retryable failure.
+
+**AGENT-6.53** When a Codex session starts, the application shall instruct the agent to request narrowly scoped elevated permission before its first main control-socket command in a restricted sandbox, retain that choice for subsequent commands, and keep Attention file reports unprivileged.
+
+**AGENT-6.54** When Graftty prepares provider plugins with linked supporting reference directories or files, the application shall materialize those resources so each cached plugin remains self-contained after the source and sibling provider are removed.
+
+**AGENT-6.55** When Graftty packages progressive skill guidance, the application shall retain readable relative links within each independent provider plugin, with supporting procedures reachable from their skill entrypoints.
 
 ## CLI — CLI
 
