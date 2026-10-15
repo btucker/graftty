@@ -407,56 +407,57 @@ struct RemoteConnectionCoordinatorTests {
             serverKey: hostKey
         )
         let counter = CallCounter()
-        let box = ConnectionBox()
-        let clock = MutableClock()
-        let exchangeCount = CallCounter()
-        let authenticatedHost = Self.successTransport(
-            box: box,
-            host: host,
-            hostKey: hostKey
-        )
-        let coordinator = RemoteConnectionCoordinator(
-            directory: dir,
-            signaling: SignalingClient(transport: { request, body in
-                if request.url?.path.hasSuffix(
-                    RemoteAccessProtocol.challengePath
-                ) == true {
-                    exchangeCount.increment()
-                    if exchangeCount.count > 1 {
-                        return Self.httpResponse(
-                            for: request,
-                            statusCode: 503,
-                            body: "host is busy"
-                        )
+        try await ConnectionBox.withFixture { box in
+            let clock = MutableClock()
+            let exchangeCount = CallCounter()
+            let authenticatedHost = Self.successTransport(
+                box: box,
+                host: host,
+                hostKey: hostKey
+            )
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(transport: { request, body in
+                    if request.url?.path.hasSuffix(
+                        RemoteAccessProtocol.challengePath
+                    ) == true {
+                        exchangeCount.increment()
+                        if exchangeCount.count > 1 {
+                            return Self.httpResponse(
+                                for: request,
+                                statusCode: 503,
+                                body: "host is busy"
+                            )
+                        }
                     }
-                }
-                return try await authenticatedHost(request, body)
-            }),
-            connectionFactory: { key, fp in
-                counter.increment()
-                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
-                box.set(connection)
-                return connection
-            },
-            now: { clock.now() }
-        )
+                    return try await authenticatedHost(request, body)
+                }),
+                connectionFactory: { key, fp in
+                    counter.increment()
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                    box.set(connection)
+                    return connection
+                },
+                now: { clock.now() }
+            )
 
-        let negotiated = await coordinator.connection(for: host)
-        let live = try #require(negotiated)
-        #expect(counter.count == 1)
+            let negotiated = await coordinator.connection(for: host)
+            let live = try #require(negotiated)
+            #expect(counter.count == 1)
 
-        // Evict via the SAME terminal-transition path
-        // `terminalStateChangeEvictsFromRegistry` exercises, then —
-        // crucially — retry with NO clock advance. If a successful
-        // negotiation ever left a cooldown entry behind, this would
-        // fast-nil WITHOUT ever calling `connectionFactory` again, and
-        // `counter.count` would stay at 1.
-        await live.close()
-        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(5)) {
-            _ = await coordinator.connection(for: host)
-            return counter.count == 2
+            // Evict via the SAME terminal-transition path
+            // `terminalStateChangeEvictsFromRegistry` exercises, then —
+            // crucially — retry with NO clock advance. If a successful
+            // negotiation ever left a cooldown entry behind, this would
+            // fast-nil WITHOUT ever calling `connectionFactory` again, and
+            // `counter.count` would stay at 1.
+            await live.close()
+            try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(5)) {
+                _ = await coordinator.connection(for: host)
+                return counter.count == 2
+            }
+            #expect(counter.count == 2, "a successful negotiation must not leave a cooldown behind for the host")
         }
-        #expect(counter.count == 2, "a successful negotiation must not leave a cooldown behind for the host")
     }
 
     // MARK: - Eviction on terminal state change
@@ -470,44 +471,45 @@ struct RemoteConnectionCoordinatorTests {
             serverKey: hostKey
         )
         let counter = CallCounter()
-        let box = ConnectionBox()
-        let coordinator = RemoteConnectionCoordinator(
-            directory: dir,
-            signaling: SignalingClient(
-                transport: Self.successTransport(
-                    box: box,
-                    host: host,
-                    hostKey: hostKey
-                )
-            ),
-            connectionFactory: { key, fp in
-                counter.increment()
-                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
-                box.set(connection)
-                return connection
+        try await ConnectionBox.withFixture { box in
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(
+                    transport: Self.successTransport(
+                        box: box,
+                        host: host,
+                        hostKey: hostKey
+                    )
+                ),
+                connectionFactory: { key, fp in
+                    counter.increment()
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                    box.set(connection)
+                    return connection
+                }
+            )
+
+            let negotiated = await coordinator.connection(for: host)
+            let live = try #require(negotiated)
+            #expect(counter.count == 1)
+
+            // Fire a terminal transition on the live connection directly —
+            // this is the same `.failed`/`.closed` path Task 1 wired
+            // `onStateChange` to observe, which the coordinator registered
+            // BEFORE `createOffer()`.
+            await live.close()
+
+            // Eviction happens asynchronously (the observer hops back onto
+            // the coordinator's actor via a `Task`); poll for the effect
+            // rather than asserting immediately.
+            var again: RemoteHostConnection?
+            try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(5)) {
+                again = await coordinator.connection(for: host)
+                return again !== live
             }
-        )
-
-        let negotiated = await coordinator.connection(for: host)
-        let live = try #require(negotiated)
-        #expect(counter.count == 1)
-
-        // Fire a terminal transition on the live connection directly —
-        // this is the same `.failed`/`.closed` path Task 1 wired
-        // `onStateChange` to observe, which the coordinator registered
-        // BEFORE `createOffer()`.
-        await live.close()
-
-        // Eviction happens asynchronously (the observer hops back onto
-        // the coordinator's actor via a `Task`); poll for the effect
-        // rather than asserting immediately.
-        var again: RemoteHostConnection?
-        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(5)) {
-            again = await coordinator.connection(for: host)
-            return again !== live
+            #expect(counter.count == 2, "eviction should allow a fresh negotiation on the next call")
+            await again?.close()
         }
-        #expect(counter.count == 2, "eviction should allow a fresh negotiation on the next call")
-        await again?.close()
     }
 
     // MARK: - Register-then-verify (A2(i))
@@ -534,43 +536,75 @@ struct RemoteConnectionCoordinatorTests {
             directory: dir,
             serverKey: hostKey
         )
-        let box = ConnectionBox()
-        let coordinator = RemoteConnectionCoordinator(
-            directory: dir,
-            signaling: SignalingClient(
-                transport: Self.successTransport(
-                    box: box,
-                    host: host,
-                    hostKey: hostKey,
-                    afterAnswererReady: { answerer in
-                        // Kill the far side shortly after standing up —
-                        // races the client's own post-registration verify.
-                        Task {
-                            try? await Task.sleep(for: .milliseconds(200))
-                            await answerer.close()
+        try await ConnectionBox.withFixture { box in
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(
+                    transport: Self.successTransport(
+                        box: box,
+                        host: host,
+                        hostKey: hostKey,
+                        afterAnswererReady: { answerer in
+                            // Kill the far side shortly after standing up —
+                            // races the client's own post-registration verify.
+                            box.retain(Task {
+                                do { try await Task.sleep(for: .milliseconds(200)) }
+                                catch { return }
+                                await answerer.close()
+                            })
                         }
-                    }
-                )
-            ),
-            connectionFactory: { key, fp in
-                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
-                box.set(connection)
-                return connection
+                    )
+                ),
+                connectionFactory: { key, fp in
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                    box.set(connection)
+                    return connection
+                }
+            )
+
+            let firstResult = await coordinator.connection(for: host)
+
+            // If the guard caught the death inline, `firstResult` is already
+            // `nil` and there's nothing further to prove. Otherwise, poll
+            // until the dead connection is no longer the one on offer — the
+            // pre-existing async `onStateChange` eviction path is the
+            // fallback net if the inline guard's exact window was missed.
+            try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(20)) {
+                guard let firstResult else { return true }
+                let again = await coordinator.connection(for: host)
+                return again !== firstResult
             }
-        )
-
-        let firstResult = await coordinator.connection(for: host)
-
-        // If the guard caught the death inline, `firstResult` is already
-        // `nil` and there's nothing further to prove. Otherwise, poll
-        // until the dead connection is no longer the one on offer — the
-        // pre-existing async `onStateChange` eviction path is the
-        // fallback net if the inline guard's exact window was missed.
-        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(20)) {
-            guard let firstResult else { return true }
-            let again = await coordinator.connection(for: host)
-            return again !== firstResult
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func loopbackFixtureClosesEveryClientAndReleasesAnswerers(throwFromBody: Bool) async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let key = try ClientIdentityStore(directory: dir).loadOrGenerateAndPersist()
+        let fingerprint = try RemoteIdentityFingerprint(rawBytes: Data(repeating: 1, count: 32))
+        let first = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
+        let second = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
+        weak var answerer: TestAnswerer?
+        do {
+            try await ConnectionBox.withFixture { box in
+                box.set(first)
+                box.set(second)
+                let peer = TestAnswerer()
+                answerer = peer
+                box.retain(peer)
+                await first.bindIceCandidates(to: peer)
+                await peer.bindIceCandidates(to: first)
+                if throwFromBody { throw Self.unreachable }
+            }
+            #expect(!throwFromBody, "fixture should propagate the test failure")
+        } catch {
+            #expect(throwFromBody)
+            #expect(error as NSError == Self.unreachable)
+        }
+        #expect(await first.state == .closed)
+        #expect(await second.state == .closed)
+        // Candidate-forwarding tasks may briefly retain the peer after close.
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(5)) { answerer == nil }
     }
 
     // MARK: - invalidate(host:) closes and evicts
@@ -584,35 +618,36 @@ struct RemoteConnectionCoordinatorTests {
             serverKey: hostKey
         )
         let counter = CallCounter()
-        let box = ConnectionBox()
-        let coordinator = RemoteConnectionCoordinator(
-            directory: dir,
-            signaling: SignalingClient(
-                transport: Self.successTransport(
-                    box: box,
-                    host: host,
-                    hostKey: hostKey
-                )
-            ),
-            connectionFactory: { key, fp in
-                counter.increment()
-                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
-                box.set(connection)
-                return connection
-            }
-        )
+        try await ConnectionBox.withFixture { box in
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(
+                    transport: Self.successTransport(
+                        box: box,
+                        host: host,
+                        hostKey: hostKey
+                    )
+                ),
+                connectionFactory: { key, fp in
+                    counter.increment()
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                    box.set(connection)
+                    return connection
+                }
+            )
 
-        let negotiated = await coordinator.connection(for: host)
-        let live = try #require(negotiated)
-        #expect(counter.count == 1)
+            let negotiated = await coordinator.connection(for: host)
+            let live = try #require(negotiated)
+            #expect(counter.count == 1)
 
-        await coordinator.invalidate(host: host)
+            await coordinator.invalidate(host: host)
 
-        #expect(await live.state == .closed)
-        let again = await coordinator.connection(for: host)
-        #expect(again !== live, "invalidate must evict so the next call negotiates fresh")
-        #expect(counter.count == 2)
-        await again?.close()
+            #expect(await live.state == .closed)
+            let again = await coordinator.connection(for: host)
+            #expect(again !== live, "invalidate must evict so the next call negotiates fresh")
+            #expect(counter.count == 2)
+            await again?.close()
+        }
     }
 
     // MARK: - invalidateAll() — W3 review wave B1 (RootView's `.background`-only teardown)
@@ -633,54 +668,55 @@ struct RemoteConnectionCoordinatorTests {
             baseURL: URL(string: "https://host-b.local:9999")!
         )
         let counter = CallCounter()
-        let box = ConnectionBox()
-        let transportA = Self.successTransport(
-            box: box,
-            host: hostA,
-            hostKey: hostKeyA
-        )
-        let transportB = Self.successTransport(
-            box: box,
-            host: hostB,
-            hostKey: hostKeyB
-        )
-        let coordinator = RemoteConnectionCoordinator(
-            directory: dir,
-            signaling: SignalingClient(transport: { request, body in
-                if request.url?.host == hostA.baseURL.host {
-                    return try await transportA(request, body)
+        try await ConnectionBox.withFixture { box in
+            let transportA = Self.successTransport(
+                box: box,
+                host: hostA,
+                hostKey: hostKeyA
+            )
+            let transportB = Self.successTransport(
+                box: box,
+                host: hostB,
+                hostKey: hostKeyB
+            )
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(transport: { request, body in
+                    if request.url?.host == hostA.baseURL.host {
+                        return try await transportA(request, body)
+                    }
+                    return try await transportB(request, body)
+                }),
+                connectionFactory: { key, fp in
+                    counter.increment()
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                    box.set(connection)
+                    return connection
                 }
-                return try await transportB(request, body)
-            }),
-            connectionFactory: { key, fp in
-                counter.increment()
-                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
-                box.set(connection)
-                return connection
-            }
-        )
+            )
 
-        // Negotiated sequentially (not concurrently) — `box` holds only
-        // the MOST RECENT connection, which `successTransport` reads to
-        // route ICE candidates, so overlapping negotiations against one
-        // shared box would race. Nothing about `invalidateAll` itself
-        // requires concurrent negotiation to exercise "evicts EVERY live
-        // host," only that more than one host is registered at once.
-        let liveA = try #require(await coordinator.connection(for: hostA))
-        let liveB = try #require(await coordinator.connection(for: hostB))
-        #expect(counter.count == 2)
+            // Negotiated sequentially (not concurrently) — `box` holds only
+            // the MOST RECENT connection, which `successTransport` reads to
+            // route ICE candidates, so overlapping negotiations against one
+            // shared box would race. Nothing about `invalidateAll` itself
+            // requires concurrent negotiation to exercise "evicts EVERY live
+            // host," only that more than one host is registered at once.
+            let liveA = try #require(await coordinator.connection(for: hostA))
+            let liveB = try #require(await coordinator.connection(for: hostB))
+            #expect(counter.count == 2)
 
-        await coordinator.invalidateAll()
+            await coordinator.invalidateAll()
 
-        #expect(await liveA.state == .closed)
-        #expect(await liveB.state == .closed)
+            #expect(await liveA.state == .closed)
+            #expect(await liveB.state == .closed)
 
-        // Eviction proof: the next call for either host must negotiate
-        // fresh rather than returning the (closed) cached connection.
-        let againA = await coordinator.connection(for: hostA)
-        #expect(againA !== liveA)
-        #expect(counter.count == 3)
-        await againA?.close()
+            // Eviction proof: the next call for either host must negotiate
+            // fresh rather than returning the (closed) cached connection.
+            let againA = await coordinator.connection(for: hostA)
+            #expect(againA !== liveA)
+            #expect(counter.count == 3)
+            await againA?.close()
+        }
     }
 
     @Test(.timeLimit(.minutes(2)))
@@ -692,48 +728,55 @@ struct RemoteConnectionCoordinatorTests {
             serverKey: hostKey
         )
         let counter = CallCounter()
-        let box = ConnectionBox()
-        let gate = Gate()
-        let authenticatedHost = Self.successTransport(
-            box: box,
-            host: host,
-            hostKey: hostKey
-        )
-        let coordinator = RemoteConnectionCoordinator(
-            directory: dir,
-            signaling: SignalingClient(transport: { request, body in
-                await gate.wait()
-                return try await authenticatedHost(request, body)
-            }),
-            connectionFactory: { key, fp in
-                counter.increment()
-                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
-                box.set(connection)
-                return connection
+        try await ConnectionBox.withFixture { box in
+            let gate = Gate()
+            let authenticatedHost = Self.successTransport(
+                box: box,
+                host: host,
+                hostKey: hostKey
+            )
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(transport: { request, body in
+                    await gate.wait()
+                    return try await authenticatedHost(request, body)
+                }),
+                connectionFactory: { key, fp in
+                    counter.increment()
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                    box.set(connection)
+                    return connection
+                }
+            )
+
+            async let negotiated = coordinator.connection(for: host)
+
+            // As in `invalidateDuringInFlightNegotiationEvictsOnCompletionRatherThanRegistering`,
+            // wait until the negotiation is genuinely parked at the gate
+            // before invoking `invalidateAll` — proves this isn't racing a
+            // negotiation that already finished.
+            do {
+                try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
+            } catch {
+                // Release the cancellation-unaware child before async-let scope exit.
+                await gate.open()
+                throw error
             }
-        )
+            await coordinator.invalidateAll()
+            await gate.open()
 
-        async let negotiated = coordinator.connection(for: host)
+            let result = await negotiated
+            #expect(result == nil, "a connection invalidated mid-negotiation via invalidateAll must never be handed back")
+            #expect(counter.count == 1, "invalidateAll must not itself trigger a second negotiation")
 
-        // As in `invalidateDuringInFlightNegotiationEvictsOnCompletionRatherThanRegistering`,
-        // wait until the negotiation is genuinely parked at the gate
-        // before invoking `invalidateAll` — proves this isn't racing a
-        // negotiation that already finished.
-        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
-        await coordinator.invalidateAll()
-        await gate.open()
+            let firstConnection = try #require(box.get())
+            #expect(await firstConnection.state == .closed, "the in-flight negotiation's result must be closed, not left dangling")
 
-        let result = await negotiated
-        #expect(result == nil, "a connection invalidated mid-negotiation via invalidateAll must never be handed back")
-        #expect(counter.count == 1, "invalidateAll must not itself trigger a second negotiation")
-
-        let firstConnection = try #require(box.get())
-        #expect(await firstConnection.state == .closed, "the in-flight negotiation's result must be closed, not left dangling")
-
-        let again = await coordinator.connection(for: host)
-        #expect(counter.count == 2, "a fresh call after invalidateAll must negotiate again")
-        #expect(again !== firstConnection)
-        await again?.close()
+            let again = await coordinator.connection(for: host)
+            #expect(counter.count == 2, "a fresh call after invalidateAll must negotiate again")
+            #expect(again !== firstConnection)
+            await again?.close()
+        }
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -829,57 +872,64 @@ struct RemoteConnectionCoordinatorTests {
             serverKey: hostKey
         )
         let counter = CallCounter()
-        let box = ConnectionBox()
-        let gate = Gate()
-        let authenticatedHost = Self.successTransport(
-            box: box,
-            host: host,
-            hostKey: hostKey
-        )
-        let coordinator = RemoteConnectionCoordinator(
-            directory: dir,
-            signaling: SignalingClient(transport: { request, body in
-                await gate.wait()
-                return try await authenticatedHost(request, body)
-            }),
-            connectionFactory: { key, fp in
-                counter.increment()
-                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
-                box.set(connection)
-                return connection
+        try await ConnectionBox.withFixture { box in
+            let gate = Gate()
+            let authenticatedHost = Self.successTransport(
+                box: box,
+                host: host,
+                hostKey: hostKey
+            )
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(transport: { request, body in
+                    await gate.wait()
+                    return try await authenticatedHost(request, body)
+                }),
+                connectionFactory: { key, fp in
+                    counter.increment()
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                    box.set(connection)
+                    return connection
+                }
+            )
+
+            async let negotiated = coordinator.connection(for: host)
+
+            // Wait until the negotiation has actually reached (and parked
+            // at) the gate before invalidating — proves `invalidate` lands
+            // WHILE the negotiation is genuinely in flight, not after it
+            // already completed.
+            do {
+                try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
+            } catch {
+                // Release the cancellation-unaware child before async-let scope exit.
+                await gate.open()
+                throw error
             }
-        )
+            await coordinator.invalidate(host: host)
+            await gate.open()
 
-        async let negotiated = coordinator.connection(for: host)
+            let result = await negotiated
+            #expect(result == nil, "a connection invalidated mid-negotiation must never be handed back to the caller")
+            #expect(counter.count == 1, "exactly one negotiation attempt — invalidate must not have started a second one")
 
-        // Wait until the negotiation has actually reached (and parked
-        // at) the gate before invalidating — proves `invalidate` lands
-        // WHILE the negotiation is genuinely in flight, not after it
-        // already completed.
-        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
-        await coordinator.invalidate(host: host)
-        await gate.open()
+            // No zombie registration: the (successfully negotiated, then
+            // evicted) connection must be closed and absent from the
+            // registry.
+            let firstConnection = try #require(box.get(), "the negotiation reached the connectionFactory before invalidate fired")
+            #expect(await firstConnection.state == .closed)
 
-        let result = await negotiated
-        #expect(result == nil, "a connection invalidated mid-negotiation must never be handed back to the caller")
-        #expect(counter.count == 1, "exactly one negotiation attempt — invalidate must not have started a second one")
-
-        // No zombie registration: the (successfully negotiated, then
-        // evicted) connection must be closed and absent from the
-        // registry.
-        let firstConnection = try #require(box.get(), "the negotiation reached the connectionFactory before invalidate fired")
-        #expect(await firstConnection.state == .closed)
-
-        // The NEXT call must negotiate fresh (not silently return the
-        // evicted connection, and not be permanently poisoned by the
-        // mid-flight invalidation) — proving `invalidatedAttempts` only
-        // ever marks the ONE attempt it was recorded against, not every
-        // future attempt for the same host.
-        let again = await coordinator.connection(for: host)
-        #expect(counter.count == 2, "a fresh call after invalidate-mid-flight must negotiate again, not reuse the evicted connection")
-        let secondConnection = try #require(again, "a fresh negotiation with no further invalidation should succeed normally")
-        #expect(secondConnection !== firstConnection)
-        await secondConnection.close()
+            // The NEXT call must negotiate fresh (not silently return the
+            // evicted connection, and not be permanently poisoned by the
+            // mid-flight invalidation) — proving `invalidatedAttempts` only
+            // ever marks the ONE attempt it was recorded against, not every
+            // future attempt for the same host.
+            let again = await coordinator.connection(for: host)
+            #expect(counter.count == 2, "a fresh call after invalidate-mid-flight must negotiate again, not reuse the evicted connection")
+            let secondConnection = try #require(again, "a fresh negotiation with no further invalidation should succeed normally")
+            #expect(secondConnection !== firstConnection)
+            await secondConnection.close()
+        }
     }
 
     // MARK: - Stale eviction guard
@@ -978,13 +1028,13 @@ struct RemoteConnectionCoordinatorTests {
                 from: body
             )
             let answerer = TestAnswerer()
+            box.retain(answerer)
             let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
             let rtcAnswer = try await answerer.accept(offer: rtcOffer)
             if let connection = box.get() {
                 await connection.bindIceCandidates(to: answerer)
                 await answerer.bindIceCandidates(to: connection)
             }
-            box.retain(answerer)
             afterAnswererReady?(answerer)
             let answer = try AuthenticatedSignalingAnswer(
                 offer: offer,
@@ -1154,27 +1204,57 @@ private final class MutableClock: @unchecked Sendable {
     }
 }
 
-/// Holds the most recently factory-created `RemoteHostConnection` (so the
-/// fake transport can route ICE candidates to/from it) plus every
-/// `TestAnswerer` created during the test (so they aren't deallocated —
-/// and their `RTCPeerConnection`s torn down — before the handshake
-/// completes). Test-only plumbing; production has no equivalent.
+/// Owns both sides of each real loopback connection until awaited cleanup.
+/// The latest client also routes ICE candidates during sequential negotiations.
 private final class ConnectionBox: @unchecked Sendable {
+    @MainActor
+    static func withFixture(_ body: @MainActor (ConnectionBox) async throws -> Void) async rethrows {
+        let box = ConnectionBox()
+        do {
+            try await body(box)
+        } catch {
+            await box.close()
+            throw error
+        }
+        await box.close()
+    }
+
     private let lock = NSLock()
-    private var current: RemoteHostConnection?
-    private var retained: [TestAnswerer] = []
+    private var clients: [RemoteHostConnection] = []
+    private var answerers: [TestAnswerer] = []
+    private var tasks: [Task<Void, Never>] = []
 
     func set(_ connection: RemoteHostConnection) {
-        lock.lock(); current = connection; lock.unlock()
+        lock.withLock { clients.append(connection) }
     }
 
     func get() -> RemoteHostConnection? {
-        lock.lock(); defer { lock.unlock() }
-        return current
+        lock.withLock { clients.last }
     }
 
     func retain(_ answerer: TestAnswerer) {
-        lock.lock(); retained.append(answerer); lock.unlock()
+        lock.withLock { answerers.append(answerer) }
+    }
+
+    func retain(_ task: Task<Void, Never>) {
+        lock.withLock { tasks.append(task) }
+    }
+
+    private func close() async {
+        let owned = lock.withLock {
+            let owned = (clients: clients, answerers: answerers, tasks: tasks)
+            clients.removeAll()
+            answerers.removeAll()
+            tasks.removeAll()
+            return owned
+        }
+        for task in owned.tasks { task.cancel() }
+        for task in owned.tasks { await task.value }
+        for client in owned.clients {
+            await client.setOnStateChange(nil)
+            await client.close()
+        }
+        for answerer in owned.answerers { await answerer.close() }
     }
 }
 
@@ -1205,7 +1285,7 @@ private actor Gate {
     }
 }
 
-/// Test-only WebRTC answerer — verbatim copy of `TestAnswerer` from
+/// Test-only WebRTC answerer adapted from `TestAnswerer` in
 /// `RemoteHostConnectionLoopbackTests.swift` (that suite's own doc
 /// comment establishes copy-don't-extract as the precedent for this
 /// helper). Speaks raw WebRTC only, no SSH — sufficient here because
@@ -1214,6 +1294,7 @@ private actor Gate {
 /// remote peer to complete a real SSH handshake.
 private actor TestAnswerer: WebRTCIceCandidateReceiver {
     private let factory: RTCPeerConnectionFactory
+    private var closed = false
     private var peerConnection: RTCPeerConnection?
     private var dataChannel: RTCDataChannel?
     private nonisolated let delegate = AnswererDelegate()
@@ -1237,6 +1318,7 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     }
 
     private func captureDataChannel(_ dc: RTCDataChannel) {
+        guard !closed else { dc.close(); return }
         self.dataChannel = dc
     }
 
@@ -1325,6 +1407,8 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     }
 
     func close() {
+        guard !closed else { return }
+        closed = true
         if let pending = gatheringContinuation {
             gatheringContinuation = nil
             delegate.onIceGatheringComplete = nil
@@ -1334,6 +1418,8 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
         }
         dataChannel?.close()
         peerConnection?.close()
+        dataChannel = nil
+        peerConnection = nil
         iceCandidateTarget = nil
         pendingLocalCandidates.removeAll()
     }

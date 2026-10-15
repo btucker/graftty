@@ -3,6 +3,7 @@
 import GhosttyKit
 import Testing
 @testable import GrafttyMobileKit
+import SwiftUI
 import UIKit
 
 private final class LinkTestLongPress: UILongPressGestureRecognizer {
@@ -85,6 +86,73 @@ private final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAni
 @Suite
 @MainActor
 struct TerminalPaneViewTests {
+
+    @Test("@spec IOS-6.38: When the user toggles Auto-correct in the iOS keyboard accessory tray, the application shall enable or disable native terminal autocorrection without changing existing text or sending terminal input, default to off, and remember the preference across panes and app launches.")
+    func autocorrectionTogglePreservesInputAndPreference() throws {
+        #expect(SingleSessionView.terminalControlBarItems.contains(.autocorrection))
+        #expect(UIImage(systemName: "textformat.abc") != nil)
+        let suite = "TerminalAutocorrectionTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preference = AppStorage(wrappedValue: false, SingleSessionView.autocorrectionDefaultsKey, store: defaults)
+        #expect(!preference.wrappedValue)
+
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let view = container.terminalView
+        var output = ""
+        container.committedSoftwareInput = .init(insertText: { output += $0 }, deleteBackward: { output.removeLast() })
+        let host = UIViewController()
+        host.view = container
+        let window = UIWindow(frame: container.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        #expect(container.focusKeyboardInput())
+        view.insertText("teh")
+        #expect(view.autocorrectionType == .no)
+        preference.wrappedValue = true
+        view.isAutocorrectionEnabled = preference.wrappedValue
+        #expect(view.autocorrectionType == .yes)
+        #expect(view.isFirstResponder)
+        #expect(output == "teh")
+        let whole = try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))
+        #expect(view.text(in: whole) == "teh")
+
+        // UIKit's correction uses the same retained range as dictation.
+        view.replace(whole, withText: "the")
+        #expect(output == "the")
+
+        let restored = AppStorage(wrappedValue: false, SingleSessionView.autocorrectionDefaultsKey, store: defaults)
+        let nextPane = TerminalInputContainerView(frame: .zero)
+        nextPane.terminalView.isAutocorrectionEnabled = restored.wrappedValue
+        #expect(nextPane.terminalView.autocorrectionType == .yes)
+        preference.wrappedValue = false
+        view.isAutocorrectionEnabled = false
+        #expect(view.autocorrectionType == .no)
+        #expect(view.isFirstResponder)
+        #expect(!restored.wrappedValue)
+        #expect(view.text(in: whole) == "the")
+        #expect(output == "the")
+        #expect(view.autocapitalizationType == .none)
+        #expect(view.smartQuotesType == .no)
+        #expect(view.smartDashesType == .no)
+        #expect(view.inlinePredictionType == .no)
+    }
+
+    @Test("Changing autocorrection preserves an active marked composition")
+    func autocorrectionPreservesMarkedText() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        var output = ""
+        container.committedSoftwareInput = .init(insertText: { output += $0 }, deleteBackward: {})
+        let view = container.terminalView
+        view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        for enabled in [true, false] {
+            view.isAutocorrectionEnabled = enabled
+            let marked = try #require(view.markedTextRange)
+            #expect(view.text(in: marked) == "にほん")
+            #expect(output.isEmpty)
+        }
+    }
 
     @Test("@spec IOS-6.27: While native iOS dictation streams or revises terminal text, the application shall retain the text and UTF-16 positions reported to UIKit across commits, apply revisions without duplicating prior words, and clear that input context when terminal keyboard focus ends.")
     func dictationRetainsCommittedTextAndAppliesRevisions() throws {

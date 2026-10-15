@@ -111,6 +111,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
 
     private let sessionName: String
     private let clientID: DisplayClientID
+    private let ownerIdentity: String?
     private let defaultKind: DisplayClientKind
     private let ownershipStore: SessionDisplayOwnershipStore
     private let broadcaster: DisplayOwnershipBroadcaster
@@ -142,6 +143,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
         sessionName: String,
         clientID: DisplayClientID,
         defaultKind: DisplayClientKind,
+        ownerIdentity: String? = nil,
         ownershipStore: SessionDisplayOwnershipStore,
         broadcaster: DisplayOwnershipBroadcaster,
         sendText: @escaping @Sendable (String) -> Void,
@@ -155,6 +157,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
         self.sessionName = sessionName
         self.clientID = clientID
         self.defaultKind = defaultKind
+        self.ownerIdentity = ownerIdentity
         self.ownershipStore = ownershipStore
         self.broadcaster = broadcaster
         self.sendText = sendText
@@ -174,6 +177,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
     }
 
     public func handleControl(_ envelope: WebControlEnvelope) {
+        guard lock.withLock({ !detached }) else { return }
         switch envelope {
         case let .hello(protocolClientID, _, role, visible, cols, rows):
             guard bindOrVerify(protocolClientID: protocolClientID) else { return }
@@ -190,7 +194,8 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
                 kind: kind,
                 role: role,
                 visible: visible,
-                grid: grid
+                grid: grid,
+                identity: ownerIdentity
             )
             noteAcceptedOwnerGridIfCurrentOwner(snapshot: snapshot)
             broadcaster.broadcast(snapshot)
@@ -263,7 +268,8 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
         do {
             let completed: Data? = try lock.withLock {
                 let snapshot = ownershipStore.snapshot(sessionName: sessionName)
-                guard supportsImagePaste, !detached, attached, snapshot.ownerClientID == clientID else {
+                guard supportsImagePaste, !detached, attached,
+                      ownershipStore.isAttachedOwner(sessionName: sessionName, clientID: clientID) else {
                     throw ImagePasteUpload.UploadError.invalidUpload
                 }
                 if case .cancel = message {
@@ -295,7 +301,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
                 let error: String? = self.lock.withLock {
                     let snapshot = self.ownershipStore.snapshot(sessionName: self.sessionName)
                     guard !self.detached, self.pendingImageCommit == id,
-                          snapshot.ownerClientID == self.clientID,
+                          self.ownershipStore.isAttachedOwner(sessionName: self.sessionName, clientID: self.clientID),
                           snapshot.epoch == self.imageUploadEpoch else {
                         if self.pendingImageCommit == id { self.pendingImageCommit = nil }
                         return "Pane control changed before the image could be pasted."
@@ -327,7 +333,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             defer { if pendingImageCommit == id { pendingImageCommit = nil } }
             let snapshot = ownershipStore.snapshot(sessionName: sessionName)
             guard !detached, pendingImageCommit == id,
-                  snapshot.ownerClientID == clientID,
+                  ownershipStore.isAttachedOwner(sessionName: sessionName, clientID: clientID),
                   snapshot.epoch == imageUploadEpoch else {
                 return "Pane control changed before the image could be pasted."
             }
@@ -430,7 +436,8 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             kind: kind,
             role: .interactive,
             visible: true,
-            grid: grid
+            grid: grid,
+            identity: ownerIdentity
         )
         noteAcceptedOwnerGridIfCurrentOwner(snapshot: snapshot)
         broadcaster.broadcast(snapshot)
@@ -454,7 +461,8 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
     }
 
     private func isCurrentOwner() -> Bool {
-        ownershipStore.snapshot(sessionName: sessionName).ownerClientID == clientID
+        lock.withLock { attached && !detached }
+            && ownershipStore.isAttachedOwner(sessionName: sessionName, clientID: clientID)
     }
 
     private func acceptOwnerGrid(_ grid: DisplayGrid) {
@@ -510,7 +518,8 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             ownerKind: snapshot.ownerKind,
             grid: snapshot.grid,
             epoch: snapshot.epoch,
-            revision: snapshot.revision
+            revision: snapshot.revision,
+            ownerIdentity: snapshot.ownerIdentity
         )
     }
 

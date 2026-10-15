@@ -47,3 +47,5 @@ For a Markdown image reference, extract its destination and remove angle bracket
 If `graftty preview` fails, report its actual error and try `graftty open <path>` when a separate native file viewer would help. Do not claim delivery after a failure or a missing preview. If an older CLI lacks the `preview` command, use `graftty image` for images or `graftty open` for other files. If the running app rejects the new preview request, use `graftty open`; the new CLI's `image` alias sends the same request and cannot downgrade it. Locate the bundled CLI as described in [graftty-open](../graftty-open/SKILL.md).
 
 Do not use `imgcat`, `kitten icat`, `chafa`, hand-written graphics escapes, or padding newlines. Never write directly to `/dev/tty*` or send a terminal query from a tool shell.
+
+For restricted Codex socket access, follow [graftty-team](../graftty-team/SKILL.md) before running the command.

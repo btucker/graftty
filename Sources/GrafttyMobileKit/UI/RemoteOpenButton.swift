@@ -205,12 +205,20 @@ struct RemoteOpenButton: View {
 
     @ViewBuilder
     private func floatingControls(actionID: UUID) -> some View {
+        let visible = (imageReady && imageOffer != nil) || (isActive && (isPaneOwner() || !offers.isEmpty))
+        // Keep the presentation anchor mounted while scene activity hides the controls.
         ViewThatFits {
-            HStack(spacing: 12) { resourceButtons(actionID: actionID) }.fixedSize()
-            VStack(spacing: 12) { resourceButtons(actionID: actionID) }.fixedSize()
+            TerminalFloatingControlGroup(isVisible: visible) {
+                HStack(spacing: 8) { resourceButtons(actionID: actionID) }.fixedSize()
+            }
+            TerminalFloatingControlGroup(isVisible: visible) {
+                VStack(spacing: 8) { resourceButtons(actionID: actionID) }.fixedSize()
+            }
             ScrollView(.vertical) {
-                VStack(spacing: 12) { resourceButtons(actionID: actionID) }
-                    .fixedSize().frame(maxWidth: .infinity)
+                TerminalFloatingControlGroup(isVisible: visible) {
+                    VStack(spacing: 8) { resourceButtons(actionID: actionID) }.fixedSize()
+                }
+                .frame(maxWidth: .infinity)
             }
             .frame(minWidth: 44)
         }

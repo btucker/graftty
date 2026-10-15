@@ -425,6 +425,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             sessionName: sessionName,
             clientID: clientID,
             defaultKind: defaultKind,
+            ownerIdentity: "ssh-device:\(deviceID.value)",
             ownershipStore: ownershipStore,
             broadcaster: ownershipBroadcaster,
             sendText: { [weak self] payload in

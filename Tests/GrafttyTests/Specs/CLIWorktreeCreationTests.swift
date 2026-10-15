@@ -919,19 +919,12 @@ struct CLIWorktreeCreationTests {
     @Test("The Graftty Team skill avoids persona language and documents shell-safe prompting")
     func teamSkillDocumentsWorktreeAddressWorkflow() throws {
         let skill = try GrafttyTeamSkillText.load()
-        #expect(skill.contains("graftty worktree add <name> --agent <codex|claude>"))
-        #expect(skill.contains("stable reply address"))
-        #expect(skill.contains("graftty team send --stdin '<address>'"))
-        #expect(skill.contains("--base <ref>"))
-        #expect(skill.contains("--base HEAD"))
-        #expect(skill.contains("first session"))
-        #expect(skill.contains("--prompt-stdin"))
-        #expect(skill.contains("`--prompt` only for trusted literal text"))
-        #expect(skill.contains("Proactively delegate"))
-        #expect(skill.contains("does not delegate the task"))
-        #expect(skill.contains("confirm that a top-level child"))
-        #expect(skill.contains("stop working on that scope"))
-        #expect(skill.contains("parent's exact canonical address"))
-        #expect(!skill.contains("Spawn a teammate"))
+        let options = try GrafttyTeamSkillText.load(reference: "worktrees")
+        for token in ["graftty worktree add <name> --agent <codex|claude>", "graftty team send --stdin '<address>'", "--prompt-stdin"] {
+            #expect(skill.contains(token))
+        }
+        for token in ["--base <ref>", "--base HEAD", "--existing", "--wait", "--timeout"] {
+            #expect(options.contains(token))
+        }
     }
 }

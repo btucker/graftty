@@ -103,6 +103,16 @@ struct WebControlEnvelopeTests {
     }
 
     @Test
+    func retainedLeaderIdentitySurvivesOwnershipRoundTrip() throws {
+        let snapshot = try DisplayOwnershipSnapshot(
+            sessionName: "main", ownerClientID: .init("channel"), ownerKind: .ios,
+            grid: .daemonFallback, epoch: 2, ownerIdentity: "ssh-device:paired-phone"
+        )
+        let envelope = WebControlEnvelope.ownership(snapshot)
+        #expect(try WebControlEnvelope.parse(Data(envelope.encoded().utf8)) == envelope)
+    }
+
+    @Test
     func rejectsNonJSONPayload() {
         #expect(throws: WebControlEnvelope.ParseError.notJSON) {
             try WebControlEnvelope.parse(Data("not json".utf8))
