@@ -10,14 +10,13 @@ final class ImagePreviewStore: ObservableObject {
 
     struct Preview: Identifiable {
         let id = UUID()
-        let image: CGImage
-        let filename: String
-        let sourceURL: URL?
+        let files: [FilePreviewFile]
+        var filename: String { files.first?.url.lastPathComponent ?? "Preview" }
+        var sourceURL: URL? { files.first?.sourceURL }
 
-        init(image: CGImage, filename: String, sourceURL: URL? = nil) {
-            self.image = image
-            self.filename = filename
-            self.sourceURL = sourceURL
+        init(files: [FilePreviewFile]) {
+            precondition(!files.isEmpty)
+            self.files = files
         }
     }
 
@@ -42,10 +41,10 @@ final class ImagePreviewStore: ObservableObject {
         if isCurrent(generation, for: pane) { generations.removeValue(forKey: pane) }
     }
 
-    func present(_ image: CGImage, filename: String, sourceURL: URL? = nil, for pane: PaneSlotID) {
+    func present(files: [FilePreviewFile], for pane: PaneSlotID) {
         order.removeAll { $0 == pane }
         if order.count >= Self.maximumPreviews, let oldest = order.first { dismiss(oldest) }
-        previews[pane] = Preview(image: image, filename: filename, sourceURL: sourceURL)
+        previews[pane] = Preview(files: files)
         order.append(pane)
     }
 
@@ -64,10 +63,4 @@ enum ImagePreviewLayout {
     }
 
     static func trayHeight(paneHeight: CGFloat) -> CGFloat { max(0, min(360, paneHeight * 0.45)) }
-    static func clampZoom(_ zoom: CGFloat) -> CGFloat { zoom.isFinite ? min(8, max(1, zoom)) : 1 }
-    static func fit(image: CGSize, viewport: CGSize) -> CGSize {
-        guard image.width > 0, image.height > 0 else { return .zero }
-        let scale = max(0, min(viewport.width / image.width, viewport.height / image.height))
-        return CGSize(width: image.width * scale, height: image.height * scale)
-    }
 }

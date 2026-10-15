@@ -11,7 +11,27 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct RemoteBrowserButtonTests {
-    @Test("@spec IMAGE-2.11: When the mobile pane lacks horizontal room for Images and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.", .timeLimit(.minutes(1)), arguments: [CGFloat(78), CGFloat(320)])
+    @Test("@spec PREVIEW-2.8: When a multi-file preview arrives for the focused owning mobile pane, the application shall automatically download and present the complete collection in order and remove every local snapshot after dismissal.", .timeLimit(.minutes(1)))
+    func collectionAutoOpensAndCleansUpEveryFile() async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false, autoPreview: true)
+        defer { close(fixture) }
+        let group = UUID()
+        fixture.state.offers = ["before.png", "after.png"].map {
+            RemoteOpenOffer(id: UUID(), filename: $0, byteCount: imageBytes.count, paneSessionName: "pane",
+                            previewKind: "file", previewOwnerDeviceID: .init(value: "fixture-phone"), previewGroupID: group)
+        }
+        try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+        let controller = try #require(quickLook(in: fixture.host.presentedViewController))
+        let source = try #require(controller.dataSource)
+        #expect(source.numberOfPreviewItems(in: controller) == 2)
+        let files = try (0..<2).map { try #require(source.previewController(controller, previewItemAt: $0).previewItemURL) }
+        #expect(files.map(\.lastPathComponent) == ["before.png", "after.png"])
+        #expect(files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+        try await finishPresentation(in: fixture)
+        try await waitUntil { files.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) } }
+    }
+
+    @Test("@spec IMAGE-2.11: When the mobile pane lacks horizontal room for Preview and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.", .timeLimit(.minutes(1)), arguments: [CGFloat(78), CGFloat(320)])
     func imageControlsFitClippedPane(paneWidth: CGFloat) async throws {
         let fixture = try makeButtonFixture(owner: true, image: true, paneWidth: paneWidth)
         defer { close(fixture) }
@@ -19,7 +39,7 @@ struct RemoteBrowserButtonTests {
         let bounds = fixture.host.view.convert(fixture.host.view.bounds, to: fixture.window.screen.coordinateSpace)
         #expect(abs(bounds.width - paneWidth) < 1)
         let objects = accessibilityObjects(in: fixture.host.view)
-        let images = try #require(objects.first { $0.accessibilityLabel == "Images" })
+        let images = try #require(objects.first { $0.accessibilityLabel == "Preview" })
         let browser = try #require(objects.first { $0.accessibilityLabel == "Browser" })
         for control in [images, browser] {
             let frame = control.accessibilityFrame
@@ -102,9 +122,9 @@ struct RemoteBrowserButtonTests {
         func authenticate() async -> Result<Void, Error> { .success(()) }
     }
 
-    @Test("@spec IMAGE-2.4: When a mobile image request arrives, the application shall preserve typing and show an Images action that presents native Quick Look only after a tap, without automatically reopening a dismissed offer.", .timeLimit(.minutes(1)))
-    func imagesArriveWithoutInterruptingTypingAndOpenOnTap() async throws {
-        let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false)
+    @Test("@spec IMAGE-2.4: When a mobile preview request arrives for the focused owning pane, the application shall automatically present native Quick Look once and retain a Preview action for manual reopening after dismissal.", .timeLimit(.minutes(1)))
+    func previewsAutoOpenOnceAndCanBeReopened() async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false, autoPreview: true)
         defer { close(fixture) }
         let incoming = imageOffer()
         let field = UITextField(frame: CGRect(x: 20, y: 40, width: 100, height: 40))
@@ -112,16 +132,11 @@ struct RemoteBrowserButtonTests {
         field.becomeFirstResponder()
         try await Task.sleep(for: .milliseconds(150))
         #expect(field.isFirstResponder)
-        #expect(!accessibilityObjects(in: fixture.host.view).contains { $0.accessibilityLabel == "Images" })
+        #expect(!accessibilityObjects(in: fixture.host.view).contains { $0.accessibilityLabel == "Preview" })
         fixture.state.offers = [incoming]
         try await waitForImages(fixture, filename: "image.png")
-        #expect(field.isFirstResponder, "Receiving an image must preserve the terminal's keyboard focus")
-        #expect(fixture.host.presentedViewController == nil)
-        #expect(accessibilityObjects(in: fixture.host.view).contains {
-            $0.accessibilityLabel == "Browser" && $0.accessibilityValue == "0 available resources"
-        })
-        try activateImages(in: fixture.host.view)
-        try await waitUntil { fixture.host.presentedViewController != nil }
+        try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+        #expect(!field.isFirstResponder)
         let sheet = try #require(fixture.host.presentedViewController)
         try await waitUntil { quickLook(in: sheet) != nil }
         let controller = try #require(quickLook(in: sheet))
@@ -171,7 +186,7 @@ struct RemoteBrowserButtonTests {
         try await waitUntil { !FileManager.default.fileExists(atPath: url.path) }
     }
 
-    @Test("@spec IMAGE-2.5: If the latest mobile image changes during download or viewing, then the application shall discard stale bytes, close the old preview and leave only the replacement image manually available.", .timeLimit(.minutes(1)))
+    @Test("@spec IMAGE-2.5: If the latest mobile image changes during download or viewing, then the application shall discard stale bytes, close the old preview and automatically open the replacement when the pane remains focused and owned.", .timeLimit(.minutes(1)))
     func replacementCancelsStaleDownloadAndMountedPreview() async throws {
         let fixture = try makeButtonFixture(owner: true, image: true)
         defer { close(fixture) }
@@ -182,19 +197,17 @@ struct RemoteBrowserButtonTests {
         fixture.state.offers = [imageOffer("replacement.png")]
         try await Task.sleep(for: .seconds(3.3))
         fixture.state.slowRead = false
-        try await Task.sleep(for: .seconds(1))
-        #expect(fixture.host.presentedViewController == nil)
-        try await waitForImages(fixture)
-        try activateImages(in: fixture.host.view)
         try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
         let controller = try #require(quickLook(in: fixture.host.presentedViewController))
         let url = try #require(controller.dataSource?.previewController(controller, previewItemAt: 0).previewItemURL)
         #expect(url.lastPathComponent == "replacement.png")
         fixture.state.offers = [imageOffer("newest.png")]
-        try await waitUntil { fixture.host.presentedViewController == nil }
         try await waitUntil { !FileManager.default.fileExists(atPath: url.path) }
-        try await waitForImages(fixture)
-        #expect(fixture.host.presentedViewController == nil)
+        try await waitUntil {
+            guard let next = quickLook(in: fixture.host.presentedViewController) else { return false }
+            return next.dataSource?.previewController(next, previewItemAt: 0).previewItemURL?.lastPathComponent == "newest.png"
+        }
+
     }
 
     @Test("@spec IMAGE-2.6: If a mobile image is unavailable or cannot be downloaded or natively previewed, then the application shall show an actionable image error and allow a later retry.", .timeLimit(.minutes(1)), arguments: [false, true])
@@ -208,8 +221,8 @@ struct RemoteBrowserButtonTests {
         try activateImages(in: fixture.host.view)
         try await waitUntil { fixture.host.presentedViewController is UIAlertController }
         let alert = try #require(fixture.host.presentedViewController as? UIAlertController)
-        #expect(alert.message?.contains("graftty image") == true)
-        #expect(alert.message?.contains(unsupportedPreview ? "supported image" : "download") == true)
+        #expect(alert.message?.contains("graftty preview") == true)
+        #expect(alert.message?.contains(unsupportedPreview ? "Quick Look supported file" : "download") == true)
         try await finishPresentation(in: fixture)
         fixture.state.failRead = false
         fixture.state.unsupportedPreview = false
@@ -253,13 +266,13 @@ struct RemoteBrowserButtonTests {
         try await waitUntil {
             fixture.host.view.layoutIfNeeded()
             return accessibilityObjects(in: fixture.host.view).contains {
-                $0.accessibilityLabel == "Images" && (filename == nil || $0.accessibilityValue == filename)
+                $0.accessibilityLabel == "Preview" && (filename == nil || $0.accessibilityValue == filename)
             }
         }
         try await Task.sleep(for: .milliseconds(50))
     }
     private func activateImages(in view: UIView) throws {
-        let button = try #require(accessibilityObjects(in: view).first { $0.accessibilityLabel == "Images" })
+        let button = try #require(accessibilityObjects(in: view).first { $0.accessibilityLabel == "Preview" })
         try #require(button.accessibilityActivate())
     }
 
@@ -408,7 +421,7 @@ struct RemoteBrowserButtonTests {
     }
 
     private func makeButtonFixture(owner: Bool, pending: Bool = false, authentication: Bool = true,
-                                   image: Bool = false, imageInitiallyAvailable: Bool = true, paneWidth: CGFloat? = nil) throws -> ButtonFixture {
+                                   image: Bool = false, imageInitiallyAvailable: Bool = true, paneWidth: CGFloat? = nil, autoPreview: Bool = false) throws -> ButtonFixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let coordinator = RemoteConnectionCoordinator(directory: directory, connectionsAllowedInitially: false)
@@ -428,8 +441,13 @@ struct RemoteBrowserButtonTests {
         if pending { _ = presentation.begin(offer.id) }
         let state = ButtonState(owner: owner)
         state.offers = image && !imageInitiallyAvailable ? [] : [image ? imageOffer() : offer]
+        var autoOpen = RemotePreviewAutoOpen()
+        // Most fixtures exercise reopening a preview the user has already dismissed.
+        if !autoPreview, image {
+            for offer in state.offers { _ = autoOpen.take(offer, isReady: true, canPresent: true) }
+        }
         let button = ButtonFixtureView(state: state, coordinator: coordinator, host: host, imageBytes: imageBytes,
-                                      device: device, initialPresentation: presentation, paneWidth: paneWidth)
+                                      device: device, initialPresentation: presentation, paneWidth: paneWidth, initialAutoOpen: autoOpen)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
         let previous = scene.windows.first { $0.isKeyWindow }
@@ -457,6 +475,7 @@ struct RemoteBrowserButtonTests {
         let device: RemoteDeviceID
         let initialPresentation: ChromeOfferPresentation
         let paneWidth: CGFloat?
+        let initialAutoOpen: RemotePreviewAutoOpen
         var body: some View {
             if state.visible {
                 let button = RemoteOpenButton(host: host, worktree: state.worktree, coordinator: coordinator, sessionName: "pane",
@@ -474,7 +493,7 @@ struct RemoteBrowserButtonTests {
                         }
                         return .openResource(.offers(state.offers))
                     }, browserConnectionReady: state.ready, isPaneFocused: state.focused, hasOwnershipSnapshot: state.hasSnapshot,
-                    isPaneOwner: { state.owner }, canPresentAuthentication: { true }, terminalRequest: .constant(nil), chromePresentation: initialPresentation)
+                    autoOpen: initialAutoOpen, isPaneOwner: { state.owner }, canPresentAuthentication: { true }, terminalRequest: .constant(nil), chromePresentation: initialPresentation)
                     .environment(\.scenePhase, state.active ? .active : .background)
                     .environment(\.accessibilityEnabled, true)
                     .environment(\.biometricGate, state.gate)

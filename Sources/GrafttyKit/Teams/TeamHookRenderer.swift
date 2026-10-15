@@ -24,7 +24,7 @@ public enum TeamHookRenderer {
     }
 
     static let skillGuidance = "Load the `graftty` skill for Attention recaps before finishing this session. Each new recap must include a task-specific `emoji`; provide up to three distinct `emojiAlternatives` so Graftty can choose an unused identity. Include these fields even if an older cached skill omits them. Load the `graftty-team` skill for agent coordination and durable roles when you need to message, delegate, or pin an agent. Graftty keeps one agent per worktree: never create a worktree yourself with `git worktree add`, a provider worktree tool, a worktree-isolated subagent, or another skill. To do work in a new worktree, delegate it with `graftty worktree add <name> --agent <codex|claude> --prompt-stdin` as the `graftty-team` skill describes."
-        + " Use the `graftty-image` skill when asked to show an image or when producing a finished visual for review. Run `graftty image` before responding; tool images, Markdown embeds, and file links alone do not open Graftty's native preview. Use `graftty-open` for other finished review artifacts or requested URLs."
+        + " When a visual would explain something better, create self-contained HTML and deliver it with the `graftty-preview` skill. Use this skill when asked to show files or when producing a finished visual for review. Run `graftty preview` before responding; tool images, Markdown embeds, and file links alone do not open Graftty's native preview. Use `graftty-open` for requested URLs or an explicit request to open a file in its default app."
 
     public static func postToolUse(runtime: TeamHookRuntime, messages: [TeamInboxMessage]) throws -> String {
         switch runtime {

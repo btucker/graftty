@@ -4,8 +4,15 @@ import Testing
 import GrafttyKit
 
 struct ImageCLITests {
+    @Test("@spec PREVIEW-1.1: When graftty preview receives a local file path, the CLI shall request a native preview through the same pane-scoped IPC as the legacy image alias.")
+    func previewIsPrimaryCommand() throws {
+        let command = try GrafttyCLI.parseAsRoot(["preview", "./explanation.html", "./chart.pdf"])
+        #expect((command as? Image)?.paths == ["./explanation.html", "./chart.pdf"])
+        let legacy = try GrafttyCLI.parseAsRoot(["image", "./chart.png", "--width", "40"])
+        #expect(legacy is Image)
+    }
     @MainActor
-    @Test("@spec IMAGE-1.1: When graftty image runs without a terminal, the CLI shall send an absolute file path and the originating pane session through app IPC without emitting image bytes, terminal escapes, or padding, and shall propagate rejection and transport failures.", .timeLimit(.minutes(1)))
+    @Test("@spec IMAGE-1.1: When graftty preview runs without a terminal, the CLI shall send ordered absolute file paths and the originating pane session through app IPC without emitting image bytes, terminal escapes, or padding, and shall propagate rejection and transport failures.", .timeLimit(.minutes(1)))
     func sendsImageRequestWithoutTTY() async throws {
         let executable = try imageExecutable()
         let root = URL(fileURLWithPath: "/tmp/graftty-image-\(UUID().uuidString.prefix(8))")
@@ -20,7 +27,7 @@ struct ImageCLITests {
             server.onRequest = { message in received = message; return response }
             try server.start()
             let result = try await runImage(executable: executable, target: target, socket: socket)
-            #expect(received == .previewImage(path: "", target: target, paneSessionName: "fixture-pane"))
+            #expect(received == .previewFiles(path: "", targets: [target, target + ".html"], paneSessionName: "fixture-pane"))
             #expect(result.stdout.isEmpty)
             #expect(result.status == (response == .ok ? 0 : 1))
             #expect(response == .ok ? result.stderr.isEmpty : result.stderr.contains("Image rejected"))
@@ -34,7 +41,7 @@ struct ImageCLITests {
     @Test("@spec IMAGE-1.2: When graftty image receives legacy width and pad options, the CLI shall accept them without reserving terminal rows, and shall encode a response-bearing native preview request.")
     func acceptsLegacyFlagsAndCodesRequest() throws {
         let command = try Image.parse(["./chart.png", "--width", "40", "--pad", "12"])
-        #expect(command.path == "./chart.png")
+        #expect(command.paths == ["./chart.png"])
         let message = NotificationMessage.previewImage(path: "/project", target: "/tmp/chart.png", paneSessionName: "pane")
         #expect(message.expectsResponse)
         #expect(try JSONDecoder().decode(NotificationMessage.self, from: JSONEncoder().encode(message)) == message)
@@ -62,7 +69,7 @@ struct ImageCLITests {
         let process = Process()
         let stdout = Pipe(), stderr = Pipe()
         process.executableURL = executable
-        process.arguments = ["image", target, "--width", "40", "--pad", "12"]
+        process.arguments = ["preview", target, target + ".html", "--width", "40", "--pad", "12"]
         var environment = ProcessInfo.processInfo.environment
         environment["GRAFTTY_SOCK"] = socket
         environment["ZMX_SESSION"] = "fixture-pane"

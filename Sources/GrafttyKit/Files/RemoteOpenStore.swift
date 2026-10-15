@@ -29,7 +29,7 @@ public actor RemoteOpenStore {
             case .tooLarge: "File previews are limited to 20 MB."
             case .expired: "This file offer expired. Run graftty open again."
             case .invalidOffset: "Invalid file download offset."
-            case .superseded: "A newer image request already replaced this preview."
+            case .superseded: "A newer request already replaced this preview."
             }
         }
     }
@@ -51,7 +51,7 @@ public actor RemoteOpenStore {
                   BrowserTunnelApprovalStore.shared.approve(ownerClientID: browserOwnerClientID, until: expires) else {
                 throw Failure.invalidBrowserOwner
             }
-            if entries.count >= 20 { entries.removeFirst() }
+            if entries.count >= 20 { evictOldest() }
             let offer = RemoteOpenOffer(id: UUID(), filename: file.absoluteString, byteCount: 0, url: file,
                                         paneSessionName: paneSessionName, browserOwnerDeviceID: deviceID)
             entries.append(Entry(offer: offer, worktree: worktree, bytes: Data(), expires: expires, previewRevision: nil))
@@ -73,6 +73,36 @@ public actor RemoteOpenStore {
                                  paneSessionName: paneSessionName, now: now)
     }
 
+    /// Inserts a collection atomically so polling never observes half a request.
+    public func offerPreviews(_ snapshots: [FilePreviewLoader.Snapshot], worktree: String,
+                              paneSessionName: String, previewRevision: UInt64,
+                              ownerDeviceID: RemoteDeviceID, now: Date = Date()) throws -> [RemoteOpenOffer] {
+        guard (1...FilePreviewLoader.maximumFiles).contains(snapshots.count) else {
+            throw FilePreviewLoader.Failure.invalidCollection
+        }
+        guard snapshots.allSatisfy({ $0.bytes.count <= RemoteOpenOffer.maxBytes }),
+              snapshots.reduce(0, { $0 + $1.bytes.count }) <= FilePreviewLoader.maximumTotalBytes else { throw Failure.tooLarge }
+        guard snapshots.allSatisfy({ !$0.filename.isEmpty && $0.filename != "." && $0.filename != ".."
+            && !$0.filename.contains("/") && !$0.filename.contains("\0") }) else { throw Failure.invalidFile }
+        purge(now: now)
+        guard !entries.contains(where: { $0.worktree == worktree && $0.offer.paneSessionName == paneSessionName
+            && ($0.previewRevision ?? 0) > previewRevision }) else { throw Failure.superseded }
+        entries.removeAll { $0.worktree == worktree && $0.offer.paneSessionName == paneSessionName && $0.previewRevision != nil }
+        let byteCount = snapshots.reduce(0) { $0 + $1.bytes.count }
+        while entries.count + snapshots.count > 20 || entries.reduce(0, { $0 + $1.bytes.count }) + byteCount > FilePreviewLoader.maximumTotalBytes {
+            evictOldest()
+        }
+        let group = UUID()
+        return snapshots.map { snapshot in
+            let offer = RemoteOpenOffer(id: UUID(), filename: snapshot.filename, byteCount: snapshot.bytes.count,
+                                       paneSessionName: paneSessionName, previewKind: "file",
+                                       previewOwnerDeviceID: ownerDeviceID, previewGroupID: group)
+            entries.append(Entry(offer: offer, worktree: worktree, bytes: snapshot.bytes,
+                                 expires: now.addingTimeInterval(900), previewRevision: previewRevision))
+            return offer
+        }
+    }
+
     /// Offers bytes already read and validated by a native preview loader.
     public func offerSnapshot(bytes: Data, filename: String, worktree: String,
                               paneSessionName: String? = nil, previewRevision: UInt64? = nil,
@@ -91,7 +121,7 @@ public actor RemoteOpenStore {
             }
         }
         while entries.count >= 20 || entries.reduce(0, { $0 + $1.bytes.count }) + bytes.count > 50 * 1024 * 1024 {
-            entries.removeFirst()
+            evictOldest()
         }
         let offer = RemoteOpenOffer(id: UUID(), filename: filename, byteCount: bytes.count, paneSessionName: paneSessionName,
                                     previewKind: previewKind, previewOwnerDeviceID: previewOwnerDeviceID)
@@ -101,7 +131,10 @@ public actor RemoteOpenStore {
     }
 
     public func withdraw(id: UUID, worktree: String) {
-        entries.removeAll { $0.offer.id == id && $0.worktree == worktree }
+        guard let entry = entries.first(where: { $0.offer.id == id && $0.worktree == worktree }) else { return }
+        if let group = entry.offer.previewGroupID {
+            entries.removeAll { $0.offer.previewGroupID == group && $0.worktree == worktree }
+        } else { entries.removeAll { $0.offer.id == id && $0.worktree == worktree } }
     }
 
     public func list(worktree: String, now: Date = Date()) -> [RemoteOpenOffer] {
@@ -116,6 +149,13 @@ public actor RemoteOpenStore {
         }
         guard offset >= 0, offset <= entry.bytes.count else { throw Failure.invalidOffset }
         return entry.bytes.subdata(in: offset..<min(entry.bytes.count, offset + RemoteOpenOffer.chunkBytes))
+    }
+
+    private func evictOldest() {
+        guard let first = entries.first else { return }
+        if let group = first.offer.previewGroupID {
+            entries.removeAll { $0.offer.previewGroupID == group }
+        } else { entries.removeFirst() }
     }
 
     private func purge(now: Date) { entries.removeAll { $0.expires <= now } }

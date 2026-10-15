@@ -1,13 +1,13 @@
 ---
 name: graftty-open
-description: Open finished documents, reports, presentations, spreadsheets, or requested HTTP(S) pages on the pane leader's device, including artifacts produced for review without a separate open request. Use graftty-image for image previews.
+description: Open HTTP(S) URLs or files explicitly requested in their default app on the pane leader's device. Use graftty-preview for visual explanations, file previews, and finished review artifacts.
 ---
 
 # Graftty open
 
-For image previews, including generated images, screenshots, charts, diagrams, and mockups, use the bundled [graftty-image](../graftty-image/SKILL.md) skill and `graftty image` to request the native tray.
+For finished artifacts the user should review, including HTML explanations, images, PDFs, spreadsheets, and presentations, use [graftty-preview](../graftty-preview/SKILL.md) and `graftty preview`. When a visual would explain something better, create self-contained HTML and preview it.
 
-Run `graftty open` for each other finished artifact you made for the user to review, such as an HTML report, CSV, PDF, or presentation. Do this even when the user has not asked to open it and you do not know which device they are using. Do not open source files you edited as part of a coding task or routine intermediate files. Also use the command when the user asks to open a file or HTTP(S) URL, including a local development site.
+Use `graftty open` for HTTP(S) URLs, including a local development site, or when the user explicitly asks to open a file in its default app. Do not open source files you edited as part of a coding task or routine intermediate files.
 
 Run the command from the Mac's tracked worktree and pane where you are working. Graftty checks that pane's current display leader when the command runs. If Graftty Mobile leads, it offers the resource in that worktree's Open menu for 15 minutes. Otherwise macOS opens it with the default app or browser. Quote paths and URLs so spaces and shell metacharacters remain literal:
 
