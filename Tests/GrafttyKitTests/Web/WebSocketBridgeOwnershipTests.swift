@@ -27,8 +27,8 @@ struct WebSocketBridgeOwnershipTests {
     }
 
 
-    @Test
-    func authenticatedReconnectLocalizesLeaderAndRejectsClosedChannelTraffic() throws {
+    @Test(arguments: [false, true])
+    func authenticatedReconnectLocalizesLeaderAndRejectsClosedChannelTraffic(detachFirst: Bool) throws {
         let store = SessionDisplayOwnershipStore()
         let broadcaster = DisplayOwnershipBroadcaster(store: store)
         let oldRecorder = Recorder()
@@ -43,16 +43,20 @@ struct WebSocketBridgeOwnershipTests {
         old.handleControl(.hello(clientID: .init("old-protocol"), kind: .ios, role: .interactive,
                                  visible: true, cols: 80, rows: 24))
         old.handleControl(.takeControl(clientID: .init("old-protocol"), kind: .ios, cols: 90, rows: 28))
-        old.detach()
-        old.handleBinary(Data("closed channel".utf8))
-        old.handleControl(.takeControl(clientID: .init("old-protocol"), kind: .ios, cols: 100, rows: 40))
-        #expect(oldRecorder.snapshot().writes.isEmpty)
+        if detachFirst { old.detach() }
         let resumed = coordinator("new-channel", recorder: newRecorder)
         resumed.handleControl(.hello(clientID: .init("new-protocol"), kind: .ios, role: .interactive,
                                      visible: true, cols: 80, rows: 24))
         let snapshot = try #require(newRecorder.ownershipSnapshots().last)
         #expect(snapshot.ownerClientID == .init("new-protocol"))
         #expect(snapshot.grid == (try DisplayGrid(cols: 90, rows: 28)))
+        old.handleControl(.hello(clientID: .init("old-protocol"), kind: .ios, role: .interactive,
+                                visible: true, cols: 80, rows: 24))
+        old.handleBinary(Data("superseded channel".utf8))
+        #expect(oldRecorder.snapshot().writes.isEmpty)
+        #expect(store.snapshot(sessionName: sessionName).ownerClientID == .init("new-channel"))
+        old.detach()
+        old.handleControl(.takeControl(clientID: .init("old-protocol"), kind: .ios, cols: 100, rows: 40))
         resumed.handleBinary(Data("restored input".utf8))
         #expect(newRecorder.snapshot().writes == [Data("restored input".utf8)])
         #expect(newRecorder.snapshot().resizes.isEmpty)

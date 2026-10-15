@@ -123,7 +123,7 @@ private final class ScrollbackFixtureController: UIViewController {
         let scroll = container.snapshotScrollView
         let firstFrame = scroll.additionalHistoryFrameForTesting ?? container.terminalView.frame
         let gap = max(0, firstFrame.minY - scroll.contentOffset.y)
-        let value = "\(follower ? "follower" : "leader") offset=\(bar.offset) total=\(bar.total) len=\(bar.len) gap=\(Int(gap)) first=\(first)"
+        let value = "\(follower ? "follower" : "leader") offset=\(bar.offset) total=\(bar.total) len=\(bar.len) gap=\(Int(gap)) width=\(Int(container.bounds.width)) height=\(Int(container.bounds.height)) first=\(first)"
         status.text = value
         status.accessibilityValue = value
     }

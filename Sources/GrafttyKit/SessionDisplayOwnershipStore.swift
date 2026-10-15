@@ -30,6 +30,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         var role: DisplayClientRole
         var visible: Bool
         var identity: String?
+        let firstAttachedRevision: UInt64
 
         /// A client may own the display only while it is visible, interactive
         /// (non-preview by both role and kind), and still presenting as the
@@ -170,11 +171,14 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         defer { lock.unlock() }
 
         var record = records[sessionName] ?? Record()
-        let attached = AttachedClient(kind: kind, role: role, visible: visible, identity: identity)
+        let previousAttachment = record.attachedClients[clientID]
+        let attached = AttachedClient(kind: kind, role: role, visible: visible, identity: identity,
+                                      firstAttachedRevision: previousAttachment?.firstAttachedRevision ?? record.revision + 1)
         record.attachedClients[clientID] = attached
         // Identity comes from the authenticated transport, never a client's hello.
         // Retain the authoritative grid until the restored leader reports its viewport.
-        let resumesOwner = identity != nil && identity == record.ownerIdentity
+        // An updated hello on a superseded channel is not a reconnect.
+        let resumesOwner = previousAttachment == nil && identity != nil && identity == record.ownerIdentity
             && record.ownerKind == kind && attached.isOwnerEligible(claimingAs: kind)
             && record.ownerClientID != clientID
         if resumesOwner {
@@ -364,6 +368,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         previousOwnerKind: DisplayClientKind?,
         previousGrid: DisplayGrid,
         previousOwnerIdentity: String? = nil,
+        previousRevision: UInt64? = nil,
         fallbackGrid: DisplayGrid = .daemonFallback
     ) -> DisplayOwnershipSnapshot {
         var changedSnapshot: DisplayOwnershipSnapshot?
@@ -376,18 +381,32 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         if record.ownerClientID == failedClientID,
            record.ownerKind == failedKind,
            record.epoch == failedEpoch {
-            if let previousOwnerClientID,
-               let previousOwnerKind,
-               record.attachedClients[previousOwnerClientID].map({
-                   $0.isOwnerEligible(claimingAs: previousOwnerKind)
-               }) ?? true {
-                record.ownerClientID = previousOwnerClientID
-                record.ownerKind = previousOwnerKind
-                record.ownerIdentity = previousOwnerIdentity ?? record.attachedClients[previousOwnerClientID]?.identity
-            } else {
-                record.ownerClientID = nil
-                record.ownerKind = nil
-                record.ownerIdentity = nil
+            record.ownerClientID = nil
+            record.ownerKind = nil
+            record.ownerIdentity = nil
+            if let previousOwnerClientID, let previousOwnerKind {
+                let previousAttachment = record.attachedClients[previousOwnerClientID]
+                let identity = previousOwnerIdentity ?? previousAttachment?.identity
+                // The former leader may have reconnected while the failed claim
+                // temporarily hid its identity. Resume its newest eligible channel.
+                let replacement: DisplayClientID?
+                if let identity, let previousRevision {
+                    replacement = record.attachedClients.filter {
+                        $0.value.identity == identity
+                            && $0.value.firstAttachedRevision > previousRevision
+                            && $0.value.isOwnerEligible(claimingAs: previousOwnerKind)
+                    }.max { $0.value.firstAttachedRevision < $1.value.firstAttachedRevision }?.key
+                } else {
+                    replacement = nil
+                }
+                let previousIsEligible = previousAttachment.map {
+                    $0.isOwnerEligible(claimingAs: previousOwnerKind)
+                } ?? true
+                if let restoredClientID = replacement ?? (previousIsEligible ? previousOwnerClientID : nil) {
+                    record.ownerClientID = restoredClientID
+                    record.ownerKind = previousOwnerKind
+                    record.ownerIdentity = identity
+                }
             }
             record.grid = previousGrid
             record.epoch += 1

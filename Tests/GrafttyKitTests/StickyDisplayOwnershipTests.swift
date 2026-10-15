@@ -59,17 +59,48 @@ struct StickyDisplayOwnershipTests {
         #expect(reconnected.epoch == claim.snapshot.epoch)
     }
 
-    @Test
-    func failedTakeoverRestoresDisconnectedLeader() {
+    @Test(arguments: [false, true])
+    func failedTakeoverRestoresDisconnectedLeader(reconnectDuringClaim: Bool) {
         let store = SessionDisplayOwnershipStore()
         _ = attach(store, "old", identity: "phone")
         let previous = store.claimOwner(sessionName: session, clientID: .init("old"), kind: .ios, grid: grid).snapshot
         _ = store.detachClient(sessionName: session, clientID: .init("old"))
         _ = attach(store, "other", identity: "tablet")
         let failed = store.claimOwner(sessionName: session, clientID: .init("other"), kind: .ios, grid: grid).snapshot
+        if reconnectDuringClaim {
+            _ = attach(store, "intermediate", identity: "phone")
+            _ = attach(store, "new", identity: "phone")
+            // Repeating an older hello must not make it the newest connection.
+            _ = attach(store, "intermediate", identity: "phone")
+        }
         _ = store.restoreOwnerAfterFailedClaim(sessionName: session, failedClientID: .init("other"),
             failedKind: .ios, failedEpoch: failed.epoch, previousOwnerClientID: previous.ownerClientID,
-            previousOwnerKind: previous.ownerKind, previousGrid: previous.grid, previousOwnerIdentity: previous.ownerIdentity)
-        #expect(attach(store, "new", identity: "phone").ownerClientID == .init("new"))
+            previousOwnerKind: previous.ownerKind, previousGrid: previous.grid,
+            previousOwnerIdentity: previous.ownerIdentity, previousRevision: previous.revision)
+        if !reconnectDuringClaim { _ = attach(store, "new", identity: "phone") }
+        #expect(store.snapshot(sessionName: session).ownerClientID == .init("new"))
+    }
+
+    @Test(arguments: [false, true])
+    func rollbackDoesNotReviveSupersededConnection(retakeOnOlderConnection: Bool) {
+        let store = SessionDisplayOwnershipStore()
+        _ = attach(store, "superseded", identity: "phone")
+        _ = store.claimOwner(sessionName: session, clientID: .init("superseded"), kind: .ios, grid: grid)
+        var previous = attach(store, "leader", identity: "phone")
+        if retakeOnOlderConnection {
+            previous = store.claimOwner(sessionName: session, clientID: .init("superseded"), kind: .ios, grid: grid).snapshot
+        } else {
+            _ = store.detachClient(sessionName: session, clientID: .init("leader"))
+        }
+        _ = attach(store, "mac", identity: nil, kind: .mac)
+        let failed = store.claimOwner(sessionName: session, clientID: .init("mac"), kind: .mac, grid: grid).snapshot
+        let restored = store.restoreOwnerAfterFailedClaim(sessionName: session, failedClientID: .init("mac"),
+            failedKind: .mac, failedEpoch: failed.epoch, previousOwnerClientID: previous.ownerClientID,
+            previousOwnerKind: previous.ownerKind, previousGrid: previous.grid,
+            previousOwnerIdentity: previous.ownerIdentity, previousRevision: previous.revision)
+        #expect(restored.ownerClientID == previous.ownerClientID)
+        if !retakeOnOlderConnection {
+            #expect(!store.isAttachedOwner(sessionName: session, clientID: .init("superseded")))
+        }
     }
 }
