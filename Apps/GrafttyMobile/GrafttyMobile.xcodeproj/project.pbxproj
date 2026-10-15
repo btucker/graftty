@@ -68,6 +68,7 @@
 		A15C2184ACE671D1B5A9E657 /* SSHAuthLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F926FB896E74D9503480EE19 /* SSHAuthLoopbackTests.swift */; };
 		A2A8FAB0407FCC81AF649074 /* TerminalPixelSizeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712112670C0A9DDB567FECDB /* TerminalPixelSizeTests.swift */; };
 		A4AD950A23C2135CEE502E61 /* BrowserControlInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4982A9F2DC39025093CF538 /* BrowserControlInteractionTests.swift */; };
+		A520E2EF6AC3CE7EA9D07B90 /* MobileAttentionNotificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5366A75685B2E4909BEE2983 /* MobileAttentionNotificationTests.swift */; };
 		A9B90654E94B1FE3C676A16F /* TerminalChromeViewportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AA1FECA7E436D882E2E782F /* TerminalChromeViewportTests.swift */; };
 		A9FEA136B7551DDE79950AD5 /* IPadWorktreeNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51649842CE2E7ACBA47F9ACA /* IPadWorktreeNavigationTests.swift */; };
 		AA14A2ACD895768E8B7A2E2B /* HostControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */; };
@@ -159,6 +160,7 @@
 		4A52344F5699042983845BC7 /* MultiPaneDetailViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiPaneDetailViewTests.swift; sourceTree = "<group>"; };
 		4DDBE5B8D50AFB2EA47A9AB0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		51649842CE2E7ACBA47F9ACA /* IPadWorktreeNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadWorktreeNavigationTests.swift; sourceTree = "<group>"; };
+		5366A75685B2E4909BEE2983 /* MobileAttentionNotificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAttentionNotificationTests.swift; sourceTree = "<group>"; };
 		55ACC7CB64EC668F86941A9E /* ClientIdentityStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientIdentityStoreTests.swift; sourceTree = "<group>"; };
 		5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostControllerTests.swift; sourceTree = "<group>"; };
 		5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneViewTests.swift; sourceTree = "<group>"; };
@@ -408,6 +410,7 @@
 				4725DB60C50A64BC035E70BB /* IPadRootLayoutSelectionTests.swift */,
 				98C28B7B9FD4CB73021407F1 /* KeyboardFrameInsetTests.swift */,
 				3D25E071713009F00061D699 /* LaunchScreenTests.swift */,
+				5366A75685B2E4909BEE2983 /* MobileAttentionNotificationTests.swift */,
 				194EE3FE3BE63175CDFFFD56 /* MobilePaneAttentionTests.swift */,
 				3A4E23E7D15FDB354063BF2C /* RootViewSizeClassTests.swift */,
 				AB040F5D6FAA7EDA4C09F34F /* SessionLifecycleTests.swift */,
@@ -795,6 +798,7 @@
 				C55600CC2CAE99D7769B31A8 /* LaunchScreenTests.swift in Sources */,
 				D51C1E9C417EC6CC1180FE22 /* LocalBrowserSessionTests.swift in Sources */,
 				6600F72F53EE9C925338B369 /* MobileAgentCompletionTests.swift in Sources */,
+				A520E2EF6AC3CE7EA9D07B90 /* MobileAttentionNotificationTests.swift in Sources */,
 				839D7F3737A06952FBB49FAC /* MobileAttentionPaneTests.swift in Sources */,
 				D6E07827478D558EA22701E3 /* MobileNavigationDecisionTests.swift in Sources */,
 				9CAB4286C051BF25058BBD67 /* MobilePaneAttentionTests.swift in Sources */,

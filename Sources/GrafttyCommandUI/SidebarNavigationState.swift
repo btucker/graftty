@@ -31,6 +31,8 @@ public final class SidebarNavigationState {
     private var bannerOccurrences: [String: SidebarAttentionOccurrence] = [:]
     private var attentionBanners: [SidebarActivityItem] = []
     public var attentionBanner: SidebarActivityItem? { attentionBanners.first }
+    /// Mobile supplies system notification delivery; desktop retains its banner queue.
+    @ObservationIgnored public var attentionRequestHandler: ((SidebarActivityItem) -> Void)?
     private let defaults: UserDefaults
     private let prefix: String
     public init(prefix: String, defaults: UserDefaults = .standard, collapsed: Bool = false) {
@@ -149,7 +151,23 @@ public final class SidebarNavigationState {
             }
         }
         bannerSnapshotReceived = true
-        attentionBanners = SidebarAttentionWorkspace.cards(from: attentionBanners + incoming)
+        if let attentionRequestHandler {
+            for item in SidebarAttentionWorkspace.cards(from: incoming) { attentionRequestHandler(item) }
+        } else {
+            attentionBanners = SidebarAttentionWorkspace.cards(from: attentionBanners + incoming)
+        }
+    }
+
+    public func resetAttentionObservation() {
+        bannerSnapshotReceived = false
+        bannerOccurrences.removeAll()
+        attentionBanners.removeAll()
+    }
+
+    public func isPendingAttentionRequest(_ item: SidebarActivityItem) -> Bool {
+        !hasViewed(item) && workspace.items.contains {
+            $0.id == item.id && $0.occurrence == item.occurrence && $0.needsAttention && !$0.isBusy
+        }
     }
 
     public func dismissAttentionBanner(_ item: SidebarActivityItem) {

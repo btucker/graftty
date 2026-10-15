@@ -194,7 +194,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.89** While the ordinary worktree list scrolls, the application shall keep Pinned Agents and the Sort order and Add Worktree line fixed above its viewport in both macOS sidebar modes.
 
-**LAYOUT-2.90** When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots.
+**LAYOUT-2.90** When a new pending Attention request arrives while the macOS worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots.
 
 **LAYOUT-2.91** When an Attention banner is clicked, the application shall open its worktree directly in the project worktree list and acknowledge only a successful visit.
 
@@ -2181,6 +2181,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-12.8** When graftty open runs in a pane led by GrafttyMobile, the host shall offer its resource to mobile; when Mac or another client leads or no pane session is supplied, the host shall open it with macOS.
 
 **IOS-12.9** When graftty open successfully enqueues a resource, the CLI shall stay quiet without claiming browser completion, and shall propagate host rejection and transport failures.
+
+### IOS-13.x — System Attention notifications
+
+**IOS-13.1** When a new pending Attention occurrence arrives on mobile after the initial snapshot, the application shall deliver it through the system notification handler instead of queuing a custom banner, suppress repeated or older occurrences, and retain the request in Attention.
+
+**IOS-13.2** When mobile delivers an Attention notification, the application shall request notification authorization, present an authorized request with its project, worktree, and request text, and preserve a host-scoped activation payload without marking it viewed.
+
+**IOS-13.3** If mobile notification authorization is denied or delivery fails, then the application shall leave the Attention request pending without displaying a custom notification toast or marking it viewed.
+
+**IOS-13.4** When the user taps a mobile Attention notification, the application shall wait for unlock, route through its saved host to the request's project and worktree on iPhone or iPad, and acknowledge only the opened occurrence after a successful visit.
 
 ## IPAD — iPad Layout
 

@@ -18,6 +18,26 @@ enum MobilePaneAttention {
         routes.pending.removeValue(forKey: ObjectIdentifier(navigation))
     }
 
+    static func route(_ item: SidebarActivityItem, navigation: SidebarNavigationState) {
+        navigation.showProject(item.projectID)
+        navigation.rememberedWorktrees[item.projectID] = item.worktreeID
+        routes.pending[ObjectIdentifier(navigation)] = item
+    }
+
+    /// Stored system notifications can outlive the host's opaque route table.
+    static func resolvedRoute(_ item: SidebarActivityItem, worktrees: [WorktreePanes]) -> SidebarActivityItem? {
+        guard let target = worktrees.first(where: { worktree in
+            guard SidebarProjection.projectID(worktree) == item.projectID else { return false }
+            if let stableID = worktree.sidebar?.id {
+                return item.id == stableID || item.id.hasPrefix(stableID + ":")
+            }
+            return worktree.path == item.worktreeID
+        }) else { return nil }
+        var resolved = item
+        resolved.worktreeID = target.path
+        return resolved
+    }
+
     static func openTarget(for context: SidebarWorktreeContext) -> SidebarActivityItem {
         context.pending.first ?? context.item
     }
@@ -42,9 +62,7 @@ enum MobilePaneAttention {
         let otherWorktrees = displayedWorktrees(worktrees)
         guard let item = navigation.nextPendingWorktree(in: otherWorktrees, projectID: nil, after: currentWorktree),
               projects.contains(where: { $0.id == item.projectID }) else { return nil }
-        navigation.showProject(item.projectID)
-        navigation.rememberedWorktrees[item.projectID] = item.worktreeID
-        routes.pending[ObjectIdentifier(navigation)] = item
+        route(item, navigation: navigation)
         return item
     }
 }

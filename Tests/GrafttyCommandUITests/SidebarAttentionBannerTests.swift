@@ -18,7 +18,39 @@ struct SidebarAttentionBannerTests {
               isBusy: false)
     }
 
-    @Test("@spec LAYOUT-2.90: When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots.")
+    @Test("@spec IOS-13.1: When a new pending Attention occurrence arrives on mobile after the initial snapshot, the application shall deliver it through the system notification handler instead of queuing a custom banner, suppress repeated or older occurrences, and retain the request in Attention.")
+    func systemHandlerReplacesBanners() {
+        let navigation = SidebarNavigationState(prefix: UUID().uuidString)
+        var delivered: [SidebarActivityItem] = []
+        navigation.attentionRequestHandler = { delivered.append($0) }
+        let existing = item("existing", time: 10)
+        navigation.updateAttentionItems([existing])
+        #expect(delivered.isEmpty)
+        let fresh = item("fresh", time: 20)
+        navigation.updateAttentionItems([existing, fresh])
+        navigation.updateAttentionItems([existing, fresh])
+        navigation.updateAttentionItems([item("fresh", time: 15)])
+        #expect(delivered == [fresh])
+        #expect(navigation.attentionBanner == nil)
+        #expect(!navigation.hasViewed(fresh))
+        #expect(navigation.attentionItems(live: [], projects: [project]).contains { $0.id == fresh.id })
+    }
+
+    @Test("Switching mobile hosts primes notifications again without clearing retained requests")
+    func hostSwitchPrimesSystemHandler() {
+        let navigation = SidebarNavigationState(prefix: UUID().uuidString)
+        var delivered: [SidebarActivityItem] = []
+        navigation.attentionRequestHandler = { delivered.append($0) }
+        navigation.updateAttentionItems([])
+        let fresh = item("fresh", time: 20)
+        navigation.updateAttentionItems([fresh])
+        navigation.resetAttentionObservation()
+        navigation.updateAttentionItems([item("other-host", time: 30)])
+        #expect(delivered == [fresh])
+        #expect(!navigation.hasViewed(fresh))
+    }
+
+    @Test("@spec LAYOUT-2.90: When a new pending Attention request arrives while the macOS worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots.")
     func onlyNewRequestsShowBanners() throws {
         let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
         let navigation = SidebarNavigationState(prefix: "test", defaults: defaults)

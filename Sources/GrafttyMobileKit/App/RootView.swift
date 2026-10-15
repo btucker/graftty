@@ -23,6 +23,7 @@ public struct RootView: View {
         connectionsAllowedInitially: false
     )
     @State private var nearbyMacBrowser = NearbyMacBrowser()
+    @State private var notifications = MobileAttentionNotifications.shared
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     public init() {}
@@ -54,8 +55,15 @@ public struct RootView: View {
         }
         .onChange(of: gate.state) { _, _ in
             updateConnectionAccess()
+            activateNotificationIfReady()
         }
-        .onAppear { nearbyMacBrowser.start() }
+        .onAppear {
+            nearbyMacBrowser.start()
+            configureAttentionNotifications()
+            activateNotificationIfReady()
+        }
+        .onChange(of: notifications.activation) { _, _ in activateNotificationIfReady() }
+        .onChange(of: hostStore.hasLoaded) { _, _ in activateNotificationIfReady() }
         .onChange(of: nearbyMacBrowser.candidates) { _, candidates in
             coordinator.updateDiscoveryCandidates(candidates)
             for candidate in candidates
@@ -83,6 +91,7 @@ public struct RootView: View {
             case .active:
                 gate.applicationWillEnterForeground()
                 updateConnectionAccess()
+                activateNotificationIfReady()
                 Task {
                     await gate.authenticateOnActivation()
                 }
@@ -92,6 +101,48 @@ public struct RootView: View {
                 break
             }
         }
+    }
+
+    private func configureAttentionNotifications() {
+        let navigation = iPadAppState.sidebarNavigation
+        navigation.attentionRequestHandler = { [weak state = iPadAppState, weak gate, weak navigation] item in
+            guard let hostID = state?.selectedHostId, gate?.state == .unlocked else { return }
+            MobileAttentionNotifications.shared.enqueue(item, hostID: hostID, isCurrent: {
+                state?.selectedHostId == hostID && gate?.state == .unlocked
+                    && navigation?.isPendingAttentionRequest(item) == true
+            })
+        }
+    }
+
+    private func activateNotificationIfReady() {
+        guard gate.state == .unlocked, scenePhase == .active, hostStore.hasLoaded,
+              let activation = notifications.activation else { return }
+        notifications.activation = nil
+        Self.applyNotificationActivation(activation.payload, hosts: hostStore.hosts,
+            appState: iPadAppState, navigationPath: &navigationPath,
+            isCompact: horizontalSizeClass != .regular, showsProjectRail: showsProjectRail)
+    }
+
+    @discardableResult
+    static func applyNotificationActivation(_ payload: MobileAttentionNotifications.Payload, hosts: [Host],
+        appState: IPadAppState, navigationPath: inout NavigationPath,
+        isCompact: Bool, showsProjectRail: Bool) -> Bool {
+        guard let host = hosts.first(where: { $0.id == payload.hostID }) else { return false }
+        applyCompactHost(host, to: appState)
+        IPadRootLayout.applyBackToWorktrees(appState: appState)
+        MobilePaneAttention.route(payload.item, navigation: appState.sidebarNavigation)
+        if isCompact {
+            var path = NavigationPath()
+            path.append(host)
+            if showsProjectRail {
+                let project = SidebarProject(id: payload.item.projectID, repositoryID: payload.item.projectID,
+                                             name: payload.item.projectName)
+                appState.worktreePickerProject = project
+                path.append(ProjectStep(host: host, project: project))
+            }
+            navigationPath = path
+        }
+        return true
     }
 
     private func updateConnectionAccess() {
