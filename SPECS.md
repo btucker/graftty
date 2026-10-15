@@ -646,6 +646,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.36** When a detached local Mac pane is mounted again, the application shall retain every history line, including history shorter than one viewport, through native paging or legacy replay.
 
+**TERM-12.37** While a Mac terminal backfills history, the application shall preserve access to older pages when live output edits the active screen or reallocates its page storage.
+
+**TERM-12.38** If live output resets a restored Mac terminal or explicitly erases its history, then the application shall reject pending older pages without restoring the discarded history.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
