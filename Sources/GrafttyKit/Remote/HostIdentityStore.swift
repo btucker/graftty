@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import GrafttyProtocol
 
@@ -99,8 +103,7 @@ public final class HostIdentityStore: @unchecked Sendable {
     // rather than Application Support. This file-backed path is used
     // until that integration lands.
     public static var defaultDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Graftty")
+        AppState.defaultDirectory
             .appendingPathComponent("Remote")
     }
 

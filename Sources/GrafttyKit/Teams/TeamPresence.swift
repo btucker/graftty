@@ -213,7 +213,7 @@ public struct TeamPresenceStorage: Sendable {
         )
         let permissions = S_IRUSR | S_IWUSR
         #if canImport(Darwin)
-        let fd = Darwin.open(url.path, O_RDWR | O_CREAT, permissions)
+        let fd = GrafttyPOSIX.open(url.path, O_RDWR | O_CREAT, permissions)
         #elseif canImport(Glibc)
         let fd = Glibc.open(url.path, O_RDWR | O_CREAT, mode_t(permissions))
         #else
@@ -223,7 +223,7 @@ public struct TeamPresenceStorage: Sendable {
         defer {
             _ = flock(fd, LOCK_UN)
             #if canImport(Darwin)
-            _ = Darwin.close(fd)
+            _ = GrafttyPOSIX.close(fd)
             #elseif canImport(Glibc)
             _ = Glibc.close(fd)
             #endif

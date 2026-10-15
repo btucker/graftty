@@ -81,12 +81,22 @@ mkdir -p "$CACHE_ROOT"
 
 if [[ "$LOCK_HELD" != 1 ]]; then
   echo "→ shared SwiftPM build: $BUILD_DIR" >&2
+  if [[ "$(uname -s)" == Linux ]]; then
+    exec flock "$LOCK_FILE" "$0" --graftty-swiftpm-lock-held "$SUBCOMMAND" "$@"
+  fi
   exec /usr/bin/lockf -k "$LOCK_FILE" \
     "$0" --graftty-swiftpm-lock-held "$SUBCOMMAND" "$@"
+fi
+
+# SwiftPM's Linux XCTest discovery reads compiler index records even when the
+# tests primarily use Swift Testing. Disabling the store breaks discovery.
+INDEX_ARGUMENT=--disable-index-store
+if [[ "$(uname -s)" == Linux && "$SUBCOMMAND" == test ]]; then
+  INDEX_ARGUMENT=--enable-index-store
 fi
 
 exec swift "$SUBCOMMAND" \
   --package-path "$REPO_ROOT" \
   --scratch-path "$BUILD_DIR" \
-  --disable-index-store \
+  "$INDEX_ARGUMENT" \
   "$@"

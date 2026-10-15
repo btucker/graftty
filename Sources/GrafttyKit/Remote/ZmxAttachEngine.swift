@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 /// PTY-backed `zmx attach` engine shared by the `/ws` WebSocket bridge
 /// (via the `WebSession` adapter) and the SSH-over-WebRTC `terminal`
@@ -13,8 +17,9 @@ import Darwin
 /// same real `ioctl(TIOCSWINSZ)` resize as `/ws`.
 ///
 /// The engine spawns the child on `start()`, spawns a reader thread
-/// that blocks on `read(masterFD)`, and a size-poller thread that
-/// watches the PTY's winsize. It exposes two consumption surfaces:
+/// that blocks on `read(masterFD)` and decodes the client's initial source
+/// grid. A size-poller retains compatibility with pre-snapshot daemons.
+/// It exposes two consumption surfaces:
 ///   - Callbacks (`onPTYData`/`onExit`/`onPTYSize`) plus synchronous
 ///     `write(_:)`/`resize(cols:rows:)`/`close()`, used by `WebSession`.
 ///   - `TerminalByteStream`'s async `send`/`resize`/`close` plus the
@@ -52,16 +57,19 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         public let zmxDir: URL
         public let sessionName: String
         public let workingDirectory: URL?
+        public let spawnConfiguration: ZmxSpawnConfiguration?
         public init(
             zmxExecutable: URL,
             zmxDir: URL,
             sessionName: String,
-            workingDirectory: URL? = nil
+            workingDirectory: URL? = nil,
+            spawnConfiguration: ZmxSpawnConfiguration? = nil
         ) {
             self.zmxExecutable = zmxExecutable
             self.zmxDir = zmxDir
             self.sessionName = sessionName
             self.workingDirectory = workingDirectory
+            self.spawnConfiguration = spawnConfiguration
         }
     }
 
@@ -69,6 +77,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         case notStarted
         case alreadyStarted
         case spawnFailed(Swift.Error)
+        case wakeFailed
     }
 
     /// Called on each chunk read from the PTY. Invoked off the caller's
@@ -81,9 +90,11 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     /// or error). The caller should initiate WS close.
     public var onExit: (() -> Void)?
 
-    /// Called whenever a size-poll observes the PTY's winsize has
-    /// changed, plus once on initial start after `zmx attach` has
-    /// applied the session's size. The caller forwards this to the
+    /// Called with the decoded snapshot's source grid before replay bytes.
+    /// Daemons without snapshot metadata retain legacy PTY-size polling.
+    /// Once a source grid is known, local PTY resizes cannot overwrite it.
+    /// Ongoing owner grids come from the caller's ownership events.
+    /// The caller forwards this to the
     /// client as a `WebControlEnvelope.grid` text frame so it can size
     /// its rendering surface to match the server.
     ///
@@ -129,6 +140,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     private var readerThread: Thread?
     private var sizePoller: Thread?
     private var lastKnownSize: (cols: UInt16, rows: UInt16)?
+    private var allowsLegacySizePolling = false
     private let stateLock = NSLock()
     private var isClosed = false
 
@@ -187,6 +199,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     }
 
     public func start() throws {
+        guard attachmentRegistry?.prepareToAttach(sessionName: config.sessionName) != false else { throw Error.wakeFailed }
         stateLock.lock()
         defer { stateLock.unlock() }
         guard spawned == nil else { throw Error.alreadyStarted }
@@ -221,9 +234,14 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
             userShellPath: processEnv["SHELL"] ?? "/bin/sh",
             ghosttyResourcesDir: ghosttyResourcesDir
         )
+        if let spawnConfiguration = config.spawnConfiguration {
+            env = spawnConfiguration.env
+        }
         do {
+            var argv = config.spawnConfiguration?.argv ?? launcher.attachArgv(sessionName: config.sessionName)
+            argv.insert("--replay-grid", at: 2)
             spawned = try PtyProcess.spawn(
-                argv: launcher.attachArgv(sessionName: config.sessionName),
+                argv: argv,
                 env: env,
                 currentDirectory: config.workingDirectory
             )
@@ -240,18 +258,16 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     }
 
     public func write(_ data: Data) {
-        // `closeSync()` closes `spawned?.masterFD` outside `stateLock` and
-        // never nils `spawned` itself — checking `isClosed` under the lock
-        // first closes the TOCTOU window where a write racing an
-        // in-flight `close()` (SSH's write-FIFO consumer and
-        // `channelInactive`'s close run on unordered `Task`s) would use a
-        // stale fd number the OS may already have reused for something
-        // else.
+        guard !data.isEmpty,
+              attachmentRegistry?.prepareForInput(sessionName: config.sessionName) != false else { return }
+        // Admission may wait for recovery. Acquire only afterwards, and pin
+        // the open file description so concurrent close cannot redirect
+        // this write to a reused descriptor number.
         stateLock.lock()
-        let closed = isClosed
-        let fd = spawned?.masterFD
+        let fd = isClosed ? -1 : (spawned.map { fcntl($0.masterFD, F_DUPFD_CLOEXEC, 0) } ?? -1)
         stateLock.unlock()
-        guard !closed, let fd, !data.isEmpty else { return }
+        guard fd >= 0 else { return }
+        defer { GrafttyPOSIX.close(fd) }
         // Track the chunk before we hand it to the PTY so web-session
         // typing state reflects writes even if the PTY consumer reacts
         // immediately.
@@ -274,12 +290,28 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     /// size-poller thread's own `isClosed`-under-lock check, just above,
     /// documents the identical fd-reuse race for reads).
     public func resize(cols: UInt16, rows: UInt16) {
+        try? resize(windowSize: PtyProcess.WindowSize(cols: cols, rows: rows))
+    }
+
+    /// REMOTE-9.12: set the attach PTY's grid and pixel size together, so
+    /// `zmx attach` forwards the owner's real pixel geometry to the session.
+    public func resize(windowSize: PtyProcess.WindowSize) throws {
+        // The ioctls run under stateLock, like the size poller's, so
+        // close() cannot free the fd number for reuse between the
+        // isClosed check and the resize.
         stateLock.lock()
-        let closed = isClosed
-        let fd = spawned?.masterFD
-        stateLock.unlock()
-        guard !closed, let fd else { return }
-        try? PtyProcess.resize(masterFD: fd, cols: cols, rows: rows)
+        defer { stateLock.unlock() }
+        guard !isClosed, let fd = spawned?.masterFD else { return }
+        // Zero pixels mean unspecified. XNU raises SIGWINCH on any winsize
+        // field change, so a grid-only resize to the current grid (a
+        // takeControl after a pixel-carrying ownerResize) keeps the pixels
+        // rather than bouncing them through zero.
+        if windowSize.xpixel == 0 || windowSize.ypixel == 0,
+           let current = PtyProcess.currentWindowSize(masterFD: fd),
+           current.cols == windowSize.cols, current.rows == windowSize.rows {
+            return
+        }
+        try PtyProcess.resize(masterFD: fd, windowSize: windowSize)
     }
 
     /// `TerminalByteStream.resize`: the behavioral upgrade this engine
@@ -347,7 +379,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
             // Closing masterFD afterwards unblocks the reader thread's
             // read() — it returns -1/EIO and the thread exits.
             _ = kill(spawned.pid, SIGTERM)
-            Darwin.close(spawned.masterFD)
+            GrafttyPOSIX.close(spawned.masterFD)
             // Bounded nonblocking reap (≤500ms). If waitpid doesn't see
             // the child marked dead in that window, give up and leave it
             // as a zombie rather than block NIO's event loop thread —
@@ -364,16 +396,37 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         guard let fd = spawned?.masterFD else { return }
         let thread = Thread { [weak self] in
             var buf = [UInt8](repeating: 0, count: 8192)
+            var decoder = ZmxReplayGridDecoder()
             while true {
-                let n = buf.withUnsafeMutableBufferPointer { Darwin.read(fd, $0.baseAddress, $0.count) }
+                let n = buf.withUnsafeMutableBufferPointer { GrafttyPOSIX.read(fd, $0.baseAddress, $0.count) }
                 if n <= 0 { break }
-                self?.dispatchPTYData(Data(buf[0..<n]))
+                self?.dispatchDecodedOutput(decoder.consume(Data(buf[0..<n])))
             }
+            self?.dispatchDecodedOutput(decoder.consume(Data(), endOfStream: true))
             self?.dispatchExit()
         }
         thread.name = "ZmxAttachEngine.reader(\(config.sessionName))"
         thread.start()
         readerThread = thread
+    }
+
+    private func dispatchDecodedOutput(_ output: ZmxReplayGridDecoder.Output) {
+        if output.started {
+            stateLock.lock()
+            guard !isClosed else { stateLock.unlock(); return }
+            allowsLegacySizePolling = output.grid == nil
+            if let grid = output.grid {
+                lastKnownSize = (grid.cols, grid.rows)
+            } else if let fd = spawned?.masterFD {
+                // Explicit compatibility fallback for pre-snapshot daemons.
+                lastKnownSize = PtyProcess.currentSize(masterFD: fd)
+            }
+            let size = lastKnownSize
+            let callback = _onPTYSize
+            stateLock.unlock()
+            if let size { callback?(size.cols, size.rows) }
+        }
+        if !output.bytes.isEmpty { dispatchPTYData(output.bytes) }
     }
 
     private func dispatchPTYData(_ data: Data) {
@@ -416,7 +469,8 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         continuation.finish()
     }
 
-    /// Polls the PTY winsize on a background thread. Each change is
+    /// For attachments without snapshot metadata, polls the PTY winsize
+    /// on a background thread. Each change is
     /// forwarded to `onPTYSize` so the WebSocket bridge can push a
     /// `grid` control envelope to the client. 250 ms cadence is a
     /// compromise: slow enough to be free CPU-wise, fast enough that a
@@ -431,7 +485,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
                 guard let self else { break }
                 // Single critical section per iteration: check that the
                 // session hasn't been closed (the `close()` path sets
-                // isClosed=true then Darwin.close(fd)) AND read the last
+                // isClosed=true then GrafttyPOSIX.close(fd)) AND read the last
                 // known size. Doing the ioctl *inside* the lock prevents
                 // the close+fd-reuse race where a freshly-opened fd of
                 // the same integer value would get a spurious TIOCGWINSZ.
@@ -441,7 +495,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
                     self.stateLock.unlock()
                     break
                 }
-                let size = PtyProcess.currentSize(masterFD: fd)
+                let size = self.allowsLegacySizePolling ? PtyProcess.currentSize(masterFD: fd) : nil
                 var emit: (UInt16, UInt16)?
                 if let size {
                     let changed = (self.lastKnownSize?.cols != size.cols)

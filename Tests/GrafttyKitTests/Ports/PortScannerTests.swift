@@ -1,6 +1,7 @@
 // Tests/GrafttyKitTests/Ports/PortScannerTests.swift
 import Testing
 import Foundation
+import GrafttyProtocol
 @testable import GrafttyKit
 
 actor StubLsofRunner: LsofRunner {
@@ -21,28 +22,136 @@ struct StubProcessTreeWalker: ProcessTreeWalking {
 
 @Suite("PortScanner")
 struct PortScannerTests {
-    @Test("@spec PORTS-4.8: When a pane is unregistered or registered again while its shell PID lookup is in flight, the application shall discard the earlier lookup result.", arguments: [false, true])
-    func ignoresLookupAfterUnregister(registerAgain: Bool) async {
-        actor Calls {
-            var count = 0
-            func next() -> Int { count += 1; return count }
-        }
-        let calls = Calls()
-        let runner = StubLsofRunner(output: "")
+    @Test func authenticationRetainsBothListenerAddresses() async throws {
+        let runner = StubLsofRunner(output: """
+        codex 1234 alice 23u IPv4 0x1 0t0 TCP 127.0.0.1:43210 (LISTEN)
+        codex 1234 alice 24u IPv6 0x2 0t0 TCP [::1]:43210 (LISTEN)
+        """)
         let scanner = PortScanner(runner: runner, walker: StubProcessTreeWalker(result: []))
         let id = PaneSlotID()
-        await scanner.setPIDResolver { [weak scanner] id in
-            if await calls.next() == 1 {
-                await scanner?.unregisterPane(id)
-                if registerAgain { await scanner?.registerPanePending(id) }
+        await scanner.registerPane(id, shellPID: 1234)
+        let bindings = await scanner.refreshedBindings(for: [id])
+        #expect(Set(bindings.map(\.host)) == ["127.0.0.1", "::1"])
+        #expect(await scanner.bindings(for: id).count == 1)
+        let authorization = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2F%5B0%3A0%3A0%3A0%3A0%3A0%3A0%3A1%5D%3A43210%2Fcallback")!
+        let authentication = try #require(WorktreeAuthenticationURL(url: authorization))
+        #expect(authentication.callbackHost == "::1")
+        let listeners = bindings.map { WorktreePort(port: $0.port, scope: .loopback, processName: $0.processName, host: $0.host) }
+        #expect(authentication.resolveCallbackHost(in: listeners) == "::1")
+        await scanner.unregisterPane(id)
+        #expect(await scanner.refreshedBindings(for: [id]).isEmpty)
+    }
+
+    @Test("@spec PORTS-4.6: If a pane is unregistered or its shell is replaced during a port scan, then the application shall discard that scan's obsolete bindings and shall not restore the removed registration.")
+    func unregistrationDuringScanDoesNotRestorePorts() async {
+        actor SuspendedRunner: LsofRunner {
+            var started = false
+            var suspended = false
+            var continuation: CheckedContinuation<String?, Never>?
+            func run(pids: String) async -> String? {
+                if !suspended { return "node 1234 alice 23u IPv4 0x1 0t0 TCP 127.0.0.1:3000 (LISTEN)" }
+                started = true
+                return await withCheckedContinuation { continuation = $0 }
             }
-            return 1234
+            func suspend() { suspended = true }
+            func finish() {
+                continuation?.resume(returning: "node 1234 alice 23u IPv4 0x1 0t0 TCP 127.0.0.1:3000 (LISTEN)")
+                continuation = nil
+            }
         }
+        for replacement in [0, 1, 2] {
+            let runner = SuspendedRunner()
+            let scanner = PortScanner(runner: runner, walker: StubProcessTreeWalker(result: []))
+            let id = PaneSlotID()
+            await scanner.registerPane(id, shellPID: 1234)
+            await scanner.tick()
+            #expect(await scanner.bindings(for: id).count == 1)
+            await runner.suspend()
+            let scan = Task { await scanner.tick() }
+            while !(await runner.started) { await Task.yield() }
+            if replacement == 1 { await scanner.registerPane(id, shellPID: 2345) }
+            else if replacement == 2 {
+                await scanner.unregisterPane(id)
+                await scanner.registerPane(id, shellPID: 1234)
+            }
+            else { await scanner.unregisterPane(id) }
+            #expect(await scanner.bindings(for: id).isEmpty)
+            await runner.finish()
+            await scan.value
+            #expect(await scanner.bindings(for: id).isEmpty)
+        }
+    }
+
+    @Test("@spec PORTS-4.7: If a pending pane is unregistered and registered again while its PID is resolving, then the application shall discard the old resolution and resolve the new registration independently.")
+    func replacedPendingRegistrationDiscardsOldResolution() async {
+        actor Resolver {
+            var started = false
+            var continuation: CheckedContinuation<pid_t?, Never>?
+            func resolve() async -> pid_t? {
+                if started { return 2345 }
+                started = true
+                return await withCheckedContinuation { continuation = $0 }
+            }
+            func finish() { continuation?.resume(returning: 1234); continuation = nil }
+        }
+        let resolver = Resolver()
+        let runner = StubLsofRunner(output: """
+            node 1234 alice 23u IPv4 0x1 0t0 TCP 127.0.0.1:3000 (LISTEN)
+            vite 2345 alice 23u IPv4 0x2 0t0 TCP 127.0.0.1:4000 (LISTEN)
+            """)
+        let scanner = PortScanner(runner: runner, walker: StubProcessTreeWalker(result: []))
+        await scanner.setPIDResolver { _ in await resolver.resolve() }
+        let id = PaneSlotID()
         await scanner.registerPanePending(id)
+        let scan = Task { await scanner.tick() }
+        while !(await resolver.started) { await Task.yield() }
+        await scanner.unregisterPane(id)
+        await scanner.registerPanePending(id)
+        await resolver.finish()
+        await scan.value
+        #expect(await scanner.bindings(for: id).isEmpty)
         await scanner.tick()
-        #expect(await runner.calls.isEmpty)
+        #expect(await scanner.bindings(for: id).map(\.port) == [4000])
+    }
+
+    @Test("@spec PORTS-5.7: When opening a worktree port, the application shall refresh discovery before resolving the listener and reject ports whose processes stopped after the last published snapshot.")
+    func refreshBeforeOpeningDropsStoppedListener() async {
+        let runner = StubLsofRunner(output: "node 1234 alice 23u IPv4 0x1 0t0 TCP 127.0.0.1:3000 (LISTEN)")
+        let scanner = PortScanner(runner: runner, walker: StubProcessTreeWalker(result: []))
+        let id = PaneSlotID()
+        await scanner.registerPane(id, shellPID: 1234)
         await scanner.tick()
-        #expect(await runner.calls.count == (registerAgain ? 1 : 0))
+        #expect(await scanner.bindings(for: id).count == 1)
+        await runner.setOutput("")
+        #expect(await scanner.refreshedPorts(for: [id]).isEmpty)
+        #expect(await runner.calls.count == 2)
+    }
+
+    @Test("@spec PORTS-5.8: When different worktrees listen on the same port on separate IPv4 and IPv6 addresses, the application shall preserve each listener's exact address so opening one worktree cannot resolve to the other.")
+    func loopbackFamiliesStayDistinct() async {
+        let scanner = PortScanner(runner: StubLsofRunner(output: """
+            node 1234 alice 23u IPv4 0x1 0t0 TCP 127.0.0.1:3000 (LISTEN)
+            node 2345 alice 23u IPv6 0x2 0t0 TCP [::1]:3000 (LISTEN)
+            node 3456 alice 23u IPv6 0x3 0t0 TCP *:8080 (LISTEN)
+            """), walker: StubProcessTreeWalker(result: []))
+        let first = PaneSlotID(), second = PaneSlotID(), wildcard = PaneSlotID()
+        await scanner.registerPane(first, shellPID: 1234)
+        await scanner.registerPane(second, shellPID: 2345)
+        await scanner.registerPane(wildcard, shellPID: 3456)
+        await scanner.tick()
+        #expect(await scanner.bindings(for: first).first?.host == "127.0.0.1")
+        #expect(await scanner.bindings(for: second).first?.host == "::1")
+        #expect(await scanner.bindings(for: wildcard).first?.host == "::1")
+    }
+
+    @Test("@spec PORTS-5.6: When a worktree process listens only on a specific host interface, the application shall retain that listener's address for opening the port rather than assume localhost.")
+    func preservesSpecificListenerAddress() async {
+        let scanner = PortScanner(runner: StubLsofRunner(output:
+            "node 1234 alice 23u IPv4 0x1 0t0 TCP 192.168.1.5:3000 (LISTEN)"), walker: StubProcessTreeWalker(result: []))
+        let id = PaneSlotID()
+        await scanner.registerPane(id, shellPID: 1234)
+        await scanner.tick()
+        #expect(await scanner.bindings(for: id).first?.host == "192.168.1.5")
     }
 
     @Test("""

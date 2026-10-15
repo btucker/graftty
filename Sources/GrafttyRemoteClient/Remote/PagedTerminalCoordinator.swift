@@ -9,12 +9,14 @@ public enum PagedTerminalPageResult: Equatable, Sendable {
 @MainActor
 public protocol PagedTerminalRenderer: AnyObject {
     func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws
+    func flushOutput() async throws
     func resize(cols: UInt16, rows: UInt16) async throws
     func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult
     func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool
 }
 
 public extension PagedTerminalRenderer {
+    func flushOutput() async throws { }
     func resize(cols: UInt16, rows: UInt16) async throws { }
 }
 

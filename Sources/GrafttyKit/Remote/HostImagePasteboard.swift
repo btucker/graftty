@@ -1,3 +1,4 @@
+#if canImport(AppKit)
 import AppKit
 import ImageIO
 import GrafttyProtocol
@@ -21,3 +22,10 @@ enum HostImagePasteboard {
         return pasteboard.writeObjects([NSImage(cgImage: image, size: .zero)])
     }
 }
+#else
+import Foundation
+
+enum HostImagePasteboard {
+    @MainActor static func write(_ data: Data) -> Bool { false }
+}
+#endif

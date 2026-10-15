@@ -58,6 +58,15 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
         self.onAuthenticatedPeer = onAuthenticatedPeer
     }
 
+    /// Compare the permissions captured by userauth after async registration.
+    /// Display names and activity timestamps do not change authorization.
+    static func hasCurrentAuthorization(_ peer: TrustedPeer, in store: TrustedPeerStore) -> Bool {
+        guard let current = try? store.get(id: peer.id) else { return false }
+        return current.id == peer.id && current.kind == peer.kind
+            && current.publicKey == peer.publicKey && current.capabilities == peer.capabilities
+            && current.capabilities.terminalControl == .allowed
+    }
+
     public func requestReceived(
         request: NIOSSHUserAuthenticationRequest,
         responsePromise: EventLoopPromise<NIOSSHUserAuthenticationOutcome>

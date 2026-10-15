@@ -9,6 +9,37 @@ import Testing
 struct WorktreeMonitorBridgeTests {
 
     @MainActor
+    @Test func refEventsTriggerTrackingWithoutPolling() async throws {
+        var home = WorktreeEntry(path: "/repo", branch: "trunk")
+        home.autoTrackEnabled = true
+        var role = WorktreeEntry(path: "/repo/role", branch: "role", state: .running)
+        role.isPinned = true
+        role.autoTrackEnabled = true
+        let stateBox = AppStateBox(.init(repos: [.init(path: "/repo", displayName: "Repo", worktrees: [home, role])]))
+        var snapshot = GitAutoTracking.Snapshot(branch: "trunk", localCommit: "local", remoteCommit: "remote")
+        var operations: [GitAutoTracking.Operation] = []
+        let tracker = GitAutoTracking(readSnapshot: { _ in snapshot }, perform: { operations.append($0); return true })
+        let compute = RecordingStatsCompute()
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in }, autoTracking: tracker,
+                                      computeLocalDefault: { a, b, c, d, _ in await compute.function(a, b, c, d) })
+        store.start(ticker: PassivePollingTicker(), getRepos: { stateBox.state.repos }, recordAutoTrackingAttempt: { path, target in
+            guard let indices = stateBox.state.indices(forWorktreePath: path) else { return }
+            stateBox.state.repos[indices.repo].worktrees[indices.worktree].autoTrackLastAttempt = target
+        })
+        let bridge = makeBridge(stateBox: stateBox, compute: compute, statsStore: store, discoverWorktrees: { repo in
+            repo.worktrees.map { .init(path: $0.path, branch: $0.branch) }
+        })
+        bridge.worktreeMonitorDidDetectOriginRefChange(WorktreeMonitor(), repoPath: "/repo")
+        try await waitUntil(timeout: 2) { operations.count == 2 }
+        #expect(operations == [.pull(path: "/repo", branch: "trunk"), .merge(path: "/repo/role", branch: "trunk")])
+        snapshot = .init(branch: "trunk", localCommit: "local-next", remoteCommit: "remote")
+        bridge.worktreeMonitorDidDetectBranchChange(WorktreeMonitor(), worktreePath: "/repo")
+        try await waitUntil(timeout: 2) { operations.count == 3 }
+        #expect(operations.last == .merge(path: "/repo/role", branch: "trunk"))
+        store.stop()
+    }
+
+    @MainActor
     @Test("""
 @spec DIVERGE-4.2: When a worktree's HEAD reference changes, the application shall recompute that worktree's divergence counts immediately, without waiting for the polling fallback.
 """)
@@ -238,6 +269,7 @@ struct WorktreeMonitorBridgeTests {
     private func makeBridge(
         stateBox: AppStateBox,
         compute: RecordingStatsCompute,
+        statsStore: WorktreeStatsStore? = nil,
         discoverWorktrees: @escaping WorktreeMonitorBridge.DiscoverWorktrees = WorktreeMonitorBridge.defaultDiscoverWorktrees
     ) -> WorktreeMonitorBridge {
         let remoteBranchStore = RemoteBranchStore(list: { _ in RemoteBranchSnapshot() })
@@ -252,7 +284,7 @@ struct WorktreeMonitorBridgeTests {
                 get: { stateBox.state },
                 set: { stateBox.state = $0 }
             ),
-            statsStore: WorktreeStatsStore(compute: compute.function, fetch: { _ in }),
+            statsStore: statsStore ?? WorktreeStatsStore(compute: compute.function, fetch: { _ in }),
             prStatusStore: prStore,
             remoteBranchStore: remoteBranchStore,
             discoverWorktrees: discoverWorktrees

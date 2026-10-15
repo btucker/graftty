@@ -168,6 +168,41 @@ extension PagedZmxAttachEngineTests {
         #expect(daemon.error == nil)
     }
 
+    @Test("@spec TERM-12.29: When a paged resize request carries zero pixel dimensions, the application shall treat the pixel size as unspecified and keep the last negotiated pixel metadata, so a grid-only follower repair never writes a zero pixel size into the session PTY or re-sends an unchanged grid.")
+    func zeroPixelResizeKeepsLastPixelMetadata() async throws {
+        let daemon = try FakePagedDaemon { fd in
+            try FakePagedDaemon.negotiate(fd, capabilities: 9)
+            var expectedPixels = Data(); expectedPixels.appendLE(UInt16(960)); expectedPixels.appendLE(UInt16(576))
+            var pixels = try FakePagedDaemon.receive(fd)
+            #expect(pixels.0 == 24)
+            #expect(pixels.1 == expectedPixels)
+            var grid = try FakePagedDaemon.receive(fd)
+            #expect(grid.0 == 2)
+            #expect(grid.1 == Data([24, 0, 80, 0]))
+            // A zero-pixel repeat of the same grid is unchanged: the next
+            // frame must be the input marker, not a 0x0 pixel size.
+            #expect(try FakePagedDaemon.receive(fd).0 == 0)
+            // A zero-pixel resize to a new grid keeps the last pixel metadata.
+            pixels = try FakePagedDaemon.receive(fd)
+            #expect(pixels.0 == 24)
+            #expect(pixels.1 == expectedPixels)
+            grid = try FakePagedDaemon.receive(fd)
+            #expect(grid.0 == 2)
+            #expect(grid.1 == Data([30, 0, 100, 0]))
+        }
+        defer { daemon.finish() }
+        let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"),
+            zmxDir: daemon.directory, sessionName: "session"))
+        defer { engine.close() }
+        try await engine.start()
+        try engine.resize(windowSize: .init(cols: 80, rows: 24, xpixel: 960, ypixel: 576))
+        try engine.resize(windowSize: .init(cols: 80, rows: 24))
+        try await engine.send(Data("input".utf8))
+        try engine.resize(windowSize: .init(cols: 100, rows: 30))
+        #expect(await daemon.waitUntilDone())
+        #expect(daemon.error == nil)
+    }
+
     @Test func gridOnlyResizeDoesNotInventPixelMetadata() async throws {
         let daemon = try FakePagedDaemon { fd in
             try FakePagedDaemon.negotiate(fd, capabilities: 9)

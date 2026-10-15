@@ -155,6 +155,7 @@ private struct PaneTile: View {
                 session: client.session,
                 controller: controller,
                 authoritativeGrid: client.snapshotCanvasGrid,
+                showsAdditionalHistory: true,
                 renderPace: client.renderPace,
                 onUserInteraction: { [weak client] in client?.wakeRenderer() },
                 preferredInterfaceStyle: preferredInterfaceStyle

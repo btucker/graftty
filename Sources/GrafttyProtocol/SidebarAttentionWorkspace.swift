@@ -1,6 +1,6 @@
 import Foundation
 
-/// @spec LAYOUT-2.85: While Attention cards are retained, the application shall preserve them across acknowledgement, navigation, and relaunch without the recent-history limit; explicit dismissal shall hide the current request until a later request arrives.
+/// @spec LAYOUT-2.85: While agent request context is retained, the application shall preserve it across acknowledgement, navigation, and relaunch without the recent-history limit; explicit dismissal shall hide the current request until a later request arrives.
 ///
 /// Durable cards are separate from the bounded history of viewed requests.
 /// An occurrence is retained for identity and acknowledgement; `isBusy` controls
@@ -11,7 +11,8 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
 
     public init() {}
 
-    /// Choose a current request without moving its worktree's queue slot.
+    /// Collapse each worktree to one representative card; `newestFirst`
+    /// then ranks the result, so the slot kept here only breaks ties.
     public static func cards(from items: [SidebarActivityItem]) -> [SidebarActivityItem] {
         var rows: [SidebarActivityItem] = []
         var positions: [SidebarActivityItem.WorktreeIdentity: Int] = [:]
@@ -38,6 +39,17 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
         return rows
     }
 
+    public static func newestFirst(_ rows: [SidebarActivityItem]) -> [SidebarActivityItem] {
+        rows.enumerated().sorted { left, right in
+            let leftTime = reportTime(left.element), rightTime = reportTime(right.element)
+            return leftTime == rightTime ? left.offset < right.offset : leftTime > rightTime
+        }.map(\.element)
+    }
+
+    private static func reportTime(_ item: SidebarActivityItem) -> Date {
+        item.occurrence?.timestamp ?? item.runningSince ?? .distantPast
+    }
+
     public func isDismissed(_ item: SidebarActivityItem) -> Bool {
         guard let previous = dismissed[item.id], let occurrence = item.occurrence else { return false }
         if occurrence == previous { return true }
@@ -58,6 +70,8 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
                     item.runningSince = item.isBusy ? items[index].runningSince : nil
                     items[index] = item
                 } else {
+                    items[index].worktreeName = item.worktreeName
+                    items[index].branchName = item.branchName
                     items[index].runningSince = item.isBusy ? items[index].runningSince ?? item.runningSince ?? Date() : nil
                     items[index].isBusy = item.isBusy
                     items[index].prBadge = item.prBadge
@@ -93,8 +107,10 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
             items[index].worktreeID = worktree.path
             items[index].projectID = SidebarProjection.projectID(worktree)
             items[index].projectName = worktree.repoDisplayName
-            items[index].worktreeName = worktree.displayBranch
-            items[index].worktreeEmoji = worktree.sidebar?.emoji
+            items[index].worktreeName = worktree.displayName
+            items[index].branchName = worktree.displayBranch
+            items[index].worktreeEmoji = worktree.effectiveEmoji
+            items[index].isMainCheckout = worktree.isMainCheckout ? true : nil
             items[index].prBadge = worktree.prBadge
             let route = SidebarProjection.attentionPaneRoute(for: item, in: worktree)
             if item.paneID != nil, let route { items[index].paneID = route }
@@ -132,5 +148,13 @@ public struct SidebarAttentionWorkspace: Codable, Sendable, Equatable {
             if let occurrence = item.occurrence { dismissed[item.id] = occurrence }
         }
         items.removeAll { $0.worktreeIdentity == target.worktreeIdentity }
+    }
+
+    /// A report action may finish after another request reaches this worktree.
+    public mutating func dismissOccurrence(_ item: SidebarActivityItem) {
+        guard let occurrence = item.occurrence,
+              items.contains(where: { $0.id == item.id && $0.occurrence == occurrence }) else { return }
+        dismissed[item.id] = occurrence
+        items.removeAll { $0.id == item.id && $0.occurrence == occurrence }
     }
 }

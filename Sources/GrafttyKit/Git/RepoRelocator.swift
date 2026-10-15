@@ -38,6 +38,31 @@ public enum RepoRelocator {
         public let newSelectedWorktreePath: String?
     }
 
+    /// Applies a final relocation decision, preserving saved order and each existing entry's state.
+    public static func relocatedWorktrees(
+        repo: RepoEntry, decision: Decision, discovered: [DiscoveredWorktree], now: Date = Date()
+    ) -> [WorktreeEntry] {
+        let carriedByID = Dictionary(uniqueKeysWithValues: decision.carriedForward.map { ($0.existingID, $0) })
+        let staleIDs = Set(decision.goneStale.map(\.existingID))
+        var worktrees: [WorktreeEntry] = []
+        for var existing in repo.worktrees {
+            if let carried = carriedByID[existing.id] {
+                existing.path = carried.newPath
+                existing.branch = carried.branch
+            } else if staleIDs.contains(existing.id) {
+                existing.markStale(at: now)
+            } else {
+                continue
+            }
+            worktrees.append(existing)
+        }
+        let carriedPaths = Set(decision.carriedForward.map(\.newPath))
+        for entry in discovered where !carriedPaths.contains(entry.path) {
+            worktrees.append(WorktreeEntry(path: entry.path, branch: entry.branch))
+        }
+        return WorktreeOrdering.staleLast(worktrees)
+    }
+
     /// First-pass decision, before any `git worktree repair` has run.
     /// If the post-discovery result is missing any previously-known
     /// linked worktree, `needsRepair` is true and the caller should run

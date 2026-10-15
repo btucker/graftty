@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 public enum ClaudePeerReplyBridgeError: Error, Equatable {
@@ -211,13 +215,13 @@ private final class NativeReplyListener: @unchecked Sendable {
         self.admission = admission
         self.onLine = onLine
         try ClaudePeerProtocol.validateSocketPath(socketPath)
-        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = GrafttyPOSIX.socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         guard fd >= 0 else { throw ClaudePeerReplyBridgeError.socketSetupFailed(errno) }
         var sourceOwnsFD = false
         var bound = false
         defer {
             if !sourceOwnsFD {
-                Darwin.close(fd)
+                GrafttyPOSIX.close(fd)
                 if bound { unlink(socketPath) }
             }
         }
@@ -230,7 +234,7 @@ private final class NativeReplyListener: @unchecked Sendable {
         }
         let result = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                GrafttyPOSIX.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
         guard result == 0 else { throw ClaudePeerReplyBridgeError.socketSetupFailed(errno) }
@@ -238,12 +242,12 @@ private final class NativeReplyListener: @unchecked Sendable {
         guard chmod(socketPath, 0o600) == 0,
               fcntl(fd, F_SETFD, FD_CLOEXEC) == 0,
               fcntl(fd, F_SETFL, O_NONBLOCK) == 0,
-              Darwin.listen(fd, 16) == 0 else {
+              GrafttyPOSIX.listen(fd, 16) == 0 else {
             throw ClaudePeerReplyBridgeError.socketSetupFailed(errno)
         }
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         source.setEventHandler { [weak self] in self?.accept(fd) }
-        source.setCancelHandler { Darwin.close(fd) }
+        source.setCancelHandler { GrafttyPOSIX.close(fd) }
         self.source = source
         sourceOwnsFD = true
         source.resume()
@@ -255,7 +259,7 @@ private final class NativeReplyListener: @unchecked Sendable {
         let source = lock.withLock { () -> DispatchSourceRead? in
             guard !stopped else { return nil }
             stopped = true
-            for fd in clients { _ = Darwin.shutdown(fd, SHUT_RDWR) }
+            for fd in clients { _ = GrafttyPOSIX.shutdown(fd, Int32(SHUT_RDWR)) }
             unlink(socketPath)
             let source = self.source
             self.source = nil
@@ -265,15 +269,13 @@ private final class NativeReplyListener: @unchecked Sendable {
     }
 
     private func accept(_ listener: Int32) {
-        let fd = Darwin.accept(listener, nil, nil)
+        let fd = GrafttyPOSIX.accept(listener, nil, nil)
         guard fd >= 0 else { return }
-        var uid: uid_t = 0
-        var gid: gid_t = 0
-        guard getpeereid(fd, &uid, &gid) == 0, uid == geteuid(),
+        guard GrafttyPOSIX.peerUserID(fd) == geteuid(),
               fcntl(fd, F_SETFD, FD_CLOEXEC) == 0,
               fcntl(fd, F_SETFL, O_NONBLOCK) == 0,
               admission.wait(timeout: .now()) == .success else {
-            Darwin.close(fd)
+            GrafttyPOSIX.close(fd)
             return
         }
         let accepted = lock.withLock { () -> Bool in
@@ -282,7 +284,7 @@ private final class NativeReplyListener: @unchecked Sendable {
             return true
         }
         guard accepted else {
-            Darwin.close(fd)
+            GrafttyPOSIX.close(fd)
             admission.signal()
             return
         }
@@ -290,7 +292,7 @@ private final class NativeReplyListener: @unchecked Sendable {
             let line = Self.readLine(fd: fd)
             let active = lock.withLock { () -> Bool in
                 clients.remove(fd)
-                Darwin.close(fd)
+                GrafttyPOSIX.close(fd)
                 return !stopped
             }
             guard active, let line else {
@@ -312,10 +314,10 @@ private final class NativeReplyListener: @unchecked Sendable {
             let now = DispatchTime.now().uptimeNanoseconds
             guard now < deadline else { return nil }
             var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-            let result = Darwin.poll(&descriptor, 1, Int32((deadline - now) / 1_000_000) + 1)
+            let result = GrafttyPOSIX.poll(&descriptor, 1, Int32((deadline - now) / 1_000_000) + 1)
             if result < 0, errno == EINTR { continue }
             guard result > 0 else { return nil }
-            let count = Darwin.read(fd, &chunk, min(chunk.count, ClaudePeerProtocol.maximumLineBytes - line.count))
+            let count = GrafttyPOSIX.read(fd, &chunk, min(chunk.count, ClaudePeerProtocol.maximumLineBytes - line.count))
             if count < 0, errno == EINTR || errno == EAGAIN { continue }
             guard count > 0 else { return nil }
             if let newline = chunk.prefix(count).firstIndex(of: 0x0A) {

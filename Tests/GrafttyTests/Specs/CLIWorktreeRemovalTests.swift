@@ -17,8 +17,8 @@ struct CLIWorktreeRemovalTests {
         #expect(help.contains("untracked"))
         #expect(help.contains("graftty team list"))
         #expect(
-            try GrafttyTeamSkillText.load().contains(
-                "graftty worktree remove <worktree> [--force]"
+            try GrafttyTeamSkillText.load(reference: "worktrees").contains(
+                "graftty worktree remove"
             )
         )
     }
@@ -29,12 +29,13 @@ struct CLIWorktreeRemovalTests {
             worktreePath: "/repo/.worktrees/feature-auth"
         )
 
-        guard case let .removeWorktree(worktreePath, force) = request else {
+        guard case let .removeWorktree(worktreePath, force, pinned) = request else {
             Issue.record("expected removeWorktree request")
             return
         }
         #expect(worktreePath == "/repo/.worktrees/feature-auth")
         #expect(force)
+        #expect(!pinned)
     }
 
     @Test func resolvesTrackedNameAndAbsolutePath() throws {

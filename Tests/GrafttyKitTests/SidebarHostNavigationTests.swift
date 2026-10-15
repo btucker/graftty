@@ -66,14 +66,14 @@ struct SidebarHostNavigationTests {
         let metadata = SidebarHostNavigation.metadata(for: worktree, projectID: "project", folders: [])
         let item = SidebarActivityItem(id: metadata.id + ":" + slot.id.uuidString,
             projectID: "project", worktreeID: worktree.path, paneID: ZmxLauncher.sessionName(for: oldSession),
-            projectName: "Repo", worktreeName: "feature", title: "Review", occurrence: nil, isBusy: false)
+            projectName: "Repo", worktreeName: "w", title: "Review", occurrence: nil, isBusy: false, branchName: "feature")
         var history = SidebarRecentHistory()
         history.open(item)
 
         worktree.prepareForStop()
         #expect(worktree.paneSessions.isEmpty)
         func closedRow(_ worktree: WorktreeEntry) -> WorktreePanes {
-            WorktreePanes(path: worktree.path, displayName: "feature", repoDisplayName: "Repo",
+            WorktreePanes(path: worktree.path, displayName: "w", repoDisplayName: "Repo",
                 displayBranch: "feature", state: .closed, isMainCheckout: false, prBadge: nil,
                 stats: nil, attentionText: nil, layout: nil,
                 sidebar: SidebarHostNavigation.metadata(for: worktree, projectID: "project", folders: []))
@@ -90,7 +90,7 @@ struct SidebarHostNavigationTests {
         let newSession = worktree.ensurePaneSession(for: slot)
         #expect(newSession != oldSession)
         let newRoute = ZmxLauncher.sessionName(for: newSession)
-        let reopened = WorktreePanes(path: worktree.path, displayName: "feature", repoDisplayName: "Repo",
+        let reopened = WorktreePanes(path: worktree.path, displayName: "w", repoDisplayName: "Repo",
             displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil,
             stats: nil, attentionText: nil,
             layout: .leaf(sessionName: newRoute, title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil),
@@ -212,7 +212,7 @@ struct SidebarHostNavigationTests {
         #expect(ProjectIconDiscovery.discover(at: directory) == nil)
     }
 
-    @Test("@spec LAYOUT-2.42: When a user reorders worktrees, the application shall preserve the main checkout first, stale entries last, and virtual-folder boundaries while moving only eligible siblings.")
+    @Test("@spec LAYOUT-2.42: When a user reorders worktrees, the application shall preserve the default-branch checkout first among pinned agents, stale temporary worktrees last within their list, and virtual-folder and pinned-section boundaries while moving only eligible siblings.")
     func worktreeMove() {
         let root = "/tmp/project"
         let main = WorktreeEntry(path: root, branch: "main", state: .closed)
@@ -227,6 +227,71 @@ struct SidebarHostNavigationTests {
         let stale = WorktreeEntry(path: root + "/gone", branch: "gone", state: .stale)
         let oldOrder = RepoEntry(path: root, displayName: "Project", worktrees: [stale, b, main, a])
         #expect(SidebarHostNavigation.canonicalWorktrees(in: oldOrder).map(\.branch) == ["main", "b", "a", "gone"])
+    }
+
+    @Test("@spec LAYOUT-2.95: While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.")
+    func recentActivityOrdering() throws {
+        let root = "/tmp/project"
+        let main = WorktreeEntry(path: root, branch: "main")
+        var quiet = WorktreeEntry(path: root + "/.worktrees/quiet", branch: "quiet")
+        var stopped = WorktreeEntry(path: root + "/.worktrees/stopped", branch: "stopped")
+        var progressing = WorktreeEntry(path: root + "/.worktrees/progressing", branch: "progressing")
+        var pinged = WorktreeEntry(path: root + "/.worktrees/pinged", branch: "pinged")
+        let stale = WorktreeEntry(path: root + "/gone", branch: "gone", state: .stale)
+        stopped.unseenAgentStop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 300))
+        progressing.agentProgressTimes = ["codex:one": Date(timeIntervalSince1970: 200).timeIntervalSinceReferenceDate]
+        pinged.attention = Attention(text: "Done", timestamp: Date(timeIntervalSince1970: 100))
+        #expect(quiet.lastActivity == nil)
+        #expect(stopped.lastActivity == Date(timeIntervalSince1970: 300))
+        #expect(progressing.lastActivity == Date(timeIntervalSince1970: 200))
+        #expect(pinged.lastActivity == Date(timeIntervalSince1970: 100))
+        var repo = RepoEntry(path: root, displayName: "project", worktrees: [stale, quiet, pinged, main, progressing, stopped])
+        #expect(repo.worktreeOrderMode == .manual)
+        #expect(SidebarHostNavigation.canonicalWorktrees(in: repo).map(\.branch) == ["main", "quiet", "pinged", "progressing", "stopped", "gone"])
+        repo.worktreeOrderMode = .recentActivity
+        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["main", "stopped", "progressing", "pinged", "quiet", "gone"])
+        // The persisted order is untouched by the display mode, so switching back to manual restores it.
+        #expect(SidebarHostNavigation.canonicalWorktrees(in: repo).map(\.branch) == ["main", "quiet", "pinged", "progressing", "stopped", "gone"])
+        // Reordering is manual-only, so a remote move must be refused rather than accepted and re-sorted away.
+        var state = AppState(repos: [repo])
+        #expect(!SidebarHostNavigation.moveWorktree(in: &state, repositoryID: root, worktreeID: progressing.path, relativeTo: stopped.path, after: false))
+        quiet.paneAttention[PaneSlotID()] = Attention(text: "Finished", timestamp: Date(timeIntervalSince1970: 400))
+        repo.worktrees = [stale, quiet, pinged, main, progressing, stopped]
+        #expect(SidebarHostNavigation.displayedWorktrees(in: repo).map(\.branch) == ["main", "quiet", "stopped", "progressing", "pinged", "gone"])
+        let encoded = try JSONEncoder().encode(repo)
+        #expect(try JSONDecoder().decode(RepoEntry.self, from: encoded).worktreeOrderMode == .recentActivity)
+        let legacy = """
+        {"id": "11111111-1111-1111-1111-111111111111", "path": "/tmp/legacy", "displayName": "legacy", "worktrees": []}
+        """
+        #expect(try JSONDecoder().decode(RepoEntry.self, from: Data(legacy.utf8)).worktreeOrderMode == .manual)
+    }
+
+    @Test("@spec LAYOUT-2.97: When a user picks an emoji from the native macOS emoji palette for a worktree, the application shall apply it as a manual identity only when it is a single emoji not used by another worktree.")
+    func manualEmojiEdit() {
+        let root = "/tmp/project"
+        var taken = WorktreeEntry(path: root + "/.worktrees/taken", branch: "taken")
+        taken.emoji = "🚀"; taken.emojiSource = .agent
+        let target = WorktreeEntry(path: root + "/.worktrees/target", branch: "target")
+        var repos = [RepoEntry(path: root, displayName: "project", worktrees: [taken, target])]
+        #expect(!SidebarHostNavigation.setManualEmoji("🚀", worktreeID: target.id, in: &repos))
+        #expect(!SidebarHostNavigation.setManualEmoji("ab", worktreeID: target.id, in: &repos))
+        #expect(!SidebarHostNavigation.setManualEmoji("", worktreeID: target.id, in: &repos))
+        #expect(repos[0].worktrees[1].emoji == nil)
+        #expect(SidebarHostNavigation.setManualEmoji(" 🧪 ", worktreeID: target.id, in: &repos))
+        #expect(repos[0].worktrees[1].emoji == "🧪")
+        #expect(repos[0].worktrees[1].emojiSource == .manual)
+        #expect(SidebarHostNavigation.setManualEmoji("🧪", worktreeID: target.id, in: &repos))
+        #expect(!SidebarHostNavigation.setManualEmoji("🧪", worktreeID: UUID(), in: &repos))
+    }
+
+    @Test("Clearing a worktree emoji drops both the emoji and its source")
+    func clearEmoji() {
+        var worktree = WorktreeEntry(path: "/tmp/project/.worktrees/one", branch: "one")
+        worktree.emoji = "🧪"; worktree.emojiSource = .manual
+        var repos = [RepoEntry(path: "/tmp/project", displayName: "project", worktrees: [worktree])]
+        #expect(SidebarHostNavigation.clearEmoji(worktreeID: worktree.id, in: &repos))
+        #expect(repos[0].worktrees[0].emoji == nil && repos[0].worktrees[0].emojiSource == nil)
+        #expect(!SidebarHostNavigation.clearEmoji(worktreeID: UUID(), in: &repos))
     }
 
     @Test("Opening one occurrence preserves sibling requests and a newer request")

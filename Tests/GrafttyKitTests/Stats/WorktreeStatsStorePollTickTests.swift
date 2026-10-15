@@ -10,7 +10,7 @@ import Foundation
 @Suite("""
 WorktreeStatsStore.pollTick
 
-@spec DIVERGE-4.6: When the divergence-stats polling tick fires, the application shall recompute at most four eligible running worktrees and advance a round-robin cursor so every eligible worktree is recomputed within `ceil(runningCount / 4)` ticks. If the same tick dispatches a per-repo `git fetch`, that repository's worktrees shall be skipped because the fetch handler itself recomputes them on success; fetch-due repositories outside the network batch shall remain eligible for the local recompute batch.
+@spec DIVERGE-4.6: When the divergence-stats polling tick fires, the application shall recompute at most four eligible worktrees, including running worktrees and closed pinned or main worktrees with auto-tracking enabled, and advance a round-robin cursor so every eligible worktree is recomputed within `ceil(eligibleCount / 4)` ticks. If the same tick dispatches a per-repo `git fetch`, that repository's worktrees shall be skipped because the fetch handler itself recomputes them on success; fetch-due repositories outside the network batch shall remain eligible for the local recompute batch.
 """)
 struct WorktreeStatsStorePollTickTests {
 
@@ -72,7 +72,7 @@ struct WorktreeStatsStorePollTickTests {
 
     @MainActor
     @Test("""
-@spec PERF-1.3: The stats polling loop shall skip closed worktrees during its recurring local recompute cadence; a closed worktree exists on disk but has no live terminal surface, and repeatedly running local git scans for every tracked-but-closed row makes CPU scale with sidebar history rather than active work.
+@spec PERF-1.3: While a closed worktree has no eligible auto-tracking opt-in, the application shall skip it during the stats polling loop's recurring local recompute cadence so CPU cost does not scale with sidebar history.
 """)
     func pollTickSkipsClosedWorktrees() async throws {
         let compute = RecordingCompute()
@@ -238,8 +238,12 @@ struct WorktreeStatsStorePollTickTests {
                 store.isInFlightRepoForTesting($0.path)
             }.count
             try #require(claimedRepoCount == 4)
-            try await waitUntil(timeout: 3.0) {
+            // The injected fetch records its completion before the store
+            // resumes on MainActor and releases the corresponding slot.
+            // A subsequent tick needs both boundaries to have completed.
+            try await waitUntilMainActor(timeout: 3.0) {
                 fetch.completedCount == expectedCompletedCount
+                    && repos.allSatisfy { !store.isInFlightRepoForTesting($0.path) }
             }
         }
 
@@ -542,6 +546,9 @@ private final class ConcurrencyRecordingFetch: @unchecked Sendable {
                 self.activeCount -= 1
                 self._completedCount += 1
             }
+            // Recording completion precedes the store's MainActor cleanup.
+            // Keep that boundary observable instead of assuming it is atomic.
+            try await Task.sleep(for: .milliseconds(50))
         }
     }
 }

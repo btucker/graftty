@@ -104,14 +104,43 @@ public enum GrafttyBonjourService {
     }
 
     public static func dictionary(fromTXTRecord data: Data) -> [String: String] {
-        NetService.dictionary(fromTXTRecord: data).reduce(into: [String: String]()) { result, entry in
+        #if os(Linux)
+        var result: [String: String] = [:]
+        var offset = 0
+        let bytes = Array(data)
+        while offset < bytes.count {
+            let length = Int(bytes[offset])
+            offset += 1
+            guard length > 0, offset + length <= bytes.count else { break }
+            let entry = String(decoding: bytes[offset..<offset + length], as: UTF8.self)
+            let parts = entry.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            if let key = parts.first, !key.isEmpty, result[String(key)] == nil {
+                result[String(key)] = parts.count == 2 ? String(parts[1]) : ""
+            }
+            offset += length
+        }
+        return result
+        #else
+        return NetService.dictionary(fromTXTRecord: data).reduce(into: [String: String]()) { result, entry in
             result[entry.key] = String(data: entry.value, encoding: .utf8) ?? ""
         }
+        #endif
     }
 
     public static func txtRecord(from dictionary: [String: String]) -> Data {
+        #if os(Linux)
+        var data = Data()
+        for key in dictionary.keys.sorted() {
+            let bytes = Array("\(key)=\(dictionary[key]!)".utf8)
+            guard !key.isEmpty, !key.contains("="), bytes.count <= 255 else { continue }
+            data.append(UInt8(bytes.count))
+            data.append(contentsOf: bytes)
+        }
+        return data
+        #else
         let values = dictionary.mapValues { Data($0.utf8) }
         return NetService.data(fromTXTRecord: values)
+        #endif
     }
 
     private struct Identity: Hashable {

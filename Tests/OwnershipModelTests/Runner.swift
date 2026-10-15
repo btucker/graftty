@@ -271,7 +271,7 @@ func runScenario(seed: UInt64, opCount: Int) -> RunResult {
                 // result to the S3 invariant check.  Other ops carry no resize.
                 var lastResize: SessionDisplayOwnershipResizeResult?
                 var requestedEpoch: UInt64?
-                if case let .ownerResize(_, reqEpoch, _, _) = op {
+                if case let .ownerResize(_, reqEpoch, _, _, _, _) = op {
                     let accepted = world.acceptedResizeCount > resizeCountBefore
                     lastResize = SessionDisplayOwnershipResizeResult(
                         accepted: accepted,
@@ -406,7 +406,7 @@ func replayWebOps(ops: [WebControlEnvelope], session: String) -> RunResult {
         // S3 violations through the same path runScenario uses.
         var lastResize: SessionDisplayOwnershipResizeResult?
         var requestedEpoch: UInt64?
-        if case let .ownerResize(_, reqEpoch, _, _) = op {
+        if case let .ownerResize(_, reqEpoch, _, _, _, _) = op {
             lastResize = SessionDisplayOwnershipResizeResult(
                 accepted: world.acceptedResizeCount > resizeCountBefore,
                 snapshot: world.store.snapshot(sessionName: session)
@@ -523,7 +523,7 @@ private func opLabel(_ op: WebControlEnvelope) -> String {
     switch op {
     case .hello(let id, _, _, _, let c, let r): return "hello(\(id.rawValue),\(c)x\(r))"
     case .takeControl(let id, _, let c, let r): return "takeControl(\(id.rawValue),\(c)x\(r))"
-    case .ownerResize(let id, let e, let c, let r): return "ownerResize(\(id.rawValue),epoch=\(e),\(c)x\(r))"
+    case .ownerResize(let id, let e, let c, let r, _, _): return "ownerResize(\(id.rawValue),epoch=\(e),\(c)x\(r))"
     default: return "\(op)"
     }
 }

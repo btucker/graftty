@@ -9,7 +9,7 @@ import Testing
 struct StaleWorktreeDismissalTests {
     @MainActor
     @Test("""
-    @spec GIT-3.21: When a worktree has remained in the stale state for one hour, the application shall automatically dismiss it using the same teardown as the manual Dismiss action: destroy any retained terminal surfaces, clear per-path PR and divergence caches, clear selection when applicable, and remove the entry. The one-hour grace period shall begin when the stale transition is first observed, persist across app relaunches, and be cancelled if the worktree resurrects before expiry.
+    @spec GIT-3.21: When a Task worktree has remained in the stale state for one hour, the application shall automatically dismiss it using the same teardown as the manual Dismiss action: destroy any retained terminal surfaces, clear per-path PR and divergence caches, clear selection when applicable, and remove the entry. The one-hour grace period shall begin when the stale transition is first observed, persist across app relaunches, and be cancelled if the worktree resurrects before expiry.
     """)
     func expiredStaleWorktreeUsesFullDismissalTeardown() async {
         let now = Date(timeIntervalSince1970: 10_000)

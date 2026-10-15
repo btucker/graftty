@@ -5,6 +5,7 @@ import GhosttyTerminal
 import GrafttyProtocol
 import GrafttyRemoteClient
 import Observation
+import os
 import UIKit
 
 /// @spec IOS-7.6
@@ -77,6 +78,15 @@ public final class SessionClient {
     private var snapshotGrid: GridSize?
     private var usesPagedHistory = false
     private var hasPagedCheckpoint = false
+    private var terminalRenderer: (any PagedTerminalRenderer)?
+    private var nativeGrid: GridSize?
+    /// Diagnostic trail of grid, checkpoint, page, and ownership transitions.
+    /// Stream with `log stream --predicate 'subsystem == "com.quotably.graftty" AND category == "paged-trace"'`.
+    private static let trace = Logger(subsystem: "com.quotably.graftty", category: "paged-trace")
+    /// Last canvas grid the non-paged output path traced; throttles that
+    /// per-frame path to one line per grid change.
+    @ObservationIgnored
+    private var lastTracedLegacyCanvas: GridSize?
 
     /// A follower renders the daemon's logical grid on a fitted canvas.
     /// VT-only streams need the same exact grid as paged checkpoints:
@@ -87,16 +97,21 @@ public final class SessionClient {
     }
 
     /// Legacy server grid fallback. Ownership snapshots are authoritative
-    /// once received; `.grid` remains a soft fallback while connecting to
-    /// older servers or before the first ownership frame arrives.
+    /// after a display has claimed the session; `.grid` remains the source
+    /// for older servers and sessions whose first ownerless hello only
+    /// echoes the attaching client's dimensions.
     private var legacyServerGrid: GridSize?
 
     public private(set) var ownershipSnapshot: DisplayOwnershipSnapshot?
 
     public var authoritativeGrid: GridSize? {
         if let installingCheckpointGrid { return installingCheckpointGrid }
-        if let grid = ownershipSnapshot?.grid {
-            return GridSize(cols: grid.cols, rows: grid.rows)
+        if let snapshot = ownershipSnapshot,
+           !snapshot.isOwnerless || snapshot.epoch > 0 {
+            // Before the first claim the store has no display grid. Its
+            // ownerless hello response only echoes this client's viewport.
+            // A preview must await the source's grid or checkpoint instead.
+            return GridSize(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
         }
         return legacyServerGrid
     }
@@ -152,6 +167,10 @@ public final class SessionClient {
     /// layout tick; no view reads it, so don't churn observers.
     @ObservationIgnored
     private var lastIOSViewport: (cols: UInt16, rows: UInt16)?
+    /// IOS-4.43: pixel size of `lastIOSViewport`'s grid, sent with owner
+    /// resizes so the host PTY reports the phone's real pixel geometry.
+    @ObservationIgnored
+    private var lastIOSViewportPixels: TerminalPixelSize = .unspecified
     @ObservationIgnored
     private var displayClientID: DisplayClientID = SessionClient.makeDisplayClientID()
     @ObservationIgnored
@@ -167,6 +186,16 @@ public final class SessionClient {
     private var pendingInput = PendingInput()
     @ObservationIgnored
     private var awaitingOwnerViewport = false
+    /// IOS-4.39: quiet window during which successive owner viewport changes
+    /// collapse into one trailing `ownerResize` (keyboard animation, rotation).
+    nonisolated public static let ownerResizeQuietWindow: TimeInterval = 0.15
+    private var pendingOwnerResize: (cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64)?
+    private var ownerResizeCoalescer: Task<Void, Never>?
+    /// IOS-4.24 / IOS-4.41 / IOS-4.42: the owner-transition resize is parked
+    /// behind the quiet window. While set, owner input stays in `pendingInput`
+    /// and leaves with the trailing resize, so the PTY adopts the grid before
+    /// any byte and nothing overtakes input queued before promotion.
+    private var ownerTransitionResizePending = false
 
     private struct PendingInput: Sendable {
         private static let maxBytes = 1_048_576
@@ -350,12 +379,16 @@ public final class SessionClient {
                 self?.handleViewport(viewport)
             }
         }
+        let renderer = pagedRenderer ?? MobilePagedTerminalRenderer(session: session, additionalHistoryRows: { [weak self] in
+            self?.additionalHistoryRowCapacity?() ?? 0
+        }, gridMatches: { [weak self] cols, rows in
+            self?.nativeGrid == GridSize(cols: cols, rows: rows)
+        }) { [weak self] cols, rows in
+            self?.installingCheckpointGrid = GridSize(cols: cols, rows: rows)
+        }
+        terminalRenderer = renderer
         paging = PagedTerminalCoordinator(
-            renderer: pagedRenderer ?? MobilePagedTerminalRenderer(session: session, additionalHistoryRows: { [weak self] in
-                self?.additionalHistoryRowCapacity?() ?? 0
-            }) { [weak self] cols, rows in
-                self?.installingCheckpointGrid = GridSize(cols: cols, rows: rows)
-            },
+            renderer: renderer,
             send: { [weak self] request in
                 guard let self, self.usesPagedHistory, let ws = self.currentWS() else {
                     throw URLError(.notConnectedToInternet)
@@ -379,17 +412,27 @@ public final class SessionClient {
         guard !stopped else { return }
         let cols = max(1, viewport.columns)
         let rows = max(1, viewport.rows)
+        nativeGrid = GridSize(cols: cols, rows: rows)
         guard snapshotCanvasGrid == nil,
               !awaitingOwnerViewport || confirmedPhysicalViewport else { return }
         lastIOSViewport = (cols, rows)
+        let pixels = TerminalPixelSize(
+            cols: cols,
+            rows: rows,
+            cellWidthPixels: viewport.cellWidthPixels,
+            cellHeightPixels: viewport.cellHeightPixels,
+            widthPixels: viewport.widthPixels,
+            heightPixels: viewport.heightPixels
+        )
+        lastIOSViewportPixels = pixels
         switch ownershipTransportMode {
         case .webControl where isOwner:
             guard let epoch = ownershipSnapshot?.epoch else { return }
             if awaitingOwnerViewport {
                 awaitingOwnerViewport = false
-                flushPendingInputAfterOwnerResize(cols: cols, rows: rows, epoch: epoch)
+                flushPendingInputAfterOwnerResize(cols: cols, rows: rows, pixels: pixels, epoch: epoch)
             } else {
-                sendOwnerResizeToServer(cols: cols, rows: rows, epoch: epoch)
+                scheduleCoalescedOwnerResize(cols: cols, rows: rows, pixels: pixels, epoch: epoch)
             }
         case .legacy where legacyEngaged:
             sendLegacyResizeToServer(cols: cols, rows: rows)
@@ -448,6 +491,7 @@ public final class SessionClient {
                     guard let ws = self.currentWS() else {
                         throw URLError(.cannotConnectToHost)
                     }
+                    var initialReplay = Data()
                     while self.isCurrentTransport(generation) {
                         let frame = try await ws.receive()
                         // A transport implementation may park in a checked
@@ -465,12 +509,26 @@ public final class SessionClient {
                             guard !self.usesPagedHistory || self.hasPagedCheckpoint else {
                                 throw URLError(.badServerResponse)
                             }
-                            if !self.usesPagedHistory { self.snapshotGrid = nil }
-                            self.session.receive(self.usesPagedHistory ? data : self.terminalReplay.prepare(data))
+                            if !self.usesPagedHistory {
+                                // SSH can deliver attach output before the hello
+                                // response announces its grid. Keep reading control
+                                // frames without parsing that replay at phone width.
+                                if self.ownershipTransportMode == .webControl, self.authoritativeGrid == nil {
+                                    guard data.count <= 16 * 1024 * 1024 - initialReplay.count else {
+                                        throw URLError(.dataLengthExceedsMaximum)
+                                    }
+                                    initialReplay.append(data)
+                                    continue
+                                }
+                                guard try await self.receiveNonPagedOutput(data, generation: generation) else { return }
+                            } else {
+                                self.session.receive(data)
+                            }
                         case .text(let text):
                             if self.usesPagedHistory,
                                let envelope = try? PagedTerminalEnvelope.parse(text), let event = envelope.event {
                                 try await self.paging?.handle(event)
+                                self.tracePagedEvent(event)
                                 guard self.isCurrentTransport(generation) else { return }
                                 if case .checkpoint(let checkpoint) = event {
                                     self.hasPagedCheckpoint = true
@@ -482,7 +540,11 @@ public final class SessionClient {
                                 }
                                 self.installingCheckpointGrid = nil
                             } else {
-                                self.handleTextFrame(text)
+                                guard try await self.receiveTextFrame(text, generation: generation) else { return }
+                                if !initialReplay.isEmpty, self.authoritativeGrid != nil {
+                                    guard try await self.receiveNonPagedOutput(initialReplay, generation: generation) else { return }
+                                    initialReplay.removeAll()
+                                }
                             }
                         }
                     }
@@ -537,6 +599,51 @@ public final class SessionClient {
         !stopped && transportGeneration == generation
     }
 
+    private func tracePagedEvent(_ event: PagedTerminalEvent) {
+        guard let summary = event.traceSummary else { return }
+        Self.trace.notice("\(summary, privacy: .public) status=\(String(describing: self.paging?.status), privacy: .public) canvas=\(self.gridTraceLabel(self.snapshotCanvasGrid), privacy: .public) native=\(self.gridTraceLabel(self.nativeGrid), privacy: .public) isOwner=\(self.isOwner)")
+    }
+
+    private func gridTraceLabel(_ grid: GridSize?) -> String {
+        grid.map { "\($0.cols)x\($0.rows)" } ?? "nil"
+    }
+
+    private func receiveNonPagedOutput(_ data: Data, generation: UInt64) async throws -> Bool {
+        snapshotGrid = nil
+        if let grid = snapshotCanvasGrid {
+            // Once per canvas grid, not per output frame: a follower or preview
+            // tile streaming output would otherwise persist a log line per chunk.
+            if grid != lastTracedLegacyCanvas {
+                lastTracedLegacyCanvas = grid
+                Self.trace.notice("legacyOutput canvas=\(grid.cols)x\(grid.rows) native=\(self.gridTraceLabel(self.nativeGrid), privacy: .public)")
+            }
+            // Resize callbacks can precede the parser's resize. Let the renderer
+            // confirm native readiness even when the callback grid already matches.
+            try await terminalRenderer?.resize(cols: grid.cols, rows: grid.rows)
+            guard isCurrentTransport(generation) else { return false }
+            installingCheckpointGrid = nil
+        }
+        guard isCurrentTransport(generation) else { return false }
+        session.receive(terminalReplay.prepare(data))
+        return true
+    }
+
+    private func receiveTextFrame(_ text: String, generation: UInt64) async throws -> Bool {
+        guard let envelope = try? WebControlEnvelope.parse(Data(text.utf8)) else { return true }
+        switch envelope {
+        case .grid, .ownership:
+            // Publishing an observable grid schedules layout independently of
+            // the receive loop. Finish earlier VT parsing before that resize.
+            try await terminalRenderer?.flushOutput()
+            try Task.checkCancellation()
+            guard isCurrentTransport(generation) else { return false }
+        default:
+            break
+        }
+        handleControlEnvelope(envelope)
+        return true
+    }
+
     private nonisolated static func isTerminalSessionEnded(_ error: any Error) -> Bool {
         guard let error = error as? TerminalSessionClient.ClientError else {
             return false
@@ -569,6 +676,7 @@ public final class SessionClient {
                 }
                 self.displayClientID = Self.makeDisplayClientID()
                 self.ownershipSnapshot = nil
+                self.legacyServerGrid = nil
                 self.legacyEngaged = false
                 self.clearPendingInput()
                 self.ownershipTransportMode = client.supportsWebControlTextFrames ? .webControl : .legacy
@@ -666,7 +774,7 @@ public final class SessionClient {
         switch ownershipTransportMode {
         case .webControl where isOwner:
             recordActivity()
-            if awaitingOwnerViewport {
+            if awaitingOwnerViewport || ownerTransitionResizePending {
                 _ = pendingInput.queue(data)
             } else {
                 sendBinary(data)
@@ -904,23 +1012,23 @@ public final class SessionClient {
         sendInput(Data([0x1B]))
     }
 
-    public func sendTab() {
-        sendInput(Data([0x09]))
+    public func sendTab(shift: Bool = false) {
+        sendInput(TerminalTrayKey.tab.data(shift: shift))
     }
 
-    public func sendArrow(_ direction: ArrowDirection) {
-        let sequence: String
+    public func sendArrow(_ direction: ArrowDirection, shift: Bool = false) {
+        let key: TerminalTrayKey
         switch direction {
         case .up:
-            sequence = "\u{1B}[A"
+            key = .up
         case .down:
-            sequence = "\u{1B}[B"
+            key = .down
         case .left:
-            sequence = "\u{1B}[D"
+            key = .left
         case .right:
-            sequence = "\u{1B}[C"
+            key = .right
         }
-        sendInput(Data(sequence.utf8))
+        sendInput(key.data(shift: shift))
     }
 
     public func sendControl(_ character: ControlCharacter) {
@@ -1020,7 +1128,18 @@ public final class SessionClient {
     private func requestTakeControl() {
         guard !pendingInput.takeoverRequested, !stopped else { return }
         let generation = transportGeneration
-        let grid = helloGrid()
+        // IOS-4.40: while a follower canvas is active the native grid is the
+        // leader's, and the last memoized viewport predates the canvas (on
+        // device it was a 31x10 pre-layout placeholder that briefly shrank
+        // the PTY to ten rows). Claim at the canvas grid so the claim itself
+        // never resizes; the confirmed physical viewport (IOS-4.32) carries
+        // the owner's real grid afterwards.
+        let grid: (cols: UInt16, rows: UInt16)
+        if let canvas = snapshotCanvasGrid {
+            grid = (canvas.cols, canvas.rows)
+        } else {
+            grid = helloGrid()
+        }
         pendingInput.takeoverBaseEpoch = ownershipSnapshot?.epoch
         pendingInput.takeoverRequested = true
         Task { @MainActor [weak self] in
@@ -1046,15 +1165,54 @@ public final class SessionClient {
     private func clearPendingInput() {
         pendingInput.clear()
         awaitingOwnerViewport = false
+        cancelCoalescedOwnerResize()
+    }
+
+    /// IOS-4.39: a software keyboard animating in, or a rotation, delivers a
+    /// burst of viewport ticks (observed: six grids inside 130 ms). Each one
+    /// forwarded verbatim is a daemon PTY resize, a SIGWINCH, and a TUI
+    /// repaint on every display. Park the latest grid and send it once the
+    /// burst goes quiet; a newer tick restarts the window.
+    private func scheduleCoalescedOwnerResize(cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64) {
+        pendingOwnerResize = (cols, rows, pixels, epoch)
+        ownerResizeCoalescer?.cancel()
+        ownerResizeCoalescer = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do { try await self.clock.sleep(for: Self.ownerResizeQuietWindow) } catch { return }
+            guard !Task.isCancelled, let pending = self.pendingOwnerResize else { return }
+            self.pendingOwnerResize = nil
+            self.ownerResizeCoalescer = nil
+            let carriesInput = self.ownerTransitionResizePending
+            self.ownerTransitionResizePending = false
+            guard !self.stopped, self.isOwner, self.ownershipSnapshot?.epoch == pending.epoch else { return }
+            let frames = carriesInput ? self.pendingInput.drain() : []
+            if frames.isEmpty {
+                self.sendOwnerResizeToServer(cols: pending.cols, rows: pending.rows, pixels: pending.pixels, epoch: pending.epoch)
+            } else {
+                self.sendOwnerResizeThenFrames(
+                    cols: pending.cols, rows: pending.rows, pixels: pending.pixels, epoch: pending.epoch, frames: frames
+                )
+            }
+        }
+    }
+
+    private func cancelCoalescedOwnerResize() {
+        ownerResizeCoalescer?.cancel()
+        ownerResizeCoalescer = nil
+        pendingOwnerResize = nil
+        ownerTransitionResizePending = false
     }
 
     private func flushPendingInput() {
+        // IOS-4.42: input parked behind the owner-transition resize leaves
+        // with it, not with a same-owner snapshot that lands meanwhile.
+        guard !ownerTransitionResizePending else { return }
         let frames = pendingInput.drain()
         guard !frames.isEmpty else { return }
         sendBinaryFrames(frames)
     }
 
-    private func sendOwnerResizeToServer(cols: UInt16, rows: UInt16, epoch: UInt64) {
+    private func sendOwnerResizeToServer(cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64) {
         let generation = transportGeneration
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1064,7 +1222,8 @@ public final class SessionClient {
                 clientID: clientID,
                 epoch: epoch,
                 cols: Int(cols),
-                rows: Int(rows)
+                rows: Int(rows),
+                pixels: pixels
             )
         }
     }
@@ -1076,14 +1235,26 @@ public final class SessionClient {
     /// guarantee, so the queued keystrokes could otherwise be processed at the
     /// previous owner's grid. The web client (TerminalPane.tsx) sends these in
     /// order on its single thread; this restores the same guarantee on iOS.
-    private func flushPendingInputAfterOwnerResize(cols: UInt16, rows: UInt16, epoch: UInt64) {
-        let frames = pendingInput.drain()
+    private func flushPendingInputAfterOwnerResize(cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64) {
+        // IOS-4.41: the confirmed viewport is measured before the software
+        // keyboard slides in, so sending it at once produced a grow-then-
+        // shrink bounce on the PTY. Park it, and the queued input, behind the
+        // same quiet window; the trailing send keeps the resize ahead of the
+        // bytes (IOS-4.24) while carrying the settled grid. Input typed in
+        // the meantime queues behind it as well (IOS-4.42).
+        ownerTransitionResizePending = true
+        scheduleCoalescedOwnerResize(cols: cols, rows: rows, pixels: pixels, epoch: epoch)
+    }
+
+    private func sendOwnerResizeThenFrames(
+        cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64, frames: [Data]
+    ) {
         let clientID = displayClientID
         let generation = transportGeneration
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard let ws = await self.awaitWS(for: generation), ws.supportsWebControlTextFrames else { return }
-            await ws.ownerResize(clientID: clientID, epoch: epoch, cols: Int(cols), rows: Int(rows))
+            await ws.ownerResize(clientID: clientID, epoch: epoch, cols: Int(cols), rows: Int(rows), pixels: pixels)
             await self.sendBinaryFrames(frames, on: ws, generation: generation)
         }
     }
@@ -1146,6 +1317,10 @@ public final class SessionClient {
 
     internal func handleTextFrame(_ text: String) {
         guard let envelope = try? WebControlEnvelope.parse(Data(text.utf8)) else { return }
+        handleControlEnvelope(envelope)
+    }
+
+    private func handleControlEnvelope(_ envelope: WebControlEnvelope) {
         switch envelope {
         case .imagePaste(.available):
             supportsImagePaste = true
@@ -1154,7 +1329,10 @@ public final class SessionClient {
         case .imagePaste:
             break
         case let .grid(cols, rows):
-            if ownershipSnapshot == nil {
+            let adoptsLegacyGrid = ownershipSnapshot == nil
+                || (ownershipSnapshot?.isOwnerless == true && ownershipSnapshot?.epoch == 0)
+            Self.trace.notice("grid \(cols)x\(rows) legacy=\(adoptsLegacyGrid) canvas=\(self.gridTraceLabel(self.snapshotCanvasGrid), privacy: .public)")
+            if adoptsLegacyGrid {
                 legacyServerGrid = GridSize(cols: cols, rows: rows)
             }
         case .resize:
@@ -1176,6 +1354,7 @@ public final class SessionClient {
             let wasOwner = isOwner
             let wasUsingSnapshotCanvas = snapshotCanvasGrid != nil
             ownershipSnapshot = snapshot
+            Self.trace.notice("ownership owner=\(snapshot.ownerClientID?.rawValue ?? "none", privacy: .public) grid=\(snapshot.grid.cols)x\(snapshot.grid.rows) epoch=\(snapshot.epoch) rev=\(snapshot.revision) isOwner=\(self.isOwner) wasOwner=\(wasOwner) canvas=\(self.gridTraceLabel(self.snapshotCanvasGrid), privacy: .public) native=\(self.gridTraceLabel(self.nativeGrid), privacy: .public)")
             if let id = imagePasteID, let epoch = imagePasteEpoch,
                !isOwner || snapshot.epoch != epoch {
                 finishImagePaste(id: id, error: "Image paste was interrupted because pane control changed.")
@@ -1190,7 +1369,9 @@ public final class SessionClient {
                 if !wasOwner,
                    ownershipTransportMode == .webControl,
                    let viewport = lastIOSViewport {
-                    flushPendingInputAfterOwnerResize(cols: viewport.cols, rows: viewport.rows, epoch: snapshot.epoch)
+                    flushPendingInputAfterOwnerResize(
+                        cols: viewport.cols, rows: viewport.rows, pixels: lastIOSViewportPixels, epoch: snapshot.epoch
+                    )
                 } else {
                     flushPendingInput()
                 }

@@ -63,6 +63,27 @@ public final class RemoteConnectionCoordinator {
 
     private let identityStore: ClientIdentityStore
     private let deviceIDStore: ClientDeviceIDStore
+    public private(set) var localDeviceID: RemoteDeviceID?
+    private var authenticationOffers = RemoteAuthenticationOffers()
+    private var previewAutoOpen = RemotePreviewAutoOpen()
+
+    func reservePreviewAutoOpen(_ offer: RemoteOpenOffer?, isReady: Bool, canPresent: Bool) -> Bool {
+        previewAutoOpen.take(offer, isReady: isReady, canPresent: canPresent)
+    }
+
+    func completePreviewAutoOpen(_ id: UUID) { previewAutoOpen.complete(id) }
+    func deferPreviewAutoOpen(_ id: UUID) { previewAutoOpen.deferPresentation(of: id) }
+
+    func completeAuthenticationOffer(_ id: UUID) { authenticationOffers.complete(id) }
+    func dismissAuthenticationOffer(_ id: UUID) { authenticationOffers.dismiss(id) }
+
+    func deferAuthenticationOffer(_ id: UUID) { authenticationOffers.deferPresentation(of: id) }
+
+    func consumeAuthenticationOffer(_ offers: [RemoteOpenOffer], sessionName: String,
+                                    ownerDeviceID: RemoteDeviceID?, canPresent: Bool) -> RemoteOpenOffer? {
+        authenticationOffers.consume(offers, sessionName: sessionName, ownerDeviceID: ownerDeviceID,
+                                     canPresent: canPresent)
+    }
     private let pinnedHostStore: PinnedHostStore
     private let signaling: SignalingClient
     private let connectionFactory: (Curve25519.Signing.PrivateKey, RemoteIdentityFingerprint) -> RemoteHostConnection
@@ -653,6 +674,7 @@ public final class RemoteConnectionCoordinator {
             return fail(host: host, route: failureRoute)
         }
 
+        localDeviceID = clientDeviceID
         let connection = connectionFactory(clientKey, pinnedHost.fingerprint)
         let connectionIdentity = ObjectIdentifier(connection)
         await connection.setOnStateChange { [weak self] state in

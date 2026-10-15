@@ -22,6 +22,26 @@ struct WorktreeReconcilerTests {
         #expect(r.merged[0].branch == "main")
     }
 
+    @Test("watcher-discovered worktrees start above older activity without restamping saved entries")
+    func newDiscoveryHasInitialActivity() {
+        let now = Date(timeIntervalSince1970: 1000)
+        var active = wt("/r/active", "active")
+        active.createdAt = now.addingTimeInterval(-100)
+        active.attention = Attention(text: "Done", timestamp: now.addingTimeInterval(-10))
+        let legacy = wt("/r/legacy", "legacy")
+        let discovered = [active, legacy, wt("/r/new", "new")].map {
+            DiscoveredWorktree(path: $0.path, branch: $0.branch)
+        }
+        let result = WorktreeReconciler.reconcile(existing: [active, legacy], discovered: discovered, now: now)
+        #expect(result.newlyAdded.first?.createdAt == now)
+        #expect(WorktreeOrdering.byRecentActivity(result.merged).map(\.branch) == ["new", "active", "legacy"])
+        let repeated = WorktreeReconciler.reconcile(existing: result.merged, discovered: discovered,
+                                                  now: now.addingTimeInterval(100))
+        #expect(repeated.merged[0].createdAt == active.createdAt)
+        #expect(repeated.merged[1].createdAt == nil)
+        #expect(repeated.merged[2].createdAt == now)
+    }
+
     @Test func missingPathTransitionsToStale() {
         let existing = [wt("/r/gone", "feat", state: .closed)]
         let now = Date(timeIntervalSince1970: 1_000)

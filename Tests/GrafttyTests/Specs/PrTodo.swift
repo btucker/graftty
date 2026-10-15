@@ -30,11 +30,6 @@ struct PrTodo {
     func pr_3_1() async throws { }
 
     @Test("""
-@spec PR-3.3: The forge-specific PR/MR reference sidebar badge shall be a tappable button that opens the PR URL in the system browser when clicked. Clicking the badge shall not trigger the row's worktree-selection action.
-""", .disabled("not yet implemented"))
-    func pr_3_3() async throws { }
-
-    @Test("""
 @spec PR-3.5: While a worktree's PR/MR is open, the forge-specific reference sidebar badge text shall be colored to reflect CI state, overriding the open-state green: red (matching the breadcrumb PR-button failure dot, RGB ~0.97/0.32/0.29) when the latest checks verdict is `failure`, orange (matching the pending dot, RGB ~0.82/0.60/0.13) and pulsing in opacity when the verdict is `pending`. A `success` or absent (`none`) verdict shall keep the open-state green so repos without CI do not lose the open-vs-merged signal. While the PR is merged, the badge shall remain purple regardless of the CI verdict, since CI status on a merged PR is stale and would distract from the actionable signal on still-open PRs.
 """, .disabled("not yet implemented"))
     func pr_3_5() async throws { }

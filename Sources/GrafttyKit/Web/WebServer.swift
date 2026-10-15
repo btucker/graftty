@@ -211,9 +211,11 @@ public final class WebServer {
         /// attach process should start in. Nil preserves the previous
         /// process-cwd behavior for unknown or legacy sessions.
         public let sessionWorktreeProvider: @Sendable (String) async -> String?
+        public let sessionSpawnProvider: @Sendable (String) async -> ZmxSpawnConfiguration?
         /// Source for `GET /repos`. Same fast-snapshot contract as
         /// `sessionsProvider`: read from in-memory AppState, no git.
         public let reposProvider: @Sendable () async -> [RepoInfo]
+        public let agentCompletionsProvider: @Sendable (String?) async -> [AgentCompletionCandidate]
         /// Additional depth-one repositories exposed only to clients that
         /// advertise `remote-worktrees-v1`.
         public let relayedReposProvider: @Sendable () async -> [RepoInfo]
@@ -270,7 +272,9 @@ public final class WebServer {
             zmxDir: URL,
             sessionsProvider: @escaping @Sendable () async -> [SessionInfo] = { [] },
             sessionWorktreeProvider: @escaping @Sendable (String) async -> String? = { _ in nil },
+            sessionSpawnProvider: @escaping @Sendable (String) async -> ZmxSpawnConfiguration? = { _ in nil },
             reposProvider: @escaping @Sendable () async -> [RepoInfo] = { [] },
+            agentCompletionsProvider: @escaping @Sendable (String?) async -> [AgentCompletionCandidate] = { _ in [] },
             relayedReposProvider: @escaping @Sendable () async -> [RepoInfo] = {
                 []
             },
@@ -290,7 +294,9 @@ public final class WebServer {
             self.zmxDir = zmxDir
             self.sessionsProvider = sessionsProvider
             self.sessionWorktreeProvider = sessionWorktreeProvider
+            self.sessionSpawnProvider = sessionSpawnProvider
             self.reposProvider = reposProvider
+            self.agentCompletionsProvider = agentCompletionsProvider
             self.relayedReposProvider = relayedReposProvider
             self.worktreeCreator = worktreeCreator
             self.defaultBranchPuller = defaultBranchPuller
@@ -478,19 +484,21 @@ public final class WebServer {
             },
             upgradePipelineHandler: { channel, head in
                 let session = Self.parseSession(from: head.uri)
-                let promise = channel.eventLoop.makePromise(of: String?.self)
+                let promise = channel.eventLoop.makePromise(of: (String?, ZmxSpawnConfiguration?).self)
                 channel.eventLoop.execute {
                     Task {
                         let worktreePath = await config.sessionWorktreeProvider(session)
-                        promise.succeed(worktreePath)
+                        let spawn = await config.sessionSpawnProvider(session)
+                        promise.succeed((worktreePath, spawn))
                     }
                 }
-                return promise.futureResult.flatMap { worktreePath in
+                return promise.futureResult.flatMap { worktreePath, spawn in
                     let wsHandler = WebSocketBridgeHandler(
                         sessionName: session,
                         zmxExecutable: config.zmxExecutable,
                         zmxDir: config.zmxDir,
                         workingDirectory: worktreePath.map { URL(fileURLWithPath: $0, isDirectory: true) },
+                        spawnConfiguration: spawn,
                         remoteAttachmentRegistry: config.remoteAttachmentRegistry,
                         ownershipStore: config.displayOwnershipStore,
                         ownershipBroadcaster: config.ownershipBroadcaster,
@@ -647,6 +655,16 @@ public final class WebServer {
                 return
             }
             // WEB-7.1: repo list for the "Add Worktree" picker.
+            if path == "/agent-completions" {
+                let provider = config.agentCompletionsProvider
+                let promise = context.eventLoop.makePromise(of: [AgentCompletionCandidate].self)
+                promise.futureResult.whenComplete { result in
+                    Self.respondEncodable(context: context, items: (try? result.get()) ?? [])
+                }
+                let worktreeID = URLComponents(string: head.uri)?.queryItems?.first { $0.name == "worktree" }?.value
+                Task { promise.succeed(await provider(worktreeID)) }
+                return
+            }
             if path == "/repos" {
                 let provider = config.reposProvider
                 let relayedProvider = config.relayedReposProvider
@@ -1119,6 +1137,7 @@ public final class WebServer {
         let zmxExecutable: URL
         let zmxDir: URL
         let workingDirectory: URL?
+        let spawnConfiguration: ZmxSpawnConfiguration?
         /// TERM-11.5: handed to each WebSession before `start()` so the
         /// session registers its zmx attach (and deregisters on close).
         let remoteAttachmentRegistry: RemoteAttachmentRegistry?
@@ -1135,6 +1154,7 @@ public final class WebServer {
             zmxExecutable: URL,
             zmxDir: URL,
             workingDirectory: URL?,
+            spawnConfiguration: ZmxSpawnConfiguration?,
             remoteAttachmentRegistry: RemoteAttachmentRegistry?,
             ownershipStore: SessionDisplayOwnershipStore,
             ownershipBroadcaster: DisplayOwnershipBroadcaster,
@@ -1144,6 +1164,7 @@ public final class WebServer {
             self.zmxExecutable = zmxExecutable
             self.zmxDir = zmxDir
             self.workingDirectory = workingDirectory
+            self.spawnConfiguration = spawnConfiguration
             self.remoteAttachmentRegistry = remoteAttachmentRegistry
             self.ownershipStore = ownershipStore
             self.ownershipBroadcaster = ownershipBroadcaster
@@ -1176,8 +1197,8 @@ public final class WebServer {
                         channel.writeAndFlush(frame, promise: nil)
                     }
                 },
-                resize: { [weak self] cols, rows in
-                    self?.session?.resize(cols: cols, rows: rows)
+                resize: { [weak self] windowSize in
+                    self?.session?.resize(windowSize: windowSize)
                 },
                 write: { data in writeOnLoop.value(data) },
                 followDisplayGrid: { [loop = context.eventLoop] snapshot in
@@ -1192,7 +1213,8 @@ public final class WebServer {
                 zmxExecutable: zmxExecutable,
                 zmxDir: zmxDir,
                 sessionName: sessionName,
-                workingDirectory: workingDirectory
+                workingDirectory: workingDirectory,
+                spawnConfiguration: spawnConfiguration
             ))
             sess.onPTYData = { [weak self] data in
                 guard let self, let channel = self.channel else { return }
@@ -1215,8 +1237,11 @@ public final class WebServer {
                     channel.close(promise: nil)
                 }
             }
-            sess.onPTYSize = { [weak self] cols, rows in
-                self?.coordinator?.handlePTYSize(cols: cols, rows: rows)
+            sess.onPTYSize = { [weak self, loop = context.eventLoop] cols, rows in
+                // Serialize source updates with hello's cached-grid replay.
+                loop.execute { [weak self] in
+                    self?.coordinator?.handlePTYSize(cols: cols, rows: rows)
+                }
             }
             sess.attachmentRegistry = remoteAttachmentRegistry
             do {

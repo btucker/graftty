@@ -165,7 +165,11 @@ final class RemoteTeamRouter {
                               identity.runtime == agent.runtime,
                               let qualified = try? RemoteTeamAddress(deviceID: device, worktreePath: member.worktreePath, suffix: agent.id) else { return nil }
                         return TeamListAgent(id: agent.id, address: qualified.rawValue, runtime: agent.runtime, displayName: agent.displayName, isReachable: agent.isReachable, paneSessionName: agent.paneSessionName)
-                    }
+                    },
+                    projectPath: member.projectPath.flatMap {
+                        try? RemoteTeamAddress(deviceID: device, worktreePath: $0).rawValue
+                    },
+                    projectName: member.projectName
                 )
             }
         }

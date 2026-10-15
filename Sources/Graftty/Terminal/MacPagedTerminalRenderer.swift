@@ -1,5 +1,6 @@
 import Foundation
 import GhosttyKit
+import os
 import GrafttyProtocol
 import GrafttyRemoteClient
 
@@ -123,9 +124,14 @@ final class MacPagedAttachment {
         self.finishGrid = finishGrid
     }
 
+    private static let trace = Logger(subsystem: "com.graftty.app", category: "paged-trace")
+
     func handle(_ event: PagedTerminalEvent) async throws {
         if case .checkpoint = event { restoringGrid = true }
         try await coordinator.handle(event)
+        if let summary = event.traceSummary {
+            Self.trace.notice("mac \(summary, privacy: .public) restoring=\(self.restoringGrid) status=\(String(describing: self.coordinator.status), privacy: .public)")
+        }
         // A later live resize borrows the authoritative grid only while its
         // resize is applied. It must not leave the pane in restore mode.
         if case .grid = event, !restoringGrid { finishGrid() }

@@ -48,7 +48,7 @@ struct SessionReconnectTests {
     }
 
     /// Wait briefly so the spawned receive Task reaches the await point.
-    /// 50ms is plenty for an in-memory factory call + one async hop.
+    /// Use `waitUntil` when assertions depend on an async state transition.
     func quiesce() async {
         try? await Task.sleep(nanoseconds: 50_000_000)
     }
@@ -143,24 +143,41 @@ struct SessionReconnectTests {
         factory.nextProvider = { FailingWS() }
         let client = SessionClient(
             sessionName: "s",
-            webSocketFactory: factory.make,
+            webSocketFactory: {
+                // Exercise a dial that takes longer than the old 50ms wait.
+                try await Task.sleep(nanoseconds: 100_000_000)
+                return factory.make()
+            },
             clock: clock,
             backoffSchedule: [1, 2, 4]
         )
         defer { client.stop() }
         client.start()
-        await quiesce()
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 1) &&
+                factory.creations == 1 && clock.hasPendingSleep(for: 1.0)
+        }
         // After first failure, attempt 1 with 1s delay pending.
         #expect(client.connectionState == .reconnecting(attempt: 1))
+        #expect(factory.creations == 1)
+        try #require(clock.hasPendingSleep(for: 1.0))
         clock.advance(by: 1.0)
-        await quiesce()
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 2) &&
+                factory.creations == 2 && clock.hasPendingSleep(for: 2.0)
+        }
         // Second WS attempted, fails, attempt 2 with 2s delay pending.
         #expect(client.connectionState == .reconnecting(attempt: 2))
         #expect(factory.creations == 2)
+        try #require(clock.hasPendingSleep(for: 2.0))
         clock.advance(by: 2.0)
-        await quiesce()
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 3) &&
+                factory.creations == 3 && clock.hasPendingSleep(for: 4.0)
+        }
         #expect(client.connectionState == .reconnecting(attempt: 3))
         #expect(factory.creations == 3)
+        #expect(clock.hasPendingSleep(for: 4.0))
     }
 
     @Test
@@ -174,16 +191,28 @@ struct SessionReconnectTests {
         }
         let client = SessionClient(
             sessionName: "s",
-            webSocketFactory: factory.make,
+            webSocketFactory: {
+                // A slow dial exposes fixed-delay assumptions on busy CI runners.
+                try await Task.sleep(nanoseconds: 100_000_000)
+                return factory.make()
+            },
             clock: clock,
             backoffSchedule: [1, 2, 4]
         )
         defer { client.stop() }
         client.start()
-        await quiesce()
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 1) &&
+                factory.creations == 1 && clock.hasPendingSleep(for: 1.0)
+        }
         #expect(client.connectionState == .reconnecting(attempt: 1))
+        try #require(clock.hasPendingSleep(for: 1.0),
+                     "the first backoff sleep must be registered before time advances")
         clock.advance(by: 1.0)
-        await quiesce()
+        await waitUntil {
+            factory.creations == 2 && client.connectionState == .live
+        }
+        #expect(factory.creations == 2)
         // Second WS is IdleWS — receive parks → state is .live.
         #expect(client.connectionState == .live)
     }
@@ -209,24 +238,38 @@ struct SessionReconnectTests {
         #expect(factory.creations == beforeForce + 1)
     }
 
-    @Test
-    func stopDuringBackoffCancelsCleanly() async throws {
+    @Test(arguments: [false, true])
+    func stopDuringBackoffCancelsCleanly(slowDial: Bool) async throws {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
         factory.nextProvider = { FailingWS() }
         let client = SessionClient(
             sessionName: "s",
-            webSocketFactory: factory.make,
+            webSocketFactory: {
+                // Exercise a dial that outlasts the former fixed 50ms wait.
+                if slowDial { try await Task.sleep(for: .milliseconds(100)) }
+                return factory.make()
+            },
             clock: clock,
             backoffSchedule: [10]  // long enough we'd never reach it
         )
+        defer { client.stop() }
         client.start()
-        await quiesce()
-        #expect(client.connectionState == .reconnecting(attempt: 1))
-        client.stop()
-        await quiesce()
-        // No additional factory calls after stop.
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 1) &&
+                factory.creations == 1 && clock.hasPendingSleep(for: 10.0)
+        }
+        try #require(client.connectionState == .reconnecting(attempt: 1),
+                     "the initial receive failure must reach backoff before stop")
+        try #require(clock.hasPendingSleep(for: 10.0),
+                     "the virtual backoff must be registered before stop")
         let snapshot = factory.creations
+        #expect(snapshot == 1)
+        client.stop()
+        await waitUntil { !clock.hasPendingSleep(for: 10.0) }
+        try #require(!clock.hasPendingSleep(for: 10.0),
+                     "stop must cancel the registered backoff sleep")
+        // No additional factory calls after stop, even past the retry deadline.
         clock.advance(by: 10.0)
         await quiesce()
         #expect(factory.creations == snapshot)

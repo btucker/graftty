@@ -20,6 +20,7 @@ extension SurfaceNSView: NSTextInputClient {
     func setMarkedText(_ value: Any, selectedRange: NSRange, replacementRange: NSRange) {
         guard canReceiveNativeText, let text = Self.attributedInput(value),
               let range = compositionReplacementRange(replacementRange) else { return }
+        agentCompletion.invalidateBoundary()
         let updated = NSMutableAttributedString(attributedString: markedText)
         updated.replaceCharacters(in: range, with: text)
         markedText = updated
@@ -52,6 +53,7 @@ extension SurfaceNSView: NSTextInputClient {
                 return
             }
         }
+        if agentCompletion.handleText(text) { return }
         let deliver = { self.surfaceOperations.text(surface, text) }
         if let hostManagedUserInputScope { hostManagedUserInputScope(deliver) }
         else { deliver() }

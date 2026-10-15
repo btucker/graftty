@@ -57,7 +57,7 @@ public struct AppState: Codable, Sendable, Equatable {
         return true
     }
 
-    /// Permanently moves stale/yellow worktrees to the bottom of a repo's
+    /// Permanently moves stale Task worktrees to the bottom of a repo's
     /// saved order, preserving relative order within the non-stale and
     /// stale groups.
     ///
@@ -117,10 +117,17 @@ public struct AppState: Codable, Sendable, Equatable {
         }
     }
 
-    /// STATE-2.4: the user focused one pane (clicked its terminal or sidebar
-    /// row) — clear just that pane's attention. Kept separate from
-    /// `setFocusedTerminal` so programmatic focus restores (e.g. TERM-2.3
-    /// after a worktree switch) don't wipe a pending "needs input".
+    /// Viewing a pane clears its notifications without retiring agent requests.
+    public mutating func viewPaneAttention(_ pane: PaneSlotID, forWorktreePath path: String) {
+        for repoIndex in repos.indices {
+            if let worktreeIndex = repos[repoIndex].worktrees.firstIndex(where: { $0.path == path }) {
+                repos[repoIndex].worktrees[worktreeIndex].viewPaneAttention(pane)
+                return
+            }
+        }
+    }
+
+    /// Explicitly acknowledges a pane's attention and the stopped turn.
     public mutating func acknowledgePaneAttention(
         _ pane: PaneSlotID,
         forWorktreePath path: String
@@ -331,8 +338,19 @@ public struct AppState: Codable, Sendable, Equatable {
     }
 
     public static var defaultDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        #if os(Linux)
+        let environment = ProcessInfo.processInfo.environment
+        if let override = environment["GRAFTTY_STATE_DIR"], override.hasPrefix("/") {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        if let data = environment["XDG_DATA_HOME"], data.hasPrefix("/") {
+            return URL(fileURLWithPath: data, isDirectory: true).appendingPathComponent("graftty", isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share/graftty", isDirectory: true)
+        #else
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Graftty")
+        #endif
     }
 
     /// Snapshot of every `.running` worktree's split tree, keyed by path.

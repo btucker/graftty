@@ -70,6 +70,22 @@ Graftty's current libghostty surface API. This PR adopts and hardens the
 transport, but demand-loaded scrollback still requires a libghostty surface
 snapshot-import bridge.
 
+`zmx attach --replay-grid` is the host's legacy VT bridge mode. It prefixes
+stdout with `GFTGRID1`, then two little-endian u16 fields for columns and rows,
+before any clear-screen or replay bytes. The dimensions come from the decoded
+snapshot, so a new client works with an already-running snapshot-capable
+daemon. The host strips this one-time header and reports the source grid before
+delivering bytes. Subsequent application output is never scanned for headers.
+Stdout is raw even when stdin uses a separate PTY. This mode cannot be combined
+with `--snapshot`, and a session-switch request ends the named attachment.
+
+Pre-snapshot daemons send VT without dimensions. The client marks their grid
+as `0,0`, and the host retains its previous outer-PTY polling fallback for
+compatibility. That fallback cannot establish the replay's source grid.
+Snapshot-capable attachments never replace the replay grid with the outer PTY
+size. Ongoing owner resize events come from Graftty's ownership protocol;
+legacy zmx daemons do not broadcast those dimensions to regular followers.
+
 `LEGACY_GRAFTTY_COMMIT` and `LEGACY_ZMX_SHA256` identify the immutable 0.5
 binary that remains the rolling-upgrade compatibility floor. The bump script
 tests that fixture on every run and also tests the committed N-1 binary when it

@@ -4,15 +4,44 @@ import Testing
 
 @Suite("TeamHookRenderer")
 struct TeamHookRendererTests {
-    @Test("@spec AGENT-6.33: When an agent session starts, the application shall instruct the agent to load the Graftty skill for Attention recaps and the Graftty Team skill for coordination, and require a task-specific emoji independently of cached skill instructions.")
+    @Test("@spec PREVIEW-3.1: When an agent session starts, the application shall instruct agents to explain visually useful material with self-contained HTML and deliver it through graftty preview.")
+    func asksForHTMLExplanations() throws {
+        for runtime in [TeamHookRuntime.codex, .claude] {
+            let context = try additionalContext(from: TeamHookRenderer.sessionStart(runtime: runtime))
+            #expect(context.contains("self-contained HTML"))
+            #expect(context.contains("Run `graftty preview` before responding"))
+            #expect(context.contains("`graftty-preview` skill"))
+        }
+    }
+
+    @Test("@spec AGENT-6.53: When a Codex session starts, the application shall instruct the agent to request narrowly scoped elevated permission before its first main control-socket command in a restricted sandbox, retain that choice for subsequent commands, and keep Attention file reports unprivileged.")
+    func codexSessionExplainsSocketPermissionBeforeFirstCommand() throws {
+        let context = try additionalContext(from: TeamHookRenderer.sessionStart(runtime: .codex))
+        #expect(context.contains("before the first control-socket command"))
+        #expect(context.contains("require_escalated"))
+        #expect(context.contains("subsequent control-socket commands"))
+        #expect(context.contains("graftty attention report"))
+        #expect(context.contains("does not need socket permission"))
+        let claude = try additionalContext(from: TeamHookRenderer.sessionStart(runtime: .claude))
+        #expect(!claude.contains("require_escalated"))
+    }
+
+    @Test("@spec AGENT-6.33: When an agent session starts, the application shall instruct the agent to load Graftty skills for Attention recaps, coordination and durable roles, and native previews of requested or completed review artifacts, and require a task-specific emoji independently of cached skill instructions.")
     func managedSessionLoadsGrafttySkill() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
             let json = try TeamHookRenderer.sessionStart(runtime: runtime)
             let context = try additionalContext(from: json)
             #expect(context.contains("Load the `graftty` skill for Attention recaps"))
             #expect(context.contains("`graftty-team` skill for agent coordination"))
+            #expect(context.contains("durable roles"))
             #expect(context.contains("task-specific `emoji`"))
             #expect(context.contains("`emojiAlternatives`"))
+            #expect(context.contains("`graftty-preview` skill"))
+            #expect(context.contains("asked to show files"))
+            #expect(context.contains("finished visual for review"))
+            #expect(context.contains("Run `graftty preview` before responding"))
+            #expect(context.contains("`graftty-open`"))
+            #expect(context.contains("requested URLs"))
         }
     }
 
@@ -72,7 +101,7 @@ struct TeamHookRendererTests {
 
         #expect(context.contains("unrelated to the tool result"))
         #expect(context.contains("continue your current work"))
-        #expect(context.contains("<graftty-peer-message agent=\"/repo/acme\" fallback-agent=\"/repo/acme#claude\" priority=\"urgent\">"))
+        #expect(context.contains("<graftty-peer-message agent=\"/repo/acme\" fallback-agent=\"/repo/acme#claude\" id=\"m1\" priority=\"urgent\">"))
         #expect(!context.lowercased().contains("untrusted"))
         #expect(context.contains("CI is blocking you"))
     }
@@ -111,24 +140,33 @@ struct TeamHookRendererTests {
     @Test("@spec TEAM-4.4: The Graftty Team provider skill shall instruct agents to send direct and broadcast message bodies through standard input with a quoted, freshly generated heredoc delimiter that is absent from the message, never as a shell argument, so shell syntax in messages remains literal.")
     func teamSkillDocumentsLiteralMessageInput() throws {
         let skill = try GrafttyTeamSkillText.load()
-
-        #expect(skill.contains("graftty team send --stdin"))
         #expect(skill.contains("graftty team broadcast --stdin"))
-        #expect(skill.contains("<graftty-peer-message agent=\"<exact-address>\" fallback-agent=\"<runtime-address>\">"))
-        #expect(skill.contains("<graftty-forge-message provider=\"<provider>\">"))
-        #expect(skill.contains("<graftty-system-message>"))
-        #expect(skill.contains("stable reply address"))
-        #expect(skill.contains("fresh quoted high-entropy heredoc delimiter"))
-        #expect(skill.contains("does not occur in the body"))
-        #expect(skill.contains("never as shell arguments"))
-        #expect(!skill.contains("graftty team msg"))
+        let example = try #require(skill.components(separatedBy: "```sh\n").dropFirst().first)
+            .components(separatedBy: "```")[0]
+        let lines = example.split(separator: "\n")
+        let command = try #require(lines.first)
+        let delimiter = try #require(lines.last)
+        let payload = "literal ${GRAFTTY_TEST_LITERAL} $(printf expanded) `printf expanded`"
+        let script = "graftty() { printf '%s\\n' \"$@\"; cat; }\n\(command)\n\(payload)\n\(delimiter)\n"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script]
+        process.environment = ["PATH": "/usr/bin:/bin", "GRAFTTY_TEST_LITERAL": "expanded"]
+        let output = Pipe()
+        process.standardOutput = output
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        #expect(text == "team\nsend\n--stdin\n<address>\n\(payload)\n")
     }
 
-    @Test("Both runtimes produce the identical SessionStart context.")
-    func bothRuntimesAlign() throws {
-        let claude = try TeamHookRenderer.sessionStart(runtime: .claude, instructions: "X")
-        let codex = try TeamHookRenderer.sessionStart(runtime: .codex, instructions: "X")
-        #expect(claude == codex)
+    @Test("Both runtimes preserve shared SessionStart context around Codex socket guidance.")
+    func bothRuntimesPreserveSharedContext() throws {
+        let claude = try additionalContext(from: TeamHookRenderer.sessionStart(runtime: .claude, instructions: "X"))
+        let codex = try additionalContext(from: TeamHookRenderer.sessionStart(runtime: .codex, instructions: "X"))
+        #expect(claude == TeamHookRenderer.skillGuidance + "\n\n\nX")
+        #expect(codex == TeamHookRenderer.skillGuidance + "\n\n\n" + TeamHookRenderer.codexSocketGuidance + "\n\n\nX")
     }
 
     @Test("format(messages:) emits agentPrompt when non-nil.")
@@ -164,7 +202,7 @@ struct TeamHookRendererTests {
         #expect(rendered.contains("RAW-EVENT"))
     }
 
-    @Test("A normal worktree message includes a reply command, canonical attribution, and no event template.")
+    @Test("A normal worktree message includes reply metadata, canonical attribution, and no event template.")
     func formatWorktreeMessage() {
         let msg = message(
             id: "opaque-id",
@@ -175,12 +213,11 @@ struct TeamHookRendererTests {
 
         let rendered = TeamHookRenderer.format(messages: [msg])
 
-        #expect(rendered.hasSuffix("""
-        <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude">
+        #expect(rendered == """
+        <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude" id="opaque-id">
         Please check the parser.
         </graftty-peer-message>
-        """))
-        #expect(rendered.contains("graftty team reply 'opaque-id' --stdin"))
+        """)
         #expect(!rendered.contains("runtime="))
         #expect(!rendered.contains("automated team event"))
     }
@@ -192,7 +229,7 @@ struct TeamHookRendererTests {
         let rendered = TeamHookRenderer.format(messages: [msg])
 
         #expect(rendered.hasSuffix("""
-        <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude" priority="urgent">
+        <graftty-peer-message agent="/repo/acme" fallback-agent="/repo/acme#claude" id="m1" priority="urgent">
         This blocks the merge.
         </graftty-peer-message>
         """))

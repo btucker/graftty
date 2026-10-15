@@ -57,7 +57,7 @@ public struct CodexHomeMirror: Sendable {
         defer {
             #if canImport(Darwin)
             _ = flock(lockFD, LOCK_UN)
-            _ = Darwin.close(lockFD)
+            _ = GrafttyPOSIX.close(lockFD)
             #elseif canImport(Glibc)
             _ = flock(lockFD, LOCK_UN)
             _ = Glibc.close(lockFD)
@@ -172,7 +172,7 @@ public struct CodexHomeMirror: Sendable {
         let path = mirrorDirectory.appendingPathComponent(".graftty-mirror.lock").path
         let permissions = S_IRUSR | S_IWUSR
         #if canImport(Darwin)
-        let fd = Darwin.open(path, O_RDWR | O_CREAT, permissions)
+        let fd = GrafttyPOSIX.open(path, O_RDWR | O_CREAT, permissions)
         #elseif canImport(Glibc)
         let fd = Glibc.open(path, O_RDWR | O_CREAT, mode_t(permissions))
         #else
@@ -182,7 +182,7 @@ public struct CodexHomeMirror: Sendable {
         let result = flock(fd, LOCK_EX)
         guard result == 0 else {
             #if canImport(Darwin)
-            _ = Darwin.close(fd)
+            _ = GrafttyPOSIX.close(fd)
             #elseif canImport(Glibc)
             _ = Glibc.close(fd)
             #endif
@@ -261,7 +261,7 @@ public struct CodexHomeMirror: Sendable {
     /// appears after inspection is preserved instead of recursively deleted.
     private func removeNonDirectoryEntry(at url: URL) throws {
         #if canImport(Darwin)
-        let result = url.path.withCString { Darwin.unlink($0) }
+        let result = url.path.withCString { GrafttyPOSIX.unlink($0) }
         #elseif canImport(Glibc)
         let result = url.path.withCString { Glibc.unlink($0) }
         #endif
@@ -420,6 +420,28 @@ public struct CodexHomeMirror: Sendable {
         let durableHooksLine = hooksSettingLine(in: durable)
         let restored = replacingHooksSetting(in: legacy, with: durableHooksLine)
         return Data(restored.utf8)
+    }
+
+    /// Reads explicit plugin switches using the same quote-aware scanner as
+    /// managed config reconciliation. Text inside instructions is not config.
+    static func pluginEnablement(in config: String) -> [String: Bool] {
+        var table: [String] = []
+        var result: [String: Bool] = [:]
+        for scanned in scanningTOMLLines(in: config) where scanned.isStructural {
+            let line = tomlContentBeforeComment(in: scanned.text)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let name = tomlTableName(in: line) {
+                table = name
+            } else if let key = tomlAssignmentKey(in: line) {
+                let path = table + key
+                guard path.count == 3, path[0] == "plugins", path[2] == "enabled" else { continue }
+                let value = line.split(separator: "=", omittingEmptySubsequences: false).last?
+                    .trimmingCharacters(in: .whitespaces)
+                if value == "true" { result[path[1]] = true }
+                if value == "false" { result[path[1]] = false }
+            }
+        }
+        return result
     }
 
     private static func hooksSettingLine(in config: String) -> String? {

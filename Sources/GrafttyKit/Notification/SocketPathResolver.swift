@@ -22,6 +22,11 @@ public enum SocketPathResolver {
         if let v = environment["GRAFTTY_SOCK"], !v.isEmpty {
             return v
         }
+        #if os(Linux)
+        if let runtime = environment["XDG_RUNTIME_DIR"], runtime.hasPrefix("/") {
+            return URL(fileURLWithPath: runtime).appendingPathComponent("graftty/graftty.sock").path
+        }
+        #endif
         return defaultDirectory.appendingPathComponent("graftty.sock").path
     }
 }

@@ -3,6 +3,7 @@ import Foundation
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
+import os
 
 struct RelayedPaneTarget: Sendable, Equatable {
     let identity: RemoteMacIdentity
@@ -61,7 +62,7 @@ final class RemoteWorktreeRelayRouter {
             attentionText: worktree.attentionText, attentionSource: worktree.attentionSource,
             attentionTimestamp: worktree.attentionTimestamp, layout: worktree.layout,
             origin: worktree.origin ?? WorktreeOrigin(deviceID: ownerID, deviceLabel: ownerLabel, relayDepth: 0),
-            route: worktree.route, sidebar: .init(id: "\(projectID):\(worktree.path)", projectID: projectID))
+            route: worktree.route, sidebar: .init(id: "\(projectID):\(worktree.path)", projectID: projectID), ports: worktree.ports, portBindings: worktree.portBindings)
     }
 
     func promotedWorktrees(
@@ -148,7 +149,9 @@ final class RemoteWorktreeRelayRouter {
                         repositoryID: repositoryAlias,
                         worktreeID: worktreeAlias
                     ),
-                    sidebar: sidebar
+                    sidebar: sidebar,
+                    ports: worktree.ports,
+                    portBindings: worktree.portBindings
                 ))
             }
         }
@@ -413,9 +416,13 @@ final class RelayedTerminalByteStream:
     GrafttyKit.TerminalSizeReporting,
     @unchecked Sendable {
     let inboundBytes: AsyncStream<Data>
+    fileprivate let pagedEvents: AsyncStream<PagedTerminalEvent>
 
     private let client: any WebSocketClient & Sendable
     private let continuation: AsyncStream<Data>.Continuation
+    private let pagedBuffer = RelayedPagedEventBuffer()
+    private static let trace = Logger(subsystem: "com.quotably.graftty", category: "terminal-relay")
+    private let paged: Bool
     private let lock = NSLock()
     private var receiveTask: Task<Void, Never>?
     private var closed = false
@@ -440,8 +447,11 @@ final class RelayedTerminalByteStream:
         }
     }
 
-    init(client: any WebSocketClient & Sendable) {
+    init(client: any WebSocketClient & Sendable, paged: Bool = false) {
         self.client = client
+        self.paged = paged
+        let buffer = pagedBuffer
+        self.pagedEvents = AsyncStream(unfolding: { await buffer.next() }, onCancel: { buffer.cancel() })
         var continuation: AsyncStream<Data>.Continuation!
         self.inboundBytes = AsyncStream { continuation = $0 }
         self.continuation = continuation
@@ -459,14 +469,27 @@ final class RelayedTerminalByteStream:
                 do {
                     switch try await client.receive() {
                     case .binary(let data) where !data.isEmpty:
-                        self.continuation.yield(data)
+                        if paged {
+                            guard self.enqueuePagedEvent(.output(data)) else { await self.close(); return }
+                        }
+                        else { self.continuation.yield(data) }
                     case .text(let text):
-                        self.handleTextFrame(text)
+                        if paged, let event = try? PagedTerminalEnvelope.parse(text).event {
+                            guard self.enqueuePagedEvent(event) else { await self.close(); return }
+                        } else {
+                            self.handleTextFrame(text)
+                        }
                     case .binary:
                         break
                     }
                 } catch {
+                    if paged, case TerminalSessionClient.ClientError.sessionEnded(let status) = error {
+                        self.pagedBuffer.finish(exitStatus: Int32(clamping: status))
+                    } else if !Task.isCancelled {
+                        Self.trace.error("Downstream terminal receive failed: \(String(describing: error), privacy: .public)")
+                    }
                     self.continuation.finish()
+                    self.pagedBuffer.finish()
                     return
                 }
             }
@@ -533,6 +556,23 @@ final class RelayedTerminalByteStream:
             && ownershipSnapshot?.ownerKind == .mac
     }
 
+    /// The downstream transport can outpace a mobile channel. Closing on
+    /// overflow preserves replay integrity rather than skipping VT bytes.
+    private func enqueuePagedEvent(_ event: PagedTerminalEvent) -> Bool {
+        switch event {
+        case .checkpoint(let checkpoint): reportPTYSize(cols: checkpoint.cols, rows: checkpoint.rows)
+        case .grid(let cols, let rows): reportPTYSize(cols: cols, rows: rows)
+        default: break
+        }
+        switch pagedBuffer.enqueue(event) {
+        case .accepted: return true
+        case .finished: return false
+        case .overflow:
+            Self.trace.error("Relayed terminal output exceeded its bounded queue")
+            return false
+        }
+    }
+
     private func handleTextFrame(_ text: String) {
         guard let envelope = try? WebControlEnvelope.parse(Data(text.utf8))
         else { return }
@@ -560,6 +600,9 @@ final class RelayedTerminalByteStream:
             ownershipSnapshot = snapshot
             claimedControl = snapshot.ownerClientID == displayClientID
                 && snapshot.ownerKind == .mac
+            // An ownerless epoch-zero greeting echoes our hello dimensions;
+            // only the source's grid or a claimed display can size followers.
+            guard !snapshot.isOwnerless || snapshot.epoch > 0 else { return nil }
             let size = (snapshot.grid.cols, snapshot.grid.rows)
             let changed = latestPTYSize?.cols != size.0
                 || latestPTYSize?.rows != size.1
@@ -592,6 +635,12 @@ final class RelayedTerminalByteStream:
         task?.cancel()
         client.close()
         continuation.finish()
+        pagedBuffer.finish()
+    }
+
+    fileprivate func request(_ request: PagedTerminalRequest) async throws {
+        guard lock.withLock({ !closed }) else { throw CancellationError() }
+        try await client.send(.text(try PagedTerminalEnvelope(request: request).encoded()))
     }
 
     private func claimControlIfNeededLocked() -> Bool {
@@ -599,4 +648,27 @@ final class RelayedTerminalByteStream:
         claimedControl = true
         return true
     }
+}
+
+/// Keeps snapshot dimensions and history framing intact across the hop.
+/// A separate wrapper lets legacy attachments retain their byte-stream contract.
+final class RelayedPagedTerminalStream: GrafttyKit.PagedTerminalStream, GrafttyKit.TerminalSizeReporting, @unchecked Sendable {
+    var events: AsyncStream<PagedTerminalEvent> { stream.pagedEvents }
+    private let stream: RelayedTerminalByteStream
+    var onPTYSize: ((UInt16, UInt16) -> Void)? {
+        get { stream.onPTYSize }
+        set { stream.onPTYSize = newValue }
+    }
+    init(client: any WebSocketClient & Sendable) throws {
+        guard client.supportsPagedHistory else {
+            client.close()
+            throw PagedZmxAttachEngine.Error.unsupported
+        }
+        stream = RelayedTerminalByteStream(client: client, paged: true)
+    }
+    func send(_ bytes: Data) async throws { try await stream.send(bytes) }
+    func resize(cols: Int, rows: Int) async { await stream.resize(cols: cols, rows: rows) }
+    func close() async { await stream.close() }
+    func requestHistory(_ request: PagedTerminalHistoryRequest) async throws { try await stream.request(.history(request)) }
+    func requestCheckpoint() async throws { try await stream.request(.checkpoint) }
 }

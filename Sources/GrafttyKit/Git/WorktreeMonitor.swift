@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreServices)
 import CoreServices
+#endif
 
 public protocol WorktreeMonitorDelegate: AnyObject {
     func worktreeMonitorDidDetectChange(_ monitor: WorktreeMonitor, repoPath: String)
@@ -19,6 +21,7 @@ public extension WorktreeMonitorDelegate {
     func worktreeMonitorDidDetectContentChange(_ monitor: WorktreeMonitor, worktreePath: String) {}
 }
 
+#if !os(Linux)
 public final class WorktreeMonitor: @unchecked Sendable {
     private var sources: [String: DispatchSourceFileSystemObject] = [:]
     private var eventStreams: [String: FSEventsSubscription] = [:]
@@ -417,3 +420,5 @@ fileprivate let fileEventsCallback: FSEventStreamCallback = { _, clientCallBackI
         return
     }
 }
+
+#endif

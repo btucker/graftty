@@ -1,6 +1,8 @@
 import Foundation
 import Observation
+#if canImport(os)
 import os
+#endif
 
 public struct BranchRef: Sendable, Equatable, Hashable {
     public let name: String

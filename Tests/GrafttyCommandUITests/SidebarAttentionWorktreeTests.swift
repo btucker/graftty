@@ -20,7 +20,7 @@ struct SidebarAttentionWorktreeTests {
               isBusy: busy)
     }
 
-    @Test("@spec LAYOUT-2.86: While Attention is displayed, the application shall show at most one card per project and worktree in every filter, prefer pending requests over resumed activity and the latest request among pending requests, and preserve the worktree's position as its representative changes.")
+    @Test("Retained request candidates collapse to one representative per worktree")
     func oneCardPerWorktreeInEveryFilter() throws {
         let navigation = try navigation()
         let older = item("old-question", time: 10)
@@ -39,6 +39,29 @@ struct SidebarAttentionWorktreeTests {
         navigation.filter = .running
         let secondRunning = item("running-two", time: 50, busy: true)
         #expect(navigation.attentionItems(live: live + [secondRunning], projects: [project]).map(\.id) == ["running-two"])
+    }
+
+    @Test("Retained request candidates rank by latest report time")
+    func cardsAreOrderedNewestFirst() throws {
+        let navigation = try navigation()
+        let first = item("first", time: 10, worktree: "/first")
+        let second = item("second", time: 20, worktree: "/second")
+        let third = item("third", time: 30, worktree: "/third")
+        navigation.updateAttentionItems([first])
+        navigation.updateAttentionItems([first, third])
+        navigation.updateAttentionItems([first, second, third])
+        #expect(navigation.attentionItems(live: [first, second, third], projects: [project]).map(\.id) == ["third", "second", "first"])
+        let opening = navigation.beginOpening(third)
+        navigation.finishOpening(opening, succeeded: true)
+        #expect(navigation.attentionItems(live: [first, second, third], projects: [project]).map(\.id) == ["third", "second", "first"])
+        let updatedFirst = item("first-again", time: 40, worktree: "/first")
+        #expect(navigation.attentionItems(live: [updatedFirst, second, third], projects: [project]).map(\.id) == ["first-again", "third", "second"])
+        navigation.filter = .all
+        var running = item("running", time: 5, busy: true, worktree: "/running")
+        running.occurrence = nil
+        running.runningSince = Date(timeIntervalSince1970: 25)
+        #expect(navigation.attentionItems(live: [updatedFirst, second, third, running], projects: [project]).map(\.id)
+                == ["first-again", "third", "running", "second"])
     }
 
     @Test("An unviewed pending request wins over a newer resumed card")

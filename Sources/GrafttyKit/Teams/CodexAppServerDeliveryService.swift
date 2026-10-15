@@ -13,6 +13,7 @@ public actor CodexAppServerDeliveryService {
     private let client: any CodexAppServerClienting
     private let eventLog: TeamEventLog?
     private let now: @Sendable () -> Date
+    private let wakeBeforeDelivery: @Sendable (String) -> Bool
     private var inFlightDeliveries: Set<DeliveryKey> = []
     private var dirtyDeliveries: Set<DeliveryKey> = []
 
@@ -23,7 +24,8 @@ public actor CodexAppServerDeliveryService {
         liveness: TeamDeliveryLivenessChecking,
         client: CodexAppServerClienting,
         eventLog: TeamEventLog? = TeamEventLog.defaultLog(),
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        wakeBeforeDelivery: @escaping @Sendable (String) -> Bool = { _ in true }
     ) {
         self.inbox = inbox
         self.presenceRecords = presenceRecords
@@ -32,6 +34,7 @@ public actor CodexAppServerDeliveryService {
         self.client = client
         self.eventLog = eventLog
         self.now = now
+        self.wakeBeforeDelivery = wakeBeforeDelivery
     }
 
     public func onMessageArrival(team: String, worktree: String) async {
@@ -80,6 +83,7 @@ public actor CodexAppServerDeliveryService {
             return false
         }
         guard !allUnread.isEmpty else { return false }
+        guard wakeBeforeDelivery(worktree) else { return false }
 
         let worktreeRecords = presenceRecords().filter {
             $0.teamID == team && $0.worktree == worktree

@@ -1224,6 +1224,36 @@ struct HostManagedZmxBackendTests {
         #expect(!session.resizes().contains(Resize(cols: 108, rows: 87)))
     }
 
+    // MARK: - TERM-11.20 — one pixel convention per grid
+
+    @Test("@spec TERM-11.20: When libghostty reports a viewport resize whose cell grid equals the bound live window size, the application shall forward the live window's pixel dimensions instead of the callback's, so every forward of one grid carries identical pixel fields and a same-grid forward never raises a spurious SIGWINCH.")
+    func sameGridCallbackAdoptsLiveWindowPixels() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        // The live query reports the surface's screen pixels (padding
+        // included); libghostty's callback reports the bare cell-grid area.
+        // XNU compares the whole winsize, so alternating the two for one
+        // grid raised a SIGWINCH on every show reconcile.
+        backend.bindSurfaceSync(
+            currentWindowSize: { PtyProcess.WindowSize(cols: 96, rows: 44, xpixel: 1_552, ypixel: 1_524) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+        #expect(session.windowSizes() == [PtyProcess.WindowSize(cols: 96, rows: 44, xpixel: 1_552, ypixel: 1_524)])
+
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 96, 44, 1_544, 1_516)
+        #expect(session.windowSizes().last == PtyProcess.WindowSize(cols: 96, rows: 44, xpixel: 1_552, ypixel: 1_524))
+
+        // A callback for a different grid is a real resize; its own pixels stand
+        // while the live query still reports the old grid.
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 120, 50, 1_930, 1_720)
+        coalescer.fireAll()
+        #expect(session.windowSizes().last == PtyProcess.WindowSize(cols: 120, rows: 50, xpixel: 1_930, ypixel: 1_720))
+    }
+
     // MARK: - TERM-11.13 — re-show resync (stale PTY size latched while occluded)
 
     @Test("@spec TERM-11.13: When a pane re-enters the visible set, the application shall forward the live libghostty grid to the zmx PTY unconditionally — so a row count latched while the surface was occluded (which libghostty never re-reported because the grid had no delta to emit) is corrected on every show rather than hidden by an optimistic last-forwarded record. A same-size forward is a kernel no-op (no SIGWINCH), so plain focus switches do not churn the TUI; a drifted grid produces exactly one real resize.")

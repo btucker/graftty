@@ -7,9 +7,21 @@ import WebKit
 struct HostBrowserView: View {
     let url: URL
     let host: Host
-    let coordinator: RemoteConnectionCoordinator
+    let connectionProvider: RemoteConnectionProvider
+    let callbackHost: String?
     @Environment(\.dismiss) private var dismiss
     @StateObject private var browser = HostBrowserModel()
+
+    init(url: URL, host: Host, coordinator: RemoteConnectionCoordinator) {
+        self.init(url: url, host: host, connectionProvider: { await coordinator.connection(for: host) })
+    }
+
+    init(url: URL, host: Host, callbackHost: String? = nil, connectionProvider: @escaping RemoteConnectionProvider) {
+        self.url = url
+        self.host = host
+        self.connectionProvider = connectionProvider
+        self.callbackHost = callbackHost
+    }
 
     var body: some View {
         NavigationStack {
@@ -24,24 +36,52 @@ struct HostBrowserView: View {
             }
             .navigationTitle(browser.webView?.url?.host ?? url.host ?? "Browser")
             .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                HostBrowserControls(hostLabel: host.label,
+                    canGoBack: browser.webView?.canGoBack == true,
+                    canGoForward: browser.webView?.canGoForward == true,
+                    onBack: { browser.webView?.goBack() },
+                    onForward: { browser.webView?.goForward() },
+                    onReload: { browser.error = nil; browser.webView?.reload() })
+            }
             .toolbar {
-                ToolbarItemGroup(placement: .bottomBar) {
-                    Button("Back", systemImage: "chevron.left") { browser.webView?.goBack() }
-                        .disabled(browser.webView?.canGoBack != true)
-                    Button("Forward", systemImage: "chevron.right") { browser.webView?.goForward() }
-                        .disabled(browser.webView?.canGoForward != true)
-                    Spacer()
-                    Text("Via \(host.label)").font(.caption)
-                    Button("Reload", systemImage: "arrow.clockwise") {
-                        browser.error = nil
-                        browser.webView?.reload()
-                    }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }.font(.body)
                 }
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
-        .task { await browser.start(url: url, host: host, coordinator: coordinator) }
+        .task { await browser.start(url: url, host: host, callbackHost: callbackHost, connectionProvider: connectionProvider) }
         .onDisappear { browser.stop() }
+    }
+}
+
+struct HostBrowserControls: View {
+    let hostLabel: String
+    let canGoBack: Bool
+    let canGoForward: Bool
+    let onBack: () -> Void
+    let onForward: () -> Void
+    let onReload: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            button("Back", symbol: "chevron.left", action: onBack).disabled(!canGoBack)
+            button("Forward", symbol: "chevron.right", action: onForward).disabled(!canGoForward)
+            Text("Via \(hostLabel)").font(.caption).foregroundStyle(.secondary)
+                .lineLimit(1).truncationMode(.middle)
+                .frame(maxWidth: .infinity)
+            button("Reload", symbol: "arrow.clockwise", action: onReload)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 4)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+    }
+
+    private func button(_ label: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.body)
+                .frame(width: 44, height: 44).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel(label)
     }
 }
 
@@ -77,42 +117,45 @@ enum HostBrowserProxyConfiguration {
 private final class HostBrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     @Published var webView: WKWebView?
     @Published var error: String?
-    private var proxy: BrowserProxy?
+    private let network = HostBrowserNetwork()
+    private var operation: UUID?
 
-    func start(url: URL, host: Host, coordinator: RemoteConnectionCoordinator) async {
+    func start(url: URL, host: Host, callbackHost: String?, connectionProvider: RemoteConnectionProvider) async {
+        stop()
+        let operation = UUID()
+        self.operation = operation
+        error = nil
         do {
-            guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-                  let connection = await coordinator.connection(for: host) else {
+            guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+                error = "Only HTTP and HTTPS pages are supported."
+                return
+            }
+            let connection = await connectionProvider()
+            guard self.operation == operation, !Task.isCancelled else { return }
+            guard let connection else {
                 error = "The paired host is unavailable."
                 return
             }
-            let proxy = try BrowserProxy { socket, host, port in
-                try await connection.openBrowserTunnel(socket, host: host, port: port)
+            let configuration = try await network.start(url: url, dataStoreIdentifier: host.id, callbackHost: callbackHost) { socket, host, port, reply in
+                try await connection.openBrowserTunnel(socket, host: host, port: port, handshakeReply: reply)
             }
-            self.proxy = proxy
-            let port = try await proxy.start()
-            guard !Task.isCancelled else { proxy.stop(); return }
-            let configuration = HostBrowserProxyConfiguration.make(
-                proxy: proxy,
-                port: port,
-                dataStoreIdentifier: host.id
-            )
+            guard self.operation == operation, !Task.isCancelled else { return }
             let view = WKWebView(frame: .zero, configuration: configuration)
             view.navigationDelegate = self
             view.uiDelegate = self
             webView = view
             view.load(URLRequest(url: url))
         } catch {
+            guard self.operation == operation, !Task.isCancelled else { return }
             self.error = error.localizedDescription
-            proxy?.stop()
         }
     }
 
     func stop() {
+        operation = nil
         webView?.stopLoading()
         webView = nil
-        proxy?.stop()
-        proxy = nil
+        network.stop()
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {

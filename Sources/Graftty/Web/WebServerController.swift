@@ -39,12 +39,14 @@ final class WebServerController: ObservableObject {
     /// injection (default-empty provider is baked into `WebServer.Config`).
     private var sessionsProvider: (@Sendable () async -> [SessionInfo])?
     private var sessionWorktreeProvider: (@Sendable (String) async -> String?)?
+    private var sessionSpawnProvider: (@Sendable (String) async -> ZmxSpawnConfiguration?)?
     private var worktreePanesProvider: (@Sendable () async -> [WorktreePanes])?
     private var relayedWorktreePanesProvider:
         (@Sendable () async -> [WorktreePanes])?
     /// Supplies `GET /repos` (`WEB-7.1`). Same injection timing as
     /// `sessionsProvider` — both read from `AppState`.
     private var reposProvider: (@Sendable () async -> [WebServer.RepoInfo])?
+    private var agentCompletionsProvider: (@Sendable (String?) async -> [AgentCompletionCandidate])?
     private var relayedReposProvider:
         (@Sendable () async -> [WebServer.RepoInfo])?
     /// Executes `POST /worktrees` (`WEB-7.2`). Routes into
@@ -131,12 +133,24 @@ final class WebServerController: ObservableObject {
         rebuildIfRunning()
     }
 
+    func setSessionSpawnProvider(
+        _ provider: @escaping @Sendable (String) async -> ZmxSpawnConfiguration?
+    ) {
+        sessionSpawnProvider = provider
+        rebuildIfRunning()
+    }
+
     /// Install the provider used for `GET /repos`. Same contract as
     /// `setSessionsProvider`.
     func setReposProvider(
         _ provider: @escaping @Sendable () async -> [WebServer.RepoInfo]
     ) {
         reposProvider = provider
+        rebuildIfRunning()
+    }
+
+    func setAgentCompletionsProvider(_ provider: @escaping @Sendable (String?) async -> [AgentCompletionCandidate]) {
+        agentCompletionsProvider = provider
         rebuildIfRunning()
     }
 
@@ -448,7 +462,9 @@ final class WebServerController: ObservableObject {
                 zmxDir: zmxDir,
                 sessionsProvider: sessionsProvider,
                 sessionWorktreeProvider: sessionWorktreeProvider,
+                sessionSpawnProvider: self.sessionSpawnProvider ?? { _ in nil },
                 reposProvider: repos,
+                agentCompletionsProvider: agentCompletionsProvider ?? { _ in [] },
                 relayedReposProvider: relayedRepos,
                 worktreeCreator: creator,
                 defaultBranchPuller: puller,

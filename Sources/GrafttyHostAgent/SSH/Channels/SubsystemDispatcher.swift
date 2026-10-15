@@ -35,6 +35,8 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     private let pagedFactory: PagedTerminalStreamFactory?
     private let panesStateSubscribe: PanesStateChannelHandler.Subscribe
     private let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
+    private let chromeTabMutator: ChromeTabChannelHandler.Mutator?
+    private let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect
     private let paneControlMutator: PaneControlChannelHandler.Mutator
     private let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator
     /// REMOTE-9: display-ownership plumbing threaded through to
@@ -69,6 +71,8 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
         worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator? = nil,
+        chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil,
+        chromeTabOnDisconnect: @escaping ChromeTabChannelHandler.OnDisconnect = { _ in },
         ownershipStore: SessionDisplayOwnershipStore,
         ownershipBroadcaster: DisplayOwnershipBroadcaster,
         deviceIDProvider: @escaping @Sendable () -> RemoteDeviceID?,
@@ -91,6 +95,8 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         self.pagedFactory = pagedFactory
         self.panesStateSubscribe = panesStateSubscribe
         self.panesStateV2Subscribe = panesStateV2Subscribe ?? panesStateSubscribe
+        self.chromeTabMutator = chromeTabMutator
+        self.chromeTabOnDisconnect = chromeTabOnDisconnect
         self.paneControlMutator = paneControlMutator
         self.worktreeManagementMutator = worktreeManagementMutator ?? { _ in
             .error(
@@ -190,6 +196,14 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
             return
         }
         switch request.subsystem {
+        case SSHChannelTypeNames.chromeTabs:
+            dispatched = true
+            guard worktreeManagementAllowed(), let deviceID = deviceIDProvider(), let chromeTabMutator else {
+                if request.wantReply { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil) }
+                context.close(promise: nil); return
+            }
+            installSubsystem(handler: ChromeTabChannelHandler(deviceID: deviceID, mutator: chromeTabMutator, onDisconnect: chromeTabOnDisconnect), request: request, context: context)
+
         case SSHChannelTypeNames.team:
             dispatched = true
             guard teamAllowed(), let deviceID = deviceIDProvider(), let teamHandler else {
@@ -289,7 +303,10 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
             try context.pipeline.syncOperations.addHandler(handler, position: .after(self))
             try context.pipeline.syncOperations.addHandler(
                 LengthPrefixedFraming.makeFramePrepender(), position: .after(self))
-            if request.subsystem == SSHChannelTypeNames.team {
+            if request.subsystem == SSHChannelTypeNames.chromeTabs {
+                try context.pipeline.syncOperations.addHandler(
+                    ByteToMessageHandler(LengthFieldBasedFrameDecoder(lengthFieldLength: .four), maximumBufferSize: ChromeTabRequest.maximumRequestBytes + 4), position: .after(self))
+            } else if request.subsystem == SSHChannelTypeNames.team {
                 try context.pipeline.syncOperations.addHandler(
                     ByteToMessageHandler(LengthFieldBasedFrameDecoder(lengthFieldLength: .four), maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes),
                     position: .after(self)

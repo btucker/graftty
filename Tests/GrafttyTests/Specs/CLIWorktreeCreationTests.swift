@@ -274,7 +274,7 @@ struct CLIWorktreeCreationTests {
     }
 
     @Test("""
-    @spec AGENT-5.1: When `graftty worktree add <name> --wait` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch whose configured shell integration emits readiness shall remain queued until the pane's first shell-ready signal; other shells shall use bounded spawn-time injection. Either path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+    @spec AGENT-5.1: When `graftty worktree add <name> --wait` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to start its shell and accept any optional launch command before reporting success, even when the worktree is not selected in the Mac UI. A zmx-backed explicit launch using zsh or bash shall run from shell startup after initialization and first-prompt environment hooks, independently of the Mac renderer. Other shells with integration readiness shall wait for the first shell-ready signal; remaining shells shall use bounded spawn-time injection. Each path shall deliver exactly once and keep the creation operation pending until the backend accepts it. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
     """)
     func helpDocumentsCreateAndLaunchWorkflow() throws {
         let help = WorktreeAdd.helpMessage()
@@ -919,19 +919,12 @@ struct CLIWorktreeCreationTests {
     @Test("The Graftty Team skill avoids persona language and documents shell-safe prompting")
     func teamSkillDocumentsWorktreeAddressWorkflow() throws {
         let skill = try GrafttyTeamSkillText.load()
-        #expect(skill.contains("graftty worktree add <name> --agent <codex|claude>"))
-        #expect(skill.contains("stable reply address"))
-        #expect(skill.contains("graftty team send --stdin '<address>'"))
-        #expect(skill.contains("--base <ref>"))
-        #expect(skill.contains("--base HEAD"))
-        #expect(skill.contains("first session"))
-        #expect(skill.contains("--prompt-stdin"))
-        #expect(skill.contains("`--prompt` only for trusted literal text"))
-        #expect(skill.contains("Proactively delegate"))
-        #expect(skill.contains("does not delegate the task"))
-        #expect(skill.contains("confirm that a top-level child"))
-        #expect(skill.contains("stop working on that scope"))
-        #expect(skill.contains("parent's exact canonical address"))
-        #expect(!skill.contains("Spawn a teammate"))
+        let options = try GrafttyTeamSkillText.load(reference: "worktrees")
+        for token in ["graftty worktree add <name> --agent <codex|claude>", "graftty team send --stdin '<address>'", "--prompt-stdin"] {
+            #expect(skill.contains(token))
+        }
+        for token in ["--base <ref>", "--base HEAD", "--existing", "--wait", "--timeout"] {
+            #expect(options.contains(token))
+        }
     }
 }

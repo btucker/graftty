@@ -591,7 +591,7 @@ struct DidYouMeanWiringTests {
 struct TeamSkillPaneBulletsTests {
     @Test("Skill text includes pane control commands")
     func skillHasPaneBullets() throws {
-        let skill = try GrafttyTeamSkillText.load()
+        let skill = try GrafttyTeamSkillText.load(reference: "worktrees")
         #expect(skill.contains("graftty pane list"))
         #expect(skill.contains("graftty pane show"))
         #expect(skill.contains("graftty pane send"))
@@ -600,7 +600,7 @@ struct TeamSkillPaneBulletsTests {
 
     @Test("Skill text flags lack of consent layer for pane send")
     func skillWarnsAboutPaneSend() throws {
-        let skill = try GrafttyTeamSkillText.load()
+        let skill = try GrafttyTeamSkillText.load(reference: "worktrees")
         #expect(skill.contains("no inbox or consent layer"))
     }
 }

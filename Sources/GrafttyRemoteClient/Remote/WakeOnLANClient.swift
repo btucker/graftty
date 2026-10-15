@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 import GrafttyProtocol
 
@@ -85,17 +89,29 @@ enum WakeOnLANClient {
     // iOS broadcast requires the managed com.apple.developer.networking.multicast
     // entitlement (GrafttyMobile.entitlements); without it sendto fails.
     private static func send(_ packet: Data, to broadcast: String, interfaceIndex: UInt32) -> Bool {
+        #if canImport(Darwin)
         let descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        #else
+        let descriptor = socket(AF_INET, Int32(SOCK_DGRAM.rawValue), Int32(IPPROTO_UDP))
+        #endif
         guard descriptor >= 0 else { return false }
         defer { close(descriptor) }
         var enabled: Int32 = 1
-        var index = interfaceIndex
         guard fcntl(descriptor, F_SETFL, O_NONBLOCK) == 0,
-            setsockopt(descriptor, SOL_SOCKET, SO_BROADCAST, &enabled, socklen_t(MemoryLayout.size(ofValue: enabled))) == 0,
-            setsockopt(descriptor, IPPROTO_IP, IP_BOUND_IF, &index, socklen_t(MemoryLayout.size(ofValue: index))) == 0
+            setsockopt(descriptor, SOL_SOCKET, SO_BROADCAST, &enabled, socklen_t(MemoryLayout.size(ofValue: enabled))) == 0
         else { return false }
+        #if canImport(Darwin)
+        var index = interfaceIndex
+        guard setsockopt(descriptor, IPPROTO_IP, IP_BOUND_IF, &index, socklen_t(MemoryLayout.size(ofValue: index))) == 0 else { return false }
+        #else
+        var name = [CChar](repeating: 0, count: Int(IF_NAMESIZE))
+        guard if_indextoname(interfaceIndex, &name) != nil else { return false }
+        guard name.withUnsafeBytes({ setsockopt(descriptor, SOL_SOCKET, SO_BINDTODEVICE, $0.baseAddress, socklen_t(name.count)) }) == 0 else { return false }
+        #endif
         var destination = sockaddr_in()
+        #if canImport(Darwin)
         destination.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        #endif
         destination.sin_family = sa_family_t(AF_INET)
         destination.sin_port = UInt16(9).bigEndian
         guard broadcast.withCString({ inet_pton(AF_INET, $0, &destination.sin_addr) }) == 1 else { return false }

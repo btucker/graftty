@@ -4,13 +4,15 @@ import GrafttyKit
 struct RemoteMacConnectionsPopover: View {
     @ObservedObject var model: RemoteMacsModel
     let onAddRemoteMac: () -> Void
+    var onSetupLinuxHost: (() -> Void)? = nil
+    var onUpdateHost: ((RemoteMac) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Remote Macs").font(.headline).padding(12)
+            Text("Remote Hosts").font(.headline).padding(12)
             Divider()
             if model.savedRemoteMacs.isEmpty {
-                Text("No remote Macs added yet.")
+                Text("No remote hosts added yet.")
                     .foregroundStyle(.secondary).padding(16)
             } else {
                 ScrollView {
@@ -26,6 +28,12 @@ struct RemoteMacConnectionsPopover: View {
                 Label("Add Remote Mac…", systemImage: "plus")
                     .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain).padding(12)
+            if let onSetupLinuxHost {
+                Button(action: onSetupLinuxHost) {
+                    Label("Set Up Linux Host…", systemImage: "server.rack")
+                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }.buttonStyle(.plain).padding(12)
+            }
         }.frame(width: 340)
     }
 
@@ -41,6 +49,11 @@ struct RemoteMacConnectionsPopover: View {
                 }
             }
             Spacer(minLength: 8)
+            if let onUpdateHost, model.maintenanceHost(for: mac) != nil {
+                Button("Update Host…") { onUpdateHost(mac) }
+                    .controlSize(.small)
+                    .accessibilityIdentifier("updateHost-\(mac.id.value)")
+            }
             if state == .connecting {
                 ProgressView().controlSize(.small)
             } else if let title = state.connectionActionTitle {

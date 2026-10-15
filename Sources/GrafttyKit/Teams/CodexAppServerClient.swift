@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Dispatch
 import Foundation
 
@@ -21,6 +25,13 @@ public struct CodexAppServerTarget: Sendable, Equatable {
 }
 
 public protocol CodexAppServerClienting: Sendable {
+    func sleepActivity(
+        binaryPath: String,
+        socketPath: String,
+        expectedCWD: String,
+        target: CodexAppServerTarget
+    ) async -> ProviderSleepActivity
+
     func deliver(
         binaryPath: String,
         socketPath: String,
@@ -38,6 +49,13 @@ public protocol CodexAppServerClienting: Sendable {
 }
 
 public extension CodexAppServerClienting {
+    func sleepActivity(
+        binaryPath: String,
+        socketPath: String,
+        expectedCWD: String,
+        target: CodexAppServerTarget
+    ) async -> ProviderSleepActivity { .unknown }
+
     func deliver(
         binaryPath: String,
         socketPath: String,
@@ -103,6 +121,112 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         throw CodexAppServerClientError.unsupportedPlatform
         #endif
     }
+
+    /// Reads activity for a hook-bound exact thread through the existing daemon.
+    /// Never resumes a thread, starts a turn, answers approvals, or selects by cwd.
+    /// Codex 0.160.0 exposes turns, background terminals, goals, queued submissions,
+    /// and last-known collaboration states. It has no complete read API for all
+    /// subagent execution and scheduled wakeups. These observations can establish
+    /// busy, but cannot establish idle. Unsupported methods and transport failures
+    /// remain unknown. The installed protocol was verified with generate-ts
+    /// --experimental; no live provider process was queried during development.
+    /// https://learn.chatgpt.com/docs/app-server
+    public func sleepActivity(
+        binaryPath: String,
+        socketPath: String,
+        expectedCWD: String,
+        target: CodexAppServerTarget
+    ) async -> ProviderSleepActivity {
+        guard !target.threadID.isEmpty, !expectedCWD.isEmpty else { return .unknown }
+        #if os(macOS)
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                let activity = try? sleepActivityOnMacOS(
+                    binaryPath: binaryPath, socketPath: socketPath,
+                    expectedCWD: expectedCWD, target: target
+                )
+                continuation.resume(returning: activity ?? .unknown)
+            }
+        }
+        #else
+        return .unknown
+        #endif
+    }
+
+    #if os(macOS)
+    private func sleepActivityOnMacOS(
+        binaryPath: String,
+        socketPath: String,
+        expectedCWD: String,
+        target: CodexAppServerTarget
+    ) throws -> ProviderSleepActivity {
+        let process = Process()
+        let stdin = Pipe()
+        let stdout = Pipe()
+        process.executableURL = URL(fileURLWithPath: binaryPath)
+        process.arguments = ["app-server", "proxy", "--sock", socketPath]
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        defer { cleanup(process: process, stdin: stdin, stdout: stdout) }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        let stdinFD = stdin.fileHandleForWriting.fileDescriptor
+        try setNoSigPipe(stdinFD)
+        try makeNonBlocking(stdinFD)
+        let connection = CodexAppServerWebSocketConnection(
+            inputFD: stdinFD, outputFD: stdout.fileHandleForReading.fileDescriptor
+        )
+        try connection.performHandshake(deadline: deadline)
+        var requestID = 0
+        func request(_ method: String, params: [String: Any]) throws -> [String: Any] {
+            requestID += 1
+            try sendRequest(["id": requestID, "method": method, "params": params], to: connection, deadline: deadline)
+            return try resultObject(
+                from: readResponse(connection: connection, deadline: deadline, expectedID: requestID, method: method),
+                method: method
+            )
+        }
+        _ = try request("initialize", params: [
+            "clientInfo": ["name": "graftty", "version": clientVersion()],
+            "capabilities": ["experimentalApi": true],
+        ])
+        try sendRequest(["method": "initialized"], to: connection, deadline: deadline)
+        let result = try request("thread/read", params: ["threadId": target.threadID, "includeTurns": true])
+        guard let thread = result["thread"] as? [String: Any],
+              thread["id"] as? String == target.threadID,
+              thread["cwd"] as? String == expectedCWD else { return .unknown }
+
+        let status = (thread["status"] as? [String: Any])?["type"] as? String
+        let turns = thread["turns"] as? [[String: Any]] ?? []
+        if status == "active" || turns.contains(where: { $0["status"] as? String == "inProgress" }) {
+            return .busy
+        }
+        // These are last-known collaboration states, so even completed children
+        // cannot prove that every child is currently idle.
+        for turn in turns {
+            for item in turn["items"] as? [[String: Any]] ?? [] {
+                let states = item["agentsStates"] as? [String: [String: Any]] ?? [:]
+                if states.values.contains(where: { ["running", "pendingInit"].contains($0["status"] as? String ?? "") }) {
+                    return .busy
+                }
+            }
+        }
+
+        // Read independently: an unsupported endpoint must not hide known busy
+        // work in another endpoint. All requests share the same bounded deadline.
+        let terminals = try? request("thread/backgroundTerminals/list", params: ["threadId": target.threadID, "limit": 1])
+        if let entries = terminals?["data"] as? [Any], !entries.isEmpty { return .busy }
+        let goalResult = try? request("thread/goal/get", params: ["threadId": target.threadID])
+        if let goal = goalResult?["goal"] as? [String: Any],
+           goal["threadId"] as? String == target.threadID,
+           goal["status"] as? String == "active" { return .busy }
+        let queue = try? request("thread/queue/list", params: ["threadId": target.threadID, "limit": 1])
+        if let entries = queue?["data"] as? [Any], !entries.isEmpty { return .busy }
+        return .unknown
+    }
+    #endif
 
     #if os(macOS)
     private func deliverOnMacOS(
@@ -632,7 +756,7 @@ private final class CodexAppServerProxyStderrCapture {
     static func make() -> CodexAppServerProxyStderrCapture? {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-codex-proxy-stderr-\(UUID().uuidString).log")
-        FileManager.default.createFile(atPath: url.path, contents: nil)
+        _ = FileManager.default.createFile(atPath: url.path, contents: nil)
         guard let fileHandle = try? FileHandle(forWritingTo: url) else {
             try? FileManager.default.removeItem(at: url)
             return nil
@@ -784,7 +908,7 @@ private final class CodexAppServerWebSocketConnection {
     private func readMore(deadline: Date) throws {
         try waitForReadable(deadline: deadline)
         var chunk = [UInt8](repeating: 0, count: 4096)
-        let count = Darwin.read(outputFD, &chunk, chunk.count)
+        let count = GrafttyPOSIX.read(outputFD, &chunk, chunk.count)
         if count > 0 {
             buffer.append(contentsOf: chunk.prefix(count))
         } else if count == 0 {
@@ -829,7 +953,7 @@ private final class CodexAppServerWebSocketConnection {
             while offset < data.count {
                 try waitForWritable(deadline: deadline)
                 let pointer = baseAddress.advanced(by: offset)
-                let count = Darwin.write(inputFD, pointer, data.count - offset)
+                let count = GrafttyPOSIX.write(inputFD, pointer, data.count - offset)
                 if count > 0 {
                     offset += count
                 } else if count == 0 {

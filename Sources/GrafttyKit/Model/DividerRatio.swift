@@ -1,4 +1,8 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#else
+import Foundation
+#endif
 
 /// Pure helper for the draggable-divider ratio math used by
 /// `SplitContainerView`. Lives in GrafttyKit (not the SwiftUI layer) so

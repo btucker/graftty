@@ -71,6 +71,8 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
     public let sessionName: String
     public let ownerClientID: DisplayClientID?
     public let ownerKind: DisplayClientKind?
+    /// Host-authenticated device identity used to restore leadership across transports.
+    public let ownerIdentity: String?
     public let grid: DisplayGrid
     public let epoch: UInt64
     /// Monotonic per-session revision that advances on every observable store
@@ -91,7 +93,8 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
         ownerKind: DisplayClientKind?,
         grid: DisplayGrid,
         epoch: UInt64,
-        revision: UInt64 = 0
+        revision: UInt64 = 0,
+        ownerIdentity: String? = nil
     ) throws {
         guard (ownerClientID == nil) == (ownerKind == nil) else {
             throw ValidationError.inconsistentOwnerFields
@@ -102,11 +105,13 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
         self.grid = grid
         self.epoch = epoch
         self.revision = revision
+        self.ownerIdentity = ownerIdentity
     }
 
     private enum CodingKeys: String, CodingKey {
         case sessionName
         case ownerClientID
+        case ownerIdentity
         case ownerKind
         case grid
         case epoch
@@ -123,7 +128,8 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
             grid: try container.decode(DisplayGrid.self, forKey: .grid),
             epoch: try container.decode(UInt64.self, forKey: .epoch),
             // Backward compatible with wire messages predating the revision field.
-            revision: try container.decodeIfPresent(UInt64.self, forKey: .revision) ?? 0
+            revision: try container.decodeIfPresent(UInt64.self, forKey: .revision) ?? 0,
+            ownerIdentity: try container.decodeIfPresent(String.self, forKey: .ownerIdentity)
         )
     }
 
@@ -131,6 +137,7 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(sessionName, forKey: .sessionName)
         try container.encodeIfPresent(ownerClientID, forKey: .ownerClientID)
+        try container.encodeIfPresent(ownerIdentity, forKey: .ownerIdentity)
         try container.encodeIfPresent(ownerKind, forKey: .ownerKind)
         try container.encode(grid, forKey: .grid)
         try container.encode(epoch, forKey: .epoch)

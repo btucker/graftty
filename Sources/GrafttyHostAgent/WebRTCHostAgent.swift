@@ -1,4 +1,9 @@
+#if canImport(WebRTC)
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 import GrafttyKit
 import GrafttyProtocol
@@ -49,6 +54,8 @@ public actor WebRTCHostAgent {
     /// transport's coordinator) caused it, so two broadcaster instances
     /// fanning out from the same store already gives full cross-transport
     /// propagation without sharing the instance itself.
+    private let chromeTabMutator: ChromeTabChannelHandler.Mutator?
+    private let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect
     private let displayOwnershipStore: SessionDisplayOwnershipStore
     private let displayOwnershipBroadcaster: DisplayOwnershipBroadcaster
     private var sshTransport: SSHNIOTransport?
@@ -91,19 +98,9 @@ public actor WebRTCHostAgent {
     /// instead of wiping the newer connection's live entry.
     private var authenticatedRegistration: (deviceID: RemoteDeviceID, token: SSHConnectionRegistry.RegistrationToken)?
 
-    /// W5 generation-guard fix: `WebRTCHostAgent` is a SINGLE process-wide
-    /// instance (`AppServices.hostAgent`) reused for every device
-    /// sequentially, not one instance per connection. `authenticatedRegistration`'s
-    /// `RegistrationToken` scopes the registry's MAP ENTRY to a connection,
-    /// but it does nothing to protect `self` from a stale connection's close
-    /// SIDE EFFECT: `SSHConnectionRegistry.register`'s replace-path runs
-    /// `await previous.close()`, where `previous.close` is the closure
-    /// captured by the OLD connection's `registerAuthenticatedConnection`
-    /// call. Because `self` is the SAME shared actor now serving a NEW,
-    /// live connection (a same-device reconnect racing the old connection's
-    /// fire-and-forget deregister Task — see `close()`'s registry-deregister
-    /// comment), that unguarded closure tears down the new connection's
-    /// live state mid-lifetime.
+    /// A pooled agent owns one device's connection and may be reused for
+    /// its signed reconnect. Registry callbacks from a superseded lifecycle
+    /// capture its generation so they cannot close that device's replacement.
     ///
     /// Bumped exactly once per accepted connection by
     /// `prepareToAcceptOffer`. That admission step also reserves the
@@ -162,10 +159,10 @@ public actor WebRTCHostAgent {
     private var iceGatheringTimeoutTask: Task<Void, Never>?
     /// A signaling offer is unauthenticated until SSH userauth succeeds.
     /// Bound that pre-auth lifetime so an abandoned LAN offer cannot reserve
-    /// this single-connection host forever.
+    /// this device's connection forever.
     private var authenticationDeadlineTask: Task<Void, Never>?
     /// ICE can report `.disconnected` during a brief interface handoff. Give
-    /// it a short recovery window, then release the singleton host slot if it
+    /// it a short recovery window, then release this device's connection if it
     /// never returns to a connected state.
     private var iceDisconnectedDeadline: (
         token: UInt64,
@@ -199,6 +196,8 @@ public actor WebRTCHostAgent {
         panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
         worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator? = nil,
+        chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil,
+        chromeTabOnDisconnect: @escaping ChromeTabChannelHandler.OnDisconnect = { _ in },
         displayOwnershipStore: SessionDisplayOwnershipStore,
         sshConnectionRegistry: SSHConnectionRegistry = SSHConnectionRegistry()
     ) {
@@ -218,19 +217,16 @@ public actor WebRTCHostAgent {
                 shortStatus: nil
             )
         }
+        self.chromeTabMutator = chromeTabMutator
+        self.chromeTabOnDisconnect = chromeTabOnDisconnect
         self.displayOwnershipStore = displayOwnershipStore
         self.displayOwnershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
         self.sshConnectionRegistry = sshConnectionRegistry
         self.delegate = PeerConnectionDelegate()
     }
 
-    /// Replace the `panes-state` subscription callback. The R5 wiring path
-    /// constructs the host agent in `GrafttyApp.init()` (before SwiftUI
-    /// `@State` is accessible) with a stub, then swaps in the production
-    /// closure from `startup()`. Safe to call multiple times — the snapshotted
-    /// value is re-read on every `installSSHHandler` call. Must be invoked
-    /// before the signaling handler is wired so no data channel can open
-    /// with the stub still in place.
+    /// Replace the panes-state subscription before this agent accepts an
+    /// offer. Each new SSH handler reads the latest configured callback.
     public func setPanesStateSubscribe(_ subscribe: @escaping PanesStateChannelHandler.Subscribe) {
         self.panesStateSubscribe = subscribe
     }
@@ -604,7 +600,7 @@ public actor WebRTCHostAgent {
     /// `sshConnectionRegistry` (see `registerAuthenticatedConnection`). If
     /// `generation` doesn't match `connectionGeneration`, this connection's
     /// registration is stale — a NEWER connection has since begun on this
-    /// SAME shared actor — so the call no-ops instead of tearing down the
+    /// same per-device actor — so the call no-ops instead of tearing down the
     /// live connection. `close()` itself (direct teardown callers:
     /// `channelInactive`, explicit close) is unaffected and still
     /// unconditional.
@@ -719,77 +715,31 @@ public actor WebRTCHostAgent {
         let peerBox = bulk ? AuthenticatedPeerBox() : primaryPeerBox
         do {
             try await transport.eventLoop.submit { [self, hostKey, trustedPeerStore, activeRemotePeers, transport] in
-                let handler = SSHServerSetup.makeHandler(
+                let configuration = SSHHostSessionConfiguration(
+                    streamFactory: factory, pagedFactory: pagedFactory,
+                    panesStateSubscribe: panesStateSubscribe, panesStateV2Subscribe: panesStateV2Subscribe,
+                    paneControlMutator: paneControlMutator, worktreeManagementMutator: worktreeManagementMutator,
+                    chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
+                    ownershipStore: ownershipStore, ownershipBroadcaster: ownershipBroadcaster,
+                    teamHandler: teamHandler, teamOnConnect: teamOnConnect, teamOnDisconnect: teamOnDisconnect
+                )
+                let handler = configuration.makeHandler(
+                    channel: transport.channel,
                     hostKey: hostKey,
                     trustedPeerStore: trustedPeerStore,
                     expectedDeviceID: expectedSignalingDeviceID,
-                    activePeerRegistry: activeRemotePeers,
-                    closeActiveTransport: {
-                        await transport.close()
-                    },
-                    onActivePeerRegistered: { entryID in
-                        transport.channel.closeFuture.whenComplete { _ in
-                            activeRemotePeers.unregister(entryID: entryID)
-                        }
-                    },
-                    allocator: transport.channel.allocator,
+                    activeRemotePeers: activeRemotePeers,
+                    peerBox: peerBox,
+                    bulkChannels: bulkChannels,
+                    isBulkTransport: bulk,
+                    closeTransport: { await transport.close() },
                     onAuthenticatedPeer: { [weak self = self] peer in
-                        peerBox.peer = peer
-                        // REMOTE-3.1 revocation (W4): `onAuthenticatedPeer` runs
-                        // synchronously on the transport's event loop, not
-                        // on this actor, and `SSHConnectionRegistry.register`
-                        // is async — so registration happens via a Task
-                        // hop rather than inline here. That means a
-                        // channel-open racing this Task's actor hop is
-                        // possible in theory, but harmless: `peerBox`
-                        // (read by every child channel's `deviceIDProvider`)
-                        // is already populated synchronously above, and
-                        // the registry's only job is to make a FUTURE
-                        // `revoke` able to find this connection — it
-                        // doesn't gate channel-open.
                         if !bulk {
                             Task {
                                 await self?.registerAuthenticatedConnection(
-                                    deviceID: peer.id,
-                                    generation: generation,
-                                    transport: transport
+                                    peer: peer, generation: generation, transport: transport
                                 )
                             }
-                        }
-                    },
-                    inboundChildChannelInitializer: { child, channelType in
-                        if case .directTCPIP(let destination) = channelType {
-                            guard peerBox.browserTunnelAllowed(host: destination.targetHost) else {
-                                return child.eventLoop.makeFailedFuture(WebRTCHostAgentError.unsupportedChannelType)
-                            }
-                            return SSHTCPBridge.connect(host: destination.targetHost, port: destination.targetPort, channel: child)
-                        }
-                        guard case .session = channelType else {
-                            return child.eventLoop.makeFailedFuture(WebRTCHostAgentError.unsupportedChannelType)
-                        }
-                        return child.eventLoop.makeCompletedFuture {
-                            let dispatcher = SubsystemDispatcher(
-                                streamFactory: factory,
-                                pagedFactory: pagedFactory,
-                                panesStateSubscribe: panesStateSubscribe,
-                                panesStateV2Subscribe: panesStateV2Subscribe,
-                                paneControlMutator: paneControlMutator,
-                                worktreeManagementMutator: worktreeManagementMutator,
-                                ownershipStore: ownershipStore,
-                                ownershipBroadcaster: ownershipBroadcaster,
-                                deviceIDProvider: { peerBox.deviceID },
-                                worktreeManagementAllowed: {
-                                    peerBox.worktreeManagementAllowed
-                                },
-                                displayKindProvider: { peerBox.displayKind },
-                                teamHandler: teamHandler,
-                                teamOnConnect: teamOnConnect,
-                                teamOnDisconnect: teamOnDisconnect,
-                                teamAllowed: { peerBox.peer?.kind == .mac },
-                                bulkChannels: bulkChannels,
-                                isBulkTransport: bulk
-                            )
-                            try child.pipeline.syncOperations.addHandler(dispatcher)
                         }
                     }
                 )
@@ -858,21 +808,26 @@ public actor WebRTCHostAgent {
     /// shared agent instance, without native WebRTC or NIOSSH — see that
     /// suite's `staleConnectionsCloseClosureDoesNotTearDownALiveReconnectedConnection`.
     internal func registerAuthenticatedConnection(deviceID: RemoteDeviceID) async {
+        guard let peer = try? trustedPeerStore.get(id: deviceID) else {
+            await close()
+            return
+        }
         await registerAuthenticatedConnection(
-            deviceID: deviceID,
+            peer: peer,
             generation: connectionGeneration,
             transport: nil
         )
     }
 
     private func registerAuthenticatedConnection(
-        deviceID: RemoteDeviceID,
+        peer: TrustedPeer,
         generation: UInt64,
         transport: SSHNIOTransport?
     ) async {
         guard isCurrentLifecycle(generation: generation, transport: transport) else {
             return
         }
+        let deviceID = peer.id
         // The replacement decision trusted the signed signaling identity.
         // Do not let a client finish SSH userauth as a different paired peer
         // after using that identity to evict a connection.
@@ -898,18 +853,10 @@ public actor WebRTCHostAgent {
             return
         }
         authenticatedRegistration = (deviceID, token)
-        // REMOTE-3.1 revocation (W4 finding 3): `await sshConnectionRegistry
-        // .register` above is itself a suspension point (registry's own
-        // replace-await, see `SSHConnectionRegistry.register`), so an admin
-        // revoke can land for this SAME peer during the Task-hop between
-        // `onAuthenticatedPeer` firing and this method resuming here — a window
-        // `revoke(deviceID:)` can't see into, because this connection isn't
-        // registered yet when the revoke runs. Re-checking the trust store
-        // AFTER registration completes closes that window: if the peer was
-        // removed from `trustedPeerStore` while we were registering, close
-        // immediately rather than leaving a live, authenticated connection
-        // for a peer that's no longer trusted.
-        if shouldCloseAfterRegister(deviceID: deviceID) {
+        // Revocation may run before this connection enters the registry.
+        // Compare the peer captured by userauth, including permissions, so a
+        // late registration cannot retain trust that changed during the hop.
+        if shouldCloseAfterRegister(peer: peer) {
             await close(ifGeneration: generation)
         }
     }
@@ -930,8 +877,8 @@ public actor WebRTCHostAgent {
     /// native WebRTC (constructing `RTCPeerConnection`/`RTCPeerConnectionFactory`
     /// hangs headless mac CI — see `factory`'s lazy-init comment). `internal`
     /// so `@testable import GrafttyHostAgent` can reach it directly.
-    internal func shouldCloseAfterRegister(deviceID: RemoteDeviceID) -> Bool {
-        (try? trustedPeerStore.get(id: deviceID)) == nil
+    internal func shouldCloseAfterRegister(peer: TrustedPeer) -> Bool {
+        !SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: trustedPeerStore)
     }
 
     private func startAuthenticationDeadline(
@@ -1092,10 +1039,6 @@ public actor WebRTCHostAgent {
         )
     }
 
-    private enum WebRTCHostAgentError: Error {
-        case unsupportedChannelType
-    }
-
     /// `RTCInitializeSSL` is process-wide and not refcounted in every SDK
     /// build, so a per-instance `deinit { RTCCleanupSSL() }` would tear SSL
     /// down for other live connections. A one-shot static token initialises
@@ -1153,8 +1096,8 @@ public actor WebRTCHostAgent {
         /// negotiation was suspended.
         case superseded
         /// `acceptOffer` was called while a prior offer was still in flight
-        /// or the agent was already connected. Only one peer connection at
-        /// a time — the second offer is rejected rather than clobbering
+        /// or the agent was already connected. Only one peer connection
+        /// per device at a time — the second offer is rejected rather than clobbering
         /// the live one.
         case busy
     }
@@ -1208,74 +1151,5 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
     }
 }
 
-/// Thread-safe box holding the trusted peer that
-/// completed SSH userauth on this connection. One instance per
-/// `installSSHHandler` call (i.e. per data channel / SSH connection);
-/// `SSHUserAuthDelegate.onAuthenticatedPeer` sets it synchronously during
-/// userauth, and `SubsystemDispatcher` reads its identity and display kind
-/// once per child channel thereafter.
-private final class AuthenticatedPeerBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _peer: TrustedPeer?
 
-    var peer: TrustedPeer? {
-        get { lock.lock(); defer { lock.unlock() }; return _peer }
-        set { lock.lock(); defer { lock.unlock() }; _peer = newValue }
-    }
-
-    var deviceID: RemoteDeviceID? {
-        lock.lock()
-        defer { lock.unlock() }
-        return _peer?.id
-    }
-
-    var displayKind: DisplayClientKind {
-        lock.lock()
-        defer { lock.unlock() }
-        switch _peer?.kind {
-        case .mac:
-            return .mac
-        case .iphone, .ipad, nil:
-            return .ios
-        }
-    }
-
-    var worktreeManagementAllowed: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _peer?.capabilities.worktreeManagement == .allowed
-    }
-
-    func browserTunnelAllowed(host: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let peer = _peer else { return false }
-        return BrowserTunnelAuthorization.allows(
-            capability: peer.capabilities.portTunnel,
-            host: host,
-            hasUserApproval: BrowserTunnelApprovalStore.shared.isApproved(deviceID: peer.id)
-        )
-    }
-}
-
-enum BrowserTunnelAuthorization {
-    static func allows(
-        capability: PairedDeviceCapabilities.PortTunnel,
-        host: String,
-        hasUserApproval: Bool
-    ) -> Bool {
-        switch capability {
-        case .disabled:
-            return false
-        case .askEachTime:
-            return hasUserApproval
-        case .allowedLoopback:
-            let normalized = host.lowercased()
-            let ipv4Loopback = IPv4Address(normalized)?.rawValue.first == 127
-            return normalized == "localhost"
-                || normalized.hasSuffix(".localhost")
-                || ipv4Loopback
-                || IPv6Address(normalized)?.isLoopback == true
-        }
-    }
-}
+#endif

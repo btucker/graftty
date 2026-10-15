@@ -5,7 +5,9 @@ import GhosttyTerminal
 enum MobileTerminalControllerFactory {
     static func make(configText: String?) -> TerminalController {
         TerminalController(
-            configSource: configText.map { .generated($0) } ?? .none,
+            // Graftty owns link menus instead of a desktop hover bubble. Native
+            // metadata is required to distinguish an OSC8 target from its label.
+            configSource: .generated((configText ?? "") + "\nlink-previews = true\n"),
             theme: TerminalTheme()
         )
     }

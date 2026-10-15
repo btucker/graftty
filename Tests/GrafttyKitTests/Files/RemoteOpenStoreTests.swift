@@ -5,6 +5,28 @@ import GrafttyProtocol
 
 @Suite("@spec IOS-12.1: When graftty open offers a regular file, the application shall retain a bounded temporary snapshot scoped to the caller's worktree and allow paired clients to retrieve only that offered snapshot in bounded chunks.")
 struct RemoteOpenStoreTests {
+    @Test("@spec IMAGE-2.7: When validated image snapshots are offered to mobile, the application shall attach explicit image intent and recipient metadata, preserve revision ordering and replace only older image snapshots in the same worktree and pane.")
+    func imageSnapshotMetadataAndReplacement() async throws {
+        let store = RemoteOpenStore()
+        let bytes = Data([1, 2, 3])
+        let phone = RemoteDeviceID(value: "phone")
+        let file = try await store.offerSnapshot(bytes: bytes, filename: "file.png", worktree: "/a", paneSessionName: "pane")
+        let old = try await store.offerSnapshot(bytes: bytes, filename: "old.png", worktree: "/a", paneSessionName: "pane", previewRevision: 1, previewKind: "image", previewOwnerDeviceID: phone)
+        let other = try await store.offerSnapshot(bytes: bytes, filename: "other.png", worktree: "/b", paneSessionName: "pane", previewRevision: 1, previewKind: "image", previewOwnerDeviceID: phone)
+        let latest = try await store.offerSnapshot(bytes: bytes, filename: "latest.png", worktree: "/a", paneSessionName: "pane", previewRevision: 2, previewKind: "image", previewOwnerDeviceID: phone)
+        #expect(latest.previewKind == "image")
+        #expect(latest.previewOwnerDeviceID == phone)
+        #expect(latest.browserOwnerDeviceID == nil)
+        #expect(file.previewKind == nil)
+        #expect(await store.list(worktree: "/a") == [file, latest])
+        #expect(await store.list(worktree: "/b") == [other])
+        await #expect(throws: RemoteOpenStore.Failure.self) {
+            try await store.read(id: old.id, worktree: "/a", offset: 0)
+        }
+        await #expect(throws: RemoteOpenStore.Failure.self) {
+            try await store.offerSnapshot(bytes: bytes, filename: "stale.png", worktree: "/a", paneSessionName: "pane", previewRevision: 1, previewKind: "image", previewOwnerDeviceID: phone)
+        }
+    }
     @Test func snapshotsAndScopesFiles() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".html")
         defer { try? FileManager.default.removeItem(at: url) }

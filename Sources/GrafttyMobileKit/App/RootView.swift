@@ -12,6 +12,7 @@ public struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var iPadAppState = IPadAppState()
     @State private var retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
+    @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     /// Owned here (not per-screen) so a negotiated SSH connection survives
     /// navigation-stack pushes/pops on the compact path and layout
     /// transitions on the iPad path — both `compactBody`'s
@@ -48,7 +49,8 @@ public struct RootView: View {
         .onChange(of: horizontalSizeClass) { previous, current in
             retainedPanes.stopAll()
             guard previous == .regular, current != .regular else { return }
-            navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts)?.path ?? NavigationPath()
+            navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
+                                                  showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
         }
         .onChange(of: gate.state) { _, _ in
             updateConnectionAccess()
@@ -119,18 +121,24 @@ public struct RootView: View {
                         worktree: step.worktree,
                         coordinator: coordinator
                     ) { sessionName in
-                        Self.applyCompactSession(SessionStep(host: step.host, worktreePath: step.worktree.path,
-                            sessionName: sessionName, title: step.worktree.layout?.title(for: sessionName) ?? sessionName), to: iPadAppState)
-                        navigationPath.append(SessionStep(
+                        let session = SessionStep(
                             host: step.host,
                             worktreePath: step.worktree.path,
                             sessionName: sessionName,
-                            title: step.worktree.layout?.title(for: sessionName) ?? sessionName
-                        ))
+                            title: step.worktree.layout?.title(for: sessionName) ?? sessionName,
+                            worktreeProject: step.project ?? SidebarProjection.projects([step.worktree]).first
+                        )
+                        Self.applyCompactSession(session, to: iPadAppState)
+                        navigationPath.append(session)
                     }
                 }
                 .navigationDestination(for: SessionStep.self) { step in
                     SingleSessionView(step: step, navigationPath: $navigationPath, coordinator: coordinator,
+                                      onBackToWorktrees: {
+                                          Self.applyCompactBack(step: step, appState: iPadAppState,
+                                                                navigationPath: &navigationPath,
+                                                                showsProjectRail: showsProjectRail)
+                                      },
                                       sidebarNavigation: iPadAppState.sidebarNavigation, retainedPanes: retainedPanes)
                         .onAppear {
                             guard horizontalSizeClass != .regular else { return }
@@ -154,10 +162,11 @@ public struct RootView: View {
                         host: host,
                         worktreePath: wt.path,
                         sessionName: sessionName,
-                        title: title
+                        title: title,
+                        worktreeProject: project ?? SidebarProjection.projects([wt]).first
                     ))
                 case .worktreeDetail:
-                    navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                    navigationPath.append(WorktreeStep(host: host, worktree: wt, project: project))
                 }
             },
             onSelectPaneWithWorktree: { worktree, leaf in
@@ -170,7 +179,8 @@ public struct RootView: View {
                         host: host,
                         worktreePath: worktree.path,
                         sessionName: sessionName,
-                        title: title
+                        title: title,
+                        worktreeProject: project ?? SidebarProjection.projects([worktree]).first
                     ))
                 }
             },
@@ -179,13 +189,13 @@ public struct RootView: View {
             onSelectWorktreeDetail: { worktree in
                 iPadAppState.selectedHostId = host.id
                 iPadAppState.selectedWorktreePath = worktree.path
-                navigationPath.append(WorktreeStep(host: host, worktree: worktree))
+                navigationPath.append(WorktreeStep(host: host, worktree: worktree, project: project))
             }
         )
         .onAppear { Self.applyCompactHost(host, to: iPadAppState) }
         .task {
             if let project,
-               iPadAppState.sidebarNavigation.selectedProjectID != project.id || iPadAppState.sidebarNavigation.showsAttention {
+               iPadAppState.sidebarNavigation.selectedProjectID != project.id {
                 iPadAppState.sidebarNavigation.showProject(project.id)
             }
         }
@@ -193,25 +203,35 @@ public struct RootView: View {
 
     struct CompactSelection: Equatable {
         let host: Host
+        let project: SidebarProject?
         let worktree: WorktreePanes?
         let session: SessionStep?
         var path: NavigationPath {
             var result = NavigationPath()
             result.append(host)
+            if let project { result.append(ProjectStep(host: host, project: project)) }
             if let session { result.append(session) }
-            else if let worktree { result.append(WorktreeStep(host: host, worktree: worktree)) }
+            else if let worktree { result.append(WorktreeStep(host: host, worktree: worktree, project: project)) }
             return result
         }
     }
 
-    static func compactSelection(appState: IPadAppState, hosts: [Host]) -> CompactSelection? {
+    static func compactSelection(appState: IPadAppState, hosts: [Host], showsProjectRail: Bool = true) -> CompactSelection? {
         guard let host = hosts.first(where: { $0.id == appState.selectedHostId }) else { return nil }
         let worktree = appState.latestWorktrees.first { $0.path == appState.selectedWorktreePath }
+        let selectedProjectID = appState.sidebarNavigation.selectedProjectID
+        let pickerProject = SidebarProjection.projects(appState.latestWorktrees).first {
+                $0.id == selectedProjectID
+            }
+            ?? appState.worktreePickerProject.flatMap { $0.id == selectedProjectID ? $0 : nil }
+            ?? worktree.flatMap { SidebarProjection.projects([$0]).first }
+        let project = showsProjectRail ? pickerProject : nil
         let leaf = worktree?.layout?.leaves.first { $0.sessionName == appState.focusedPaneId }
             ?? worktree?.layout?.leaves.first
         let session = leaf.map { SessionStep(host: host, worktreePath: worktree?.path,
-            sessionName: $0.sessionName, title: $0.displayTitle) }
-        return CompactSelection(host: host, worktree: worktree, session: session)
+            sessionName: $0.sessionName, title: $0.displayTitle,
+            worktreeProject: pickerProject) }
+        return CompactSelection(host: host, project: project, worktree: worktree, session: session)
     }
 
     static func applyCompactHost(_ host: Host, to appState: IPadAppState) {
@@ -223,6 +243,22 @@ public struct RootView: View {
         appState.selectedHostId = step.host.id
         appState.selectedWorktreePath = step.worktreePath
         appState.focusedPaneId = step.sessionName
+        appState.worktreePickerProject = step.worktreeProject
+        if let project = step.worktreeProject {
+            // Search can open another project's terminal without losing the picker.
+            appState.sidebarNavigation.selectedProjectID = project.id
+        }
+    }
+
+    static func applyCompactBack(step: SessionStep, appState: IPadAppState,
+                                 navigationPath: inout NavigationPath, showsProjectRail: Bool) {
+        IPadRootLayout.applyBackToWorktrees(appState: appState)
+        appState.worktreePickerProject = step.worktreeProject
+        if let project = step.worktreeProject {
+            appState.sidebarNavigation.selectedProjectID = project.id
+            appState.sidebarNavigation.compactShowsProjects = false
+        }
+        navigationPath = step.worktreePickerPath(showsProjectRail: showsProjectRail)
     }
 
     private var lockOverlay: some View {
@@ -273,6 +309,7 @@ struct ProjectStep: Hashable {
 struct WorktreeStep: Hashable {
     let host: Host
     let worktree: WorktreePanes
+    var project: SidebarProject? = nil
 }
 
 /// Third-level nav: picked a pane, now show its terminal fullscreen.
@@ -281,39 +318,114 @@ struct SessionStep: Hashable {
     let worktreePath: String?
     let sessionName: String
     let title: String
+    /// Retain the originating picker even when a search opens another project.
+    let worktreeProject: SidebarProject?
 
     init(
         host: Host,
         worktreePath: String? = nil,
         sessionName: String,
-        title: String
+        title: String,
+        worktreeProject: SidebarProject? = nil
     ) {
         self.host = host
         self.worktreePath = worktreePath
         self.sessionName = sessionName
         self.title = title
+        self.worktreeProject = worktreeProject
+    }
+
+    func worktreePickerPath(showsProjectRail: Bool) -> NavigationPath {
+        var path = NavigationPath()
+        path.append(host)
+        if showsProjectRail, let project = worktreeProject {
+            path.append(ProjectStep(host: host, project: project))
+        }
+        return path
     }
 }
 
-/// Shared floating terminal control used by the fullscreen back button and
-/// the show-keyboard button. Keeping the plain style here prevents SwiftUI's
-/// default accent tint from turning either glyph blue.
+private struct TerminalControlsGroupedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var terminalControlsGrouped: Bool {
+        get { self[TerminalControlsGroupedKey.self] }
+        set { self[TerminalControlsGroupedKey.self] = newValue }
+    }
+}
+
+struct TerminalFloatingGlass: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.interactive(), in: Capsule())
+        } else {
+            content.background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(.separator.opacity(0.35), lineWidth: 0.5))
+        }
+    }
+}
+
+/// One continuous background; the buttons retain their own touch targets.
+struct TerminalFloatingControlGroup<Content: View>: View {
+    var isVisible = true
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .environment(\.terminalControlsGrouped, true)
+            .background {
+                Capsule().fill(.clear)
+                    .modifier(TerminalFloatingGlass())
+                    .opacity(isVisible ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+    }
+}
+
+private struct TerminalFloatingButtonBackground: ViewModifier {
+    @Environment(\.terminalControlsGrouped) private var grouped
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if grouped { content }
+        else { content.modifier(TerminalFloatingGlass()) }
+    }
+}
+
+/// Shared floating terminal control for Back, keyboard and browser actions.
+/// The plain style keeps each glyph in the primary foreground.
 struct TerminalFloatingGlyphButton: View {
     let systemName: String
     let accessibilityLabel: String
+    var isBusy = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
+            Group {
+                if isBusy { ProgressView().tint(Color.primary) }
+                else { Image(systemName: systemName) }
+            }
                 .font(.title2)
                 .foregroundStyle(.primary)
                 .padding(10)
-                .background(.ultraThinMaterial, in: Circle())
-                .shadow(radius: 1)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+                .modifier(TerminalFloatingButtonBackground())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+struct TerminalFloatingControlPlacement: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.leading, 12)
+            .padding(.top, 12)
     }
 }
 
@@ -336,11 +448,13 @@ final class TerminalContainerBox {
 /// freeing and remounting Ghostty's renderer during a QuartzCore transaction.
 struct SingleSessionView: View {
     static let sessionRole: SessionClient.Role = .fullscreen
+    static let autocorrectionDefaultsKey = "GrafttyMobile.terminalAutocorrectionEnabled"
 
     enum TerminalControlBarItem: String, Hashable {
         case escape
         case tab
         case stickyControl
+        case shift
         case controlC
         case controlD
         case navigationDivider
@@ -351,6 +465,7 @@ struct SingleSessionView: View {
         case returnDivider
         case submitReturn
         case literalLineFeed
+        case autocorrection
         case hideKeyboard
     }
 
@@ -358,6 +473,7 @@ struct SingleSessionView: View {
         .escape,
         .tab,
         .stickyControl,
+        .shift,
         .controlC,
         .controlD,
         .navigationDivider,
@@ -368,6 +484,7 @@ struct SingleSessionView: View {
         .returnDivider,
         .submitReturn,
         .literalLineFeed,
+        .autocorrection,
         .hideKeyboard,
     ]
 
@@ -381,6 +498,7 @@ struct SingleSessionView: View {
     /// hide the sidebar-toggle button — leaving no way to re-show a
     /// collapsed sidebar (IPAD-1.7).
     let isFullScreen: Bool
+    let showsProjectRail: Bool
     /// Injected from `RootView` on BOTH size classes so `openTerminal()`
     /// can negotiate (or reuse) the per-host `RemoteHostConnection` for
     /// SSH-over-WebRTC. `nil` exists only in preview and narrowly scoped
@@ -412,7 +530,6 @@ struct SingleSessionView: View {
     private let sidebarNavigation: SidebarNavigationState?
     private let retainedPanes: RetainedPaneClientPool<RetainedMobilePane>?
     @State private var attentionWorktrees: [WorktreePanes] = []
-    @State private var attentionProjects: [SidebarProject] = []
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -448,14 +565,19 @@ struct SingleSessionView: View {
     /// container so the SwiftUI control-bar buttons can cancel an
     /// active selection per IOS-11.7.
     @State private var paneContainerBox = TerminalContainerBox()
+    @StateObject private var agentCompletion = AgentCompletionModel()
     @State private var stickyControlActivation:
         TerminalInputContainerView.StickyControlActivation = .inactive
+    @State private var isTrayShiftSelected = false
+    @AppStorage(autocorrectionDefaultsKey) private var isAutocorrectionEnabled = false
     /// The iOS-scaled Mac ghostty config used to build `controller`.
     /// Cached so owner-selected font preferences can be applied without re-fetching.
     @State private var baseConfigText: String?
     /// Latest owner-selected size. Pinch actions already update the live
     /// Ghostty surface; this state preserves that size across configuration updates.
     @State private var preferredFontSize: Float?
+    @State private var terminalBrowserRequest: TerminalBrowserRequest?
+    @State private var terminalBrowserError: String?
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -481,6 +603,19 @@ struct SingleSessionView: View {
         keyboardAllowed: Bool = true
     ) -> Bool {
         clientIsOwner && isPaneFocused && keyboardAllowed
+    }
+
+    static func handleAgentCompletionSceneChange(
+        _ phase: ScenePhase,
+        model: AgentCompletionModel,
+        transportIsAvailable: Bool
+    ) {
+        guard phase != .active, model.isActive else { return }
+        if phase == .inactive, transportIsAvailable {
+            model.invalidateBoundary()
+        } else {
+            model.cancel(preserveLiteral: false)
+        }
     }
 
     static func shouldDismissKeyboard(
@@ -570,6 +705,7 @@ struct SingleSessionView: View {
         step: SessionStep,
         navigationPath: Binding<NavigationPath>,
         isFullScreen: Bool = true,
+        showsProjectRail: Bool = true,
         coordinator: RemoteConnectionCoordinator? = nil,
         externalPendingFocusRequests: Int = 0,
         onExternalFocusRequestsConsumed: (() -> Void)? = nil,
@@ -580,11 +716,16 @@ struct SingleSessionView: View {
         onBackToWorktrees: (() -> Void)? = nil,
         fontSizeStore: TerminalFontSizeStore = .shared,
         sidebarNavigation: SidebarNavigationState? = nil,
-        retainedPanes: RetainedPaneClientPool<RetainedMobilePane>? = nil
+        retainedPanes: RetainedPaneClientPool<RetainedMobilePane>? = nil,
+        attentionWorktrees: [WorktreePanes] = [],
+        initialClient: SessionClient? = nil,
+        initialController: TerminalController? = nil,
+        initialKeyboardBottomInset: CGFloat = 0
     ) {
         self.step = step
         self._navigationPath = navigationPath
         self.isFullScreen = isFullScreen
+        self.showsProjectRail = showsProjectRail
         self.coordinator = coordinator
         self.externalPendingFocusRequests = externalPendingFocusRequests
         self.onExternalFocusRequestsConsumed = onExternalFocusRequestsConsumed
@@ -596,17 +737,26 @@ struct SingleSessionView: View {
         self.fontSizeStore = fontSizeStore
         self.sidebarNavigation = sidebarNavigation
         self.retainedPanes = retainedPanes
+        self._attentionWorktrees = State(initialValue: attentionWorktrees)
+        self._client = State(initialValue: initialClient)
+        self._controller = State(initialValue: initialController)
+        self._connection = State(initialValue: initialClient == nil ? .connecting : .live)
+        self._keyboardBottomInset = State(initialValue: initialKeyboardBottomInset)
     }
 
     var body: some View {
         ZStack {
-            // Terminal theme background behind everything — including under the
-            // keyboard, so its rounded corners (and the control-bar row) show
-            // the terminal's color instead of system chrome. Ignores all
-            // safe-area regions (incl. `.keyboard`) so it bleeds the full
-            // screen; the keyboard-padded content sits on top of it.
+            // Terminal theme background also fills keyboard transitions.
+            // Content reserves keyboard clearance independently.
             terminalBackground
             sessionView
+        }
+        .alert("Could not open link", isPresented: Binding(
+            get: { terminalBrowserError != nil }, set: { if !$0 { terminalBrowserError = nil } }
+        )) { Button("OK") { terminalBrowserError = nil } } message: { Text(terminalBrowserError ?? "") }
+        .onDisappear {
+            terminalBrowserRequest = nil
+            paneContainerBox.view?.detachBrowserControls()
         }
     }
 
@@ -629,6 +779,14 @@ struct SingleSessionView: View {
                     VStack(spacing: 0) {
                         terminalContent
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .overlay(alignment: .bottom) {
+                                if agentCompletion.isActive, isPaneFocused {
+                                    AgentCompletionPicker(model: agentCompletion)
+                                        .frame(maxHeight: 240)
+                                        .padding(.horizontal, 8)
+                                        .padding(.bottom, 8)
+                                }
+                            }
                         // While the keyboard is up, the control bar is laid out
                         // in-flow directly below the terminal. Because this VStack
                         // already lives inside the keyboard-reduced area, the bar
@@ -659,8 +817,7 @@ struct SingleSessionView: View {
             .overlay(alignment: .topLeading) {
                 if isFullScreen {
                     backButton
-                        .padding(.leading, 12)
-                        .padding(.top, 12)
+                        .modifier(TerminalFloatingControlPlacement())
                 }
             }
             .overlay(alignment: .top) {
@@ -706,10 +863,18 @@ struct SingleSessionView: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if isPaneFocused, scenePhase == .active, gate?.state == .unlocked,
-                   connection == .live, let worktree = step.worktreePath, let coordinator {
-                    RemoteOpenButton(host: step.host, worktree: worktree, coordinator: coordinator)
-                        .padding(.top, 64)
+                if let worktree = step.worktreePath, let coordinator {
+                    RemoteOpenButton(host: step.host, worktree: worktree, coordinator: coordinator,
+                                     sessionName: step.sessionName,
+                                     ownerDeviceID: client?.isOwner == true ? coordinator.localDeviceID : nil,
+                                     isActive: isPaneFocused && scenePhase == .active && gate?.state == .unlocked && connection == .live,
+                                     browserConnectionReady: connection == .live,
+                                     isPaneFocused: isPaneFocused,
+                                     hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
+                                     isPaneOwner: { client?.isOwner == true },
+                                     canPresentAuthentication: { true },
+                                     terminalRequest: $terminalBrowserRequest)
+                        .modifier(TerminalFloatingControlPlacement())
                         .padding(.trailing, 12)
                 }
             }
@@ -805,7 +970,11 @@ struct SingleSessionView: View {
             }
             .task(id: dialKey) { await observeAttention() }
             .onDisappear {
+                agentCompletion.invalidateBoundary()
+                agentCompletion.loadCandidates = nil
+                paneContainerBox.view?.onBackRequested = nil
                 paneContainerBox.view?.resetStickyModifiers()
+                paneContainerBox.view?.onTrayShiftSelectionChange = nil
                 paneContainerBox.view?.terminalView.resignFirstResponder()
                 if let retainedPanes { retainedPanes.cached(retainedPaneKey)?.detachControls() }
                 else { client?.stop() }
@@ -813,6 +982,7 @@ struct SingleSessionView: View {
                 if connection != .ended { connection = .connecting }
             }
             .onChange(of: client?.connectionState) { _, state in
+                if state != .live { agentCompletion.cancel(preserveLiteral: false) }
                 guard state == .ended else { return }
                 retainedPanes?.remove(retainedPaneKey)
                 client?.stop()
@@ -828,6 +998,12 @@ struct SingleSessionView: View {
                     paneContainerBox.view?.resetStickyModifiers()
                     paneContainerBox.view?.terminalView.resignFirstResponder()
                 }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                Self.handleAgentCompletionSceneChange(
+                    phase, model: agentCompletion,
+                    transportIsAvailable: client?.isOwner == true && client?.connectionState == .live
+                )
             }
     }
 
@@ -988,8 +1164,7 @@ struct SingleSessionView: View {
     private var backButton: some View {
         TerminalFloatingGlyphButton(
             systemName: "chevron.left",
-            accessibilityLabel: pendingAttentionCount > 0
-                ? "Needs Attention, \(pendingAttentionCount) new requests in other worktrees" : "Back",
+            accessibilityLabel: backAccessibilityLabel,
             action: popToParent
         )
         .overlay(alignment: .topTrailing) {
@@ -1006,6 +1181,12 @@ struct SingleSessionView: View {
                     .accessibilityHidden(true)
             }
         }
+    }
+
+    var backAccessibilityLabel: String {
+        let count = pendingAttentionCount
+        guard count > 0 else { return "Back to worktrees" }
+        return "Back to worktrees, \(count) pending \(count == 1 ? "worktree" : "worktrees")"
     }
 
     private var retainedPaneKey: RetainedPaneClientPool<RetainedMobilePane>.Key {
@@ -1035,33 +1216,25 @@ struct SingleSessionView: View {
                 } else { projects = SidebarProjection.projects(rows) }
                 sidebarNavigation.reconcile(worktrees: rows, projects: projects)
                 attentionWorktrees = rows
-                attentionProjects = projects
             } catch {
                 // Do not present a stale count while the host is unreachable.
                 attentionWorktrees = []
-                attentionProjects = []
             }
             do { try await Task.sleep(for: .seconds(1)) } catch { return }
         }
     }
 
-    private func popToParent() {
-        if pendingAttentionCount > 0, let sidebarNavigation {
-            MobilePaneAttention.open(worktrees: attentionWorktrees, projects: attentionProjects,
-                                     navigation: sidebarNavigation)
-            // Skip a possible split-pane picker and return directly to the list.
-            var path = NavigationPath()
-            path.append(step.host)
-            navigationPath = path
-            return
-        }
+    func popToParent() {
         if let onBackToWorktrees {
             onBackToWorktrees()
             return
         }
-        if !navigationPath.isEmpty {
-            navigationPath.removeLast()
-        }
+        guard !navigationPath.isEmpty else { return }
+        navigationPath = step.worktreePickerPath(showsProjectRail: showsProjectRail)
+    }
+
+    var terminalBackSwipeAction: (() -> Void)? {
+        isFullScreen ? popToParent : nil
     }
 
     @ViewBuilder
@@ -1163,11 +1336,7 @@ struct SingleSessionView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.primary)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(
-            Capsule()
-                .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
-        )
+        .modifier(TerminalFloatingGlass())
         .accessibilityLabel("Take Control")
     }
 
@@ -1197,12 +1366,12 @@ struct SingleSessionView: View {
     private func terminalControlBarItem(_ item: TerminalControlBarItem) -> some View {
         switch item {
         case .escape:
-            terminalTextControl("Esc", accessibilityLabel: "Escape") {
+            terminalTextControl("Esc", accessibilityLabel: "Escape", completionKey: .escape) {
                 client?.sendEscape()
             }
         case .tab:
-            terminalTextControl("Tab", accessibilityLabel: "Tab") {
-                client?.sendTab()
+            terminalTextControl("Tab", accessibilityLabel: "Tab", completionKey: .accept) {
+                client?.sendTab(shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .stickyControl:
             terminalModifierControl(
@@ -1216,6 +1385,14 @@ struct SingleSessionView: View {
             terminalTextControl("^C", accessibilityLabel: "Control C") {
                 client?.sendControl(.c)
             }
+        case .shift:
+            terminalModifierControl(
+                "Shift",
+                accessibilityLabel: "Tray Shift",
+                activation: isTrayShiftSelected ? .locked : .inactive
+            ) {
+                paneContainerBox.view?.toggleTrayShift()
+            }
         case .controlD:
             terminalTextControl("^D", accessibilityLabel: "Control D") {
                 client?.sendControl(.d)
@@ -1224,28 +1401,30 @@ struct SingleSessionView: View {
             Divider().frame(height: 28)
         case .left:
             terminalIconControl("arrow.left", accessibilityLabel: "Left arrow") {
-                client?.sendArrow(.left)
+                client?.sendArrow(.left, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .down:
-            terminalIconControl("arrow.down", accessibilityLabel: "Down arrow") {
-                client?.sendArrow(.down)
+            terminalIconControl("arrow.down", accessibilityLabel: "Down arrow", completionKey: .down) {
+                client?.sendArrow(.down, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .up:
-            terminalIconControl("arrow.up", accessibilityLabel: "Up arrow") {
-                client?.sendArrow(.up)
+            terminalIconControl("arrow.up", accessibilityLabel: "Up arrow", completionKey: .up) {
+                client?.sendArrow(.up, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .right:
             terminalIconControl("arrow.right", accessibilityLabel: "Right arrow") {
-                client?.sendArrow(.right)
+                client?.sendArrow(.right, shift: paneContainerBox.view?.isTrayShiftSelected == true)
             }
         case .submitReturn:
-            terminalIconControl("return", accessibilityLabel: "Submit return") {
+            terminalIconControl("return", accessibilityLabel: "Submit return", completionKey: .accept) {
                 client?.submitReturn()
             }
         case .literalLineFeed:
             terminalTextControl("LF", accessibilityLabel: "Insert newline") {
                 client?.insertNewline()
             }
+        case .autocorrection:
+            terminalAutocorrectionControl
         case .hideKeyboard:
             terminalIconControl(
                 "keyboard.chevron.compact.down",
@@ -1284,7 +1463,7 @@ struct SingleSessionView: View {
             session: client.session,
             controller: controller,
             authoritativeGrid: client.snapshotCanvasGrid,
-            addsVerticalRowPadding: true,
+            reservesTopChromeSpace: true,
             showsAdditionalHistory: true,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)
@@ -1298,10 +1477,17 @@ struct SingleSessionView: View {
                 isPaneFocused: isPaneFocused,
                 keyboardAllowed: keyboardAllowed
             ) ? .init(
-                insertText: { text in client.sendSoftwareKeyboardText(text) },
+                insertText: { text in
+                    // A focus/eligibility update can flush the pending token
+                    // after ownership changed. It must not request takeover.
+                    guard client.isOwner, client.connectionState == .live else { return }
+                    client.sendSoftwareKeyboardText(text)
+                },
                 insertControlByte: { byte in client.sendControlByte(byte) },
                 deleteBackward: { client.deleteBackward() }
             ) : nil,
+            agentCompletion: agentCompletion,
+            isAutocorrectionEnabled: isAutocorrectionEnabled,
             hardwareKeyboardCommands: isPaneFocused ? ghosttyCommandContext.map {
                     MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: $0)
                 } ?? [] : [],
@@ -1318,8 +1504,14 @@ struct SingleSessionView: View {
             onPasteRequested: { [weak client] in
                 client?.pasteFromClipboard()
             },
+            onBackRequested: terminalBackSwipeAction,
             captureContainer: { [paneContainerBox, client] view in
                 paneContainerBox.view = view
+                let shiftSelected = view.isTrayShiftSelected
+                DispatchQueue.main.async { isTrayShiftSelected = shiftSelected }
+                view.onTrayShiftSelectionChange = { selected in
+                    DispatchQueue.main.async { isTrayShiftSelected = selected }
+                }
                 retainedPanes?.cached(retainedPaneKey)?.container = view
                 client.additionalHistoryRowCapacity = { [weak view] in
                     view?.snapshotScrollView.additionalHistoryRowCapacity ?? 0
@@ -1336,10 +1528,36 @@ struct SingleSessionView: View {
                     }
                 }
             },
-            retainedContainer: retainedPanes?.cached(retainedPaneKey)?.container
+            retainedContainer: retainedPanes?.cached(retainedPaneKey)?.container,
+            onOpenURL: { url in
+                guard let coordinator, let worktree = step.worktreePath else {
+                    terminalBrowserError = "Browser links require a tracked worktree on the originating Mac."
+                    return
+                }
+                terminalBrowserRequest = TerminalBrowserRequest(url: url, scope: .init(
+                    hostID: step.host.id, worktree: worktree, sessionName: step.sessionName,
+                    ownerDeviceID: client.isOwner ? coordinator.localDeviceID : nil))
+            },
+            linkContext: AnyHashable(TerminalBrowserRequest.Scope(hostID: step.host.id,
+                worktree: step.worktreePath ?? "", sessionName: step.sessionName,
+                ownerDeviceID: client.isOwner ? coordinator?.localDeviceID : nil))
         )
         pane
+            .onAppear {
+                agentCompletion.currentWorktreePath = step.worktreePath
+                let provider: RemoteConnectionProvider? = coordinator == nil ? nil : makeRemoteConnectionProvider(
+                    coordinator: coordinator, host: step.host, sessionName: step.sessionName
+                )
+                let baseURL = step.host.baseURL
+                let worktreePath = step.worktreePath
+                agentCompletion.loadCandidates = {
+                    try await AgentCompletionsFetcher.fetch(
+                        baseURL: baseURL, provider: provider, worktreePath: worktreePath
+                    )
+                }
+            }
             .onChange(of: client.isOwner) { wasOwner, isOwner in
+                if !isOwner { agentCompletion.cancel(preserveLiteral: false) }
                 if Self.shouldSynchronizeViewportOnOwnerTransition(
                     wasOwner: wasOwner,
                     isOwner: isOwner
@@ -1376,11 +1594,17 @@ struct SingleSessionView: View {
 
     /// Wraps a control-bar action so that pressing any key while a
     /// terminal selection is active first cancels the selection
-    /// (IOS-11.7). Every entry in `terminalControlBar` routes its
+    /// (IOS-11.7). Terminal key entries in `terminalControlBar` route their
     /// action through this wrapper.
-    private func controlBarAction(_ body: @escaping () -> Void) -> () -> Void {
+    private func controlBarAction(
+        _ body: @escaping () -> Void,
+        resetsInputContext: Bool = true,
+        completionKey: AgentCompletionKey? = nil
+    ) -> () -> Void {
         { [paneContainerBox] in
             paneContainerBox.cancelActiveSelectionIfAny()
+            if let completionKey, paneContainerBox.view?.handleAgentCompletionControl(completionKey) == true { return }
+            if resetsInputContext { paneContainerBox.view?.terminalView.commitAndResetTextContext() }
             body()
         }
     }
@@ -1388,9 +1612,10 @@ struct SingleSessionView: View {
     private func terminalTextControl(
         _ title: String,
         accessibilityLabel: String,
+        completionKey: AgentCompletionKey? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: controlBarAction(action)) {
+        Button(action: controlBarAction(action, completionKey: completionKey)) {
             Text(title)
                 .font(.footnote.monospaced().weight(.semibold))
                 .foregroundStyle(.primary)
@@ -1408,7 +1633,7 @@ struct SingleSessionView: View {
         activation: TerminalInputContainerView.StickyControlActivation,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: controlBarAction(action)) {
+        Button(action: controlBarAction(action, resetsInputContext: false)) {
             Text(title)
                 .font(.footnote.monospaced().weight(.semibold))
                 .foregroundStyle(activation == .inactive ? Color.primary : Color.accentColor)
@@ -1441,9 +1666,10 @@ struct SingleSessionView: View {
     private func terminalIconControl(
         _ systemName: String,
         accessibilityLabel: String,
+        completionKey: AgentCompletionKey? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: controlBarAction(action)) {
+        Button(action: controlBarAction(action, completionKey: completionKey)) {
             Image(systemName: systemName)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
@@ -1453,6 +1679,27 @@ struct SingleSessionView: View {
         .buttonStyle(.plain)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var terminalAutocorrectionControl: some View {
+        // A preference change must preserve the current input context and
+        // completion token, so it does not use the terminal-key action wrapper.
+        Button { isAutocorrectionEnabled.toggle() } label: {
+            Image(systemName: "textformat.abc")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(isAutocorrectionEnabled ? Color.accentColor : Color.primary)
+                .frame(width: 38, height: 34)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(isAutocorrectionEnabled ? Color.accentColor : Color.clear, lineWidth: 2)
+        }
+        .accessibilityLabel("Auto-correct")
+        .accessibilityValue(isAutocorrectionEnabled ? "On" : "Off")
+        .accessibilityAddTraits(isAutocorrectionEnabled ? .isSelected : [])
     }
 }
 

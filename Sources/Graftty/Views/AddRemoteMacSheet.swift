@@ -106,10 +106,21 @@ struct AddRemoteMacFormController: Equatable {
         }
     }
 
+    var transport: RemoteHostTransport = .webRTC
+    var directHostString = ""
+    var directPortString = "8801"
     var manualURLString: String = ""
     var selectedCandidateIdentity: RemoteMacIdentity?
     var selectedPairingBaseURL: URL?
     var phase: Phase = .idle
+
+    func directEndpoint() throws -> DirectSSHEndpoint {
+        let host = directHostString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let port = Int(directPortString.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            throw DirectSSHEndpoint.ValidationError.invalidPort
+        }
+        return try DirectSSHEndpoint(host: host.isEmpty ? (selectedPairingBaseURL?.host ?? "") : host, port: port)
+    }
 
     var canConfirmVerification: Bool {
         if case .verifying = phase { return true }
@@ -250,6 +261,26 @@ struct AddRemoteMacSheet: View {
                 }
             }
 
+            Picker("Connection", selection: $controller.transport) {
+                Text("WebRTC").tag(RemoteHostTransport.webRTC)
+                Text("Direct SSH").tag(RemoteHostTransport.directSSH)
+            }
+            .pickerStyle(.segmented)
+            .disabled(isPairingInFlight || controller.canConfirmVerification)
+
+            if controller.transport == .directSSH {
+                HStack {
+                    TextField("Graftty host", text: $controller.directHostString)
+                    TextField("8801", text: $controller.directPortString)
+                        .frame(width: 70)
+                }
+                .textFieldStyle(.roundedBorder)
+                .disabled(isPairingInFlight || controller.canConfirmVerification)
+                Text("Connect to the Graftty SSH service. Default port 8801. The pairing URL above is used to verify the host first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if let verificationCode {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Verification Code")
@@ -316,6 +347,10 @@ struct AddRemoteMacSheet: View {
         if let errorMessage {
             return errorMessage
         }
+        if controller.transport == .directSSH, (try? controller.directEndpoint()) == nil,
+           controller.selectedPairingBaseURL != nil {
+            return "Enter a Graftty host and a port from 1 to 65535."
+        }
         // A selected discovered candidate takes precedence over the manual
         // URL field, so stray/invalid text there is ignored — don't surface a
         // validation error while the Pair button will actually use the candidate.
@@ -329,7 +364,8 @@ struct AddRemoteMacSheet: View {
     }
 
     private var canAttemptPairing: Bool {
-        switch controller.phase {
+        if controller.transport == .directSSH, (try? controller.directEndpoint()) == nil { return false }
+        return switch controller.phase {
         case .candidateSelected, .manualURLReady, .verifying:
             true
         case .idle, .failed:
@@ -404,7 +440,8 @@ struct AddRemoteMacSheet: View {
 
         do {
             let pinnedHost = try await driver.confirmPairing()
-            try model.recordPairingResult(.paired(pinnedHost))
+            let endpoint = controller.transport == .directSSH ? try controller.directEndpoint() : nil
+            try model.recordPairingResult(.paired(pinnedHost), transport: controller.transport, directEndpoint: endpoint)
             pairingDriver = nil
             try Task.checkCancellation()
             onPaired()

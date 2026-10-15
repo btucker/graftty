@@ -28,7 +28,10 @@
     "INSTR",
     "EDITOR",
     "REMOTE",
-    "URL"
+    "CHROME",
+    "URL",
+    "IMAGE",
+    "PREVIEW"
   ],
   "sections": {
     "LAYOUT": "App Layout",
@@ -58,9 +61,15 @@
     "INSTR": "Agent Instruction Files",
     "EDITOR": "Editor Integration",
     "REMOTE": "Secure Remote Access",
-    "URL": "Worktree URL Handler"
+    "CHROME": "Dedicated Chrome tabs",
+    "URL": "Worktree URL Handler",
+    "IMAGE": "Native Image Preview",
+    "PREVIEW": "Native File Preview"
   },
   "subsections": {
+    "CHROME.1": "Host profiles and ownership",
+    "CHROME.2": "Phone controls",
+    "CHROME.3": "Authenticated transport",
     "LAYOUT.1": "Window Structure",
     "LAYOUT.2": "Sidebar — Repository List",
     "LAYOUT.3": "Adding Repositories",
@@ -82,6 +91,7 @@
     "GIT.3": "Change Handling",
     "GIT.4": "Deleting a Worktree",
     "GIT.5": "Creating a Worktree",
+    "GIT.6": "Auto-tracking Pinned Agents",
     "ATTN.1": "CLI Tool",
     "ATTN.2": "Communication Protocol",
     "ATTN.3": "Error Handling",
@@ -118,6 +128,7 @@
     "DIST.1": "Build Bundle",
     "DIST.2": "Release Automation",
     "DIST.3": "Homebrew Cask",
+    "DIST.4": "Linux host distribution",
     "WEB.1": "Binding",
     "WEB.2": "Authorization",
     "WEB.3": "Protocol",
@@ -175,6 +186,7 @@
     "PROJECT.3": "Project icons and navigation preferences",
     "TEAM.10": "Codex Wrapper App-Server Routing",
     "TEAM.11": "Idle Delivery",
-    "TEAM.14": "Messaging between Macs"
+    "TEAM.14": "Messaging between Macs",
+    "TEAM.15": "Native agent completion"
   }
 }

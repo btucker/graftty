@@ -3,6 +3,21 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarInteractionPolicyTests {
+    @Test("Opening agent requests preserves them while explicit dismissal and notification acknowledgement still work", arguments: [true, false])
+    func openingDoesNotDismissAgentRequests(paneScoped: Bool) {
+        let timestamp = Date(timeIntervalSinceReferenceDate: 100)
+        let occurrence = SidebarAttentionOccurrence(timestamp: timestamp, text: "Choose a branch", source: .agentStop)
+        var item = SidebarActivityItem(id: "request", projectID: "project", worktreeID: "/worktree",
+            paneID: paneScoped ? "agent" : nil, projectName: "Project", worktreeName: "Task",
+            title: "Choose a branch", occurrence: occurrence, isBusy: false)
+        #expect(SidebarInteractionPolicy.acknowledgementOnOpen(for: item, supportsExactAcknowledgement: true) == nil)
+        #expect(SidebarInteractionPolicy.acknowledgement(for: item, supportsExactAcknowledgement: true)
+            == .acknowledgeOccurrence(worktreeID: item.worktreeID, paneID: item.paneID, occurrence: occurrence))
+        item.occurrence?.source = .userNotify
+        #expect(SidebarInteractionPolicy.acknowledgementOnOpen(for: item, supportsExactAcknowledgement: true) != nil)
+        #expect(SidebarInteractionPolicy.acknowledgementOnOpen(for: item, supportsExactAcknowledgement: false) == nil)
+    }
+
     @Test("@spec REMOTE-14.10: When an attention target is opened on an owner without exact acknowledgement support, the application shall preserve host attention rather than acknowledge unrelated or newer requests.")
     func safeAcknowledgement() {
         let item = SidebarActivityItem(id: "w", projectID: "p", worktreeID: "route", paneID: nil, projectName: "Project", worktreeName: "Worktree", title: "Review", occurrence: .init(timestamp: Date(), text: "Review", source: .agentStop), isBusy: false)

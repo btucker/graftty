@@ -84,6 +84,14 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var emoji: String?
     /// Nil for pre-migration state. Current identities record their source.
     public var emojiSource: WorktreeEmojiSource?
+    /// Explicit sidebar pin; instruction files alone do not imply it.
+    public var isPinned: Bool = false
+    /// Pull origin in the main checkout; merge the local default in pinned agents.
+    public var autoTrackEnabled: Bool = false
+    /// Suppresses retries against the same upstream after an app restart.
+    public var autoTrackLastAttempt: GitAutoTracking.Target?
+    /// Initial activity for a newly added worktree. Legacy entries have no creation time.
+    public var createdAt: Date?
     public var state: WorktreeState
     /// Wall-clock time when this entry most recently transitioned to
     /// `.stale`. Persisted so the stale-worktree auto-dismiss grace
@@ -121,18 +129,23 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// the slot keeps the same pane primary across worktree stops, app
     /// launches, and zmx restarts.
     public var primaryPaneSlotID: PaneSlotID?
-    /// PR number for which the "PR resolved — delete worktree?" offer
-    /// dialog has already been presented (the PR has either merged or
-    /// been closed without merging — GIT-4.7). Persisted so that a
-    /// force-push that closes PR N and reopens as PR M is correctly
-    /// treated as a fresh transition (the numbers differ), while a
-    /// steady poll of the same resolved PR stays quiet.
-    public var offeredDeleteForResolvedPR: Int?
+
+    /// Most recent creation, attention, agent progress, or agent stop time. Drives
+    /// the sidebar's recent-activity worktree order.
+    public var lastActivity: Date? {
+        var times = paneAttention.values.map(\.timestamp)
+        if let createdAt { times.append(createdAt) }
+        if let attention { times.append(attention.timestamp) }
+        times += agentProgressTimes.values.map(Date.init(timeIntervalSinceReferenceDate:))
+        times += [unseenAgentStop, lastAgentStop].compactMap { $0 }.map { Date(timeIntervalSinceReferenceDate: $0.timestamp) }
+        return times.max()
+    }
 
     public init(
         path: String,
         branch: String,
         state: WorktreeState = .closed,
+        createdAt: Date? = nil,
         staleSince: Date? = nil,
         attention: Attention? = nil,
         splitTree: SplitTree = SplitTree(root: nil)
@@ -142,6 +155,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.branch = branch
         self.emoji = nil
         self.emojiSource = nil
+        self.createdAt = createdAt
         self.state = state
         self.staleSince = state == .stale ? (staleSince ?? Date()) : nil
         self.attention = attention
@@ -154,7 +168,6 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.splitTree = splitTree
         self.focusedPaneSlotID = nil
         self.primaryPaneSlotID = nil
-        self.offeredDeleteForResolvedPR = nil
     }
 
     // Custom Decodable so fields added after the initial release are
@@ -163,19 +176,9 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, state, staleSince, attention, unseenAgentStop, lastAgentStop, agentProgressTimes, paneAttention,
-             paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID,
-             offeredDeleteForResolvedPR
+        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, state, staleSince, attention, unseenAgentStop, lastAgentStop, agentProgressTimes, paneAttention,
+             paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID
         case focusedPaneSlotID = "focusedTerminalID"
-    }
-
-    /// Legacy key honored on decode only — state blobs persisted by
-    /// the build that knew only `.merged` PRs (before GIT-4.7 broadened
-    /// to include closed-without-merging) carry this name. Read in
-    /// `init(from:)` as a fallback so users upgrading from that build
-    /// don't get re-prompted for merged PRs they've already dismissed.
-    private enum LegacyCodingKeys: String, CodingKey {
-        case offeredDeleteForMergedPR
     }
 
     public init(from decoder: Decoder) throws {
@@ -185,6 +188,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.branch = try container.decode(String.self, forKey: .branch)
         self.emoji = try container.decodeIfPresent(String.self, forKey: .emoji)
         self.emojiSource = try container.decodeIfPresent(WorktreeEmojiSource.self, forKey: .emojiSource)
+        self.isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        self.autoTrackEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoTrackEnabled) ?? false
+        self.autoTrackLastAttempt = try container.decodeIfPresent(GitAutoTracking.Target.self, forKey: .autoTrackLastAttempt)
+        self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
         self.state = try container.decode(WorktreeState.self, forKey: .state)
         self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)
@@ -212,12 +219,6 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
             PaneSlotID.self,
             forKey: .primaryPaneSlotID
         )
-        let resolved = try container.decodeIfPresent(
-            Int.self, forKey: .offeredDeleteForResolvedPR
-        )
-        let legacyMerged = try decoder.container(keyedBy: LegacyCodingKeys.self)
-            .decodeIfPresent(Int.self, forKey: .offeredDeleteForMergedPR)
-        self.offeredDeleteForResolvedPR = resolved ?? legacyMerged
     }
 
     /// True when this worktree is requesting attention at either scope — a
@@ -268,26 +269,32 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         return true
     }
 
-    /// The user is now looking at this worktree (sidebar click or
-    /// notification activation): clear ALL attention — worktree-scoped and
-    /// every pane (STATE-2.4). One method so both acknowledgement paths
-    /// can't drift on scope.
+    /// Viewing a worktree clears notifications. Stopped agents still need
+    /// attention until provider progress or explicit occurrence dismissal.
+    public mutating func viewAttention() {
+        if attention?.source != .agentStop { attention = nil }
+        paneAttention = paneAttention.filter { $0.value.source == .agentStop }
+    }
+
+    /// Viewing a pane clears its notification while preserving agent requests.
+    public mutating func viewPaneAttention(_ pane: PaneSlotID) {
+        if paneAttention[pane]?.source != .agentStop { paneAttention[pane] = nil }
+    }
+
+    /// Explicitly acknowledges every request and notification on the worktree.
     public mutating func acknowledgeAttention() {
         unseenAgentStop = nil
         attention = nil
         paneAttention.removeAll()
     }
 
-    /// The user focused one specific pane (clicked its terminal, or its
-    /// sidebar row): clear just that pane's attention (STATE-2.4). The
-    /// worktree-scoped overlay and sibling panes are left alone — the user
-    /// only attended to this one.
+    /// Explicitly acknowledges the stopped turn and the chosen pane's attention.
     public mutating func acknowledgePaneAttention(_ pane: PaneSlotID) {
         unseenAgentStop = nil
         paneAttention[pane] = nil
     }
 
-    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention while preserving other sessions, user notifications, and command-finished markers.
+    /// @spec AGENT-3.4: When a provider reports SessionStart, UserPromptSubmit, PostToolUse, or PostToolUseFailure, the application shall clear that session's stopped-turn and explicit needs-input attention and older unowned legacy attention while preserving other identified sessions, user notifications, and command-finished markers.
     /// Finds attention by its persisted owner rather than re-resolving the
     /// provider's current pane, which may have moved since the prompt began.
     public mutating func clearAgentStopAttention(
@@ -323,14 +330,16 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
            (stop.providerSessionKey == nil || stop.providerSessionKey == providerSessionKey) {
             unseenAgentStop = nil
         }
+        // Restored overlays predating session ownership use the same
+        // timestamp-guarded fallback as legacy stopped-turn reports above.
         if attention?.source == .agentStop,
-           attention?.providerSessionKey == providerSessionKey,
+           (attention?.providerSessionKey == nil || attention?.providerSessionKey == providerSessionKey),
            (attention?.timestamp ?? .distantFuture) <= progressedAt {
             attention = nil
         }
         paneAttention = paneAttention.filter { _, attention in
             attention.source != .agentStop
-                || attention.providerSessionKey != providerSessionKey
+                || (attention.providerSessionKey != nil && attention.providerSessionKey != providerSessionKey)
                 || attention.timestamp > progressedAt
         }
     }
@@ -605,5 +614,16 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// uses for externally-sourced text.
     public var displayBranch: String {
         BidiOverrides.stripping(branch)
+    }
+}
+
+extension WorktreeEntry {
+    public func iconIdentity(in repo: RepoEntry) -> WorktreeIconIdentity {
+        .resolve(isMainCheckout: path == repo.path, emoji: emoji)
+    }
+
+    public func effectiveEmoji(in repo: RepoEntry) -> String? {
+        if case .emoji(let value) = iconIdentity(in: repo) { return value }
+        return nil
     }
 }

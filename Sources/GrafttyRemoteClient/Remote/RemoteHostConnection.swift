@@ -1,4 +1,9 @@
+#if canImport(WebRTC)
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 import GrafttyProtocol
 import GrafttyTunnel
@@ -27,26 +32,7 @@ public protocol WebRTCIceCandidateReceiver: Sendable {
 /// the current connection down and builds a fresh one.
 public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
 
-    public enum State: Sendable, Equatable {
-        case idle
-        case connecting
-        case connected
-        case failed(reason: String)
-        case closed
-
-        /// `true` for the two terminal values. `RemoteHostConnection.setState`
-        /// refuses any further transition once this is true — see its doc
-        /// comment. Public because connection lifecycle coordinators live in
-        /// platform UI modules while this state machine is shared by macOS
-        /// and iOS. Keeping the predicate here avoids duplicating the
-        /// terminal-case switch across consumers if a state is added later.
-        public var isTerminal: Bool {
-            switch self {
-            case .failed, .closed: return true
-            case .idle, .connecting, .connected: return false
-            }
-        }
-    }
+    public typealias State = RemoteHostConnectionState
 
     public private(set) var state: State = .idle
 
@@ -486,6 +472,19 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// `PaneControlClient` and `PaneControlClient.open()` performs the
     /// single open. Throws `ConnectionError.notConnected` if the SSH
     /// handshake has not completed.
+    public func makeChromeTabClient() throws -> ChromeTabChannelClient {
+        guard
+            let transport = sshTransport,
+            let box = sshHandlerBox
+        else {
+            throw ConnectionError.notConnected
+        }
+        return ChromeTabChannelClient(
+            parentChannel: transport.channel,
+            parentHandler: box.handler
+        )
+    }
+
     public func makePaneControlClient() throws -> PaneControlChannelClient {
         guard
             let transport = sshTransport,
@@ -500,30 +499,28 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     }
 
     /// The TCP destination and DNS lookup both live on the paired host.
-    public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int) async throws {
+    public func openBrowserTunnel(_ socket: NWConnection, host: String, port: Int,
+                                  handshakeReply: Data = BrowserProxy.socksSuccessReply) async throws {
+        let transport = try await socketTransport()
+        _ = try await transport.bridge(socket, host: host, port: port, handshakeReply: handshakeReply)
+    }
+
+    public func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward {
+        // Cached desktop listeners follow the primary connection's lifetime;
+        // the optional bulk carrier can be replaced independently.
+        guard state == .connected, let transport = sshTransport, let box = sshHandlerBox else {
+            throw ConnectionError.notConnected
+        }
+        return try await LocalPortForward.start(
+            transport: SSHSocketTransport(parent: transport.channel, handler: box.handler), host: host, port: port)
+    }
+
+    private func socketTransport() async throws -> SSHSocketTransport {
         await waitBrieflyForBulkTransport()
-        guard let transport = bulkHandlerBox != nil ? bulkTransport : sshTransport,
-              let box = bulkHandlerBox ?? sshHandlerBox,
-              (1...65535).contains(port) else { throw ConnectionError.notConnected }
-        let bridge = SSHTCPBridge(connection: socket, startsConnection: false)
-        let channel = try await openChildChannel(
-            parentChannel: transport.channel,
-            parentHandler: box.handler,
-            channelType: .directTCPIP(.init(targetHost: host, targetPort: port,
-                                          originatorAddress: try SocketAddress(ipAddress: "127.0.0.1", port: 0))),
-            closeParentOnTimeout: false
-        ) { child, _ in
-            child.setOption(ChannelOptions.autoRead, value: false).flatMap {
-                child.pipeline.addHandler(bridge)
-            }
-        }
-        do {
-            try await BrowserProxy.send(Data([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]), to: socket)
-            try await channel.eventLoop.submit { bridge.activate() }.get()
-        } catch {
-            channel.close(promise: nil)
-            throw error
-        }
+        guard state == .connected,
+              let transport = bulkHandlerBox != nil ? bulkTransport : sshTransport,
+              let box = bulkHandlerBox ?? sshHandlerBox else { throw ConnectionError.notConnected }
+        return SSHSocketTransport(parent: transport.channel, handler: box.handler)
     }
 
     public func openWorktreeManagementChannel() async throws
@@ -935,3 +932,5 @@ private final class SSHHandlerBox: @unchecked Sendable {
     let handler: NIOSSHHandler
     init(_ handler: NIOSSHHandler) { self.handler = handler }
 }
+
+#endif

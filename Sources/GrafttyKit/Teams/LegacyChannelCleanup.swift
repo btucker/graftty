@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(os)
 import os
+#endif
 
 /// One-shot cleanup of the legacy `graftty-channel` MCP integration that
 /// was retired in the channels-to-inbox migration. Runs idempotently on

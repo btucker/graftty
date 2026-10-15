@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 import Testing
 @testable import GrafttyKit
@@ -183,6 +187,7 @@ struct TeamInboxObserverTests {
         #expect(capture.last()?.count == 1)
     }
 
+    #if !os(Linux)
     @Test("Reattaching an inbox file closes each descriptor exactly once")
     func reattachDoesNotDoubleCloseFileDescriptor() async throws {
         let root = try Self.temporaryDirectory()
@@ -213,6 +218,7 @@ struct TeamInboxObserverTests {
         try await closeAudit.waitForAttempts(3)
         #expect(closeAudit.failedAttempts == 0)
     }
+    #endif
 
     @Test("Deletion between the signature check and read does not emit an empty batch", arguments: [false, true])
     func deletionDuringReadPreservesLastBatch(force: Bool) async throws {
@@ -311,7 +317,7 @@ private final class DescriptorCloseAudit: @unchecked Sendable {
     private var attempts: [(descriptor: Int32, result: Int32)] = []
 
     func close(_ descriptor: Int32) -> Int32 {
-        let result = Darwin.close(descriptor)
+        let result = GrafttyPOSIX.close(descriptor)
         lock.lock()
         attempts.append((descriptor, result))
         lock.unlock()

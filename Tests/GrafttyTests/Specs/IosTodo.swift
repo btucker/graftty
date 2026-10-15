@@ -74,11 +74,6 @@ struct IosTodo {
     func ios_4_7() async throws { }
 
     @Test("""
-@spec IOS-4.8: While a pane is mounted, the application shall hide the navigation bar (`.toolbar(.hidden, for: .navigationBar)`) and extend the terminal beneath every safe-area edge (`.ignoresSafeArea()`) — top (under the notch), bottom (under the home indicator), and the left/right safe-area strips in landscape. libghostty renders its configured background color to the full view bounds, so the unsafe regions pick up the terminal's own background rather than the SwiftUI default. The user returns to the worktree detail via the system edge-swipe-back gesture rather than an explicit button.
-""", .disabled("not yet implemented"))
-    func ios_4_8() async throws { }
-
-    @Test("""
 @spec IOS-4.9: The application shall display a floating keyboard button at the bottom-trailing corner of the pane view with three states:
 """, .disabled("not yet implemented"))
     func ios_4_9() async throws { }
@@ -97,11 +92,6 @@ struct IosTodo {
 @spec IOS-5.4: When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
 """, .disabled("not yet implemented"))
     func ios_5_4() async throws { }
-
-    @Test("""
-@spec IOS-5.5: While a session's terminal is rendered full-screen (navigation bar hidden per the fullscreen layout), the application shall overlay a translucent back-button in the top-left that pops the current session off the `NavigationPath`, returning the user to the worktree detail they drilled in from. The button shall be rendered as a chevron inside an `.ultraThinMaterial` circle at a fixed 44×44pt tap target, padded 12pt from the top and leading edges so it floats above the terminal content without being clipped by the device's notch / rounded corners. The system edge-swipe gesture remains available but is not discoverable, so this overlay is the primary affordance.
-""", .disabled("not yet implemented"))
-    func ios_5_5() async throws { }
 
     @Test("""
 @spec IOS-8.1: The v1 iOS app shall not support connecting to non-Graftty SSH/mosh hosts.

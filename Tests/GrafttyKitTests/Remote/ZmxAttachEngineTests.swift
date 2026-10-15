@@ -72,6 +72,88 @@ struct ZmxAttachEngineTests {
 
     // MARK: - TerminalByteStream round trip
 
+    @Test("@spec ZMX-9.8: When the legacy attach client decodes a snapshot, the application shall report its source grid before delivering replay bytes, preserve those bytes, and never substitute the outer PTY's requested grid.")
+    func snapshotGridPrecedesReplay() throws {
+        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-replay-grid")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appendingPathComponent("zmx")
+        try Self.writeScript("""
+        #!/bin/sh
+        stty raw -echo
+        printf GFTGR
+        sleep 0.05
+        printf 'ID1\\120\\000\\030\\000\\033[Hreplay\\000\\377\\n'
+        sleep 1
+        """, to: script)
+        let engine = Self.makeEngine(zmxExecutable: script, zmxDir: dir, sessionName: "fixture")
+        let lock = NSLock()
+        var grids: [String] = []
+        var bytes = Data()
+        var gridAtFirstByte: String?
+        let received = DispatchSemaphore(value: 0)
+        engine.onPTYSize = { cols, rows in lock.withLock { grids.append("\(cols)x\(rows)") } }
+        engine.onPTYData = { chunk in
+            lock.withLock {
+                if bytes.isEmpty { gridAtFirstByte = grids.last }
+                bytes.append(chunk)
+            }
+            if chunk.contains(0xff) { received.signal() }
+        }
+        try engine.start()
+        defer { engine.close() }
+        engine.resize(cols: UInt16(40), rows: UInt16(40))
+        #expect(received.wait(timeout: .now() + 3) == .success)
+        Thread.sleep(forTimeInterval: 0.3)
+        lock.withLock {
+            #expect(grids == ["80x24"])
+            #expect(gridAtFirstByte == "80x24")
+            #expect(bytes == Data(Array("\u{1b}[Hreplay".utf8) + [0, 255, 10]))
+        }
+        var lateGrid: String?
+        engine.onPTYSize = { cols, rows in lateGrid = "\(cols)x\(rows)" }
+        #expect(lateGrid == "80x24")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func realZmxReplayReportsLeaderGridBeforeBytes() throws {
+        try ZmxNativeHostManagedIntegrationTests.withScopedZmxDir { launcher in
+            let leader = try ZmxNativeHostManagedIntegrationTests.spawnHostManagedAttach(
+                launcher: launcher, sessionName: "source-grid")
+            defer { leader.terminate() }
+            try ZmxNativeHostManagedIntegrationTests.waitForAttachReady(leader)
+            let row = "LEFT" + String(repeating: ".", count: 71) + "RIGHT"
+            try leader.write("stty -echo; printf '%s\\r\\n' '\(row)'\n")
+            let live = ZmxNativeHostManagedIntegrationTests.readUntil(
+                marker: row, from: leader, deadline: 5)
+            try #require(live.contains(row))
+
+            let engine = Self.makeEngine(zmxExecutable: launcher.executable,
+                                         zmxDir: launcher.zmxDir, sessionName: "source-grid")
+            let lock = NSLock()
+            var grid: String?
+            var initialGrid: String?
+            var replay = Data()
+            let received = DispatchSemaphore(value: 0)
+            engine.onPTYSize = { cols, rows in lock.withLock { grid = "\(cols)x\(rows)" } }
+            engine.onPTYData = { chunk in
+                lock.withLock {
+                    if replay.isEmpty { initialGrid = grid }
+                    replay.append(chunk)
+                    if String(decoding: replay, as: UTF8.self).contains(row) { received.signal() }
+                }
+            }
+            try engine.start()
+            defer { engine.close() }
+            engine.resize(cols: UInt16(40), rows: UInt16(40))
+            #expect(received.wait(timeout: .now() + 5) == .success)
+            lock.withLock {
+                #expect(initialGrid == "80x24")
+                #expect(grid == "80x24")
+                #expect(!replay.starts(with: Data("GFTGRID1".utf8)))
+            }
+        }
+    }
+
     @Test func spawnAndEchoRoundTripThroughTerminalByteStream() async throws {
         let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-attach-engine")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -159,6 +241,63 @@ struct ZmxAttachEngineTests {
         }
         #expect(String(data: collected, encoding: .utf8)?.contains("13 42") == true,
                 "expected 'stty size' to report the resized dimensions; got \(collected.count) bytes: \(String(data: collected, encoding: .utf8) ?? "<non-utf8>")")
+    }
+
+    /// Start an engine whose fake zmx prints `rows cols xpixel ypixel` via
+    /// `TIOCGWINSZ` after a short delay (perl ships with macOS; `stty size`
+    /// cannot show pixels), apply `resizes`, and return the reported line.
+    private static func reportedWinsize(
+        after resizes: (TerminalSyncResizing) throws -> Void
+    ) async throws -> String {
+        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-attach-engine")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appendingPathComponent("zmx")
+        try writeScript("""
+        #!/bin/sh
+        sleep 0.2
+        /usr/bin/perl -e 'my $w = "\\0" x 8; ioctl(STDIN, 0x40087468, $w) or die "ioctl"; printf("ws=%d %d %d %d\\n", unpack("S4", $w));'
+        sleep 1
+        """, to: script)
+        let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
+        try FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
+
+        let engine = makeEngine(zmxExecutable: script, zmxDir: zmxDir, sessionName: "pixel-test")
+        try engine.start()
+        defer { engine.close() }
+
+        try resizes(engine)
+
+        var iterator = engine.inboundBytes.makeAsyncIterator()
+        var collected = Data()
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !(String(data: collected, encoding: .utf8) ?? "").contains("\n") {
+            guard let chunk = await iterator.next() else { break }
+            collected.append(chunk)
+        }
+        return String(data: collected, encoding: .utf8) ?? ""
+    }
+
+    /// REMOTE-9.12: an owner resize's pixel size must reach the attach
+    /// PTY's winsize so `zmx attach` forwards it to the session.
+    @Test func windowSizeResizeSetsPixelWinsize() async throws {
+        let output = try await Self.reportedWinsize { engine in
+            try engine.resize(windowSize: PtyProcess.WindowSize(cols: 50, rows: 40, xpixel: 1150, ypixel: 1880))
+        }
+        #expect(output.contains("ws=40 50 1150 1880"), "got \(output)")
+    }
+
+    /// REMOTE-9.12: zero pixels mean unspecified. A grid-only resize to the
+    /// current grid (a takeControl after a pixel-carrying owner resize)
+    /// must keep the pixel size: XNU raises SIGWINCH on any winsize field
+    /// change, so bouncing the pixels through zero would make `zmx attach`
+    /// repaint the session twice for an unchanged grid.
+    @Test func gridOnlyResizeToCurrentGridKeepsPixelWinsize() async throws {
+        let output = try await Self.reportedWinsize { engine in
+            try engine.resize(windowSize: PtyProcess.WindowSize(cols: 50, rows: 40, xpixel: 1150, ypixel: 1880))
+            try engine.resize(windowSize: PtyProcess.WindowSize(cols: 50, rows: 40))
+            engine.resize(cols: 50, rows: 40)
+        }
+        #expect(output.contains("ws=40 50 1150 1880"), "got \(output)")
     }
 
     // MARK: - Delivery-surface selection (C1 fix): the unselected surface

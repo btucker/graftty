@@ -55,6 +55,11 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     private var requestRefresh: () -> Void
     private let displayClientID = DisplayClientID(UUID().uuidString)
     private var ownershipSnapshot: DisplayOwnershipSnapshot?
+    private var ownershipLost: (() -> Void)?
+
+    func bindOwnershipLoss(_ handler: @escaping () -> Void) {
+        lock.withLock { ownershipLost = handler }
+    }
     private var pendingInput: [Data] = []
     private var pendingInputBytes = 0
     private var takeoverRequested = false
@@ -306,8 +311,9 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         if isRestoringGridLocked { lock.unlock(); return }
         guard case .closed = lifecycle else {
             if client.supportsWebControlTextFrames {
-                if isOwnerLocked {
-                    ownerEpoch = ownershipSnapshot?.epoch
+                if isOwnerLocked, let snapshot = ownershipSnapshot,
+                   snapshot.grid.cols != cols || snapshot.grid.rows != rows {
+                    ownerEpoch = snapshot.epoch
                 }
                 lock.unlock()
                 if let ownerEpoch {
@@ -535,6 +541,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         var pending: [Data] = []
         var ownerResize: (epoch: UInt64, cols: UInt16, rows: UInt16)?
         let refresh: () -> Void
+        let ownershipLoss: (() -> Void)?
         lock.lock()
         if let previous = ownershipSnapshot {
             if snapshot.epoch < previous.epoch
@@ -544,7 +551,9 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
                 return
             }
         }
+        let wasOwner = isOwnerLocked
         ownershipSnapshot = snapshot
+        ownershipLoss = wasOwner && !isOwnerLocked ? ownershipLost : nil
         if isOwnerLocked {
             let grid = currentGridLocked()
             if !client.supportsPagedHistory, !isRestoringGridLocked,
@@ -558,6 +567,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
         }
         refresh = requestRefresh
         lock.unlock()
+        ownershipLoss?()
 
         if ownerResize != nil || !pending.isEmpty {
             let pendingFrames = pending
@@ -612,14 +622,20 @@ extension RemoteTerminalSurfaceBackend: SurfaceHandleZmxBackend {
         guard case .running = lifecycle,
               !isRestoringGridLocked,
               isOwnerLocked,
-              let epoch = ownershipSnapshot?.epoch
+              let snapshot = ownershipSnapshot
         else {
             lock.unlock()
             return
         }
         let grid = currentGridLocked()
+        // Presentation layout runs again for every ownership broadcast. Echoing
+        // an acknowledged grid here would request another broadcast forever.
+        guard grid.cols != snapshot.grid.cols || grid.rows != snapshot.grid.rows else {
+            lock.unlock()
+            return
+        }
         lock.unlock()
-        enqueueOwnerResize(epoch: epoch, cols: grid.cols, rows: grid.rows)
+        enqueueOwnerResize(epoch: snapshot.epoch, cols: grid.cols, rows: grid.rows)
     }
 
     func takeControl() -> Bool {

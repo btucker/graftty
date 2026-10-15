@@ -11,10 +11,14 @@ import GrafttyKit
 /// through swift-argument-parser unchanged.
 @main
 enum GrafttyCLIEntryPoint {
-    static func main() {
+    static func main() async {
         do {
             var command = try GrafttyCLI.parseAsRoot()
-            try command.run()
+            if var asyncCommand = command as? AsyncParsableCommand {
+                try await asyncCommand.run()
+            } else {
+                try command.run()
+            }
         } catch {
             let baseMessage = GrafttyCLI.fullMessage(for: error)
             let stuck = unknownSubcommandLevel(args: CommandLine.arguments)
@@ -45,11 +49,11 @@ enum GrafttyCLIEntryPoint {
     }
 }
 
-struct GrafttyCLI: ParsableCommand {
+struct GrafttyCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "graftty",
         abstract: "Graftty terminal multiplexer CLI",
-        subcommands: [Open.self, Notify.self, Pane.self, Worktree.self, Remote.self, Team.self, Attention.self, InternalGroup.self]
+        subcommands: [Open.self, Image.self, Notify.self, Pane.self, Worktree.self, Remote.self, Team.self, Attention.self, InternalGroup.self]
     )
 }
 
@@ -231,6 +235,9 @@ struct PaneList: ParsableCommand {
             throw ExitCode(1)
         case .worktreeCreate, .worktreeCreateRetry:
             CLIEnv.printError("Unexpected worktree_create response for list")
+            throw ExitCode(1)
+        case .linuxSetupIdentity:
+            CLIEnv.printError("Unexpected linux_setup_identity response for list")
             throw ExitCode(1)
         case .worktreeRemove:
             CLIEnv.printError("Unexpected worktree_remove response for list")
@@ -543,6 +550,12 @@ struct SocketTransportClient: SocketTransport {
 /// Small shared helpers used by every subcommand. Keeps each subcommand's
 /// `run()` readable and avoids copy-pasting the error plumbing.
 enum CLIEnv {
+    /// Print `message` to stderr and return the failure exit code to throw.
+    static func fail(_ message: String) -> ExitCode {
+        printError(message)
+        return ExitCode(1)
+    }
+
     static func resolveWorktree() throws -> String {
         do {
             return try WorktreeResolver.resolve()
@@ -612,6 +625,9 @@ enum CLIEnv {
             throw ExitCode(1)
         case .worktreeCreate, .worktreeCreateRetry:
             printError("Unexpected worktree_create response")
+            throw ExitCode(1)
+        case .linuxSetupIdentity:
+            printError("Unexpected linux_setup_identity response")
             throw ExitCode(1)
         case .worktreeRemove:
             printError("Unexpected worktree_remove response")

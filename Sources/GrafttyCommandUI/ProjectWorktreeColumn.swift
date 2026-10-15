@@ -8,6 +8,9 @@ public struct ProjectWorktreeColumn<Content: View, Header: View>: View {
     private let content: Content
     private let header: Header
     private let onDoubleClickEmptySpace: () -> Void
+    #if os(macOS)
+    private var emptySpaceMenu: (() -> NSMenu)?
+    #endif
     @State private var rowsHeight: CGFloat = 0
 
     public init(onDoubleClickEmptySpace: @escaping () -> Void = {},
@@ -30,7 +33,7 @@ public struct ProjectWorktreeColumn<Content: View, Header: View>: View {
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
 
                         #if os(macOS)
-                        ProjectWorktreeEmptySpace(onDoubleClick: onDoubleClickEmptySpace)
+                        ProjectWorktreeEmptySpace(onDoubleClick: onDoubleClickEmptySpace, menu: emptySpaceMenu)
                             .frame(height: max(0, viewport.size.height - rowsHeight))
                         #else
                         Color.clear.frame(height: max(0, viewport.size.height - rowsHeight))
@@ -42,6 +45,17 @@ public struct ProjectWorktreeColumn<Content: View, Header: View>: View {
     }
 }
 
+#if os(macOS)
+extension ProjectWorktreeColumn {
+    /// Menu shown on right-click below the last row (LAYOUT-2.95).
+    public func emptySpaceMenu(_ build: @escaping () -> NSMenu) -> Self {
+        var copy = self
+        copy.emptySpaceMenu = build
+        return copy
+    }
+}
+#endif
+
 extension ProjectWorktreeColumn where Header == EmptyView {
     public init(onDoubleClickEmptySpace: @escaping () -> Void = {}, @ViewBuilder content: () -> Content) {
         self.init(onDoubleClickEmptySpace: onDoubleClickEmptySpace, header: { EmptyView() }, content: content)
@@ -51,23 +65,32 @@ extension ProjectWorktreeColumn where Header == EmptyView {
 #if os(macOS)
 private struct ProjectWorktreeEmptySpace: NSViewRepresentable {
     let onDoubleClick: () -> Void
+    let menu: (() -> NSMenu)?
 
     func makeNSView(context: Context) -> ProjectWorktreeEmptySpaceView {
         let view = ProjectWorktreeEmptySpaceView()
         view.onDoubleClick = onDoubleClick
+        view.menuBuilder = menu
         return view
     }
 
     func updateNSView(_ view: ProjectWorktreeEmptySpaceView, context: Context) {
         view.onDoubleClick = onDoubleClick
+        view.menuBuilder = menu
     }
 }
 
 final class ProjectWorktreeEmptySpaceView: NSView {
     var onDoubleClick: (() -> Void)?
+    var menuBuilder: (() -> NSMenu)?
 
     override func mouseDown(with event: NSEvent) {
         if event.clickCount == 2 { onDoubleClick?() }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let menu = menuBuilder?(), !menu.items.isEmpty else { return nil }
+        return menu
     }
 }
 #endif

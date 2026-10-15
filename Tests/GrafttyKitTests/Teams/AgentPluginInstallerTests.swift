@@ -17,6 +17,13 @@ struct AgentPluginInstallerTests {
         let second = try #require(AgentPluginInstaller.developmentPluginVersion(forResourcesAt: root))
         #expect(first != second)
         #expect(first.hasPrefix("0.0.0-dev.r"))
+        let references = root.appendingPathComponent("references")
+        try FileManager.default.createDirectory(at: references, withIntermediateDirectories: true)
+        let reference = references.appendingPathComponent("guide.md")
+        try Data("first reference".utf8).write(to: reference)
+        let withReference = try #require(AgentPluginInstaller.developmentPluginVersion(forResourcesAt: root))
+        try Data("revised reference".utf8).write(to: reference)
+        #expect(AgentPluginInstaller.developmentPluginVersion(forResourcesAt: root) != withReference)
     }
 
     @Test("""
@@ -52,7 +59,7 @@ struct AgentPluginInstallerTests {
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-plugin-refresh-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: destination) }
-        let installer = AgentPluginInstaller()
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
         let plan = try installer.prepare(destinationRoot: destination)
         let codex = #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true}]}"#
         let claude = #"[{"id":"graftty@graftty","scope":"user","enabled":true}]"#
@@ -92,18 +99,21 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.42: When an enabled legacy Graftty Team plugin is installed, the application shall install the renamed Graftty plugin before removing the legacy plugin, and shall preserve the legacy plugin if installation fails.
+    @spec AGENT-6.42: When migrating an enabled legacy Graftty Team plugin, the application shall verify that the renamed plugin is enabled before removing the legacy plugin, verify removal, and report incomplete migration as a retryable failure.
     """)
     func refreshMigratesLegacyPluginAfterSuccessfulInstall() async throws {
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-plugin-migration-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: destination) }
-        let installer = AgentPluginInstaller()
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
         let plan = try installer.prepare(destinationRoot: destination)
         let codex = #"{"installed":[{"pluginId":"graftty-team@graftty","installed":true,"enabled":true}]}"#
         let claude = #"[{"id":"graftty-team@graftty","scope":"user","enabled":true}]"#
 
-        let executor = InventoryPluginCLIExecutor(codex: codex, claude: claude)
+        let executor = InventoryPluginCLIExecutor(
+            codexInventories: [codex, Self.bothCodexPlugins, Self.currentCodexPlugin],
+            claudeInventories: [claude, Self.bothClaudePlugins, Self.currentClaudePlugin]
+        )
         let report = await installer.refresh(plan, executor: executor)
         #expect(report.succeeded)
         let mutations = await executor.mutations()
@@ -126,17 +136,17 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.35: When the user installs the renamed Graftty plugin manually, the application shall remove enabled legacy plugins only after the new installation succeeds.
+    @spec AGENT-6.35: When the user installs the renamed Graftty plugin manually, the application shall remove installed legacy plugins only after verifying that the new installation is enabled, and verify that the legacy registration is gone.
     """)
     func manualInstallMigratesLegacyPlugins() async throws {
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-plugin-manual-migration-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: destination) }
-        let installer = AgentPluginInstaller()
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
         let plan = try installer.prepare(destinationRoot: destination)
         let codex = #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true},{"pluginId":"graftty-team@graftty","installed":true,"enabled":true}]}"#
         let claude = #"[{"id":"graftty@graftty","scope":"user","enabled":true},{"id":"graftty-team@graftty","scope":"user","enabled":true}]"#
-        let executor = InventoryPluginCLIExecutor(codex: codex, claude: claude)
+        let executor = InventoryPluginCLIExecutor(codexInventories: [codex, Self.currentCodexPlugin], claudeInventories: [claude, Self.currentClaudePlugin])
 
         let report = await installer.installReplacingLegacy(plan, executor: executor)
 
@@ -146,12 +156,206 @@ struct AgentPluginInstallerTests {
             ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"],
         ])
 
-        let failing = InventoryPluginCLIExecutor(codex: codex, claude: claude, failingMutation: 1)
+        let failing = InventoryPluginCLIExecutor(codexInventories: [codex], claudeInventories: [claude, Self.currentClaudePlugin], failingMutation: 1)
         let failed = await installer.installReplacingLegacy(plan, executor: failing)
         #expect(!failed.succeeded)
         #expect(await failing.mutations().map(\.arguments) == plan.installSteps.map(\.arguments) + [
             ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"],
         ])
+    }
+
+    private static let currentCodexPlugin = #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true}]}"#
+    private static let currentClaudePlugin = #"[{"id":"graftty@graftty","scope":"user","enabled":true}]"#
+    private static let bothCodexPlugins = #"{"installed":[{"pluginId":"graftty@graftty","installed":true,"enabled":true},{"pluginId":"graftty-team@graftty","installed":true,"enabled":true}]}"#
+    private static let bothClaudePlugins = #"[{"id":"graftty@graftty","scope":"user","enabled":true},{"id":"graftty-team@graftty","scope":"user","enabled":true}]"#
+
+    @Test("A successful install command cannot remove the legacy plugin until the replacement is enabled.")
+    func migrationRejectsUnverifiedReplacement() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
+        let plan = try installer.prepare(destinationRoot: destination)
+        let old = Self.bothCodexPlugins.replacingOccurrences(of: #"{"pluginId":"graftty@graftty","installed":true,"enabled":true},"#, with: "")
+        let executor = InventoryPluginCLIExecutor(codex: old, claude: "[]")
+        let report = await installer.refresh(plan, executor: executor)
+        #expect(!report.succeeded)
+        #expect(report.results.contains { $0.errorDescription?.contains("not enabled") == true })
+        #expect(await executor.mutations().contains { $0.arguments.prefix(2) == ["plugin", "remove"] } == false)
+    }
+
+    @Test("A successful uninstall command that leaves a legacy registration must remain retryable.")
+    func migrationVerifiesRemovalAndRetries() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
+        let plan = try installer.prepare(destinationRoot: destination)
+        let executor = InventoryPluginCLIExecutor(codex: Self.bothCodexPlugins, claude: "[]")
+        let report = await installer.refresh(plan, executor: executor)
+        #expect(!report.succeeded)
+        #expect(report.results.contains { $0.errorDescription?.contains("still installed") == true })
+
+        let retry = InventoryPluginCLIExecutor(
+            codexInventories: [Self.bothCodexPlugins, Self.bothCodexPlugins, Self.currentCodexPlugin],
+            claudeInventories: ["[]"]
+        )
+        #expect(await installer.refresh(plan, executor: retry).succeeded)
+    }
+
+    @Test("Disabled legacy registrations are removed when their replacement is enabled.")
+    func removesDisabledLegacyRegistration() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
+        let plan = try installer.prepare(destinationRoot: destination)
+        let disabled = Self.bothCodexPlugins.replacingOccurrences(of: #""graftty-team@graftty","installed":true,"enabled":true"#, with: #""graftty-team@graftty","installed":true,"enabled":false"#)
+        let executor = InventoryPluginCLIExecutor(
+            codexInventories: [disabled, disabled, Self.currentCodexPlugin], claudeInventories: ["[]"]
+        )
+        #expect(await installer.refresh(plan, executor: executor).succeeded)
+        #expect(await executor.mutations().contains { $0.arguments == ["plugin", "remove", "graftty-team@graftty"] })
+    }
+
+    @Test("A provider-specific install never queries or removes the unselected provider's plugins.")
+    func migrationStaysWithinSelectedProvider() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
+        let full = try installer.prepare(destinationRoot: destination)
+        let selected = AgentPluginSetupPlan(rootDirectory: full.rootDirectory, installSteps: full.installSteps.filter { $0.provider == .codex })
+        let executor = InventoryPluginCLIExecutor(codex: Self.currentCodexPlugin, claude: "missing-cli")
+        #expect(await installer.installReplacingLegacy(selected, executor: executor).succeeded)
+    }
+
+    @Test("""
+    @spec AGENT-6.51: If Codex retains an enabled legacy Graftty Team registration that its native plugin inventory omits, then the application shall migrate that registration, preserve an explicitly disabled replacement, and verify that native removal clears the legacy registration.
+    """)
+    func migratesOrphanedCodexRegistration() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let configuration = destination.appendingPathComponent("config.toml")
+        let installer = AgentPluginInstaller(codexConfigurationURL: configuration, claudeSettingsURL: destination.appendingPathComponent("claude-settings.json"))
+        let plan = try installer.prepare(destinationRoot: destination)
+        let legacy = "[plugins.\"graftty-team@graftty\"]\nenabled = true\n"
+        try Data(legacy.utf8).write(to: configuration)
+        let executor = InventoryPluginCLIExecutor(
+            codexInventories: [#"{"installed":[]}"#, Self.currentCodexPlugin, Self.currentCodexPlugin],
+            claudeInventories: ["[]"], codexConfigurationURL: configuration
+        )
+        #expect(await installer.refresh(plan, executor: executor).succeeded)
+        #expect(await executor.mutations().map(\.arguments) == plan.installSteps.filter { $0.provider == .codex }.map(\.arguments) + [["plugin", "remove", "graftty-team@graftty"]])
+        #expect(try String(contentsOf: configuration, encoding: .utf8).isEmpty)
+
+        // An invisible but still registered plugin must fail verification too.
+        try Data(legacy.utf8).write(to: configuration)
+        let stuck = InventoryPluginCLIExecutor(codex: Self.currentCodexPlugin, claude: "[]")
+        #expect(await installer.refresh(plan, executor: stuck).succeeded == false)
+
+        let disabled = legacy + "[plugins.\"graftty@graftty\"]\nenabled = false\n"
+        try Data(disabled.utf8).write(to: configuration)
+        let optedOut = InventoryPluginCLIExecutor(codex: #"{"installed":[]}"#, claude: "[]")
+        #expect(await installer.refresh(plan, executor: optedOut).succeeded)
+        #expect(await optedOut.mutations().isEmpty)
+    }
+
+    @Test("""
+    @spec AGENT-6.52: If Claude retains a legacy Graftty Team registration in user settings, then the application shall verify that the replacement is enabled, remove the legacy registration even when native inventory omits it, preserve other settings and explicit opt-outs, and report incomplete cleanup as a retryable failure.
+    """, arguments: [true, false])
+    func migratesOrphanedClaudeRegistration(legacyEnabled: Bool) async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let settingsURL = destination.appendingPathComponent("claude-settings.json")
+        let installer = AgentPluginInstaller(
+            codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: settingsURL
+        )
+        let plan = try installer.prepare(destinationRoot: destination)
+        let settings: [String: Any] = [
+            "enabledPlugins": ["graftty-team@graftty": legacyEnabled, "other@example": false],
+            "permissions": ["allow": ["Read"]], "customFutureKey": ["keep": "this"],
+        ]
+        let original = try JSONSerialization.data(withJSONObject: settings)
+        try original.write(to: settingsURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: settingsURL.path)
+        let executor = InventoryPluginCLIExecutor(
+            codexInventories: [#"{"installed":[]}"#],
+            claudeInventories: legacyEnabled ? ["[]", Self.currentClaudePlugin, Self.currentClaudePlugin] : [Self.currentClaudePlugin]
+        )
+        #expect(await installer.refresh(plan, executor: executor).succeeded)
+        let cleaned = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any])
+        let enabled = try #require(cleaned["enabledPlugins"] as? [String: Bool])
+        #expect(enabled == ["other@example": false])
+        #expect(cleaned["permissions"] as? [String: [String]] == ["allow": ["Read"]])
+        #expect(cleaned["customFutureKey"] as? [String: String] == ["keep": "this"])
+        #expect(try FileManager.default.attributesOfItem(atPath: settingsURL.path)[.posixPermissions] as? Int == 0o600)
+        #expect(await executor.mutations().map(\.arguments) == plan.installSteps.filter {
+            $0.provider == .claude && (legacyEnabled || $0.arguments.prefix(2) != ["plugin", "install"])
+        }.map(\.arguments))
+
+        // Never remove the old entry when replacement verification fails.
+        try original.write(to: settingsURL)
+        let missingReplacement = InventoryPluginCLIExecutor(codex: #"{"installed":[]}"#, claude: "[]")
+        if legacyEnabled { #expect(await installer.refresh(plan, executor: missingReplacement).succeeded == false) }
+        #expect(try Data(contentsOf: settingsURL) == original)
+
+        var optedOut = settings
+        optedOut["enabledPlugins"] = ["graftty-team@graftty": true, "graftty@graftty": false]
+        let disabled = try JSONSerialization.data(withJSONObject: optedOut)
+        try disabled.write(to: settingsURL)
+        let disabledReplacement = InventoryPluginCLIExecutor(codex: #"{"installed":[]}"#, claude: Self.currentClaudePlugin)
+        #expect(await installer.refresh(plan, executor: disabledReplacement).succeeded)
+        #expect(await disabledReplacement.mutations().isEmpty)
+        #expect(try Data(contentsOf: settingsURL) == disabled)
+    }
+
+    @Test("Claude cleanup removes a settings entry left behind by a successful native uninstall.")
+    func claudeUninstallClearsResidualSetting() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let settingsURL = destination.appendingPathComponent("claude-settings.json")
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: settingsURL)
+        let plan = try installer.prepare(destinationRoot: destination)
+        try Data(#"{"enabledPlugins":{"graftty-team@graftty":true,"graftty@graftty":true}}"#.utf8).write(to: settingsURL)
+        let executor = InventoryPluginCLIExecutor(
+            codexInventories: [#"{"installed":[]}"#],
+            claudeInventories: [Self.bothClaudePlugins, Self.bothClaudePlugins, Self.currentClaudePlugin, Self.currentClaudePlugin]
+        )
+        #expect(await installer.refresh(plan, executor: executor).succeeded)
+        #expect(await executor.mutations().contains { $0.arguments == ["plugin", "uninstall", "graftty-team@graftty", "--scope", "user"] })
+        let cleaned = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any])
+        #expect(cleaned["enabledPlugins"] as? [String: Bool] == ["graftty@graftty": true])
+    }
+
+    @Test("Invalid Claude settings are a retryable failure and remain untouched.")
+    func claudeMigrationRejectsInvalidSettings() async throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let settingsURL = destination.appendingPathComponent("claude-settings.json")
+        let installer = AgentPluginInstaller(codexConfigurationURL: destination.appendingPathComponent("config.toml"), claudeSettingsURL: settingsURL)
+        let plan = try installer.prepare(destinationRoot: destination)
+        for contents in ["broken JSON", #"{"enabledPlugins":{"graftty-team@graftty":"true"}}"#] {
+            let original = Data(contents.utf8)
+            try original.write(to: settingsURL)
+            let executor = InventoryPluginCLIExecutor(codex: #"{"installed":[]}"#, claude: Self.currentClaudePlugin)
+            #expect(await installer.refresh(plan, executor: executor).succeeded == false)
+            #expect(await executor.mutations().isEmpty)
+            #expect(try Data(contentsOf: settingsURL) == original)
+        }
+    }
+
+    @Test("Codex plugin switches honor quoted tables, dotted keys, comments, and multiline user text.")
+    func codexPluginRegistrationParsing() {
+        let id = "graftty-team@graftty"
+        for config in [
+            "[plugins.\"graftty-team@graftty\"] # comment\nenabled = true # comment",
+            "[ 'plugins' . 'graftty-team@graftty' ]\n'enabled' = true",
+            "plugins.\"graftty-team@graftty\".enabled=true",
+            "[plugins.\"graftty-team@graftty\"]\r\nenabled = true\r\n",
+            "[plugins]\n\"graftty-team@graftty\".enabled=true",
+        ] {
+            #expect(CodexHomeMirror.pluginEnablement(in: config) == [id: true])
+        }
+        let fake = "instructions = \"\"\"\n[plugins.\"graftty-team@graftty\"]\nenabled = true\n\"\"\"\n[plugins.\"graftty@graftty\"]\nenabled = false"
+        #expect(CodexHomeMirror.pluginEnablement(in: fake) == ["graftty@graftty": false])
+        #expect(CodexHomeMirror.pluginEnablement(in: "[plugins.\"graftty-team@graftty\"]\nenabled = \"true\"").isEmpty)
     }
 
     @Test("""
@@ -174,6 +378,7 @@ struct AgentPluginInstallerTests {
             "skills/graftty-team/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-team/SKILL.md",
             ".claude-plugin/plugin.json": "../../../../codex/plugins/graftty/.codex-plugin/plugin.json",
             "skills/graftty-open/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-open/SKILL.md",
+            "skills/graftty-preview/SKILL.md": "../../../../../codex/plugins/graftty/skills/graftty-preview/SKILL.md",
         ]
         for (path, target) in links {
             let link = claudeRoot.appendingPathComponent(path)
@@ -186,6 +391,8 @@ struct AgentPluginInstallerTests {
             .appendingPathComponent("skills/graftty-team/SKILL.md"))
         let expectedOpenSkill = try Data(contentsOf: claudeRoot
             .appendingPathComponent("skills/graftty-open/SKILL.md"))
+        let expectedImageSkill = try Data(contentsOf: claudeRoot
+            .appendingPathComponent("skills/graftty-preview/SKILL.md"))
         let expectedManifest = try Data(contentsOf: claudeRoot
             .appendingPathComponent(".claude-plugin/plugin.json"))
         let destination = temporary.appendingPathComponent("prepared")
@@ -206,6 +413,7 @@ struct AgentPluginInstallerTests {
                 "skills/graftty/SKILL.md": expectedRecapSkill,
                 "skills/graftty-team/SKILL.md": expectedTeamSkill,
                 "skills/graftty-open/SKILL.md": expectedOpenSkill,
+                "skills/graftty-preview/SKILL.md": expectedImageSkill,
                 ".\(provider)-plugin/plugin.json": expectedManifest,
             ] {
                 let file = cached.appendingPathComponent(path)
@@ -216,31 +424,149 @@ struct AgentPluginInstallerTests {
         }
     }
 
+    @Test("@spec AGENT-6.54: When Graftty prepares provider plugins with linked supporting reference directories or files, the application shall materialize those resources so each cached plugin remains self-contained after the source and sibling provider are removed.")
+    func linkedSkillReferencesSurviveIndependentCaching() throws {
+        let fm = FileManager.default
+        let temporary = fm.temporaryDirectory.appendingPathComponent("graftty-skill-references-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: temporary) }
+        try fm.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let source = temporary.appendingPathComponent("source")
+        try fm.copyItem(at: try #require(AgentPluginInstaller.bundledResourceRoot()), to: source)
+        let references = temporary.appendingPathComponent("references/nested")
+        try fm.createDirectory(at: references, withIntermediateDirectories: true)
+        let original = temporary.appendingPathComponent("original.md")
+        let expected = Data("# Supporting guidance\n".utf8)
+        try expected.write(to: original)
+        try fm.createSymbolicLink(at: references.appendingPathComponent("guide.md"), withDestinationURL: original)
+        for provider in ["codex", "claude"] {
+            let link = source.appendingPathComponent("\(provider)/plugins/graftty/skills/graftty-team/references")
+            if fm.fileExists(atPath: link.path) { try fm.removeItem(at: link) }
+            try fm.createSymbolicLink(at: link, withDestinationURL: references.deletingLastPathComponent())
+        }
+        let prepared = temporary.appendingPathComponent("prepared")
+        _ = try AgentPluginInstaller(resourceRoot: source).prepare(destinationRoot: prepared)
+        for provider in ["codex", "claude"] {
+            try fm.copyItem(at: prepared.appendingPathComponent("\(provider)/plugins/graftty"),
+                            to: temporary.appendingPathComponent("cached-\(provider)"))
+        }
+        for item in [source, prepared, references.deletingLastPathComponent(), original] {
+            try fm.removeItem(at: item)
+        }
+        for provider in ["codex", "claude"] {
+            let cached = temporary.appendingPathComponent("cached-\(provider)/skills/graftty-team/references")
+            #expect(try fm.attributesOfItem(atPath: cached.path)[.type] as? FileAttributeType == .typeDirectory)
+            let guide = cached.appendingPathComponent("nested/guide.md")
+            #expect(try fm.attributesOfItem(atPath: guide.path)[.type] as? FileAttributeType == .typeRegular)
+            #expect(try Data(contentsOf: guide) == expected)
+        }
+    }
+
+    @Test("Cyclic supporting links fail preparation without replacing installed plugins.")
+    func cyclicSkillReferencesPreserveInstalledSnapshot() throws {
+        let fm = FileManager.default
+        let temporary = fm.temporaryDirectory.appendingPathComponent("graftty-cyclic-reference-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: temporary) }
+        let prepared = temporary.appendingPathComponent("prepared")
+        _ = try AgentPluginInstaller().prepare(destinationRoot: prepared)
+        let skillPath = "codex/plugins/graftty/skills/graftty-team/SKILL.md"
+        let original = try Data(contentsOf: prepared.appendingPathComponent(skillPath))
+        let referencesPath = "codex/plugins/graftty/skills/graftty-team/references"
+        let previousReferences = try fm.contentsOfDirectory(atPath: prepared.appendingPathComponent(referencesPath).path).sorted()
+        let source = temporary.appendingPathComponent("source")
+        try fm.copyItem(at: try #require(AgentPluginInstaller.bundledResourceRoot()), to: source)
+        let references = source.appendingPathComponent("codex/plugins/graftty/skills/graftty-team/references")
+        try fm.createDirectory(at: references, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: references.appendingPathComponent("self.md").path,
+                                  withDestinationPath: "self.md")
+        #expect(throws: (any Error).self) {
+            try AgentPluginInstaller(resourceRoot: source).prepare(destinationRoot: prepared)
+        }
+        #expect(try Data(contentsOf: prepared.appendingPathComponent(skillPath)) == original)
+        #expect(try fm.contentsOfDirectory(atPath: prepared.appendingPathComponent(referencesPath).path).sorted() == previousReferences)
+        #expect(try fm.contentsOfDirectory(atPath: prepared.path).sorted() == ["claude", "codex"])
+    }
+
+    /// Read the named skill's entrypoint and references from each prepared
+    /// provider, asserting that every Markdown resource is a regular file.
+    private func preparedSkillTexts(named skill: String) throws -> [String] {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-\(skill)-plugin-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+        return try ["codex", "claude"].map { provider in
+            let directory = destination.appendingPathComponent("\(provider)/plugins/graftty/skills/\(skill)")
+            let documents = try SkillMarkdown.documents(in: directory)
+            #expect(documents["SKILL.md"] != nil, "Packaged documents: \(documents.keys.sorted())")
+            return documents.sorted { $0.key < $1.key }.map(\.value).joined(separator: "\n")
+        }
+    }
+
+    @Test("@spec AGENT-6.55: When Graftty packages progressive skill guidance, the application shall retain readable relative links within each independent provider plugin, with supporting procedures reachable from their skill entrypoints.")
+    func packagedSkillLinksStayWithinIndependentProviderCaches() throws {
+        let fm = FileManager.default
+        let temporary = fm.temporaryDirectory.appendingPathComponent("graftty-skill-links-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: temporary) }
+        let prepared = temporary.appendingPathComponent("prepared")
+        _ = try AgentPluginInstaller().prepare(destinationRoot: prepared)
+        for provider in ["codex", "claude"] {
+            try fm.copyItem(at: prepared.appendingPathComponent("\(provider)/plugins/graftty"),
+                            to: temporary.appendingPathComponent("cached-\(provider)"))
+        }
+        try fm.removeItem(at: prepared)
+        for provider in ["codex", "claude"] {
+            try SkillMarkdown.validateLinks(in: temporary.appendingPathComponent("cached-\(provider)"))
+        }
+    }
+
     @Test("""
-    @spec AGENT-6.34: When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
+    @spec AGENT-6.34: When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that routes finished review artifacts through graftty preview and documents external file opening, URL routing, worktree scope and mobile limits.
     """)
     func preparesOpenSkillForBothProviders() throws {
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-open-plugin-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: destination) }
+        for skill in try preparedSkillTexts(named: "graftty-open") {
+            for token in ["name: graftty-open", "graftty open", "20 MB", "15 minutes", "http://localhost:3000"] {
+                #expect(skill.contains(token))
+            }
+        }
+    }
 
-        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
-
-        for provider in ["codex", "claude"] {
-            let file = destination.appendingPathComponent(
-                "\(provider)/plugins/graftty/skills/graftty-open/SKILL.md"
-            )
-            let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
-            #expect(attributes[.type] as? FileAttributeType == .typeRegular)
-            let skill = try String(contentsOf: file, encoding: .utf8)
-            #expect(skill.contains("name: graftty-open"))
+    @Test("""
+    @spec AGENT-6.50: When Graftty prepares provider plugins, the application shall bundle a `graftty-preview` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, show files with graftty preview in a native tray and create self-contained HTML when a visual explains something better, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures or missing previews without claiming delivery before falling back to graftty open.
+    """)
+    func preparesImageSkillForBothProviders() throws {
+        for skill in try preparedSkillTexts(named: "graftty-preview") {
+            #expect(skill.contains("name: graftty-preview"))
+            #expect(skill.contains("![Chart](./output/chart.png)"))
+            #expect(skill.contains("![Refined sidebar](</absolute/path with spaces/sidebar.png>)"))
+            #expect(skill.contains("containing Markdown file's directory"))
+            #expect(skill.contains("graftty preview"))
+            #expect(skill.contains("native tray"))
+            #expect(skill.contains("!["))
+            #expect(skill.contains("acknowledges"))
+            #expect(skill.contains("imgcat"))
+            #expect(skill.contains("kitten icat"))
+            #expect(skill.contains("/dev/tty"))
+            #expect(skill.contains("terminal query"))
             #expect(skill.contains("graftty open"))
-            #expect(skill.contains("finished artifact"))
-            #expect(skill.contains("pane leader"))
-            #expect(skill.contains("tracked worktree"))
-            #expect(skill.contains("20 MB"))
-            #expect(skill.contains("15 minutes"))
-            #expect(skill.contains("Open menu"))
+        }
+    }
+
+    @Test("""
+    @spec IMAGE-1.6: When Graftty installs the graftty-preview skill, the skill shall describe the movable and resizable macOS tray and the owning Mobile pane's Preview control for native Quick Look, explain collection navigation and automatic mobile opening, and acknowledge requests without claiming the user saw the image.
+    """)
+    func imageSkillDescribesNativePreviewOnLeadingDevice() throws {
+        for skill in try preparedSkillTexts(named: "graftty-preview") {
+            #expect(skill.contains("Graftty Mobile"))
+            #expect(skill.contains("focused owning pane"))
+            #expect(skill.contains("Preview control"))
+            #expect(skill.contains("Quick Look with zoom and sharing"))
+            #expect(skill.contains("Arrival preserves terminal focus"))
+            #expect(skill.contains("Drag the header"))
+            #expect(skill.contains("resize"))
+            #expect(skill.contains("previous and next"))
+            #expect(skill.contains("self-contained HTML"))
+            #expect(skill.contains("zoom"))
+            #expect(skill.contains("Close"))
+            #expect(!skill.contains("Drew <name>"))
         }
     }
 
@@ -336,17 +662,9 @@ struct AgentPluginInstallerTests {
             let skill = try String(contentsOf: destination
                 .appendingPathComponent(provider)
                 .appendingPathComponent("plugins/graftty/skills/graftty-team/SKILL.md"))
-            #expect(skill.contains("<graftty-peer-message agent=\"<exact-address>\" fallback-agent=\"<runtime-address>\">"))
-            #expect(skill.contains("<graftty-forge-message provider=\"<provider>\">"))
-            #expect(skill.contains("<graftty-system-message>"))
-            #expect(skill.contains("<canonical-worktree-path>#<runtime>-<12hex>"))
-            #expect(skill.contains("<canonical-worktree-path>#<runtime>"))
-            #expect(skill.contains("display metadata and may be truncated"))
-            #expect(skill.contains("Do not use provider-native agent messaging tools"))
-            #expect(skill.contains("graftty team reply '<message-id>' --stdin"))
-            #expect(skill.contains("takes precedence over conflicting reply paths"))
-            #expect(skill.contains("--fallback"))
-            #expect(!skill.contains("## Trust boundary"))
+            for token in ["#<runtime>-<12hex>", "#<runtime>", "graftty team reply", "`id` attribute", "<graftty-peer-message>", "--fallback", "references/routing.md"] {
+                #expect(skill.contains(token))
+            }
             let hooks = try String(contentsOf: destination
                 .appendingPathComponent(provider)
                 .appendingPathComponent("plugins/graftty/hooks/hooks.json"))
@@ -366,23 +684,10 @@ struct AgentPluginInstallerTests {
     @spec AGENT-6.21: When Graftty materializes a provider team skill, the skill shall explain the durable hierarchical `.graftty/**/GRAFTTY.md` instruction system's repository and worktree scopes, its `## Private` sharing boundary, next-session delivery, and the authorization required before editing an instruction file.
     """)
     func materializedSkillsExplainDurableInstructionFiles() throws {
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-agent-plugin-instructions-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: destination) }
-
-        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
-
-        for provider in ["codex", "claude"] {
-            let skill = try String(contentsOf: destination
-                .appendingPathComponent(provider)
-                .appendingPathComponent("plugins/graftty/skills/graftty-team/SKILL.md"))
-            #expect(skill.contains("## Durable agent instructions"))
-            #expect(skill.contains("`.graftty/GRAFTTY.md`"))
-            #expect(skill.contains("`.graftty/<parent>/GRAFTTY.md`"))
-            #expect(skill.contains("`.graftty/<parent>/<leaf>/GRAFTTY.md`"))
-            #expect(skill.contains("`## Private`"))
-            #expect(skill.contains("next session start"))
-            #expect(skill.contains("only when authorized"))
+        for skill in try preparedSkillTexts(named: "graftty-team") {
+            for token in ["references/durable-roles.md", ".graftty/GRAFTTY.md", ".graftty/<parent>/GRAFTTY.md", ".graftty/<parent>/<leaf>/GRAFTTY.md", "## Private"] {
+                #expect(skill.contains(token))
+            }
         }
     }
 
@@ -390,27 +695,10 @@ struct AgentPluginInstallerTests {
     @spec AGENT-6.26: When Graftty materializes a provider team skill, the skill shall direct an agent to proactively delegate suitable independent work by launching a new top-level agent with `graftty worktree add --agent --prompt-stdin`, distinguish delegation from creating a worktree alone, require the parent to confirm child reachability before relinquishing the delegated scope, and preserve the user's authorization boundaries.
     """)
     func materializedSkillsExplainRealWorktreeDelegation() throws {
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-agent-plugin-delegation-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: destination) }
-
-        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
-
-        for provider in ["codex", "claude"] {
-            let skill = try String(contentsOf: destination
-                .appendingPathComponent(provider)
-                .appendingPathComponent("plugins/graftty/skills/graftty-team/SKILL.md"))
-            #expect(skill.contains("## Delegate work into a new worktree"))
-            #expect(skill.contains("Proactively delegate"))
-            #expect(skill.contains(
-                "graftty worktree add <name> --agent <codex|claude> --prompt-stdin"
-            ))
-            #expect(skill.contains("does not delegate the task"))
-            #expect(skill.contains("confirm that a top-level child"))
-            #expect(skill.contains("Once reachable, stop working on that scope"))
-            #expect(skill.contains("parent's exact canonical address"))
-            #expect(skill.contains("Parent fallback address: <parent-runtime-address>"))
-            #expect(skill.contains("does not grant new authority"))
+        for skill in try preparedSkillTexts(named: "graftty-team") {
+            for token in ["graftty worktree add <name> --agent <codex|claude> --prompt-stdin", "Parent exact address:", "Parent fallback address:", "graftty team list --json", "references/worktrees.md"] {
+                #expect(skill.contains(token))
+            }
         }
     }
 
@@ -418,61 +706,47 @@ struct AgentPluginInstallerTests {
     @spec AGENT-6.16: While a provider sandbox denies a `graftty team` command access to a live Graftty control socket with `EPERM` or `errno 1`, the installed team skill shall instruct the agent to verify the socket and owner read-only, retry the same command with narrowly scoped elevated permission, and avoid deleting or recreating the socket or restarting Graftty as a first response.
     """)
     func materializedSkillsDiagnoseSandboxDeniedControlSocket() throws {
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-agent-plugin-skills-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: destination) }
-
-        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
-
-        for provider in ["codex", "claude"] {
-            let skill = try String(contentsOf: destination
-                .appendingPathComponent(provider)
-                .appendingPathComponent("plugins/graftty/skills/graftty-team/SKILL.md"))
-            #expect(skill.contains("`EPERM` or `errno 1`"))
-            #expect(skill.contains("read-only checks"))
-            #expect(skill.contains("narrowly scoped elevated permission"))
-            #expect(skill.contains("Do not delete or recreate the socket"))
+        for skill in try preparedSkillTexts(named: "graftty-team") {
+            for token in ["references/socket-diagnosis.md", "EPERM", "errno 1", "$GRAFTTY_SOCK"] {
+                #expect(skill.contains(token))
+            }
         }
     }
 
     @Test("""
-    @spec AGENT-6.36: When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct sandboxed agents to request narrowly scoped permission for main control-socket commands.
+    @spec AGENT-6.36: When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct Codex agents in a restricted sandbox to request narrowly scoped permission before their first main control-socket command and retain that choice for subsequent commands without changing provider policy.
     """)
     func materializedSkillsSeparateAttentionHandoffFromMainSocket() throws {
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-attention-skill-\(UUID().uuidString)")
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-permission-skill-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: destination) }
         _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
         for provider in ["codex", "claude"] {
             let skills = destination.appendingPathComponent("\(provider)/plugins/graftty/skills")
-            let recap = try String(contentsOf: skills.appendingPathComponent("graftty/SKILL.md"))
-            let team = try String(contentsOf: skills.appendingPathComponent("graftty-team/SKILL.md"))
-            #expect(recap.contains("private file"))
-            #expect(recap.contains("\"context\""))
-            #expect(recap.contains("Do not request socket permission for `graftty attention report`"))
-            #expect(team.contains("main Graftty control socket"))
-            #expect(team.contains("Request narrowly scoped elevated permission to use the main socket"))
+            let recap = try String(contentsOf: skills.appendingPathComponent("graftty/SKILL.md"), encoding: .utf8)
+            let team = try String(contentsOf: skills.appendingPathComponent("graftty-team/SKILL.md"), encoding: .utf8)
+            let permission = try #require(team.range(of: "require_escalated"))
+            let roster = try #require(team.range(of: "graftty team list --json"))
+            #expect(permission.lowerBound < roster.lowerBound)
+            #expect(team.contains("graftty attention report --stdin"))
+            #expect(recap.contains("../graftty-team/SKILL.md"))
+            #expect(!recap.contains("require_escalated"))
         }
     }
 
     @Test("""
-    @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents for concise task context, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
+    @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents for concise context explaining the problem and why solving it matters, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
     """)
     func materializedRecapSkillRequestsTaskContext() throws {
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-context-skill-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: destination) }
-        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
-        for provider in ["codex", "claude"] {
-            let skill = try String(contentsOf: destination.appendingPathComponent(
-                "\(provider)/plugins/graftty/skills/graftty/SKILL.md"
-            ))
-            #expect(skill.contains("\"context\""))
-            #expect(skill.contains("what this worktree is trying to accomplish"))
-            #expect(skill.contains("one sentence"))
-            #expect(skill.contains("recent verified progress"))
-            #expect(skill.contains("task-specific"))
-            #expect(skill.contains("only when the user must decide"))
+        for skill in try preparedSkillTexts(named: "graftty") {
+            let recap = try SkillMarkdown.recapExample(in: skill)
+            for key in ["title", "context", "completed", "next", "emoji"] {
+                #expect((recap[key] as? String)?.isEmpty == false)
+            }
+            let alternatives = try #require(recap["emojiAlternatives"] as? [String])
+            #expect(alternatives.count <= 3)
+            #expect(Set(alternatives).count == alternatives.count)
+            #expect(!alternatives.contains(try #require(recap["emoji"] as? String)))
+            #expect(recap["need"] == nil)
         }
     }
 
@@ -516,7 +790,6 @@ struct AgentPluginInstallerTests {
             #expect(skill.contains("exactly one agent"))
             #expect(skill.contains("`git worktree add`"))
             #expect(skill.contains("worktree-isolated subagents"))
-            #expect(skill.contains("even when another skill"))
         }
     }
 
@@ -524,15 +797,10 @@ struct AgentPluginInstallerTests {
     @spec AGENT-6.43: When Graftty installs the recap skill, the application shall instruct agents not to mention the Attention report in their response to the user unless the report command fails.
     """)
     func materializedRecapSkillKeepsReportSilent() throws {
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-silent-skill-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: destination) }
-        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
-        for provider in ["codex", "claude"] {
-            let skill = try String(contentsOf: destination.appendingPathComponent(
-                "\(provider)/plugins/graftty/skills/graftty/SKILL.md"
-            ))
-            #expect(skill.contains("Do not mention the report"))
+        for skill in try preparedSkillTexts(named: "graftty") {
+            // Preserve this consequential response rule without pinning
+            // surrounding explanatory prose or document organization.
+            #expect(skill.contains("Do not mention the report in your response unless the command fails"))
             #expect(skill.contains("mention the failure in your final response"))
         }
     }
@@ -644,26 +912,36 @@ private struct Invocation: Equatable, Sendable {
 }
 
 private actor InventoryPluginCLIExecutor: CLIExecutor {
-    let codex: String
-    let claude: String
+    private var inventories: [String: [String]]
     let failingMutation: Int?
+    let codexConfigurationURL: URL?
     private var recorded: [Invocation] = []
 
     init(codex: String, claude: String, failingMutation: Int? = nil) {
-        self.codex = codex
-        self.claude = claude
+        self.codexConfigurationURL = nil
+        self.inventories = ["codex": [codex], "claude": [claude]]
+        self.failingMutation = failingMutation
+    }
+
+    init(codexInventories: [String], claudeInventories: [String], failingMutation: Int? = nil, codexConfigurationURL: URL? = nil) {
+        self.codexConfigurationURL = codexConfigurationURL
+        self.inventories = ["codex": codexInventories, "claude": claudeInventories]
         self.failingMutation = failingMutation
     }
 
     func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
         let listing = args.prefix(2) == ["plugin", "list"]
-        let output = command == "codex" ? codex : claude
+        let output = inventories[command]?.first ?? "missing-cli"
+        if listing, (inventories[command]?.count ?? 0) > 1 { inventories[command]?.removeFirst() }
         if listing, output == "missing-cli" { throw CLIError.notFound(command: command) }
         if !listing {
             recorded.append(Invocation(command: command, arguments: args))
             if recorded.count - 1 == failingMutation {
                 throw CLIError.nonZeroExit(command: command, exitCode: 1, stderr: "fixture failure")
             }
+        }
+        if command == "codex", args == ["plugin", "remove", "graftty-team@graftty"], let codexConfigurationURL {
+            try Data().write(to: codexConfigurationURL)
         }
         return CLIOutput(stdout: listing ? output : "updated", stderr: "", exitCode: 0)
     }

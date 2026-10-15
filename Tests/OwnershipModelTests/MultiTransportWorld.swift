@@ -108,7 +108,7 @@ struct MultiTransportWorld {
             ownershipStore: store,
             broadcaster: broadcaster,
             sendText: { _ in },
-            resize: { [resizeLog] _, _ in resizeLog.record() },
+            resize: { [resizeLog] _ in resizeLog.record() },
             write: { _ in }
         )
         webCoordinators[protocolID] = coord
@@ -136,7 +136,7 @@ struct MultiTransportWorld {
         switch envelope {
         case let .hello(id, _, _, _, _, _): return id
         case let .takeControl(id, _, _, _): return id
-        case let .ownerResize(id, _, _, _): return id
+        case let .ownerResize(id, _, _, _, _, _): return id
         default: return nil
         }
     }

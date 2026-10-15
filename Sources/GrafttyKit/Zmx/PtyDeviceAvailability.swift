@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 /// Cheap runtime probe for whether the OS can currently allocate another PTY.
 public enum PtyDeviceAvailability: Equatable {
@@ -10,7 +14,7 @@ public enum PtyDeviceAvailability: Equatable {
             openPTY: { posix_openpt(O_RDWR | O_NOCTTY) },
             grantPTY: { grantpt($0) },
             unlockPTY: { unlockpt($0) },
-            closeFD: { Darwin.close($0) }
+            closeFD: { GrafttyPOSIX.close($0) }
         )
     }
 

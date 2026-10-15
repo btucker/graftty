@@ -80,7 +80,7 @@ struct ZmxSpawnConfigurationTests {
     }
 
     @Test("""
-    @spec ZMX-6.4: When agent hooks are enabled for a zsh shell, the host-managed `zmx attach` environment shall set `GHOSTTY_ZSH_ZDOTDIR` to Graftty's agent-hook zsh init directory so Ghostty's zsh integration can restore that directory after loading. When hooks are disabled, `GHOSTTY_ZSH_ZDOTDIR` shall be omitted.
+    @spec ZMX-6.4: When agent hooks are enabled for a zsh shell, the host-managed `zmx attach` environment shall set `GHOSTTY_ZSH_ZDOTDIR` to Graftty's agent-hook zsh init directory so Ghostty's zsh integration can restore that directory after loading. If hooks are disabled and no initial command is supplied, then `GHOSTTY_ZSH_ZDOTDIR` shall be omitted; a shell-owned initial command shall still load the init shim without enabling agent hooks.
     """)
     func disabledHooksReplaceInheritedZDOTDIRAndRemoveAgentHookEnv() throws {
         let config = makeConfig(
@@ -254,7 +254,7 @@ struct ZmxSpawnConfigurationTests {
 }
 
 @Suite("""
-@spec ZMX-6.6: When the host-managed `zmx attach` spawn invokes the user's shell, the spawn shall recover login-shell behavior. For non-bash shells (and bash with agent hooks disabled), the argv shall omit the positional shell argument so zmx applies its documented default of spawning `$SHELL` as a login shell, with `env["SHELL"]` set to the resolved user-shell path. For bash with agent hooks enabled (per ZMX-6.7), the spawn shall keep the positional pointing at the bash launcher script because login bash discards `--rcfile`. This restores `~/.zprofile` (via the ZMX-6.3 ZDOTDIR shim for zsh) processing — without it, `eval "$(brew shellenv)"` is skipped and `~/.zshrc` references to Homebrew-installed binaries (rbenv, nvm, etc.) resolve to "command not found", cascading into broken keybindings, missing colors, and shell-init errors.
+@spec ZMX-6.6: When the host-managed `zmx attach` spawn invokes the user's shell, the spawn shall recover login-shell behavior. For non-bash shells (and bash with agent hooks disabled and no initial command), the argv shall omit the positional shell argument so zmx applies its documented default of spawning `$SHELL` as a login shell, with `env["SHELL"]` set to the resolved user-shell path. For bash with agent hooks enabled (per ZMX-6.7) or an initial command supplied, the spawn shall keep the positional pointing at the bash launcher script because login bash discards `--rcfile`. This restores `~/.zprofile` (via the ZMX-6.3 ZDOTDIR shim for zsh) processing — without it, `eval "$(brew shellenv)"` is skipped and `~/.zshrc` references to Homebrew-installed binaries (rbenv, nvm, etc.) resolve to "command not found", cascading into broken keybindings, missing colors, and shell-init errors.
 """)
 struct ZmxLoginShellRecoveryTests {
     private let paneSessionID = PaneSessionID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)

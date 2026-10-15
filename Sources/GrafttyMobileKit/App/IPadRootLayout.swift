@@ -116,6 +116,7 @@ public struct IPadRootLayout: View {
                     if let host = selectedHost {
                         WorktreeListContent(
                             host: host,
+                            isSidebar: true,
                             theme: appState.theme,
                             selectedWorktreePath: appState.selectedWorktreePath,
                             focusedPaneId: appState.focusedPaneId,
@@ -278,6 +279,7 @@ public struct IPadRootLayout: View {
         appState.selectedWorktreePath = nil
         appState.focusedPaneId = nil
         appState.latestWorktrees = []
+        appState.worktreePickerProject = nil
         appState.anyWorktreeHasAttention = false
     }
 
@@ -1325,6 +1327,15 @@ private struct HostMenu: View {
     }
 }
 
+/// @spec IPAD-2.8: While the regular-width iPad detail is visible, the application shall extend the terminal tree to the top and bottom detail-column edges beneath transparent navigation chrome, keeping split controls over the panes and respecting the sidebar boundary.
+struct IPadTerminalDetailChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .ignoresSafeArea(.container, edges: [.top, .bottom])
+            .toolbarBackground(.hidden, for: .navigationBar)
+    }
+}
+
 // MARK: - IPadDetailColumn (private)
 
 private struct IPadDetailColumn: View {
@@ -1341,23 +1352,23 @@ private struct IPadDetailColumn: View {
 
     var body: some View {
         content
-            // @spec IPAD-2.8
-            // While the regular-width iPad detail is visible, the application
-            // shall let the terminal tree own the complete detail-column
-            // rectangle beneath transparent navigation chrome, with split
-            // controls floating over the panes instead of shrinking them.
-            .ignoresSafeArea(.container, edges: .top)
-            .toolbarBackground(.hidden, for: .navigationBar)
+            .modifier(IPadTerminalDetailChrome())
             .toolbar {
                 // IPAD-1.11: the conditional wraps the whole
                 // `ToolbarItem` (not just its body) so iOS doesn't
                 // reserve a dead leading slot when no attention is set.
                 if shouldShowAttentionDot {
                     ToolbarItem(placement: .topBarLeading) {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 8, height: 8)
-                            .accessibilityLabel("Attention needed in sidebar")
+                        Button {
+                            MobilePaneAttention.open(worktrees: appState.latestWorktrees,
+                                projects: SidebarProjection.projects(appState.latestWorktrees),
+                                navigation: appState.sidebarNavigation,
+                                currentWorktree: appState.selectedWorktreePath)
+                        } label: {
+                            Circle().fill(Color.red).frame(width: 8, height: 8)
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
+                        .accessibilityLabel("Next pending worktree")
                     }
                 }
                 if shouldShowSplitControls {

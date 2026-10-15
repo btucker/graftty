@@ -135,6 +135,44 @@ struct NotificationMessageTests {
         ))
     }
 
+    @Test("@spec SLEEP-25: When a team hook carries provider sleep activity, the application shall preserve the optional activity through notification encoding and decoding and decode older hooks without it.")
+    func providerSleepActivityRoundTrips() throws {
+        for activity in [ProviderSleepActivity.unknown, .busy, .idle] {
+            let original: NotificationMessage = .teamHook(
+                callerWorktree: "/repo", runtime: .claude, event: .stop,
+                sessionID: "session", paneSessionName: nil, providerSleepActivity: activity
+            )
+            let data = try JSONEncoder().encode(original)
+            let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(json["provider_sleep_activity"] as? String == activity.rawValue)
+            #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
+        }
+        let old = Data(#"{"type":"team_hook","caller_worktree":"/repo","runtime":"claude","event":"stop"}"#.utf8)
+        let decoded = try JSONDecoder().decode(NotificationMessage.self, from: old)
+        #expect(decoded.providerSleepActivity == nil)
+    }
+
+    @Test("Provider activity is one-way and preserves exact provider identity.")
+    func providerActivityNotificationRoundTrips() throws {
+        let original: NotificationMessage = .providerActivity(
+            callerWorktree: "/repo", runtime: .claude, sessionID: "exact",
+            paneSessionName: "pane", activity: .busy
+        )
+        #expect(!original.expectsResponse)
+        let data = try JSONEncoder().encode(original)
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
+        #expect(original.providerSleepActivity == .busy)
+    }
+
+    @Test("Missing or invalid provider activity metadata decodes as unknown.")
+    func malformedProviderActivityIsUnknown() throws {
+        for value in ["", #","provider_sleep_activity":"future-status""#] {
+            let data = Data("{\"type\":\"provider_activity\",\"caller_worktree\":\"/repo\",\"runtime\":\"claude\"\(value)}".utf8)
+            let message = try JSONDecoder().decode(NotificationMessage.self, from: data)
+            #expect(message.providerSleepActivity == .unknown)
+        }
+    }
+
     @Test func teamHookRoundTripsRuntimeEventAndSession() throws {
         let original: NotificationMessage = .teamHook(
             callerWorktree: "/r/a",
@@ -190,7 +228,7 @@ struct NotificationMessageTests {
         )
         let encoded = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: encoded)
-        guard case let .teamHook(_, _, _, _, _, paneSessionName, _, _) = decoded else {
+        guard case let .teamHook(_, _, _, _, _, paneSessionName, _, _, _) = decoded else {
             Issue.record("expected .teamHook"); return
         }
         #expect(paneSessionName == "graftty-abc12345")
@@ -208,7 +246,7 @@ struct NotificationMessageTests {
         """
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: oldJSON.data(using: .utf8)!)
         guard case let .teamHook(
-            _, callerAgentID, _, _, _, paneSessionName, attentionReason, _
+            _, callerAgentID, _, _, _, paneSessionName, attentionReason, _, _
         ) = decoded else {
             Issue.record("expected .teamHook"); return
         }

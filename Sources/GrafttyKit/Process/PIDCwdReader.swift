@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 /// `proc_pidinfo(PROC_PIDVNODEPATHINFO)` wrapper — reads another
 /// process's cwd. Backs the right-click "Move to current worktree"
@@ -10,6 +14,12 @@ public enum PIDCwdReader {
     /// Nil if the process is gone, unreadable, or its cdir has no
     /// path (e.g. running in a deleted directory).
     public static func cwd(ofPID pid: Int32) -> String? {
+        #if os(Linux)
+        guard pid > 0,
+              let path = try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/\(pid)/cwd"),
+              !path.hasSuffix(" (deleted)") else { return nil }
+        return path
+        #else
         var info = proc_vnodepathinfo()
         let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
         let rc = withUnsafeMutablePointer(to: &info) { ptr -> Int32 in
@@ -23,5 +33,6 @@ public enum PIDCwdReader {
                 return value.isEmpty ? nil : value
             }
         }
+        #endif
     }
 }

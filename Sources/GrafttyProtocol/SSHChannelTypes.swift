@@ -7,6 +7,7 @@
 /// stock OpenSSH or other SSH libraries.
 public enum SSHChannelTypeNames {
     /// Duplex team discovery and messaging between authenticated Macs.
+    public static let chromeTabs = "chrome-tabs-v1@graftty.dev"
     public static let team = "team@graftty.dev"
 
     public static let terminalPaged = "terminal-paged-v1@graftty.dev"

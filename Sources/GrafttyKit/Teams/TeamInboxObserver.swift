@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(os)
 import os
+#endif
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -47,8 +49,10 @@ public final class TeamInboxObserver: @unchecked Sendable {
     private let closeDescriptor: @Sendable (Int32) -> Int32
 
     // Mutated only on `queue`.
+    #if !os(Linux)
     private var fileSource: DispatchSourceFileSystemObject?
     private var dirSource: DispatchSourceFileSystemObject?
+    #endif
     private var pollTimer: DispatchSourceTimer?
     private var fileFD: Int32 = -1
     private var dirFD: Int32 = -1
@@ -123,6 +127,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
             withIntermediateDirectories: true
         )
 
+        #if !os(Linux)
         if installEventSources {
             // Watch parent directory: a new entry (the messages.jsonl file
             // appearing for the first time) fires `.write`, at which point
@@ -153,6 +158,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
             attachFileSource(callback: callback)
         }
 
+        #endif
         // Polling backstop: a change-gated re-read on a repeating timer so a
         // dropped kqueue `NOTE_WRITE` (which the kernel may coalesce/drop under
         // load) or a starved queue can't leave the observer permanently stale.
@@ -168,6 +174,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
     }
 
     private func attachFileSource(callback: @escaping ([TeamInboxMessage]) -> Void) {
+        #if !os(Linux)
         let messagesURL = TeamInbox.messagesURLFor(
             rootDirectory: inbox.rootDirectory,
             teamID: teamID
@@ -179,8 +186,10 @@ public final class TeamInboxObserver: @unchecked Sendable {
         // handler is the sole owner of closing the old descriptor. Closing it
         // here as well creates a delayed double-close: the descriptor can be
         // reused by an unrelated subprocess before the cancel handler runs.
+        #if !os(Linux)
         fileSource?.cancel()
         fileSource = nil
+        #endif
         fileFD = -1
 
         guard FileManager.default.fileExists(atPath: messagesURL.path) else { return }
@@ -210,6 +219,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
         }
         src.resume()
         fileSource = src
+        #endif
     }
 
 #if DEBUG
@@ -283,12 +293,14 @@ public final class TeamInboxObserver: @unchecked Sendable {
             guard let self else { return }
             self.pollTimer?.cancel()
             self.pollTimer = nil
+            #if !os(Linux)
             self.fileSource?.cancel()
             self.fileSource = nil
             self.fileFD = -1
             self.dirSource?.cancel()
             self.dirSource = nil
             self.dirFD = -1
+            #endif
         }
     }
 
@@ -297,7 +309,9 @@ public final class TeamInboxObserver: @unchecked Sendable {
         // call cancel(), but the dispatch sources still hold the fds.
         // Cancel inline (no `queue.async`) since `self` is going away.
         pollTimer?.cancel()
+        #if !os(Linux)
         fileSource?.cancel()
         dirSource?.cancel()
+        #endif
     }
 }

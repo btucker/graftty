@@ -425,6 +425,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             sessionName: sessionName,
             clientID: clientID,
             defaultKind: defaultKind,
+            ownerIdentity: "ssh-device:\(deviceID.value)",
             ownershipStore: ownershipStore,
             broadcaster: ownershipBroadcaster,
             sendText: { [weak self] payload in
@@ -440,7 +441,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                     channel.writeAndFlush(data, promise: nil)
                 }
             },
-            resize: { [weak self] cols, rows in
+            resize: { [weak self] windowSize in
                 // This closure runs synchronously on the channel's event
                 // loop (via `handleControl`, from `channelRead` or
                 // `drainControlFrames`) — the same loop that serializes
@@ -454,12 +455,14 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                 // write, exactly the hazard `ptyWriteContinuation`'s doc
                 // comment describes.
                 guard let self else { return }
+                // REMOTE-9.12: the window size carries the owner's pixel
+                // size (ownerResize only); zero pixels mean unspecified.
                 if let syncResizing = self.stream as? TerminalSyncResizing {
-                    syncResizing.resize(cols: cols, rows: rows)
+                    try? syncResizing.resize(windowSize: windowSize)
                 } else {
                     let snapshot = self.stream
                     Task { [snapshot] in
-                        await snapshot?.resize(cols: Int(cols), rows: Int(rows))
+                        await snapshot?.resize(cols: Int(windowSize.cols), rows: Int(windowSize.rows))
                     }
                 }
             },
@@ -498,7 +501,9 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         // reaches the client.
         drainControlFrames(channel: channel)
 
-        if pagedFactory == nil, let ptyGrid {
+        // A size-reporting source may be a relayed terminal. The client's
+        // pty-req describes its own display, not the replay's source grid.
+        if pagedFactory == nil, !(stream is any TerminalSizeReporting), let ptyGrid {
             coordinator.handlePTYSize(cols: ptyGrid.cols, rows: ptyGrid.rows)
         }
     }

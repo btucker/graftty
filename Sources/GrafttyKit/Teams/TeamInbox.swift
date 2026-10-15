@@ -748,7 +748,7 @@ public final class TeamInbox {
     private func openForAppend(at path: String) throws -> Int32 {
         let permissions = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH
         #if canImport(Darwin)
-        let fd = Darwin.open(path, O_WRONLY | O_CREAT | O_APPEND, permissions)
+        let fd = GrafttyPOSIX.open(path, O_WRONLY | O_CREAT | O_APPEND, permissions)
         #elseif canImport(Glibc)
         let fd = Glibc.open(path, O_WRONLY | O_CREAT | O_APPEND, mode_t(permissions))
         #else
@@ -774,7 +774,7 @@ public final class TeamInbox {
         try ensureParentDirectory(for: url)
         let permissions = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH
         #if canImport(Darwin)
-        let fd = Darwin.open(url.path, O_RDWR | O_CREAT, permissions)
+        let fd = GrafttyPOSIX.open(url.path, O_RDWR | O_CREAT, permissions)
         #elseif canImport(Glibc)
         let fd = Glibc.open(url.path, O_RDWR | O_CREAT, mode_t(permissions))
         #else
@@ -785,7 +785,7 @@ public final class TeamInbox {
 
         try acquireRecordLock(fd: fd, deadline: deadline)
         #if canImport(Darwin)
-        defer { _ = Darwin.lockf(fd, F_ULOCK, 0) }
+        defer { _ = GrafttyPOSIX.lockf(fd, F_ULOCK, 0) }
         #elseif canImport(Glibc)
         defer { _ = Glibc.lockf(fd, F_ULOCK, 0) }
         #endif
@@ -798,7 +798,7 @@ public final class TeamInbox {
     private func acquireRecordLock(fd: Int32, deadline: Date) throws {
         while true {
             #if canImport(Darwin)
-            let result = Darwin.lockf(fd, F_TLOCK, 0)
+            let result = GrafttyPOSIX.lockf(fd, F_TLOCK, 0)
             #elseif canImport(Glibc)
             let result = Glibc.lockf(fd, F_TLOCK, 0)
             #endif
@@ -832,7 +832,7 @@ public final class TeamInbox {
             var offset = 0
             while offset < rawBuffer.count {
                 #if canImport(Darwin)
-                let written = Darwin.write(fd, base.advanced(by: offset), rawBuffer.count - offset)
+                let written = GrafttyPOSIX.write(fd, base.advanced(by: offset), rawBuffer.count - offset)
                 #elseif canImport(Glibc)
                 let written = Glibc.write(fd, base.advanced(by: offset), rawBuffer.count - offset)
                 #endif

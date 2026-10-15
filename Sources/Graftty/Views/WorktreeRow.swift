@@ -70,7 +70,8 @@ struct PaneTitleRow: View {
     /// pane title (LAYOUT-2.30); the title truncates to make room rather
     /// than being replaced. Agent "needs input" (`.needsInput`) shows an
     /// icon; `graftty notify` / ✓! (`.text`) show their text. Cleared when
-    /// the user clicks the worktree (STATE-2.4). Worktree-scoped pings
+    /// the agent resumes or the request is dismissed; notifications clear
+    /// when the user clicks the worktree (STATE-2.4). Worktree-scoped pings
     /// render on the worktree row instead (STATE-2.3).
     let attentionStyle: AttentionCapsuleStyle?
     /// Port bindings detected for this pane's process subtree (PORTS-3.1).
@@ -78,6 +79,7 @@ struct PaneTitleRow: View {
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
     var attentionCount: Int = 0
+    var onOpenPort: ((PortBinding) -> Void)? = nil
     var shouldRenderPortChips: Bool {
         attentionStyle == nil && !portBindings.isEmpty
     }
@@ -147,7 +149,7 @@ struct PaneTitleRow: View {
                     titleText
                     if shouldRenderPortChips {
                         ForEach(portBindings, id: \.self) { binding in
-                            PortChip(binding: binding, theme: theme)
+                            PortChip(binding: binding, theme: theme, onOpen: onOpenPort.map { action in { action(binding) } })
                         }
                     }
                 }
@@ -260,6 +262,10 @@ struct WorktreeRow: View {
     var attentionCount: Int = 0
     var project: SidebarProject? = nil
     var projectIconData: Data? = nil
+    /// Right-click menu for the identity slot (LAYOUT-2.96); nil for rows
+    /// whose identity is not editable.
+    var identityMenu: ((NSView) -> NSMenu)? = nil
+    var reportButton: SidebarReportButton? = nil
 
     enum LeadingItem: Hashable {
         case projectIcon, emoji, typeIcon, prBadge, label
@@ -285,18 +291,23 @@ struct WorktreeRow: View {
                                         imageData: projectIconData, size: WorktreeRowGeometry.identityWidth)
                 case .emoji:
                     if let emoji = entry.emoji {
-                        Text(emoji).font(.system(size: 15))
-                            .frame(width: WorktreeRowGeometry.identityWidth).accessibilityHidden(true)
+                        identityMenuTarget(Text(emoji).font(.system(size: 15))
+                            .frame(width: WorktreeRowGeometry.identityWidth).accessibilityHidden(true))
                     }
                 case .typeIcon:
-                    typeIcon
+                    identityMenuTarget(typeIcon)
                 case .prBadge:
                     if let prBadge {
                         SidebarPRBadge(badge: prBadge)
                             .fixedSize(horizontal: true, vertical: false)
+                            .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.prBadge: $0] }
                     }
                 case .label:
                     branchLabel
+                    if let reportButton {
+                        reportButton.frame(width: 20, height: 20)
+                            .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.reportButton: $0] }
+                    }
                 }
             }
             if let attentionStyle {
@@ -313,6 +324,15 @@ struct WorktreeRow: View {
         .padding(.horizontal, WorktreeRowGeometry.horizontalInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func identityMenuTarget<Content: View>(_ content: Content) -> some View {
+        if let identityMenu, !entry.state.isInFlight {
+            content.rightClickMenu(anchored: identityMenu)
+        } else {
+            content
+        }
     }
 
     /// Fallback when a linked worktree has no emoji: `arrow.triangle.branch`,

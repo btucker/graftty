@@ -29,14 +29,14 @@ struct ZmxResizePropagationTests {
             let old = TerminalAttachCoordinator(
                 sessionName: name, clientID: DisplayClientID("old"), defaultKind: .mac,
                 ownershipStore: store, broadcaster: broadcaster, sendText: { _ in },
-                resize: { try? PtyProcess.resize(masterFD: first.masterFd, cols: $0, rows: $1) },
+                resize: { try? PtyProcess.resize(masterFD: first.masterFd, windowSize: $0) },
                 write: { _ in Issue.record("Takeover must not send input") },
                 followDisplayGrid: { try? PtyProcess.resize(masterFD: first.masterFd, cols: $0.grid.cols, rows: $0.grid.rows) }
             )
             let next = TerminalAttachCoordinator(
                 sessionName: name, clientID: DisplayClientID("new"), defaultKind: .ios,
                 ownershipStore: store, broadcaster: broadcaster, sendText: { _ in },
-                resize: { try? PtyProcess.resize(masterFD: second.masterFd, cols: $0, rows: $1) },
+                resize: { try? PtyProcess.resize(masterFD: second.masterFd, windowSize: $0) },
                 write: { _ in Issue.record("Takeover must not send input") }
             )
             old.handleControl(.hello(clientID: DisplayClientID("old"), kind: .mac, role: .interactive, visible: true, cols: 80, rows: 24))

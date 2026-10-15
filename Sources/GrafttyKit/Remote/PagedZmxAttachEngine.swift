@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import GrafttyProtocol
 
 /// Connects to an existing zmx daemon without creating a PTY or replaying VT history.
@@ -54,6 +58,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
     }
 
     private func startBlocking() throws {
+        guard attachmentRegistry?.prepareToAttach(sessionName: config.sessionName) != false else { throw Error.unsupported }
         try lock.withLock {
             guard !started else { throw Error.alreadyStarted }
             guard !closed else { throw Error.closed }
@@ -69,18 +74,19 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
         let bytes = Array(path.utf8) + [0]
         guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else { throw Error.unsupported }
         withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
+        #if !os(Linux)
         address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
-        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        #endif
+        let fd = GrafttyPOSIX.socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         guard fd >= 0 else { throw Error.socket(errno) }
         var handedToReader = false
-        defer { if !handedToReader { Darwin.close(fd) } }
-        var noSignal: Int32 = 1
-        _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout.size(ofValue: noSignal)))
+        defer { if !handedToReader { GrafttyPOSIX.close(fd) } }
+        _ = GrafttyPOSIX.configureNoSigPipe(fd)
         _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
         var timeout = timeval(tv_sec: 2, tv_usec: 0)
         _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
         let connected = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { GrafttyPOSIX.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
         guard connected == 0 else { throw Error.unsupported }
         try lock.withLock {
@@ -123,7 +129,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
         let reader = Thread { [weak self] in
             defer {
                 self?.lock.withLock { self?.descriptor = -1 }
-                Darwin.close(fd)
+                GrafttyPOSIX.close(fd)
                 self?.closeSync()
             }
             do {
@@ -146,6 +152,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
 
     public func send(_ bytes: Data) async throws {
         guard !bytes.isEmpty else { return }
+        guard attachmentRegistry?.prepareForInput(sessionName: config.sessionName) != false else { throw Error.closed }
         try sendFrame(tag: 0, payload: bytes)
         inputState?.recordInput(bytes, forSession: config.sessionName)
     }
@@ -174,7 +181,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
             guard !closed else { return false }
             closed = true
             // The reader owns close(fd). shutdown interrupts read without fd reuse.
-            if descriptor >= 0 { _ = shutdown(descriptor, SHUT_RDWR) }
+            if descriptor >= 0 { _ = shutdown(descriptor, Int32(SHUT_RDWR)) }
             sizeCallback = nil
             let detach = registered
             registered = false
@@ -194,6 +201,12 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
 
     private func resize(cols: UInt16, rows: UInt16, pixels: PtyProcess.WindowSize?) throws {
         guard cols > 0, rows > 0 else { return }
+        // TERM-12.29: a zero pixel dimension means "unspecified" (grid-only
+        // follower repairs, legacy callers), never a literal 0x0 window. The
+        // daemon stores whatever pixel size it is sent and XNU raises
+        // SIGWINCH on any winsize field change, so writing zeros would bounce
+        // the session PTY's pixel size on every repair.
+        let pixels = pixels.flatMap { $0.xpixel > 0 && $0.ypixel > 0 ? $0 : nil }
         try withWritableSocket { fd in
             let includesPixels = supportsPixels && (pixels != nil || requestedSize?.includesPixels == true)
             let size = RequestedSize(windowSize: .init(cols: cols, rows: rows,
@@ -240,7 +253,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
                     // A partial frame cannot be retried or followed by another
                     // header. Poison the descriptor before unlocking so another
                     // writer cannot append bytes to the incomplete payload.
-                    _ = shutdown(descriptor, SHUT_RDWR)
+                    _ = shutdown(descriptor, Int32(SHUT_RDWR))
                     descriptor = -1
                     throw error
                 }
@@ -288,7 +301,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
                 if result < 0, errno == EINTR { continue }
                 guard result > 0 else { throw Error.unsupported }
             }
-            let n = data.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress!.advanced(by: position), count - position) }
+            let n = data.withUnsafeMutableBytes { GrafttyPOSIX.read(fd, $0.baseAddress!.advanced(by: position), count - position) }
             if n < 0, errno == EINTR { continue }
             guard n > 0 else { throw Error.closed }
             position += n

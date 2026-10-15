@@ -4,6 +4,17 @@ import Testing
 
 @Suite("LsofOutputParser")
 struct LsofOutputParserTests {
+    @Test("@spec PORTS-1.5: When scanning worktree ports, the application shall exclude established connections, UDP sockets, regular files, and port zero from the listening port list.")
+    func ignoresNonListeners() {
+        let raw = """
+        node 12345 alice 23u IPv4 0x1 0t0 TCP 127.0.0.1:50000->1.2.3.4:443 (ESTABLISHED)
+        node 12345 alice 23u IPv4 0x1 0t0 UDP *:3000
+        node 12345 alice 23r REG 0x1 0t0 123 /tmp/log:3000
+        node 12345 alice 23u IPv4 0x1 0t0 TCP *:0 (LISTEN)
+        """
+        #expect(LsofOutputParser.parse(raw).isEmpty)
+    }
+
     @Test("Parses a single IPv4 loopback row")
     func parsesIPv4Loopback() {
         let raw = """
@@ -26,7 +37,7 @@ struct LsofOutputParserTests {
         """
         let rows = LsofOutputParser.parse(raw)
         #expect(rows.count == 1)
-        #expect(rows[0].address == "*")
+        #expect(rows[0].address == "::")
         #expect(rows[0].port == 3000)
     }
 

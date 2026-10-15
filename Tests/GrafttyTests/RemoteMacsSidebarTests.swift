@@ -10,7 +10,7 @@ import GrafttyCommandUI
 @testable import Graftty
 @testable import GrafttyKit
 
-@Suite("Remote Macs sidebar and add sheet")
+@Suite("Remote Hosts sidebar and add sheet")
 @MainActor
 struct RemoteMacsSidebarTests {
     @Test("@spec LAYOUT-2.59: When a remote worktree selection changes to another Mac with the same worktree path, the application shall update the selected project and remembered worktree for that Mac.")
@@ -53,7 +53,7 @@ struct RemoteMacsSidebarTests {
         #expect(decoded.resolve(on: first, in: []) == nil)
     }
 
-    @Test("@spec LAYOUT-2.55: While the Remote Macs menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.")
+    @Test("@spec LAYOUT-2.55: While the Remote Hosts menu is open, the application shall show machine connection status and offer connection actions only for unavailable machines.")
     func machineStatusActions() {
         #expect(RemoteMacConnectionState.connected.statusText == "Connected")
         #expect(RemoteMacConnectionState.connected.connectionActionTitle == nil)
@@ -82,12 +82,12 @@ struct RemoteMacsSidebarTests {
         let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty",
             owner: .init(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0))
         let content = HStack(spacing: 0) {
-            ProjectNavigationRail(projects: [project], counts: ["p": 1], workingCounts: ["p": 1], icons: [:], selectedID: "p", showsAttention: false,
+            ProjectNavigationRail(projects: [project], counts: ["p": 1], workingCounts: ["p": 1], icons: [:], selectedID: "p",
                 collapsed: .constant(false), selectionColor: Color.white.opacity(0.16),
-                onSelect: { _ in }, onAttention: {}, onMove: { _, _, _ in })
+                onSelect: { _ in },  onMove: { _, _, _ in })
             Divider()
             ProjectWorktreeColumn {
-                RemoteMacsSection(model: model, worktreePanesByRemote: [RemoteMacIdentity(remote): [row]],
+                RemoteMacsSection(model: model, expansion: .constant(RemoteSidebarExpansion()), worktreePanesByRemote: [RemoteMacIdentity(remote): [row]],
                     selectedRemoteIdentity: RemoteMacIdentity(remote), selectedRemoteWorktreePath: row.path,
                     theme: .fallback, onSelectRemoteMac: { _ in }, onAddRemoteMac: {},
                     showsMacHierarchy: false, showsRepositoryHeaders: false)
@@ -165,6 +165,62 @@ struct RemoteMacsSidebarTests {
         #expect(!RemoteWorktreeReorderPolicy.allows(main, editableProjectIDs: ["project"], query: ""))
     }
 
+    @Test("@spec LAYOUT-2.111: When a remote worktree is dragged across temporary worktrees and Pinned Agents, the application shall reject the destination before sending a reorder request to the owning Mac.")
+    func remoteReordersRequireMatchingSections() {
+        func row(_ id: String, membership: Bool?, isMain: Bool = false) -> WorktreePanes {
+            WorktreePanes(path: id, displayName: id, repoDisplayName: "Project", repositoryID: "repo",
+                displayBranch: id, state: .closed, isMainCheckout: isMain, prBadge: nil, stats: nil,
+                attentionText: nil, layout: nil, sidebar: .init(id: id, projectID: "project", isPinned: membership))
+        }
+        let task = row("fix", membership: false)
+        let legacyTask = row("legacy", membership: nil)
+        let team = row("architect", membership: true)
+        #expect(!RemoteWorktreeReorderPolicy.areSiblings(task, team))
+        #expect(!RemoteWorktreeReorderPolicy.areSiblings(team, task))
+        #expect(!RemoteWorktreeReorderPolicy.areSiblings(legacyTask, team))
+        #expect(RemoteWorktreeReorderPolicy.areSiblings(legacyTask, task))
+        #expect(RemoteWorktreeReorderPolicy.areSiblings(team, row("qa", membership: true)))
+        let home = row("trunk", membership: false, isMain: true)
+        #expect(RemoteWorktreeReorderPolicy.areSiblings(team, home))
+        #expect(!RemoteWorktreeReorderPolicy.areSiblings(task, home))
+        #expect(RemoteWorktreeReorderPolicy.areSiblings(legacyTask, row("legacy-home", membership: nil, isMain: true)))
+    }
+
+    @Test("@spec LAYOUT-2.156: While a remote project uses recent activity order, the application shall disable temporary worktree reordering and preserve manual pinned worktree reordering.")
+    func recentActivityPreventsTemporaryReordering() {
+        func row(_ id: String, pinned: Bool) -> WorktreePanes {
+            WorktreePanes(path: id, displayName: id, repoDisplayName: "Project", repositoryID: "repo", displayBranch: id,
+                state: .closed, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+                sidebar: .init(id: id, projectID: "project", isPinned: pinned))
+        }
+        let task = row("fix", pinned: false)
+        let role = row("architect", pinned: true)
+        #expect(!RemoteWorktreeReorderPolicy.allows(task, editableProjectIDs: ["project"], query: "", orderMode: .recentActivity))
+        #expect(RemoteWorktreeReorderPolicy.allows(role, editableProjectIDs: ["project"], query: "", orderMode: .recentActivity))
+        #expect(RemoteWorktreeReorderPolicy.allows(task, editableProjectIDs: ["project"], query: "", orderMode: .manual))
+        #expect(!RemoteWorktreeReorderPolicy.allows(role, editableProjectIDs: [], query: "", orderMode: .recentActivity))
+    }
+
+    @Test func unsupportedSortingDisablesNativePopupAndExplainsUpdate() async throws {
+        let help = "Update Graftty on the owning host to change worktree order."
+        let hosting = NSHostingView(rootView: SidebarWorktreeOrderControl(selection: .constant(.manual), helpText: help, color: .secondaryLabelColor)
+            .disabled(true).frame(width: 136, height: 28))
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 160, height: 40), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(100))
+        hosting.layoutSubtreeIfNeeded()
+        func find(_ view: NSView) -> NSPopUpButton? {
+            (view as? NSPopUpButton) ?? view.subviews.lazy.compactMap { find($0) }.first
+        }
+        let popup = try #require(find(hosting))
+        #expect(!popup.isEnabled)
+        #expect(popup.toolTip == help)
+        #expect(popup.selectedItem?.title == "Manual Order")
+        #expect(popup.menu?.items.map(\.title) == ["Manual Order", "Recent Activity"])
+    }
+
     @Test("empty sidebar projection still exposes Add Remote Mac")
     func emptyProjectionShowsAddRemoteMacAction() throws {
         let projection = RemoteMacsSidebarProjection.make(
@@ -174,7 +230,7 @@ struct RemoteMacsSidebarTests {
             connectionState: { _ in .offline }
         )
 
-        #expect(projection.title == "Remote Macs")
+        #expect(projection.title == "Remote Hosts")
         #expect(projection.rows.isEmpty)
         #expect(projection.addAction == .addRemoteMac)
         #expect(projection.isVisible)

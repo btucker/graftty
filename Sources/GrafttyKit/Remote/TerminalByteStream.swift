@@ -61,8 +61,9 @@ public typealias TerminalByteStreamFactory = @Sendable (String) async throws -> 
 /// REMOTE-9.4) probe for conformance with `as?` instead of requiring it
 /// on every `TerminalByteStream`.
 public protocol TerminalSizeReporting: AnyObject {
-    /// Invoked whenever the underlying PTY's size changes (and, for
-    /// `ZmxAttachEngine`, once more on initial attach). May be called
+    /// Invoked when a source grid becomes known. `ZmxAttachEngine` reports
+    /// the snapshot grid before initial replay; pre-snapshot daemons retain
+    /// legacy PTY-size polling as a compatibility fallback. May be called
     /// off the caller's thread — implementations document their own
     /// threading contract. Setting to `nil` removes any installed callback.
     var onPTYSize: ((_ cols: UInt16, _ rows: UInt16) -> Void)? { get set }
@@ -84,4 +85,14 @@ public protocol TerminalSizeReporting: AnyObject {
 /// resize keep working via the existing `Task`-wrapped fallback.
 public protocol TerminalSyncResizing: AnyObject {
     func resize(cols: UInt16, rows: UInt16)
+    /// REMOTE-9.12: apply the grid together with the owner's pixel size.
+    /// Zero pixel fields mean unspecified. The default drops the pixels and
+    /// forwards the grid, so grid-only conformers keep working.
+    func resize(windowSize: PtyProcess.WindowSize) throws
+}
+
+public extension TerminalSyncResizing {
+    func resize(windowSize: PtyProcess.WindowSize) throws {
+        resize(cols: windowSize.cols, rows: windowSize.rows)
+    }
 }

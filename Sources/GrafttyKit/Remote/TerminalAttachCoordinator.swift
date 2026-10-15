@@ -1,5 +1,8 @@
 import Foundation
 import GrafttyProtocol
+#if canImport(os)
+import os
+#endif
 
 public final class DisplayOwnershipBroadcaster: @unchecked Sendable {
     internal final class Registration: @unchecked Sendable {
@@ -102,13 +105,20 @@ public final class DisplayOwnershipBroadcaster: @unchecked Sendable {
 /// Made `public` (REMOTE-9) so `TerminalSessionHandler` can construct and
 /// drive it directly.
 public final class TerminalAttachCoordinator: @unchecked Sendable {
+    /// Diagnostic trail of remote-client ownership traffic; same category as
+    /// the ownership store so one predicate shows the whole handshake.
+    private static let trace = Logger(subsystem: "com.graftty.app", category: "ownership-trace")
+
     private let sessionName: String
     private let clientID: DisplayClientID
+    private let ownerIdentity: String?
     private let defaultKind: DisplayClientKind
     private let ownershipStore: SessionDisplayOwnershipStore
     private let broadcaster: DisplayOwnershipBroadcaster
     private let sendText: @Sendable (String) -> Void
-    private let resize: @Sendable (UInt16, UInt16) -> Void
+    /// REMOTE-9.12: only `ownerResize` carries pixels; every other path
+    /// passes a grid-only size whose zero pixels mean unspecified.
+    private let resize: @Sendable (PtyProcess.WindowSize) -> Void
     private let followDisplayGrid: @Sendable (DisplayOwnershipSnapshot) -> Void
     private let write: @Sendable (Data) -> Void
     private let lock = NSLock()
@@ -119,6 +129,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
     private var attached = false
     private var detached = false
     private var lastAcceptedOwnerGrid: DisplayGrid?
+    private var latestSourceGrid: DisplayGrid?
     private let supportsImagePaste: Bool
     private let pasteImage: @MainActor @Sendable (Data) -> Bool
     /// Run the final ownership check and input enqueue together on the
@@ -132,10 +143,11 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
         sessionName: String,
         clientID: DisplayClientID,
         defaultKind: DisplayClientKind,
+        ownerIdentity: String? = nil,
         ownershipStore: SessionDisplayOwnershipStore,
         broadcaster: DisplayOwnershipBroadcaster,
         sendText: @escaping @Sendable (String) -> Void,
-        resize: @escaping @Sendable (UInt16, UInt16) -> Void,
+        resize: @escaping @Sendable (PtyProcess.WindowSize) -> Void,
         write: @escaping @Sendable (Data) -> Void,
         followDisplayGrid: @escaping @Sendable (DisplayOwnershipSnapshot) -> Void = { _ in },
         supportsImagePaste: Bool = true,
@@ -145,6 +157,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
         self.sessionName = sessionName
         self.clientID = clientID
         self.defaultKind = defaultKind
+        self.ownerIdentity = ownerIdentity
         self.ownershipStore = ownershipStore
         self.broadcaster = broadcaster
         self.sendText = sendText
@@ -164,6 +177,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
     }
 
     public func handleControl(_ envelope: WebControlEnvelope) {
+        guard lock.withLock({ !detached }) else { return }
         switch envelope {
         case let .hello(protocolClientID, _, role, visible, cols, rows):
             guard bindOrVerify(protocolClientID: protocolClientID) else { return }
@@ -173,16 +187,23 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             attached = true
             attachedKind = kind
             lock.unlock()
+            Self.trace.notice("coordinator hello \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) kind=\(kind.rawValue, privacy: .public) role=\(String(describing: role), privacy: .public) visible=\(visible) grid=\(cols)x\(rows)")
             let snapshot = ownershipStore.attachClient(
                 sessionName: sessionName,
                 clientID: clientID,
                 kind: kind,
                 role: role,
                 visible: visible,
-                grid: grid
+                grid: grid,
+                identity: ownerIdentity
             )
             noteAcceptedOwnerGridIfCurrentOwner(snapshot: snapshot)
             broadcaster.broadcast(snapshot)
+            // SSH suppresses control frames until hello. A source may have
+            // reported its initial grid before that carrier was enabled.
+            if let sourceGrid = lock.withLock({ latestSourceGrid }) {
+                sendText(WebControlEnvelope.grid(cols: sourceGrid.cols, rows: sourceGrid.rows).encoded())
+            }
             if supportsImagePaste { sendText(WebControlEnvelope.imagePaste(.available).encoded()) }
 
         case let .takeControl(protocolClientID, _, cols, rows):
@@ -197,13 +218,14 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
                 grid: grid,
                 fallbackGrid: grid
             )
+            Self.trace.notice("coordinator takeControl \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) grid=\(cols)x\(rows) accepted=\(result.accepted) epoch=\(result.snapshot.epoch)")
             if result.accepted {
                 acceptOwnerGrid(grid)
-                resize(cols, rows)
+                resize(PtyProcess.WindowSize(cols: cols, rows: rows))
             }
             broadcaster.broadcast(result.snapshot)
 
-        case let .ownerResize(protocolClientID, epoch, cols, rows):
+        case let .ownerResize(protocolClientID, epoch, cols, rows, xpixel, ypixel):
             guard bindOrVerify(protocolClientID: protocolClientID) else { return }
             let grid = try! DisplayGrid(cols: cols, rows: rows)
             let result = ownershipStore.ownerResize(
@@ -212,9 +234,15 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
                 epoch: epoch,
                 grid: grid
             )
+            Self.trace.notice("coordinator ownerResize \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) grid=\(cols)x\(rows) pixels=\(xpixel)x\(ypixel) epoch=\(epoch) accepted=\(result.accepted)")
             if result.accepted {
                 acceptOwnerGrid(grid)
-                resize(cols, rows)
+                // A half-specified pixel size is unspecified (TERM-12.29).
+                let pixelsKnown = xpixel > 0 && ypixel > 0
+                resize(PtyProcess.WindowSize(
+                    cols: cols, rows: rows,
+                    xpixel: pixelsKnown ? xpixel : 0, ypixel: pixelsKnown ? ypixel : 0
+                ))
             }
             broadcaster.broadcast(result.snapshot)
 
@@ -240,7 +268,8 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
         do {
             let completed: Data? = try lock.withLock {
                 let snapshot = ownershipStore.snapshot(sessionName: sessionName)
-                guard supportsImagePaste, !detached, attached, snapshot.ownerClientID == clientID else {
+                guard supportsImagePaste, !detached, attached,
+                      ownershipStore.isAttachedOwner(sessionName: sessionName, clientID: clientID) else {
                     throw ImagePasteUpload.UploadError.invalidUpload
                 }
                 if case .cancel = message {
@@ -272,7 +301,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
                 let error: String? = self.lock.withLock {
                     let snapshot = self.ownershipStore.snapshot(sessionName: self.sessionName)
                     guard !self.detached, self.pendingImageCommit == id,
-                          snapshot.ownerClientID == self.clientID,
+                          self.ownershipStore.isAttachedOwner(sessionName: self.sessionName, clientID: self.clientID),
                           snapshot.epoch == self.imageUploadEpoch else {
                         if self.pendingImageCommit == id { self.pendingImageCommit = nil }
                         return "Pane control changed before the image could be pasted."
@@ -304,7 +333,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             defer { if pendingImageCommit == id { pendingImageCommit = nil } }
             let snapshot = ownershipStore.snapshot(sessionName: sessionName)
             guard !detached, pendingImageCommit == id,
-                  snapshot.ownerClientID == clientID,
+                  ownershipStore.isAttachedOwner(sessionName: sessionName, clientID: clientID),
                   snapshot.epoch == imageUploadEpoch else {
                 return "Pane control changed before the image could be pasted."
             }
@@ -330,9 +359,12 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
 
     public func handlePTYSize(cols: UInt16, rows: UInt16) {
         guard let grid = try? DisplayGrid(cols: cols, rows: rows) else { return }
+        lock.withLock { latestSourceGrid = grid }
         sendText(WebControlEnvelope.grid(cols: cols, rows: rows).encoded())
         let snapshot = ownershipStore.snapshot(sessionName: sessionName, fallbackGrid: grid)
-        if isCurrentOwner(), currentLastAcceptedOwnerGrid() == grid {
+        let currentOwner = snapshot.ownerClientID == clientID
+        Self.trace.notice("coordinator ptySize \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) grid=\(cols)x\(rows) currentOwner=\(currentOwner)")
+        if currentOwner, currentLastAcceptedOwnerGrid() == grid {
             broadcaster.broadcast(snapshot)
         } else {
             sendOwnershipSnapshot(snapshot)
@@ -380,7 +412,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             )
             if result.accepted {
                 acceptOwnerGrid(grid)
-                resize(cols, rows)
+                resize(PtyProcess.WindowSize(cols: cols, rows: rows))
             }
             broadcaster.broadcast(result.snapshot)
             return
@@ -404,7 +436,8 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             kind: kind,
             role: .interactive,
             visible: true,
-            grid: grid
+            grid: grid,
+            identity: ownerIdentity
         )
         noteAcceptedOwnerGridIfCurrentOwner(snapshot: snapshot)
         broadcaster.broadcast(snapshot)
@@ -428,7 +461,8 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
     }
 
     private func isCurrentOwner() -> Bool {
-        ownershipStore.snapshot(sessionName: sessionName).ownerClientID == clientID
+        lock.withLock { attached && !detached }
+            && ownershipStore.isAttachedOwner(sessionName: sessionName, clientID: clientID)
     }
 
     private func acceptOwnerGrid(_ grid: DisplayGrid) {
@@ -458,8 +492,9 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
         }
         let shouldFollow = lock.withLock { attached && !detached }
             && !snapshot.isOwnerless && snapshot.ownerClientID != clientID
-        if shouldFollow,
-           ownershipStore.snapshot(sessionName: sessionName).grid == snapshot.grid {
+        let follows = shouldFollow && ownershipStore.snapshot(sessionName: sessionName).grid == snapshot.grid
+        Self.trace.notice("coordinator ownershipSnapshot \(self.sessionName, privacy: .public) client=\(self.clientID.rawValue, privacy: .public) owner=\(snapshot.ownerClientID?.rawValue ?? "none", privacy: .public) grid=\(snapshot.grid.cols)x\(snapshot.grid.rows) epoch=\(snapshot.epoch) follow=\(follows)")
+        if follows {
             followDisplayGrid(snapshot)
         }
         sendText(WebControlEnvelope.ownership(localizedSnapshot(snapshot)).encoded())
@@ -483,7 +518,8 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             ownerKind: snapshot.ownerKind,
             grid: snapshot.grid,
             epoch: snapshot.epoch,
-            revision: snapshot.revision
+            revision: snapshot.revision,
+            ownerIdentity: snapshot.ownerIdentity
         )
     }
 

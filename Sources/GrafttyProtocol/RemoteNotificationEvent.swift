@@ -24,6 +24,7 @@ public struct RemoteNotificationEvent: Codable, Sendable, Hashable, Identifiable
     public let title: String
     public let body: String
     public let timestamp: Date
+    public var identityProject: SidebarProject?
 
     public init(
         id: UUID,
@@ -34,7 +35,8 @@ public struct RemoteNotificationEvent: Codable, Sendable, Hashable, Identifiable
         paneID: String?,
         title: String,
         body: String,
-        timestamp: Date
+        timestamp: Date,
+        identityProject: SidebarProject? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -45,5 +47,6 @@ public struct RemoteNotificationEvent: Codable, Sendable, Hashable, Identifiable
         self.title = title
         self.body = body
         self.timestamp = timestamp
+        self.identityProject = identityProject
     }
 }

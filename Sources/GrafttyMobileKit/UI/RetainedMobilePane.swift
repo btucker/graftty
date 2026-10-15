@@ -27,11 +27,15 @@ final class RetainedMobilePane: PanePreviewClienting {
         container?.resetStickyModifiers()
         container?.terminalView.resignFirstResponder()
         container?.committedSoftwareInput = nil
+        container?.agentCompletion = nil
         container?.hardwareKeyboardCommands = []
         container?.onUserInteraction = nil
         container?.onPasteRequested = nil
+        container?.onBackRequested = nil
+        container?.detachBrowserControls()
         container?.onPhysicalViewportReady = nil
         container?.setStickyControlActivationChangeHandler(nil)
+        container?.onTrayShiftSelectionChange = nil
         container?.configureFontSizeObservation(initialFontSize: nil, onChange: nil)
     }
 

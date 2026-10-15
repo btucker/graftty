@@ -13,11 +13,18 @@ struct Open: ParsableCommand {
     func run() throws {
         let resource = try OpenResourceTarget.resolve(target)
         let path = resource.isFileURL ? resource.path : resource.absoluteString
-        let worktree = try CLIEnv.resolveWorktree()
+        let environment = ProcessInfo.processInfo.environment
+        let worktree = try Self.worktreePath(environment: environment, resolve: CLIEnv.resolveWorktree)
         try CLIEnv.expectOk(CLIEnv.sendRequest(Self.request(
-            path: worktree, target: path, environment: ProcessInfo.processInfo.environment
+            path: worktree, target: path, environment: environment
         )))
-        print("Resource routed for review.")
+        // Enqueue acknowledgment is not browser or authentication completion.
+    }
+
+    // The host resolves registered pane membership, even after the shell changes cwd.
+    static func worktreePath(environment: [String: String], resolve: () throws -> String) rethrows -> String {
+        if let session = environment["ZMX_SESSION"], !session.isEmpty { return "" }
+        return try resolve()
     }
 
     static func request(path: String, target: String, environment: [String: String]) -> NotificationMessage {

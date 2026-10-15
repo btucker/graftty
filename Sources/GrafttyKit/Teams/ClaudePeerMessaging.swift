@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 /// Errors surfaced by the experimental Claude peer-socket transport.
@@ -339,7 +343,7 @@ public enum ClaudePeerSocketClient {
             messageID: messageID
         )
 
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         guard fd >= 0 else {
             throw ClaudePeerMessagingError.socketCreationFailed
         }
@@ -353,14 +357,7 @@ public enum ClaudePeerSocketClient {
             &timeout,
             socklen_t(MemoryLayout<timeval>.size)
         )
-        var noSigPipe: Int32 = 1
-        _ = setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_NOSIGPIPE,
-            &noSigPipe,
-            socklen_t(MemoryLayout<Int32>.size)
-        )
+        _ = GrafttyPOSIX.configureNoSigPipe(fd)
 
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
@@ -380,7 +377,7 @@ public enum ClaudePeerSocketClient {
         _ = fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK)
         let result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-                Darwin.connect(
+                GrafttyPOSIX.connect(
                     fd,
                     socketAddress,
                     socklen_t(MemoryLayout<sockaddr_un>.size)
@@ -430,7 +427,7 @@ public enum ClaudePeerSocketClient {
                 throw ClaudePeerMessagingError.writeFailed(errno: errorNumber)
             }
         }
-        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
+        _ = GrafttyPOSIX.shutdown(fd, Int32(SHUT_WR))
         return messageID
     }
 }

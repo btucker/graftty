@@ -3,6 +3,10 @@ import GrafttyProtocol
 
 public struct RemoteMac: Codable, Sendable, Hashable, Identifiable {
     public let id: RemoteDeviceID
+    public var transport: RemoteHostTransport
+    public var directEndpoint: DirectSSHEndpoint?
+    /// System OpenSSH destination, never the Graftty direct listener.
+    public var maintenanceDestination: LinuxHostDestination?
     public var label: String
     public var fingerprint: RemoteIdentityFingerprint
     public var lastKnownBaseURL: URL?
@@ -18,12 +22,18 @@ public struct RemoteMac: Codable, Sendable, Hashable, Identifiable {
         label: String,
         fingerprint: RemoteIdentityFingerprint,
         lastKnownBaseURL: URL? = nil,
+        transport: RemoteHostTransport = .webRTC,
+        directEndpoint: DirectSSHEndpoint? = nil,
+        maintenanceDestination: LinuxHostDestination? = nil,
         routes: [RemoteConnectionRoute] = [],
         lastSuccessfulRoute: RemoteConnectionRoute? = nil,
         addedAt: Date = Date(),
         lastUsedAt: Date? = nil,
         lastDiscoveredAt: Date? = nil
     ) {
+        self.transport = transport
+        self.directEndpoint = directEndpoint
+        self.maintenanceDestination = maintenanceDestination
         self.id = id
         self.label = label
         self.fingerprint = fingerprint
@@ -42,6 +52,9 @@ public struct RemoteMac: Codable, Sendable, Hashable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case transport
+        case directEndpoint
+        case maintenanceDestination
         case id
         case label
         case fingerprint
@@ -56,6 +69,9 @@ public struct RemoteMac: Codable, Sendable, Hashable, Identifiable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        transport = try container.decodeIfPresent(RemoteHostTransport.self, forKey: .transport) ?? .webRTC
+        directEndpoint = try container.decodeIfPresent(DirectSSHEndpoint.self, forKey: .directEndpoint)
+        maintenanceDestination = try container.decodeIfPresent(LinuxHostDestination.self, forKey: .maintenanceDestination)
         id = try container.decode(RemoteDeviceID.self, forKey: .id)
         label = try container.decode(String.self, forKey: .label)
         fingerprint = try container.decode(
@@ -95,4 +111,40 @@ public enum RemoteMacConnectionState: String, Codable, Sendable, Equatable {
     case connected
     case failed
     case needsPairing
+}
+
+/// @spec REMOTE-20.1
+/// When a saved remote host has no transport field, the application shall use WebRTC.
+public enum RemoteHostTransport: String, Codable, Sendable, Hashable {
+    case webRTC
+    case directSSH
+}
+
+/// @spec REMOTE-20.2
+/// When a remote host uses direct SSH, the application shall persist its explicit Graftty endpoint with default port 8801.
+public struct DirectSSHEndpoint: Codable, Sendable, Hashable {
+    public let host: String
+    public let port: Int
+
+    public enum ValidationError: Error { case invalidHost, invalidPort }
+
+    public init(host: String, port: Int = 8801) throws {
+        let host = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty, host.utf8.count <= 253,
+              !host.contains(where: { $0.isWhitespace || $0.isNewline }),
+              !host.contains("/"), !host.contains("@"), !host.contains("\\") else {
+            throw ValidationError.invalidHost
+        }
+        guard (1...65535).contains(port) else { throw ValidationError.invalidPort }
+        self.host = host
+        self.port = port
+    }
+
+    private enum CodingKeys: String, CodingKey { case host, port }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(host: container.decode(String.self, forKey: .host),
+                      port: container.decode(Int.self, forKey: .port))
+    }
 }

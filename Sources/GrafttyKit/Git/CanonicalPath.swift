@@ -40,7 +40,7 @@ public enum CanonicalPath {
     private static func realpath(_ path: String) -> String? {
         var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
         return path.withCString { cstr -> String? in
-            guard Darwin.realpath(cstr, &buf) != nil else { return nil }
+            guard GrafttyPOSIX.realpath(cstr, &buf) != nil else { return nil }
             return String(cString: buf)
         }
     }

@@ -10,6 +10,58 @@ import Testing
 @Suite("RemoteTerminalSurfaceBackend — Ghostty host-managed adapter", .serialized)
 struct RemoteTerminalSurfaceBackendTests {
     @MainActor
+    @Test("@spec REMOTE-12.19: When a Remote Mac receives an ownership snapshot acknowledging its live terminal grid, the application shall suppress matching resize requests from layout and native resize callbacks so the ownership exchange terminates.", arguments: [false, true])
+    func acknowledgedGridDoesNotEchoThroughLayout(paged: Bool) async throws {
+        let client = FakeRemoteTerminalWebSocketClient(
+            supportsWebControlTextFrames: true, supportsPagedHistory: paged
+        )
+        let backend = RemoteTerminalSurfaceBackend(client: client, pagedRendererFactory: { _, prepare in
+            RemotePagedRenderer(prepare: prepare)
+        })
+        defer { backend.close(); backend.surfaceWasFreed() }
+        let recorder = RemoteSurfaceRecorder()
+        backend.bindSurfaceSync(currentGridSize: { (120, 40) }, requestRefresh: recorder.requestRefresh)
+        // SurfaceHandle's presentation callback lays out the terminal, which
+        // calls markLayoutSettled even when the dimensions have not changed.
+        var presentations = 0
+        backend.bindAttachmentGrid { [weak backend] _ in
+            presentations += 1
+            backend?.markLayoutSettled()
+        }
+        try backend.start(surface: fakeSurface())
+        try await client.waitForControlCounts(hello: 1)
+        let hello = try #require(client.hellos().first)
+        if paged {
+            client.deliver(.text(try PagedTerminalEnvelope(event: .checkpoint(.init(
+                incarnation: 1, id: 1, cols: 120, rows: 40, ready: Data([1]),
+                hasPrimaryHistory: false, hasAlternateHistory: false))).encoded()))
+        }
+        client.deliver(.text(WebControlEnvelope.ownership(try DisplayOwnershipSnapshot(
+            sessionName: "main", ownerClientID: hello.clientID, ownerKind: .mac,
+            grid: DisplayGrid(cols: 120, rows: 40), epoch: 1, revision: 1
+        )).encoded()))
+        // Wait until ownership has been consumed, then drain the outbound
+        // queue with input. This also proves typing remains writable.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while recorder.refreshCount() == 0 || (paged && presentations < 3) {
+            guard ContinuousClock.now < deadline else { throw TestTimeout() }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        backend.markLayoutSettled()
+        RemoteTerminalSurfaceBackend.receiveResizeCallback(backend.userdataForTesting, 120, 40, 0, 0)
+        try backend.write(Data("still typing".utf8))
+        try await client.waitForSentFrames(count: 1)
+        #expect(client.ownerResizes().isEmpty)
+        #expect(client.sentFrames() == [.binary(Data("still typing".utf8))])
+
+        RemoteTerminalSurfaceBackend.receiveResizeCallback(backend.userdataForTesting, 132, 43, 0, 0)
+        try await client.waitForControlCounts(ownerResize: 1)
+        #expect(client.ownerResizes() == [
+            RecordedOwnerResize(clientID: hello.clientID, epoch: 1, cols: 132, rows: 43)
+        ])
+    }
+
+    @MainActor
     @Test("@spec TERM-12.26: When a remote Mac finishes restoring a terminal as a follower, the application shall retain the authoritative grid until display ownership changes.")
     func pagedFollowerKeepsGridAfterHistoryAndReleasesItForOwner() async throws {
         let client = FakeRemoteTerminalWebSocketClient(supportsWebControlTextFrames: true, supportsPagedHistory: true)
@@ -321,6 +373,18 @@ struct RemoteTerminalSurfaceBackendTests {
             client.ownerResizes().isEmpty,
             "an ownership snapshot already carrying the live grid must not start a resize/broadcast loop"
         )
+        let loss = AsyncStream<Void>.makeStream()
+        backend.bindOwnershipLoss { loss.continuation.yield(()) }
+        let replacementOwner = try DisplayOwnershipSnapshot(sessionName: "main",
+            ownerClientID: DisplayClientID("other-client"), ownerKind: .ios,
+            grid: DisplayGrid(cols: 80, rows: 24), epoch: 3, revision: 3)
+        client.deliver(.text(WebControlEnvelope.ownership(replacementOwner).encoded()))
+        var losses = loss.stream.makeAsyncIterator()
+        _ = await losses.next()
+        try backend.write(Data("stale completion literal".utf8), claimEngagement: false)
+        #expect(client.sentFrames() == [.binary(Data("queued".utf8))])
+        #expect(client.takeControlCount() == 1)
+        loss.continuation.finish()
     }
 
     @Test("""
@@ -727,6 +791,10 @@ private final class FakeRemoteTerminalWebSocketClient: WebSocketClient, @uncheck
 
     func ownerResizes() -> [RecordedOwnerResize] {
         lock.withLock { recordedOwnerResizes }
+    }
+
+    func takeControlCount() -> Int {
+        lock.withLock { recordedTakeControls.count }
     }
 
     func waitForControlCounts(

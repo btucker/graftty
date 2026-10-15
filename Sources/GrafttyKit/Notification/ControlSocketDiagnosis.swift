@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 /// Classifies why a `connect()` to the Graftty control socket failed.
 /// ATTN-3.4: distinguishing "socket file is missing" from "socket file
@@ -14,6 +18,7 @@ public enum ControlSocketDiagnosis {
         case staleSocket(path: String)
         case busy
         case timeout
+        case permissionDenied(path: String, errno: Int32)
         case failure(errno: Int32)
     }
 
@@ -22,6 +27,9 @@ public enum ControlSocketDiagnosis {
         socketExists: Bool,
         path: String
     ) -> Reason {
+        if errno == EPERM || errno == EACCES {
+            return .permissionDenied(path: path, errno: errno)
+        }
         if errno == ECONNREFUSED && socketExists {
             return .staleSocket(path: path)
         }

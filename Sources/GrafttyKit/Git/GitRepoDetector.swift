@@ -21,7 +21,7 @@ public enum GitRepoDetector {
 
             if FileManager.default.fileExists(atPath: gitPath.path) {
                 var isDir: ObjCBool = false
-                FileManager.default.fileExists(atPath: gitPath.path, isDirectory: &isDir)
+                _ = FileManager.default.fileExists(atPath: gitPath.path, isDirectory: &isDir)
 
                 if isDir.boolValue {
                     return .repoRoot(current.path)

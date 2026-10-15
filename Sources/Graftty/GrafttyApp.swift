@@ -160,24 +160,33 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
         UNUserNotificationCenter.current().delegate = self
     }
 
-    func post(_ notification: AgentStopNotificationContent) {
+    @MainActor private lazy var delivery = AgentNotificationDelivery()
+
+    @MainActor
+    func post(_ notification: AgentStopNotificationContent,
+              resolving: @escaping @MainActor (AgentStopNotificationContent) async -> AgentStopNotificationContent = {
+                  await ProjectNotificationIdentity.resolved($0)
+              }) {
         let center = UNUserNotificationCenter.current()
-        center.getNotificationSettings { settings in
-            let post = { center.add(Self.request(for: notification)) }
-            switch settings.authorizationStatus {
-            case .authorized, .provisional, .ephemeral:
-                post()
-            case .notDetermined:
-                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-                    if granted { post() }
+        let reservation = delivery.reserve(notification)
+        Task {
+            await delivery.post(notification, reservation: reservation, authorized: {
+                let settings = await center.notificationSettings()
+                switch settings.authorizationStatus {
+                case .authorized, .provisional, .ephemeral: return true
+                case .notDetermined:
+                    return (try? await center.requestAuthorization(options: [.alert, .sound])) == true
+                default: return false
                 }
-            default:
-                break
-            }
+            }, resolving: resolving, deliver: { request in
+                try? await center.add(request.request)
+            })
         }
     }
 
-    func post(_ event: RemoteNotificationEvent) {
+    @MainActor
+    func post(_ event: RemoteNotificationEvent,
+              resolvingIdentity: @escaping @MainActor () async -> Data? = { nil }) {
         guard let data = try? JSONEncoder().encode(event) else { return }
         post(AgentStopNotificationContent(
             title: event.title,
@@ -188,18 +197,38 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
             ],
             identifier: event.kind == .agentStop
                 ? "remote-agent-attention:\(event.originFingerprint?.display ?? event.origin.deviceID.value):\(event.worktreeID)"
-                : nil
-        ))
+                : nil,
+            identityImage: nil
+        ), resolving: { notification in
+            var resolved = notification
+            resolved.identityImage = await resolvingIdentity()
+            return resolved
+        })
     }
 
     static func request(for notification: AgentStopNotificationContent) -> UNNotificationRequest {
+        prepareRequest(for: notification).request
+    }
+
+    static func prepareRequest(for notification: AgentStopNotificationContent) -> (request: UNNotificationRequest, sourceURL: URL?) {
+        var sourceURL: URL?
         let content = UNMutableNotificationContent()
         content.title = notification.title
         content.subtitle = notification.subtitle ?? ""
         content.body = notification.body
         content.sound = .default
         content.userInfo = notification.userInfo
-        return UNNotificationRequest(identifier: notification.identifier ?? UUID().uuidString, content: content, trigger: nil)
+        if let data = notification.identityImage, data.count <= 65536 {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-project-\(UUID().uuidString).png")
+            do {
+                try data.write(to: url, options: .atomic)
+                content.attachments = [try UNNotificationAttachment(identifier: "project-icon", url: url)]
+                sourceURL = url
+            } catch {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        return (UNNotificationRequest(identifier: notification.identifier ?? UUID().uuidString, content: content, trigger: nil), sourceURL)
     }
 
     static func foregroundPresentationOptions(kind: String?) -> UNNotificationPresentationOptions {
@@ -297,10 +326,10 @@ final class AppServices {
 
     // MARK: - WebRTC (R4)
 
-    /// Mac-side WebRTC host agent. Accepts authenticated offers from paired
-    /// clients and opens SSH sessions over the resulting DataChannel.
+    /// Mac-side connection pool. Each paired device gets an independent
+    /// WebRTC agent and SSH transport.
     /// Retained here so it outlives the SwiftUI init cycle.
-    var hostAgent: WebRTCHostAgent?
+    var hostAgentPool: WebRTCHostAgentPool?
     /// Deletes only the prompt files found at startup after their grace
     /// period. Capturing that snapshot avoids pruning prompts owned by
     /// worktree operations created during this app process.
@@ -468,18 +497,31 @@ final class AppServices {
         )
     }
 
-    func startRemoteMacAccessServices(hostAgent: WebRTCHostAgent?) async throws {
+    /// Paired-device listener port. `GRAFTTY_PAIRED_ACCESS_PORT` lets a
+    /// development instance (isolated via `CFFIXED_USER_HOME` and its own
+    /// bundle identifier) listen beside a production Graftty that already
+    /// holds the default port; mobile pairing records the advertised port,
+    /// so clients follow whichever port the instance binds.
+    static let pairedAccessPort: Int = {
+        if let raw = ProcessInfo.processInfo.environment["GRAFTTY_PAIRED_ACCESS_PORT"],
+           let port = Int(raw), (1...65_535).contains(port) {
+            return port
+        }
+        return RemoteAccessProtocol.pairedAccessPort
+    }()
+
+    func startRemoteMacAccessServices(hostAgentPool: WebRTCHostAgentPool?) async throws {
         guard remoteMacAccessEnabled else {
             throw RemoteMacAccessServiceError.disabled
         }
         guard lanRemoteAccessServer == nil else { return }
-        guard let hostAgent else {
+        guard let hostAgentPool else {
             throw RemoteMacAccessServiceError.hostAgentUnavailable
         }
 
         let endpoint = RemoteAccessEndpoint(
             host: Self.localLANHostName(),
-            port: RemoteAccessProtocol.pairedAccessPort
+            port: Self.pairedAccessPort
         )
         endpoint.setRoutes(
             await Self.remoteAccessRoutes(
@@ -523,7 +565,7 @@ final class AppServices {
                 }
                 let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
                 do {
-                    let answer = try await hostAgent.acceptOffer(
+                    let answer = try await hostAgentPool.acceptOffer(
                         rtcOffer,
                         clientDeviceID: verified.offer.clientDeviceID,
                         replacingExistingConnection:
@@ -540,7 +582,7 @@ final class AppServices {
                     }
                 } catch WebRTCHostAgent.HostError.busy {
                     await signalingServer.releaseOffer(verified)
-                    return .hostBusy("host is already handling an offer")
+                    return .hostBusy("device connection is busy or host connection limit reached")
                 } catch {
                     await signalingServer.releaseOffer(verified)
                     NSLog("[Graftty] LAN WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
@@ -550,7 +592,7 @@ final class AppServices {
         )
         let server = LANRemoteAccessServer(
             config: .init(
-                port: RemoteAccessProtocol.pairedAccessPort,
+                port: Self.pairedAccessPort,
                 bindHost: "::"
             ),
             routeHandler: routeHandler
@@ -740,6 +782,7 @@ struct GrafttyApp: App {
     /// `WebRTCHostAgent` share — `PairedDevicesSection` reads it directly
     /// (list/remove) since the coordinator doesn't expose it publicly.
     private let trustedPeerStore: TrustedPeerStore
+    private let hostKey: Curve25519.Signing.PrivateKey?
     /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
     /// its live SSH connection into (REMOTE-3.1 revocation, W4). Exposed
     /// alongside `trustedPeerStore` so `PairedDevicesSection`'s "Remove"
@@ -766,7 +809,7 @@ struct GrafttyApp: App {
     /// 2s cadence for `portScanner.tick()`. A user starting `npm run
     /// dev` should see the chip appear within a couple seconds without
     /// the chip noticeably flickering on/off across rebuilds.
-    private let portsTicker = PollingTicker(interval: .seconds(2))
+    private let portsTicker = PollingTicker(interval: .seconds(2), pauseWhenInactive: { false })
 
     // SwiftUI re-fires `.onAppear` on dock-reopen and File → New Window
     // because the WindowGroup content closure reruns; `startup()` is
@@ -841,9 +884,9 @@ struct GrafttyApp: App {
         _webController = StateObject(wrappedValue: webController)
         _updaterController = StateObject(wrappedValue: UpdaterController())
 
-        // R4: Construct the Mac-side WebRTC host agent. The dedicated
+        // Load identity before startup creates the inbound host pool. The dedicated
         // paired-access listener authenticates v2 offers with the device keys
-        // before passing them to this agent, which opens SSH sessions over the
+        // before passing them to the pool, whose agents open SSH sessions over the
         // resulting DataChannel → zmx attach.
         let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
@@ -852,74 +895,10 @@ struct GrafttyApp: App {
         self.sshConnectionRegistry = sshConnectionRegistry
 
         do {
-            let remoteMacsModel = appServices.remoteMacsModel
-            appServices.hostAgent = WebRTCHostAgent(
-                hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
-                trustedPeerStore: trustedPeerStore,
-                streamFactory: {
-                    [registry = appServices.remoteAttachmentRegistry,
-                     terminalManager] sessionName in
-                    if sessionName.hasPrefix("relay-pane-") {
-                        return try await remoteMacsModel.openRelayedTerminal(
-                            alias: sessionName
-                        )
-                    }
-                    let workingDirectoryPath = await MainActor.run {
-                        terminalManager.worktreePath(
-                            forSessionName: sessionName
-                        )
-                    }
-                    let workingDirectory = workingDirectoryPath.map {
-                        URL(fileURLWithPath: $0, isDirectory: true)
-                    }
-                    let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
-                        zmxExecutable: zmxExe,
-                        zmxDir: zmxDir,
-                        sessionName: sessionName,
-                        workingDirectory: workingDirectory
-                    ))
-                    engine.attachmentRegistry = registry
-                    try engine.start()
-                    return engine
-                },
-                pagedFactory: { [registry = appServices.remoteAttachmentRegistry, terminalManager] sessionName in
-                    // Relayed panes use the intermediary's existing byte transport.
-                    guard !sessionName.hasPrefix("relay-pane-") else {
-                        throw PagedZmxAttachEngine.Error.unsupported
-                    }
-                    let path = await MainActor.run {
-                        terminalManager.worktreePath(forSessionName: sessionName)
-                    }
-                    let engine = PagedZmxAttachEngine(config: .init(
-                        zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
-                        workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) }
-                    ))
-                    engine.attachmentRegistry = registry
-                    try await engine.start()
-                    return engine
-                },
-                // R5 Task 11: init-time placeholder closures. The host
-                // agent is constructed in `init()` (before SwiftUI `@State`
-                // is accessible), then `startup()` calls
-                // `setPanesStateSubscribe(_:)` and `setPaneControlMutator(_:)`
-                // with the production wiring that actually reads from
-                // `AppState`. The actor's FIFO ordering guarantees the
-                // setter hops run before any `acceptOffer` hop, so no
-                // incoming WebRTC offer ever sees these placeholders.
-                panesStateSubscribe: { _ in
-                    PanesStateChannelHandler.Cancellable(cancel: {})
-                },
-                paneControlMutator: { _ in
-                    .error(code: "starting", message: "host not yet wired (startup did not run)")
-                },
-                displayOwnershipStore: appServices.displayOwnershipStore,
-                sshConnectionRegistry: sshConnectionRegistry
-            )
+            self.hostKey = try hostIdentityStore.loadOrGenerateAndPersist()
         } catch {
-            // Identity-store I/O failure leaves hostAgent nil; the signaling
-            // endpoint will serve 503. Log so a TestFlight crash dump or
-            // console transcript surfaces the cause.
-            NSLog("[Graftty] failed to construct WebRTCHostAgent: \(error)")
+            self.hostKey = nil
+            NSLog("[Graftty] failed to load remote host identity: \(error)")
         }
     }
 
@@ -1167,6 +1146,7 @@ struct GrafttyApp: App {
         guard Self.applyDeepLink(
             url,
             appState: $appState,
+            admitWorktree: { terminalManager.wakeWorktree($0.path) },
             prepareRunningWorktree: { worktree in
                 terminalManager.createSurfaces(
                     for: worktree.splitTree,
@@ -1182,13 +1162,15 @@ struct GrafttyApp: App {
     static func applyDeepLink(
         _ url: URL,
         appState: Binding<AppState>,
+        admitWorktree: (WorktreeEntry) -> Bool = { _ in true },
         prepareRunningWorktree: (WorktreeEntry) -> Void
     ) -> Bool {
         guard let target = GrafttyDeepLink.parse(url),
               case let .resolved(path, paneSlot) = DeepLinkResolver.resolve(
                   target,
                   inRepos: appState.wrappedValue.repos
-              ) else { return false }
+              ), let resolved = appState.wrappedValue.worktree(forPath: path),
+              admitWorktree(resolved) else { return false }
         appState.wrappedValue.selectedWorktreePath = path
         if let worktree = appState.wrappedValue.worktree(forPath: path),
            worktree.state == .running {
@@ -1249,7 +1231,7 @@ struct GrafttyApp: App {
 
         // 2s cadence for port-binding scans. Cheap (one batched lsof
         // across all registered shell PIDs per tick) and only meaningful
-        // while the app is up; pause when inactive is the default.
+        // while the app is up, including while a mobile client is using it.
         portsTicker.start { [portScanner] in
             await portScanner.tick()
         }
@@ -1293,15 +1275,15 @@ struct GrafttyApp: App {
 
         terminalManager.initialize()
         AgentNotificationRouter.shared.install()
-        AgentNotificationRouter.shared.onActivate = { [appState = $appState, tm = terminalManager] payload in
-            Self.activateAgentStopNotification(
-                payload,
-                appState: appState,
-                terminalManager: tm
-            )
+        AgentNotificationRouter.shared.onActivate = { payload in
+            NSApp.activate(ignoringOtherApps: true)
+            AgentNotificationActivation.shared.enqueue(payload)
         }
-        services.remoteMacsModel.onRemoteNotification = {
-            AgentNotificationRouter.shared.post($0)
+        services.remoteMacsModel.onRemoteNotification = { [remoteMacsModel = services.remoteMacsModel] event in
+            AgentNotificationRouter.shared.post(event, resolvingIdentity: {
+                let identity = await remoteMacsModel.notificationProjectIdentity(for: event)
+                return identity.flatMap { ProjectNotificationIdentity.image(project: $0.0, data: $0.1) }
+            })
         }
         AgentNotificationRouter.shared.onActivateRemote = {
             [remoteMacsModel = services.remoteMacsModel] event in
@@ -1563,9 +1545,39 @@ struct GrafttyApp: App {
         // SocketServer already dispatches onMessage to the main queue.
         let binding = $appState
         let tm = terminalManager
+        tm.autoSleep.start { binding.wrappedValue }
+        let sleepCoordinator = tm.autoSleep.coordinator
+        services.remoteAttachmentRegistry.wakeBeforeAttach = { session in
+            sleepCoordinator.wake(session: session)
+        }
+        services.remoteAttachmentRegistry.wakeBeforeInput = { session in
+            sleepCoordinator.wakeForInput(session: session)
+        }
         let teamInbox = services.teamInbox
         let teamEventDispatcher = services.teamEventDispatcher
         let remoteTeamRouter = services.remoteTeamRouter
+        tm.agentCompletionLoader = { currentWorktreePath, update in
+            let repos = binding.wrappedValue.repos
+            async let remote = remoteTeamRouter.members()
+            let local = await OffMainIO.run {
+                AgentCompletionCatalog.local(repos: repos,
+                    records: (try? TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).listAll()) ?? [],
+                    isReachable: TeamAgentReachability.isReachable)
+            }
+            update?(AgentCompletionCatalog.contextualized(local, worktreePath: currentWorktreePath, repos: repos))
+            return AgentCompletionCatalog.contextualized(local + AgentCompletionCatalog.remote(members: await remote),
+                worktreePath: currentWorktreePath, repos: repos)
+        }
+        webController.setAgentCompletionsProvider { worktreeID in
+            if let worktreeID, worktreeID.hasPrefix("relay-worktree-") {
+                if case .agentCompletions(let candidates) = await services.remoteMacsModel
+                    .sendRelayedWorktreeManagement(.worktreeAgentCompletions(worktreeID: worktreeID)) {
+                    return candidates
+                }
+                return []
+            }
+            return await tm.agentCompletionLoader?(worktreeID, nil) ?? []
+        }
         remoteTeamRouter.handler = { deviceID, data in
             do {
                 let request = try JSONDecoder().decode(RemoteTeamRequest.self, from: data)
@@ -1754,34 +1766,6 @@ struct GrafttyApp: App {
         let autoDismissPRStatusStore = services.prStatusStore
         let autoDismissStatsStore = services.statsStore
         services.staleWorktreeAutoDismissTicker = staleWorktreeAutoDismissTicker
-        reconcileOnLaunch {
-            staleWorktreeAutoDismissTicker.start {
-                _ = await StaleWorktreeDismissal.dismissExpired(
-                    appState: binding,
-                    now: Date(),
-                    discoverWorktrees: { repo in
-                        if !repo.isGitTracked,
-                           !FileManager.default.fileExists(atPath: repo.path) {
-                            return []
-                        }
-                        return try await WorktreeDiscovery.discover(repo: repo)
-                    },
-                    destroySurfaces: {
-                        tm.destroySurfaces(terminalIDs: $0)
-                    },
-                    clearPRStatus: {
-                        autoDismissPRStatusStore.clear(worktreePath: $0)
-                    },
-                    clearStats: {
-                        autoDismissStatsStore.clear(worktreePath: $0)
-                    },
-                    onDismiss: {
-                        Self.persistAppState($0)
-                    }
-                )
-            }
-        }
-
         // Start the stats safety-net poller: HEAD and origin-ref events
         // provide the prompt path, while this 5s ticker catches
         // coalesced or missed filesystem events. Per-repo, it gates the
@@ -1798,7 +1782,12 @@ struct GrafttyApp: App {
         )
         services.statsStore.start(
             ticker: statsTicker,
-            getRepos: { [appState] in appState.repos }
+            getRepos: { binding.wrappedValue.repos },
+            recordAutoTrackingAttempt: { path, target in
+                guard let indices = binding.wrappedValue.indices(forWorktreePath: path) else { return }
+                binding.wrappedValue.repos[indices.repo].worktrees[indices.worktree].autoTrackLastAttempt = target
+                Self.persistAppState(binding.wrappedValue)
+            }
         )
 
         // Local remote-ref scans seed PR polling's pushed-branch gate. Each
@@ -1889,7 +1878,8 @@ struct GrafttyApp: App {
             presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
             sessionStorage: CodexAppServerSessionStorage(rootDirectory: TeamPresenceStorage.defaultRoot()),
             liveness: deliveryLiveness,
-            client: CodexAppServerClient()
+            client: CodexAppServerClient(),
+            wakeBeforeDelivery: { sleepCoordinator.wake(path: $0) }
         )
         let claudeReplyBridge = ClaudePeerReplyBridge { original, recipient, reply in
             // The bridge binds a socket to the recipient that received the
@@ -1924,7 +1914,8 @@ struct GrafttyApp: App {
                     liveness: deliveryLiveness
                 )
             },
-            replyBridge: claudeReplyBridge
+            replyBridge: claudeReplyBridge,
+            wakeBeforeDelivery: { sleepCoordinator.wake(path: $0) }
         )
         presenceTicker.start {
             let records = await TeamPresenceMonitor.sweep(storage: presenceStorage)
@@ -1976,6 +1967,7 @@ struct GrafttyApp: App {
                         return
                     }
                     let recipientWorktrees = await deliveryState.claimRecipientWorktrees(in: messages)
+                    let awakeRecipients = recipientWorktrees.filter { tm.wakeWorktree($0) }
                     var deliveries: [any CodexAppServerDeliveryTrigger] = []
                     if let codexAppServerDeliveryService {
                         deliveries.append(codexAppServerDeliveryService)
@@ -1985,7 +1977,7 @@ struct GrafttyApp: App {
                     }
                     await Self.drainNativeDeliveryMessages(
                         teamID: teamID,
-                        recipientWorktrees: recipientWorktrees,
+                        recipientWorktrees: awakeRecipients,
                         inbox: services.teamInbox,
                         deliveries: deliveries
                     )
@@ -2046,18 +2038,50 @@ struct GrafttyApp: App {
         // those mappings exist, then retry unread rows from while the app was
         // down; otherwise a background owner can be skipped until the
         // 30-second presence ticker runs.
-        let restoredPresenceRecords = refreshPresenceIndex()
-        refreshDeliveryLiveness(records: restoredPresenceRecords)
-        Task {
-            await Self.retryNativeDeliveryForPresenceWorktrees(
-                inbox: services.teamInbox,
-                records: restoredPresenceRecords,
-                deliveries: Self.nativeDeliveries(
-                    codex: codexAppServerDeliveryService,
-                    claude: claudePeerDeliveryService,
-                    enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+        func refreshAndRetryRestoredDelivery() {
+            let restoredPresenceRecords = refreshPresenceIndex()
+            refreshDeliveryLiveness(records: restoredPresenceRecords)
+            Task {
+                await Self.retryNativeDeliveryForPresenceWorktrees(
+                    inbox: services.teamInbox,
+                    records: restoredPresenceRecords,
+                    deliveries: Self.nativeDeliveries(
+                        codex: codexAppServerDeliveryService,
+                        claude: claudePeerDeliveryService,
+                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+                    )
                 )
-            )
+            }
+        }
+        refreshAndRetryRestoredDelivery()
+
+        reconcileOnLaunch {
+            staleWorktreeAutoDismissTicker.start {
+                _ = await StaleWorktreeDismissal.dismissExpired(
+                    appState: binding,
+                    now: Date(),
+                    discoverWorktrees: { repo in
+                        if !repo.isGitTracked,
+                           !FileManager.default.fileExists(atPath: repo.path) {
+                            return []
+                        }
+                        return try await WorktreeDiscovery.discover(repo: repo)
+                    },
+                    destroySurfaces: {
+                        tm.destroySurfaces(terminalIDs: $0)
+                    },
+                    clearPRStatus: {
+                        autoDismissPRStatusStore.clear(worktreePath: $0)
+                    },
+                    clearStats: {
+                        autoDismissStatsStore.clear(worktreePath: $0)
+                    },
+                    onDismiss: {
+                        Self.persistAppState($0)
+                    }
+                )
+            }
+            refreshAndRetryRestoredDelivery()
         }
 
         // TERM-11.5: WebSocket `/ws` sessions report attach/detach into the
@@ -2112,6 +2136,11 @@ struct GrafttyApp: App {
         // Web/iOS attaches spawn their own `zmx attach` process. If that
         // attach wins the race to create a new zmx daemon, its cwd becomes
         // the daemon's shell cwd, so resolve the pane back to its worktree.
+        webController.setSessionSpawnProvider { [terminalManager = tm] sessionName in
+            await MainActor.run {
+                terminalManager.remoteSpawnConfiguration(forSessionName: sessionName)
+            }
+        }
         webController.setSessionWorktreeProvider { sessionName in
             await MainActor.run { () -> String? in
                 for repo in appStateBinding.wrappedValue.repos {
@@ -2137,8 +2166,10 @@ struct GrafttyApp: App {
         // `panes-state` SSH channel) MUST produce identical envelopes
         // so the iPad's sidebar renders the same regardless of transport.
         let terminalManager = tm
+        let panesPortBindings = portBindingsModel
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
+        let panesPortScanner = portScanner
         let panesClaudeRegistry = services.claudeSessionRegistry
         let localWorktreeOrigin = WorktreeOrigin(
             deviceID: AppServices.localRemoteDeviceID(),
@@ -2149,7 +2180,7 @@ struct GrafttyApp: App {
             var out: [WorktreePanes] = []
             for repo in appStateBinding.wrappedValue.repos {
                 let projectID = "\(localWorktreeOrigin.deviceID.value):\(repo.id.uuidString)"
-                let ancestry = SidebarWorktreeHierarchy.folderAncestry(in: SidebarWorktreeHierarchy.nodes(for: repo.worktrees, inRepoAtPath: repo.path, defaultBranch: nil))
+                let ancestry = SidebarHostNavigation.folderAncestry(in: repo)
                 let defaultBranch = panesRemoteBranchStore.resolvedDefaultBranch(
                     forRepoAt: repo.path,
                     hint: repo.defaultBranchHint
@@ -2159,7 +2190,7 @@ struct GrafttyApp: App {
                     inRepoAtPath: repo.path,
                     defaultBranch: defaultBranch
                 )
-                for wt in SidebarHostNavigation.canonicalWorktrees(in: repo) {
+                for wt in SidebarHostNavigation.displayedWorktrees(in: repo) {
                     let stats = wt.state.hasOnDiskWorktree
                         ? panesStatsStore.stats[wt.path]
                         : nil
@@ -2188,7 +2219,12 @@ struct GrafttyApp: App {
                             },
                         origin: localWorktreeOrigin,
                         sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
-                            folders: ancestry[wt.id]?.map(\.name) ?? [], folderIDs: ancestry[wt.id]?.map(\.id))
+                            folders: ancestry[wt.id]?.map(\.name) ?? [], repositoryPath: repo.path, folderIDs: ancestry[wt.id]?.map(\.id)),
+                        ports: wt.state == .running ? panesPortBindings.ports(for: wt.splitTree.allLeaves) : [],
+                        portBindings: wt.state == .running ? Dictionary(uniqueKeysWithValues: wt.splitTree.allLeaves.compactMap { slot in
+                            guard let session = wt.paneSessions[slot], let bindings = panesPortBindings.bindings[slot], !bindings.isEmpty else { return nil }
+                            return (ZmxLauncher.sessionName(for: session), bindings)
+                        }) : nil
                     ))
                 }
             }
@@ -2347,11 +2383,8 @@ struct GrafttyApp: App {
             }
         }
 
-        // R5 Task 11: wire production panes-state + pane-control closures into
-        // the host agent before the paired-access listener starts, so no
-        // incoming WebRTC offer can complete its data-channel handshake with
-        // the Task 9 stubs still in place — `installSSHHandler` reads the
-        // actor's stored closures synchronously when the DC opens.
+        // Prepare production channel callbacks before creating the pool and
+        // starting the paired-access listener.
         //
         // `panesStateSubscribe`: emits initial snapshot, then polls
         // `buildWorktreePanesSnapshot` on a 1Hz cadence and re-emits when
@@ -2371,7 +2404,7 @@ struct GrafttyApp: App {
         services.hostPairingCoordinator.setStartupError(
             "Paired access is still starting. Try again in a moment."
         )
-        if let hostAgent = services.hostAgent {
+        if let hostKey {
             let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { onChange in
                 // Initial snapshot fires synchronously so the first frame
                 // hits the wire before the polling loop's first sleep.
@@ -2404,7 +2437,7 @@ struct GrafttyApp: App {
                 onChange in
                 let snapshot: @MainActor () async -> PanesStateMessage = {
                     let remote = await services.remoteMacsModel.sidebarRelaySnapshot()
-                    let navigation = SidebarHostController.shared.snapshot(state: &appStateBinding.wrappedValue, owner: localWorktreeOrigin, remote: remote.projects,
+                    let navigation = SidebarHostController.shared.snapshot(state: appStateBinding, owner: localWorktreeOrigin, remote: remote.projects,
                         authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(services.remoteMacsModel.savedRemoteMacs.map(\.id)))
                     let worktrees = buildWorktreePanesSnapshot() + remote.worktrees
                     let order = Dictionary(navigation.projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
@@ -2686,11 +2719,52 @@ struct GrafttyApp: App {
                 }
 
                 switch request {
+                case .agentCompletions:
+                    return .agentCompletions(await terminalManager.agentCompletionLoader?(nil, nil) ?? [])
+                case .worktreeAgentCompletions(let worktreeID):
+                    return .agentCompletions(await terminalManager.agentCompletionLoader?(worktreeID, nil) ?? [])
                 case let .openResource(worktreeID, request):
                     do {
                         switch request {
                         case .list:
                             return .openResource(.offers(await RemoteOpenStore.shared.list(worktree: worktreeID)))
+                        case .authenticate(let url):
+                            guard let authentication = WorktreeAuthenticationURL(url: url) else {
+                                return .error(code: "invalid-authentication", message: "This link has no supported local sign-in callback.", forceAllowed: false, shortStatus: nil)
+                            }
+                            let paneIDs = await MainActor.run { () -> [PaneSlotID] in
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running else { return [] }
+                                return worktree.splitTree.allLeaves
+                            }
+                            let bindings = await panesPortScanner.refreshedBindings(for: paneIDs)
+                            let listeners = bindings.map {
+                                WorktreePort(port: $0.port, scope: $0.scope == .lan ? .lan : .loopback,
+                                             processName: $0.processName, host: $0.host)
+                            }
+                            return await MainActor.run {
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running, worktree.splitTree.allLeaves == paneIDs,
+                                      let callbackHost = authentication.resolveCallbackHost(in: listeners) else {
+                                    return .error(code: "authentication-unavailable", message: "The sign-in callback is no longer listening in this worktree. Start re-auth again.", forceAllowed: false, shortStatus: nil)
+                                }
+                                return .openResource(.authentication(url: url, callbackHost: callbackHost))
+                            }
+                        case .port(let port):
+                            let paneIDs = await MainActor.run { () -> [PaneSlotID] in
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running else { return [] }
+                                return worktree.splitTree.allLeaves
+                            }
+                            let listeners = await panesPortScanner.refreshedPorts(for: paneIDs)
+                            return await MainActor.run {
+                                guard let worktree = appStateBinding.wrappedValue.worktree(forPath: worktreeID),
+                                      worktree.state == .running, worktree.splitTree.allLeaves == paneIDs,
+                                      let url = listeners.first(where: { $0.port == port })?.url else {
+                                    return .error(code: "port-unavailable", message: "This port is no longer listening in this worktree.", forceAllowed: false, shortStatus: nil)
+                                }
+                                return .openResource(.url(url))
+                            }
                         case let .read(id, offset):
                             return .openResource(.chunk(try await RemoteOpenStore.shared.read(id: id, worktree: worktreeID, offset: offset)))
                         }
@@ -2708,10 +2782,24 @@ struct GrafttyApp: App {
                         appStateBinding.wrappedValue.sidebarNavigation = navigation
                         return .ok
                     }
+                case let .setWorktreeOrder(repositoryID, mode):
+                    return await MainActor.run {
+                        var candidate = appStateBinding.wrappedValue
+                        guard SidebarHostNavigation.setWorktreeOrder(mode, in: &candidate, repositoryID: repositoryID) else {
+                            return .error(code: "repository-unavailable", message: "The repository is no longer available for sorting.", forceAllowed: false, shortStatus: nil)
+                        }
+                        do {
+                            try candidate.save(to: AppState.defaultDirectory)
+                            appStateBinding.wrappedValue = candidate
+                            return .ok
+                        } catch {
+                            return .error(code: "persistence-failed", message: error.localizedDescription, forceAllowed: false, shortStatus: nil)
+                        }
+                    }
                 case let .moveWorktree(repositoryID, worktreeID, relativeTo, after):
                     return await MainActor.run {
                         guard SidebarHostNavigation.moveWorktree(in: &appStateBinding.wrappedValue, repositoryID: repositoryID, worktreeID: worktreeID, relativeTo: relativeTo, after: after) else {
-                            return .error(code: "invalid-move", message: "Move worktrees within their folder, after the main checkout.", forceAllowed: false, shortStatus: nil)
+                            return .error(code: "invalid-move", message: "Move worktrees within their folder, after the main checkout, while the repository uses manual order.", forceAllowed: false, shortStatus: nil)
                         }
                         return .ok
                     }
@@ -2733,7 +2821,7 @@ struct GrafttyApp: App {
                     let presentation = await MainActor.run {
                         RemoteHostPresentation(
                             ghosttyConfig:
-                                GhosttyConfigReader.resolvedConfig(),
+                                terminalManager.mobilePresentationConfig(),
                             keybindings: GhosttyKeybindingsResponse(
                                 chords: terminalManager.keybindBridge.allChords
                             )
@@ -3003,23 +3091,119 @@ struct GrafttyApp: App {
                 }
             }
 
-            // Configure SSH channel handlers before starting the dedicated
-            // paired-access listener. Browser Web Access deliberately has no
-            // native signaling route.
-            Task { @MainActor in
-                await hostAgent.setPanesStateSubscribe(panesStateSubscribe)
-                await hostAgent.setPanesStateV2Subscribe(panesStateV2Subscribe)
-                await hostAgent.setPaneControlMutator(paneControlMutator)
-                await hostAgent.setWorktreeManagementMutator(
-                    worktreeManagementMutator
+            // Explicit phone launch opts into an isolated worktree profile.
+            let chromeBroker = ChromeTabBroker(authorize: { target, peerID in
+                await MainActor.run {
+                    guard let peer = try? trustedPeerStore.get(id: RemoteDeviceID(value: peerID)),
+                          peer.capabilities.terminalControl == .allowed,
+                          peer.capabilities.worktreeManagement == .allowed,
+                          terminalManager.paneID(forSessionName: target) != nil,
+                          let path = terminalManager.worktreePath(forSessionName: target),
+                          ChromeTabBroker.ownsDisplay(clientID: services.displayOwnershipStore.snapshot(sessionName: target).ownerClientID?.rawValue, peerID: peerID) else { return nil }
+                    return path
+                }
+            }, makeBackend: { DedicatedChromeBackend(worktreePath: $0) })
+            let chromeTabMutator: ChromeTabChannelHandler.Mutator = { request, peer, viewer in
+                await chromeBroker.handle(request, peerID: peer.value, viewerID: viewer)
+            }
+            let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { viewer in
+                await chromeBroker.disconnect(viewerID: viewer)
+            }
+
+            // Every device gets a fully configured connection agent. Shared
+            // registries keep revocation and routing consistent across devices.
+            let activeRemotePeers = ActiveRemotePeerRegistry()
+            let hostAgentPool = WebRTCHostAgentPool(makeAgent: {
+                [hostKey, trustedPeerStore, sshConnectionRegistry,
+                 terminalManager = terminalManager,
+                 registry = services.remoteAttachmentRegistry,
+                 remoteMacsModel = services.remoteMacsModel,
+                 remoteTeamRouter = services.remoteTeamRouter,
+                 displayOwnershipStore = services.displayOwnershipStore,
+                 activeRemotePeers, panesStateSubscribe, panesStateV2Subscribe,
+                 paneControlMutator, worktreeManagementMutator, chromeTabMutator, chromeTabOnDisconnect,
+                 zmxExe = zmxBinary, zmxDir] in
+                let hostAgent = WebRTCHostAgent(
+                    hostKey: hostKey,
+                    trustedPeerStore: trustedPeerStore,
+                    activeRemotePeers: activeRemotePeers,
+                    streamFactory: {
+                        [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName in
+                        if sessionName.hasPrefix("relay-pane-") {
+                            return try await remoteMacsModel.openRelayedTerminal(
+                                alias: sessionName
+                            )
+                        }
+                        let (workingDirectoryPath, spawnConfiguration) = await MainActor.run {
+                            (terminalManager.worktreePath(forSessionName: sessionName),
+                             terminalManager.remoteSpawnConfiguration(forSessionName: sessionName))
+                        }
+                        let workingDirectory = workingDirectoryPath.map {
+                            URL(fileURLWithPath: $0, isDirectory: true)
+                        }
+                        let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
+                            zmxExecutable: zmxExe,
+                            zmxDir: zmxDir,
+                            sessionName: sessionName,
+                            workingDirectory: workingDirectory,
+                            spawnConfiguration: spawnConfiguration
+                        ))
+                        engine.attachmentRegistry = registry
+                        try engine.start()
+                        return engine
+                    },
+                    pagedFactory: { [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName in
+                        if sessionName.hasPrefix("relay-pane-") {
+                            return try await remoteMacsModel.openRelayedPagedTerminal(alias: sessionName)
+                        }
+                        let (path, spawnConfiguration) = await MainActor.run {
+                            (terminalManager.worktreePath(forSessionName: sessionName),
+                             terminalManager.remoteSpawnConfiguration(forSessionName: sessionName))
+                        }
+                        // Paging attaches only to existing daemons. A newly
+                        // created mobile pane must first spawn its shell.
+                        var bootstrap: ZmxAttachEngine?
+                        defer { bootstrap?.close() }
+                        let socket = zmxDir.appendingPathComponent(sessionName).path
+                        if !FileManager.default.fileExists(atPath: socket) {
+                            let session = ZmxAttachEngine(config: .init(
+                                zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
+                                workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) },
+                                spawnConfiguration: spawnConfiguration
+                            ))
+                            // Discard bootstrap output. The paged channel will
+                            // obtain its own checkpoint once the daemon exists.
+                            session.onPTYData = { _ in }
+                            bootstrap = session
+                            try session.start()
+                            let deadline = ContinuousClock.now + .seconds(5)
+                            while !FileManager.default.fileExists(atPath: socket), ContinuousClock.now < deadline {
+                                try await Task.sleep(for: .milliseconds(20))
+                            }
+                        }
+                        let engine = PagedZmxAttachEngine(config: .init(
+                            zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
+                            workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) }
+                        ))
+                        engine.attachmentRegistry = registry
+                        try await engine.start()
+                        return engine
+                    },
+                    panesStateSubscribe: panesStateSubscribe,
+                    panesStateV2Subscribe: panesStateV2Subscribe,
+                    paneControlMutator: paneControlMutator,
+                    worktreeManagementMutator: worktreeManagementMutator,
+                    chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
+                    displayOwnershipStore: displayOwnershipStore,
+                    sshConnectionRegistry: sshConnectionRegistry
                 )
                 await hostAgent.setTeamMessaging(
                     handler: { deviceID, data in
-                        await services.remoteTeamRouter.receive(from: deviceID, data: data)
+                        await remoteTeamRouter.receive(from: deviceID, data: data)
                     },
                     onConnect: { deviceID, session in
                         let label = (try? trustedPeerStore.get(id: deviceID))?.displayName ?? deviceID.value
-                        await services.remoteTeamRouter.register(
+                        await remoteTeamRouter.register(
                             deviceID: deviceID,
                             connectionID: session.id,
                             label: label,
@@ -3027,12 +3211,16 @@ struct GrafttyApp: App {
                         ) { data in try await session.send(data) }
                     },
                     onDisconnect: { deviceID, connectionID in
-                        await services.remoteTeamRouter.unregister(deviceID: deviceID, connectionID: connectionID)
+                        await remoteTeamRouter.unregister(deviceID: deviceID, connectionID: connectionID)
                     }
                 )
+                return hostAgent
+            })
+            services.hostAgentPool = hostAgentPool
+            Task { @MainActor in
                 do {
                     try await services.startRemoteMacAccessServices(
-                        hostAgent: hostAgent
+                        hostAgentPool: hostAgentPool
                     )
                     services.hostPairingCoordinator.setStartupError(nil)
                 } catch {
@@ -3049,7 +3237,7 @@ struct GrafttyApp: App {
             Task { @MainActor in
                 do {
                     try await services.startRemoteMacAccessServices(
-                        hostAgent: nil
+                        hostAgentPool: nil
                     )
                     services.hostPairingCoordinator.setStartupError(nil)
                 } catch {
@@ -3084,6 +3272,7 @@ struct GrafttyApp: App {
                 // PERSIST-2.1: save process-lifetime mutations even when the
                 // main window (and its `.onChange` observer) is closed.
                 stateBinding.wrappedValue.capturePaneTitleMetadata(tm.paneTitleMetadata)
+                tm.autoSleep.shutdown()
                 Self.persistAppState(stateBinding.wrappedValue)
                 appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
@@ -3107,7 +3296,7 @@ struct GrafttyApp: App {
         }
         return """
         Paired-device access could not start on port \
-        \(RemoteAccessProtocol.pairedAccessPort). Quit the other process using \
+        \(AppServices.pairedAccessPort). Quit the other process using \
         that port, then restart Graftty. (\(error))
         """
     }
@@ -3515,38 +3704,11 @@ struct GrafttyApp: App {
             finalDecision = firstDecision
         }
 
-        // (h) Build the new worktrees array:
-        //  - Carried-forward: mutate path (and latest branch label)
-        //    in place on the `pre` copy, preserving id / splitTree /
-        //    state / attention / paneAttention / focusedPaneSlotID /
-        //    primaryPaneSlotID / offeredDeleteForResolvedPR.
-        //  - Gone-stale: preserve the full entry, flip state to `.stale`
-        //    so the sidebar can still offer a Dismiss action.
-        //  - Fresh: discovered branches that didn't match any existing
-        //    entry are brand-new worktrees (git added while we weren't
-        //    watching). Append as `.closed`.
-        var newWorktrees: [WorktreeEntry] = []
-        for cf in finalDecision.carriedForward {
-            if var existing = pre.worktrees.first(where: { $0.id == cf.existingID }) {
-                existing.path = cf.newPath
-                existing.branch = cf.branch
-                newWorktrees.append(existing)
-            }
-        }
-        for stale in finalDecision.goneStale {
-            if var existing = pre.worktrees.first(where: { $0.id == stale.existingID }) {
-                existing.markStale()
-                newWorktrees.append(existing)
-            }
-        }
-        // Fresh (unmatched) discovered entries — carried-forward already
-        // claimed the matched ones, so any discovered worktree whose
-        // `(branch, path)` pair isn't in `carriedForward` is new.
-        let carriedPaths = Set(finalDecision.carriedForward.map(\.newPath))
-        for d in discovered where !carriedPaths.contains(d.path) {
-            newWorktrees.append(WorktreeEntry(path: d.path, branch: d.branch))
-        }
-        appState.wrappedValue.repos[repoIdx].worktrees = WorktreeOrdering.staleLast(newWorktrees)
+        // (h) Preserve saved order and state across relocated and stale entries,
+        // then append newly discovered worktrees as Tasks.
+        appState.wrappedValue.repos[repoIdx].worktrees = RepoRelocator.relocatedWorktrees(
+            repo: pre, decision: finalDecision, discovered: discovered
+        )
 
         // (i) Update selection to the relocated path (decision already
         // mapped old→new or nil'd it when the selected worktree went
@@ -3572,6 +3734,7 @@ struct GrafttyApp: App {
         let prStatusStore = services.prStatusStore
         let remoteBranchStore = services.remoteBranchStore
         let worktreeMonitor = services.worktreeMonitor
+        let terminalManager = self.terminalManager
         Task { @MainActor in
             defer { onComplete() }
             // LAYOUT-4.6 / LAYOUT-4.9: resolve bookmarks and run any
@@ -3588,16 +3751,17 @@ struct GrafttyApp: App {
                 remoteBranchStore: remoteBranchStore
             )
 
-            for repoIdx in binding.wrappedValue.repos.indices {
-                let repoPath = binding.wrappedValue.repos[repoIdx].path
+            for repoPath in binding.wrappedValue.repos.map(\.path) {
+                guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { continue }
                 let discovered: [DiscoveredWorktree]
                 do {
-                    discovered = try await WorktreeDiscovery.discover(repo: binding.wrappedValue.repos[repoIdx])
+                    discovered = try await WorktreeDiscovery.discover(repo: repo)
                 } catch {
                     NSLog("[Graftty] reconcileOnLaunch: discover failed for %@: %@",
                           repoPath, String(describing: error))
                     continue
                 }
+                guard let repoIdx = binding.wrappedValue.repos.firstIndex(where: { $0.path == repoPath }) else { continue }
 
                 let result = WorktreeReconciler.reconcile(
                     existing: binding.wrappedValue.repos[repoIdx].worktrees,
@@ -3624,7 +3788,54 @@ struct GrafttyApp: App {
                     statsStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
                 }
             }
+            if let launcher = terminalManager.zmxLauncher {
+                let liveSessions = try? await OffMainIO.run { try launcher.listSessions() }
+                let recoveredPaths = Self.recoverRetainedWorktrees(appState: binding,
+                    terminalManager: terminalManager, liveSessions: liveSessions)
+                for path in recoveredPaths {
+                    guard let (repoIndex, worktreeIndex) = binding.wrappedValue.indices(forWorktreePath: path) else { continue }
+                    let repo = binding.wrappedValue.repos[repoIndex]
+                    statsStore.refresh(worktreePath: path, repoPath: repo.path, branch: repo.worktrees[worktreeIndex].branch)
+                }
+            }
         }
+    }
+
+    @MainActor
+    @discardableResult
+    internal static func recoverRetainedWorktrees(
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        liveSessions: Set<String>?
+    ) -> [String] {
+        guard let liveSessions else { return [] }
+        var recoveredPaths: [String] = []
+        for repoIndex in appState.wrappedValue.repos.indices {
+            for worktreeIndex in appState.wrappedValue.repos[repoIndex].worktrees.indices {
+                let worktree = appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
+                let leaves = worktree.splitTree.allLeaves
+                guard worktree.state == .closed,
+                      !leaves.isEmpty,
+                      leaves.allSatisfy({ pane in
+                          worktree.paneSessions[pane].map {
+                              liveSessions.contains(ZmxLauncher.sessionName(for: $0))
+                          } == true
+                      }) else { continue }
+                appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex].state = .running
+                appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex].focusedPaneSlotID = worktree.firstPane
+                Self.prepareRunningWorktreeForRestore(
+                    &appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex],
+                    terminalManager: terminalManager
+                )
+                recoveredPaths.append(worktree.path)
+                guard appState.wrappedValue.selectedWorktreePath == worktree.path else { continue }
+                terminalManager.createSurfaces(for: worktree.splitTree,
+                    paneSessions: worktree.paneSessions, worktreePath: worktree.path,
+                    confirmedLiveSessions: liveSessions)
+                if let pane = worktree.firstPane { terminalManager.setFocus(pane) }
+            }
+        }
+        return recoveredPaths
     }
 
     @MainActor
@@ -3647,6 +3858,7 @@ struct GrafttyApp: App {
         // so surviving zmx sessions never receive another default command.
         for leafID in worktree.splitTree.allLeaves {
             terminalManager.markRehydrated(leafID)
+            terminalManager.registerForPortScan(leafID)
         }
         // If zmx reports a session missing, createSurfaces clears only that
         // leaf's rehydration marker. Retaining one primary marker lets the
@@ -3748,6 +3960,8 @@ struct GrafttyApp: App {
         terminalManager: TerminalManager
     ) {
         switch message {
+        case let .providerActivity(path, runtime, sessionID, paneSessionName, activity):
+            terminalManager.autoSleep.providerActivity(path: path, session: paneSessionName, sessionID: sessionID, activity: activity, runtime: runtime)
         case .notify(let path, let text, let clearAfter, let paneSessionName):
             // Defense-in-depth behind the CLI's ATTN-1.7 guard: reject
             // empty / whitespace-only text silently so a raw socket
@@ -3847,13 +4061,14 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .offerResource, .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend, .teamReply,
+        case .previewFiles, .previewImage, .offerResource, .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend, .teamReply,
              .teamBroadcast, .teamHook, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
-             .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability,
+             .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability, .worktreePinnedRemovalCapability,
+             .worktreePinCapability, .setWorktreePinned,
              .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree,
-             .attentionReport:
+             .attentionReport, .linuxSetupIdentity, .completeLinuxSetup:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -3881,8 +4096,49 @@ struct GrafttyApp: App {
         remoteMacsModel: RemoteMacsModel
     ) async -> ResponseMessage? {
         switch message {
+        case .offerResource(let path, _, let session), .previewImage(let path, _, let session), .previewFiles(let path, _, let session):
+            guard let worktree = OpenResourceRouting.worktree(path: path, paneSessionName: session, state: appState.wrappedValue) else {
+                return .error("The originating pane is unavailable. Run graftty open from a tracked worktree.")
+            }
+            guard terminalManager.wakeWorktree(worktree.path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
+        case .addPane(let path, _, _), .closePane(let path, _),
+             .showPane(let path, _, _), .sendPane(let path, _, _, _):
+            guard terminalManager.wakeWorktree(path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
+        default: break
+        }
+        switch message {
+        case .linuxSetupIdentity:
+            do {
+                let store = ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory)
+                let key = try store.loadOrGenerateAndPersist()
+                return .linuxSetupIdentity(LinuxHostTrustRequest(
+                    deviceID: AppServices.localRemoteDeviceID().value,
+                    displayName: AppServices.localHostDisplayName(),
+                    publicKey: key.publicKey.rawRepresentation.base64EncodedString()
+                ))
+            } catch { return .error(LinuxHostSetupError.message(for: error)) }
+        case .completeLinuxSetup(let result):
+            do {
+                // Load persisted identities before checking for conflicting pins.
+                await remoteMacsModel.loadSavedRemotes()
+                try Task.checkCancellation()
+                let controller = LinuxHostSetupConnectionController(
+                    pinnedHostStore: PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
+                )
+                let saved = try controller.save(result, model: remoteMacsModel)
+                // Socket handlers have a five-second limit. Connection progress
+                // and failures are reflected by the model after acknowledging save.
+                Task { _ = try? await remoteMacsModel.connect(to: saved) }
+                return .ok
+            } catch { return .error(LinuxHostSetupError.message(for: error)) }
+        case let .previewFiles(path, targets, paneSessionName):
+            return await FilePreviewRequest.handle(path: path, targets: targets, paneSessionName: paneSessionName,
+                                                   state: { appState.wrappedValue }, terminalManager: terminalManager)
+        case let .previewImage(path, target, paneSessionName):
+            return await ImagePreviewRequest.handle(path: path, target: target, paneSessionName: paneSessionName,
+                                                    state: { appState.wrappedValue }, terminalManager: terminalManager)
         case let .offerResource(path, target, paneSessionName):
-            guard let worktree = appState.wrappedValue.worktree(forPath: path) else {
+            guard let worktree = OpenResourceRouting.worktree(path: path, paneSessionName: paneSessionName, state: appState.wrappedValue) else {
                 return .error("Run graftty open from a tracked worktree.")
             }
             do {
@@ -3903,7 +4159,8 @@ struct GrafttyApp: App {
                         terminalManager.displayOwnershipStore?.snapshot(sessionName: $0).ownerClientID
                     }
                     _ = try await RemoteOpenStore.shared.offer(
-                        file: url, worktree: path, browserOwnerClientID: ownerClientID
+                        file: url, worktree: worktree.path, browserOwnerClientID: ownerClientID,
+                        paneSessionName: paneSessionName
                     )
                 case .mac:
                     guard NSWorkspace.shared.open(url) else {
@@ -4004,8 +4261,10 @@ struct GrafttyApp: App {
             let sessionID,
             let paneSessionName,
             let attentionReason,
-            let stopHookActive
+            let stopHookActive,
+            let providerSleepActivity
         ):
+            terminalManager.autoSleep.providerActivity(path: callerPath, session: paneSessionName, sessionID: sessionID, activity: providerSleepActivity ?? .unknown, runtime: runtime)
             return await handleTeamHook(
                 callerPath: callerPath,
                 callerAgentID: callerAgentID,
@@ -4068,8 +4327,14 @@ struct GrafttyApp: App {
             return .ok
         case .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability:
             return .ok
-        case .worktreeRemoveCapability:
+        case .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability:
             return .ok
+        case .setWorktreePinned(let path, let isPinned):
+            let response = WorktreePinRequestHandler.handle(
+                worktreePath: path, isPinned: isPinned, state: &appState.wrappedValue
+            )
+            if response == .ok { Self.persistAppState(appState.wrappedValue) }
+            return response
         case .createWorktree(
             let callerPath,
             let worktreeName,
@@ -4104,10 +4369,11 @@ struct GrafttyApp: App {
                 return .error("unknown or expired worktree creation operation")
             }
             return .worktreeCreate(status)
-        case .removeWorktree(let worktreePath, let force):
+        case .removeWorktree(let worktreePath, let force, let pinned):
             return beginCLIWorktreeRemoval(
                 worktreePath: worktreePath,
                 force: force,
+                pinned: pinned,
                 appState: appState,
                 terminalManager: terminalManager,
                 statsStore: statsStore,
@@ -4120,7 +4386,7 @@ struct GrafttyApp: App {
                 return .error("unknown or expired worktree removal operation")
             }
             return .worktreeRemove(status)
-        case .notify, .clear:
+        case .notify, .clear, .providerActivity:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
         }
@@ -4130,6 +4396,7 @@ struct GrafttyApp: App {
     private static func beginCLIWorktreeRemoval(
         worktreePath: String,
         force: Bool,
+        pinned: Bool,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         statsStore: WorktreeStatsStore,
@@ -4137,64 +4404,25 @@ struct GrafttyApp: App {
         teamEventDispatcher: TeamEventDispatcher,
         worktreeRemovals: CLIWorktreeRemovalStore
     ) -> ResponseMessage {
-        guard let (repoIndex, worktreeIndex) = appState.wrappedValue
-            .indices(forWorktreePath: worktreePath) else {
-            return .error("unknown worktree")
-        }
-        let repo = appState.wrappedValue.repos[repoIndex]
-        let worktree = repo.worktrees[worktreeIndex]
-        guard worktree.path != repo.path else {
-            return .error("cannot remove the main checkout")
-        }
-        guard worktree.state != .deleting else {
-            return .error("worktree removal is already in progress")
-        }
-        guard !worktreeRemovals.hasPendingRemoval(worktreePath: worktreePath) else {
-            return .error("worktree removal is already in progress")
-        }
-
-        let status = worktreeRemovals.begin(worktreePath: worktreePath)
-        Task { @MainActor in
-            let result = await DeleteWorktreeFlow.delete(
-                worktreePath: worktreePath,
-                force: force,
-                appState: appState,
-                terminalManager: terminalManager,
-                statsStore: statsStore,
-                prStatusStore: prStatusStore,
-                teamEventDispatcher: teamEventDispatcher
-            )
-            switch result {
-            case .success:
-                worktreeRemovals.markRemoved(operationID: status.operationID)
-            case .failure(.gitFailedForceable(let stderr, let shortStatus)):
-                worktreeRemovals.markFailed(
-                    operationID: status.operationID,
-                    error: stderr,
-                    forceAllowed: true,
-                    shortStatus: shortStatus.isEmpty ? nil : shortStatus
-                )
-            case .failure(.gitFailedFinal(let message)):
-                worktreeRemovals.markFailed(
-                    operationID: status.operationID,
-                    error: message,
-                    forceAllowed: false
-                )
-            case .failure(.notFound):
-                worktreeRemovals.markFailed(
-                    operationID: status.operationID,
-                    error: "unknown worktree",
-                    forceAllowed: false
-                )
-            case .failure(.mainCheckoutRejected):
-                worktreeRemovals.markFailed(
-                    operationID: status.operationID,
-                    error: "cannot remove the main checkout",
-                    forceAllowed: false
+        CLIWorktreeRemovalRequestHandler.begin(
+            worktreePath: worktreePath,
+            force: force,
+            pinned: pinned,
+            appState: appState,
+            worktreeRemovals: worktreeRemovals,
+            wakeWorktree: { terminalManager.wakeWorktree($0) },
+            deleteWorktree: { path, force in
+                await DeleteWorktreeFlow.delete(
+                    worktreePath: path,
+                    force: force,
+                    appState: appState,
+                    terminalManager: terminalManager,
+                    statsStore: statsStore,
+                    prStatusStore: prStatusStore,
+                    teamEventDispatcher: teamEventDispatcher
                 )
             }
-        }
-        return .worktreeRemove(status)
+        )
     }
 
     @MainActor
@@ -4701,7 +4929,7 @@ struct GrafttyApp: App {
         stoppedAt: Date,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        postNotification: (AgentStopNotificationContent) -> Void = { AgentNotificationRouter.shared.post($0) }
+        postNotification: (@MainActor (AgentStopNotificationContent) -> Void)? = nil
     ) {
         let paneSlot = paneSessionName
             .flatMap { appState.wrappedValue.worktree(forPath: callerPath)?.paneSlot(forSessionName: $0) }
@@ -4734,9 +4962,19 @@ struct GrafttyApp: App {
                 if let notification = AgentStopNotification.stoppedTurnContent(
                     runtime: runtime, worktreeName: WorktreeNameSanitizer.sanitize(worktree.branch),
                     worktreePath: callerPath, sessionID: sessionID ?? callerAgentID ?? "",
-                    paneSessionName: paneSessionName, stop: stop, emoji: worktree.emoji
+                    paneSessionName: paneSessionName, stop: stop,
+                    emoji: worktree.effectiveEmoji(in: appState.wrappedValue.repos[ri])
                 ) {
-                    postNotification(notification)
+                    var notification = notification
+                    ProjectNotificationIdentity.apply(to: &notification, worktree: worktree, repo: appState.wrappedValue.repos[ri])
+                    if let postNotification { postNotification(notification) }
+                    else {
+                        AgentNotificationRouter.shared.post(notification, resolving: { notification in
+                            await ProjectNotificationIdentity.resolved(notification, currentRepo: {
+                                appState.wrappedValue.repo(forWorktreePath: callerPath)
+                            })
+                        })
+                    }
                 }
                 break
             }
@@ -4786,8 +5024,7 @@ struct GrafttyApp: App {
                     .setAgentStopAttentionIfAbsent(attention, pane: pane) else {
                     return
                 }
-                AgentNotificationRouter.shared.post(
-                    AgentStopNotification.content(
+                var notification = AgentStopNotification.content(
                         runtime: runtime,
                         worktreeName: worktreeName,
                         worktreePath: callerPath,
@@ -4796,7 +5033,12 @@ struct GrafttyApp: App {
                         reason: reason,
                         timestamp: timestamp
                     )
-                )
+                ProjectNotificationIdentity.apply(to: &notification, worktree: worktree, repo: appState.wrappedValue.repos[repoIndex])
+                AgentNotificationRouter.shared.post(notification, resolving: { notification in
+                    await ProjectNotificationIdentity.resolved(notification, currentRepo: {
+                        appState.wrappedValue.repo(forWorktreePath: callerPath)
+                    })
+                })
                 return
             }
         }
@@ -4821,24 +5063,6 @@ struct GrafttyApp: App {
             providerSessionKey: providerSessionKey,
             progressedAt: progressedAt
         )
-    }
-
-    @MainActor
-    private static func activateAgentStopNotification(
-        _ payload: AgentStopNotificationPayload,
-        appState: Binding<AppState>,
-        terminalManager: TerminalManager
-    ) {
-        NSApp.activate(ignoringOtherApps: true)
-        AgentStopNotification.acknowledgeSelection(
-            appState: &appState.wrappedValue,
-            worktreePath: payload.worktreePath
-        )
-        if let worktree = appState.wrappedValue.worktree(forPath: payload.worktreePath),
-           let terminalID = agentStopFocusTarget(
-               worktree: worktree, paneSessionName: payload.paneSessionName) {
-            terminalManager.setFocus(terminalID)
-        }
     }
 
     /// AGENT-3.3: the pane to focus when an agent-stop notification is
@@ -5166,6 +5390,9 @@ struct GrafttyApp: App {
             return .error("pane has no surface and zmx is unavailable")
         }
         let sessionName = ZmxLauncher.sessionName(for: sessionID)
+        guard terminalManager.autoSleep.coordinator.wakeForInput(session: sessionName) else {
+            return .error("pane could not be resumed")
+        }
         let writer = ZmxPaneInputSubprocessWriter(launcher: launcher)
         return await Task.detached(priority: .utility) {
             handleSendPaneWithoutSurface_forTesting(
@@ -5263,6 +5490,13 @@ struct GrafttyApp: App {
                     .worktrees[wtIdx].splitTree
                 let leaves = splitTree.allLeaves
                 for leafID in leaves {
+                    // Stop clears mappings. A retained mapping belongs to a
+                    // previous launch and must not replay its default command.
+                    // createSurfaces clears this marker if zmx confirms it gone.
+                    if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                        .paneSessions[leafID] != nil {
+                        terminalManager.markRehydrated(leafID)
+                    }
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                         .ensurePaneSession(for: leafID)
                 }
@@ -5452,6 +5686,10 @@ struct GrafttyApp: App {
         guard let (targetRepoIdx, targetWorktreeIdx) =
                 appState.wrappedValue.worktreeIndicesMatching(path: newPWD),
               (targetRepoIdx, targetWorktreeIdx) != (currentRepoIdx, currentWorktreeIdx)
+        else { return }
+
+        guard terminalManager.wakeWorktree(appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].path),
+              terminalManager.wakeWorktree(appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].path)
         else { return }
 
         // Remember where this pane was sitting in the source tree *before*
@@ -6201,14 +6439,14 @@ struct GrafttyApp: App {
     fileprivate
     var targetsRelayedResource: Bool {
         switch self {
-        case .hostPresentation, .listRepositories, .moveProject,
+        case .agentCompletions, .hostPresentation, .listRepositories, .moveProject,
              .listRemoteMacConnections, .connectRemoteMac:
             return false
         case .create(let repositoryID, _, _, _),
              .pullDefaultBranch(let repositoryID), .projectIcon(let repositoryID, _),
-             .moveWorktree(let repositoryID, _, _, _):
+             .moveWorktree(let repositoryID, _, _, _), .setWorktreeOrder(let repositoryID, _):
             return repositoryID.hasPrefix("relay-repository-")
-        case .openResource(let worktreeID, _), .open(let worktreeID),
+        case .worktreeAgentCompletions(let worktreeID), .openResource(let worktreeID, _), .open(let worktreeID),
              .delete(let worktreeID, _),
              .acknowledge(let worktreeID, _), .acknowledgeOccurrence(let worktreeID, _, _):
             return worktreeID.hasPrefix("relay-worktree-")
@@ -6422,6 +6660,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repo = binding.wrappedValue.repos.first(where: {
                 $0.path == repoPath && $0.isGitTracked
             }) else { return }
+            store.refreshAutoTracking(repoPath: repoPath)
             // Graftty's own periodic fetch also moves origin refs. Limit
             // this repo-wide signal to running rows so it doesn't turn
             // into recurring work proportional to closed history.
@@ -6482,6 +6721,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repoIdx = binding.wrappedValue.repos.firstIndex(where: { $0.path == repoPath }),
                   let wtIdx = binding.wrappedValue.repos[repoIdx].worktrees.firstIndex(where: { $0.path == worktreePath }) else { return }
             binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
+            store.refreshAutoTracking(repoPath: repoPath)
             if binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state.hasOnDiskWorktree {
                 store.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
             }

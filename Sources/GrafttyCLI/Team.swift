@@ -1,5 +1,9 @@
 import ArgumentParser
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 import GrafttyKit
 
@@ -256,6 +260,18 @@ struct TeamHook: ParsableCommand {
                 paneSessionName: paneSessionName
             )
         }
+        let providerSleepActivity: ProviderSleepActivity = runtime == .claude
+            ? .claudeHook(payload: stdinPayload, event: event.camelCaseKey)
+            : .unknown
+        // Send before Attention's Stop handoff, which can return without a team hook.
+        // This one-way message only supplies provider evidence; it does not change liveness.
+        try? SocketClient.send(.providerActivity(
+            callerWorktree: worktreePath,
+            runtime: runtime,
+            sessionID: resolvedSessionID,
+            paneSessionName: paneSessionName,
+            activity: providerSleepActivity
+        ))
         if event == .stop,
            let action = try? AttentionFileHandoff().stop(
                 worktree: worktreePath,
@@ -280,7 +296,8 @@ struct TeamHook: ParsableCommand {
                     sessionID: resolvedSessionID,
                     paneSessionName: paneSessionName,
                     attentionReason: attentionReason,
-                    stopHookActive: stopHookActive
+                    stopHookActive: stopHookActive,
+                    providerSleepActivity: providerSleepActivity
                 )
             )
             switch response {
@@ -291,7 +308,7 @@ struct TeamHook: ParsableCommand {
                     stageAttentionProgress()
                 }
                 print(Self.unrenderedHookOutput(runtime: runtime, event: event))
-            case .ok, .paneList, .paneShow, .teamList, .teamInbox,
+            case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamInbox,
                 .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
                 print(Self.unrenderedHookOutput(runtime: runtime, event: event))
             }
@@ -582,7 +599,7 @@ struct TeamInbox: ParsableCommand {
             case .serverBusy:
                 writeError(ResponseMessage.serverBusyMessage)
                 throw ExitCode(1)
-            case .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
+            case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
                  .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
                 writeError("Unexpected response for team inbox")
                 throw ExitCode(1)
@@ -641,7 +658,7 @@ struct TeamInbox: ParsableCommand {
             writeError(Self.advanceFailureGuidance)
             writeError(ResponseMessage.serverBusyMessage)
             throw ExitCode(1)
-        case .paneList, .paneShow, .teamList, .teamHookOutput,
+        case .linuxSetupIdentity, .paneList, .paneShow, .teamList, .teamHookOutput,
              .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
             writeError(Self.advanceFailureGuidance)
             writeError("Unexpected response while advancing team inbox")
@@ -1153,7 +1170,7 @@ struct InternalGroup: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "internal",
         abstract: "Internal subcommands invoked by graftty itself; not meant for direct use.",
-        subcommands: [SyncCodexHome.self, ClaudePeerSend.self]
+        subcommands: [SyncCodexHome.self, ClaudePeerSend.self, SleepGuard.self]
     )
 }
 
@@ -1392,7 +1409,7 @@ private enum TeamOutput {
         case .serverBusy:
             CLIEnv.printError(ResponseMessage.serverBusyMessage)
             throw ExitCode(1)
-        case .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox,
+        case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox,
              .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
             CLIEnv.printError("Unexpected response for team members")
             throw ExitCode(1)

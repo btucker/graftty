@@ -87,6 +87,9 @@ public final class WorktreeStatsStore {
     private var getRepos: @MainActor () -> [RepoEntry] = { [] }
 
     @ObservationIgnored
+    private var recordAutoTrackingAttempt: @MainActor (String, GitAutoTracking.Target) -> Void = { _, _ in }
+
+    @ObservationIgnored
     private var pollCursor = RoundRobinBatchCursor()
 
     /// Network fetches use a separate cursor so a due tick cannot enqueue the
@@ -120,6 +123,15 @@ public final class WorktreeStatsStore {
     @ObservationIgnored
     private let compute: ComputeFunction
 
+    @ObservationIgnored
+    private let computeLocalDefault: LocalComputeFunction
+
+    @ObservationIgnored
+    public let autoTracking: GitAutoTracking
+
+    @ObservationIgnored
+    private var autoTrackingCursor = RoundRobinBatchCursor()
+
     /// Bounds the number of five-subprocess divergence pipelines that can be
     /// active at once. Together with `pollBatchSize`, a large workspace no
     /// longer turns a safety-net tick or event burst into an unbounded group
@@ -139,13 +151,19 @@ public final class WorktreeStatsStore {
         _ cachedDefault: String?
     ) async -> ComputeResult
 
+    public typealias LocalComputeFunction = @Sendable (
+        _ worktreePath: String, _ repoPath: String, _ branch: String,
+        _ cachedDefault: String?, _ defaultBranchHint: String?
+    ) async -> ComputeResult
+
     /// Result of a background compute attempt. `defaultBranch` is cached
     /// on main regardless of whether stats landed; `stats` carries its
     /// own `upstreamRefs` so the UI tooltip shows the actual ref
     /// measured against (`WorktreeStats.upstreamRefs.displayLabel`).
     /// `stats == nil` with `defaultBranch != nil` is a transient compute
     /// failure (`DIVERGE-4.9`); `defaultBranch == nil` means the repo
-    /// has no resolvable default and the gutter should render nothing.
+    /// has no authoritative resolved default. Local-only hint stats may
+    /// still be returned, without caching that hint as the origin default.
     public struct ComputeResult: Sendable {
         public let defaultBranch: String?
         public let stats: WorktreeStats?
@@ -172,11 +190,15 @@ public final class WorktreeStatsStore {
     public init(
         compute: @escaping ComputeFunction = WorktreeStatsStore.defaultCompute,
         fetch: @escaping FetchFunction = WorktreeStatsStore.defaultFetch,
-        backgroundProcessLimiter: BackgroundProcessLimiter = BackgroundProcessLimiter(capacity: 4)
+        backgroundProcessLimiter: BackgroundProcessLimiter = BackgroundProcessLimiter(capacity: 4),
+        autoTracking: GitAutoTracking? = nil,
+        computeLocalDefault: @escaping LocalComputeFunction = WorktreeStatsStore.defaultLocalCompute
     ) {
         self.compute = compute
         self.fetch = fetch
         self.backgroundProcessLimiter = backgroundProcessLimiter
+        self.autoTracking = autoTracking ?? GitAutoTracking(backgroundProcessLimiter: backgroundProcessLimiter)
+        self.computeLocalDefault = computeLocalDefault
     }
 
     func generationForTesting(_ worktreePath: String) -> Int {
@@ -280,9 +302,21 @@ public final class WorktreeStatsStore {
         pendingRefresh.removeValue(forKey: worktreePath)
         inFlight[worktreePath] = now
         generation[worktreePath, default: 0] += 1
-        let cached = defaultBranchByRepo[repoPath] ?? nil
         let fetchGeneration = generation[worktreePath, default: 0]
-        let compute = self.compute
+        let repo = getRepos().first(where: { $0.path == repoPath })
+        let worktree = repo?.worktrees.first(where: { $0.path == worktreePath })
+        let tracksLocalDefault = worktreePath != repoPath && worktree?.isPinned == true && worktree?.autoTrackEnabled == true
+        let cached = defaultBranchByRepo[repoPath] ?? nil
+        let localCompute = self.computeLocalDefault
+        let hint = repo?.defaultBranchHint
+        let compute: ComputeFunction
+        if tracksLocalDefault {
+            compute = { path, repoPath, branch, cached in
+                await localCompute(path, repoPath, branch, cached, hint)
+            }
+        } else {
+            compute = self.compute
+        }
         let backgroundProcessLimiter = self.backgroundProcessLimiter
 
         Task {
@@ -342,10 +376,12 @@ public final class WorktreeStatsStore {
     /// stub PollingTickerLike + stubbed GitRunner executor.
     public func start(
         ticker: PollingTickerLike,
-        getRepos: @escaping @MainActor () -> [RepoEntry]
+        getRepos: @escaping @MainActor () -> [RepoEntry],
+        recordAutoTrackingAttempt: @escaping @MainActor (String, GitAutoTracking.Target) -> Void = { _, _ in }
     ) {
         stop()
         self.getRepos = getRepos
+        self.recordAutoTrackingAttempt = recordAutoTrackingAttempt
         self.ticker = ticker
         let repos = getRepos
         ticker.start { [weak self] in
@@ -356,6 +392,25 @@ public final class WorktreeStatsStore {
     public func stop() {
         ticker?.stop()
         ticker = nil
+    }
+
+    /// Event-driven checks share the same coordinator as the polling fallback.
+    public func refreshAutoTracking(repoPath: String) {
+        guard let repo = getRepos().first(where: { $0.path == repoPath }),
+              repo.isGitTracked,
+              repo.worktrees.contains(where: { $0.autoTrackEnabled && GitAutoTracking.menuTitle(worktree: $0, repo: repo) != nil }) else { return }
+        Task {
+            await autoTracking.refresh(repoPath: repoPath, getRepo: {
+                self.getRepos().first(where: { $0.path == repoPath })
+            }, recordAttempt: recordAutoTrackingAttempt, onAttempt: { path in
+                guard let current = self.getRepos().first(where: { $0.path == repoPath }) else { return }
+                // A moved default branch affects every linked agent's stats.
+                for worktree in current.worktrees where worktree.state.hasOnDiskWorktree
+                    && (worktree.path == path || (path == repoPath && (worktree.state == .running || worktree.autoTrackEnabled))) {
+                    self.refresh(worktreePath: worktree.path, repoPath: repoPath, branch: worktree.branch)
+                }
+            })
+        }
     }
 
     /// Display label for the upstream refs the most recent successful
@@ -411,43 +466,57 @@ public final class WorktreeStatsStore {
     /// via `GitRunner`. `nonisolated` so `init`'s default-parameter
     /// evaluation can reference it.
     public nonisolated static let defaultCompute: ComputeFunction = makeDefaultCompute()
+    public nonisolated static let defaultLocalCompute: LocalComputeFunction = { path, repo, branch, cached, hint in
+        await makeDefaultCompute(useLocalDefault: true, fallbackDefaultBranch: hint)(path, repo, branch, cached)
+    }
 
     /// Builds the production compute pipeline around one absolute deadline.
     /// The executor seam keeps timeout-propagation tests independent of
     /// `GitRunner`'s legacy process-global test override.
     nonisolated static func makeDefaultCompute(
         executor: CLIExecutor? = nil,
-        timeout: Duration = localCommandTimeout()
+        timeout: Duration = localCommandTimeout(),
+        useLocalDefault: Bool = false,
+        fallbackDefaultBranch: String? = nil
     ) -> ComputeFunction {
         { worktreePath, repoPath, branch, cachedDefault in
             let deadline = GitCommandDeadline(timeout: timeout)
+            let resolvedName: String?
             let name: String?
             if let cached = cachedDefault {
+                resolvedName = cached
                 name = cached
             } else {
-                name = await GitOriginDefaultBranch.resolve(
+                resolvedName = await GitOriginDefaultBranch.resolve(
                     repoPath: repoPath,
                     deadline: deadline,
                     using: executor
                 )
+                name = resolvedName ?? fallbackDefaultBranch
             }
             guard let name else {
                 return ComputeResult(defaultBranch: nil, stats: nil)
             }
-            let refs = await GitWorktreeStats.resolveUpstreamRefs(
+            let remoteRefs = await GitWorktreeStats.resolveUpstreamRefs(
                 worktreePath: worktreePath,
                 branch: branch,
                 defaultBranch: name,
                 deadline: deadline,
-                using: executor
+                using: executor,
+                includeDefaultBranchRemote: useLocalDefault
             )
+            let refs = useLocalDefault
+                ? UpstreamRefs(defaultRef: "refs/heads/\(name)", branchRef: remoteRefs.branchRef)
+                : remoteRefs
             let stats = try? await GitWorktreeStats.compute(
                 worktreePath: worktreePath,
                 upstreamRefs: refs,
                 deadline: deadline,
                 using: executor
             )
-            return ComputeResult(defaultBranch: name, stats: stats)
+            // A display hint may support local-only stats, but must not
+            // become an authoritative cache entry for later origin scans.
+            return ComputeResult(defaultBranch: resolvedName, stats: stats)
         }
     }
 
@@ -518,7 +587,26 @@ public final class WorktreeStatsStore {
         var fetchCandidates: [RepoEntry] = []
         var statsCandidates: [PollCandidate] = []
 
+        let trackingRepos = repos.filter { repo in
+            repo.isGitTracked && repo.worktrees.contains {
+                $0.autoTrackEnabled && GitAutoTracking.menuTitle(worktree: $0, repo: repo) != nil
+            }
+        }
+        for repo in autoTrackingCursor.nextBatch(from: trackingRepos, maximumCount: Self.pollBatchSize, path: \.path) {
+            refreshAutoTracking(repoPath: repo.path)
+        }
+
         for repo in repos where repo.isGitTracked {
+            // Pin changes can arrive through the menu, CLI, or a drop. A
+            // closed row that was unpinned is no longer polled, so discard
+            // cached stats from its former local-default comparison here.
+            for worktree in repo.worktrees where worktree.state.hasOnDiskWorktree {
+                guard let refs = stats[worktree.path]?.upstreamRefs else { continue }
+                let shouldUseLocal = worktree.path != repo.path && worktree.isPinned && worktree.autoTrackEnabled
+                if refs.defaultRef.hasPrefix("refs/heads/") != shouldUseLocal {
+                    clear(worktreePath: worktree.path)
+                }
+            }
             switch repoFetchDisposition(repo: repo, now: now) {
             case .inFlight:
                 // The live fetch will recompute this repo's worktrees.
@@ -572,7 +660,7 @@ public final class WorktreeStatsStore {
         for repo: RepoEntry,
         to candidates: inout [PollCandidate]
     ) {
-        for worktree in repo.worktrees where shouldPollStats(for: worktree) {
+        for worktree in repo.worktrees where shouldPollStats(for: worktree, in: repo) {
             candidates.append(PollCandidate(
                 worktreePath: worktree.path,
                 repoPath: repo.path,
@@ -610,7 +698,7 @@ public final class WorktreeStatsStore {
         // permanently latches the repo — every subsequent poll then classifies
         // it as active and Gate B never re-fires for a worktree the user later
         // opens.
-        guard repo.worktrees.contains(where: shouldPollStats) else {
+        guard repo.worktrees.contains(where: { shouldPollStats(for: $0, in: repo) }) else {
             return .notDue
         }
         return .due
@@ -621,7 +709,7 @@ public final class WorktreeStatsStore {
         let dispatchedAt = now
         let repoPath = repo.path
         let worktrees = repo.worktrees
-            .filter(shouldPollStats)
+            .filter { shouldPollStats(for: $0, in: repo) }
             .map { (path: $0.path, branch: $0.branch) }
         let backgroundProcessLimiter = self.backgroundProcessLimiter
 
@@ -655,8 +743,8 @@ public final class WorktreeStatsStore {
         return startedAt
     }
 
-    private func shouldPollStats(for worktree: WorktreeEntry) -> Bool {
-        worktree.state == .running
+    private func shouldPollStats(for worktree: WorktreeEntry, in repo: RepoEntry) -> Bool {
+        worktree.state == .running || (worktree.autoTrackEnabled && GitAutoTracking.menuTitle(worktree: worktree, repo: repo) != nil)
     }
 
     func performRepoFetch(
@@ -704,6 +792,8 @@ public final class WorktreeStatsStore {
             self.repoFailureStreak[repoPath, default: 0] += 1
             return
         }
+
+        refreshAutoTracking(repoPath: repoPath)
 
         // Recompute stats for each active worktree on this repo after fetch succeeds.
         for wt in worktrees {

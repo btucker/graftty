@@ -1,5 +1,13 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 import GrafttyProtocol
 
@@ -47,7 +55,11 @@ public enum AttentionFileHandoffError: Error {
 /// sandboxed agent. Team and worktree commands keep using the control socket.
 public struct AttentionFileHandoff: Sendable {
     public static var defaultRootDirectory: URL {
+        #if os(Linux)
+        URL(fileURLWithPath: "/tmp/graftty-attention-\(geteuid())", isDirectory: true)
+        #else
         URL(fileURLWithPath: "/private/tmp/graftty-attention-\(geteuid())", isDirectory: true)
+        #endif
     }
 
     public let rootDirectory: URL
@@ -182,13 +194,17 @@ public struct AttentionFileHandoff: Sendable {
     }
 
     @discardableResult
-    public func consumeActivities(_ handle: (AttentionFileActivityEvent) -> Void) throws -> Int {
-        try consumeFiles(includeProgress: true, handle)
+    public func consumeActivities(
+        acceptingWorktree: (String) -> Bool = { _ in true },
+        _ handle: (AttentionFileActivityEvent) throws -> Void
+    ) throws -> Int {
+        try consumeFiles(includeProgress: true, acceptingWorktree: acceptingWorktree, handle)
     }
 
     private func consumeFiles(
         includeProgress: Bool,
-        _ handle: (AttentionFileActivityEvent) -> Void
+        acceptingWorktree: (String) -> Bool = { _ in true },
+        _ handle: (AttentionFileActivityEvent) throws -> Void
     ) throws -> Int {
         try ensureDirectory()
         let files = try FileManager.default.contentsOfDirectory(
@@ -219,6 +235,12 @@ public struct AttentionFileHandoff: Sendable {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }
+            let worktree: String
+            switch event {
+            case .stop(let value): worktree = value.worktree
+            case .progress(let value): worktree = value.worktree
+            }
+            guard acceptingWorktree(worktree) else { continue }
             events.append((file, event))
         }
         events.sort { $0.1.occurredAt < $1.1.occurredAt }
@@ -233,7 +255,7 @@ public struct AttentionFileHandoff: Sendable {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }
-            handle(event)
+            try handle(event)
             try FileManager.default.removeItem(at: file)
             count += 1
         }
@@ -288,7 +310,9 @@ public struct AttentionFileHandoff: Sendable {
 public final class AttentionFileHandoffObserver: @unchecked Sendable {
     private let handoff: AttentionFileHandoff
     private let queue = DispatchQueue(label: "com.graftty.attention-file-handoff", qos: .utility)
+    #if !os(Linux)
     private var source: DispatchSourceFileSystemObject?
+    #endif
     private var timer: DispatchSourceTimer?
 
     public init(handoff: AttentionFileHandoff = AttentionFileHandoff()) {
@@ -299,6 +323,7 @@ public final class AttentionFileHandoffObserver: @unchecked Sendable {
         try handoff.ensureDirectory()
         queue.sync {
             guard timer == nil else { return }
+            #if !os(Linux)
             let fd = open(handoff.rootDirectory.path, O_EVTONLY)
             if fd >= 0 {
                 let source = DispatchSource.makeFileSystemObjectSource(
@@ -309,6 +334,7 @@ public final class AttentionFileHandoffObserver: @unchecked Sendable {
                 source.resume()
                 self.source = source
             }
+            #endif
             let timer = DispatchSource.makeTimerSource(queue: queue)
             timer.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
             timer.setEventHandler(handler: onChange)
@@ -320,8 +346,10 @@ public final class AttentionFileHandoffObserver: @unchecked Sendable {
 
     public func stop() {
         queue.sync {
+            #if !os(Linux)
             source?.cancel()
             source = nil
+            #endif
             timer?.cancel()
             timer = nil
         }

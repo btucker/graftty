@@ -3,6 +3,7 @@ import Combine
 import GhosttyKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 @preconcurrency import UserNotifications
 
 /// Spatial direction for pane navigation (goto_split left/right/up/down).
@@ -62,9 +63,27 @@ final class TerminalManager: ObservableObject {
     private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
     private var paneSlotIDsBySessionName: [String: PaneSlotID] = [:]
     private var paneWorktreePaths: [PaneSlotID: String] = [:]
+    private var remoteViewerPaneSlots: Set<PaneSlotID> = []
     private var hostManagedPaneCommandHandlers:
         [PaneSlotID: (HostManagedPaneCommand) -> Void] = [:]
     private(set) var focusedTerminalID: PaneSlotID?
+    let worktreeSleepState = WorktreeSleepState()
+    var sleepingWorktreePaths: Set<String> { worktreeSleepState.paths }
+    lazy var autoSleep = WorktreeAutoSleepController(terminalManager: self)
+
+    func setSleepingWorktreePaths(_ paths: Set<String>) {
+        if paths != sleepingWorktreePaths { worktreeSleepState.paths = paths }
+    }
+
+    func wakeWorktree(_ path: String) -> Bool { autoSleep.wake(path: path) }
+
+    func wakePane(_ pane: PaneSlotID) -> Bool {
+        if remoteViewerPaneSlots.contains(pane) { return true }
+        guard let path = paneWorktreePaths[pane] else { return true }
+        return wakeWorktree(path)
+    }
+
+    func isShellReady(_ pane: PaneSlotID) -> Bool { shellReadyFired.contains(pane) }
 
     /// Caps the number of worktrees with live surfaces (MEM-1.1).
     /// Lazy so it can capture `self` in the eviction callback after `init`.
@@ -88,6 +107,8 @@ final class TerminalManager: ObservableObject {
     /// reports the first prompt. Writing immediately after `zmx attach`
     /// starts can race shell startup and be consumed or discarded by init.
     private var pendingShellReadyInitialInput: [PaneSlotID: String] = [:]
+    private var shellStartupCommands: [PaneSlotID: String] = [:]
+    private var shellStartupReceipts: [PaneSlotID: URL] = [:]
     private var initialInputDeliveryResults: [PaneSlotID: Bool] = [:]
     private var initialInputDeliveryWaiters:
         [PaneSlotID: [CheckedContinuation<Bool, Never>]] = [:]
@@ -159,7 +180,11 @@ final class TerminalManager: ObservableObject {
         didSet {
             ownershipObserverToken = displayOwnershipStore?.addObserver { [weak self] snapshot in
                 Task { @MainActor in
-                    self?.handle(forSessionName: snapshot.sessionName)?.synchronizeDisplayOwnership()
+                    let handle = self?.handle(forSessionName: snapshot.sessionName)
+                    if handle?.canTakeDisplayControl() == true {
+                        (handle?.view as? SurfaceNSView)?.agentCompletion.cancel(preserveLiteral: false)
+                    }
+                    handle?.synchronizeDisplayOwnership()
                     self?.objectWillChange.send()
                 }
             }
@@ -182,13 +207,24 @@ final class TerminalManager: ObservableObject {
     // Daemon logs outlive their shells. Do not reload a known-dead PID while
     // an asynchronous replacement is starting and has not written its log yet.
     private var obsoleteShellPIDs: [PaneSlotID: Int32] = [:]
-    var portScanPIDResolver = ZmxPIDResolver()
-    private var portScanPIDLookupGenerations: [PaneSlotID: UUID] = [:]
+    private var portScanSessionQuery: (id: UUID, launcher: ZmxLauncher, task: Task<[String: Int32]?, Never>)?
+    private var portScanPaneGenerations: [PaneSlotID: UUID] = [:]
+    var shellPIDLogReader: @Sendable (URL, String) -> pid_t? = {
+        ZmxPIDLookup.shellPID(logFile: $0, sessionName: $1)
+    }
 
     /// Theme colors pulled from the ghostty config (background, foreground).
     /// Emitted post-`initialize()` once the config is read; defaults to
     /// `.fallback` before that so views have something to render with.
     @Published var theme: GhosttyTheme = .fallback
+
+    /// Self-contained host presentation for mobile, where named theme files
+    /// and config includes from this Mac are unavailable.
+    func mobilePresentationConfig() -> String {
+        let text = GhosttyConfigReader.portableConfig()
+        guard let config = ghosttyConfig?.config else { return text }
+        return GhosttyPresentationConfig.render(config: config, text: text)
+    }
 
     /// Per-pane titles set by the running program via the OSC-0/OSC-2 escape
     /// sequences (e.g. `\033]0;TITLE\007`). Populated in response to
@@ -197,6 +233,7 @@ final class TerminalManager: ObservableObject {
     /// `destroySurface`. Raw titles and PWDs are snapshotted at quit so a
     /// surviving shell keeps the same title priority when reattached.
     var titles: [PaneSlotID: String] = [:]
+    var agentCompletionLoader: ((String?, AgentCompletionModel.CatalogUpdate?) async -> [AgentCompletionCandidate])?
 
     /// Per-pane last-known working directory, populated from OSC 7
     /// (`GHOSTTY_ACTION_PWD`). Used as the second tier of the sidebar
@@ -365,6 +402,45 @@ final class TerminalManager: ObservableObject {
     /// pane split-right of the source with `initialInput` as the command.
     var onOpenInEditorPane: ((PaneSlotID, String) -> Void)?
 
+    /// Routes sidebar files through the terminal's configured editor.
+    @discardableResult
+    func openURL(_ urlString: String, from sourceID: PaneSlotID?) -> Bool {
+        let cwd = sourceID.flatMap { pwds[$0] }
+
+        let classified = EditorOpenRouter.classify(urlString: urlString, paneCwd: cwd)
+
+        let editorAction = EditorOpenRouter.resolve(
+            target: classified,
+            editor: editorPreference?.resolve()
+        )
+
+        switch editorAction {
+        case .openInBrowser(let url):
+            NSWorkspace.shared.open(url)
+
+        case .openWithDefaultApp(let file):
+            NSWorkspace.shared.open(file)
+
+        case .openWithApp(let file, let app):
+            let config = NSWorkspace.OpenConfiguration()
+            config.promptsUserIfNeeded = false
+            NSWorkspace.shared.open([file], withApplicationAt: app, configuration: config)
+                { _, _ in }
+
+        case .openInPane(let initialInput):
+            guard let sourceID, let onOpenInEditorPane else {
+                NSSound.beep()
+                return false
+            }
+            onOpenInEditorPane(sourceID, initialInput)
+
+        case .noOp:
+            NSSound.beep()
+            return false
+        }
+        return true
+    }
+
     /// Swift-native mirror of `ghostty_action_progress_report_s` so
     /// callers outside the Terminal module don't need to import
     /// GhosttyKit just to pattern-match on progress state.
@@ -465,38 +541,61 @@ final class TerminalManager: ObservableObject {
         if let cached = cachedShellPIDs[id] { return cached }
         guard let launcher = zmxLauncher, launcher.isAvailable else { return nil }
         guard let sessionName = zmxSessionName(for: id) else { return nil }
-        guard let pid = ZmxPIDLookup.shellPID(
-            logFile: launcher.logFile(forSession: sessionName),
-            sessionName: sessionName
-        ) else { return nil }
-        return cacheShellPID(pid, for: id)
-    }
-
-    /// Snapshot pane identity on the main actor, then resolve logs in the
-    /// background. A closed or remapped pane cannot accept an earlier result.
-    func lookupShellPIDForPortScan(for id: PaneSlotID) async -> pid_t? {
-        if let cached = cachedShellPIDs[id] { return cached }
-        guard let launcher = zmxLauncher, let sessionName = zmxSessionName(for: id) else { return nil }
-        let generation = portScanPIDLookupGenerations[id] ?? UUID()
-        portScanPIDLookupGenerations[id] = generation
-        let logFile = await OffMainIO.run {
-            launcher.isAvailable ? launcher.logFile(forSession: sessionName) : nil
+        guard let pid = shellPIDLogReader(launcher.logFile(forSession: sessionName), sessionName) else { return nil }
+        guard obsoleteShellPIDs[id] != pid else { return nil }
+        if obsoleteShellPIDs[id] != nil {
+            portScanSessionQuery = nil
         }
-        guard let logFile,
-              let pid = await portScanPIDResolver.shellPID(
-                logFile: logFile, sessionName: sessionName
-              ),
-              portScanPIDLookupGenerations[id] == generation,
-              zmxLauncher === launcher, zmxSessionName(for: id) == sessionName else { return nil }
-        if let cached = cachedShellPIDs[id] { return cached }
-        return cacheShellPID(pid, for: id)
+        obsoleteShellPIDs[id] = nil
+        cachedShellPIDs[id] = pid
+        return pid
     }
 
-    private func cacheShellPID(_ pid: Int32, for id: PaneSlotID) -> pid_t? {
+    /// Resolve ports exclusively from the daemon's live shell PIDs. Historical
+    /// logs can be large and can name dead shells, so never read them here.
+    /// Consumers share detached work; cancelling one must not cancel the query.
+    func lookupShellPIDForPortScan(for id: PaneSlotID) async -> pid_t? {
+        guard let launcher = zmxLauncher,
+              let name = zmxSessionName(for: id) else { return nil }
+        let generation = portScanPaneGenerations[id]
+        let obsoletePID = obsoleteShellPIDs[id]
+        if portScanSessionQuery?.launcher !== launcher {
+            let queryID = UUID()
+            let task = Task.detached(priority: .utility) { try? launcher.listSessionShellPIDs() }
+            portScanSessionQuery = (queryID, launcher, task)
+            Task { @MainActor [weak self] in
+                _ = await task.value
+                try? await Task.sleep(for: .seconds(2))
+                if self?.portScanSessionQuery?.id == queryID {
+                    self?.portScanSessionQuery = nil
+                }
+            }
+        }
+        guard let query = portScanSessionQuery,
+              let sessions = await query.task.value,
+              !Task.isCancelled,
+              portScanSessionQuery?.id == query.id,
+              zmxLauncher === launcher,
+              zmxSessionName(for: id) == name,
+              portScanPaneGenerations[id] == generation,
+              obsoleteShellPIDs[id] == obsoletePID else { return nil }
+        guard let pid = sessions[name] else {
+            if let previous = cachedShellPIDs[id] {
+                obsoleteShellPIDs[id] = previous
+            }
+            cachedShellPIDs[id] = nil
+            return nil
+        }
         guard obsoleteShellPIDs[id] != pid else { return nil }
         obsoleteShellPIDs[id] = nil
         cachedShellPIDs[id] = pid
         return pid
+    }
+
+    private func invalidatePortScanResolution(for id: PaneSlotID) {
+        portScanPaneGenerations[id] = UUID()
+        // Drop the snapshot without cancelling work that other consumers await.
+        portScanSessionQuery = nil
     }
 
     /// Rebuild the keybind bridge from the current config. Call after
@@ -561,8 +660,10 @@ final class TerminalManager: ObservableObject {
         for splitTree: SplitTree,
         paneSessions: [PaneSlotID: PaneSessionID],
         worktreePath: String,
-        extraInitialInput: String? = nil
+        extraInitialInput: String? = nil,
+        confirmedLiveSessions: Set<String>? = nil
     ) -> [PaneSlotID: SurfaceHandle] {
+        guard wakeWorktree(worktreePath) else { return [:] }
         recordPaneSessions(
             for: splitTree,
             paneSessions: paneSessions,
@@ -570,7 +671,7 @@ final class TerminalManager: ObservableObject {
         )
         guard let app = ghosttyApp?.app else { return [:] }
 
-        var zmxSessionSnapshot: ZmxSessionSnapshot?
+        var zmxSessionSnapshot: ZmxSessionSnapshot? = confirmedLiveSessions.map(ZmxSessionSnapshot.live)
         func liveSessionsIfNeeded(for terminalID: PaneSlotID) -> ZmxSessionSnapshot? {
             guard rehydratedSurfaces.contains(terminalID),
                   let launcher = zmxLauncher else { return nil }
@@ -594,7 +695,8 @@ final class TerminalManager: ObservableObject {
             let zmxSpawnConfiguration = resolveZmxSpawnConfiguration(
                 for: terminalID,
                 paneSessionID: paneSessionID,
-                worktreePath: worktreePath
+                worktreePath: worktreePath,
+                initialCommand: pendingInitialInput?.trimmingCharacters(in: .newlines)
             )
             let displayClientID = zmxSpawnConfiguration.map { _ in Self.makeMacDisplayClientID() }
             let initialInput = pendingInitialInput
@@ -615,7 +717,7 @@ final class TerminalManager: ObservableObject {
                 worktreePath: worktreePath,
                 socketPath: socketPath,
                 zmxSpawnConfiguration: zmxSpawnConfiguration,
-                extraInitialInput: waitsForShellReady ? nil : initialInput,
+                extraInitialInput: waitsForShellReady || zmxSpawnConfiguration?.runsInitialCommand == true ? nil : initialInput,
                 terminalManager: self,
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
                 displayOwnershipStore: displayOwnershipStore,
@@ -625,7 +727,7 @@ final class TerminalManager: ObservableObject {
                 explicitInitialInputSurfaces.remove(terminalID)
                 continue
             }
-            if waitsForShellReady, let initialInput {
+            if waitsForShellReady, zmxSpawnConfiguration?.runsInitialCommand != true, let initialInput {
                 queueInitialInputUntilShellReady(initialInput, for: terminalID)
             }
             pendingInitialInput = nil
@@ -645,10 +747,12 @@ final class TerminalManager: ObservableObject {
         extraInitialInput: String? = nil,
         hostManagedBackend: SurfaceHandleZmxBackend? = nil
     ) -> SurfaceHandle? {
+        guard hostManagedBackend != nil || wakeWorktree(worktreePath) else { return nil }
         recordPaneSession(
             paneSessionID,
             for: terminalID,
-            worktreePath: worktreePath
+            worktreePath: worktreePath,
+            hostOwned: hostManagedBackend == nil
         )
         guard let app = ghosttyApp?.app else { return nil }
         if let existing = surfaces[terminalID] {
@@ -668,7 +772,8 @@ final class TerminalManager: ObservableObject {
             ? resolveZmxSpawnConfiguration(
                 for: terminalID,
                 paneSessionID: paneSessionID,
-                worktreePath: worktreePath
+                worktreePath: worktreePath,
+                initialCommand: extraInitialInput?.trimmingCharacters(in: .newlines)
             )
             : nil
         let displayClientID = zmxSpawnConfiguration.map { _ in Self.makeMacDisplayClientID() }
@@ -687,7 +792,7 @@ final class TerminalManager: ObservableObject {
             worktreePath: surfaceWorktreePath,
             socketPath: socketPath,
             zmxSpawnConfiguration: zmxSpawnConfiguration,
-            extraInitialInput: waitsForShellReady ? nil : extraInitialInput,
+            extraInitialInput: waitsForShellReady || zmxSpawnConfiguration?.runsInitialCommand == true ? nil : extraInitialInput,
             terminalManager: self,
             remoteAttachmentRegistry: remoteAttachmentRegistry,
             displayOwnershipStore: displayOwnershipStore,
@@ -698,7 +803,7 @@ final class TerminalManager: ObservableObject {
             explicitInitialInputSurfaces.remove(terminalID)
             return nil
         }
-        if waitsForShellReady, let extraInitialInput {
+        if waitsForShellReady, zmxSpawnConfiguration?.runsInitialCommand != true, let extraInitialInput {
             queueInitialInputUntilShellReady(extraInitialInput, for: terminalID)
         }
         didCreateSurface(for: terminalID)
@@ -715,19 +820,27 @@ final class TerminalManager: ObservableObject {
             && configuration?.shellReadySignalAvailable == true
     }
 
-    /// PORTS-4.5: At pane-registration time the zmx daemon may not have
-    /// written its `pty spawned ... pid=N` line yet, so `lookupShellPID`
-    /// can transiently return nil. Register as pending in that case so
+    /// PORTS-4.5: At pane-registration time the zmx daemon may not yet
+    /// appear in the live session listing. Register as pending in that case so
     /// the scanner re-attempts resolution on each tick — otherwise the
     /// pane silently never gets scanned and chips never appear.
-    /// Surface creation uses only cached PIDs; pending lookups read logs in
-    /// the background on the next scan tick.
-    func registerForPortScan(_ terminalID: PaneSlotID) {
-        guard let scanner = portScanner else { return }
-        if let pid = cachedShellPIDs[terminalID] {
-            Task { await scanner.registerPane(terminalID, shellPID: pid) }
-        } else {
-            Task { await scanner.registerPanePending(terminalID) }
+    func registerForPortScan(_ terminalID: PaneSlotID, resetting: Bool = false) {
+        if resetting { invalidatePortScanResolution(for: terminalID) }
+        guard let scanner = portScanner,
+              let sessionName = zmxSessionName(for: terminalID) else { return }
+        let launcher = zmxLauncher
+        let generation = portScanPaneGenerations[terminalID]
+        Task { @MainActor [weak self] in
+            guard let self, self.zmxLauncher === launcher,
+                  self.zmxSessionName(for: terminalID) == sessionName,
+                  self.portScanPaneGenerations[terminalID] == generation else { return }
+            if resetting { await scanner.unregisterPane(terminalID) }
+            guard !Task.isCancelled, self.zmxLauncher === launcher,
+                  self.zmxSessionName(for: terminalID) == sessionName,
+                  self.portScanPaneGenerations[terminalID] == generation else { return }
+            // The scanner validates its registration generation after awaiting
+            // the resolver. Keep the pane pending even if that query is rejected.
+            await scanner.registerPanePending(terminalID)
         }
     }
 
@@ -763,7 +876,13 @@ final class TerminalManager: ObservableObject {
             missing = launcher.isSessionMissing(name)
         }
         if missing {
-            portScanPIDLookupGenerations[terminalID] = nil
+            if let receipt = shellStartupReceipts[terminalID],
+               FileManager.default.fileExists(atPath: receipt.path) {
+                shellStartupCommands.removeValue(forKey: terminalID)
+                shellStartupReceipts.removeValue(forKey: terminalID)
+                try? FileManager.default.removeItem(at: receipt)
+                explicitInitialInputSurfaces.remove(terminalID)
+            }
             // Prefer the newest spawn in the log over a possibly older cache.
             if let previousPID = ZmxPIDLookup.shellPID(
                 logFile: launcher.logFile(forSession: name), sessionName: name
@@ -773,6 +892,7 @@ final class TerminalManager: ObservableObject {
             cachedShellPIDs[terminalID] = nil
             shellReadyFired.remove(terminalID)
             clearRehydrated(terminalID)
+            registerForPortScan(terminalID, resetting: true)
             titles.removeValue(forKey: terminalID)
             pwds.removeValue(forKey: terminalID)
             if renderedTitles.removeValue(forKey: terminalID) != nil {
@@ -786,7 +906,7 @@ final class TerminalManager: ObservableObject {
     /// lifecycle labels (firstPaneMarkers, rehydratedSurfaces) outlive
     /// this and are cleaned up separately in `forgetTrackingState`.
     private func forgetSurfaceRuntimeState(for terminalID: PaneSlotID) {
-        portScanPIDLookupGenerations[terminalID] = nil
+        invalidatePortScanResolution(for: terminalID)
         surfaces.removeValue(forKey: terminalID)
         titles.removeValue(forKey: terminalID)
         pwds.removeValue(forKey: terminalID)
@@ -959,14 +1079,25 @@ final class TerminalManager: ObservableObject {
         }
     }
 
+    /// A failed creation relinquishes its staged prompt. Never reuse its
+    /// loader or queued renderer input when the retained pane is reopened.
+    func discardInitialInput(for terminalID: PaneSlotID) {
+        if pendingShellReadyInitialInput[terminalID] != nil {
+            completeInitialInputDelivery(for: terminalID, success: false)
+        }
+        shellStartupCommands.removeValue(forKey: terminalID)
+        shellStartupReceipts.removeValue(forKey: terminalID)
+        explicitInitialInputSurfaces.remove(terminalID)
+    }
+
     /// Shared by the Ghostty PWD action and tests. The first prompt commits
     /// any queued launch command before default-command policy runs.
     func shellBecameReady(for terminalID: PaneSlotID) {
         guard shellReadyFired.insert(terminalID).inserted else { return }
         // Readiness proves a new shell exists, even if its PID was reused.
         if obsoleteShellPIDs.removeValue(forKey: terminalID) != nil {
-            portScanPIDLookupGenerations[terminalID] = nil
             cachedShellPIDs[terminalID] = nil
+            portScanSessionQuery = nil
         }
         if let input = pendingShellReadyInitialInput[terminalID] {
             let accepted = surfaces[terminalID]?.writeText(
@@ -1007,6 +1138,7 @@ final class TerminalManager: ObservableObject {
     /// rendering off-anchor) and force a repaint so a shown pane presents a
     /// clean full frame.
     func setVisible(_ visible: Bool, for terminalID: PaneSlotID) {
+        if visible && !wakePane(terminalID) { return }
         guard let handle = surfaces[terminalID] else { return }
         handle.setVisible(visible)
         if visible {
@@ -1017,7 +1149,8 @@ final class TerminalManager: ObservableObject {
 
     @discardableResult
     func takeDisplayControl(for terminalID: PaneSlotID) -> Bool {
-        surfaces[terminalID]?.takeDisplayControl() ?? false
+        guard wakePane(terminalID) else { return false }
+        return surfaces[terminalID]?.takeDisplayControl() ?? false
     }
 
     /// Whether to show a "Take Control" affordance on a pane: true when its
@@ -1054,6 +1187,7 @@ final class TerminalManager: ObservableObject {
 
     /// Focus exactly one surface (by ID); unfocus the rest.
     func setFocus(_ terminalID: PaneSlotID) {
+        guard wakePane(terminalID) else { return }
         focusedTerminalID = terminalID
         for (id, handle) in surfaces {
             if id == terminalID {
@@ -1081,6 +1215,8 @@ final class TerminalManager: ObservableObject {
     }
 
     func destroySurface(terminalID: PaneSlotID) {
+        ImagePreviewStore.shared.dismiss(terminalID)
+        _ = wakePane(terminalID)
         if let scanner = portScanner {
             Task { await scanner.unregisterPane(terminalID) }
         }
@@ -1156,7 +1292,6 @@ final class TerminalManager: ObservableObject {
     /// pane→session map, and the `shellReadyFired` / `firstPaneMarkers`
     /// labels, and does NOT call `killZmxSession` or fire `paneClosed`.
     func evictSurface(terminalID: PaneSlotID, forRetry: Bool = false) {
-        portScanPIDLookupGenerations[terminalID] = nil
         if let handle = surfaces.removeValue(forKey: terminalID) {
             let size = GridSize(handle.queryGridSize())
             if size.cols > 0 && size.rows > 0 {
@@ -1166,9 +1301,8 @@ final class TerminalManager: ObservableObject {
             else { handle.requestClose() }
         }
         rehydratedSurfaces.insert(terminalID)
-        if let scanner = portScanner {
-            Task { await scanner.unregisterPane(terminalID) }
-        }
+        // The zmx shell and its processes survive renderer eviction.
+        // Keep discovery attached until the pane session is destroyed.
     }
 
     /// Mark a terminal as the primary pane of its worktree.
@@ -1195,7 +1329,9 @@ final class TerminalManager: ObservableObject {
     /// Drop the rehydration label so `defaultCommandDecision` treats a
     /// pane as fresh. Called by `clearRehydratedIfDaemonGone`.
     func clearRehydrated(_ terminalID: PaneSlotID) {
-        rehydratedSurfaces.remove(terminalID)
+        if rehydratedSurfaces.remove(terminalID) != nil {
+            invalidatePortScanResolution(for: terminalID)
+        }
     }
 
     /// Whether a terminal was marked as the first pane of its worktree.
@@ -1229,6 +1365,10 @@ final class TerminalManager: ObservableObject {
         shellReadyFired.remove(terminalID)
         explicitInitialInputSurfaces.remove(terminalID)
         firstPaneMarkers.remove(terminalID)
+        shellStartupCommands.removeValue(forKey: terminalID)
+        if let receipt = shellStartupReceipts.removeValue(forKey: terminalID) {
+            try? FileManager.default.removeItem(at: receipt)
+        }
         rehydratedSurfaces.remove(terminalID)
         evictedGridSizes.removeValue(forKey: terminalID)
         forgetPaneSession(for: terminalID)
@@ -1241,13 +1381,33 @@ final class TerminalManager: ObservableObject {
     func resolveZmxSpawnConfiguration(
         for terminalID: PaneSlotID,
         paneSessionID: PaneSessionID,
-        worktreePath: String
+        worktreePath: String,
+        initialCommand: String? = nil,
+        defaults: UserDefaults = .standard
     ) -> ZmxSpawnConfiguration? {
         guard let launcher = zmxLauncher, launcher.isAvailable else {
             return nil
         }
         let processEnv = ProcessInfo.processInfo.environment
-        return ZmxSpawnConfiguration.make(
+        // A receipt proves the old loader was consumed. Keep it until pane
+        // teardown for any concurrent startup waiter, but never replay that
+        // loader when a later remote attachment has to recreate the daemon.
+        if let receipt = shellStartupReceipts[terminalID],
+           FileManager.default.fileExists(atPath: receipt.path) {
+            shellStartupCommands.removeValue(forKey: terminalID)
+        }
+        var command = initialCommand ?? (wasRehydrated(terminalID) ? nil : shellStartupCommands[terminalID])
+        if command == nil, !shellReadyFired.contains(terminalID) {
+            let decision = defaultCommandDecision(
+                defaultCommand: defaults.string(forKey: SettingsKeys.defaultCommand) ?? "",
+                firstPaneOnly: defaults.object(forKey: "defaultCommandFirstPaneOnly") as? Bool ?? true,
+                isFirstPane: isFirstPane(terminalID),
+                wasRehydrated: wasRehydrated(terminalID),
+                hasExplicitInitialInput: explicitInitialInputSurfaces.contains(terminalID)
+            )
+            if case .type(let value) = decision { command = value }
+        }
+        let configuration = ZmxSpawnConfiguration.make(
             launcher: launcher,
             paneSessionID: paneSessionID,
             worktreePath: worktreePath,
@@ -1256,7 +1416,35 @@ final class TerminalManager: ObservableObject {
             bundleURL: Bundle.main.bundleURL,
             ghosttyResourcesDir: processEnv["GHOSTTY_RESOURCES_DIR"],
             agentHooksDisabled: processEnv["GRAFTTY_DISABLE_AGENT_HOOKS"] == "1",
-            agentHooksRoot: AgentHookInstaller.rootDirectory()
+            agentHooksRoot: AgentHookInstaller.rootDirectory(),
+            initialCommand: command,
+            startupReceipt: command.map { _ in
+                shellStartupReceipts[terminalID]
+                    ?? FileManager.default.temporaryDirectory.appendingPathComponent("graftty-startup-\(UUID().uuidString)")
+            }
+        )
+        if configuration.runsInitialCommand {
+            shellStartupCommands[terminalID] = configuration.env["GRAFTTY_INITIAL_COMMAND"]
+            shellStartupReceipts[terminalID] = configuration.startupReceipt
+            explicitInitialInputSurfaces.insert(terminalID)
+        }
+        return configuration
+    }
+
+    /// The first remote attach may create the daemon before any Mac renderer.
+    /// Keep the command on the session's spawn configuration so reattachment
+    /// can retry a failed spawn, while zmx runs it only when creating a shell.
+    func remoteSpawnConfiguration(
+        forSessionName sessionName: String,
+        defaults: UserDefaults = .standard
+    ) -> ZmxSpawnConfiguration? {
+        guard let paneUUID = paneID(forSessionName: sessionName) else { return nil }
+        let id = PaneSlotID(id: paneUUID)
+        guard
+              let sessionID = paneSessionIDs[id],
+              let path = paneWorktreePaths[id] else { return nil }
+        return resolveZmxSpawnConfiguration(
+            for: id, paneSessionID: sessionID, worktreePath: path, defaults: defaults
         )
     }
 
@@ -1275,17 +1463,29 @@ final class TerminalManager: ObservableObject {
     func recordPaneSession(
         _ paneSessionID: PaneSessionID,
         for terminalID: PaneSlotID,
-        worktreePath: String? = nil
+        worktreePath: String? = nil,
+        hostOwned: Bool = true
     ) {
-        portScanPIDLookupGenerations[terminalID] = nil
-        if paneSessionIDs[terminalID] != paneSessionID {
+        let previousSession = paneSessionIDs[terminalID]
+        if previousSession != paneSessionID {
+            forgetPaneSession(for: terminalID)
             cachedShellPIDs[terminalID] = nil
             obsoleteShellPIDs[terminalID] = nil
+            invalidatePortScanResolution(for: terminalID)
         }
-        forgetPaneSession(for: terminalID)
+        remoteViewerPaneSlots.remove(terminalID)
         paneSessionIDs[terminalID] = paneSessionID
         paneSlotIDsBySessionName[ZmxLauncher.sessionName(for: paneSessionID)] = terminalID
         paneWorktreePaths[terminalID] = worktreePath
+        if let view = surfaces[terminalID]?.view as? SurfaceNSView,
+           view.agentCompletion.currentWorktreePath != worktreePath {
+            view.agentCompletion.invalidateBoundary()
+            view.agentCompletion.currentWorktreePath = worktreePath
+        }
+        if !hostOwned { remoteViewerPaneSlots.insert(terminalID) }
+        if hostOwned, let worktreePath {
+            autoSleep.register(session: ZmxLauncher.sessionName(for: paneSessionID), path: worktreePath)
+        }
     }
 
     func recordPaneSessions(
@@ -1331,6 +1531,9 @@ final class TerminalManager: ObservableObject {
     }
 
     private func forgetPaneSession(for terminalID: PaneSlotID) {
+        portScanPaneGenerations[terminalID] = nil
+        portScanSessionQuery = nil
+        remoteViewerPaneSlots.remove(terminalID)
         paneWorktreePaths.removeValue(forKey: terminalID)
         guard let sessionID = paneSessionIDs.removeValue(forKey: terminalID)
         else { return }
@@ -1447,36 +1650,7 @@ final class TerminalManager: ObservableObject {
                 encoding: .utf8
             ) else { return }
 
-            let sourceID = terminalID(from: target)
-            let cwd = sourceID.flatMap { pwds[$0] }
-
-            let classified = EditorOpenRouter.classify(urlString: urlString, paneCwd: cwd)
-
-            let editorAction = EditorOpenRouter.resolve(
-                target: classified,
-                editor: editorPreference?.resolve()
-            )
-
-            switch editorAction {
-            case .openInBrowser(let url):
-                NSWorkspace.shared.open(url)
-
-            case .openWithDefaultApp(let file):
-                NSWorkspace.shared.open(file)
-
-            case .openWithApp(let file, let app):
-                let config = NSWorkspace.OpenConfiguration()
-                config.promptsUserIfNeeded = false
-                NSWorkspace.shared.open([file], withApplicationAt: app, configuration: config)
-                    { _, _ in }
-
-            case .openInPane(let initialInput):
-                guard let sourceID else { NSSound.beep(); break }
-                onOpenInEditorPane?(sourceID, initialInput)
-
-            case .noOp:
-                NSSound.beep()
-            }
+            openURL(urlString, from: terminalID(from: target))
 
         case GHOSTTY_ACTION_MOUSE_SHAPE:
             guard let view = surfaceView(from: target) else { return }

@@ -1,6 +1,25 @@
 import Foundation
 
+import GrafttyProtocol
+
+public typealias WorktreeOrderMode = GrafttyProtocol.WorktreeOrderMode
+
 public enum WorktreeOrdering {
+    /// Newest `lastActivity` first; worktrees without activity keep their
+    /// relative order after the active ones, and stale rows stay last.
+    public static func byRecentActivity(_ worktrees: [WorktreeEntry]) -> [WorktreeEntry] {
+        let keyed = worktrees.enumerated().map { (offset: $0.offset, element: $0.element, activity: $0.element.lastActivity) }
+        let ordered = keyed.sorted { left, right in
+            switch (left.activity, right.activity) {
+            case let (l?, r?) where l != r: return l > r
+            case (.some, nil): return true
+            case (nil, .some): return false
+            default: return left.offset < right.offset
+            }
+        }.map(\.element)
+        return staleLast(ordered)
+    }
+
     public static func move(
         _ worktrees: [WorktreeEntry],
         movingIDs: [WorktreeEntry.ID],
@@ -28,6 +47,7 @@ public enum WorktreeOrdering {
         return staleLast(reordered)
     }
 
+    /// Moves stale Tasks last without changing the relative order of pinned worktrees.
     public static func staleLast(_ worktrees: [WorktreeEntry]) -> [WorktreeEntry] {
         var nonStale: [WorktreeEntry] = []
         var stale: [WorktreeEntry] = []
@@ -37,7 +57,7 @@ public enum WorktreeOrdering {
         var sawStale = false
         var needsReorder = false
         for worktree in worktrees {
-            if worktree.state == .stale {
+            if worktree.state == .stale && !worktree.isPinned {
                 sawStale = true
                 stale.append(worktree)
             } else {

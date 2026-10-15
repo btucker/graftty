@@ -1,6 +1,10 @@
 // Sources/GrafttyKit/Editor/EditorOpenRouter.swift
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import UniformTypeIdentifiers
 
 /// Pure logic that decides what to do with a URL string handed to us by

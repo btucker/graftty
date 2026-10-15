@@ -348,7 +348,7 @@ public struct TailscaleLocalAPI {
         """
         let reqBytes = Array(req.utf8)
         let sent = reqBytes.withUnsafeBufferPointer { buf in
-            Darwin.send(fd, buf.baseAddress, buf.count, 0)
+            GrafttyPOSIX.send(fd, buf.baseAddress, buf.count, 0)
         }
         if sent != reqBytes.count { throw Error.socketUnreachable }
 
@@ -356,7 +356,7 @@ public struct TailscaleLocalAPI {
         var chunk = [UInt8](repeating: 0, count: 4096)
         while true {
             let n = chunk.withUnsafeMutableBufferPointer { buf in
-                Darwin.recv(fd, buf.baseAddress, buf.count, 0)
+                GrafttyPOSIX.recv(fd, buf.baseAddress, buf.count, 0)
             }
             if n <= 0 { break }
             buffer.append(contentsOf: chunk[0..<n])
@@ -379,7 +379,7 @@ public struct TailscaleLocalAPI {
     }
 
     private static func openUnixSocket(path: String) throws -> Int32 {
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         if fd < 0 { throw Error.socketUnreachable }
 
         var addr = sockaddr_un()
@@ -392,14 +392,14 @@ public struct TailscaleLocalAPI {
         withUnsafeMutablePointer(to: &addr.sun_path) { sunPath in
             sunPath.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { dst in
                 _ = pathBytes.withUnsafeBufferPointer { src in
-                    memcpy(dst, src.baseAddress, src.count)
+                    memcpy(dst, src.baseAddress!, src.count)
                 }
             }
         }
         let size = socklen_t(MemoryLayout<sockaddr_un>.size)
         let rc = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                Darwin.connect(fd, sockPtr, size)
+                GrafttyPOSIX.connect(fd, sockPtr, size)
             }
         }
         if rc != 0 {
@@ -410,7 +410,7 @@ public struct TailscaleLocalAPI {
     }
 
     private static func openTCPLocalhost(port: Int) throws -> Int32 {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        let fd = socket(AF_INET, GrafttyPOSIX.streamSocket, 0)
         if fd < 0 { throw Error.socketUnreachable }
 
         var addr = sockaddr_in()
@@ -421,7 +421,7 @@ public struct TailscaleLocalAPI {
         let size = socklen_t(MemoryLayout<sockaddr_in>.size)
         let rc = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                Darwin.connect(fd, sockPtr, size)
+                GrafttyPOSIX.connect(fd, sockPtr, size)
             }
         }
         if rc != 0 {

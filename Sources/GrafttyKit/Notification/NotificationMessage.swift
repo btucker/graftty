@@ -81,6 +81,10 @@ public struct TeamInboxPageRequest: Sendable, Equatable {
 }
 
 public enum NotificationMessage: Sendable, Equatable {
+    case linuxSetupIdentity
+    case completeLinuxSetup(LinuxHostSetupResult)
+    case previewFiles(path: String, targets: [String], paneSessionName: String? = nil)
+    case previewImage(path: String, target: String, paneSessionName: String? = nil)
     case offerResource(path: String, target: String, paneSessionName: String? = nil)
     case notify(path: String, text: String, clearAfter: TimeInterval? = nil, paneSessionName: String? = nil)
     case clear(path: String, paneSessionName: String? = nil)
@@ -122,7 +126,15 @@ public enum NotificationMessage: Sendable, Equatable {
         sessionID: String?,
         paneSessionName: String?,
         attentionReason: AgentHookAttentionReason? = nil,
-        stopHookActive: Bool = false
+        stopHookActive: Bool = false,
+        providerSleepActivity: ProviderSleepActivity? = nil
+    )
+    case providerActivity(
+        callerWorktree: String,
+        runtime: TeamHookRuntime,
+        sessionID: String?,
+        paneSessionName: String?,
+        activity: ProviderSleepActivity
     )
     case attentionReport(callerWorktree: String, callerAgentID: String, recap: AttentionRecap)
     case teamInbox(TeamInboxPageRequest)
@@ -149,16 +161,27 @@ public enum NotificationMessage: Sendable, Equatable {
     case worktreeCreateIdempotencyCapability
     case remoteWorktreeCapability
     case worktreeCreateStatus(operationID: String)
-    case removeWorktree(worktreePath: String, force: Bool)
+    case removeWorktree(worktreePath: String, force: Bool, pinned: Bool = false)
     case worktreeRemoveCapability
+    case worktreePinnedRemovalCapability
+    case worktreePinCapability
+    case setWorktreePinned(worktreePath: String, isPinned: Bool)
     case worktreeRemoveStatus(operationID: String)
 }
 
 public extension NotificationMessage {
+    var providerSleepActivity: ProviderSleepActivity? {
+        switch self {
+        case .teamHook(_, _, _, _, _, _, _, _, let activity): return activity
+        case .providerActivity(_, _, _, _, let activity): return activity
+        default: return nil
+        }
+    }
+
     /// @spec ATTN-2.20: When the application receives a one-way `notify` or `clear` socket message, it shall dispatch the notification without registering or waiting on a response handler, so notification bursts cannot consume request-client capacity.
     var expectsResponse: Bool {
         switch self {
-        case .notify, .clear:
+        case .notify, .clear, .providerActivity:
             return false
         default:
             return true
@@ -168,8 +191,9 @@ public extension NotificationMessage {
 
 extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
+        case targets
         case type, path, text, clearAfter, direction, command, index, lines
-        case target, request
+        case target, request, result
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
         case messageID = "message_id"
@@ -184,7 +208,8 @@ extension NotificationMessage: Codable {
         case branchName = "branch_name"
         case worktreePath = "worktree_path"
         case base
-        case force
+        case force, pinned
+        case isPinned = "is_pinned"
         case operationID = "operation_id"
         case agentRuntime = "agent_runtime"
         case agentPrompt = "agent_prompt"
@@ -193,6 +218,7 @@ extension NotificationMessage: Codable {
         case paneSessionName = "pane_session_name"
         case attentionReason = "attention_reason"
         case stopHookActive = "stop_hook_active"
+        case providerSleepActivity = "provider_sleep_activity"
         case recap
         case pressEnter = "press_enter"
     }
@@ -200,6 +226,21 @@ extension NotificationMessage: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .linuxSetupIdentity:
+            try container.encode("linux_setup_identity", forKey: .type)
+        case .completeLinuxSetup(let result):
+            try container.encode("complete_linux_setup", forKey: .type)
+            try container.encode(result, forKey: .result)
+        case let .previewFiles(path, targets, paneSessionName):
+            try container.encode("preview_files", forKey: .type)
+            try container.encode(path, forKey: .path)
+            try container.encode(targets, forKey: .targets)
+            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
+        case let .previewImage(path, target, paneSessionName):
+            try container.encode("preview_image", forKey: .type)
+            try container.encode(path, forKey: .path)
+            try container.encode(target, forKey: .target)
+            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
         case let .offerResource(path, target, paneSessionName):
             try container.encode("open_resource", forKey: .type)
             try container.encode(path, forKey: .path)
@@ -282,7 +323,8 @@ extension NotificationMessage: Codable {
             let sessionID,
             let paneSessionName,
             let attentionReason,
-            let stopHookActive
+            let stopHookActive,
+            let providerSleepActivity
         ):
             try container.encode("team_hook", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
@@ -293,6 +335,14 @@ extension NotificationMessage: Codable {
             try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
             try container.encodeIfPresent(attentionReason, forKey: .attentionReason)
             try container.encode(stopHookActive, forKey: .stopHookActive)
+            try container.encodeIfPresent(providerSleepActivity, forKey: .providerSleepActivity)
+        case .providerActivity(let path, let runtime, let sessionID, let paneSessionName, let activity):
+            try container.encode("provider_activity", forKey: .type)
+            try container.encode(path, forKey: .callerWorktree)
+            try container.encode(runtime, forKey: .runtime)
+            try container.encodeIfPresent(sessionID, forKey: .sessionID)
+            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
+            try container.encode(activity, forKey: .providerSleepActivity)
         case .attentionReport(let path, let callerAgentID, let recap):
             try container.encode("attention_report", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
@@ -358,12 +408,21 @@ extension NotificationMessage: Codable {
         case .worktreeCreateStatus(let operationID):
             try container.encode("worktree_create_status", forKey: .type)
             try container.encode(operationID, forKey: .operationID)
-        case .removeWorktree(let worktreePath, let force):
+        case .removeWorktree(let worktreePath, let force, let pinned):
             try container.encode("remove_worktree", forKey: .type)
             try container.encode(worktreePath, forKey: .worktreePath)
             try container.encode(force, forKey: .force)
+            try container.encode(pinned, forKey: .pinned)
+        case .worktreePinCapability:
+            try container.encode("worktree_pin_capability", forKey: .type)
+        case .setWorktreePinned(let worktreePath, let isPinned):
+            try container.encode("set_worktree_pinned", forKey: .type)
+            try container.encode(worktreePath, forKey: .worktreePath)
+            try container.encode(isPinned, forKey: .isPinned)
         case .worktreeRemoveCapability:
             try container.encode("worktree_remove_capability", forKey: .type)
+        case .worktreePinnedRemovalCapability:
+            try container.encode("worktree_pinned_removal_capability", forKey: .type)
         case .worktreeRemoveStatus(let operationID):
             try container.encode("worktree_remove_status", forKey: .type)
             try container.encode(operationID, forKey: .operationID)
@@ -374,6 +433,20 @@ extension NotificationMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
+        case "linux_setup_identity":
+            self = .linuxSetupIdentity
+        case "complete_linux_setup":
+            self = .completeLinuxSetup(try container.decode(LinuxHostSetupResult.self, forKey: .result))
+        case "preview_files":
+            self = .previewFiles(path: try container.decode(String.self, forKey: .path),
+                                 targets: try container.decode([String].self, forKey: .targets),
+                                 paneSessionName: try container.decodeIfPresent(String.self, forKey: .paneSessionName))
+        case "preview_image":
+            self = .previewImage(
+                path: try container.decode(String.self, forKey: .path),
+                target: try container.decode(String.self, forKey: .target),
+                paneSessionName: try container.decodeIfPresent(String.self, forKey: .paneSessionName)
+            )
         case "open_resource":
             self = .offerResource(
                 path: try container.decode(String.self, forKey: .path),
@@ -473,7 +546,16 @@ extension NotificationMessage: Codable {
                              runtime: runtime, event: event,
                              sessionID: sessionID, paneSessionName: paneSessionName,
                              attentionReason: attentionReason,
-                             stopHookActive: stopHookActive)
+                             stopHookActive: stopHookActive,
+                             providerSleepActivity: try container.decodeIfPresent(ProviderSleepActivity.self, forKey: .providerSleepActivity))
+        case "provider_activity":
+            self = .providerActivity(
+                callerWorktree: try container.decode(String.self, forKey: .callerWorktree),
+                runtime: try container.decode(TeamHookRuntime.self, forKey: .runtime),
+                sessionID: try container.decodeIfPresent(String.self, forKey: .sessionID),
+                paneSessionName: try container.decodeIfPresent(String.self, forKey: .paneSessionName),
+                activity: (try? container.decode(ProviderSleepActivity.self, forKey: .providerSleepActivity)) ?? .unknown
+            )
         case "attention_report":
             self = .attentionReport(
                 callerWorktree: try container.decode(String.self, forKey: .callerWorktree),
@@ -550,10 +632,20 @@ extension NotificationMessage: Codable {
         case "remove_worktree":
             self = .removeWorktree(
                 worktreePath: try container.decode(String.self, forKey: .worktreePath),
-                force: try container.decode(Bool.self, forKey: .force)
+                force: try container.decode(Bool.self, forKey: .force),
+                pinned: try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+            )
+        case "worktree_pin_capability":
+            self = .worktreePinCapability
+        case "set_worktree_pinned":
+            self = .setWorktreePinned(
+                worktreePath: try container.decode(String.self, forKey: .worktreePath),
+                isPinned: try container.decode(Bool.self, forKey: .isPinned)
             )
         case "worktree_remove_capability":
             self = .worktreeRemoveCapability
+        case "worktree_pinned_removal_capability":
+            self = .worktreePinnedRemovalCapability
         case "worktree_remove_status":
             self = .worktreeRemoveStatus(
                 operationID: try container.decode(String.self, forKey: .operationID)
@@ -730,6 +822,8 @@ public struct TeamListMember: Codable, Sendable, Equatable {
     public let isMainWorktree: Bool
     public let isRunning: Bool
     public let agents: [TeamListAgent]
+    public let projectPath: String?
+    public let projectName: String?
 
     public init(
         name: String,
@@ -737,7 +831,9 @@ public struct TeamListMember: Codable, Sendable, Equatable {
         worktreePath: String,
         isMainWorktree: Bool,
         isRunning: Bool,
-        agents: [TeamListAgent] = []
+        agents: [TeamListAgent] = [],
+        projectPath: String? = nil,
+        projectName: String? = nil
     ) {
         self.name = name
         self.branch = branch
@@ -745,6 +841,8 @@ public struct TeamListMember: Codable, Sendable, Equatable {
         self.isMainWorktree = isMainWorktree
         self.isRunning = isRunning
         self.agents = agents
+        self.projectPath = projectPath
+        self.projectName = projectName
     }
 
     enum CodingKeys: String, CodingKey {
@@ -752,6 +850,8 @@ public struct TeamListMember: Codable, Sendable, Equatable {
         case worktreePath = "worktree_path"
         case isMainWorktree = "is_main_worktree"
         case isRunning = "is_running"
+        case projectPath = "project_path"
+        case projectName = "project_name"
     }
 
     private enum LegacyCodingKeys: String, CodingKey {
@@ -786,7 +886,9 @@ public struct TeamListMember: Codable, Sendable, Equatable {
             worktreePath: try container.decode(String.self, forKey: .worktreePath),
             isMainWorktree: isMainWorktree,
             isRunning: try container.decode(Bool.self, forKey: .isRunning),
-            agents: try container.decodeIfPresent([TeamListAgent].self, forKey: .agents) ?? []
+            agents: try container.decodeIfPresent([TeamListAgent].self, forKey: .agents) ?? [],
+            projectPath: try container.decodeIfPresent(String.self, forKey: .projectPath),
+            projectName: try container.decodeIfPresent(String.self, forKey: .projectName)
         )
     }
 }
@@ -819,6 +921,7 @@ public enum ResponseMessage: Sendable, Equatable {
     public static let serverBusyMessage =
         "Control socket is busy; retry the command."
 
+    case linuxSetupIdentity(LinuxHostTrustRequest)
     case ok
     case error(String)
     case serverBusy
@@ -834,7 +937,7 @@ public enum ResponseMessage: Sendable, Equatable {
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, code, message, panes, output, messages, text, operation
+        case type, code, message, panes, output, messages, text, operation, identity
         case operationID = "operation_id"
         case teamName = "team_name"
         case members
@@ -846,6 +949,9 @@ extension ResponseMessage: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .linuxSetupIdentity(let identity):
+            try container.encode("linux_setup_identity", forKey: .type)
+            try container.encode(identity, forKey: .identity)
         case .ok:
             try container.encode("ok", forKey: .type)
         case .error(let message):
@@ -890,6 +996,8 @@ extension ResponseMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
+        case "linux_setup_identity":
+            self = .linuxSetupIdentity(try container.decode(LinuxHostTrustRequest.self, forKey: .identity))
         case "ok":
             self = .ok
         case "error":

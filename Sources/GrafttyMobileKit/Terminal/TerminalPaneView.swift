@@ -1,5 +1,7 @@
 #if canImport(UIKit)
 import GhosttyTerminal
+import GrafttyCommandUI
+import GrafttyProtocol
 import SwiftUI
 import UIKit
 
@@ -59,15 +61,17 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// The leader's grid, from ownership or a paged checkpoint. The canvas preserves
     /// both dimensions while its presentation fits the available container.
     public let authoritativeGrid: SessionClient.GridSize?
-    /// Reserves one rendered row above and below interactive panes. Preview
-    /// tiles leave this disabled because their background is presentation UI.
-    public let addsVerticalRowPadding: Bool
+    /// Keeps the first row below top chrome while the scroll viewport fills
+    /// the pane. Preview tiles do not reserve interactive chrome space.
+    public let reservesTopChromeSpace: Bool
     public let showsAdditionalHistory: Bool
     public let pendingFocusRequests: Int
     /// Fired once per successful keyboard focus so the owners of the
     /// focus-request counters can mark them consumed.
     public let onFocusRequestsConsumed: (() -> Void)?
     public let committedSoftwareInput: CommittedSoftwareInput?
+    public let agentCompletion: AgentCompletionModel?
+    public let isAutocorrectionEnabled: Bool
     public let hardwareKeyboardCommands: [HardwareKeyboardCommand]
     /// Governs how frequently `UITerminalView` repaints while no host output
     /// is arriving. `.full` (the default) matches display refresh; `.reduced`
@@ -97,21 +101,28 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// `RootView` wires this to read `UIPasteboard.general.string` and
     /// forward to `SessionClient.sendPaste(_:)`. (IOS-11.8)
     public let onPasteRequested: (() -> Void)?
+    public let onBackRequested: (() -> Void)?
     /// Captures the live `TerminalInputContainerView` so the SwiftUI
     /// layer can call `cancelActiveSelectionIfAny()` from elsewhere
     /// (e.g., terminal control-bar buttons) per IOS-11.7.
     public let captureContainer: ((TerminalInputContainerView) -> Void)?
     public let retainedContainer: TerminalInputContainerView?
+    /// Routes an explicit native or menu link activation to the owning pane.
+    public let onOpenURL: ((URL) -> Void)?
+    /// Change when the origin or owner changes to invalidate captured menu actions.
+    public let linkContext: AnyHashable?
 
     public init(
         session: InMemoryTerminalSession,
         controller: TerminalController,
         authoritativeGrid: SessionClient.GridSize? = nil,
-        addsVerticalRowPadding: Bool = false,
+        reservesTopChromeSpace: Bool = false,
         showsAdditionalHistory: Bool = false,
         pendingFocusRequests: Int = 0,
         onFocusRequestsConsumed: (() -> Void)? = nil,
         committedSoftwareInput: CommittedSoftwareInput? = nil,
+        agentCompletion: AgentCompletionModel? = nil,
+        isAutocorrectionEnabled: Bool = false,
         hardwareKeyboardCommands: [HardwareKeyboardCommand] = [],
         renderPace: TerminalRenderPace = .full,
         onUserInteraction: (() -> Void)? = nil,
@@ -119,17 +130,22 @@ public struct TerminalPaneView: UIViewRepresentable {
         onFontSizeChange: ((Float) -> Void)? = nil,
         preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
         onPasteRequested: (() -> Void)? = nil,
+        onBackRequested: (() -> Void)? = nil,
         captureContainer: ((TerminalInputContainerView) -> Void)? = nil,
-        retainedContainer: TerminalInputContainerView? = nil
+        retainedContainer: TerminalInputContainerView? = nil,
+        onOpenURL: ((URL) -> Void)? = nil,
+        linkContext: AnyHashable? = nil
     ) {
         self.session = session
         self.controller = controller
         self.authoritativeGrid = authoritativeGrid
-        self.addsVerticalRowPadding = addsVerticalRowPadding
+        self.reservesTopChromeSpace = reservesTopChromeSpace
         self.showsAdditionalHistory = showsAdditionalHistory
         self.pendingFocusRequests = pendingFocusRequests
         self.onFocusRequestsConsumed = onFocusRequestsConsumed
         self.committedSoftwareInput = committedSoftwareInput
+        self.agentCompletion = agentCompletion
+        self.isAutocorrectionEnabled = isAutocorrectionEnabled
         self.hardwareKeyboardCommands = hardwareKeyboardCommands
         self.renderPace = renderPace
         self.onUserInteraction = onUserInteraction
@@ -137,8 +153,11 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.onFontSizeChange = onFontSizeChange
         self.preferredInterfaceStyle = preferredInterfaceStyle
         self.onPasteRequested = onPasteRequested
+        self.onBackRequested = onBackRequested
         self.captureContainer = captureContainer
         self.retainedContainer = retainedContainer
+        self.onOpenURL = onOpenURL
+        self.linkContext = linkContext
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
@@ -164,11 +183,13 @@ public struct TerminalPaneView: UIViewRepresentable {
     public func makeUIView(context: Context) -> TerminalInputContainerView {
         let view = retainedContainer ?? TerminalInputContainerView()
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
-        view.addsVerticalRowPadding = addsVerticalRowPadding
+        view.reservesTopChromeSpace = reservesTopChromeSpace
         view.authoritativeGrid = authoritativeGrid
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.controller = controller
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        view.agentCompletion = agentCompletion
+        view.terminalView.isAutocorrectionEnabled = isAutocorrectionEnabled
         view.committedSoftwareInput = committedSoftwareInput
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
@@ -178,6 +199,9 @@ public struct TerminalPaneView: UIViewRepresentable {
             onChange: onFontSizeChange
         )
         view.onPasteRequested = onPasteRequested
+        view.onBackRequested = onBackRequested
+        view.openURL = onOpenURL ?? { _ in }
+        view.linkContext = linkContext
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         captureContainer?(view)
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
@@ -186,10 +210,12 @@ public struct TerminalPaneView: UIViewRepresentable {
 
     public func updateUIView(_ view: TerminalInputContainerView, context: Context) {
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
-        view.addsVerticalRowPadding = addsVerticalRowPadding
+        view.reservesTopChromeSpace = reservesTopChromeSpace
         view.authoritativeGrid = authoritativeGrid
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        view.agentCompletion = agentCompletion
+        view.terminalView.isAutocorrectionEnabled = isAutocorrectionEnabled
         view.committedSoftwareInput = committedSoftwareInput
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
@@ -199,6 +225,9 @@ public struct TerminalPaneView: UIViewRepresentable {
             onChange: onFontSizeChange
         )
         view.onPasteRequested = onPasteRequested
+        view.onBackRequested = onBackRequested
+        view.openURL = onOpenURL ?? { _ in }
+        view.linkContext = linkContext
         context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
     }
@@ -288,17 +317,43 @@ public final class TerminalInputContainerView: UIView,
             setNeedsLayout()
         }
     }
-    var addsVerticalRowPadding = false {
+    var reservesTopChromeSpace = false {
         didSet {
-            guard addsVerticalRowPadding != oldValue else { return }
+            guard reservesTopChromeSpace != oldValue else { return }
+            if reservesTopChromeSpace {
+                snapshotScrollView.onContentUpdate = { [weak self] in self?.refreshFirstLineClearance() }
+                refreshFirstLineClearance()
+            } else {
+                snapshotScrollView.onContentUpdate = nil
+            }
             setNeedsLayout()
         }
+    }
+    private var needsFirstLineClearance = true
+
+    private func refreshFirstLineClearance() {
+        guard reservesTopChromeSpace else { return }
+        let needsClearance: Bool
+        if snapshotScrollView.hasScrollback {
+            needsClearance = false
+        } else {
+            guard case .inMemory(let session) = terminalView.configuration.backend,
+                  let text = session.readViewportText() else { return }
+            let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+            let columns = Int(terminalGridMetrics?.columns ?? UInt16.max)
+            let fitsFirstRow = lines.first.map { TerminalCellWidth.estimate($0) <= columns } ?? true
+            needsClearance = fitsFirstRow && lines.dropFirst().allSatisfy { $0.allSatisfy(\.isWhitespace) }
+        }
+        guard needsClearance != needsFirstLineClearance else { return }
+        needsFirstLineClearance = needsClearance
+        setNeedsLayout()
     }
 
     override public func layoutSubviews() {
         super.layoutSubviews()
         let canvas = snapshotCanvas
-        snapshotScrollView.frame = paddedViewport(canvas: canvas)
+        snapshotScrollView.frame = bounds
+        snapshotScrollView.topContentInset = topChromeInset(canvas: canvas)
         guard let grid = authoritativeGrid, let metrics = terminalGridMetrics, let canvas else {
             snapshotScrollView.configure(canvas: nil, nativeRowHeight: 0)
             confirmPhysicalViewportIfReady()
@@ -323,15 +378,23 @@ public final class TerminalInputContainerView: UIView,
         )
     }
 
-    // Keep the margins outside the native surface so they cannot become
-    // terminal cells. The clear container exposes the configured theme behind it.
-    private func paddedViewport(canvas: TerminalSnapshotCanvas.Layout?) -> CGRect {
-        guard addsVerticalRowPadding, let metrics = terminalGridMetrics,
-              terminalView.contentScaleFactor > 0 else { return bounds }
-        let rowHeight = CGFloat(metrics.cellHeightPixels) / terminalView.contentScaleFactor
-            * (canvas?.scale ?? 1) * (canvas == nil ? 1 : snapshotScrollView.followerZoomScale)
-        let inset = min(rowHeight, max(0, bounds.height / 2))
-        return bounds.insetBy(dx: 0, dy: inset)
+    override public func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        setNeedsLayout()
+    }
+
+    // Protect a lone first line without leaving a gap above populated terminals.
+    // UIKit supplies the chrome overlapping each pane, so lower split panes
+    // do not reserve the navigation bar again.
+    private func topChromeInset(canvas: TerminalSnapshotCanvas.Layout?) -> CGFloat {
+        guard reservesTopChromeSpace, needsFirstLineClearance else { return 0 }
+        let rowHeight = terminalGridMetrics.map {
+            CGFloat($0.cellHeightPixels) / max(1, terminalView.contentScaleFactor)
+                * (canvas?.scale ?? 1) * (canvas == nil ? 1 : snapshotScrollView.followerZoomScale)
+        } ?? 0
+        // Fullscreen Back occupies 44pt, with 12pt above and below it.
+        let clearance = onBackRequested == nil ? rowHeight : max(rowHeight, 68)
+        return min(safeAreaInsets.top + clearance, max(0, bounds.height - 1))
     }
 
     private func confirmPhysicalViewportIfReady() {
@@ -340,9 +403,8 @@ public final class TerminalInputContainerView: UIView,
         // Pixel comparison also covers fractional point changes that Ghostty
         // deduplicates without another resize notification.
         let scale = terminalView.contentScaleFactor
-        let viewport = paddedViewport(canvas: nil)
-        let widthPixels = (viewport.width * scale).rounded(.down)
-        let heightPixels = (viewport.height * scale).rounded(.down)
+        let widthPixels = (bounds.width * scale).rounded(.down)
+        let heightPixels = ((bounds.height - topChromeInset(canvas: nil)) * scale).rounded(.down)
         guard awaitingPhysicalViewport, authoritativeGrid == nil,
               widthPixels > 0, heightPixels > 0,
               let metrics = terminalGridMetrics,
@@ -359,6 +421,32 @@ public final class TerminalInputContainerView: UIView,
     }
 
     private var isCommittedSoftwareInputEligible = false
+    var agentCompletion: AgentCompletionModel? {
+        get { terminalView.agentCompletion }
+        set {
+            guard terminalView.agentCompletion !== newValue else { return }
+            terminalView.agentCompletion?.invalidateBoundary()
+            terminalView.agentCompletion?.onInsertText = nil
+            terminalView.agentCompletion = newValue
+            newValue?.onInsertText = { [weak self] text in
+                guard let self, self.isCommittedSoftwareInputEligible else { return }
+                self.terminalView.stopHardwareArrowRepeat()
+                self.terminalView.resetTextContext(notifyingInputSystem: true)
+                self.storedCommittedSoftwareInput?.insertText(text)
+            }
+        }
+    }
+
+    @discardableResult
+    func handleAgentCompletionControl(_ key: AgentCompletionKey) -> Bool {
+        guard isCommittedSoftwareInputEligible else { return false }
+        guard !isTrayShiftSelected, stickyControlActivation == .inactive else {
+            agentCompletion?.invalidateBoundary()
+            return false
+        }
+        return agentCompletion?.handleKey(key) == true
+    }
+
     private var storedCommittedSoftwareInput: TerminalPaneView.CommittedSoftwareInput?
     var committedSoftwareInput: TerminalPaneView.CommittedSoftwareInput? {
         get { storedCommittedSoftwareInput }
@@ -367,13 +455,18 @@ public final class TerminalInputContainerView: UIView,
             if let newValue {
                 storedCommittedSoftwareInput = newValue
                 isCommittedSoftwareInputEligible = true
-                terminalView.isKeyboardInputEnabled = true
+                if !terminalView.isKeyboardInputEnabled { terminalView.isKeyboardInputEnabled = true }
             } else {
                 if wasEligible {
+                    agentCompletion?.invalidateBoundary()
                     resetStickyModifiers()
+                    terminalView.resetTextContext()
                 }
                 isCommittedSoftwareInputEligible = false
-                terminalView.isKeyboardInputEnabled = false
+                // The renderer resigns on every false assignment, even when
+                // already disabled. Avoid another input-boundary callback.
+                if terminalView.isKeyboardInputEnabled { terminalView.isKeyboardInputEnabled = false }
+                terminalView.stopHardwareArrowRepeat()
                 storedCommittedSoftwareInput = nil
             }
             guard wasEligible != isCommittedSoftwareInputEligible else { return }
@@ -396,6 +489,14 @@ public final class TerminalInputContainerView: UIView,
     /// without host output, so a finger on the surface must count as
     /// activity). Wired by the SwiftUI layer to `SessionClient.wakeRenderer()`.
     public var onUserInteraction: (() -> Void)?
+    /// Only fullscreen routes install this action; retained and embedded panes
+    /// release it so a later drag cannot navigate a stale SwiftUI route.
+    public var onBackRequested: (() -> Void)? {
+        didSet {
+            updateTerminalGestureEnablement()
+            if (oldValue == nil) != (onBackRequested == nil) { setNeedsLayout() }
+        }
+    }
     private var configuredFontSize: Float?
     private var observedFontSize: Float?
     private var observedPinchScale: CGFloat = 1
@@ -430,15 +531,32 @@ public final class TerminalInputContainerView: UIView,
     }
 
     public func toggleStickyControlModifier() {
+        agentCompletion?.invalidateBoundary()
         #if !targetEnvironment(macCatalyst)
         terminalView.toggleStickyModifier(.ctrl)
         #endif
     }
 
     public func resetStickyModifiers() {
+        setTrayShiftSelected(false)
         #if !targetEnvironment(macCatalyst)
         terminalView.resetStickyModifiers()
         #endif
+    }
+
+    public private(set) var isTrayShiftSelected = false
+    var onTrayShiftSelectionChange: ((Bool) -> Void)?
+
+    public func toggleTrayShift() {
+        guard isCommittedSoftwareInputEligible else { return }
+        agentCompletion?.invalidateBoundary()
+        setTrayShiftSelected(!isTrayShiftSelected)
+    }
+
+    private func setTrayShiftSelected(_ selected: Bool) {
+        guard isTrayShiftSelected != selected else { return }
+        isTrayShiftSelected = selected
+        onTrayShiftSelectionChange?(selected)
     }
 
     public func setStickyControlActivationChangeHandler(
@@ -529,6 +647,9 @@ public final class TerminalInputContainerView: UIView,
                 modifierFlags: command.modifierFlags,
                 perform: { [weak self] in
                     guard let self, self.isCommittedSoftwareInputEligible else { return }
+                    if command.modifierFlags.isEmpty,
+                       self.terminalView.handleAgentCompletionText(command.text) { return }
+                    self.terminalView.commitAndResetTextContext()
                     self.storedCommittedSoftwareInput?.insertText(command.text)
                 }
             )
@@ -541,7 +662,7 @@ public final class TerminalInputContainerView: UIView,
     private lazy var anyTouchObserver: AnyTouchObserverGestureRecognizer = {
         let r = AnyTouchObserverGestureRecognizer()
         r.cancelsTouchesInView = false
-        r.onTouchBegan = { [weak self] in self?.onUserInteraction?() }
+        r.onTouchBegan = { [weak self] changesCursor in self?.handleAnyTouchBegan(changesCursor: changesCursor) }
         return r
     }()
 
@@ -553,6 +674,15 @@ public final class TerminalInputContainerView: UIView,
         return r
     }()
     private var selectionPanStartedInViewport = false
+    private lazy var backSwipeRecognizer: UISwipeGestureRecognizer = {
+        let recognizer = UISwipeGestureRecognizer(target: self, action: #selector(handleBackSwipe(_:)))
+        recognizer.direction = .right
+        recognizer.numberOfTouchesRequired = 1
+        recognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        recognizer.delegate = self
+        recognizer.isEnabled = false
+        return recognizer
+    }()
 
     /// Captures the most-recent long-press location so the menu's
     /// `Select` action can word-select at the original touch point even
@@ -560,7 +690,31 @@ public final class TerminalInputContainerView: UIView,
     private var lastLongPressPoint: CGPoint = .zero
     private var longPressURL: URL?
     private(set) var terminalGridMetrics: TerminalGridMetrics?
-    var openURL: (URL) -> Void = { UIApplication.shared.open($0) }
+    var openURL: (URL) -> Void = { _ in }
+    var copyLink: (URL) -> Void = { UIPasteboard.general.string = $0.absoluteString }
+    var linkContext: AnyHashable? {
+        didSet {
+            guard oldValue != linkContext else { return }
+            invalidateLinkMenu()
+        }
+    }
+    func detachBrowserControls() {
+        openURL = { _ in }
+        linkContext = nil
+        // Even a context-free caller can hold actions capturing its old route.
+        invalidateLinkMenu()
+    }
+
+    private func invalidateLinkMenu() {
+        longPressURL = nil
+        longPressMenuGeneration &+= 1
+        pendingPasteRefocusGeneration = nil
+        completedLongPressMenuDismissalGeneration = nil
+        longPressMenu.dismissMenu()
+    }
+
+    private var probingLink = false
+    private var probedLink: String?
     /// Paste and edit-menu dismissal are independent UIKit callbacks whose
     /// relative ordering is not part of our contract. Pair them by long-press
     /// menu generation and refocus only after both have happened.
@@ -613,6 +767,13 @@ public final class TerminalInputContainerView: UIView,
         addInteraction(selectionMenu)
         addGestureRecognizer(selectionPanRecognizer)
         snapshotScrollView.panGestureRecognizer.require(toFail: selectionPanRecognizer)
+        addGestureRecognizer(backSwipeRecognizer)
+        snapshotScrollView.panGestureRecognizer.require(toFail: backSwipeRecognizer)
+        for pan in terminalView.gestureRecognizers?.compactMap({ $0 as? UIPanGestureRecognizer }) ?? [] {
+            if pan.allowedTouchTypes.contains(NSNumber(value: UITouch.TouchType.direct.rawValue)) {
+                pan.require(toFail: backSwipeRecognizer)
+            }
+        }
         addGestureRecognizer(anyTouchObserver)
     }
 
@@ -686,6 +847,7 @@ public final class TerminalInputContainerView: UIView,
 
     func acceptsTerminalInput(at point: CGPoint) -> Bool {
         snapshotScrollView.frame.contains(point)
+            && point.y >= snapshotScrollView.frame.minY + snapshotScrollView.topContentInset
     }
 
     @discardableResult
@@ -710,6 +872,26 @@ public final class TerminalInputContainerView: UIView,
         prepareLongPressMenu(
             at: request.sourcePoint, text: request.text
         )
+        // Text alone cannot distinguish an OSC8 display label from its target.
+        // Verify through native metadata only when pointer motion is safe.
+        longPressURL = nil
+        // Native lookup uses the real terminal cell map, including OSC8.
+        // Never synthesize pointer motion in a mouse-reporting application
+        // or while a selection drag owns the mouse button.
+        if let surface = terminalView.surface, !surface.isMouseCaptured, !selectionController.isActive, !surface.hasSelection() {
+            longPressURL = TerminalLinkResolver.url(in: request.text, anchor: request.anchorRange)
+            probingLink = true
+            probedLink = nil
+            surface.sendMousePos(x: -1, y: -1, modifiers: .super_)
+            surface.sendMousePos(x: Double(request.sourcePoint.x), y: Double(request.sourcePoint.y), modifiers: .super_)
+            let link = probedLink
+            probingLink = false
+            surface.sendMousePos(x: Double(request.sourcePoint.x), y: Double(request.sourcePoint.y))
+            if let link {
+                // An unsupported OSC8 target must not fall back to its label.
+                longPressURL = TerminalLinkResolver.webURL(link)
+            }
+        }
         let config = UIEditMenuConfiguration(
             identifier: longPressMenuIdentifier(for: longPressMenuGeneration),
             sourcePoint: convert(request.sourcePoint, from: terminalView)
@@ -760,6 +942,7 @@ public final class TerminalInputContainerView: UIView,
     /// Selection and the checkpoint canvas can both suppress pinch. Restore
     /// each original state only after both restrictions have been released.
     private func updateTerminalGestureEnablement() {
+        backSwipeRecognizer.isEnabled = onBackRequested != nil && !selectionController.isActive
         snapshotScrollView.followerPinchGesture.isEnabled = authoritativeGrid != nil && !selectionPanRecognizer.isEnabled
         for recognizer in terminalView.gestureRecognizers ?? [] {
             let scrollPan = (recognizer as? UIPanGestureRecognizer).map {
@@ -823,6 +1006,7 @@ public final class TerminalInputContainerView: UIView,
     }
 
     fileprivate func performPaste(for menuGeneration: UInt) {
+        terminalView.commitAndResetTextContext()
         onPasteRequested?()
         guard menuGeneration == longPressMenuGeneration else { return }
         pendingPasteRefocusGeneration = menuGeneration
@@ -912,7 +1096,16 @@ public final class TerminalInputContainerView: UIView,
 
     /// Internal-visibility access for unit tests: simulates the any-touch
     /// observer's `touchesBegan` callback without a real UIKit touch event.
-    func simulateAnyTouchBeganForTesting() {
+    func simulateAnyTouchBeganForTesting(changesCursor: Bool = false) {
+        handleAnyTouchBegan(changesCursor: changesCursor)
+    }
+
+    private func handleAnyTouchBegan(changesCursor: Bool) {
+        // A finger tap only changes keyboard focus. Keep the initial boundary
+        // so the first percent key can open completion at an empty prompt.
+        if changesCursor || agentCompletion?.isActive == true {
+            agentCompletion?.invalidateBoundary()
+        }
         onUserInteraction?()
     }
 
@@ -968,6 +1161,43 @@ public final class TerminalInputContainerView: UIView,
     ) -> Bool {
         let normalizedModifiers = event.modifierFlags.appCommandModifiers
         let inputs = hardwareCommandInputs(for: event)
+        // Enabled application shortcuts retain priority over completion.
+        if let command = hardwareKeyboardCommands.first(where: {
+            $0.modifierFlags.appCommandModifiers == normalizedModifiers
+                && inputs.contains(canonicalHardwareCommandInput($0.input))
+        }) {
+            agentCompletion?.invalidateBoundary()
+            command.perform()
+            return true
+        }
+        let isShiftModifierPress = event.usage == UInt16(UIKeyboardHIDUsage.keyboardLeftShift.rawValue)
+            || event.usage == UInt16(UIKeyboardHIDUsage.keyboardRightShift.rawValue)
+        if isCommittedSoftwareInputEligible, terminalView.markedTextRange == nil, !isShiftModifierPress {
+            if normalizedModifiers.isEmpty {
+                let completionKey: AgentCompletionKey?
+                if inputs.contains(UIKeyCommand.inputUpArrow) { completionKey = .up }
+                else if inputs.contains(UIKeyCommand.inputDownArrow) { completionKey = .down }
+                else if inputs.contains("\r") || inputs.contains("\t") { completionKey = .accept }
+                else if inputs.contains(UIKeyCommand.inputEscape) { completionKey = .escape }
+                else { completionKey = nil }
+                if let completionKey, agentCompletion?.handleKey(completionKey) == true {
+                    return terminalView.didHandleAgentCompletionHardwareInput()
+                }
+                if inputs.contains("\u{8}"), agentCompletion?.handleBackspace() == true {
+                    return terminalView.didHandleAgentCompletionHardwareInput()
+                }
+            }
+            let isPrintable = !event.characters.isEmpty && event.characters.unicodeScalars.allSatisfy {
+                $0.properties.generalCategory != .control && $0.value < 0xF700
+            }
+            if normalizedModifiers.subtracting([.shift]).isEmpty, isPrintable {
+                if terminalView.handleAgentCompletionText(event.characters) {
+                    return terminalView.didHandleAgentCompletionHardwareInput()
+                }
+            } else {
+                agentCompletion?.invalidateBoundary()
+            }
+        }
         guard let command = effectiveHardwareKeyboardCommands.first(where: {
             $0.modifierFlags.appCommandModifiers == normalizedModifiers
                 && inputs.contains(canonicalHardwareCommandInput($0.input))
@@ -976,6 +1206,7 @@ public final class TerminalInputContainerView: UIView,
                   let byte = hardwareControlByte(for: event),
                   let committedInput = storedCommittedSoftwareInput
             else { return false }
+            terminalView.resetTextContext(notifyingInputSystem: true)
             if let insertControlByte = committedInput.insertControlByte {
                 insertControlByte(byte)
             } else {
@@ -1069,7 +1300,11 @@ public final class TerminalInputContainerView: UIView,
     }
 
     @objc private func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {
-        matchingHardwareKeyboardCommand(for: command)?.perform()
+        guard let match = matchingHardwareKeyboardCommand(for: command) else { return }
+        if hardwareKeyboardCommands.contains(where: { $0.id == match.id }) {
+            agentCompletion?.invalidateBoundary()
+        }
+        match.perform()
     }
 
     private func matchingHardwareKeyboardCommand(
@@ -1084,6 +1319,18 @@ public final class TerminalInputContainerView: UIView,
                 && $0.input == input
                 && $0.modifierFlags.appCommandModifiers == modifierFlags
         }
+    }
+
+    public override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === backSwipeRecognizer else { return super.gestureRecognizerShouldBegin(gestureRecognizer) }
+        return onBackRequested != nil && !selectionController.isActive
+            && snapshotScrollView.followerZoomScale == 1
+    }
+
+    @objc func handleBackSwipe(_ recognizer: UISwipeGestureRecognizer) {
+        guard recognizer.state == .ended, onBackRequested != nil,
+              !selectionController.isActive, snapshotScrollView.followerZoomScale == 1 else { return }
+        onBackRequested?()
     }
 
     func performHardwareKeyboardCommandForTesting(input: String, modifierFlags: UIKeyModifierFlags) {
@@ -1107,6 +1354,8 @@ public final class TerminalInputContainerView: UIView,
     }
 }
 
+extension TerminalInputContainerView: UIGestureRecognizerDelegate { }
+
 extension TerminalInputContainerView: TerminalSurfaceTextSelectionRequestDelegate {
     /// @spec IOS-11.1: While a focused terminal pane is interactive, the application shall handle libghostty's built-in long-press selection request through `TerminalInputContainerView` and present a menu at the touch point containing **Select**, **Select All**, and (when the clipboard contains text or an image at menu-build time) **Paste**, without installing a competing long-press recognizer on the container.
     public func terminalDidRequestTextSelection(_ request: TerminalTextSelectionRequest) {
@@ -1114,12 +1363,25 @@ extension TerminalInputContainerView: TerminalSurfaceTextSelectionRequestDelegat
     }
 }
 
+extension TerminalInputContainerView: TerminalSurfaceOpenURLDelegate, TerminalSurfaceHoverLinkDelegate {
+    public func terminalDidRequestOpenURL(_ value: String, kind: TerminalOpenURLKind) {
+        guard let url = TerminalLinkResolver.webURL(value) else { return }
+        openURL(url)
+    }
+
+    public func terminalDidUpdateHoverLink(_ value: String?) {
+        if probingLink { probedLink = value }
+    }
+}
+
 extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
     public func terminalDidAttachSurface(_ surface: TerminalSurface) {
+        refreshFirstLineClearance()
         setNeedsLayout()
     }
 
     public func terminalDidDetachSurface() {
+        needsFirstLineClearance = true
         cancelActiveSelectionIfAny()
         longPressURL = nil
         terminalGridMetrics = nil
@@ -1134,6 +1396,7 @@ extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
 extension TerminalInputContainerView: TerminalSurfaceScrollbarDelegate {
     public func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) {
         snapshotScrollView.updateScrollbar(scrollbar)
+        refreshFirstLineClearance()
     }
 }
 
@@ -1151,10 +1414,10 @@ extension TerminalInputContainerView: TerminalSurfaceGridResizeDelegate {
 /// local scrolling renders without host output, so a finger on the
 /// surface must count as activity.
 final class AnyTouchObserverGestureRecognizer: UIGestureRecognizer {
-    var onTouchBegan: (() -> Void)?
+    var onTouchBegan: ((Bool) -> Void)?
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        onTouchBegan?()
+        onTouchBegan?(touches.contains { $0.type == .indirectPointer })
         state = .failed
     }
 }
@@ -1204,9 +1467,14 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
             UIAction(title: "Select All") { [weak self] _ in self?.performSelectAll() },
         ]
         if let url = longPressURL {
+            let open = openURL
+            children.insert(UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                guard let self, self.longPressMenuGeneration == generation else { return }
+                self.copyLink(url)
+            }, at: 0)
             children.insert(UIAction(title: "Open Link", image: UIImage(systemName: "safari")) { [weak self] _ in
                 guard let self, self.longPressMenuGeneration == generation else { return }
-                self.openURL(url)
+                open(url)
             }, at: 0)
         }
         if hasPasteContent {

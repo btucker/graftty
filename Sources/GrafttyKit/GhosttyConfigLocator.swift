@@ -61,6 +61,6 @@ public enum GhosttyConfigLocator {
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        fileManager.createFile(atPath: url.path, contents: Data())
+        _ = fileManager.createFile(atPath: url.path, contents: Data())
     }
 }

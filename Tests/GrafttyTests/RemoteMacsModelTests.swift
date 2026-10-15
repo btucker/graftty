@@ -10,6 +10,129 @@ import Testing
 @Suite("RemoteMacsModel")
 @MainActor
 struct RemoteMacsModelTests {
+    @Test("@spec LAYOUT-2.154: While an editable remote project is connected, the application shall expose Add worktree before repository details are cached, resolve the promoted repository alias to its owning identity, and fetch the captured repository on action or report its error.")
+    func remoteProjectAddResolvesColdCacheAndOwner() async throws {
+        let remote = try remoteMac()
+        let other = try remoteMac(id: .init(value: "other-mac"), fingerprintByte: 0x33)
+        let repository = RemoteRepositoryInfo(id: "/repo", displayName: "Repo", origin: nil, defaultBranchStatus: nil, branches: [])
+        let recorder = RemoteMacsModelManagementRecorder(response: .repositories([repository]))
+        let (model, _) = try await projectControlModel(remotes: [remote, other], recorder: recorder)
+        defer { model.disconnect(identity: RemoteMacIdentity(remote)); model.disconnect(identity: RemoteMacIdentity(other)) }
+        let raw = SidebarProject(id: "project", repositoryID: repository.id, name: "Repo", supportsWorktreeEditing: true)
+        let project = try #require(model.relayRouter.promoteProjects([raw], from: remote).first)
+        #expect(project.repositoryID != repository.id)
+        #expect(model.repositoriesByRemote.isEmpty)
+        #expect(model.editableRepositoryTarget(for: project) == .init(identity: RemoteMacIdentity(remote), repositoryID: repository.id))
+        var wrongOwner = project
+        wrongOwner.owner = .init(deviceID: other.id, deviceLabel: other.label, relayDepth: 1)
+        #expect(model.editableRepositoryTarget(for: wrongOwner) == nil)
+        let replacedMac = try remoteMac(id: remote.id, fingerprintByte: 0x44)
+        let replacementProject = try #require(model.relayRouter.promoteProjects([raw], from: replacedMac).first)
+        #expect(model.editableRepositoryTarget(for: replacementProject) == nil)
+        var offline = project; offline.isAvailable = false
+        #expect(model.editableRepositoryTarget(for: offline) == nil)
+        var readOnly = project; readOnly.supportsWorktreeEditing = nil
+        #expect(model.editableRepositoryTarget(for: readOnly) == nil)
+        let resolved = try await model.addWorktreeRepository(for: project)
+        #expect(RemoteMacIdentity(resolved.0) == RemoteMacIdentity(remote))
+        #expect(resolved.1 == repository)
+        #expect(await recorder.requests() == [.listRepositories])
+        model.disconnect(identity: RemoteMacIdentity(remote))
+        #expect(model.editableRepositoryTarget(for: project) == nil)
+        await #expect(throws: (any Error).self) { try await model.addWorktreeRepository(for: project) }
+    }
+
+    @Test("@spec LAYOUT-2.155: When a remote project's sort mode is changed, the application shall route the request to the owning repository and display the host's acknowledged snapshot mode, while disabling sorting for older hosts and retaining the mode after failure.")
+    func remoteSortRoutesAndRejectsUnsupportedOrFailedRequests() async throws {
+        let remote = try remoteMac()
+        let failure = WorktreeManagementResponse.error(code: "denied", message: "Host refused sorting", forceAllowed: false, shortStatus: nil)
+        let recorder = RemoteMacsModelManagementRecorder(response: failure)
+        let (model, _) = try await projectControlModel(remotes: [remote], recorder: recorder)
+        defer { model.disconnect(identity: RemoteMacIdentity(remote)) }
+        let raw = SidebarProject(id: "project", repositoryID: "/repo", name: "Repo", supportsWorktreeEditing: true, worktreeOrderMode: .manual)
+        let project = try #require(model.relayRouter.promoteProjects([raw], from: remote).first)
+        #expect(model.canSetWorktreeOrder(for: project))
+        var legacy = project; legacy.worktreeOrderMode = nil
+        #expect(!model.canSetWorktreeOrder(for: legacy))
+        await #expect(throws: (any Error).self) { try await model.setWorktreeOrder(.recentActivity, for: legacy) }
+        #expect(await recorder.requests().isEmpty)
+        do {
+            try await model.setWorktreeOrder(.recentActivity, for: project)
+            Issue.record("Expected host error")
+        } catch { #expect(error.localizedDescription == "Host refused sorting") }
+        #expect(project.worktreeOrderMode == .manual)
+        #expect(await recorder.requests() == [.setWorktreeOrder(repositoryID: "/repo", mode: .recentActivity)])
+        #expect(await model.sendRelayedWorktreeManagement(.setWorktreeOrder(repositoryID: project.repositoryID, mode: .recentActivity)) == failure)
+        #expect(await recorder.requests().count == 2)
+        var offline = project; offline.isAvailable = false
+        #expect(!model.canSetWorktreeOrder(for: offline))
+    }
+
+    @Test func addRepositoryReportsHostErrorsAndMissingRepository() async throws {
+        let remote = try remoteMac()
+        for response in [WorktreeManagementResponse.repositories([]), .error(code: "denied", message: "Details denied", forceAllowed: false, shortStatus: nil)] {
+            let recorder = RemoteMacsModelManagementRecorder(response: response)
+            let (model, _) = try await projectControlModel(remotes: [remote], recorder: recorder)
+            let raw = SidebarProject(id: "project", repositoryID: "/repo", name: "Repo", supportsWorktreeEditing: true)
+            let project = try #require(model.relayRouter.promoteProjects([raw], from: remote).first)
+            do {
+                _ = try await model.addWorktreeRepository(for: project)
+                Issue.record("Expected repository lookup error")
+            } catch {
+                if case .error(_, let message, _, _) = response { #expect(error.localizedDescription == message) }
+                else { #expect(error.localizedDescription.contains("repository")) }
+            }
+            model.disconnect(identity: RemoteMacIdentity(remote))
+        }
+    }
+
+    @Test func addActionKeepsCapturedRepositoryAcrossProjectChanges() async throws {
+        let remote = try remoteMac()
+        let repository = RemoteRepositoryInfo(id: "/repo", displayName: "Repo", origin: nil, defaultBranchStatus: nil, branches: [])
+        let otherRepository = RemoteRepositoryInfo(id: "/other", displayName: "Other", origin: nil, defaultBranchStatus: nil, branches: [])
+        let gate = RemoteMacsModelConnectGate()
+        let recorder = RemoteMacsModelManagementRecorder(response: .repositories([repository, otherRepository]), gate: gate)
+        let (model, _) = try await projectControlModel(remotes: [remote], recorder: recorder)
+        defer { model.disconnect(identity: RemoteMacIdentity(remote)) }
+        let raw = SidebarProject(id: "project", repositoryID: repository.id, name: "Repo", supportsWorktreeEditing: true)
+        let project = try #require(model.relayRouter.promoteProjects([raw], from: remote).first)
+        let action = Task { try await model.addWorktreeRepository(for: project) }
+        await gate.waitUntilStarted()
+        let other = SidebarProject(id: "other", repositoryID: otherRepository.id, name: "Other", supportsWorktreeEditing: true)
+        _ = model.relayRouter.promoteProjects([other], from: remote)
+        await gate.release()
+        let result = try await action.value
+        #expect(result.1.id == repository.id)
+        #expect(RemoteMacIdentity(result.0) == RemoteMacIdentity(remote))
+    }
+
+    @Test func successfulSortUsesRawRepositoryRoute() async throws {
+        let remote = try remoteMac()
+        let recorder = RemoteMacsModelManagementRecorder()
+        let (model, _) = try await projectControlModel(remotes: [remote], recorder: recorder)
+        defer { model.disconnect(identity: RemoteMacIdentity(remote)) }
+        let raw = SidebarProject(id: "project", repositoryID: "/repo", name: "Repo", supportsWorktreeEditing: true, worktreeOrderMode: .manual)
+        let project = try #require(model.relayRouter.promoteProjects([raw], from: remote).first)
+        try await model.setWorktreeOrder(.recentActivity, for: project)
+        #expect(await recorder.requests() == [.setWorktreeOrder(repositoryID: "/repo", mode: .recentActivity)])
+        #expect(project.worktreeOrderMode == .manual)
+        let hostUpdate = SidebarProject(id: raw.id, repositoryID: raw.repositoryID, name: raw.name, supportsWorktreeEditing: true, worktreeOrderMode: .recentActivity)
+        #expect(model.relayRouter.promoteProjects([hostUpdate], from: remote).first?.worktreeOrderMode == .recentActivity)
+    }
+
+    private func projectControlModel(remotes: [RemoteMac], recorder: RemoteMacsModelManagementRecorder) async throws -> (RemoteMacsModel, RemoteMacConnectionRegistry) {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        for remote in remotes { try store.add(remote) }
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            .init(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                  connection: RemoteMacsModelRecordingConnection(managementRecorder: recorder), paneEnvironment: .empty)
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        for remote in remotes { _ = try await model.connect(to: remote) }
+        return (model, registry)
+    }
+
     @Test("@spec REMOTE-14.7: When remote project metadata arrives during refresh, the application shall derive project contents and removal authority from the same per-owner snapshot.")
     func sidebarAuthorityUsesOneSnapshot() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
@@ -46,6 +169,62 @@ struct RemoteMacsModelTests {
         #expect(third.worktrees.compactMap { $0.sidebar?.id } == ["stable-worktree"])
         #expect(driver.readCount == 2)
         model.disconnect(identity: RemoteMacIdentity(remote))
+    }
+
+    @Test func remoteNotificationResolvesCurrentProjectInitials() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let project = SidebarProject(id: "project", repositoryID: "/repo", name: "Project", initials: "NEW")
+        let driver = SidebarSnapshotSequenceDriver(next: .init(projects: [project]))
+        let paneStore = WorktreePanesStore(driver: driver)
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            .init(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                  connection: RemoteMacsModelTestConnection(), paneEnvironment: .init(worktreePanesStore: paneStore, paneControlClient: nil))
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+        await paneStore.applySnapshot([])
+        await paneStore.applySnapshot([])
+        let event = RemoteNotificationEvent(id: UUID(), kind: .agentStop,
+            origin: .init(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0),
+            originFingerprint: RemoteMacIdentity(remote).fingerprint, worktreeID: "/repo", paneID: nil,
+            title: "Review", body: "Done", timestamp: Date(),
+            identityProject: SidebarProject(id: "project", repositoryID: "/repo", name: "Project", initials: "OLD"))
+        let identity = await model.notificationProjectIdentity(for: event)
+        #expect(identity?.0.displayInitials == "NEW")
+        #expect(identity?.1 == nil)
+        model.disconnect(identity: RemoteMacIdentity(remote))
+    }
+
+    @Test func legacyHomeNotificationUsesPublishedProjectFallback() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            .init(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                  connection: RemoteMacsModelTestConnection(), paneEnvironment: .empty)
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        let identity = RemoteMacIdentity(remote)
+        var events: [RemoteNotificationEvent] = []
+        model.onRemoteNotification = { events.append($0) }
+        func snapshot(attention: String?) -> [WorktreePanes] {
+            [WorktreePanes(path: "/repo", displayName: "root", repoDisplayName: "Repo",
+                displayBranch: "release", state: .closed, isMainCheckout: true, prBadge: nil,
+                stats: nil, attentionText: attention, attentionSource: .userNotify,
+                attentionTimestamp: attention == nil ? nil : Date(timeIntervalSince1970: 100), layout: nil)]
+        }
+        registry.onPaneSnapshot(identity, snapshot(attention: nil))
+        registry.onPaneSnapshot(identity, snapshot(attention: "Review"))
+        let event = try #require(events.first)
+        let rows = try #require(model.worktreePanesByRemote[identity])
+        let publishedProject = try #require(SidebarProjection.projects(rows).first)
+        #expect(event.identityProject?.id == publishedProject.id)
+        #expect(event.identityProject?.colorIndex == publishedProject.colorIndex)
+        #expect(event.identityProject?.displayInitials == publishedProject.displayInitials)
     }
 
     private func tempStoreURL() throws -> URL {
@@ -250,7 +429,7 @@ struct RemoteMacsModelTests {
         }
         let model = RemoteMacsModel(store: store, connectionRegistry: registry)
         #expect(await model.reconnectRemoteMac(target: "unknown") == .error(
-            "Unknown Remote Mac 'unknown'. Use a saved name or device ID from the Remote Macs sidebar."
+            "Unknown Remote Host 'unknown'. Use a saved name or device ID from the Remote Hosts sidebar."
         ))
         guard case .error(let message) = await model.reconnectRemoteMac(target: "Studio Mac") else {
             Issue.record("Expected ambiguous target error")
@@ -373,6 +552,72 @@ struct RemoteMacsModelTests {
 
         #expect(connections.issuedCount == 1)
         #expect(model.connectionState(for: RemoteMacIdentity(remote)) == .offline)
+    }
+
+    @Test("@spec REMOTE-22.31: When maintenance reconnection is cancelled during teardown, the application shall clear the cancelled connection attempt so a later Connect can recover.")
+    func maintenanceReconnectCancellationAllowsRecovery() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let closeGate = RemoteMacsModelConnectGate()
+        let connections = RemoteMacsModelConnectionSequence([
+            RemoteMacsModelTestConnection(closeGate: closeGate),
+            RemoteMacsModelTestConnection(),
+        ])
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(),
+                connection: connections.next(),
+                paneEnvironment: .empty
+            )
+        }
+        let model = RemoteMacsModel(
+            store: store,
+            connectionRegistry: registry
+        )
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+
+        let maintenance = Task { try await model.reconnectAfterMaintenance(remote) }
+        await closeGate.waitUntilStarted()
+        maintenance.cancel()
+        await closeGate.release()
+        await #expect(throws: CancellationError.self) { try await maintenance.value }
+
+        #expect(connections.issuedCount == 1)
+        #expect(model.connectionState(for: RemoteMacIdentity(remote)) != .connecting)
+        _ = try await model.connect(to: remote)
+        #expect(connections.issuedCount == 2)
+    }
+
+    @Test("@spec REMOTE-22.36: When maintenance reconnection is cancelled after dialing begins, the application shall cancel that dial, reject connected publication, and allow a later connection to recover.")
+    func maintenanceReconnectCancellationDuringDial() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let remote = try remoteMac()
+        try store.add(remote)
+        let gate = MaintenanceDialCancellationGate()
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            try await gate.waitForReplacementDial()
+            return .init(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                         connection: RemoteMacsModelTestConnection(), paneEnvironment: .empty)
+        }
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+        let maintenance = Task { try await model.reconnectAfterMaintenance(remote) }
+        await gate.waitUntilStarted()
+        let started = ContinuousClock.now
+        maintenance.cancel()
+        await #expect(throws: CancellationError.self) { try await maintenance.value }
+        #expect(started.duration(to: .now) < .seconds(1))
+        #expect(await gate.cancelled)
+        #expect(registry.activeConnectionCount == 0)
+        #expect(model.connectionState(for: RemoteMacIdentity(remote)) != .connected)
+        _ = try await model.connect(to: remote)
+        #expect(registry.activeConnectionCount == 1)
     }
 
     @Test("disconnect during cached terminal connection teardown prevents a replacement dial")
@@ -669,7 +914,8 @@ struct RemoteMacsModelTests {
     @Test("""
     @spec REMOTE-12.18: When an explicit reconnect arrives during an ordinary \
     connection attempt, the application shall replace the weaker attempt with \
-    one signed replacement attempt and shall deduplicate further reconnects.
+    one signed replacement attempt and shall deduplicate further reconnects \
+    while that replacement attempt remains pending.
     """)
     func explicitReconnectUpgradesAnOrdinaryInflightAttempt() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
@@ -677,6 +923,7 @@ struct RemoteMacsModelTests {
         try store.add(remote)
         let started = AsyncStream<Void>.makeStream()
         var starts = started.stream.makeAsyncIterator()
+        let replacementGate = RemoteMacsModelConnectGate()
         var intents: [Bool] = []
         let registry = RemoteMacConnectionRegistry(
             intentAwareFactory: { remoteMac, identity, replacing in
@@ -684,6 +931,8 @@ struct RemoteMacsModelTests {
                 if intents.count == 1 {
                     started.continuation.yield(())
                     try await Task.sleep(for: .seconds(30))
+                } else {
+                    await replacementGate.wait()
                 }
                 return RemoteMacConnectionRegistry.Entry(
                     id: UUID(),
@@ -705,10 +954,14 @@ struct RemoteMacsModelTests {
             deviceID: remote.id,
             fingerprint: remote.fingerprint
         ) == .ok)
+        // Keep the replacement in flight through the second request's host-pin refresh.
+        await replacementGate.waitUntilStarted()
         #expect(await model.reconnectRemoteMac(
             deviceID: remote.id,
             fingerprint: remote.fingerprint
         ) == .ok)
+        #expect(intents == [false, true])
+        await replacementGate.release()
 
         await #expect(throws: CancellationError.self) {
             _ = try await ordinary.value
@@ -918,6 +1171,41 @@ struct RemoteMacsModelTests {
         #expect(await recorder.requests() == [
             .equalize(target: "pane-a")
         ])
+    }
+
+    @Test("@spec TEAM-15.9: When a relayed terminal requests agent completion, the application shall fetch the terminal-owning host's catalog, preserve its routing addresses, and map the current worktree to the viewer's opaque ID for project priority.")
+    func relayedAgentCompletionUsesTerminalOwner() async throws {
+        let path = "/repos/app/.worktrees/feature"
+        let candidate = AgentCompletionCandidate(address: path + "#codex", projectPath: "/repos/app",
+            projectName: "app", worktreePath: path, worktreeName: "feature", hostName: "This Mac", runtime: "codex")
+        let recorder = RemoteMacsModelManagementRecorder(response: .agentCompletions([candidate]))
+        let registry = RemoteMacConnectionRegistry(factory: { remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(id: UUID(), identity: identity, remoteMac: remoteMac,
+                createdAt: Date(), connection: RemoteMacsModelRecordingConnection(managementRecorder: recorder),
+                paneEnvironment: RemoteMacPaneEnvironment(worktreePanesStore: nil, paneControlClient: nil))
+        })
+        let remote = try remoteMac()
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        try store.add(remote)
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        await model.loadSavedRemotes()
+        _ = try await model.connect(to: remote)
+        registry.onPaneSnapshot(RemoteMacIdentity(remote), [
+            WorktreePanes(path: path, displayName: "feature", repoDisplayName: "app", repositoryID: "/repos/app",
+                displayBranch: "feature", state: .running, isMainCheckout: false, prBadge: nil, stats: nil,
+                attentionText: nil, layout: nil,
+                origin: WorktreeOrigin(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0))
+        ])
+        let promoted = try #require(model.promotedWorktreesForRelay().first)
+        let response = await model.sendRelayedWorktreeManagement(.worktreeAgentCompletions(worktreeID: promoted.path))
+        guard case .agentCompletions(let candidates) = response else {
+            Issue.record("Expected destination catalog")
+            return
+        }
+        #expect(candidates.first?.address == path + "#codex")
+        #expect(candidates.first?.projectPath == "/repos/app")
+        #expect(candidates.first?.worktreePath == promoted.path)
+        #expect(await recorder.requests() == [.worktreeAgentCompletions(worktreeID: path)])
     }
 
     @Test("direct and relayed layout commands forward opaque targets")
@@ -1402,7 +1690,7 @@ struct RemoteMacsModelTests {
         let recap = AttentionRecap(title: "Attention queue", completed: "Tests passed.", next: "Review.",
                                    need: "Does this look right?")
         func snapshot(time: Double?, userNotification: Bool = false,
-                      promptTime: Double? = nil, separatePane: Bool = false, worktreePrompt: Bool = false) -> [WorktreePanes] {
+                      promptTime: Double? = nil, separatePane: Bool = false, worktreePrompt: Bool = false, home: Bool = false) -> [WorktreePanes] {
             let stop = time.map { SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: $0),
                                                   recap: recap, paneSlotID: "slot") }
             let prompt = PaneLayoutNode.leaf(sessionName: separatePane ? "other-pane" : "agent-pane", title: "Agent",
@@ -1413,7 +1701,7 @@ struct RemoteMacsModelTests {
                 left: .leaf(sessionName: "agent-pane", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil),
                 right: prompt) : prompt
             return [WorktreePanes(path: "/repo/sidebar", displayName: "sidebar", repoDisplayName: "Repo",
-                displayBranch: "sidebar", state: .running, isMainCheckout: false, prBadge: nil,
+                displayBranch: "sidebar", state: .running, isMainCheckout: home, prBadge: nil,
                 stats: nil, attentionText: worktreePrompt ? "Worktree requires permission" : nil,
                 attentionSource: .agentStop, attentionTimestamp: worktreePrompt ? promptTime.map(Date.init(timeIntervalSince1970:)) : nil,
                 layout: layout,
@@ -1446,6 +1734,15 @@ struct RemoteMacsModelTests {
         #expect(events.count == 7)
         #expect(events.last?.title == "Worktree requires permission")
         #expect(events.last?.paneID == nil)
+        registry.onPaneSnapshot(identity, snapshot(time: 500, home: true))
+        let homeEvent = try #require(events.last)
+        #expect(homeEvent.body.contains("📥") == false)
+        #expect(homeEvent.identityProject?.id == "project")
+        #expect(event.identityProject == nil)
+        let decoded = try JSONDecoder().decode(RemoteNotificationEvent.self, from: JSONEncoder().encode(homeEvent))
+        #expect(decoded.identityProject?.name == "Repo")
+        let fallback = await model.notificationProjectIdentity(for: decoded)
+        #expect(fallback?.0.id == "project")
     }
 
     @Test("""
@@ -1669,6 +1966,25 @@ private final class FakeDiscoveryBrowser: RemoteMacDiscoveryBrowsing {
     }
 }
 
+private actor MaintenanceDialCancellationGate {
+    private var calls = 0
+    private var started = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var cancelled = false
+    func waitForReplacementDial() async throws {
+        calls += 1
+        guard calls == 2 else { return }
+        started = true
+        waiters.forEach { $0.resume() }; waiters.removeAll()
+        do { try await Task.sleep(for: .seconds(2)) }
+        catch { cancelled = true; throw error }
+    }
+    func waitUntilStarted() async {
+        guard !started else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+}
+
 private actor RemoteMacsModelConnectGate {
     private var started = false
     private var released = false
@@ -1872,6 +2188,12 @@ private actor RemoteMacsModelPaneControlRecorder:
 private actor RemoteMacsModelManagementRecorder:
     WorktreeManagementChannelDriver {
     private var recordedRequests: [WorktreeManagementRequest] = []
+    private let response: WorktreeManagementResponse
+    private let gate: RemoteMacsModelConnectGate?
+
+    init(response: WorktreeManagementResponse = .ok, gate: RemoteMacsModelConnectGate? = nil) {
+        self.response = response; self.gate = gate
+    }
 
     func open() async throws {}
     nonisolated func close() {}
@@ -1880,7 +2202,8 @@ private actor RemoteMacsModelManagementRecorder:
         _ request: WorktreeManagementRequest
     ) async throws -> WorktreeManagementResponse {
         recordedRequests.append(request)
-        return .ok
+        await gate?.wait()
+        return response
     }
 
     func requests() -> [WorktreeManagementRequest] {

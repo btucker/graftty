@@ -5,6 +5,32 @@ import GrafttyProtocol
 
 @Suite("Attention file handoff")
 struct AttentionFileHandoffTests {
+    @Test("@spec REMOTE-23.9: When a host consumes Attention events, the application shall retain events for worktrees owned by another host.")
+    func retainsOtherHostsEvents() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        for index in 0..<105 {
+            try handoff.progress(worktree: "/other", agentID: "codex-\(index)", runtime: .codex, sessionID: nil)
+        }
+        try handoff.progress(worktree: "/mine", agentID: "codex-mine", runtime: .codex, sessionID: nil)
+        #expect(try handoff.consumeActivities(acceptingWorktree: { $0 == "/mine" }) { _ in } == 1)
+        #expect(try handoff.consumeActivities { _ in } == 100)
+        #expect(try handoff.consumeActivities { _ in } == 5)
+    }
+
+    @Test("@spec REMOTE-23.10: If an Attention event handler cannot persist its result, then the application shall retain the event for retry.")
+    func failedHandlerRetainsEvent() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        try handoff.progress(worktree: "/mine", agentID: "codex-mine", runtime: .codex, sessionID: nil)
+        #expect(throws: CocoaError.self) {
+            try handoff.consumeActivities { _ in throw CocoaError(.fileWriteNoPermission) }
+        }
+        #expect(try handoff.consumeActivities { _ in } == 1)
+    }
+
     @Test("@spec AGENT-3.23: When a staged recap lacks an emoji, the Stop hook shall request one correction, preserve the recap if no correction arrives, and accept a corrected report without another continuation.")
     func legacyRecapRequestsEmojiOnce() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("emoji-retry-\(UUID())")

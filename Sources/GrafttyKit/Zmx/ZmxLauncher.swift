@@ -263,6 +263,33 @@ public final class ZmxLauncher: Sendable {
         return Set(parseListOutput(output))
     }
 
+    /// Live shell PIDs from `zmx list`. Current daemons expose the shell
+    /// PID here rather than writing a shell-spawn record to their logs.
+    public func listSessionShellPIDs() throws -> [String: Int32] {
+        guard isAvailable else { return [:] }
+        let output = try ZmxRunner.run(
+            executable: executable,
+            args: ["list"],
+            env: subprocessEnv(from: ProcessInfo.processInfo.environment),
+            timeout: 2.0
+        )
+        return parseSessionShellPIDs(output)
+    }
+
+    func parseSessionShellPIDs(_ output: String) -> [String: Int32] {
+        var result: [String: Int32] = [:]
+        for line in output.split(separator: "\n") {
+            let fields = line.split(whereSeparator: \.isWhitespace)
+            guard let nameField = fields.first(where: { $0.hasPrefix("name=") }),
+                  let pidField = fields.first(where: { $0.hasPrefix("pid=") }),
+                  let pid = Int32(pidField.dropFirst(4)), pid > 0 else { continue }
+            let name = String(nameField.dropFirst(5))
+            guard !name.isEmpty else { continue }
+            result[name] = pid
+        }
+        return result
+    }
+
     /// Whether the zmx daemon for the given session name is *known to be
     /// absent* from our `ZMX_DIR`. Returns `false` (i.e., "not missing")
     /// on any query failure — when zmx itself can't answer, we bias

@@ -154,22 +154,7 @@ struct GitTodo {
     func git_4_6() async throws { }
 
     @Test("""
-@spec GIT-4.14: While the GIT-4.7 offer-delete dialog is on screen, the application shall not block the main run loop's default mode. The dialog is presented as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than the nested-event-loop `NSAlert.runModal()`, so libghostty's PTY read callbacks — which land on the main thread in the default run-loop mode — keep flowing while the offer awaits a click. Without this, every terminal pane in every visible worktree freezes for as long as the auto-triggered offer stays unanswered.
-""", .disabled("structural — verified by manual smoke testing"))
-    func git_4_14() async throws { }
-
-    @Test("""
-@spec GIT-4.8: If the user confirms the offer dialog from GIT-4.7 by clicking "Delete Worktree", the application shall proceed directly to `git worktree remove` without re-prompting — the offer dialog IS the confirmation. The resulting success and failure paths shall be identical to GIT-4.5 and GIT-4.4 (teardown on success, stderr surfaced on failure).
-""", .disabled("not yet implemented"))
-    func git_4_8() async throws { }
-
-    @Test("""
-@spec GIT-4.9: The application shall offer the dialog described in GIT-4.7 at most once per (worktree, PR-number) pair, by persisting the offered PR number on the worktree entry. On a subsequent poll that still reports the same resolved PR (merged or closed), on an app restart that re-resolves the same already-resolved PR, or if the user dismisses the dialog with "Keep", the application shall not re-offer until the worktree's PR number changes. The application shall not present this dialog for the repository's main checkout (GIT-4.1 forbids deleting it) nor for worktrees in the stale state.
-""", .disabled("not yet implemented"))
-    func git_4_9() async throws { }
-
-    @Test("""
-@spec GIT-4.10: When `git worktree remove` succeeds (via either the menu-initiated Delete Worktree path per GIT-4.3 or the PR-merged offer path per GIT-4.8), the application shall drop the worktree's cached entries from every per-path observable store (PR status, divergence stats) before removing the entry from the model. Matches the contract GIT-3.6's Dismiss path already enforces — without it, orphan cache entries survive indefinitely and bleed into a future same-path re-add on its first reconcile tick.
+@spec GIT-4.10: When `git worktree remove` succeeds, the application shall drop the worktree's cached entries from every per-path observable store (PR status, divergence stats) before removing the entry from the model. Matches the contract GIT-3.6's Dismiss path already enforces — without it, orphan cache entries survive indefinitely and bleed into a future same-path re-add on its first reconcile tick.
 """, .disabled("not yet implemented"))
     func git_4_10() async throws { }
 
@@ -189,7 +174,7 @@ struct GitTodo {
     func git_4_16() async throws { }
 
     @Test("""
-@spec GIT-4.19: When the user invokes a delete-flow confirmation dialog (GIT-4.2 Delete Worktree, GIT-4.4 force-delete recovery, GIT-4.11 final failure, or the GIT-3.6 Remove Repository menu item), the application shall present it as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than `NSAlert.runModal()`. Extends GIT-4.14's policy from the auto-triggered offer dialog to every user-initiated delete dialog — otherwise the nested-event-loop `runModal()` freezes libghostty's PTY callbacks for every embedded terminal pane while the dialog awaits a click.
+@spec GIT-4.19: When the user invokes a delete-flow confirmation dialog (GIT-4.2 Delete Worktree, GIT-4.4 force-delete recovery, GIT-4.11 final failure, or the GIT-3.6 Remove Repository menu item), the application shall present it as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than `NSAlert.runModal()`. Otherwise the nested-event-loop `runModal()` freezes libghostty's PTY callbacks for every embedded terminal pane while the dialog awaits a click.
 """, .disabled("structural — verified by manual smoke testing"))
     func git_4_19() async throws { }
 

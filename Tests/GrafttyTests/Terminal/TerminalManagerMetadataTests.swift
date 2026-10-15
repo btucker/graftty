@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import GhosttyKit
 import Testing
 @testable import Graftty
 @testable import GrafttyKit
@@ -7,6 +8,29 @@ import Testing
 @MainActor
 @Suite("TerminalManager pane metadata")
 struct TerminalManagerMetadataTests {
+    @Test("@spec TEAM-15.15: When a native Mac pane is reassigned to another tracked worktree, the application shall dismiss pending completion and use the pane's new worktree context for subsequent agent discovery.")
+    func completionContextFollowsPaneReassignment() async throws {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-completion-move.sock")
+        let slot = PaneSlotID()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(terminalID: slot, app: fakeApp(), worktreePath: "/project-a/fix",
+            socketPath: "/tmp/graftty-completion-move.sock", terminalManager: manager, surfaceFactory: harness.factory))
+        manager.insertSurfaceForTesting(handle, for: slot)
+        let view = try #require(handle.view as? SurfaceNSView)
+        view.surfaceOperations.text = { _, _ in }
+        view.surfaceOperations.imeRect = { _ in .zero }
+        var loadedPath: String?
+        manager.agentCompletionLoader = { path, _ in loadedPath = path; return [] }
+        #expect(view.agentCompletion.handleText("%"))
+        manager.recordPaneSession(PaneSessionID(), for: slot, worktreePath: "/project-b/fix")
+        #expect(!view.agentCompletion.isActive)
+        #expect(view.agentCompletion.currentWorktreePath == "/project-b/fix")
+        #expect(!view.agentCompletion.handleText(" "))
+        #expect(view.agentCompletion.handleText("%"))
+        await view.agentCompletion.waitForLoad()
+        #expect(loadedPath == "/project-b/fix")
+        view.agentCompletion.cancel(preserveLiteral: false)
+    }
     @Test("@spec PERSIST-3.8: When Graftty quits and reopens with running worktrees, the application shall restore each pane's last title or PWD label and preserve title-over-PWD precedence as fresh metadata arrives.")
     func paneTitlesSurviveStateRoundTrip() throws {
         let namedSlot = PaneSlotID()
@@ -276,6 +300,29 @@ struct TerminalManagerMetadataTests {
         #expect(backend.writes.count == 1)
     }
 
+    @Test("Failed creation discards pending launch input and rehydration suppresses unconsumed cached loaders")
+    func abandonedLaunchIsNotReplayed() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "graftty-abandoned-\(UUID().uuidString)"))
+        defaults.set("", forKey: "defaultCommand")
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        manager.zmxLauncher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/true"),
+            zmxDir: URL(fileURLWithPath: "/tmp/zmx-test"))
+        let pane = PaneSlotID()
+        let session = PaneSessionID()
+        let pending = try #require(manager.resolveZmxSpawnConfiguration(for: pane,
+            paneSessionID: session, worktreePath: "/tmp", initialCommand: "printf abandoned", defaults: defaults))
+        #expect(pending.runsInitialCommand)
+        manager.markRehydrated(pane)
+        #expect(manager.resolveZmxSpawnConfiguration(for: pane,
+            paneSessionID: session, worktreePath: "/tmp", defaults: defaults)?.runsInitialCommand == false)
+        manager.queueInitialInputUntilShellReadyForTesting("printf abandoned\r", for: pane)
+        manager.discardInitialInput(for: pane)
+        #expect(!(await manager.waitForExplicitInitialInputDelivery(for: pane)))
+        manager.clearRehydrated(pane)
+        #expect(manager.resolveZmxSpawnConfiguration(for: pane,
+            paneSessionID: session, worktreePath: "/tmp", defaults: defaults)?.runsInitialCommand == false)
+    }
+
     @Test("Initial input only waits when the configured shell can emit readiness")
     func initialInputReadinessGateMatchesSpawnConfiguration() {
         let unsupported = testSurfaceHandleSpawnConfiguration()
@@ -299,5 +346,58 @@ struct TerminalManagerMetadataTests {
             extraInitialInput: nil,
             configuration: supported
         ))
+    }
+
+    @Test("@spec GIT-5.24: When a paired client first attaches to a newly created worktree's zsh or bash terminal, the application shall supply the host's default command to shell startup, honor the first-pane-only preference, and suppress a second default-command launch when a Mac renderer later attaches.")
+    func remoteAttachmentCarriesDefaultCommand() throws {
+        let defaults = try #require(UserDefaults(suiteName: "graftty-startup-\(UUID().uuidString)"))
+        defaults.set("printf mobile", forKey: "defaultCommand")
+        defaults.set(true, forKey: "defaultCommandFirstPaneOnly")
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        manager.zmxLauncher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/true"), zmxDir: URL(fileURLWithPath: "/tmp/zmx-test"))
+        let primary = PaneSlotID()
+        let secondary = PaneSlotID()
+        let firstSession = PaneSessionID()
+        let secondSession = PaneSessionID()
+        manager.recordPaneSession(firstSession, for: primary, worktreePath: "/tmp")
+        manager.recordPaneSession(secondSession, for: secondary, worktreePath: "/tmp")
+        manager.markFirstPane(primary)
+        // A Mac surface may prepare its spawn before the mobile client.
+        // Both configurations must give the winning daemon the command.
+        let macConfiguration = try #require(manager.resolveZmxSpawnConfiguration(
+            for: primary, paneSessionID: firstSession, worktreePath: "/tmp", defaults: defaults
+        ))
+        let configuration = try #require(manager.remoteSpawnConfiguration(
+            forSessionName: ZmxLauncher.sessionName(for: firstSession), defaults: defaults
+        ))
+        #expect(configuration.env["GRAFTTY_INITIAL_COMMAND"] == "printf mobile")
+        #expect(macConfiguration.env["GRAFTTY_INITIAL_COMMAND"] == configuration.env["GRAFTTY_INITIAL_COMMAND"])
+        #expect(manager.remoteSpawnConfiguration(
+            forSessionName: ZmxLauncher.sessionName(for: secondSession), defaults: defaults
+        )?.runsInitialCommand == false)
+        #expect(manager.consumeExplicitInitialInputMarker(primary))
+        manager.markRehydrated(secondary)
+        defaults.set(false, forKey: "defaultCommandFirstPaneOnly")
+        #expect(manager.remoteSpawnConfiguration(
+            forSessionName: ZmxLauncher.sessionName(for: secondSession), defaults: defaults
+        )?.runsInitialCommand == false)
+    }
+
+    @Test("A consumed agent prompt loader is not replayed by a later remote attachment")
+    func remoteAttachmentDoesNotReplayConsumedLoader() throws {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        manager.zmxLauncher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/true"), zmxDir: URL(fileURLWithPath: "/tmp/zmx-test"))
+        let pane = PaneSlotID()
+        let session = PaneSessionID()
+        manager.recordPaneSession(session, for: pane, worktreePath: "/tmp")
+        let first = try #require(manager.resolveZmxSpawnConfiguration(
+            for: pane, paneSessionID: session, worktreePath: "/tmp", initialCommand: "run-saved-agent-prompt"
+        ))
+        let receipt = try #require(first.startupReceipt)
+        defer { try? FileManager.default.removeItem(at: receipt) }
+        try Data().write(to: receipt)
+        #expect(manager.remoteSpawnConfiguration(
+            forSessionName: ZmxLauncher.sessionName(for: session)
+        )?.runsInitialCommand == false)
     }
 }

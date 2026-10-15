@@ -1,11 +1,39 @@
 #if canImport(UIKit)
 @testable import GhosttyTerminal
+import GhosttyKit
 import Testing
 @testable import GrafttyMobileKit
+import SwiftUI
 import UIKit
+
+private final class LinkTestLongPress: UILongPressGestureRecognizer {
+    var point: CGPoint = .zero
+    override var state: UIGestureRecognizer.State { get { .began } set {} }
+    override func location(in view: UIView?) -> CGPoint { point }
+}
 
 private final class NilInputKeyCommand: UIKeyCommand {
     override var input: String? { nil }
+}
+
+private final class ArrowTestKey: UIKey {
+    var usage: UIKeyboardHIDUsage = .keyboardLeftArrow
+    override var keyCode: UIKeyboardHIDUsage { usage }
+    override var characters: String {
+        switch usage {
+        case .keyboardRightArrow: UIKeyCommand.inputRightArrow
+        case .keyboardUpArrow: UIKeyCommand.inputUpArrow
+        case .keyboardDownArrow: UIKeyCommand.inputDownArrow
+        default: UIKeyCommand.inputLeftArrow
+        }
+    }
+    override var charactersIgnoringModifiers: String { characters }
+    override var modifierFlags: UIKeyModifierFlags { [] }
+}
+
+private final class ArrowTestPress: UIPress {
+    let arrow = ArrowTestKey()
+    override var key: UIKey? { arrow }
 }
 
 @MainActor
@@ -28,6 +56,8 @@ private final class TerminalResponseRecorder: @unchecked Sendable {
     func append(_ data: Data) {
         lock.withLock { self.data.append(data) }
     }
+
+    func snapshot() -> Data { lock.withLock { data } }
 
     func contains(_ response: String) -> Bool {
         lock.withLock { data.range(of: Data(response.utf8)) != nil }
@@ -57,39 +87,397 @@ private final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAni
 @MainActor
 struct TerminalPaneViewTests {
 
-    @Test("@spec IOS-6.25: While an interactive mobile terminal pane is displayed, the application shall reserve one displayed terminal row above and below the usable viewport, expose the Ghostty-themed background through that padding, and exclude the padding from terminal input and the owner grid.")
-    func terminalPaddingTracksMeasuredRows() {
+    @Test("@spec IOS-6.38: When the user toggles Auto-correct in the iOS keyboard accessory tray, the application shall enable or disable native terminal autocorrection without changing existing text or sending terminal input, default to off, and remember the preference across panes and app launches.")
+    func autocorrectionTogglePreservesInputAndPreference() throws {
+        #expect(SingleSessionView.terminalControlBarItems.contains(.autocorrection))
+        #expect(UIImage(systemName: "textformat.abc") != nil)
+        let suite = "TerminalAutocorrectionTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preference = AppStorage(wrappedValue: false, SingleSessionView.autocorrectionDefaultsKey, store: defaults)
+        #expect(!preference.wrappedValue)
+
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let view = container.terminalView
+        var output = ""
+        container.committedSoftwareInput = .init(insertText: { output += $0 }, deleteBackward: { output.removeLast() })
+        let host = UIViewController()
+        host.view = container
+        let window = UIWindow(frame: container.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        #expect(container.focusKeyboardInput())
+        view.insertText("teh")
+        #expect(view.autocorrectionType == .no)
+        preference.wrappedValue = true
+        view.isAutocorrectionEnabled = preference.wrappedValue
+        #expect(view.autocorrectionType == .yes)
+        #expect(view.isFirstResponder)
+        #expect(output == "teh")
+        let whole = try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))
+        #expect(view.text(in: whole) == "teh")
+
+        // UIKit's correction uses the same retained range as dictation.
+        view.replace(whole, withText: "the")
+        #expect(output == "the")
+
+        let restored = AppStorage(wrappedValue: false, SingleSessionView.autocorrectionDefaultsKey, store: defaults)
+        let nextPane = TerminalInputContainerView(frame: .zero)
+        nextPane.terminalView.isAutocorrectionEnabled = restored.wrappedValue
+        #expect(nextPane.terminalView.autocorrectionType == .yes)
+        preference.wrappedValue = false
+        view.isAutocorrectionEnabled = false
+        #expect(view.autocorrectionType == .no)
+        #expect(view.isFirstResponder)
+        #expect(!restored.wrappedValue)
+        #expect(view.text(in: whole) == "the")
+        #expect(output == "the")
+        #expect(view.autocapitalizationType == .none)
+        #expect(view.smartQuotesType == .no)
+        #expect(view.smartDashesType == .no)
+        #expect(view.inlinePredictionType == .no)
+    }
+
+    @Test("Changing autocorrection preserves an active marked composition")
+    func autocorrectionPreservesMarkedText() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        var output = ""
+        container.committedSoftwareInput = .init(insertText: { output += $0 }, deleteBackward: {})
+        let view = container.terminalView
+        view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        for enabled in [true, false] {
+            view.isAutocorrectionEnabled = enabled
+            let marked = try #require(view.markedTextRange)
+            #expect(view.text(in: marked) == "にほん")
+            #expect(output.isEmpty)
+        }
+    }
+
+    @Test("@spec IOS-6.27: While native iOS dictation streams or revises terminal text, the application shall retain the text and UTF-16 positions reported to UIKit across commits, apply revisions without duplicating prior words, and clear that input context when terminal keyboard focus ends.")
+    func dictationRetainsCommittedTextAndAppliesRevisions() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view: any UITextInput = container.terminalView
+        let delegate = NativeInputDelegateSpy()
+        var output = ""
+        container.committedSoftwareInput = .init(
+            insertText: { output += $0 },
+            deleteBackward: { if !output.isEmpty { output.unicodeScalars.removeLast() } }
+        )
+        view.inputDelegate = delegate
+
+        view.insertText("first")
+        let firstEnd = view.endOfDocument
+        #expect(view.offset(from: view.beginningOfDocument, to: firstEnd) == 5)
+        let first = try #require(view.textRange(from: view.beginningOfDocument, to: firstEnd))
+        #expect(view.text(in: first) == "first")
+        #expect(view.position(from: view.beginningOfDocument, offset: 5) != nil)
+
+        // Dictation may replace its prior hypothesis with a longer phrase.
+        view.replace(first, withText: "first second")
+        view.insertText(" 👋🏽")
+        let whole = try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))
+        #expect(view.text(in: whole) == "first second 👋🏽")
+        #expect(output == "first second 👋🏽")
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == output.utf16.count)
+        view.deleteBackward()
+        #expect(output == "first second 👋")
+        #expect(view.text(in: try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))) == output)
+        let phrase = try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))
+        view.replace(phrase, withText: "first third")
+        #expect(output == "first third")
+        #expect(view.text(in: try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))) == output)
+        #expect(delegate.events.isEmpty)
+
+        container.terminalView.resignFirstResponder()
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 0)
+    }
+
+    @Test("Native composition retains earlier committed dictation context")
+    func compositionFollowsCommittedDictationText() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view: any UITextInput = container.terminalView
+        var texts: [String] = []
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: {})
+        view.insertText("first ")
+        view.setMarkedText("second", selectedRange: NSRange(location: 6, length: 0))
+        let marked = try #require(view.markedTextRange)
+        #expect(view.offset(from: view.beginningOfDocument, to: marked.start) == 6)
+        #expect(view.text(in: marked) == "second")
+        #expect(texts == ["first "])
+        view.unmarkText()
+        #expect(view.markedTextRange == nil)
+        #expect(texts == ["first ", "second"])
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 12)
+        view.insertText(" third")
+        #expect(texts == ["first ", "second", " third"])
+    }
+
+    @Test("Software Return and lost input eligibility clear dictation context")
+    func dictationContextEndsAtTerminalCommandBoundaries() {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var texts: [String] = []
+        var deletes = 0
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: { deletes += 1 })
+        view.insertText("first")
+        view.insertText("\n")
+        #expect(texts == ["first", "\n"])
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 0)
+        // The remote prompt can contain text outside this local context.
+        view.deleteBackward()
+        #expect(deletes == 1)
+        view.insertText("next")
+        container.committedSoftwareInput = nil
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 0)
+        view.insertText("ignored")
+        #expect(texts == ["first", "\n", "next"])
+    }
+
+    #if !targetEnvironment(macCatalyst)
+    @Test("Sticky Ctrl replacements and deletes bypass retained dictation text", arguments: [true, false])
+    func stickyControlDoesNotReviseDictationContext(replacing: Bool) throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var texts: [String] = []
+        var deletes = 0
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: { deletes += 1 })
+        view.insertText("abc")
+        view.toggleStickyModifier(.ctrl)
+        if replacing {
+            let range = try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))
+            view.replace(range, withText: "c")
+        } else {
+            view.deleteBackward()
+        }
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 0)
+        #expect(texts == ["abc"])
+        #expect(deletes == 0)
+        #expect(view.stickyActivation(for: .ctrl) == .inactive)
+    }
+    #endif
+
+    @Test("Correcting committed dictation preserves a separate active composition")
+    func correctingCommittedWordPreservesComposition() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var output = ""
+        container.committedSoftwareInput = .init(
+            insertText: { output += $0 }, deleteBackward: { if !output.isEmpty { output.unicodeScalars.removeLast() } }
+        )
+        view.insertText("first ")
+        view.setMarkedText("secon", selectedRange: NSRange(location: 5, length: 0))
+        let end = try #require(view.position(from: view.beginningOfDocument, offset: 5))
+        let word = try #require(view.textRange(from: view.beginningOfDocument, to: end))
+        view.replace(word, withText: "First")
+        #expect(output == "First ")
+        #expect(view.markedTextRange != nil)
+        view.setMarkedText("second", selectedRange: NSRange(location: 6, length: 0))
+        view.unmarkText()
+        #expect(output == "First second")
+    }
+
+    @Test("Hardware command dispatch clears prior software dictation context")
+    func hardwareReturnEndsDictationContext() {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var texts: [String] = []
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: {})
+        view.insertText("first")
+        container.performHardwareKeyboardCommandForTesting(input: "\r", modifierFlags: [])
+        #expect(texts == ["first", "\r"])
+        #expect(view.offset(from: view.beginningOfDocument, to: view.endOfDocument) == 0)
+    }
+
+    @Test("Menu paste clears dictation context before inserting remote text")
+    func menuPasteEndsDictationContext() {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        view.insertText("first")
+        var contextLengthAtPaste: Int?
+        container.onPasteRequested = {
+            contextLengthAtPaste = view.offset(from: view.beginningOfDocument, to: view.endOfDocument)
+        }
+        container.performPasteForTesting()
+        #expect(contextLengthAtPaste == 0)
+    }
+
+    #if !targetEnvironment(macCatalyst)
+    @Test("Arming Ctrl preserves marked text while selecting and deleting it")
+    func stickyControlDoesNotTransformPendingComposition() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var texts: [String] = []
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: {})
+        view.setMarkedText("abc", selectedRange: NSRange(location: 3, length: 0))
+        view.toggleStickyModifier(.ctrl)
+        let selected = try #require(view.position(from: view.beginningOfDocument, offset: 2))
+        view.selectedTextRange = view.textRange(from: selected, to: selected)
+        view.deleteBackward()
+        #expect(view.text(in: try #require(view.markedTextRange)) == "ac")
+        #expect(view.stickyActivation(for: .ctrl) == .armed)
+        view.commitAndResetTextContext()
+        #expect(texts == ["ac"])
+        #expect(view.stickyActivation(for: .ctrl) == .armed)
+        #expect(view.markedTextRange == nil)
+    }
+
+    @Test("Sticky marked-text deletion retains Ghostty's native text and selection")
+    func stickyMarkedDeletionMatchesNativeContext() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        var texts: [String] = []
+        container.committedSoftwareInput = .init(insertText: { texts.append($0) }, deleteBackward: {})
+        view.setMarkedText("👋🏽", selectedRange: NSRange(location: 4, length: 0))
+        view.toggleStickyModifier(.ctrl)
+        view.deleteBackward()
+        let nativeRange = try #require(view.inputHandler.markedTextRange())
+        let nativeText = try #require(view.inputHandler.text(in: nativeRange))
+        #expect(view.text(in: try #require(view.markedTextRange)) == nativeText)
+        let nativeSelection = view.inputHandler.selectedTextRange()
+        #expect(view.offset(from: view.beginningOfDocument, to: try #require(view.selectedTextRange).start) == nativeSelection.location)
+        view.unmarkText()
+        #expect(texts == [nativeText])
+        #expect(view.stickyActivation(for: .ctrl) == .armed)
+    }
+    #endif
+
+    @Test("Prefix revisions keep a selection inside removed text within the document")
+    func prefixRevisionClampsRemovedSelection() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        view.insertText("abcdefghij")
+        view.setMarkedText("x", selectedRange: NSRange(location: 1, length: 0))
+        let caret = try #require(view.position(from: view.beginningOfDocument, offset: 5))
+        view.selectedTextRange = view.textRange(from: caret, to: caret)
+        let prefixEnd = try #require(view.position(from: view.beginningOfDocument, offset: 10))
+        view.replace(try #require(view.textRange(from: view.beginningOfDocument, to: prefixEnd)), withText: "")
+        let selected = try #require(view.selectedTextRange)
+        #expect(view.offset(from: view.beginningOfDocument, to: selected.start) == 0)
+        #expect(view.offset(from: view.beginningOfDocument, to: selected.end) <= 1)
+        // Validate the selection before passing it to NSString insertion.
+        try #require(view.offset(from: view.beginningOfDocument, to: selected.end) <= 1)
+        view.unmarkText()
+        view.insertText("y")
+        #expect(view.text(in: try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))) == "yx")
+    }
+
+    @Test("External terminal controls notify UIKit when they reset input context")
+    func externalInputContextResetNotifiesUIKit() {
+        let container = TerminalInputContainerView(frame: .zero)
+        let view = container.terminalView
+        let delegate = NativeInputDelegateSpy()
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        view.inputDelegate = delegate
+        view.insertText("first")
+        #expect(delegate.events.isEmpty)
+        view.commitAndResetTextContext()
+        #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
+        delegate.events.removeAll()
+        view.commitAndResetTextContext()
+        view.insertText("next")
+        #expect(delegate.events.isEmpty)
+        // Physical input clears context before Ghostty delegates Return.
+        view.pressesBegan([], with: nil)
+        #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
+        delegate.events.removeAll()
+        view.setMarkedText("pending", selectedRange: NSRange(location: 7, length: 0))
+        #expect(container.terminalView(view, handleHardwareKey: TerminalHardwareKeyEvent(
+            usage: UInt16(UIKeyboardHIDUsage.keyboardA.rawValue), characters: "\u{01}",
+            charactersIgnoringModifiers: "a", modifierFlags: [.control]
+        )))
+        #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
+        #expect(view.markedTextRange == nil)
+        delegate.events.removeAll()
+        view.setMarkedText("pending\n", selectedRange: NSRange(location: 8, length: 0))
+        view.commitAndResetTextContext()
+        #expect(delegate.events == ["textWillChange", "selectionWillChange", "selectionDidChange", "textDidChange"])
+    }
+
+    @Test("@spec IOS-6.28: While a hardware arrow key is held in a mobile terminal, the application shall use its own repeat scheduler with libghostty's automatic repeat disabled, repeat that key after an initial delay, and stop repeating on release, cancellation, keyboard ineligibility, focus loss, or dismissal of the agent picker that received the held arrow.", arguments: [UIKeyboardHIDUsage.keyboardLeftArrow, .keyboardRightArrow, .keyboardUpArrow, .keyboardDownArrow])
+    func heldArrowRepeatsAndStops(usage: UIKeyboardHIDUsage) async throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        #expect(!container.terminalView.automaticallyRepeatsHardwareKeys)
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        var delivered = 0
+        let press = ArrowTestPress()
+        press.arrow.usage = usage
+        container.hardwareKeyboardCommands = [.init(id: "arrow", title: "Arrow",
+            input: press.arrow.characters, modifierFlags: [], perform: { delivered += 1 })]
+        container.terminalView.pressesBegan([press], with: nil)
+        #expect(delivered == 1)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(delivered == 1)
+        try await Task.sleep(for: .milliseconds(550))
+        #expect(delivered > 1)
+        container.terminalView.pressesEnded([press], with: nil)
+        let releasedCount = delivered
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(delivered == releasedCount)
+        container.terminalView.pressesBegan([press], with: nil)
+        container.terminalView.pressesCancelled([press], with: nil)
+        let cancelledCount = delivered
+        try await Task.sleep(for: .milliseconds(650))
+        #expect(delivered == cancelledCount)
+        container.terminalView.pressesBegan([press], with: nil)
+        container.committedSoftwareInput = nil
+        let disabledCount = delivered
+        try await Task.sleep(for: .milliseconds(650))
+        #expect(delivered == disabledCount)
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        container.terminalView.pressesBegan([press], with: nil)
+        _ = container.terminalView.resignFirstResponder()
+        let unfocusedCount = delivered
+        try await Task.sleep(for: .milliseconds(650))
+        #expect(delivered == unfocusedCount)
+    }
+
+    @Test("first-line clearance preserves the full scroll viewport and excludes chrome from terminal input")
+    func terminalClearancePreservesFullScrollViewport() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        container.addsVerticalRowPadding = true
+        container.reservesTopChromeSpace = true
         let displayScale = UIScreen.main.scale
         container.terminalView.contentScaleFactor = displayScale
-        for cellHeight: UInt32 in [32, 40] {
-            container.terminalDidResize(TerminalGridMetrics(
-                columns: 40, rows: 12, widthPixels: 640, heightPixels: 480,
-                cellWidthPixels: 16, cellHeightPixels: cellHeight
-            ))
-            container.layoutIfNeeded()
-            let padding = CGFloat(cellHeight) / displayScale
-            #expect(abs(container.snapshotScrollView.frame.minY - padding) < 0.001)
-            #expect(abs(container.snapshotScrollView.frame.maxY - (240 - padding)) < 0.001)
-            #expect(container.snapshotScrollView.frame.width == 320)
-            #expect(container.terminalView.bounds.height == 240 - 2 * padding)
-            #expect(container.hitTest(CGPoint(x: 160, y: padding / 2), with: nil) === container)
-            #expect(container.hitTest(CGPoint(x: 160, y: 240 - padding / 2), with: nil) === container)
-            #expect(!container.acceptsTerminalInput(at: CGPoint(x: 160, y: padding / 2)))
-            #expect(container.acceptsTerminalInput(at: CGPoint(x: 160, y: padding + 1)))
-            #expect(!container.acceptsTerminalInput(at: CGPoint(x: 160, y: 240 - padding / 2)))
-            #expect(container.backgroundColor == .clear)
-        }
+        container.terminalDidResize(TerminalGridMetrics(
+            columns: 40, rows: 12, widthPixels: 640, heightPixels: 480,
+            cellWidthPixels: 16, cellHeightPixels: 40))
+        container.layoutIfNeeded()
+        #expect(container.snapshotScrollView.frame == container.bounds)
+        #expect(abs(container.terminalView.frame.minY - 40 / displayScale) < 0.001)
+        #expect(container.terminalView.frame.maxY == 240)
+        #expect(!container.acceptsTerminalInput(at: CGPoint(x: 160, y: 1)))
+        #expect(container.acceptsTerminalInput(at: CGPoint(x: 160, y: 40 / displayScale + 1)))
+        #expect(container.acceptsTerminalInput(at: CGPoint(x: 160, y: 239)))
+        container.onBackRequested = {}
+        container.layoutIfNeeded()
+        #expect(container.terminalView.frame.minY >= 68)
+        #expect(container.terminalView.frame.maxY == 240)
         container.authoritativeGrid = .init(cols: 80, rows: 24)
         container.layoutIfNeeded()
-        // Fitting twice as many columns halves the displayed row height.
-        #expect(container.snapshotScrollView.frame == container.bounds.insetBy(dx: 0, dy: 10))
+        #expect(container.snapshotScrollView.frame == container.bounds)
         #expect(container.terminalView.bounds.size == CGSize(width: 1280 / displayScale, height: 960 / displayScale))
-        container.snapshotScrollView.setFollowerZoomScale(2, around: CGPoint(x: 160, y: 100))
+    }
+
+    @Test("a tall follower keeps its protected first line visible, including after zoom", arguments: [CGFloat(1), CGFloat(2)])
+    func overflowingFollowerProtectsFirstLine(zoom: CGFloat) {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 600, height: 160))
+        container.reservesTopChromeSpace = true
+        container.onBackRequested = {}
+        container.terminalView.contentScaleFactor = UIScreen.main.scale
+        container.terminalDidResize(TerminalGridMetrics(
+            columns: 80, rows: 24, widthPixels: 1200, heightPixels: 800,
+            cellWidthPixels: 15, cellHeightPixels: 33))
+        container.authoritativeGrid = .init(cols: 80, rows: 24)
         container.layoutIfNeeded()
-        #expect(container.snapshotScrollView.frame == container.bounds.insetBy(dx: 0, dy: 20))
-        #expect(container.terminalView.bounds.size == CGSize(width: 1280 / displayScale, height: 960 / displayScale))
+        container.snapshotScrollView.setFollowerZoomScale(zoom, around: CGPoint(x: 300, y: 80))
+        container.layoutIfNeeded()
+        let firstRow = container.terminalView.convert(CGPoint.zero, to: container)
+        #expect(firstRow.y >= 68)
+        #expect(container.snapshotScrollView.contentOffset.y == 0)
+        #expect(abs(container.snapshotScrollView.contentOffset.x - 300 * (zoom - 1)) < 1)
+        #expect(container.snapshotScrollView.frame == container.bounds)
     }
 
     @Test("@spec IOS-6.24: When the iOS text input system inserts, replaces, selects, or composes terminal text, the application shall deliver committed text once without reporting those same edits back to the input delegate as external changes.")
@@ -190,7 +578,7 @@ struct TerminalPaneViewTests {
         }
     }
 
-    @Test("@spec IOS-11.13: When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and open the complete URL in the system browser when chosen. Pressing ordinary text shall not offer Open Link.")
+    @Test("@spec IOS-11.13: When the user presses and holds a displayed HTTP or HTTPS URL whose terminal cells map unambiguously to the viewport text, the application shall offer Open Link alongside its text-selection actions and offer Copy Link and route the complete URL through the originating pane browser when Open Link is chosen. Pressing ordinary text shall not offer link actions.")
     func longPressOpensTheCompleteURLUnderThePressedWord() throws {
         let container = TerminalInputContainerView(frame: .zero)
         let text = "See https://example.com/first and https://example.org/path?q=hello#part."
@@ -206,7 +594,7 @@ struct TerminalPaneViewTests {
             text: text
         )
         #expect(container.longPressMenuActionTitlesForTesting(hasPasteContent: false) == [
-            "Open Link", "Select", "Select All",
+            "Open Link", "Copy Link", "Select", "Select All",
         ])
         let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
             .children.compactMap { $0 as? UIAction }.first { $0.title == "Open Link" })
@@ -224,6 +612,30 @@ struct TerminalPaneViewTests {
         ])
         button.sendActions(for: .touchUpInside)
         #expect(opened.count == 1, "A dismissed menu must not open a stale URL")
+    }
+
+    @Test("@spec IOS-11.24: If a terminal link menu outlives its originating session or ownership context, then the application shall discard its Open and Copy actions instead of invoking callbacks for a replacement pane.")
+    func staleLinkMenuCannotUseReplacementContext() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        container.terminalView.contentScaleFactor = 1
+        container.linkContext = "owned-first-pane"
+        container.terminalDidResize(TerminalGridMetrics(columns: 100, rows: 1, widthPixels: 1000, heightPixels: 20, cellWidthPixels: 10, cellHeightPixels: 20))
+        var opened = 0
+        var copied = 0
+        container.openURL = { _ in opened += 1 }
+        container.copyLink = { _ in copied += 1 }
+        container.prepareLongPressMenu(at: CGPoint(x: 105, y: 10), text: "https://example.com/first")
+        let actions = container.longPressMenuForTesting(hasPasteContent: false).children.compactMap { $0 as? UIAction }.filter { $0.title.contains("Link") }
+        try #require(actions.count == 2)
+        container.linkContext = "unowned-first-pane"
+        container.linkContext = "owned-replacement-pane"
+        for action in actions {
+            let button = UIButton()
+            button.addAction(action, for: .touchUpInside)
+            button.sendActions(for: .touchUpInside)
+        }
+        #expect(opened == 0)
+        #expect(copied == 0)
     }
 
     @Test
@@ -260,6 +672,17 @@ struct TerminalPaneViewTests {
     }
 
     @Test
+    func nativeAnchorsRequireFullURLContainment() {
+        let text = "● 🧪 https://one.example/same?q=first https://two.example/same?q=A%2Bb#part"
+        let full = text as NSString
+        let anchor = full.range(of: "A%2Bb")
+        #expect(TerminalLinkResolver.url(in: text, anchor: anchor)?.absoluteString == "https://two.example/same?q=A%2Bb#part")
+        #expect(TerminalLinkResolver.url(in: text, anchor: full.range(of: "●")) == nil)
+        #expect(TerminalLinkResolver.url(in: text, anchor: NSRange(location: anchor.location, length: full.length)) == nil)
+        #expect(TerminalLinkResolver.webURL("https://user:secret@example.com/") == nil)
+    }
+
+    @Test
     func terminalLinksRequireEveryPossiblePaddedCellToMatch() {
         let grid = TerminalGridMetrics(
             columns: 40, rows: 10, widthPixels: 420, heightPixels: 200,
@@ -282,8 +705,18 @@ struct TerminalPaneViewTests {
         ) == nil, "A possible top margin must not count as the URL's first row")
     }
 
-    @Test
-    func realSurfaceLinksResolveAfterWrappedOutput() async throws {
+    @Test("@spec IOS-11.23: When a native terminal long-press or Cmd-click targets a plain or OSC8 link in an unselected terminal without mouse capture after Unicode output and soft wraps, the application shall recognize and route the exact hyperlink target without installing another gesture.", arguments: [0, 1, 2, 5, 6])
+    func realSurfaceLinksResolveAfterWrappedOutput(fixture: Int) async throws {
+        try await verifyRealSurfaceLinks(fixture: fixture)
+    }
+
+    @Test("@spec IOS-11.25: While a terminal application captures mouse input or a native selection is active, the application shall retain text-selection actions and omit long-press link actions whose OSC8 target cannot be verified without changing that input state.", arguments: [3, 4, 7, 8])
+    func protectedNativeLinksRetainSelection(fixture: Int) async throws {
+        try await verifyRealSurfaceLinks(fixture: fixture)
+    }
+
+    private func verifyRealSurfaceLinks(fixture: Int) async throws {
+        let osc8 = fixture == 1 || fixture >= 5
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
         let host = UIViewController()
         window.rootViewController = host
@@ -292,7 +725,7 @@ struct TerminalPaneViewTests {
         container.layoutIfNeeded()
         let responses = TerminalResponseRecorder()
         let session = InMemoryTerminalSession(write: { responses.append($0) }, resize: { _ in })
-        let renderer = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        let renderer = MobileTerminalControllerFactory.make(configText: "font-size = 14\nlink-previews = \(fixture != 2 && fixture != 5 && fixture != 6)")
         container.terminalView.configuration = .init(backend: .inMemory(session))
         container.terminalView.controller = renderer
         host.view.addSubview(container)
@@ -312,9 +745,13 @@ struct TerminalPaneViewTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         try #require(responses.contains(bottomRight))
-        let prefix = String(repeating: "a", count: Int(grid.columns) + 5)
-        session.receive("\u{1b}[H\u{1b}[2J" + prefix + "\r\n\r\nhttps://one.example/same\r\nhttps://two.example/same")
-        for _ in 0..<100 where session.readViewportText()?.contains("https://two.example/same") != true {
+        let prefix = "● 🧪 Unicode prompt " + String(repeating: "a", count: Int(grid.columns) - 14)
+        let target = fixture == 6 ? "file:///tmp/private-fixture.txt"
+            : "https://two.example/" + String(repeating: "path", count: Int(grid.columns) / 2) + "?q=A%2Bb#part"
+        let label = fixture >= 5 ? "https://label.example/advertised" : (osc8 ? "Sign in to second service" : target)
+        let link = osc8 ? "\u{1b}]8;;\(target)\u{1b}\\\(label)\u{1b}]8;;\u{1b}\\" : target
+        session.receive("\u{1b}[H\u{1b}[2J" + prefix + "\r\n\r\nhttps://one.example/same\r\n" + link)
+        for _ in 0..<100 where session.readViewportText()?.contains(label) != true {
             try await Task.sleep(for: .milliseconds(10))
         }
         let text = try #require(session.readViewportText())
@@ -328,15 +765,93 @@ struct TerminalPaneViewTests {
             x: CGFloat(grid.cellWidthPixels) * 15.5 / scale,
             y: (cellHeight * 4 + (cellHeight + unusedHeight) / 2) / scale
         )
+        let surface = try #require(container.terminalView.surface)
+        if fixture == 3 || fixture == 7 {
+            surface.sendMousePos(x: -1, y: -1)
+            session.receive("\u{1b}[?1003h\u{1b}[?1006h")
+            for _ in 0..<100 where !surface.isMouseCaptured { try await Task.sleep(for: .milliseconds(10)) }
+            try #require(surface.isMouseCaptured)
+        } else if fixture == 4 || fixture == 8 {
+            container.selectionController.beginSelection(at: CGPoint(x: 20, y: 10))
+            try #require(container.selectionController.isActive)
+        }
+        let before = responses.snapshot().count
         var opened: URL?
         container.openURL = { opened = $0 }
-        container.prepareLongPressMenu(at: point, text: text)
+        let gesture = LinkTestLongPress()
+        gesture.point = point
+        container.terminalView.handleLongPressForSelection(gesture)
+        if [3, 4, 7, 8].contains(fixture) {
+            let titles = container.longPressMenuActionTitlesForTesting(hasPasteContent: false)
+            #expect(!titles.contains("Open Link"))
+            #expect(!titles.contains("Copy Link"))
+            #expect(titles.contains("Select"))
+            if fixture == 3 || fixture == 7 {
+                try await Task.sleep(for: .milliseconds(20))
+                let report = String(decoding: responses.snapshot().dropFirst(before), as: UTF8.self)
+                #expect(report.components(separatedBy: "\u{1b}[<").count - 1 == 1,
+                        "Only the wrapper's original move may report to the mouse-capturing application")
+            } else { #expect(container.selectionController.isActive) }
+            return
+        }
+        if fixture == 6 {
+            #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Open Link"))
+            #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Copy Link"))
+            surface.sendMousePos(x: -1, y: -1, modifiers: .super_)
+            surface.sendMousePos(x: Double(point.x), y: Double(point.y), modifiers: .super_)
+            _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT, modifiers: .super_)
+            _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT, modifiers: .super_)
+            #expect(opened == nil, "Unsupported OSC8 targets must neither open nor fall back to the visible label URL")
+            return
+        }
         let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
             .children.compactMap { $0 as? UIAction }.first { $0.title == "Open Link" })
         let button = UIButton()
         button.addAction(action, for: .touchUpInside)
         button.sendActions(for: .touchUpInside)
-        #expect(opened?.absoluteString == "https://two.example/same")
+        #expect(opened?.absoluteString == target)
+        var copied: URL?
+        container.copyLink = { copied = $0 }
+        let copy = try #require(container.longPressMenuForTesting(hasPasteContent: false)
+            .children.compactMap { $0 as? UIAction }.first { $0.title == "Copy Link" })
+        let copyButton = UIButton()
+        copyButton.addAction(copy, for: .touchUpInside)
+        copyButton.sendActions(for: .touchUpInside)
+        #expect(copied?.absoluteString == target)
+        if osc8 {
+            opened = nil
+            let surface = try #require(container.terminalView.surface)
+            surface.sendMousePos(x: -1, y: -1, modifiers: .super_)
+            surface.sendMousePos(x: Double(point.x), y: Double(point.y), modifiers: .super_)
+            _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT, modifiers: .super_)
+            _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT, modifiers: .super_)
+            #expect(opened?.absoluteString == target, "Actual native OSC8 Cmd-click must invoke the Graftty callback")
+        }
+    }
+
+    @Test("@spec PORTS-5.18: When a mobile user opens an OAuth terminal link, the application shall route its exact URL through the originating pane browser without a separate sign-in action or stale menu targets.")
+    func authLinksUsePaneBrowser() throws {
+        let container = TerminalInputContainerView(frame: .zero)
+        container.terminalView.contentScaleFactor = 1
+        container.terminalDidResize(TerminalGridMetrics(
+            columns: 200, rows: 1, widthPixels: 2000, heightPixels: 20,
+            cellWidthPixels: 10, cellHeightPixels: 20
+        ))
+        let url = URL(string: "https://example.com/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A43210%2Fcallback&state=test")!
+        var opened: [URL] = []
+        container.openURL = { opened.append($0) }
+        container.prepareLongPressMenu(at: CGPoint(x: 105, y: 10), text: url.absoluteString)
+        let action = try #require(container.longPressMenuForTesting(hasPasteContent: false)
+            .children.compactMap { $0 as? UIAction }.first { $0.title == "Open Link" })
+        #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Sign in via Mac"))
+        let button = UIButton()
+        button.addAction(action, for: .touchUpInside)
+        button.sendActions(for: .touchUpInside)
+        #expect(opened == [url])
+        container.prepareLongPressMenu(at: CGPoint(x: 105, y: 10), text: "https://example.com/ordinary-link")
+        #expect(!container.longPressMenuActionTitlesForTesting(hasPasteContent: false).contains("Sign in via Mac"))
+        button.sendActions(for: .touchUpInside)
+        #expect(opened == [url])
     }
 
     @Test("When the terminal surface is replaced, selection and cached link targets are discarded")
@@ -1258,7 +1773,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.2: `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. Before Ghostty translation it may delegate enabled application commands and the listed transport corrections in `IOS-6.19`; every unmatched key, including arrows, shall flow through libghostty, and GrafttyMobile shall not reimplement general terminal key translation.
+@spec IOS-6.2: `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. Before Ghostty translation it may delegate enabled application commands, the listed transport corrections in `IOS-6.19`, and active agent completion in `IOS-6.32`; every unmatched key, including arrows, shall flow through libghostty, and GrafttyMobile shall not reimplement general terminal key translation.
 """)
     func eligibleTerminalBecomesFirstResponderInWindow() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -1280,7 +1795,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.18: When a hardware press does not match an enabled application command or a Return/quote/Escape/Tab/Ctrl-letter correction in `IOS-6.19`, the sole `UITerminalView` responder shall pass it to libghostty's hardware-key translation. GrafttyMobile shall not install any other per-key handlers; explicit control-bar Escape remains a `SessionClient.sendEscape()` command under `IOS-6.1`.
+@spec IOS-6.18: When a hardware press does not match an enabled application command, a Return/quote/Escape/Tab/Ctrl-letter correction in `IOS-6.19`, or active agent completion in `IOS-6.32`, the sole `UITerminalView` responder shall pass it to libghostty's hardware-key translation. GrafttyMobile shall not install any other per-key handlers; explicit control-bar Escape shall use active agent completion under `IOS-6.34` or otherwise remain a `SessionClient.sendEscape()` command under `IOS-6.1`.
 """)
     func containerPublishesNoGeneralTerminalKeyCommands() {
         let container = TerminalInputContainerView(frame: .zero)

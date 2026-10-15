@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import Testing
@@ -61,7 +62,7 @@ struct WorktreeDropReorderTests {
         #expect(TransferablePaneSlotID.contentType != TransferableWorktreeMove.contentType)
     }
 
-    @Test("Row drop location maps upper half before and lower half after")
+    @Test("@spec LAYOUT-2.101: When a user drops a worktree onto another worktree's block, the application shall place it before that whole worktree from the block's upper half and after it from the lower half, never between its pane rows.")
     func rowDropLocationMapsToPlacement() {
         #expect(WorktreeDropPlacement.fromRowDropLocation(CGPoint(x: 0, y: 18), rowHeight: 44) == .before)
         #expect(WorktreeDropPlacement.fromRowDropLocation(CGPoint(x: 0, y: 24), rowHeight: 44) == .after)
@@ -253,5 +254,40 @@ struct WorktreeDropReorderTests {
 
         #expect(!changed)
         #expect(state.repos[0].worktrees.map(\.branch) == ["main", "a"])
+    }
+}
+
+@Suite("AppKit worktree drag source")
+struct WorktreeDragSourceTests {
+    @Test("@spec LAYOUT-2.100: When a user drags a worktree heading, the application shall begin an AppKit drag session that lifts the whole worktree block and whose pasteboard payload the worktree row drop destination decodes as that worktree move.")
+    func pasteboardPayloadRoundTripsThroughRowDrop() async throws {
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/repo", branch: "main"),
+            WorktreeEntry(path: "/repo/.worktrees/a", branch: "a"),
+        ])
+        let payload = TransferableWorktreeMove(repoID: repo.id, worktreeID: repo.worktrees[1].id)
+        let writer = try #require(WorktreeDragPasteboardWriter(payload))
+        #expect(writer.writableTypes(for: .general) == [NSPasteboard.PasteboardType(TransferableWorktreeMove.contentType.identifier)])
+        let data = try #require(writer.pasteboardPropertyList(forType: WorktreeDragPasteboardWriter.pasteboardType) as? Data)
+        #expect(writer.pasteboardPropertyList(forType: .string) == nil)
+
+        // The drop side sees pasteboard items as item providers with raw data for the type.
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: TransferableWorktreeMove.contentType.identifier, visibility: .all) { completion in
+            completion(data, nil)
+            return nil
+        }
+        let drop: WorktreeRowDrop = try await withCheckedThrowingContinuation { continuation in
+            _ = provider.loadTransferable(type: WorktreeRowDrop.self) { continuation.resume(with: $0) }
+        }
+        guard case .worktree(let decoded) = drop else { Issue.record("expected worktree payload"); return }
+        #expect(decoded.repoID == payload.repoID && decoded.worktreeID == payload.worktreeID)
+    }
+
+    @Test("Drag source view takes plain left presses only")
+    @MainActor func hitTestGating() {
+        let view = WorktreeDragSourceView(frame: NSRect(x: 0, y: 0, width: 100, height: 20))
+        #expect(view.draggingSession(NSDraggingSession(), sourceOperationMaskFor: .withinApplication) == .move)
+        #expect(view.draggingSession(NSDraggingSession(), sourceOperationMaskFor: .outsideApplication) == [])
     }
 }

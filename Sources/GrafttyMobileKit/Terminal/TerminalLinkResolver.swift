@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import GhosttyTerminal
+import GrafttyProtocol
 
 @MainActor
 enum TerminalLinkResolver {
@@ -12,8 +13,23 @@ enum TerminalLinkResolver {
         guard let value, let url = URL(string: value),
               let scheme = url.scheme?.lowercased(),
               scheme == "https" || scheme == "http",
-              let host = url.host, !host.isEmpty else { return nil }
+              let host = url.host, !host.isEmpty,
+              url.user == nil, url.password == nil,
+              ChromeTabAction.launch(url: value).isValid else { return nil }
         return url
+    }
+
+    /// The native gesture supplies an anchor obtained by reading a suffix from
+    /// actual terminal cells. Require the entire anchor to belong to one URL.
+    static func url(in text: String, anchor: NSRange?) -> URL? {
+        guard let anchor, anchor.location != NSNotFound, anchor.length > 0,
+              anchor.location <= text.utf16.count,
+              anchor.length <= text.utf16.count - anchor.location else { return nil }
+        let matches = detector?.matches(in: text, range: NSRange(location: 0, length: text.utf16.count)) ?? []
+        guard let match = matches.first(where: {
+            $0.range.location <= anchor.location && NSMaxRange($0.range) >= NSMaxRange(anchor)
+        }) else { return nil }
+        return webURL(match.url?.absoluteString)
     }
 
     /// Viewport reads join soft-wrapped rows. Rebuild ASCII cell positions

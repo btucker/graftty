@@ -16,7 +16,23 @@ final class RemoteMacsModel: ObservableObject {
         case unknownPaneAlias(String)
         case unexpectedManagementResponse
     }
+    enum ProjectControlError: LocalizedError {
+        case unavailable, unsupportedOrder, missingRepository, host(String), unexpectedResponse
+        var errorDescription: String? {
+            switch self {
+            case .unavailable: return "The owning host or repository is unavailable. Reconnect and try again."
+            case .unsupportedOrder: return "Update Graftty on the owning host to change worktree order."
+            case .missingRepository: return "The repository is no longer available on the owning host."
+            case .host(let message): return message
+            case .unexpectedResponse: return "The owning host returned an unexpected response."
+            }
+        }
+    }
+
     @Published private(set) var savedRemoteMacs: [RemoteMac] = []
+    @Published private(set) var trustedLinuxHosts: [RemoteDeviceID: PinnedHost] = [:]
+    private let maintenancePins: PinnedHostStore
+    private var linuxPinGeneration: UInt64 = 0
     @Published private(set) var discoveryCandidates: [GrafttyBonjourCandidate] = []
     @Published private(set) var worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]] = [:]
     @Published private(set) var repositoriesByRemote:
@@ -74,9 +90,11 @@ final class RemoteMacsModel: ObservableObject {
     init(
         store: RemoteMacStore? = nil,
         connectionRegistry: RemoteMacConnectionRegistry? = nil,
-        relayRouter: RemoteWorktreeRelayRouter? = nil
+        relayRouter: RemoteWorktreeRelayRouter? = nil,
+        maintenancePins: PinnedHostStore = PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
     ) {
         self.store = store ?? RemoteMacStore()
+        self.maintenancePins = maintenancePins
         let registry = connectionRegistry ?? RemoteMacConnectionRegistry()
         self.connectionRegistry = registry
         self.relayRouter = relayRouter ?? RemoteWorktreeRelayRouter()
@@ -140,6 +158,13 @@ final class RemoteMacsModel: ObservableObject {
 
     func loadSavedRemotes() async {
         await store.loadIfNeeded()
+        let pins = maintenancePins
+        let pinGeneration = linuxPinGeneration
+        let hosts = await Task.detached { (try? pins.list()) ?? [] }.value
+        if linuxPinGeneration == pinGeneration {
+            trustedLinuxHosts = Dictionary(hosts.filter { $0.kind == .linux }.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+            linuxPinGeneration &+= 1
+        }
         savedRemoteMacs = store.remoteMacs
         for remoteMac in savedRemoteMacs {
             let identity = RemoteMacIdentity(remoteMac)
@@ -193,7 +218,7 @@ final class RemoteMacsModel: ObservableObject {
             : idMatches
         guard !matches.isEmpty else {
             return .error(
-                "Unknown Remote Mac '\(target)'. Use a saved name or device ID from the Remote Macs sidebar."
+                "Unknown Remote Host '\(target)'. Use a saved name or device ID from the Remote Hosts sidebar."
             )
         }
         guard matches.count == 1 else {
@@ -269,6 +294,20 @@ final class RemoteMacsModel: ObservableObject {
         try await connectionTask(to: remoteMac).value
     }
 
+    func reconnectAfterMaintenance(_ remote: RemoteMac) async throws {
+        let identity = RemoteMacIdentity(remote)
+        guard savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == identity }),
+              connectionState(for: identity) != .needsPairing else {
+            throw LinuxHostSetupError.invalidPlan("This host's saved pairing changed during maintenance.")
+        }
+        prepareForExplicitReconnect(identity: identity)
+        let attempt = connectionTask(to: remote, intent: .forcedReconnect)
+        _ = try await withTaskCancellationHandler {
+            try await attempt.value
+        } onCancel: { attempt.cancel() }
+        try Task.checkCancellation()
+    }
+
     @discardableResult
     func connectFromUserSelection(
         to remoteMac: RemoteMac
@@ -299,23 +338,34 @@ final class RemoteMacsModel: ObservableObject {
         let attemptToSupersede = supersededAttempt
         let task = Task { @MainActor [weak self] in
             guard let self else { throw CancellationError() }
-            if let attemptToSupersede {
-                attemptToSupersede.task.cancel()
+            do {
+                if let attemptToSupersede {
+                    attemptToSupersede.task.cancel()
+                }
+                if intent.disconnectsLocalConnection {
+                    await registry.disconnectAndWait(identity: identity)
+                }
+                try Task.checkCancellation()
+                guard self.connectAttemptIDs[identity] == attemptID else {
+                    throw CancellationError()
+                }
+                return try await self.performConnect(
+                    to: remoteMac,
+                    identity: identity,
+                    attemptID: attemptID,
+                    replacingExistingHostConnection:
+                        intent.replacesExistingHostConnection
+                )
+            } catch {
+                // Teardown can suspend and be cancelled before performConnect
+                // owns cleanup. Clear only this attempt, never its successor.
+                if self.connectAttemptIDs[identity] == attemptID {
+                    self.connectAttemptIDs[identity] = nil
+                    if self.connectAttempts[identity]?.id == attemptID { self.connectAttempts[identity] = nil }
+                    self.connectionStates[identity] = error is CancellationError ? .offline : .failed
+                }
+                throw error
             }
-            if intent.disconnectsLocalConnection {
-                await registry.disconnectAndWait(identity: identity)
-            }
-            try Task.checkCancellation()
-            guard self.connectAttemptIDs[identity] == attemptID else {
-                throw CancellationError()
-            }
-            return try await self.performConnect(
-                to: remoteMac,
-                identity: identity,
-                attemptID: attemptID,
-                replacingExistingHostConnection:
-                    intent.replacesExistingHostConnection
-            )
         }
         connectAttempts[identity] = ConnectAttempt(
             id: attemptID,
@@ -344,6 +394,7 @@ final class RemoteMacsModel: ObservableObject {
                 to: remoteMac,
                 replacingExistingHostConnection: replacingExistingHostConnection
             )
+            try Task.checkCancellation()
             guard connectAttemptIDs[identity] == attemptID else {
                 throw CancellationError()
             }
@@ -401,12 +452,24 @@ final class RemoteMacsModel: ObservableObject {
 
     func openTerminalSession(
         identity: RemoteMacIdentity,
-        sessionName: String
+        sessionName: String,
+        preferPaged: Bool = MacPagedTerminalRenderer.isSupported
     ) async throws -> any WebSocketClient & Sendable {
         try await connectionRegistry.openTerminalSession(
             identity: identity,
-            sessionName: sessionName
+            sessionName: sessionName,
+            preferPaged: preferPaged
         )
+    }
+
+    func forwardedPortURL(on remoteMac: RemoteMac, worktreePath: String,
+                          sessionName: String, binding: PortBinding) async throws -> URL {
+        let identity = RemoteMacIdentity(remoteMac)
+        guard let worktree = worktreePanesByRemote[identity]?.first(where: { $0.path == worktreePath }) else {
+            throw RemoteWorktreePortTarget.Failure.unavailable
+        }
+        let target = try RemoteWorktreePortTarget(worktree: worktree, sessionName: sessionName, binding: binding)
+        return try await connectionRegistry.forwardedURL(identity: identity, host: target.host, port: target.port)
     }
 
     func sendPaneControl(
@@ -600,9 +663,53 @@ final class RemoteMacsModel: ObservableObject {
             request: .listRepositories
         )
         guard case .repositories(let repositories) = response else {
-            throw RelayError.unexpectedManagementResponse
+            if case .error(_, let message, _, _) = response { throw ProjectControlError.host(message) }
+            throw ProjectControlError.unexpectedResponse
         }
         return repositories.filter { ($0.origin?.relayDepth ?? 0) == 0 }
+    }
+
+    /// Resolve management aliases before comparing raw repository IDs. The
+    /// pinned identity must still match the saved host and be connected.
+    func editableRepositoryTarget(for project: SidebarProject) -> RelayedRepositoryTarget? {
+        guard project.isAvailable, project.supportsWorktreeEditing == true,
+              let route = relayRouter.resolveRepository(project.repositoryID),
+              project.owner?.deviceID == route.identity.id,
+              savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == route.identity }),
+              connectionState(for: route.identity) == .connected else { return nil }
+        return route
+    }
+
+    func addWorktreeRepository(for project: SidebarProject) async throws -> (RemoteMac, RemoteRepositoryInfo) {
+        guard let route = editableRepositoryTarget(for: project),
+              let mac = savedRemoteMacs.first(where: { RemoteMacIdentity($0) == route.identity }) else {
+            throw ProjectControlError.unavailable
+        }
+        // Capture the owner and repository before suspension. A selection
+        // change must not retarget the sheet to a different project.
+        let repositories = try await refreshRepositories(on: mac)
+        guard savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == route.identity }),
+              connectionState(for: route.identity) == .connected else { throw ProjectControlError.unavailable }
+        guard let repository = repositories.first(where: { $0.id == route.repositoryID }) else {
+            throw ProjectControlError.missingRepository
+        }
+        return (mac, repository)
+    }
+
+    func canSetWorktreeOrder(for project: SidebarProject) -> Bool {
+        project.worktreeOrderMode != nil && editableRepositoryTarget(for: project) != nil
+    }
+
+    func setWorktreeOrder(_ mode: WorktreeOrderMode, for project: SidebarProject) async throws {
+        guard project.worktreeOrderMode != nil else { throw ProjectControlError.unsupportedOrder }
+        guard let route = editableRepositoryTarget(for: project) else { throw ProjectControlError.unavailable }
+        let response = try await sendWorktreeManagement(identity: route.identity,
+            request: .setWorktreeOrder(repositoryID: route.repositoryID, mode: mode))
+        switch response {
+        case .ok: return
+        case .error(_, let message, _, _): throw ProjectControlError.host(message)
+        default: throw ProjectControlError.unexpectedResponse
+        }
     }
 
     @discardableResult
@@ -687,18 +794,22 @@ final class RemoteMacsModel: ObservableObject {
         return response
     }
 
-    func acknowledge(
+    /// Viewing remote content acknowledges only exact notification occurrences.
+    /// Broad legacy acknowledgements would also retire stopped-agent requests.
+    func acknowledgeViewedAttention(
         on remoteMac: RemoteMac,
         worktreePath: String,
         paneSessionName: String? = nil
     ) async {
-        _ = await forwardManagement(
-            identity: RemoteMacIdentity(remoteMac),
-            request: .acknowledge(
-                worktreeID: worktreePath,
-                paneID: paneSessionName
-            )
-        )
+        let identity = RemoteMacIdentity(remoteMac)
+        guard let worktree = worktreePanesByRemote[identity]?.first(where: { $0.path == worktreePath }),
+              await sidebarSnapshot(for: remoteMac)?.projects
+                .first(where: { $0.id == SidebarProjection.projectID(worktree) })?.supportsWorktreeEditing == true else { return }
+        for item in SidebarProjection.activity([worktree]) {
+            guard paneSessionName == nil || item.paneID == paneSessionName,
+                  let request = SidebarInteractionPolicy.acknowledgementOnOpen(for: item, supportsExactAcknowledgement: true) else { continue }
+            _ = await forwardManagement(identity: identity, request: request)
+        }
     }
 
     struct SidebarRelaySnapshot {
@@ -736,6 +847,26 @@ final class RemoteMacsModel: ObservableObject {
         return result
     }
 
+    func notificationProjectIdentity(for event: RemoteNotificationEvent) async -> (SidebarProject, Data?)? {
+        guard let fallback = event.identityProject else { return nil }
+        guard let mac = savedRemoteMacs.first(where: { mac in
+            event.originFingerprint == RemoteMacIdentity(mac).fingerprint
+        }) else { return (fallback, nil) }
+        let snapshot = await sidebarSnapshot(for: mac)
+        var project = snapshot?.projects.first { $0.id == fallback.id } ?? fallback
+        for _ in 0..<2 {
+            guard let revision = project.iconRevision else { return (project, nil) }
+            let response = try? await sendWorktreeManagement(identity: RemoteMacIdentity(mac),
+                request: .projectIcon(repositoryID: project.repositoryID, revision: revision))
+            let current = await sidebarSnapshot(for: mac)?.projects.first { $0.id == fallback.id } ?? project
+            project = current
+            if current.iconRevision != revision { continue }
+            if case .icon(let data) = response { return (current, data.flatMap { PNGThumbnail.projectIcon($0, revision: revision) }) }
+            return (current, nil)
+        }
+        return (project, nil)
+    }
+
     func sidebarSnapshot(for mac: RemoteMac) async -> SidebarSnapshot? {
         await connectionRegistry.sidebarSnapshot(for: RemoteMacIdentity(mac))
     }
@@ -761,7 +892,27 @@ final class RemoteMacsModel: ObservableObject {
         _ request: WorktreeManagementRequest
     ) async -> WorktreeManagementResponse? {
         switch request {
+        case .worktreeAgentCompletions(let worktreeID):
+            guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
+            let response = await forwardManagement(identity: route.identity,
+                request: .worktreeAgentCompletions(worktreeID: route.path))
+            guard case .agentCompletions(let candidates) = response else { return response }
+            // Match the viewer's opaque current-worktree ID while leaving
+            // inserted addresses relative to the terminal-owning host.
+            return .agentCompletions(candidates.map { candidate in
+                AgentCompletionCandidate(address: candidate.address, projectPath: candidate.projectPath,
+                    projectName: candidate.projectName,
+                    worktreePath: candidate.worktreePath == route.path ? worktreeID : candidate.worktreePath,
+                    worktreeName: candidate.worktreeName, hostName: candidate.hostName, runtime: candidate.runtime,
+                    isCurrentProject: candidate.isCurrentProject)
+            })
         case let .openResource(worktreeID, request):
+            if case .port = request {
+                return .error(code: "port-route-unavailable", message: "Connect directly to this worktree's Mac to open its ports.", forceAllowed: false, shortStatus: nil)
+            }
+            if case .authenticate = request {
+                return .error(code: "authentication-route-unavailable", message: "Connect directly to this worktree's Mac to complete sign-in.", forceAllowed: false, shortStatus: nil)
+            }
             guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
             let response = await forwardManagement(
                 identity: route.identity,
@@ -775,7 +926,7 @@ final class RemoteMacsModel: ObservableObject {
             }
             return response
 
-        case .hostPresentation, .listRemoteMacConnections, .moveProject,
+        case .agentCompletions, .hostPresentation, .listRemoteMacConnections, .moveProject,
              .connectRemoteMac:
             return nil
 
@@ -849,6 +1000,10 @@ final class RemoteMacsModel: ObservableObject {
         case let .projectIcon(repositoryID, revision):
             guard let route = relayRouter.resolveRepository(repositoryID) else { return nil }
             return await forwardManagement(identity: route.identity, request: .projectIcon(repositoryID: route.repositoryID, revision: revision))
+
+        case let .setWorktreeOrder(repositoryID, mode):
+            guard let route = relayRouter.resolveRepository(repositoryID) else { return nil }
+            return await forwardManagement(identity: route.identity, request: .setWorktreeOrder(repositoryID: route.repositoryID, mode: mode))
 
         case let .moveWorktree(repositoryID, worktreeID, relativeTo, after):
             guard let repo = relayRouter.resolveRepository(repositoryID),
@@ -930,7 +1085,7 @@ final class RemoteMacsModel: ObservableObject {
         )
     }
 
-    func openRelayedTerminal(alias: String) async throws -> RelayedTerminalByteStream {
+    private func relayedTerminalClient(alias: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
         guard let target = relayRouter.resolvePane(alias),
               let remoteMac = savedRemoteMacs.first(where: {
                   RemoteMacIdentity($0) == target.identity
@@ -938,11 +1093,19 @@ final class RemoteMacsModel: ObservableObject {
             throw RelayError.unknownPaneAlias(alias)
         }
         _ = try await connect(to: remoteMac)
-        let client = try await openTerminalSession(
+        return try await openTerminalSession(
             identity: target.identity,
-            sessionName: target.sessionName
+            sessionName: target.sessionName,
+            preferPaged: preferPaged
         )
-        return RelayedTerminalByteStream(client: client)
+    }
+
+    func openRelayedTerminal(alias: String) async throws -> RelayedTerminalByteStream {
+        RelayedTerminalByteStream(client: try await relayedTerminalClient(alias: alias, preferPaged: false))
+    }
+
+    func openRelayedPagedTerminal(alias: String) async throws -> RelayedPagedTerminalStream {
+        try RelayedPagedTerminalStream(client: await relayedTerminalClient(alias: alias, preferPaged: true))
     }
 
     private func applyPaneSnapshot(
@@ -950,10 +1113,11 @@ final class RemoteMacsModel: ObservableObject {
         from identity: RemoteMacIdentity
     ) {
         let ownerLabel = savedRemoteMacs.first { RemoteMacIdentity($0) == identity }?.label ?? identity.id.value
-        worktreePanesByRemote[identity] = snapshot.map {
+        let normalized = snapshot.map {
             RemoteWorktreeRelayRouter.normalizingSidebarIdentity($0, ownerID: identity.id, ownerLabel: ownerLabel)
         }
-        processAttentionTransitions(snapshot, from: identity)
+        worktreePanesByRemote[identity] = normalized
+        processAttentionTransitions(normalized, from: identity)
         refreshRelayRoutes()
     }
 
@@ -1096,7 +1260,7 @@ final class RemoteMacsModel: ObservableObject {
         let title = recap?.title ?? (kind == .agentStop ? text : "Notification from \(remoteMac.label)")
         let body: String
         if let recap {
-            let identity = [worktree.sidebar?.emoji, worktreeName].compactMap { $0 }.joined(separator: " ")
+            let identity = [worktree.effectiveEmoji, worktreeName].compactMap { $0 }.joined(separator: " ")
             body = "\(identity) on \(remoteMac.label)\n\(recap.need ?? recap.completed)"
         } else {
             body = kind == .agentStop
@@ -1112,7 +1276,8 @@ final class RemoteMacsModel: ObservableObject {
             paneID: paneID,
             title: title,
             body: body,
-            timestamp: attentionTimestamp ?? Date()
+            timestamp: attentionTimestamp ?? Date(),
+            identityProject: worktree.iconIdentity == .project ? SidebarProjection.projects([worktree]).first : nil
         ))
     }
 
@@ -1143,7 +1308,8 @@ final class RemoteMacsModel: ObservableObject {
             \(itemCount) \(itemNoun) across \(worktreeCount) remote \
             \(worktreeNoun) \(verb) attention.
             """,
-            timestamp: Date()
+            timestamp: Date(),
+            identityProject: first.identityProject
         )
     }
 
@@ -1228,7 +1394,26 @@ final class RemoteMacsModel: ObservableObject {
         }
     }
 
-    func recordPairingResult(_ result: RemoteMacPairingSaveResult) throws {
+    func maintenanceHost(for remote: RemoteMac) -> PinnedHost? {
+        let host = trustedLinuxHosts[remote.id]
+        return Self.canMaintain(remote, state: connectionState(for: RemoteMacIdentity(remote)), pinned: host) ? host : nil
+    }
+
+    static func canMaintain(_ remote: RemoteMac, state: RemoteMacConnectionState, pinned: PinnedHost?) -> Bool {
+        state == .connected && remote.directEndpoint != nil && pinned?.kind == .linux
+            && pinned?.id == remote.id && pinned?.fingerprint == remote.fingerprint
+    }
+
+    func saveMaintenanceDestination(_ destination: LinuxHostDestination, for identity: RemoteMacIdentity) throws {
+        guard var remote = savedRemoteMacs.first(where: { RemoteMacIdentity($0) == identity }) else {
+            throw LinuxHostSetupError.invalidPlan("This host is no longer saved.")
+        }
+        remote.maintenanceDestination = destination
+        try store.update(remote)
+        savedRemoteMacs = store.remoteMacs
+    }
+
+    func recordPairingResult(_ result: RemoteMacPairingSaveResult, transport: RemoteHostTransport = .webRTC, directEndpoint: DirectSSHEndpoint? = nil, maintenanceDestination: LinuxHostDestination? = nil) throws {
         guard case .paired(let pinnedHost) = result else { return }
 
         let remoteMac = RemoteMac(
@@ -1237,6 +1422,9 @@ final class RemoteMacsModel: ObservableObject {
             fingerprint: pinnedHost.fingerprint,
             lastKnownBaseURL: pinnedHost.routes.first?.baseURL
                 ?? Self.baseURL(fromPairingURL: pinnedHost.pairingURL),
+            transport: transport,
+            directEndpoint: directEndpoint,
+            maintenanceDestination: maintenanceDestination,
             routes: pinnedHost.routes,
             lastSuccessfulRoute: pinnedHost.lastSuccessfulRoute,
             addedAt: pinnedHost.pinnedAt,
@@ -1245,6 +1433,8 @@ final class RemoteMacsModel: ObservableObject {
         )
         try store.add(remoteMac)
         savedRemoteMacs = store.remoteMacs
+        trustedLinuxHosts[pinnedHost.id] = pinnedHost.kind == .linux ? pinnedHost : nil
+        linuxPinGeneration &+= 1
         connectionStates[RemoteMacIdentity(remoteMac)] = .offline
     }
 

@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyRemoteClient
 
 private extension WorktreeManagementResponse {
     var errorMessage: String? {
@@ -41,6 +42,7 @@ struct MainWindow: View {
     let worktreeMonitor: WorktreeMonitor
     let teamEventDispatcher: TeamEventDispatcher
     @ObservedObject var hostPairingCoordinator: RemoteMacHostPairingCoordinator
+    @ObservedObject private var iconStore = SidebarHostController.shared
     @ObservedObject var remoteMacsModel: RemoteMacsModel
     let makeRemoteMacPairingDriver: () -> AddRemoteMacPairingDriving
 
@@ -55,11 +57,13 @@ struct MainWindow: View {
     /// can present the Add Worktree sheet pre-scoped to the current repo.
     @State private var pendingAddWorktree: AddWorktreeRequest?
     @State private var isShowingAddRemoteMacSheet = false
+    @State private var isShowingLinuxHostSetupSheet = false
+    @State private var pendingHostMaintenance: LinuxHostMaintenanceRequest?
+    @State private var linuxHostSetupClient: LinuxHostTrustRequest?
     @State private var pendingAddRemoteWorktree: RemoteAddWorktreeRequest?
     @State private var selectedRemoteIdentity: RemoteMacIdentity?
     @State private var worktreeHistory = WorktreeNavigationHistory()
     @State private var attentionOpenGeneration: UInt64 = 0
-    @State private var attentionSidebarWidth: Double?
     @StateObject private var voiceDictation = VoiceDictationController()
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     @AppStorage("sidebar.mac.collapsed") private var projectRailCollapsed = false
@@ -97,10 +101,6 @@ struct MainWindow: View {
         let repository: RemoteRepositoryInfo
     }
 
-    /// GIT-4.20: resolved-PR "delete worktree?" offers that fired while
-    /// no window could host the sheet, kept for retry when one appears.
-    @State private var pendingResolvedOffers = PendingResolvedOfferQueue()
-
     var body: some View {
         NavigationSplitView(
             columnVisibility: $columnVisibility
@@ -123,7 +123,6 @@ struct MainWindow: View {
                 onSelect: selectWorktree,
                 onOpenAttention: openAttentionTarget,
                 onNavigationIntent: { attentionOpenGeneration &+= 1 },
-                onAttentionWidthChange: { attentionSidebarWidth = $0 },
                 onSelectPane: selectPane,
                 onSelectRemoteMac: selectRemoteMac,
                 onSelectRemoteWorktree: selectRemoteWorktree,
@@ -131,6 +130,12 @@ struct MainWindow: View {
                 onAddRemoteWorktree: beginAddRemoteWorktree,
                 onDeleteRemoteWorktree: deleteRemoteWorktree,
                 onAddRemoteMac: { isShowingAddRemoteMacSheet = true },
+                onSetupLinuxHost: presentLinuxHostSetup,
+                onUpdateHost: { remote in
+                    if let pin = remoteMacsModel.maintenanceHost(for: remote) {
+                        pendingHostMaintenance = .init(remote: remote, pinnedHost: pin)
+                    }
+                },
                 onAddRepo: addRepository,
                 onAddPath: addPath,
                 onRemoveRepo: removeRepoWithConfirmation,
@@ -143,14 +148,13 @@ struct MainWindow: View {
             )
             .navigationSplitViewColumnWidth(
                 min: minimumSidebarWidth,
-                ideal: max(minimumSidebarWidth, attentionSidebarWidth ?? appState.sidebarWidth),
+                ideal: max(minimumSidebarWidth, appState.sidebarWidth),
                 max: 676
             )
-            // Deliberately do NOT call ignoresSafeArea here. The sidebar
-            // respects the title-bar safe area so its content begins below
-            // the traffic lights rather than colliding with them. The
-            // detail column opts out so the breadcrumb sits alongside the
-            // traffic lights.
+            // SidebarView opts out of the title-bar safe area itself and
+            // places its search row in that strip, inset past the traffic
+            // lights and the sidebar toggle; the detail column does the
+            // same for the breadcrumb.
         } detail: {
             VStack(spacing: 0) {
                 BreadcrumbBar(
@@ -182,7 +186,8 @@ struct MainWindow: View {
                     onGoBack: { navigateWorktreeHistory(forward: false) },
                     onGoForward: { navigateWorktreeHistory(forward: true) },
                     onSelectHistory: selectHistoryTarget,
-                    onRefreshPR: refreshPR
+                    onRefreshPR: refreshPR,
+                    project: selectedIdentityProject, projectIconData: selectedProjectIconData
                 )
 
                 if let selectedRemoteMac {
@@ -203,7 +208,7 @@ struct MainWindow: View {
                                     if let worktreePath =
                                         selectedRemoteWorktreePath {
                                         Task {
-                                            await remoteMacsModel.acknowledge(
+                                            await remoteMacsModel.acknowledgeViewedAttention(
                                                 on: selectedRemoteMac,
                                                 worktreePath: worktreePath,
                                                 paneSessionName: sessionName
@@ -262,11 +267,9 @@ struct MainWindow: View {
                             // on the next return visit.
                             if let wtPath = appState.selectedWorktreePath {
                                 appState.setFocusedTerminal(terminalID, forWorktreePath: wtPath)
-                                // STATE-2.4: clicking a pane's terminal to
-                                // focus it acknowledges that pane's attention
-                                // (e.g. the agent-stop "needs input" icon),
-                                // same as clicking its sidebar row.
-                                appState.acknowledgePaneAttention(terminalID, forWorktreePath: wtPath)
+                                // STATE-2.4: viewing a pane clears notifications;
+                                // agent requests remain until provider progress.
+                                appState.viewPaneAttention(terminalID, forWorktreePath: wtPath)
                             }
                             terminalManager.setFocus(terminalID)
                         }
@@ -317,6 +320,30 @@ struct MainWindow: View {
                 onCancel: { isShowingAddRemoteMacSheet = false },
                 onPaired: { isShowingAddRemoteMacSheet = false }
             )
+        }
+        .sheet(isPresented: $isShowingLinuxHostSetupSheet) {
+            if let linuxHostSetupClient {
+                LinuxHostSetupSheet(
+                    client: linuxHostSetupClient,
+                    initialProjects: appState.repos.filter(\.isGitTracked).map { repo in
+                        LinuxHostProject(
+                            localPath: repo.path,
+                            branch: repo.worktrees.first { $0.path == repo.path }?.branch ?? repo.defaultBranchHint ?? "",
+                            directoryName: URL(fileURLWithPath: repo.path).lastPathComponent
+                        )
+                    },
+                    onConnect: completeLinuxHostSetup
+                )
+            }
+        }
+        .sheet(item: $pendingHostMaintenance) { request in
+            LinuxHostMaintenanceSheet(remote: request.remote, pinnedHost: request.pinnedHost,
+                onValidated: { destination in
+                    try remoteMacsModel.saveMaintenanceDestination(destination, for: RemoteMacIdentity(request.remote))
+                }, onReconnect: {
+                    do { try await remoteMacsModel.reconnectAfterMaintenance(request.remote); return true }
+                    catch { return false }
+                })
         }
         .sheet(item: $pendingAddRemoteWorktree) { request in
             AddWorktreeSheet(
@@ -382,20 +409,12 @@ struct MainWindow: View {
                 $appState.wrappedValue.windowFrame = newFrame
             }
         }
-        .onAppear {
-            // Wired here rather than in GrafttyApp.startup() so the
-            // closure captures MainWindow's `$appState` binding — both
-            // NSAlert presentation and the "offered" write-back need it.
-            prStatusStore.onPRResolved = { worktreePath, prNumber, prTitle, state in
-                offerDeleteForResolvedPR(worktreePath: worktreePath, prNumber: prNumber, prTitle: prTitle, state: state)
-            }
-        }
         .focusedSceneValue(\.addWorktreeAction, addWorktreeAction)
         .focusedSceneValue(\.worktreeNavAction, worktreeNavAction)
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
-        ), when: attentionSidebarWidth == nil)
+        ), when: true)
         .onChange(of: selectedVoicePaneID) { _, _ in
             voiceDictation.cancel()
         }
@@ -421,6 +440,8 @@ struct MainWindow: View {
             activateRemoteNotification(event)
             remoteMacsModel.consumeRemoteNotificationActivation()
         }
+        .modifier(AgentNotificationActivationHandler(
+            activation: .shared, onActivate: activateLocalNotification))
         .onDisappear {
             voiceDictation.cancel()
             destroyAllRemoteSurfaces()
@@ -430,38 +451,6 @@ struct MainWindow: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in
             applyAppVisibility(isVisible: true)
-        }
-        // GIT-4.20: retry any resolved-PR offers that couldn't present
-        // when they fired (no host window). Two triggers, because the
-        // offer can be enqueued whenever `NSApp.mainWindow` is nil:
-        // `didBecomeActive` covers returning from the background (a PR
-        // merged while the user was away — the reported case), and
-        // `didBecomeMain` covers a window reappearing while the app
-        // stayed active (e.g. the primary window was deminiaturized).
-        // The retry hosts on `NSApp.mainWindow`, same as every other
-        // alert site here — presenting on a non-primary main window is
-        // still strictly better than losing the offer, which is what
-        // happened before.
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            retryPendingResolvedOffers()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeMainNotification)) { _ in
-            retryPendingResolvedOffers()
-        }
-    }
-
-    /// GIT-4.20: re-attempt the resolved-PR "delete worktree?" offers
-    /// that were queued while no window could host the sheet. Each retry
-    /// re-enters `offerDeleteForResolvedPR`, which re-checks the marker /
-    /// stale guards and re-queues itself if a window still isn't ready.
-    private func retryPendingResolvedOffers() {
-        for offer in pendingResolvedOffers.drain() {
-            offerDeleteForResolvedPR(
-                worktreePath: offer.worktreePath,
-                prNumber: offer.prNumber,
-                prTitle: offer.prTitle,
-                state: offer.state
-            )
         }
     }
 
@@ -495,6 +484,22 @@ struct MainWindow: View {
         let originY = screen.minY + (screen.height - defaultFrame.height) / 2
         return CGRect(x: originX, y: originY,
                       width: defaultFrame.width, height: defaultFrame.height)
+    }
+
+    private var selectedIdentityProject: SidebarProject? {
+        if let remote = selectedRemoteWorktreeSnapshot {
+            let id = SidebarProjection.projectID(remote)
+            return appState.sidebarNavigation?.cachedProjects.first { $0.id == id }
+                ?? SidebarProjection.projects([remote]).first
+        }
+        return selectedRepo.map { iconStore.project(for: $0, owner: iconStore.owner) }
+    }
+
+    private var selectedProjectIconData: Data? {
+        if selectedRemoteWorktreeSnapshot != nil {
+            return selectedIdentityProject.flatMap { iconStore.remoteIcons[$0.id] }
+        }
+        return selectedRepo.flatMap { iconStore.iconData(for: $0) }
     }
 
     private var selectedRepo: RepoEntry? {
@@ -694,20 +699,17 @@ struct MainWindow: View {
                   remoteMacsModel.worktreePanesByRemote[route.identity]?.first(where: { $0.path == route.path })?.layout != nil else { return false }
             guard let current = remoteMacsModel.promotedWorktreesForRelay().first(where: { $0.path == item.worktreeID }) else { return false }
             var resolvedItem = item
-            if item.paneID != nil {
-                guard let paneID = SidebarProjection.paneRoute(for: item, in: current) else { return false }
+            if let paneID = SidebarProjection.attentionPaneRoute(for: item, in: current) {
                 guard let pane = remoteMacsModel.relayRouter.resolvePane(paneID) else { return false }
-                resolvedItem.paneID = paneID
+                if item.paneID != nil { resolvedItem.paneID = paneID }
                 selectRemotePane(mac, worktreePath: route.path, sessionName: pane.sessionName, acknowledging: false)
-            } else { selectRemoteWorktree(mac, worktreePath: route.path, acknowledging: false) }
-            if let stop = worktree.sidebar?.unseenAgentStop {
-                guard let response = await remoteMacsModel.sendRelayedWorktreeManagement(.acknowledgeOccurrence(
-                    worktreeID: item.worktreeID, paneID: nil, occurrence: stop.occurrence)) else { return false }
-                if case .error(let code, _, _, _) = response, code != "occurrence-changed" { return false }
+            } else {
+                guard item.paneID == nil else { return false }
+                selectRemoteWorktree(mac, worktreePath: route.path, acknowledging: false)
             }
             let supportsExact = await remoteMacsModel.sidebarSnapshot(for: mac)?.projects
                 .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
-            if let request = SidebarInteractionPolicy.acknowledgement(for: resolvedItem, supportsExactAcknowledgement: supportsExact) {
+            if let request = SidebarInteractionPolicy.acknowledgementOnOpen(for: resolvedItem, supportsExactAcknowledgement: supportsExact) {
                 guard let response = await remoteMacsModel.sendRelayedWorktreeManagement(request) else { return false }
                 if case .error(let code, _, _, _) = response, code != "occurrence-changed" { return false }
             }
@@ -715,18 +717,24 @@ struct MainWindow: View {
         }
         guard let worktree = appState.worktree(forPath: item.worktreeID), worktree.state.hasOnDiskWorktree else { return false }
         var selectedSlot: PaneSlotID?
+        let metadata = SidebarHostNavigation.metadata(for: worktree, projectID: item.projectID, folders: [])
         if item.paneID != nil {
-            let metadata = SidebarHostNavigation.metadata(for: worktree, projectID: item.projectID, folders: [])
             guard let slotID = SidebarProjection.paneSlotID(for: item, in: metadata),
                   let slot = worktree.splitTree.allLeaves.first(where: { $0.id.uuidString == slotID }) else { return false }
             selectedSlot = slot
-            selectPane(worktree.path, slot, acknowledging: false)
-        } else { selectWorktree(worktree.path, acknowledging: false) }
+        } else if let slotID = item.agentStop?.paneSlotID {
+            selectedSlot = worktree.splitTree.allLeaves.first { $0.id.uuidString == slotID }
+        } else if let title = item.agentStop?.paneTitle {
+            let matches = worktree.splitTree.allLeaves.filter { terminalManager.displayTitles[$0] == title }
+            if matches.count == 1 { selectedSlot = matches[0] }
+        } else if worktree.splitTree.allLeaves.count == 1 { selectedSlot = worktree.splitTree.allLeaves.first }
+        if let selectedSlot { selectPane(worktree.path, selectedSlot, acknowledging: false) }
+        else { selectWorktree(worktree.path, acknowledging: false) }
         guard appState.selectedWorktreePath == item.worktreeID,
               let active = appState.worktree(forPath: item.worktreeID), active.state == .running,
               !active.splitTree.allLeaves.isEmpty else { return false }
-        if let occurrence = item.occurrence {
-            let paneID = selectedSlot.flatMap { active.paneSessions[$0] }.map { ZmxLauncher.sessionName(for: $0) }
+        if let occurrence = item.occurrence, occurrence.source != .agentStop {
+            let paneID = item.paneID == nil ? nil : selectedSlot.flatMap { active.paneSessions[$0] }.map { ZmxLauncher.sessionName(for: $0) }
             SidebarHostNavigation.acknowledge(in: &appState, worktreeID: item.worktreeID, paneID: paneID, occurrence: occurrence)
         }
         return true
@@ -737,8 +745,9 @@ struct MainWindow: View {
         selectPane(worktreePath, terminalID, acknowledging: true)
     }
 
-    private func selectPane(_ worktreePath: String, _ terminalID: PaneSlotID, acknowledging: Bool) {
-        selectWorktree(worktreePath, acknowledging: acknowledging)
+    @discardableResult
+    private func selectPane(_ worktreePath: String, _ terminalID: PaneSlotID, acknowledging: Bool) -> Bool {
+        guard selectWorktree(worktreePath, acknowledging: acknowledging) else { return false }
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 if appState.repos[repoIdx].worktrees[wtIdx].path == worktreePath {
@@ -755,6 +764,7 @@ struct MainWindow: View {
                         == terminalID
             }
         )
+        return true
     }
 
     private func selectWorktree(_ path: String) {
@@ -762,13 +772,15 @@ struct MainWindow: View {
         selectWorktree(path, acknowledging: true)
     }
 
-    private func selectWorktree(_ path: String, acknowledging: Bool) {
+    @discardableResult
+    private func selectWorktree(_ path: String, acknowledging: Bool) -> Bool {
+        guard terminalManager.wakeWorktree(path) else { return false }
         // In-flight rows have no surfaces to focus and no PR / stats
         // to refresh — let the user keep their current worktree until
         // the owning flow finalizes (`.creating → .running`, or
         // `.deleting → removed`).
         if let wt = appState.worktree(forPath: path), wt.state.isInFlight {
-            return
+            return false
         }
         var selection = RemoteMacSidebarSelectionState(
             selectedWorktreePath: appState.selectedWorktreePath,
@@ -852,13 +864,9 @@ struct MainWindow: View {
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 if appState.repos[repoIdx].worktrees[wtIdx].path == path {
-                    // Clicking a worktree dismisses both levels of
-                    // attention — worktree-level (CLI notify) and any
-                    // outstanding per-pane badges — so the user sees a
-                    // clean slate once they're looking at the worktree.
-                    // Same `acknowledgeAttention()` the notification-
-                    // activation path uses, so the two can't drift.
-                    if acknowledging { appState.repos[repoIdx].worktrees[wtIdx].acknowledgeAttention() }
+                    // STATE-2.4: viewing clears notifications at both scopes
+                    // while preserving stopped-agent requests.
+                    if acknowledging { appState.repos[repoIdx].worktrees[wtIdx].viewAttention() }
                 }
             }
         }
@@ -892,6 +900,52 @@ struct MainWindow: View {
         // backoff expires, and the user's only escape hatch is
         // right-click "Refresh now" on the PR button.
         refreshPR()
+        return true
+    }
+
+    private func activateLocalNotification(_ payload: AgentStopNotificationPayload) {
+        attentionOpenGeneration &+= 1
+        pendingRemoteNotificationActivation = nil
+        AgentNotificationActivation.open(payload, worktree: appState.worktree(forPath: payload.worktreePath),
+            selectWorktree: { selectWorktree($0, acknowledging: true) },
+            selectPane: { selectPane($0, $1, acknowledging: true) })
+    }
+
+    @MainActor
+    private func presentLinuxHostSetup() {
+        do {
+            let store = ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory)
+            let key = try store.loadOrGenerateAndPersist()
+            linuxHostSetupClient = LinuxHostTrustRequest(
+                deviceID: AppServices.localRemoteDeviceID().value,
+                displayName: AppServices.localHostDisplayName(),
+                publicKey: key.publicKey.rawRepresentation.base64EncodedString()
+            )
+            isShowingLinuxHostSetupSheet = true
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could not prepare Linux host setup"
+            alert.informativeText = LinuxHostSetupError.message(for: error)
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
+    }
+
+    @MainActor
+    private func completeLinuxHostSetup(_ result: LinuxHostSetupResult) async throws {
+        try Task.checkCancellation()
+        await remoteMacsModel.loadSavedRemotes()
+        try Task.checkCancellation()
+        let controller = LinuxHostSetupConnectionController(
+            pinnedHostStore: PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
+        )
+        let saved = try controller.save(result, model: remoteMacsModel)
+        do {
+            _ = try await remoteMacsModel.connect(to: saved)
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            throw LinuxHostSetupError.invalidPlan("The host is installed and paired, but Graftty could not reach \(saved.directEndpoint?.host ?? result.openSSH.hostname):\(result.identity.port). Check the firewall and direct network route, then retry.\n\(error.localizedDescription)")
+        }
     }
 
     private func selectRemoteMac(_ remoteMac: RemoteMac) {
@@ -1010,7 +1064,7 @@ struct MainWindow: View {
             }
         }
         if acknowledging { Task {
-            await remoteMacsModel.acknowledge(
+            await remoteMacsModel.acknowledgeViewedAttention(
                 on: remoteMac,
                 worktreePath: worktreePath
             )
@@ -1145,7 +1199,7 @@ struct MainWindow: View {
             preferredSessionName: sessionName
         )
         if acknowledging { Task {
-            await remoteMacsModel.acknowledge(
+            await remoteMacsModel.acknowledgeViewedAttention(
                 on: remoteMac,
                 worktreePath: worktreePath,
                 paneSessionName: sessionName
@@ -1605,6 +1659,16 @@ struct MainWindow: View {
                     }
                     let isSelected = selectedRemoteIdentity == identity
                         && selectedRemoteWorktreePath == worktreePath
+                    if let view = terminalManager.handle(for: terminalID)?.view as? SurfaceNSView {
+                        view.configureAgentCompletion(currentWorktreePath: worktreePath) {
+                            let response = try await remoteMacsModel.sendWorktreeManagement(identity: identity,
+                                request: .worktreeAgentCompletions(worktreeID: worktreePath))
+                            guard case .agentCompletions(let candidates) = response else {
+                                throw RemoteWorktreeError("Agent completion is unavailable on this host")
+                            }
+                            return candidates
+                        }
+                    }
                     terminalManager.setVisible(
                         isSelected && appIsVisible,
                         for: terminalID
@@ -1966,7 +2030,7 @@ struct MainWindow: View {
         pendingRemoteFocusTarget = target
         focusRemotePane(terminalID, target: target)
         Task {
-            await remoteMacsModel.acknowledge(
+            await remoteMacsModel.acknowledgeViewedAttention(
                 on: remoteMac,
                 worktreePath: target.worktreePath,
                 paneSessionName: sessionName
@@ -2933,18 +2997,9 @@ struct MainWindow: View {
     /// `appState` synchronously; the FSEvents watcher will also fire
     /// `worktreeMonitorDidDetectDeletion` shortly after, but its update
     /// is idempotent so the eventual callback is harmless.
-    private func deleteWorktreeWithConfirmation(_ worktreePath: String) {
-        guard let host = NSApp.mainWindow else { return }
-        let config = SheetAlert.Configuration(
-            messageText: "Delete Worktree?",
-            informativeText: "This will delete the worktree but not the branch.",
-            style: .warning,
-            primaryButton: "Delete Worktree",
-            secondaryButton: "Cancel"
-        )
-        SheetAlert.present(config, on: host) { response in
-            guard response == .primary else { return }
-            performDeleteWorktree(worktreePath)
+    private func deleteWorktreeWithConfirmation(_ worktreePath: String, on host: NSWindow) {
+        DeleteWorktreeConfirmation.present(worktreePath: worktreePath, on: host) { path, window in
+            performDeleteWorktree(path, on: window)
         }
     }
 
@@ -2993,14 +3048,12 @@ struct MainWindow: View {
         appState.removeRepo(atPath: repo.path)
     }
 
-    /// Shared `git worktree remove` + teardown path used by both the
-    /// user-initiated "Delete Worktree" menu action and the PR-merged
-    /// offer dialog. Callers own the confirmation UX — this helper runs
-    /// git unconditionally and surfaces failures via the same error
-    /// alert as the menu path. `force` is set internally on retry from
+    /// Runs `git worktree remove` and tears down the worktree after
+    /// the caller confirms deletion. Surfaces failures via an error
+    /// alert. `force` is set internally on retry from
     /// the GIT-4.4 dialog; see GIT-4.12.
-    private func performDeleteWorktree(_ worktreePath: String, force: Bool = false) {
-        Task { @MainActor in
+    private func performDeleteWorktree(_ worktreePath: String, on host: NSWindow, force: Bool = false) {
+        Task { @MainActor [weak host] in
             let result = await DeleteWorktreeFlow.delete(
                 worktreePath: worktreePath,
                 force: force,
@@ -3018,15 +3071,15 @@ struct MainWindow: View {
                 // matches the pre-refactor behavior.
                 return
             case .failure(.gitFailedForceable(let stderr, let status)):
-                guard let host = NSApp.mainWindow else { return }
+                guard let host, host.isVisible else { return }
                 let config = ForceDeleteAlert.gitFailedForceableConfiguration(stderr: stderr, status: status)
                 SheetAlert.present(config, on: host) { response in
                     guard response == .secondary else { return }
-                    performDeleteWorktree(worktreePath, force: true)
+                    performDeleteWorktree(worktreePath, on: host, force: true)
                 }
             case .failure(.gitFailedFinal(let msg)):
                 NSLog("[Graftty] performDeleteWorktree: %@", msg)
-                guard let host = NSApp.mainWindow else { return }
+                guard let host, host.isVisible else { return }
                 let config = ForceDeleteAlert.gitFailedFinalConfiguration(message: msg)
                 SheetAlert.present(config, on: host)
             }
@@ -3057,49 +3110,6 @@ struct MainWindow: View {
                 teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
                 dispatcher: teamEventDispatcher
             )
-        }
-    }
-
-    /// GIT-4.7 / GIT-4.14. The "offered" marker is persisted via
-    /// `AppState.onChange` so Keep is sticky across restarts, not just
-    /// across polls — and is written only once we know the sheet is
-    /// going up, so a no-window early-return leaves the next poll free
-    /// to retry. `beginSheetModal(for:)` (rather than `runModal()`)
-    /// keeps the main run loop's default mode pumping so libghostty's
-    /// PTY callbacks keep flowing for every embedded pane while the
-    /// auto-triggered offer is on screen.
-    private func offerDeleteForResolvedPR(worktreePath: String, prNumber: Int, prTitle: String, state: PRInfo.State) {
-        guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
-        let repo = appState.repos[repoIdx]
-        let wt = repo.worktrees[wtIdx]
-
-        // Mirrors GIT-4.1: git refuses to remove the main checkout, and
-        // a stale entry has no live worktree to remove.
-        guard wt.path != repo.path, wt.state != .stale else { return }
-        guard wt.offeredDeleteForResolvedPR != prNumber else { return }
-        guard let config = PRResolutionOfferAlert.configuration(prNumber: prNumber, prTitle: prTitle, state: state) else { return }
-        // `NSApp.mainWindow` only — falling through to "any visible
-        // non-panel window" would attach the sheet to Settings or the
-        // Team Activity Log when those are foregrounded. GIT-4.20: the
-        // store fires the resolved edge exactly once (GIT-4.7 idempotent
-        // guard), so we can't rely on "the next poll retries" — queue
-        // the offer instead and retry it when a window appears.
-        guard let host = NSApp.mainWindow else {
-            pendingResolvedOffers.enqueue(PendingResolvedOffer(
-                worktreePath: worktreePath, prNumber: prNumber,
-                prTitle: prTitle, state: state
-            ))
-            return
-        }
-
-        // The offer is presenting, so it no longer needs to be retried.
-        pendingResolvedOffers.remove(worktreePath: worktreePath)
-        // Set the marker now that the sheet is definitely going up, so a
-        // user who clicks Keep doesn't get re-prompted on the next poll.
-        appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForResolvedPR = prNumber
-        SheetAlert.present(config, on: host) { response in
-            guard response == .primary else { return }
-            performDeleteWorktree(worktreePath)
         }
     }
 

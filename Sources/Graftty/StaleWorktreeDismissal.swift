@@ -107,6 +107,7 @@ enum StaleWorktreeDismissal {
                 guard let worktree = currentRepo.worktrees.first(where: {
                     $0.id == candidateWorktree.id
                 }), worktree.state == .stale,
+                    !SidebarHostNavigation.isPinned(worktree, in: currentRepo),
                     worktree.staleSince == candidateWorktree.staleSince,
                     now.timeIntervalSince(candidateWorktree.staleSince) >= gracePeriod,
                     !discoveredPaths.contains(worktree.path) else {
