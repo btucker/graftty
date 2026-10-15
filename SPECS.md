@@ -572,6 +572,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.20** When libghostty reports a viewport resize whose cell grid equals the bound live window size, the application shall forward the live window's pixel dimensions instead of the callback's, so every forward of one grid carries identical pixel fields and a same-grid forward never raises a spurious SIGWINCH.
 
+**TERM-11.21** When a Mac pane resumes leading after applying an attachment grid, the application shall restore its full viewport before resizing the terminal, regardless of scrollbar style.
+
 ### TERM-12.x — Paged History on Mac and Mobile
 
 **TERM-12.1** When Graftty on Mac or mobile opens a terminal through a paging-capable attachment, the application shall restore the current screen and parser state with a bounded recent-history allowance before fetching older history, without serializing or transferring the complete retained history on the initial path.
