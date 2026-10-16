@@ -25,6 +25,9 @@ struct BreadcrumbBar: View {
     let onRefreshPR: () -> Void
     var project: SidebarProject? = nil
     var projectIconData: Data? = nil
+    var previewWorktreePath: String? = nil
+    var previewInlinePane: PaneSlotID? = nil
+    var canShowInlinePreview: (PaneSlotID) -> Bool = { _ in true }
     @State private var showsHistory = false
 
     /// Leading inset wide enough to clear the three traffic-light buttons
@@ -68,6 +71,11 @@ struct BreadcrumbBar: View {
 
             if let prInfo {
                 PRButton(info: prInfo, theme: theme, onRefresh: onRefreshPR)
+            }
+            if let previewWorktreePath {
+                FilePreviewToolbarButton(worktreePath: previewWorktreePath, inlinePane: previewInlinePane,
+                                         canShowInline: canShowInlinePreview)
+                    .foregroundColor(theme.foreground.opacity(0.8))
             }
         }
         .font(.callout)

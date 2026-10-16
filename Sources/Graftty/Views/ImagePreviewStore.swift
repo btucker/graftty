@@ -42,9 +42,13 @@ final class ImagePreviewStore: ObservableObject {
     }
 
     func present(files: [FilePreviewFile], for pane: PaneSlotID) {
+        present(Preview(files: files), for: pane)
+    }
+
+    func present(_ preview: Preview, for pane: PaneSlotID) {
         order.removeAll { $0 == pane }
         if order.count >= Self.maximumPreviews, let oldest = order.first { dismiss(oldest) }
-        previews[pane] = Preview(files: files)
+        previews[pane] = preview
         order.append(pane)
     }
 
