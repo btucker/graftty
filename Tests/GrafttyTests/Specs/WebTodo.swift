@@ -69,7 +69,7 @@ struct WebTodo {
     func web_3_4() async throws { }
 
     @Test("""
-@spec WEB-3.5: WebSocket text frames shall carry JSON control envelopes. Legacy `{"type":"resize","cols":<uint16>,"rows":<uint16>}` frames may update the PTY only for a socket that is already the confirmed display owner; ownership-aware clients shall use `hello`, `ownership`, `grid`, `takeControl`, and `ownerResize` envelopes from `WebControlEnvelope`, and only a `takeControl` frame may change web display ownership. Clients may send `takeControl` from an explicit Take Control button or from an intentional terminal-input event, but passive attach, focus, and resize events shall not claim ownership.
+@spec WEB-3.5: WebSocket text frames shall carry JSON control envelopes. Legacy `{"type":"resize","cols":<uint16>,"rows":<uint16>}` frames may update the PTY only for a socket that is already the confirmed display owner; ownership-aware clients shall use `hello`, `ownership`, `grid`, `takeControl`, and `ownerResize` envelopes from `WebControlEnvelope`, and a visible interactive `hello` shall acquire leadership when no active leader exists. Clients may send `takeControl` from an explicit Take Control button or from an intentional terminal-input event, but preview attachments, focus, and resize events shall not claim ownership.
 """, .disabled("not yet implemented"))
     func web_3_5() async throws { }
 

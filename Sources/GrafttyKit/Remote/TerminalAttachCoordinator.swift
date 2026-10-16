@@ -399,9 +399,7 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
 
     private func handleLegacyResize(cols: UInt16, rows: UInt16) {
         let grid = try! DisplayGrid(cols: cols, rows: rows)
-        let kind = currentKind() ?? defaultKind
-        ensureAttached(kind: kind, grid: grid)
-
+        // A resize alone is not an interactive attachment or a takeover.
         let snapshot = ownershipStore.snapshot(sessionName: sessionName, fallbackGrid: grid)
         if snapshot.ownerClientID == clientID {
             let result = ownershipStore.ownerResize(

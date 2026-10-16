@@ -31,7 +31,7 @@ struct StickyDisplayOwnershipTests {
         #expect(store.ownerResize(sessionName: session, clientID: .init("new"), epoch: resumed.epoch, grid: grid).accepted)
     }
 
-    @Test("@spec OWN-1.5: While leadership is retained for a disconnected device, the application shall reject passive takeover by other devices, previews, hidden clients, or clients without authenticated identity.")
+    @Test("@spec OWN-1.5: While leadership is retained for a disconnected device, the application shall reject takeover by preview or hidden attachments until an eligible interactive client attaches.")
     func passiveClientsCannotResumeLeader() {
         let store = SessionDisplayOwnershipStore()
         _ = attach(store, "old", identity: "phone")
@@ -39,10 +39,9 @@ struct StickyDisplayOwnershipTests {
         _ = store.detachClient(sessionName: session, clientID: .init("old"))
         #expect(attach(store, "preview", identity: "phone", role: .preview).ownerClientID == .init("old"))
         #expect(attach(store, "hidden", identity: "phone", visible: false).ownerClientID == .init("old"))
-        #expect(attach(store, "other", identity: "other").ownerClientID == .init("old"))
-        #expect(attach(store, "untrusted", identity: nil).ownerClientID == .init("old"))
-        #expect(attach(store, "mac", identity: "phone", kind: .mac).ownerClientID == .init("old"))
-        #expect(!store.claimOwnerIfOwnerlessOrCurrent(sessionName: session, clientID: .init("mac"), kind: .mac, grid: grid).accepted)
+        #expect(attach(store, "mac", identity: nil, kind: .mac).ownerClientID == .init("mac"))
+        #expect(attach(store, "other", identity: "other").ownerClientID == .init("mac"))
+        #expect(store.claimOwnerIfOwnerlessOrCurrent(sessionName: session, clientID: .init("mac"), kind: .mac, grid: grid).accepted)
         #expect(!store.ownerResize(sessionName: session, clientID: .init("old"), epoch: 1, grid: grid).accepted)
     }
 

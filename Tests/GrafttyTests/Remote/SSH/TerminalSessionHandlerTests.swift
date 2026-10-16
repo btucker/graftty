@@ -442,8 +442,10 @@ final class TerminalSessionHandlerTests: XCTestCase {
     // MARK: - REMOTE-9: display ownership on SSH terminals
 
     /// @spec REMOTE-9.1: When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with a display kind derived from the authenticated peer type and with the authenticated device identity.
+    /// @spec OWN-1.10: When an authenticated visible interactive SSH client sends hello without an active leader, the host shall acknowledge its automatic leadership and accept terminal input without a Take Control request.
     func testAttachRegistersMacClientWithAuthenticatedKindAndDeviceIdentity() async throws {
-        let stream = EchoStream()
+        let received = NIOLockedValueBox<[Data]>([])
+        let stream = EchoStream { data in received.withLockedValue { $0.append(data) } }
         let factory = RecordingStreamFactory(returning: .success(stream))
         let store = SessionDisplayOwnershipStore()
         let broadcaster = DisplayOwnershipBroadcaster()
@@ -473,12 +475,6 @@ final class TerminalSessionHandlerTests: XCTestCase {
             cols: 80,
             rows: 24
         ))
-        try await sendControlEnvelope(channel, .takeControl(
-            clientID: DisplayClientID("ipad-1"),
-            kind: .web,
-            cols: 80,
-            rows: 24
-        ))
 
         try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID != nil }
 
@@ -490,6 +486,12 @@ final class TerminalSessionHandlerTests: XCTestCase {
             "expected clientID to embed the authenticated device identity, got \(ownerID)"
         )
 
+        let envelope = try await nextOutboundEnvelope(channel)
+        guard case let .ownership(owner) = envelope else { return XCTFail("Missing ownership snapshot") }
+        XCTAssertEqual(owner.ownerClientID, DisplayClientID("ipad-1"))
+        let input = Data("automatic-input".utf8)
+        try await channel.writeInbound(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(bytes: input))))
+        try await waitUntil { received.withLockedValue { $0 == [input] } }
         _ = try? await channel.finish()
     }
 
@@ -498,6 +500,9 @@ final class TerminalSessionHandlerTests: XCTestCase {
         let stream = EchoStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
         let store = SessionDisplayOwnershipStore()
+        let activeLeader = DisplayClientID("active-mac")
+        _ = store.attachClient(sessionName: "alpha", clientID: activeLeader, kind: .mac,
+                               role: .interactive, visible: true, grid: .daemonFallback)
         let broadcaster = DisplayOwnershipBroadcaster()
         let capture = OutboundEventCapture()
         let handler = Self.makeHandler(
@@ -535,7 +540,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
             XCTFail("expected an ownership envelope, got \(envelope)")
             return
         }
-        XCTAssertNil(snapshot.ownerClientID, "no owner has claimed control yet")
+        XCTAssertEqual(snapshot.ownerClientID, activeLeader, "the attached Mac keeps leadership")
 
         // No echoed `.channel` frame should ever appear — the bytes were
         // discarded before reaching `EchoStream`/the PTY.
@@ -623,7 +628,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
         try await sendControlEnvelope(channel, .hello(
             clientID: DisplayClientID("ipad-1"),
             kind: .ios,
-            role: .interactive,
+            role: .preview,
             visible: true,
             cols: 80,
             rows: 24
@@ -1495,14 +1500,17 @@ private final class RecordingStreamFactory: @unchecked Sendable {
 private final class EchoStream: TerminalByteStream, @unchecked Sendable {
     private let continuation: AsyncStream<Data>.Continuation
     let inboundBytes: AsyncStream<Data>
+    private let onInput: @Sendable (Data) -> Void
 
-    init() {
+    init(onInput: @escaping @Sendable (Data) -> Void = { _ in }) {
+        self.onInput = onInput
         var cont: AsyncStream<Data>.Continuation!
         self.inboundBytes = AsyncStream { c in cont = c }
         self.continuation = cont
     }
 
     func send(_ bytes: Data) async throws {
+        onInput(bytes)
         continuation.yield(bytes)
     }
 

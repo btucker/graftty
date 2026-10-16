@@ -17,7 +17,7 @@ struct IOSSeamTests {
     @Test func iosFollowerIgnoresSupersededOwnershipFrame() async throws {
         var world = MultiTransportWorld(session: "main")
         let ios = DisplayClientID("ios-1")
-        await world.attachIOS(id: ios)                  // ios connects as follower (kind .ios never auto-owns)
+        await world.attachIOS(id: ios)
         let e1 = world.makeOwnershipFrame(epoch: 1, cols: 80)
         let e2 = world.makeOwnershipFrame(epoch: 2, cols: 100)
         world.enqueueIOSIncoming(e2)                     // newer first
