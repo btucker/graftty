@@ -535,16 +535,16 @@ private struct ResourcePreviewSheet<Content: View>: View {
     let didDetach: () -> Void
     @ViewBuilder let content: () -> Content
     var body: some View {
-        ResourcePreviewAttachment(didDetach: didDetach).frame(width: 0, height: 0)
+        ViewAttachmentObserver(didDetach: didDetach).frame(width: 0, height: 0)
             .sheet(isPresented: $isPresented, onDismiss: didDismiss) {
                 MountedResourceContent(didMount: didMount, content: content())
             }
     }
 }
 
-/// Actual host removal ends a reservation. Covering the source with a system
+/// Actual host removal ends an attachment. Covering the source with a system
 /// modal or changing scene activity does not remove its hosting controller.
-private struct ResourcePreviewAttachment: UIViewControllerRepresentable {
+struct ViewAttachmentObserver: UIViewControllerRepresentable {
     let didDetach: () -> Void
     func makeUIViewController(context: Context) -> Anchor { Anchor() }
     func updateUIViewController(_ anchor: Anchor, context: Context) { anchor.didDetach = didDetach }
