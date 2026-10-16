@@ -20,6 +20,71 @@ import XCTest
 /// lands, and the side-effect assertions poll thread-safe fakes — no busy-poll
 /// of the embedded loop, no race.
 final class TerminalSessionHandlerTests: XCTestCase {
+    /// @spec SSH-1.6: While forwarding terminal output over SSH, the host shall await each write of at most 16 KiB before sending the next, preserving byte and control-event order so other terminal channels can run between writes.
+    func testOutputIsPacedInBoundedWrites() async throws {
+        for paged in [false, true] {
+            let stream = EchoStream()
+            let pagedStream = TestPagedStream()
+            let gate = TerminalOutputWriteGate()
+            let capture = OutboundEventCapture()
+            let handler = TerminalSessionHandler(
+                streamFactory: { _ in stream },
+                pagedFactory: paged ? { @Sendable _ in pagedStream } : nil,
+                ownershipStore: SessionDisplayOwnershipStore(),
+                ownershipBroadcaster: DisplayOwnershipBroadcaster(),
+                deviceID: RemoteDeviceID(value: "paced-output"))
+            let channel = try await Self.channel(capture, gate, handler)
+            // NIO's outbound wait ignores cancellation. Close the channel
+            // on timeout so a missing final slice fails instead of hanging.
+            let deadline = Task {
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
+                try? await channel.eventLoop.submit { gate.failPendingWrites() }.get()
+                try? await channel.close().get()
+            }
+            defer { deadline.cancel() }
+            do {
+                try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+                try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+                try await sendShellRequest(channel)
+                try await waitUntil { capture.successCount >= 3 }
+                let output = Data((0..<(40 * 1024)).map { UInt8($0 % 251) })
+                if paged {
+                    pagedStream.continuation.yield(.output(output))
+                    pagedStream.continuation.yield(.grid(cols: 100, rows: 30))
+                } else { try await stream.send(output) }
+                try await waitUntil { gate.chunks.withLockedValue { !$0.isEmpty } }
+                let first = gate.chunks.withLockedValue { $0 }
+                XCTAssertEqual(first.count, 1)
+                XCTAssertEqual(first.first?.count, 16 * 1024)
+                var received = Data()
+                while received.count < output.count {
+                    let chunk = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+                    guard case .byteBuffer(let bytes) = chunk.data else { throw WaitTimedOut() }
+                    XCTAssertEqual(chunk.type, .channel)
+                    XCTAssertLessThanOrEqual(bytes.readableBytes, 16 * 1024)
+                    received.append(contentsOf: bytes.readableBytesView)
+                    try await channel.eventLoop.submit { gate.releaseNext() }.get()
+                }
+                XCTAssertEqual(received, output)
+                if paged {
+                    let grid = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+                    XCTAssertEqual(grid.type, .stdErr)
+                    guard case .byteBuffer(let bytes) = grid.data else { throw WaitTimedOut() }
+                    var decoder = StdErrControlFraming.Decoder()
+                    decoder.append(Data(bytes.readableBytesView))
+                    let (frames, _) = decoder.drain()
+                    let text = String(decoding: try XCTUnwrap(frames.first), as: UTF8.self)
+                    XCTAssertEqual(try PagedTerminalEnvelope.parse(text).event, .grid(cols: 100, rows: 30))
+                }
+            } catch {
+                try? await channel.eventLoop.submit { gate.failPendingWrites() }.get()
+                _ = try? await channel.finish()
+                throw error
+            }
+            _ = try? await channel.finish()
+        }
+    }
+
     /// @spec REMOTE-9.11: When an SSH terminal's source grid arrives before its ownership hello, the host shall announce that source grid after the hello enables the control carrier.
     func testSourceGridBeforeLateHelloIsReannounced() async throws {
         let stream = SizeReportingStream(initialSize: (120, 67))
@@ -1380,6 +1445,32 @@ private final class OutboundEventCapture: ChannelOutboundHandler, @unchecked Sen
 // MARK: - Test fakes
 
 private enum FactoryError: Error { case notFound }
+
+private final class TerminalOutputWriteGate: ChannelOutboundHandler, @unchecked Sendable {
+    typealias OutboundIn = SSHChannelData
+    let chunks = NIOLockedValueBox<[Data]>([])
+    private var pending: [EventLoopPromise<Void>] = []
+
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        let chunk = unwrapOutboundIn(data)
+        if chunk.type == .channel, case .byteBuffer(let bytes) = chunk.data {
+            chunks.withLockedValue { $0.append(Data(bytes.readableBytesView)) }
+            if let promise { pending.append(promise) }
+            context.write(data, promise: nil)
+        } else {
+            context.write(data, promise: promise)
+        }
+    }
+
+    func releaseNext() {
+        if !pending.isEmpty { pending.removeFirst().succeed(()) }
+    }
+
+    func failPendingWrites() {
+        for promise in pending { promise.fail(ChannelError.ioOnClosedChannel) }
+        pending.removeAll()
+    }
+}
 
 private final class RecordingStreamFactory: @unchecked Sendable {
     private let lock = NIOLock()

@@ -258,6 +258,54 @@ struct MacPagedTerminalTests {
         #expect(terminal.firstHistoryRow().contains("history-row-000000"))
     }
 
+    @Test("@spec TERM-12.39: When the Mac takes control of a restored paged terminal from mobile, the application shall resize to the Mac viewport and keep the terminal attachment available for input and live output.", .timeLimit(.minutes(1)))
+    func takeControlKeepsRestoredAttachmentLive() async throws {
+        let fixture = try await HistoryDaemon.make()
+        defer { fixture.close() }
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let store = SessionDisplayOwnershipStore()
+        let phone = DisplayClientID("phone")
+        _ = store.attachClient(sessionName: "history", clientID: phone, kind: .ios,
+                               role: .interactive, visible: true, grid: try DisplayGrid(cols: 80, rows: 24))
+        _ = store.claimOwner(sessionName: "history", clientID: phone, kind: .ios,
+                             grid: try DisplayGrid(cols: 80, rows: 24))
+        let backend = HostManagedZmxBackend(spawnConfiguration: .init(
+            sessionName: "history", argv: ["/nonexistent-graftty-legacy-attach"],
+            env: fixture.launcher.subprocessEnv(from: ProcessInfo.processInfo.environment),
+            workingDirectory: fixture.launcher.zmxDir, shellReadySignalAvailable: false
+        ), initialSize: .init(cols: 80, rows: 24),
+            ownership: HostManagedZmxOwnership(store: store, sessionName: "history", clientID: DisplayClientID("mac")))
+        defer { backend.close(); backend.releaseReceiveUserdataAfterSurfaceFree() }
+        var completed = false
+        var failure: String?
+        backend.bindAttachmentFailure { failure = $0 }
+        backend.bindAttachmentGrid { grid in
+            if let grid { terminal.prepareGrid(grid) }
+            else { completed = true }
+        }
+        backend.bindSurfaceSync(currentWindowSize: { .init(cols: 165, rows: 79, xpixel: 2661, ypixel: 2714) }, requestRefresh: {})
+        backend.markLayoutSettled()
+        try backend.start(surface: terminal.raw)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !completed, failure == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(completed)
+        #expect(failure == nil)
+        #expect(store.snapshot(sessionName: "history").ownerClientID == phone)
+        terminal.prepareGrid(try DisplayGrid(cols: 165, rows: 79))
+        #expect(backend.takeControl())
+        #expect(store.snapshot(sessionName: "history").ownerClientID == DisplayClientID("mac"))
+        #expect(store.snapshot(sessionName: "history").grid == (try DisplayGrid(cols: 165, rows: 79)))
+        try backend.write(Data("takeover-probe\r".utf8))
+        while !terminal.text().contains("live-takeover-probe"), failure == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(failure == nil)
+        #expect(terminal.text().contains("live-takeover-probe"))
+    }
+
     @MainActor
     private final class NativeCanvas {
         let app: GhosttyApp

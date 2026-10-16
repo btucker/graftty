@@ -1647,12 +1647,20 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
 
     private func startInboundForwarding(stream: TerminalByteStream, channel: Channel, loop: EventLoop) {
         let task = Task { [weak self] in
-            for await chunk in stream.inboundBytes {
-                let buffer = channel.allocator.buffer(bytes: chunk)
-                let data = SSHChannelData(type: .channel, data: .byteBuffer(buffer))
-                loop.execute {
-                    channel.writeAndFlush(data, promise: nil)
+            do {
+                for await chunk in stream.inboundBytes {
+                    // Mirror the production host's paced output forwarding.
+                    var buffer = channel.allocator.buffer(bytes: chunk)
+                    while buffer.readableBytes > 0 {
+                        try Task.checkCancellation()
+                        let slice = buffer.readSlice(length: min(buffer.readableBytes, 16 * 1024))!
+                        let data = SSHChannelData(type: .channel, data: .byteBuffer(slice))
+                        try await channel.writeAndFlush(data).get()
+                    }
                 }
+            } catch {
+                channel.close(promise: nil)
+                return
             }
             loop.execute { [weak self] in
                 guard let self, !self.isShuttingDown else { return }
