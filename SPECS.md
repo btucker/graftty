@@ -1472,7 +1472,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-3.4** WebSocket binary frames shall carry raw PTY bytes in both directions.
 
-**WEB-3.5** WebSocket text frames shall carry JSON control envelopes. Legacy `{"type":"resize","cols":<uint16>,"rows":<uint16>}` frames may update the PTY only for a socket that is already the confirmed display owner; ownership-aware clients shall use `hello`, `ownership`, `grid`, `takeControl`, and `ownerResize` envelopes from `WebControlEnvelope`, and only a `takeControl` frame may change web display ownership. Clients may send `takeControl` from an explicit Take Control button or from an intentional terminal-input event, but passive attach, focus, and resize events shall not claim ownership.
+**WEB-3.5** WebSocket text frames shall carry JSON control envelopes. Legacy `{"type":"resize","cols":<uint16>,"rows":<uint16>}` frames may update the PTY only for a socket that is already the confirmed display owner; ownership-aware clients shall use `hello`, `ownership`, `grid`, `takeControl`, and `ownerResize` envelopes from `WebControlEnvelope`, and a visible interactive `hello` shall acquire leadership when no active leader exists. Clients may send `takeControl` from an explicit Take Control button or from an intentional terminal-input event, but preview attachments, focus, and resize events shall not claim ownership.
 
 **WEB-3.6** When the application responds to an HTTP request with `Connection: close`, it shall transmit exactly the number of body bytes declared in its `Content-Length` header to the client before closing the TCP connection, so clients never observe a truncated response (`ERR_CONTENT_LENGTH_MISMATCH`). This requirement applies even on links (e.g., Tailscale `utun`, MTU ~1280) whose kernel TCP send buffer cannot absorb the full response in a single non-blocking write.
 
@@ -1596,13 +1596,23 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **OWN-1.2** When the current display owner reports a resize whose grid equals the authoritative grid, the application shall validate the owner and epoch without advancing the ownership revision or notifying observers.
 
-**OWN-1.3** When the leader disconnects, the application shall retain its leadership and last grid until another client takes control.
+**OWN-1.3** When the leader disconnects, the application shall retain its identity and last grid until a visible interactive client attaches or explicitly takes control.
 
 **OWN-1.4** When the authenticated leading device reconnects interactively, the application shall restore its leadership on the new connection without changing the retained grid or accepting traffic from the old connection.
 
-**OWN-1.5** While leadership is retained for a disconnected device, the application shall reject passive takeover by other devices, previews, hidden clients, or clients without authenticated identity.
+**OWN-1.5** While leadership is retained for a disconnected device, the application shall reject takeover by preview or hidden attachments until an eligible interactive client attaches.
 
 **OWN-1.6** When another device takes control during a leader's disconnection, the application shall reconnect the former leader as a follower.
+
+**OWN-1.7** When a visible interactive client attaches and no eligible attached leader exists, the application shall make that client the leader, preserve the retained grid until its viewport is confirmed, and notify ownership observers.
+
+**OWN-1.8** When a local Mac pane reattaches after its leader detached, the application shall accept its viewport and input without manual takeover unless another attached client has become leader.
+
+**OWN-1.9** If a Mac terminal attachment fails to start after acquiring leadership, then the application shall close its session and detach its ownership registration so a later attachment can become leader.
+
+**OWN-1.10** When an authenticated visible interactive SSH client sends hello without an active leader, the host shall acknowledge its automatic leadership and accept terminal input without a Take Control request.
+
+**OWN-1.11** If a Mac terminal backend closes while measuring its initial viewport, then the application shall not register that closed backend as an attached leader.
 
 ### OWN-2.x — Mac Take-Control Affordance and Reclaim
 
@@ -1922,9 +1932,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.24** When an ownership snapshot promotes this client from non-owner to display owner, the application shall send an `ownerResize` carrying its current iOS viewport before queued input, waiting for the physical viewport after releasing a follower canvas.
 
-**IOS-4.25** Attaching an interactive iOS client to an ownerless session shall not implicitly make the phone the display owner. Mobile ownership changes require a `takeControl` frame, sent either by the Take Control button or by intentional terminal input; passive attach alone shall leave the session ownerless.
+**IOS-4.25** When a visible interactive iOS client attaches without an active leader, the application shall make it the display owner without requiring a Take Control action.
 
-**IOS-4.26** On an ownerless session, an iOS WebSocket `hello` shall attach the client and return an ownerless ownership snapshot rather than implicitly claiming ownership. This is the transport-level state that lets GrafttyMobile show Take Control before sending the explicit `takeControl` frame.
+**IOS-4.26** When a visible interactive iOS WebSocket client sends a hello without an active leader, the application shall return an ownership snapshot naming that client as leader without requiring a Take Control frame.
 
 **IOS-4.27** When an ownership snapshot arrives with the same epoch as the last applied snapshot but a lower revision, the application shall ignore it, so a reordered same-epoch owner resize cannot roll the grid back to a stale size. A same-epoch snapshot with an equal or higher revision is still applied.
 
@@ -2846,7 +2856,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-9.x
 
-**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with a display kind derived from the authenticated peer type and with the authenticated device identity.
+**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with a display kind derived from the authenticated peer type and with the authenticated device identity. @spec OWN-1.10: When an authenticated visible interactive SSH client sends hello without an active leader, the host shall acknowledge its automatic leadership and accept terminal input without a Take Control request.
 
 **REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
 

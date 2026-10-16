@@ -7,7 +7,7 @@ struct SessionDisplayOwnershipStoreTests {
     private let sessionName = "main"
 
     @Test
-    func visibleInteractiveAttachStaysOwnerlessUntilExplicitClaim() throws {
+    func visibleInteractiveAttachAcquiresVacantLeadership() throws {
         let store = SessionDisplayOwnershipStore()
         let clientID = DisplayClientID("mac-1")
         let grid = try DisplayGrid(cols: 100, rows: 30)
@@ -21,17 +21,17 @@ struct SessionDisplayOwnershipStoreTests {
             grid: grid
         )
 
-        #expect(snapshot.ownerClientID == nil)
-        #expect(snapshot.ownerKind == nil)
+        #expect(snapshot.ownerClientID == clientID)
+        #expect(snapshot.ownerKind == .mac)
         #expect(snapshot.grid == grid)
-        #expect(snapshot.epoch == 0)
-        #expect(snapshot.isOwnerless)
+        #expect(snapshot.epoch == 1)
+        #expect(!snapshot.isOwnerless)
     }
 
     @Test("""
-    @spec IOS-4.25: Attaching an interactive iOS client to an ownerless session shall not implicitly make the phone the display owner. Mobile ownership changes require a `takeControl` frame, sent either by the Take Control button or by intentional terminal input; passive attach alone shall leave the session ownerless.
+    @spec IOS-4.25: When a visible interactive iOS client attaches without an active leader, the application shall make it the display owner without requiring a Take Control action.
     """)
-    func iosAttachDoesNotAutoClaimOwnerlessSession() throws {
+    func iosAttachAcquiresVacantLeadership() throws {
         let store = SessionDisplayOwnershipStore()
         let clientID = DisplayClientID("ios-1")
         let grid = try DisplayGrid(cols: 90, rows: 28)
@@ -45,11 +45,11 @@ struct SessionDisplayOwnershipStoreTests {
             grid: grid
         )
 
-        #expect(snapshot.isOwnerless)
-        #expect(snapshot.ownerClientID == nil)
-        #expect(snapshot.ownerKind == nil)
+        #expect(!snapshot.isOwnerless)
+        #expect(snapshot.ownerClientID == clientID)
+        #expect(snapshot.ownerKind == .ios)
         #expect(snapshot.grid == grid)
-        #expect(snapshot.epoch == 0)
+        #expect(snapshot.epoch == 1)
     }
 
     @Test
@@ -105,7 +105,7 @@ struct SessionDisplayOwnershipStoreTests {
     }
 
     @Test
-    func unattachedClaimIsRejectedAndLaterAttachCanExplicitlyClaim() throws {
+    func unattachedClaimIsRejectedAndLaterAttachAcquiresLeadership() throws {
         let store = SessionDisplayOwnershipStore()
         let clientID = DisplayClientID("web-1")
         let claimGrid = try DisplayGrid(cols: 100, rows: 30)
@@ -136,10 +136,10 @@ struct SessionDisplayOwnershipStoreTests {
             grid: attachGrid
         )
 
-        #expect(attached.ownerClientID == nil)
-        #expect(attached.ownerKind == nil)
+        #expect(attached.ownerClientID == clientID)
+        #expect(attached.ownerKind == .web)
         #expect(attached.grid == attachGrid)
-        #expect(attached.epoch == 0)
+        #expect(attached.epoch == 1)
 
         let accepted = store.claimOwner(
             sessionName: sessionName,
@@ -155,7 +155,7 @@ struct SessionDisplayOwnershipStoreTests {
     }
 
     @Test
-    func hiddenInteractiveClientCannotClaimUntilVisibleAndExplicitlyClaimed() throws {
+    func hiddenInteractiveClientCannotClaimUntilVisible() throws {
         let store = SessionDisplayOwnershipStore()
         let clientID = DisplayClientID("web-1")
         let hiddenGrid = try DisplayGrid(cols: 90, rows: 28)
@@ -194,9 +194,9 @@ struct SessionDisplayOwnershipStoreTests {
             visible: true,
             grid: visibleGrid
         )
-        #expect(visible.isOwnerless)
+        #expect(visible.ownerClientID == clientID)
         #expect(visible.grid == visibleGrid)
-        #expect(visible.epoch == 0)
+        #expect(visible.epoch == 1)
 
         let accepted = store.claimOwner(
             sessionName: sessionName,
@@ -253,7 +253,7 @@ struct SessionDisplayOwnershipStoreTests {
     }
 
     @Test
-    func existingFollowerDoesNotAutoClaimAfterOwnerDisconnect() throws {
+    func reattachingFollowerAcquiresLeadershipAfterOwnerDisconnect() throws {
         let store = SessionDisplayOwnershipStore()
         let owner = DisplayClientID("mac-1")
         let follower = DisplayClientID("web-1")
@@ -291,9 +291,9 @@ struct SessionDisplayOwnershipStoreTests {
             grid: followerGrid
         )
 
-        #expect(reattach.ownerClientID == owner)
+        #expect(reattach.ownerClientID == follower)
         #expect(reattach.grid == ownerGrid)
-        #expect(reattach.epoch == ownerClaim.snapshot.epoch)
+        #expect(reattach.epoch > ownerClaim.snapshot.epoch)
     }
 
     @Test
@@ -523,7 +523,7 @@ struct SessionDisplayOwnershipStoreTests {
         #expect(result.snapshot.grid == webGrid)
     }
 
-    @Test("@spec OWN-1.3: When the leader disconnects, the application shall retain its leadership and last grid until another client takes control.")
+    @Test("@spec OWN-1.3: When the leader disconnects, the application shall retain its identity and last grid until a visible interactive client attaches or explicitly takes control.")
     func ownerDisconnectPreservesLeadershipAndLastGrid() throws {
         let store = SessionDisplayOwnershipStore()
         let owner = DisplayClientID("ios-1")
@@ -689,7 +689,7 @@ struct SessionDisplayOwnershipStoreTests {
             visible: true,
             grid: try DisplayGrid(cols: 100, rows: 30)
         )
-        #expect(box.snapshots.isEmpty)
+        #expect(box.snapshots.count == 1)
 
         let claim = store.claimOwner(
             sessionName: sessionName,
@@ -698,13 +698,13 @@ struct SessionDisplayOwnershipStoreTests {
             grid: try DisplayGrid(cols: 100, rows: 30)
         )
         #expect(claim.accepted)
-        #expect(box.snapshots.count == 1)
+        #expect(box.snapshots.count == 2)
         #expect(box.snapshots.last?.ownerKind == .mac)
 
         _ = store.detachClient(sessionName: sessionName, clientID: DisplayClientID("mac-1"))
-        #expect(box.snapshots.count == 1)
-        _ = store.releaseOwner(sessionName: sessionName, clientID: DisplayClientID("mac-1"))
         #expect(box.snapshots.count == 2)
+        _ = store.releaseOwner(sessionName: sessionName, clientID: DisplayClientID("mac-1"))
+        #expect(box.snapshots.count == 3)
         #expect(box.snapshots.last?.isOwnerless == true)
 
         // After cancellation, further mutations are not delivered.
@@ -717,7 +717,7 @@ struct SessionDisplayOwnershipStoreTests {
             visible: true,
             grid: try DisplayGrid(cols: 100, rows: 30)
         )
-        #expect(box.snapshots.count == 2)
+        #expect(box.snapshots.count == 3)
     }
 
     @Test

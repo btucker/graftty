@@ -207,9 +207,9 @@ struct WebSocketBridgeOwnershipTests {
     }
 
     @Test("""
-    @spec IOS-4.26: On an ownerless session, an iOS WebSocket `hello` shall attach the client and return an ownerless ownership snapshot rather than implicitly claiming ownership. This is the transport-level state that lets GrafttyMobile show Take Control before sending the explicit `takeControl` frame.
+    @spec IOS-4.26: When a visible interactive iOS WebSocket client sends a hello without an active leader, the application shall return an ownership snapshot naming that client as leader without requiring a Take Control frame.
     """)
-    func iosHelloReturnsOwnerlessSnapshotUntilExplicitTakeControl() throws {
+    func iosHelloReturnsAutomaticLeadershipWithoutActiveLeader() throws {
         let store = SessionDisplayOwnershipStore()
         let broadcaster = DisplayOwnershipBroadcaster()
         let socket = makeCoordinator(
@@ -229,9 +229,11 @@ struct WebSocketBridgeOwnershipTests {
         ))
 
         let snapshot = store.snapshot(sessionName: sessionName)
-        #expect(snapshot.isOwnerless)
+        #expect(snapshot.ownerClientID == DisplayClientID("server-ios-1"))
+        #expect(snapshot.ownerKind == .ios)
         let ownership = try #require(socket.recorder.ownershipSnapshots().last)
-        #expect(ownership.isOwnerless)
+        #expect(ownership.ownerClientID == DisplayClientID("ios-protocol"))
+        #expect(ownership.ownerKind == .ios)
     }
 
     @Test

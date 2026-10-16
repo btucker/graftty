@@ -63,6 +63,10 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
                   let client = attachedClients[clientID] else { return false }
             return client.isOwnerEligible(claimingAs: ownerKind)
         }
+
+        var hasActiveOwner: Bool {
+            ownerClientID.map { isAttachedOwner($0) } ?? false
+        }
     }
 
     /// Diagnostic trail of every ownership transition (claims, owner
@@ -181,8 +185,14 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         let resumesOwner = previousAttachment == nil && identity != nil && identity == record.ownerIdentity
             && record.ownerKind == kind && attached.isOwnerEligible(claimingAs: kind)
             && record.ownerClientID != clientID
-        if resumesOwner {
+        // A retained owner identity is not an active leader after detach or
+        // loss of eligibility. Only an interactive attachment may fill that gap.
+        let acquiresVacantLeadership = !record.hasActiveOwner && attached.isOwnerEligible(claimingAs: kind)
+        if resumesOwner || acquiresVacantLeadership {
             record.ownerClientID = clientID
+            record.ownerKind = kind
+            record.ownerIdentity = identity
+            record.grid = record.grid ?? grid
             record.epoch += 1
         }
         record.revision += 1
@@ -190,7 +200,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         records[sessionName] = record
         Self.trace("attach", sessionName, record, client: clientID)
         let result = snapshot(for: sessionName, record: record, fallbackGrid: grid)
-        if resumesOwner { changedSnapshot = result }
+        if resumesOwner || acquiresVacantLeadership { changedSnapshot = result }
         return result
     }
 
@@ -256,7 +266,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         }
 
         let alreadyCurrentOwner = record.ownerClientID == clientID && record.ownerKind == kind
-        guard record.ownerClientID == nil || alreadyCurrentOwner else {
+        guard !record.hasActiveOwner || alreadyCurrentOwner else {
             Self.trace("claim", sessionName, record, client: clientID, accepted: false)
             return SessionDisplayOwnershipClaimResult(
                 accepted: false,
@@ -316,7 +326,8 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         return records[sessionName]?.isAttachedOwner(clientID) ?? false
     }
 
-    /// Disconnecting does not relinquish leadership. Another client must claim it.
+    /// Retain the last leader and grid on disconnect; a visible interactive
+    /// attachment can acquire leadership while that leader is absent.
     public func detachClient(
         sessionName: String,
         clientID: DisplayClientID,

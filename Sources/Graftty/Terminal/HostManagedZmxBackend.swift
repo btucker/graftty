@@ -447,11 +447,7 @@ final class HostManagedZmxBackend {
         do {
             try newSession.start()
         } catch {
-            lock.lock()
-            if case .starting = lifecycle {
-                lifecycle = .closed
-            }
-            lock.unlock()
+            close()
             newSession.close()
             throw error
         }
@@ -1100,6 +1096,10 @@ final class HostManagedZmxBackend {
     private func attachToOwnershipIfNeeded(grid: DisplayGrid) {
         guard let ownership else { return }
         lock.lock()
+        if case .closed = lifecycle {
+            lock.unlock()
+            return
+        }
         guard !attachedToOwnership else {
             lock.unlock()
             return
