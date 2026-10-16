@@ -1,0 +1,143 @@
+{
+  "date": "2026-10-16",
+  "providerVersions": {
+    "claude": "2.1.296 (Claude Code)",
+    "codex": "codex-cli 0.162.1"
+  },
+  "fastChecks": {
+    "pythonIntegration": 17,
+    "pythonEndpointSpike": 5,
+    "swiftProtocol": 4,
+    "specGeneration": "passed",
+    "diffCheck": "passed"
+  },
+  "swiftPM": {
+    "serialCommandExitCode": 0,
+    "xctestExecuted": 127,
+    "xctestSkipped": 1,
+    "xctestFailures": 0,
+    "log": "/private/tmp/graftty-agent-serial-tests.log"
+  },
+  "macMessaging": {
+    "fixedPairings": [
+      {
+        "message": "f09e96220cd947eea5f2f3a7f883a136",
+        "sender": "claude",
+        "recipient": "codex",
+        "urgent": false,
+        "providerContextReceipt": true,
+        "toolReplyReceipt": true
+      },
+      {
+        "message": "590e497e6bc242ecb222f36c3eac1816",
+        "sender": "claude",
+        "recipient": "codex",
+        "urgent": true,
+        "providerContextReceipt": true,
+        "toolReplyReceipt": true
+      },
+      {
+        "message": "3cb6e5e4c40d4293a66f48f69eb370b6",
+        "sender": "codex",
+        "recipient": "claude",
+        "urgent": false,
+        "providerContextReceipt": true,
+        "toolReplyReceipt": true
+      },
+      {
+        "message": "ee8e04df151d41b68bc59126696fbfa7",
+        "sender": "codex",
+        "recipient": "claude",
+        "urgent": true,
+        "providerContextReceipt": true,
+        "toolReplyReceipt": true
+      },
+      {
+        "message": "245c75d84beb49ddbb755c3f018eec45",
+        "sender": "claude",
+        "recipient": "claude-peer",
+        "urgent": false,
+        "providerContextReceipt": true,
+        "toolReplyReceipt": true
+      },
+      {
+        "message": "3ea3b5d569904104b60d1831589a8052",
+        "sender": "claude",
+        "recipient": "claude-peer",
+        "urgent": true,
+        "providerContextReceipt": true,
+        "toolReplyReceipt": true
+      },
+      {
+        "message": "c5c076e394244fb383a0621a586a537f",
+        "sender": "codex",
+        "recipient": "codex-peer",
+        "urgent": false,
+        "providerContextReceipt": true,
+        "toolReplyReceipt": true
+      },
+      {
+        "message": "d0e6d79ccff84d42a191ef7d52620683",
+        "sender": "codex",
+        "recipient": "codex-peer",
+        "urgent": true,
+        "providerContextReceipt": true,
+        "toolReplyReceipt": true
+      }
+    ],
+    "seededMessagesPassed": 3,
+    "generatedActions": 12,
+    "seed": 1,
+    "artifacts": "/private/tmp/graftty-ai-cc03man9",
+    "overallResult": "failed because native output differs from daemon history"
+  },
+  "macMobile": {
+    "nativeRoundTrips": 4,
+    "finalOwnershipAndGridConvergenceRecheckedFromTrace": true,
+    "keyboardShowHidePairs": 4,
+    "mobileXCTestFailures": 0,
+    "seed": 1,
+    "artifacts": "/private/tmp/graftty-ai-_lu_xn60",
+    "overallResult": "failed; rendering damage and blank follower output recorded; final messaging checks validated separately on Mac",
+    "keyboardOwnershipValidation": "Historical fixture allowed follower keyboard; corrected owner/follower eligibility requires a new native run."
+  },
+  "confirmedMacRenderingFailures": [
+    {
+      "agent": "claude",
+      "error": "native logical row content differs from zmx: ROW-000294"
+    },
+    {
+      "agent": "claude-peer",
+      "error": "native row order/content differs from zmx: expected=['ROW-000285', 'ROW-000286', 'ROW-000287', 'ROW-000288', 'ROW-000289', 'ROW-000290', 'ROW-000291', 'ROW-000292', 'ROW-000293', 'ROW-000294', 'ROW-000295', 'ROW-000296', 'ROW-000297', 'ROW-000298', 'ROW-000299'], actual=['ROW-000288', 'ROW-000289', 'ROW-000293', 'ROW-000294', 'ROW-000298', 'ROW-000299']"
+    },
+    {
+      "agent": "codex",
+      "error": "native logical row content differs from zmx: ROW-000285"
+    },
+    {
+      "agent": "codex-peer",
+      "error": "native logical row content differs from zmx: ROW-000286"
+    }
+  ],
+  "remainingCoverage": [
+    "withheld history pages and transport fault injection",
+    "provider restart and address expiry",
+    "burst ordering",
+    "full app navigation, pairing UI, biometrics, push notifications",
+    "exact Unicode content comparison against a lossless oracle"
+  ],
+  "sourceCommit": "be0470bf",
+  "reviewNotes": [
+    "Initial results precede viewport clipping and production keyboard eligibility fixes.",
+    "Review fixes have focused protocol/unit coverage; full native validation of the revised fixtures remains pending."
+  ],
+  "reviewValidation": {
+    "pythonIntegrationTestsPassed": 20,
+    "pythonEndpointTestsPassed": 5,
+    "swiftProtocolTestsPassed": 5,
+    "macNativeFixturesCompiled": true,
+    "iosBuildForTesting": "passed",
+    "specGeneration": "passed",
+    "fullNativeRerun": "pending after fixture review fixes"
+  }
+}

@@ -51,6 +51,11 @@ jobs:
           python3 scripts/generate-specs.py --check \
             || { echo "::error::SPECS.md is stale relative to @spec annotations. Run scripts/generate-specs.py locally and recommit."; exit 1; }
 
+      - name: Test scripted agent protocols and action controller
+        run: |
+          python3 -B -m unittest discover -s scripts/agent-endpoint-spike -p 'test_*.py'
+          python3 -B -m unittest discover -s scripts/agent-integration -p 'test_*.py'
+
   macos-build-and-test:
     # macos-26 ships Xcode 26 which bundles a current swift-testing.
     # The older swift-testing (124.4) on macos-latest (→ macos-15) has

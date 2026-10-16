@@ -1,0 +1,73 @@
+name: Native agent integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Deterministic action seed
+        default: '1'
+        required: true
+      actions:
+        description: Generated actions after the fixed regressions
+        default: '60'
+        required: true
+  schedule:
+    - cron: '23 7 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-agent-integration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-agents:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: ./.github/actions/paging-renderer
+      - name: Install pinned provider CLIs
+        run: |
+          npm install --prefix "$RUNNER_TEMP/agent-clients" \
+            @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.296
+          "$RUNNER_TEMP/agent-clients/node_modules/.bin/codex" --version
+          "$RUNNER_TEMP/agent-clients/node_modules/.bin/claude" --version
+      - name: Build Graftty CLI
+        run: scripts/swiftpm build --build-system native --product graftty-cli
+      - name: Run real agents on Mac and mobile
+        env:
+          TEST_SEED: ${{ inputs.seed || github.run_number }}
+          TEST_ACTIONS: ${{ inputs.actions || '60' }}
+        run: |
+          cli="$HOME/Library/Caches/Graftty/SwiftPM/build/$(uname -m)-apple-macosx/debug/graftty-cli"
+          python3 -B scripts/agent-integration/run.py \
+            --codex "$RUNNER_TEMP/agent-clients/node_modules/.bin/codex" \
+            --claude "$RUNNER_TEMP/agent-clients/node_modules/.bin/claude" \
+            --cli "$cli" --zmx "$PWD/Resources/zmx-binary/zmx" \
+            --ghostty-package "$PWD/.dependencies/libghostty-spm" \
+            --seed "$TEST_SEED" --actions "$TEST_ACTIONS"
+      - name: Preserve native failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-agent-integration-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            /private/tmp/graftty-ai-*/*failure.json
+            /private/tmp/graftty-ai-*/result.json
+            /private/tmp/graftty-ai-*/actions.json
+            /private/tmp/graftty-ai-*/trace.jsonl
+            /private/tmp/graftty-ai-*/mac.log
+            /private/tmp/graftty-ai-*/mobile.log
+            /private/tmp/graftty-ai-*/simulator-boot.log
+            /private/tmp/graftty-ai-*/ios-build.log
+            /private/tmp/graftty-ai-*/mobile.xcresult
