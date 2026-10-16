@@ -163,6 +163,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     public func makeCoordinator() -> Coordinator { Coordinator() }
 
     public final class Coordinator {
+        let controlAttachmentID = UUID()
         /// Fired once per successful keyboard focus so the counter owners
         /// can zero the pending count. Consumption lives with the counters
         /// (not here) because this Coordinator dies with the representable
@@ -172,7 +173,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         func applyFocusRequest(_ pendingRequests: Int, to view: TerminalInputContainerView) {
             guard pendingRequests > 0 else { return }
             DispatchQueue.main.async { [weak self, weak view] in
-                guard let self, let view else { return }
+                guard let self, let view,
+                      view.controlAttachmentID == self.controlAttachmentID else { return }
                 if view.focusKeyboardInput() {
                     self.onFocusRequestsConsumed?()
                 }
@@ -182,6 +184,7 @@ public struct TerminalPaneView: UIViewRepresentable {
 
     public func makeUIView(context: Context) -> TerminalInputContainerView {
         let view = retainedContainer ?? TerminalInputContainerView()
+        view.controlAttachmentID = context.coordinator.controlAttachmentID
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.reservesTopChromeSpace = reservesTopChromeSpace
         view.authoritativeGrid = authoritativeGrid
@@ -209,6 +212,9 @@ public struct TerminalPaneView: UIViewRepresentable {
     }
 
     public func updateUIView(_ view: TerminalInputContainerView, context: Context) {
+        // SwiftUI can update an outgoing representable after its retained
+        // container has already been adopted by a replacement route.
+        guard view.controlAttachmentID == context.coordinator.controlAttachmentID else { return }
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.reservesTopChromeSpace = reservesTopChromeSpace
         view.authoritativeGrid = authoritativeGrid
@@ -237,6 +243,7 @@ public final class TerminalInputContainerView: UIView,
     TerminalSoftwareInputDelegate,
     TerminalHardwareInputDelegate
 {
+    var controlAttachmentID: UUID?
     public enum StickyControlActivation: Equatable, Sendable {
         case inactive
         case armed

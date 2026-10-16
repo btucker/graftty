@@ -1,5 +1,7 @@
 #if canImport(UIKit)
 import GrafttyProtocol
+import GrafttyRemoteClient
+import GhosttyTerminal
 import Observation
 import QuickLook
 import SafariServices
@@ -693,5 +695,115 @@ struct RemoteBrowserButtonTests {
         } }
         return (blue, visible, totalBlue)
     }
+
+    @Test("@spec PREVIEW-2.9: While a native preview covers a mobile terminal, the application shall preserve its live terminal channel and mounted session through presentation and dismissal, and perform normal pane cleanup only when the pane is actually removed.", .timeLimit(.minutes(1)), arguments: [false, true], [false, true])
+    func nativePreviewPreservesTerminalConnection(embedded: Bool, retained: Bool) async throws {
+        let socket = PreviewLifecycleSocket()
+        let client = SessionClient(sessionName: "preview-lifecycle", webSocketFactory: { socket })
+        client.start()
+        defer { client.stop() }
+        try await waitUntil("live terminal") { client.isOwner }
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let pairedHost = Host(label: "Mac", baseURL: URL(string: "https://mac.invalid")!)
+        let pool = retained ? RetainedPaneClientPool<RetainedMobilePane>() : nil
+        let key = RetainedPaneClientPool<RetainedMobilePane>.Key(hostID: pairedHost.id, sessionName: client.sessionName)
+        _ = pool?.acquire(key) { RetainedMobilePane(client: client) }
+        defer { pool?.stopAll() }
+        func terminal() -> AnyView {
+            AnyView(SingleSessionView(
+                step: SessionStep(host: pairedHost,
+                                  sessionName: "preview-lifecycle", title: "Shell"),
+                navigationPath: .constant(NavigationPath()), isFullScreen: !embedded,
+                isEmbeddedPane: embedded, retainedPanes: pool, initialClient: client,
+                initialController: MobileTerminalControllerFactory.make(configText: "font-size = 14"))
+                .id(UUID())
+                .environment(\.scenePhase, .inactive)
+                .environment(\.horizontalSizeClass, embedded ? .regular : .compact))
+        }
+        let host = UIHostingController(rootView: terminal())
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; previous?.makeKeyAndVisible() }
+        let session = client.session
+        let container = try await terminalContainer(in: host.view)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
+        try Data("Preview without dropping the terminal".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = NativeImagePreview.Coordinator(url: url, dismiss: {})
+        let preview = NativeImagePreview.makeController(coordinator: source)
+        preview.modalPresentationStyle = .fullScreen
+        host.present(preview, animated: false)
+        try await waitUntil("native Quick Look presentation") { preview.view.window != nil }
+        try #require(preview.topViewController is QLPreviewController)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(socket.closeCount == 0)
+        #expect(client.isOwner)
+        #expect(client.session === session)
+        preview.dismiss(animated: false)
+        try await waitUntil("native Quick Look dismissal") { host.presentedViewController == nil }
+        let returnedContainer = try await terminalContainer(in: host.view)
+        #expect(returnedContainer === container)
+        #expect(socket.closeCount == 0)
+        if retained {
+            let previousCompletion = try #require(container.agentCompletion)
+            host.rootView = terminal()
+            try await waitUntil("replacement terminal controls") {
+                host.view.layoutIfNeeded()
+                return container.agentCompletion != nil && container.agentCompletion !== previousCompletion
+            }
+            let replacementContainer = try await terminalContainer(in: host.view)
+            #expect(replacementContainer === container)
+            try await Task.sleep(for: .milliseconds(150))
+            let replacementCompletion = try #require(container.agentCompletion)
+            #expect(replacementCompletion !== previousCompletion)
+            #expect(container.committedSoftwareInput != nil)
+            #expect(socket.closeCount == 0)
+        }
+        host.rootView = AnyView(Color.clear)
+        if retained {
+            try await waitUntil("retained pane controls detached after removal") { container.agentCompletion == nil }
+            #expect(socket.closeCount == 0)
+        } else {
+            try await waitUntil("channel closed after actual pane removal") { socket.closeCount == 1 }
+        }
+    }
+
+    private func terminalContainer(in root: UIView) async throws -> TerminalInputContainerView {
+        var container: TerminalInputContainerView?
+        func find(_ view: UIView) -> TerminalInputContainerView? {
+            (view as? TerminalInputContainerView) ?? view.subviews.lazy.compactMap { find($0) }.first
+        }
+        try await waitUntil("mounted terminal") {
+            root.layoutIfNeeded()
+            container = find(root)
+            container?.layoutIfNeeded()
+            return (container?.terminalGridMetrics?.columns ?? 0) > 0
+        }
+        return try #require(container)
+    }
+
+    private func waitUntil(_ stage: String, condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(condition(), "Timed out waiting for \(stage)")
+    }
+}
+
+private final class PreviewLifecycleSocket: WebSocketClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var closes = 0
+    var closeCount: Int { lock.withLock { closes } }
+    func send(_ frame: WebSocketFrame) async throws {}
+    func receive() async throws -> WebSocketFrame {
+        try await Task.sleep(for: .seconds(30))
+        throw CancellationError()
+    }
+    func close() { lock.withLock { closes += 1 } }
 }
 #endif

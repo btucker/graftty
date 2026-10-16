@@ -24,6 +24,7 @@ final class RetainedMobilePane: PanePreviewClienting {
     }
 
     func detachControls() {
+        container?.controlAttachmentID = nil
         container?.resetStickyModifiers()
         container?.terminalView.resignFirstResponder()
         container?.committedSoftwareInput = nil

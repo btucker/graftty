@@ -437,6 +437,7 @@ struct TerminalFloatingControlPlacement: ViewModifier {
 @MainActor
 final class TerminalContainerBox {
     weak var view: TerminalInputContainerView?
+    var controlAttachmentID: UUID?
     func cancelActiveSelectionIfAny() { view?.cancelActiveSelectionIfAny() }
     func fitTerminalToCurrentSize() { view?.terminalView.fitToSize() }
 }
@@ -754,10 +755,34 @@ struct SingleSessionView: View {
         .alert("Could not open link", isPresented: Binding(
             get: { terminalBrowserError != nil }, set: { if !$0 { terminalBrowserError = nil } }
         )) { Button("OK") { terminalBrowserError = nil } } message: { Text(terminalBrowserError ?? "") }
-        .onDisappear {
-            terminalBrowserRequest = nil
-            paneContainerBox.view?.detachBrowserControls()
+        .background {
+            ViewAttachmentObserver(didDetach: detachSession).frame(width: 0, height: 0)
         }
+    }
+
+    /// Full-screen resources cover the terminal without ending its attachment.
+    /// Release controls and transport only after the pane actually leaves the UI.
+    private func detachSession() {
+        terminalBrowserRequest = nil
+        agentCompletion.invalidateBoundary()
+        agentCompletion.loadCandidates = nil
+        // Removal is deferred beyond the UIKit update. A replacement route
+        // may already own the retained container by the time this runs.
+        if let container = paneContainerBox.view,
+           container.controlAttachmentID == paneContainerBox.controlAttachmentID {
+            container.detachBrowserControls()
+            container.onBackRequested = nil
+            container.resetStickyModifiers()
+            container.onTrayShiftSelectionChange = nil
+            container.terminalView.resignFirstResponder()
+            if let cached = retainedPanes?.cached(retainedPaneKey),
+               cached.client === client, cached.container === container {
+                cached.detachControls()
+            }
+        }
+        if retainedPanes == nil { client?.stop() }
+        client = nil
+        if connection != .ended { connection = .connecting }
     }
 
     @ViewBuilder
@@ -969,18 +994,6 @@ struct SingleSessionView: View {
                 }
             }
             .task(id: dialKey) { await observeAttention() }
-            .onDisappear {
-                agentCompletion.invalidateBoundary()
-                agentCompletion.loadCandidates = nil
-                paneContainerBox.view?.onBackRequested = nil
-                paneContainerBox.view?.resetStickyModifiers()
-                paneContainerBox.view?.onTrayShiftSelectionChange = nil
-                paneContainerBox.view?.terminalView.resignFirstResponder()
-                if let retainedPanes { retainedPanes.cached(retainedPaneKey)?.detachControls() }
-                else { client?.stop() }
-                client = nil
-                if connection != .ended { connection = .connecting }
-            }
             .onChange(of: client?.connectionState) { _, state in
                 if state != .live { agentCompletion.cancel(preserveLiteral: false) }
                 guard state == .ended else { return }
@@ -1507,6 +1520,7 @@ struct SingleSessionView: View {
             onBackRequested: terminalBackSwipeAction,
             captureContainer: { [paneContainerBox, client] view in
                 paneContainerBox.view = view
+                paneContainerBox.controlAttachmentID = view.controlAttachmentID
                 let shiftSelected = view.isTrayShiftSelected
                 DispatchQueue.main.async { isTrayShiftSelected = shiftSelected }
                 view.onTrayShiftSelectionChange = { selected in
