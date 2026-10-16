@@ -131,6 +131,67 @@ private final class FakePagedDaemon: @unchecked Sendable {
 }
 
 extension PagedZmxAttachEngineTests {
+    @Test("@spec TERM-12.40: While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering without disconnecting, and shall release a waiting reader when the attachment closes.", .timeLimit(.minutes(1)), arguments: [false, true])
+    func resizeBurstPreservesAttachment(closeWhileFull: Bool) async throws {
+        let burstSent = DispatchSemaphore(value: 0)
+        let count = 512
+        let daemon = try FakePagedDaemon { fd in
+            try FakePagedDaemon.negotiate(fd)
+            #expect(try FakePagedDaemon.receive(fd).0 == 2)
+            try FakePagedDaemon.send(fd, tag: 31, payload: Data([79, 0, 165, 0]))
+            for index in 0..<count {
+                try FakePagedDaemon.send(fd, tag: 1, payload: Data("\(index)".utf8))
+            }
+            burstSent.signal()
+            if closeWhileFull {
+                do {
+                    _ = try FakePagedDaemon.receive(fd)
+                    Issue.record("Closed attachment accepted another frame")
+                } catch PagedZmxAttachEngine.Error.closed { }
+            } else {
+                #expect(try FakePagedDaemon.receive(fd).0 == 2)
+                let input = try FakePagedDaemon.receive(fd)
+                #expect(input.0 == 0)
+                #expect(input.1 == Data("still-live".utf8))
+            }
+        }
+        defer { daemon.finish() }
+        let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"),
+            zmxDir: daemon.directory, sessionName: "session"))
+        defer { engine.close() }
+        try await engine.start()
+        var iterator = engine.events.makeAsyncIterator()
+        guard case .checkpoint = await iterator.next() else {
+            Issue.record("Missing checkpoint"); return
+        }
+        try engine.resize(windowSize: .init(cols: 165, rows: 79))
+        let sent = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: burstSent.wait(timeout: .now() + 3) == .success)
+            }
+        }
+        try #require(sent)
+        // Model the renderer yielding while applying the takeover's new grid.
+        try await Task.sleep(for: .milliseconds(100))
+        if closeWhileFull {
+            await engine.close()
+        } else {
+            #expect(await iterator.next() == .grid(cols: 165, rows: 79))
+            var output: [Data] = []
+            while output.count < count, let event = await iterator.next() {
+                guard case .output(let bytes) = event else {
+                    Issue.record("Output order was interrupted"); break
+                }
+                output.append(bytes)
+            }
+            #expect(output == (0..<count).map { Data("\($0)".utf8) })
+            try engine.resize(windowSize: .init(cols: 166, rows: 79))
+            try await engine.send(Data("still-live".utf8))
+        }
+        #expect(await daemon.waitUntilDone())
+        #expect(daemon.error == nil)
+    }
+
     @Test("@spec TERM-12.25: When a native paged attachment negotiates pixel-size support, the application shall send current pixel metadata before each changed window size and daemon-requested size reply, including changes that preserve the cell grid.", arguments: [UInt8(8), UInt8(9)])
     func windowResizePreservesNegotiatedPixelMetadata(capabilities: UInt8) async throws {
         let daemon = try FakePagedDaemon { fd in

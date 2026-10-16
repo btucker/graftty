@@ -650,6 +650,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.38** If live output resets a restored Mac terminal or explicitly erases its history, then the application shall reject pending older pages without restoring the discarded history.
 
+**TERM-12.39** When the Mac takes control of a restored paged terminal from mobile, the application shall resize to the Mac viewport and keep the terminal attachment available for input and live output.
+
+**TERM-12.40** While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering without disconnecting, and shall release a waiting reader when the attachment closes.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
