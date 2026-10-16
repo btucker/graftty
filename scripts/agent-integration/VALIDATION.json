@@ -98,7 +98,8 @@
     "mobileXCTestFailures": 0,
     "seed": 1,
     "artifacts": "/private/tmp/graftty-ai-_lu_xn60",
-    "overallResult": "failed; rendering damage and blank follower output recorded; final messaging checks validated separately on Mac"
+    "overallResult": "failed; rendering damage and blank follower output recorded; final messaging checks validated separately on Mac",
+    "keyboardOwnershipValidation": "Historical fixture allowed follower keyboard; corrected owner/follower eligibility requires a new native run."
   },
   "confirmedMacRenderingFailures": [
     {
@@ -124,5 +125,19 @@
     "burst ordering",
     "full app navigation, pairing UI, biometrics, push notifications",
     "exact Unicode content comparison against a lossless oracle"
-  ]
+  ],
+  "sourceCommit": "be0470bf",
+  "reviewNotes": [
+    "Initial results precede viewport clipping and production keyboard eligibility fixes.",
+    "Review fixes have focused protocol/unit coverage; full native validation of the revised fixtures remains pending."
+  ],
+  "reviewValidation": {
+    "pythonIntegrationTestsPassed": 20,
+    "pythonEndpointTestsPassed": 5,
+    "swiftProtocolTestsPassed": 5,
+    "macNativeFixturesCompiled": true,
+    "iosBuildForTesting": "passed",
+    "specGeneration": "passed",
+    "fullNativeRerun": "pending after fixture review fixes"
+  }
 }

@@ -37,6 +37,7 @@ final class MacFollowerTerminalView: NSView {
     private var historyView: NSView?
     private var historySurface: ghostty_surface_t?
     var historySurfaceForTesting: ghostty_surface_t? { historySurface }
+    var historyFrameForTesting: CGRect? { historyView == nil ? nil : historyScaledView.frame }
     private var lastHistory: Data?
     private var historyCellSize: CGSize?
     private var lastHistoryGrid: CGSize?

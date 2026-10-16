@@ -39,16 +39,35 @@ def assert_buffer_matches(rendered, authoritative):
         raise InvariantFailure(f'native row order/content differs from zmx: expected={expected}, actual={actual}')
     native_rows = list(re.finditer(r'ROW-[0-9]{6}', rendered))
     daemon_rows = list(re.finditer(r'ROW-[0-9]{6}', authoritative))
-    for index in range(len(expected) - 1):
-        def content(text, rows):
-            segment = text[rows[index].end():rows[index + 1].start()]
-            return re.sub(r'\s+', '', unicodedata.normalize('NFC', segment))
-        daemon_content = content(authoritative, daemon_rows)
-        # zmx's plain-text history export omits components of some complex
-        # graphemes. Use it as an exact content oracle for ASCII rows only;
-        # numbered row order remains checked for every row, including Unicode.
-        if daemon_content.isascii() and content(rendered, native_rows) != daemon_content:
-            raise InvariantFailure(f'native logical row content differs from zmx: {expected[index]}')
+    def content(text, rows, index):
+        start = rows[index].end()
+        if index + 1 < len(rows):
+            end = rows[index + 1].start()
+        else:
+            end = text.find('END-GRAFTTY-FIXTURE', start)
+            if end < 0:
+                end = len(text)
+        return unicodedata.normalize('NFC', text[start:end].strip())
+
+    for index, label in enumerate(expected):
+        daemon_content = content(authoritative, daemon_rows, index)
+        # zmx's text export omits parts of complex graphemes. Row identity is
+        # checked for all rows; exact content uses ASCII daemon rows only.
+        if not daemon_content.isascii():
+            continue
+        native_content = content(rendered, native_rows, index)
+        native_chars = list(re.finditer(r'(\s*)(\S)', native_content))
+        daemon_chars = list(re.finditer(r'(\s*)(\S)', daemon_content))
+        matches = len(native_chars) == len(daemon_chars)
+        for left, right in zip(native_chars, daemon_chars):
+            # Physical wraps make separators ambiguous only at line breaks.
+            # Preserve literal horizontal spacing everywhere else.
+            left_gap, right_gap = left[1], right[1]
+            if left[2] != right[2] or ('\n' not in left_gap + right_gap and left_gap != right_gap):
+                matches = False
+                break
+        if not matches:
+            raise InvariantFailure(f'native logical row content differs from zmx: {label}')
 
 
 def patch_xctestrun(value, product_root, endpoint):

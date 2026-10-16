@@ -257,8 +257,22 @@ private final class AgentIntegrationMacHost {
         selection.bottom_right.coord = GHOSTTY_POINT_COORD_BOTTOM_RIGHT
         var result = ghostty_text_s()
         let hasText = ghostty_surface_read_text(pane.handle.surface, selection, &result)
-        let text = hasText && result.text != nil ? String(cString: result.text) : ""
+        let nativeText = hasText && result.text != nil ? String(cString: result.text) : ""
         if hasText { ghostty_surface_free_text(pane.handle.surface, &result) }
+        var text = nativeText
+        if let follower = pane.handle.followerPresentation, follower.followerGrid != nil {
+            let viewport = follower.scrollView.contentView.bounds
+            let scale = follower.scaledView.frame.height / max(1, follower.scaledView.bounds.height)
+            let rowHeight = CGFloat(size.cell_height_px) / (pane.window.backingScaleFactor) * scale
+            var visible: [String] = []
+            if let history = follower.historySurfaceForTesting, let frame = follower.historyFrameForTesting {
+                visible.append(AgentIntegrationViewport.visibleRows(try physicalRows(history),
+                    frame: frame, viewport: viewport, rowHeight: rowHeight))
+            }
+            visible.append(AgentIntegrationViewport.visibleRows(try physicalRows(pane.handle.surface),
+                frame: follower.scaledView.frame, viewport: viewport, rowHeight: rowHeight))
+            text = visible.filter { !$0.isEmpty }.joined(separator: "\n")
+        }
         selection.top_left.tag = GHOSTTY_POINT_SCREEN
         selection.bottom_right.tag = GHOSTTY_POINT_SCREEN
         var buffer = ghostty_text_s()
@@ -275,12 +289,32 @@ private final class AgentIntegrationMacHost {
         let hasSelection = ghostty_surface_read_selection(pane.handle.surface, &selected)
         let selectedText = hasSelection && selected.text != nil ? String(cString: selected.text) : ""
         if hasSelection { ghostty_surface_free_text(pane.handle.surface, &selected) }
-        return ["text": text, "buffer": bufferText, "anchor": AgentIntegrationAnchor.first(in: text),
+        return ["text": text, "nativeText": nativeText, "buffer": bufferText, "anchor": AgentIntegrationAnchor.first(in: text),
             "selected": selectedText, "revision": String(state.revision), "epoch": String(state.epoch),
             "owner": state.ownerClientID?.rawValue ?? "", "grid": "\(state.grid.cols)x\(state.grid.rows)",
             "ownerIdentity": state.ownerIdentity ?? "",
             "nativeGrid": "\(size.columns)x\(size.rows)", "offset": String(bar.offset), "total": String(bar.total),
             "len": String(bar.len), "session": pane.session]
+    }
+
+    func physicalRows(_ surface: ghostty_surface_t) throws -> String {
+        let size = ghostty_surface_size(surface)
+        guard size.columns > 0 else { return "" }
+        var lines: [String] = []
+        for row in 0..<UInt32(size.rows) {
+            let selection = ghostty_selection_s(
+                top_left: .init(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT, x: 0, y: row),
+                bottom_right: .init(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
+                    x: UInt32(size.columns) - 1, y: row), rectangle: false)
+            var text = ghostty_text_s()
+            guard ghostty_surface_read_text(surface, selection, &text) else {
+                throw AgentIntegrationError("native physical-row read failed")
+            }
+            let line = text.text.map { String(cString: $0) } ?? ""
+            ghostty_surface_free_text(surface, &text)
+            lines.append(line)
+        }
+        return lines.joined(separator: "\n")
     }
 
     func required(_ command: AgentIntegrationCommand, _ key: String) throws -> String {

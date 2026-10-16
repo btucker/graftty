@@ -28,7 +28,8 @@ wrappers and plugins into its temporary home. Codex uses Graftty's real managed
 app-server setup. Claude uses manual permissions so native tool approval remains
 part of the test.
 
-The runner creates a disposable simulator. Select an installed runtime with
+The runner creates and builds a disposable simulator before starting the native
+command loop deadlines. Select an installed runtime with
 `--runtime com.apple.CoreSimulator.SimRuntime.iOS-26-4`. To reuse a particular
 test device, pass `--simulator UUID`; the runner does not delete that device.
 `--mac-only` is a diagnostic mode and does not establish mobile coverage.
@@ -48,9 +49,12 @@ scrollbar state, and paging state. Handoffs must converge on ownership and grid.
 A follower resize must leave the authoritative grid unchanged. The completed
 Mac row sequence and complete ASCII row contents must match the daemon history.
 The daemon's text exporter can omit components of complex graphemes, so exact
-Unicode content comparison needs a separate oracle. Unicode rows still participate
-in row order and handoff checks. Mobile keyboard show/hide
-must leave the Mac owner's grid unchanged. Output mismatches retain evidence and
+Unicode content comparison needs a separate oracle. Internal ASCII spacing is
+checked except at physical wraps, where the text exports cannot distinguish a
+separator from a split word. Unicode rows still participate
+in row order and handoff checks. Keyboard show/hide runs while mobile owns the
+session; a follower tap must leave the keyboard hidden and the Mac owner's grid
+unchanged. Output mismatches retain evidence and
 fail the run even when the remaining independent checks complete.
 
 All four provider pairings receive normal and urgent messages through the real
@@ -65,7 +69,12 @@ A seeded sequence adds window sizes, rotations, ownership changes, scrolling,
 terminal reconnects, selection, messages, and snapshots. Mobile scrolling uses
 actual XCUITest drags and flings. Identical seeds generate identical actions.
 Every action must complete in the corresponding native client; blank rendering
-and ownership revision regression fail the run.
+and ownership revision regression fail the run. After generated actions and at
+sequence completion, the Mac buffer is checked again when numbered fixture rows
+remain in the daemon history. `generatedContentChecks` records `notObservable`
+when provider TUIs have virtualized those rows after messaging. Those entries
+carry no content guarantee; they do not count as passing content checks. A fixed
+baseline failure also prevents shrinking an unrelated generated failure.
 
 These test hosts mount production Mac follower and UIKit terminal views and use
 real zmx, authenticated SSH over WebRTC, ownership, provider plugins, and message

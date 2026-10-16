@@ -7,6 +7,17 @@ enum AgentIntegrationAnchor {
     }
 }
 
+/// Both native scroll containers use top-down document coordinates. Read the
+/// physical rows that intersect their viewport, including partially visible rows.
+enum AgentIntegrationViewport {
+    static func visibleRows(_ text: String, frame: CGRect, viewport: CGRect, rowHeight: CGFloat) -> String {
+        guard rowHeight.isFinite, rowHeight > 0, frame.intersects(viewport) else { return "" }
+        let first = max(0, Int(floor((viewport.minY - frame.minY) / rowHeight)))
+        let last = max(first, Int(ceil((min(viewport.maxY, frame.maxY) - frame.minY) / rowHeight)))
+        return text.components(separatedBy: "\n").dropFirst(first).prefix(last - first).joined(separator: "\n")
+    }
+}
+
 /// Shared only by the Mac test bundle and the mobile interaction host.
 struct AgentIntegrationCommand: Codable, Equatable, Sendable {
     let id: Int

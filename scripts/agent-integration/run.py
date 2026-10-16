@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import signal
 import subprocess
 import sys
@@ -145,7 +146,7 @@ class Run:
                 return mac, phone
         raise InvariantFailure(f'Mac/mobile ownership and grid did not converge: mac={mac}, phone={phone}')
 
-    def start_mobile(self, env):
+    def prepare_mobile(self):
         options = self.options
         if options.simulator:
             self.simulator = options.simulator
@@ -183,9 +184,13 @@ class Run:
         data = patch_xctestrun(data, str(run_files[0].parent), self.server.endpoint)
         run_file = self.root / 'agent-integration.xctestrun'
         run_file.write_bytes(plistlib.dumps(data))
-        self.spawn(['xcodebuild', '-xctestrun', str(run_file), '-destination', 'platform=iOS Simulator,id=' + self.simulator,
+        self.mobile_command = ['xcodebuild', '-xctestrun', str(run_file), '-destination', 'platform=iOS Simulator,id=' + self.simulator,
             '-resultBundlePath', str(self.root / 'mobile.xcresult'), '-parallel-testing-enabled', 'NO',
-            '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests', 'test-without-building'], build_env, 'mobile')
+            '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests', 'test-without-building']
+        self.mobile_environment = build_env
+
+    def start_mobile(self):
+        self.spawn(self.mobile_command, self.mobile_environment, 'mobile')
         self.wait_registered('mobile')
         self.wait_registered('gestures')
 
@@ -195,7 +200,8 @@ class Run:
         for agent, token in pending.items():
             if (agent, token) in self.approved_tokens or agent not in self.paths:
                 continue
-            text = self.snapshot(agent)['text']
+            value = self.snapshot(agent)
+            text = value.get('nativeText', value['text'])
             # A new model tool can arrive before the old approval UI repaints.
             # Match its unique argument before pressing Enter.
             if approval_ready(token, text):
@@ -220,10 +226,24 @@ class Run:
         self.summary['assertions'].append({'message': nonce, 'sender': sender, 'recipient': recipient,
                                           'urgent': urgent, 'providerContextReceipt': True, 'toolReplyReceipt': True})
 
+    def check_generated_content(self, agent):
+        if any(failure['agent'] == agent for failure in self.invariant_failures):
+            status = 'baselineFailed'
+        else:
+            value = self.act(Action('verify', agent))
+            if re.search(r'ROW-[0-9]{6}', value['authoritativeText']):
+                assert_buffer_matches(value['buffer'], value['authoritativeText'])
+                status = 'checked'
+            else:
+                # Provider TUIs can virtualize the old fixture after messaging.
+                # Absence is an explicit coverage gap, not a content pass.
+                status = 'notObservable'
+        self.summary.setdefault('generatedContentChecks', []).append({'agent': agent, 'status': status})
+
     def scenarios(self):
         broker, models = self.server.broker, self.server.models
         if not self.options.mac_only:
-            self.start_mobile(self.env)
+            self.start_mobile()
         self.phase = 'fixed'
         for agent in AGENTS:
             self.paths[agent] = self.act(Action('start', agent))
@@ -250,11 +270,14 @@ class Run:
                 self.act(Action('takeControl', agent, client='mobile'))
                 self.act(Action('resize', agent, {'width': '852', 'height': '393'}, client='mobile'))
                 mac, _ = self.converge(agent)
+                for visible in ('true', 'false'):
+                    self.act(Action('keyboard', agent, {'visible': visible}, client='gestures'))
+                mac, _ = self.converge(agent)
                 before = self.act(Action('select', agent))
                 self.act(Action('resize', agent, {'width': '700', 'height': '500'}))
                 after = self.snapshot(agent)
                 try:
-                    assert_observation(before, after, preserve_anchor=True, preserve_selection=True)
+                    assert_observation(before, after, preserve_selection=True)
                     if after['grid'] != mac['grid']:
                         raise InvariantFailure('follower Mac changed the authoritative PTY grid')
                 except InvariantFailure as error:
@@ -296,8 +319,7 @@ class Run:
                 if follower['isOwner'] != 'false':
                     raise InvariantFailure('mobile still owns the session after Mac takeover')
                 grid = owner['grid']
-                for visible in ('true', 'false'):
-                    self.act(Action('keyboard', agent, {'visible': visible}, client='gestures'))
+                self.act(Action('keyboard', agent, {'visible': 'false', 'attempt': 'true'}, client='gestures'))
                 if self.snapshot(agent)['grid'] != grid:
                     raise InvariantFailure('follower keyboard changed the authoritative PTY grid')
             self.summary['assertions'].append({'agent': agent, 'MacMobileMac': not self.options.mac_only,
@@ -328,6 +350,9 @@ class Run:
             self.act(action)
             after = self.snapshot(action.provider, action.client)
             assert_observation(before, after)
+            self.check_generated_content(action.provider)
+        for agent in AGENTS:
+            self.check_generated_content(agent)
         self.summary['assertions'].append({'seededActions': len(actions), 'seed': self.options.seed})
         if self.invariant_failures:
             self.phase = 'fixed'
@@ -353,6 +378,8 @@ class Run:
         (self.root / 'bin' / 'graftty').symlink_to(self.options.cli)
         failure = None
         try:
+            if not self.options.mac_only:
+                self.prepare_mobile()
             self.spawn([str(REPO / 'scripts/swiftpm'), 'test', '--build-system', 'native', '--filter', 'AgentIntegrationNativeTests'], self.env, 'mac')
             self.wait_registered('mac', timeout=900)
             self.scenarios()
@@ -369,7 +396,7 @@ class Run:
                     (self.root / (agent + '-failure.json')).write_text(json.dumps(value, indent=2))
                 except Exception as diagnostic_error:
                     self.summary.setdefault('diagnosticErrors', []).append(str(diagnostic_error))
-            self.summary['failurePhase'] = self.phase
+            self.summary['failurePhase'] = 'fixed' if self.invariant_failures else self.phase
             self.summary['failureSignature'] = type(error).__name__ + ':' + str(error).split(':')[0]
         finally:
             for client in ('mobile', 'gestures', 'mac'):

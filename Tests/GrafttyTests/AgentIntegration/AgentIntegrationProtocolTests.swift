@@ -23,6 +23,17 @@ struct AgentIntegrationProtocolTests {
         #expect(AgentIntegrationAnchor.first(in: "no numbered content").isEmpty)
     }
 
+    @Test("@spec TEST-1.7: When a native follower displays history and a clipped terminal canvas, the integration harness shall derive its text and reading anchor from intersecting physical rows in display order.")
+    func clippedFollowerRows() {
+        let viewport = CGRect(x: 0, y: 15, width: 100, height: 20)
+        let history = AgentIntegrationViewport.visibleRows("ROW-000001\nROW-000002", frame: CGRect(x: 0, y: 0, width: 100, height: 20), viewport: viewport, rowHeight: 10)
+        let canvas = AgentIntegrationViewport.visibleRows("ROW-000003\nROW-000004\nROW-000005", frame: CGRect(x: 0, y: 20, width: 100, height: 30), viewport: viewport, rowHeight: 10)
+        #expect(history == "ROW-000002")
+        #expect(canvas == "ROW-000003\nROW-000004")
+        #expect(AgentIntegrationAnchor.first(in: history + "\n" + canvas) == "ROW-000002")
+        #expect(AgentIntegrationViewport.visibleRows("hidden", frame: CGRect(x: 0, y: 40, width: 100, height: 10), viewport: viewport, rowHeight: 10).isEmpty)
+    }
+
     @Test("@spec TEST-1.3: When an integration action completes, the test harness shall correlate its renderer and ownership observation with the originating sequence ID.")
     func observationRoundTrip() throws {
         let observation = AgentIntegrationObservation(id: 9, client: "mobile", provider: "claude",

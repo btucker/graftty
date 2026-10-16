@@ -123,8 +123,6 @@ final class AgentIntegrationMobileController: UIViewController {
             container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 12\nscrollback-limit = 10000000")
             container.terminalView.configuration = .init(backend: .inMemory(client.session))
             container.accessibilityIdentifier = "Agent integration terminal"
-            container.committedSoftwareInput = .init(insertText: { client.sendSoftwareKeyboardText($0) },
-                deleteBackward: { client.deleteBackward() })
             panes[command.provider] = Pane(client: client, container: container)
             focus(command.provider)
             client.start()
@@ -176,7 +174,14 @@ final class AgentIntegrationMobileController: UIViewController {
     }
 
     func synchronize() {
-        for pane in panes.values {
+        for (provider, pane) in panes {
+            pane.container.committedSoftwareInput = SingleSessionView.isTerminalKeyboardEligible(
+                clientIsOwner: pane.client.isOwner, isPaneFocused: provider == focused
+            ) ? .init(insertText: { [weak client = pane.client] text in
+                guard let client, client.isOwner, client.connectionState == .live else { return }
+                client.sendSoftwareKeyboardText(text)
+            }, insertControlByte: { [weak client = pane.client] in client?.sendControlByte($0) },
+               deleteBackward: { [weak client = pane.client] in client?.deleteBackward() }) : nil
             pane.container.authoritativeGrid = pane.client.snapshotCanvasGrid.map { .init(cols: $0.cols, rows: $0.rows) }
             pane.container.snapshotScrollView.showsAdditionalHistory = pane.client.isFollower
             pane.container.setNeedsLayout()
@@ -190,19 +195,21 @@ final class AgentIntegrationMobileController: UIViewController {
     }
 
     func snapshot(_ pane: Pane) -> [String: String] {
-        var text = pane.client.session.readViewportText() ?? ""
+        var text = ""
         let state = pane.client.ownershipSnapshot
         let bar = pane.container.terminalView.surface?.currentScrollbar
         let scroll = pane.container.snapshotScrollView
-        if let frame = scroll.additionalHistoryFrameForTesting,
-           let rows = scroll.additionalHistoryRowsForTesting, let metrics = pane.container.terminalGridMetrics {
+        if let metrics = pane.container.terminalGridMetrics {
             let rowHeight = CGFloat(metrics.cellHeightPixels) / pane.container.terminalView.contentScaleFactor
                 * pane.container.terminalView.transform.a
-            if rowHeight > 0, scroll.contentOffset.y < frame.maxY {
-                let first = max(0, Int(floor((scroll.contentOffset.y - frame.minY) / rowHeight)))
-                let count = max(1, Int(ceil(scroll.bounds.height / rowHeight)))
-                text = rows.components(separatedBy: "\n").dropFirst(first).prefix(count).joined(separator: "\n") + "\n" + text
+            var visible: [String] = []
+            if let frame = scroll.additionalHistoryFrameForTesting, let rows = scroll.additionalHistoryRowsForTesting {
+                visible.append(AgentIntegrationViewport.visibleRows(rows, frame: frame,
+                    viewport: scroll.bounds, rowHeight: rowHeight))
             }
+            visible.append(AgentIntegrationViewport.visibleRows(pane.client.session.readViewportRowsText() ?? "",
+                frame: pane.container.terminalView.frame, viewport: scroll.bounds, rowHeight: rowHeight))
+            text = visible.filter { !$0.isEmpty }.joined(separator: "\n")
         }
         let metrics = pane.container.terminalGridMetrics
         return ["text": text, "anchor": AgentIntegrationAnchor.first(in: text),

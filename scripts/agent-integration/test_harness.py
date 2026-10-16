@@ -75,6 +75,18 @@ class SequenceTests(unittest.TestCase):
         with self.assertRaises(InvariantFailure):
             assert_buffer_matches('blank', 'blank')
 
+    def test_content_oracle_preserves_spaces_and_checks_final_row(self):
+        for actual, expected in (
+            ('ROW-000001 ab\nROW-000002 tail', 'ROW-000001 a b\nROW-000002 tail'),
+            ('ROW-000001 a  b\nROW-000002 tail', 'ROW-000001 a b\nROW-000002 tail'),
+            ('ROW-000001 intact\nROW-000002 damaged\nEND-GRAFTTY-FIXTURE',
+             'ROW-000001 intact\nROW-000002 expected\nEND-GRAFTTY-FIXTURE'),
+        ):
+            with self.assertRaises(InvariantFailure):
+                assert_buffer_matches(actual, expected)
+        assert_buffer_matches('ROW-000001 path/comp\n  onent\nROW-000002 final\nEND-GRAFTTY-FIXTURE\nnew footer',
+                              'ROW-000001 path/component\nROW-000002 final\nEND-GRAFTTY-FIXTURE\nold footer')
+
     def test_daemon_grapheme_export_does_not_create_false_failures(self):
         assert_buffer_matches('ROW-000001 漢字 👩🏽‍💻\nROW-000002 tail',
                               'ROW-000001 漢字 👩\nROW-000002 tail')

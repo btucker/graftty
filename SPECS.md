@@ -4153,3 +4153,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.5** When a scripted native integration run requests mobile gestures, rotation, or keyboard input, the test harness shall drive the mounted terminal through XCUITest and preserve screenshots with the action sequence ID.
 
 **TEST-1.6** When a native integration viewport contains wrapped fixture output, the test harness shall identify its reading anchor by the first logical row label rather than by physical row count.
+
+**TEST-1.7** When a native follower displays history and a clipped terminal canvas, the integration harness shall derive its text and reading anchor from intersecting physical rows in display order.
