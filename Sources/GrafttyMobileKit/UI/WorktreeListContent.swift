@@ -199,14 +199,9 @@ public struct WorktreeListContent: View {
         self.remoteSidebarProvider = remoteSidebarProvider
     }
 
-    private struct PendingWorktreeRouteKey: Hashable {
-        let item: SidebarActivityItem?
-        let loaded: Bool
-    }
-
-    private var isLoaded: Bool {
-        if case .loaded = state { return true }
-        return false
+    private var routeWorktrees: [WorktreePanes] {
+        if case .loaded(let worktrees) = state { return worktrees }
+        return []
     }
 
     enum LoadState: Equatable {
@@ -229,7 +224,7 @@ public struct WorktreeListContent: View {
         )) {
             await loadIfReady()
         }
-        .task(id: PendingWorktreeRouteKey(item: MobilePaneAttention.pendingRoute(for: navigation), loaded: isLoaded)) {
+        .task(id: MobilePaneAttention.RouteKey(item: MobilePaneAttention.pendingRoute(for: navigation), worktrees: routeWorktrees)) {
             consumePendingWorktreeRoute()
         }
         .task(id: externalRefreshToken) {
@@ -257,7 +252,6 @@ public struct WorktreeListContent: View {
             orderMutationID = nil
             sidebarSnapshot = nil
             closeReport()
-            MobilePaneAttention.consumePendingRoute(for: navigation)
             showsRemoteMacManagement = false
         }
         .task(id: RemotePollingKey(
@@ -380,17 +374,6 @@ public struct WorktreeListContent: View {
             Button("Cancel", role: .cancel) { }
         } message: { pending in
             Text(pending.stderr + (pending.shortStatus.isEmpty ? "" : "\n\n" + pending.shortStatus))
-        }
-        .overlay(alignment: .top) {
-            if let item = navigation.attentionBanner, case .loaded(let worktrees) = state,
-               projects(for: worktrees).contains(where: { $0.id == item.projectID }) {
-                SidebarAttentionBanner(item: item,
-                    project: projects(for: worktrees).first { $0.id == item.projectID },
-                    projectIconData: projectIcons[item.projectID], onOpen: {
-                        Task { await openReportTarget(item, worktrees: worktrees) }
-                    }, onDismiss: { navigation.dismissAttentionBanner(item) })
-                    .padding(10)
-            }
         }
         .overlay(alignment: .bottom) {
             if let msg = errorToast {
@@ -517,11 +500,11 @@ public struct WorktreeListContent: View {
         guard isSidebar || !showsProjectRail || project?.id == navigation.selectedProjectID,
               let item = MobilePaneAttention.pendingRoute(for: navigation),
               case .loaded(let rows) = state,
-              rows.contains(where: { $0.path == item.worktreeID && SidebarProjection.projectID($0) == item.projectID }) else { return }
+              let resolved = MobilePaneAttention.resolvedRoute(item, worktrees: rows) else { return }
         MobilePaneAttention.consumePendingRoute(for: navigation)
         // Consuming the route changes the task identity. Keep opening outside
         // that task so its cancellation cannot interrupt navigation.
-        Task { await openReportTarget(item, worktrees: rows) }
+        Task { await openReportTarget(resolved, worktrees: rows) }
     }
 
     @ViewBuilder

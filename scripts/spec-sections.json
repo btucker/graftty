@@ -157,6 +157,7 @@
     "IOS.7": "Lifecycle",
     "IOS.8": "Non-goals (recorded for future specs)",
     "IOS.9": "Creating worktrees from the iOS client",
+    "IOS.13": "System Attention notifications",
     "IPAD.1": "Root Layout and Sidebar",
     "IPAD.2": "Multi-Pane Detail View",
     "IPAD.3": "Focused-Pane Toolbar",

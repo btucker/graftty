@@ -2,7 +2,7 @@
 import SwiftUI
 
 public struct GrafttyMobileApp: App {
-    public init() {}
+    public init() { MobileAttentionNotifications.shared.install() }
 
     public var body: some Scene {
         WindowGroup {

@@ -275,6 +275,10 @@ public struct IPadRootLayout: View {
     }
 
     static func applyHostSwitch(appState: IPadAppState, to newHostId: UUID) {
+        if appState.selectedHostId != newHostId {
+            appState.sidebarNavigation.resetAttentionObservation()
+            MobilePaneAttention.consumePendingRoute(for: appState.sidebarNavigation)
+        }
         appState.selectedHostId = newHostId
         appState.selectedWorktreePath = nil
         appState.focusedPaneId = nil
