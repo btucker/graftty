@@ -52,6 +52,7 @@ final class MobileAttentionNotifications: NSObject, UNUserNotificationCenterDele
     @ObservationIgnored private let deliver: (UNNotificationRequest) async throws -> Void
     @ObservationIgnored private var authorization: Task<Bool, Never>?
     @ObservationIgnored private var reservations: [String: UUID] = [:]
+    @ObservationIgnored private var latestTimestamps: [String: Date] = [:]
 
     init(authorize: @escaping () async -> Bool, deliver: @escaping (UNNotificationRequest) async throws -> Void) {
         self.authorize = authorize
@@ -67,6 +68,10 @@ final class MobileAttentionNotifications: NSObject, UNUserNotificationCenterDele
     func enqueue(_ item: SidebarActivityItem, hostID: UUID,
                  isCurrent: @escaping () -> Bool = { true }) -> Task<Void, Never> {
         let payload = Payload(hostID: hostID, item: item)
+        if let timestamp = item.occurrence?.timestamp {
+            if let latest = latestTimestamps[payload.identifier], timestamp < latest { return Task {} }
+            latestTimestamps[payload.identifier] = timestamp
+        }
         let token = UUID()
         reservations[payload.identifier] = token
         return Task {

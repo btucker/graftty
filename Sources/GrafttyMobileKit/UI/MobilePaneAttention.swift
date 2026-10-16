@@ -4,6 +4,16 @@ import Observation
 
 @MainActor
 enum MobilePaneAttention {
+    struct RouteKey: Hashable {
+        let item: SidebarActivityItem?
+        let resolved: SidebarActivityItem?
+
+        @MainActor init(item: SidebarActivityItem?, worktrees: [WorktreePanes]) {
+            self.item = item
+            self.resolved = item.flatMap { MobilePaneAttention.resolvedRoute($0, worktrees: worktrees) }
+        }
+    }
+
     @Observable @MainActor
     final class Routes {
         var pending: [ObjectIdentifier: SidebarActivityItem] = [:]
@@ -28,8 +38,14 @@ enum MobilePaneAttention {
     static func resolvedRoute(_ item: SidebarActivityItem, worktrees: [WorktreePanes]) -> SidebarActivityItem? {
         guard let target = worktrees.first(where: { worktree in
             guard SidebarProjection.projectID(worktree) == item.projectID else { return false }
-            if let stableID = worktree.sidebar?.id {
-                return item.id == stableID || item.id.hasPrefix(stableID + ":")
+            if let metadata = worktree.sidebar {
+                if let paneID = item.paneID {
+                    if metadata.paneIDs != nil || metadata.paneSlotIDs != nil {
+                        return SidebarProjection.paneSlotID(for: item, in: metadata) != nil
+                    }
+                    return item.id == metadata.id + ":" + paneID
+                }
+                return item.id == metadata.id + (item.agentStop != nil ? ":stop" : "")
             }
             return worktree.path == item.worktreeID
         }) else { return nil }

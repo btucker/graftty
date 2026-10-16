@@ -83,6 +83,21 @@ struct MobileAttentionNotificationTests {
         await delivery.enqueue(item(), hostID: UUID(), isCurrent: { current }).value
     }
 
+    @Test("A delayed request from another pane cannot replace a newer worktree notification")
+    func olderPaneCannotReplaceNewerNotification() async throws {
+        var requests: [UNNotificationRequest] = []
+        let delivery = MobileAttentionNotifications(authorize: { true }, deliver: { requests.append($0) })
+        let hostID = UUID()
+        let newer = item(time: 20)
+        await delivery.enqueue(newer, hostID: hostID).value
+        var older = item(time: 15)
+        older.id = "other-pane"
+        older.paneID = "other-pane"
+        await delivery.enqueue(older, hostID: hostID).value
+        #expect(requests.count == 1)
+        #expect(MobileAttentionNotifications.Payload.decode(try #require(requests.last).content.userInfo)?.item == newer)
+    }
+
     @Test("Request identifiers separate hosts and group one worktree")
     func identifiersRespectHostAndWorktree() throws {
         let hostID = UUID()
@@ -164,11 +179,48 @@ struct MobileAttentionNotificationTests {
             attentionText: nil, layout: nil, sidebar: .init(id: "stable", projectID: "project"))
         var pending = item()
         pending.id = "stable:stop"
+        pending.paneID = nil
+        pending.agentStop = .init(agentName: "Codex", stoppedAt: .now)
         let resolved = try #require(MobilePaneAttention.resolvedRoute(pending, worktrees: [current]))
         #expect(resolved.worktreeID == current.path)
         #expect(resolved.occurrence == pending.occurrence)
         pending.id = "deleted:stop"
         pending.worktreeID = current.path
         #expect(MobilePaneAttention.resolvedRoute(pending, worktrees: [current]) == nil)
+    }
+
+    @Test("A stored notification matches an exact legacy worktree identity")
+    func overlappingLegacyWorktreeIdentities() throws {
+        func worktree(_ name: String) -> WorktreePanes {
+            .init(path: name, displayName: name, repoDisplayName: "Project", displayBranch: name,
+                  state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+                  layout: .leaf(sessionName: "shell", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil),
+                  sidebar: .init(id: "project:\(name)", projectID: "project"))
+        }
+        let parent = worktree("/work/task")
+        let child = worktree("/work/task:child")
+        var pending = item()
+        pending.id = "project:/work/task:child:stop"
+        pending.paneID = nil
+        pending.agentStop = .init(agentName: "Codex", stoppedAt: .now)
+        #expect(MobilePaneAttention.resolvedRoute(pending, worktrees: [parent, child])?.worktreeID == child.path)
+        #expect(MobilePaneAttention.resolvedRoute(pending, worktrees: [parent]) == nil)
+        pending.agentStop = nil
+        pending.paneID = "shell"
+        pending.id = "project:/work/task:child:shell"
+        #expect(MobilePaneAttention.resolvedRoute(pending, worktrees: [parent, child])?.worktreeID == child.path)
+    }
+
+    @Test("Pending notification routing retries when the worktree appears after a partial snapshot")
+    func routeIdentityChangesWhenTargetAppears() throws {
+        let current = WorktreePanes(path: "new-route", displayName: "Task", repoDisplayName: "Project",
+            displayBranch: "task", state: .running, isMainCheckout: false, prBadge: nil, stats: nil,
+            attentionText: nil, layout: nil, sidebar: .init(id: "request", projectID: "project"))
+        var pending = item()
+        pending.paneID = nil
+        let missing = MobilePaneAttention.RouteKey(item: pending, worktrees: [])
+        let available = MobilePaneAttention.RouteKey(item: pending, worktrees: [current])
+        #expect(missing != available)
+        #expect(available.resolved?.worktreeID == current.path)
     }
 }

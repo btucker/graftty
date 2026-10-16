@@ -199,14 +199,9 @@ public struct WorktreeListContent: View {
         self.remoteSidebarProvider = remoteSidebarProvider
     }
 
-    private struct PendingWorktreeRouteKey: Hashable {
-        let item: SidebarActivityItem?
-        let loaded: Bool
-    }
-
-    private var isLoaded: Bool {
-        if case .loaded = state { return true }
-        return false
+    private var routeWorktrees: [WorktreePanes] {
+        if case .loaded(let worktrees) = state { return worktrees }
+        return []
     }
 
     enum LoadState: Equatable {
@@ -229,7 +224,7 @@ public struct WorktreeListContent: View {
         )) {
             await loadIfReady()
         }
-        .task(id: PendingWorktreeRouteKey(item: MobilePaneAttention.pendingRoute(for: navigation), loaded: isLoaded)) {
+        .task(id: MobilePaneAttention.RouteKey(item: MobilePaneAttention.pendingRoute(for: navigation), worktrees: routeWorktrees)) {
             consumePendingWorktreeRoute()
         }
         .task(id: externalRefreshToken) {
