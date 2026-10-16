@@ -304,10 +304,12 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     }
 
     var additionalHistoryTextForTesting: String? { historySession.readViewportText() }
+    var additionalHistoryRowsForTesting: String? { historySession.readViewportRowsText() }
     var additionalHistoryFrameForTesting: CGRect? { historyView?.frame }
     #else
     func refreshAdditionalHistory() {}
     var additionalHistoryTextForTesting: String? { nil }
+    var additionalHistoryRowsForTesting: String? { nil }
     var additionalHistoryFrameForTesting: CGRect? { nil }
     #endif
 

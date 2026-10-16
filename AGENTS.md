@@ -1,5 +1,7 @@
 # Graftty — Agent Instructions
 
+Unless the user explicitly specifies Mac or GrafttyMobile, assume requests apply to both. If applying a request to both would not make sense, clarify with the user.
+
 ## Keeping SPECS.md current
 
 `SPECS.md` is auto-generated from `@spec` annotations in code. Never edit it manually.

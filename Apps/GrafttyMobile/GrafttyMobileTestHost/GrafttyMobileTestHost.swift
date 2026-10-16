@@ -13,7 +13,9 @@ struct GrafttyMobileTestHost: App {
     var body: some Scene {
         WindowGroup {
             #if GRAFTTY_BROWSER_CONTROL_FIXTURE
-            if ProcessInfo.processInfo.arguments.contains("--scrollback-fixture") {
+            if let endpoint = Self.agentIntegrationEndpoint {
+                AgentIntegrationFixture(endpoint: endpoint)
+            } else if ProcessInfo.processInfo.arguments.contains("--scrollback-fixture") {
                 ScrollbackFixture().ignoresSafeArea(.keyboard)
             } else if ProcessInfo.processInfo.arguments.contains("--image-controls-fixture") {
                 ImageControlsFixture()
@@ -25,6 +27,15 @@ struct GrafttyMobileTestHost: App {
             #endif
         }
     }
+
+    #if GRAFTTY_BROWSER_CONTROL_FIXTURE
+    private static var agentIntegrationEndpoint: URL? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "--agent-integration-url"),
+              arguments.indices.contains(index + 1) else { return nil }
+        return URL(string: arguments[index + 1])
+    }
+    #endif
 }
 
 #if GRAFTTY_BROWSER_CONTROL_FIXTURE
