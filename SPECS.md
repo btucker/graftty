@@ -4137,3 +4137,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.4** If queued SSH output exceeds its byte limit, then the transport shall close and fail writes without dropping bytes from a live SSH stream.
 
 **SSH-1.5** While bulk terminal output is active, the application shall deliver interactive terminal bytes and the complete bulk stream over shared or isolated SSH connections.
+
+## TEST — TEST
+
+### TEST-1.x
+
+**TEST-1.1** When an integration client receives a scripted action, the test harness shall preserve its sequence ID, provider, operation, and parameters through JSON encoding.
+
+**TEST-1.2** If a scripted integration action names an unsupported operation, then the test harness shall reject it rather than report a successful observation.
+
+**TEST-1.3** When an integration action completes, the test harness shall correlate its renderer and ownership observation with the originating sequence ID.
+
+**TEST-1.4** When real scripted agents move between native Mac and mobile displays, the integration harness shall exercise production terminal ownership and messaging paths and fail if a commanded native action fails.
+
+**TEST-1.5** When a scripted native integration run requests mobile gestures, rotation, or keyboard input, the test harness shall drive the mounted terminal through XCUITest and preserve screenshots with the action sequence ID.
+
+**TEST-1.6** When a native integration viewport contains wrapped fixture output, the test harness shall identify its reading anchor by the first logical row label rather than by physical row count.
