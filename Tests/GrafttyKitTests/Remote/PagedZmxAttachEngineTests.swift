@@ -131,14 +131,16 @@ private final class FakePagedDaemon: @unchecked Sendable {
 }
 
 extension PagedZmxAttachEngineTests {
-    @Test("@spec TERM-12.40: While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering without disconnecting, and shall release a waiting reader when the attachment closes.", .timeLimit(.minutes(1)), arguments: [false, true])
-    func resizeBurstPreservesAttachment(closeWhileFull: Bool) async throws {
+    @Test("@spec TERM-12.40: While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering without disconnecting, and shall release a waiting reader when the attachment closes.", .timeLimit(.minutes(1)), arguments: [false, true], [false, true])
+    func outputBurstPreservesAttachment(closeWhileFull: Bool, resizing: Bool) async throws {
         let burstSent = DispatchSemaphore(value: 0)
         let count = 512
         let daemon = try FakePagedDaemon { fd in
             try FakePagedDaemon.negotiate(fd)
-            #expect(try FakePagedDaemon.receive(fd).0 == 2)
-            try FakePagedDaemon.send(fd, tag: 31, payload: Data([79, 0, 165, 0]))
+            if resizing {
+                #expect(try FakePagedDaemon.receive(fd).0 == 2)
+                try FakePagedDaemon.send(fd, tag: 31, payload: Data([79, 0, 165, 0]))
+            }
             for index in 0..<count {
                 try FakePagedDaemon.send(fd, tag: 1, payload: Data("\(index)".utf8))
             }
@@ -164,19 +166,19 @@ extension PagedZmxAttachEngineTests {
         guard case .checkpoint = await iterator.next() else {
             Issue.record("Missing checkpoint"); return
         }
-        try engine.resize(windowSize: .init(cols: 165, rows: 79))
+        if resizing { try engine.resize(windowSize: .init(cols: 165, rows: 79)) }
         let sent = await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
                 continuation.resume(returning: burstSent.wait(timeout: .now() + 3) == .success)
             }
         }
         try #require(sent)
-        // Model the renderer yielding while applying the takeover's new grid.
+        // Model a renderer pause during ordinary output or a takeover resize.
         try await Task.sleep(for: .milliseconds(100))
         if closeWhileFull {
             await engine.close()
         } else {
-            #expect(await iterator.next() == .grid(cols: 165, rows: 79))
+            if resizing { #expect(await iterator.next() == .grid(cols: 165, rows: 79)) }
             var output: [Data] = []
             while output.count < count, let event = await iterator.next() {
                 guard case .output(let bytes) = event else {
