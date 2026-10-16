@@ -572,6 +572,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.20** When libghostty reports a viewport resize whose cell grid equals the bound live window size, the application shall forward the live window's pixel dimensions instead of the callback's, so every forward of one grid carries identical pixel fields and a same-grid forward never raises a spurious SIGWINCH.
 
+**TERM-11.21** When a Mac pane resumes leading after applying an attachment grid, the application shall restore its full viewport before resizing the terminal, regardless of scrollbar style.
+
 ### TERM-12.x — Paged History on Mac and Mobile
 
 **TERM-12.1** When Graftty on Mac or mobile opens a terminal through a paging-capable attachment, the application shall restore the current screen and parser state with a bounded recent-history allowance before fetching older history, without serializing or transferring the complete retained history on the initial path.
@@ -643,6 +645,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-12.35** When a renderer requests clipboard text together with available types and display control can be reclaimed, the application shall return both the exact text bytes and available types after reclaiming control.
 
 **TERM-12.36** When a detached local Mac pane is mounted again, the application shall retain every history line, including history shorter than one viewport, through native paging or legacy replay.
+
+**TERM-12.37** While a Mac terminal backfills history, the application shall preserve access to older pages when live output edits the active screen or reallocates its page storage.
+
+**TERM-12.38** If live output resets a restored Mac terminal or explicitly erases its history, then the application shall reject pending older pages without restoring the discarded history.
 
 ## GIT — Worktree Discovery & Monitoring
 
@@ -949,6 +955,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **ATTN-3.8** When the application closes a control-socket request without a response before the receive deadline, the CLI shall report the premature close rather than claim that the full receive deadline elapsed.
 
 **ATTN-3.9** When a control-socket connect attempt is rejected before dispatch with a transient capacity error, the CLI shall apply the same bounded busy retry used for a structured server rejection, and it shall preserve unexpected connect errno values instead of reporting a receive timeout that did not occur.
+
+**ATTN-3.10** If a control-socket connection fails with EPERM or EACCES, then the CLI shall preserve the denied path and errno, explain that sandbox policy or filesystem permissions may deny access, and avoid retrying or recommending a socket reset.
 
 ### ATTN-4.x — CLI Distribution
 
@@ -1584,6 +1592,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **OWN-1.2** When the current display owner reports a resize whose grid equals the authoritative grid, the application shall validate the owner and epoch without advancing the ownership revision or notifying observers.
 
+**OWN-1.3** When the leader disconnects, the application shall retain its leadership and last grid until another client takes control.
+
+**OWN-1.4** When the authenticated leading device reconnects interactively, the application shall restore its leadership on the new connection without changing the retained grid or accepting traffic from the old connection.
+
+**OWN-1.5** While leadership is retained for a disconnected device, the application shall reject passive takeover by other devices, previews, hidden clients, or clients without authenticated identity.
+
+**OWN-1.6** When another device takes control during a leader's disconnection, the application shall reconnect the former leader as a follower.
+
 ### OWN-2.x — Mac Take-Control Affordance and Reclaim
 
 **OWN-2.1** While a zmx-backed Mac pane's session is owned by another display client, or is ownerless after a prior ownership change, the application shall offer the pane's Take Control affordance (`canTakeDisplayControl()` true); while the Mac pane itself owns the session — including the automatic ownerless claim at first attach — or the session has no ownership history, the affordance shall be hidden.
@@ -1966,7 +1982,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-6.x — Input
 
-**IOS-6.1** While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, tray Shift, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, and Hide Keyboard controls. The non-modifier controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl and tray Shift state.
+**IOS-6.1** While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard with Esc, Tab, sticky Ctrl, tray Shift, Ctrl-C, Ctrl-D, arrows, submit Return, literal LF, Auto-correct, and Hide Keyboard controls. The terminal key controls shall send their explicit terminal bytes through `SessionClient`. Tapping sticky Ctrl once shall arm it for the next software-keyboard letter, tapping it twice shall lock it, and libghostty shall translate Ctrl+A through Ctrl+Z to ASCII bytes `0x01` through `0x1A`. When terminal input becomes ineligible, the application shall clear sticky Ctrl and tray Shift state.
 
 **IOS-6.2** `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. Before Ghostty translation it may delegate enabled application commands, the listed transport corrections in `IOS-6.19`, and active agent completion in `IOS-6.32`; every unmatched key, including arrows, shall flow through libghostty, and GrafttyMobile shall not reimplement general terminal key translation.
 
@@ -1992,7 +2008,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.14** While the mobile client is the display owner, its pane is focused, and the user allows the keyboard, the application shall install committed-software-input handlers on the sole `UITerminalView` responder; otherwise it shall disable keyboard eligibility without blocking Ghostty gestures.
 
-**IOS-6.15** When a fullscreen iOS session reconnects after suspension, the application shall remain a follower until user input or an explicit Take Control action requests ownership, including when the session is ownerless.
+**IOS-6.15** When a fullscreen iOS session reconnects, the application shall adopt the host-confirmed retained leadership or follower state without sending an automatic takeover.
 
 **IOS-6.16** When a fullscreen mobile client transitions from non-owner to owner while keyboard input is allowed, the application shall request keyboard focus for the sole `UITerminalView` responder. This covers takeovers initiated by Paste or Take Control, where the terminal was not eligible before ownership was confirmed.
 
@@ -2038,6 +2054,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.37** When an active iOS agent picker is interrupted by a transient inactive scene while its owned terminal transport remains live, the application shall preserve the literal token before closing the picker; when the application backgrounds or its transport becomes unavailable, the application shall discard the buffered token.
 
+**IOS-6.38** When the user toggles Auto-correct in the iOS keyboard accessory tray, the application shall enable or disable native terminal autocorrection without changing existing text or sending terminal input, default to off, and remember the preference across panes and app launches.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.
@@ -2054,7 +2072,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-7.7** When a paging-capable mobile attachment opens or reconnects, the application shall install its current-screen checkpoint before live output, request older history on viewport demand, and keep live output and authorized input usable while that history is pending.
 
-**IOS-7.8** When a terminal receive or replay fails, the application shall close and discard that channel before reconnecting so failed attachments cannot retain control or accumulate on the host.
+**IOS-7.8** When a terminal receive or replay fails, the application shall close and discard that channel before reconnecting so failed attachments cannot submit input or accumulate on the host.
 
 **IOS-7.9** While mobile remains in the foreground, switching compact pane views shall retain up to four recently visited pane connections and their existing leadership, reusing connections on return and releasing the least recently visited connection when the limit is exceeded.
 
@@ -2502,6 +2520,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.17** When a wrapped Codex TUI exits unsuccessfully, the application shall preserve its app-server log and report its path while preserving the TUI exit status; when it exits successfully, the application shall remove the log.
 
+**TEAM-10.18** When the periodic presence sweep runs, the application shall clean stale presence and orphaned app-server records and load the remaining presence records off the main thread before updating delivery liveness.
+
+**TEAM-10.19** If a periodic presence refresh finishes after a newer foreground presence update or removal, then the application shall preserve the newer records and use them for delivery liveness.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.6** If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.
@@ -2576,7 +2598,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-14.33** When an agent replies by inbox message ID, the application shall resolve the original sender from that caller's stored message, preserve its Mac and exact agent identity, allow an explicit runtime fallback on the same Mac, and reject unknown, system, other recipients' messages, or ambiguous local destinations without sending or advancing the inbox.
 
-**TEAM-14.34** When delivering a remote agent message, the application shall include its message ID and a Graftty reply command, state that the stored sender takes precedence over reply paths in the body, and warn that native peer names can identify an agent on another Mac.
+**TEAM-14.34** When delivering an agent message, the application shall include its XML-escaped inbox ID in the peer envelope alongside sender addresses and omit reply instructions, leaving reply procedures to the Graftty Team skill.
 
 **TEAM-14.35** When a Claude agent replies through its Graftty reply socket, the application shall forward the reply using the socket's original message and exact recipient identity, preserving the sender device even when worktree names match.
 
@@ -3282,7 +3304,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-2.17** If the host, worktree, pane or owner changes while a browser offer list awaits refresh, then the application shall hide the old list instead of opening its URLs in the replacement scope.
 
-**CHROME-2.18** While the terminal browser control is visible, the application shall use the same primary glyph, plain button and translucent circle styling as Back while preserving its available-resource badge, busy indication and accessibility.
+**CHROME-2.18** While the terminal browser control is visible, the application shall use the same primary glyph and plain button styling as Back, with Liquid Glass on iOS 26 and newer and translucent material on earlier versions while preserving its available-resource badge, busy indication and accessibility.
 
 **CHROME-2.19** When a browser presentation is canceled before its sheet mounts, the application shall release its reservation and defer the same offer for an authorized retry without requiring a dismissal callback.
 
@@ -3303,6 +3325,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CHROME-2.27** When a mounted mobile browser backgrounds and its ownership snapshot clears during transport suspension, the application shall retain the browser sheet until explicit dismissal or confirmed ownership loss.
 
 **CHROME-2.28** While a retained mobile browser sheet's biometric gate is locked, the application shall hide its page, address, tab metadata, and browser controls until the gate unlocks.
+
+**CHROME-2.29** While multiple terminal overlay actions appear on the right, the application shall join their backgrounds into one capsule, using Liquid Glass on iOS 26 and newer, while preserving separate accessible touch targets.
 
 ### CHROME-3.x — Authenticated transport
 
@@ -3370,23 +3394,21 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IMAGE-1.x
 
-**IMAGE-1.1** When graftty image runs without a terminal, the CLI shall send an absolute file path and the originating pane session through app IPC without emitting image bytes, terminal escapes, or padding, and shall propagate rejection and transport failures.
+**IMAGE-1.1** When graftty preview runs without a terminal, the CLI shall send ordered absolute file paths and the originating pane session through app IPC without emitting image bytes, terminal escapes, or padding, and shall propagate rejection and transport failures.
 
 **IMAGE-1.2** When graftty image receives legacy width and pad options, the CLI shall accept them without reserving terminal rows, and shall encode a response-bearing native preview request.
 
 **IMAGE-1.3** When a pane requests a native image preview, the application shall replace only that pane's preview, retain a bounded number of previews, and dismiss only the requested pane.
 
-**IMAGE-1.4** When a native image tray renders, the application shall initially overlay at most 45 percent of the pane height and 360 points without resizing the terminal, fit the image with its aspect ratio, and bound zoom from fit to eight times fit.
+**IMAGE-1.4** When a native image tray renders, the application shall initially overlay at most 45 percent of the pane height and 360 points without resizing the terminal, and delegate file rendering, page navigation and zoom to Quick Look.
 
-**IMAGE-1.5** When the application loads an image preview, it shall reject missing, nonregular, invalid, or larger than 20 MB files and decode only the oriented first frame with a maximum edge of 2048 pixels.
-
-**IMAGE-1.6** When Graftty installs the graftty-image skill, the skill shall describe the movable and resizable macOS tray and the owning Mobile pane's Images control for native Quick Look, explain fit, zoom, close, and Preview.app controls, and acknowledge requests without claiming the user saw the image.
+**IMAGE-1.6** When Graftty installs the graftty-preview skill, the skill shall describe the movable and resizable macOS tray and the owning Mobile pane's Preview control for native Quick Look, explain collection navigation and automatic mobile opening, and acknowledge requests without claiming the user saw the image.
 
 **IMAGE-1.7** When an image tray arrives or closes, the application shall preserve terminal focus, and shall dismiss on Escape only when the preview owns focus, restoring its previous responder.
 
 **IMAGE-1.8** While panes are split or worktrees are switched, the native tray shall show only the focused or visible zoomed pane's image and retain inactive previews without replacing it.
 
-**IMAGE-1.9** When preview decoding finishes after a newer request or dismissal, the application shall discard the older result instead of replacing or resurrecting the pane preview.
+**IMAGE-1.9** When preview file loading finishes after a newer request or dismissal, the application shall discard the older result instead of replacing or resurrecting the pane preview.
 
 **IMAGE-1.10** When graftty image identifies its originating pane, the application shall use registered session membership after directory changes, route iOS leadership to native mobile offers, and reject unsupported or other Mac leaders without opening on the host Mac.
 
@@ -3394,29 +3416,29 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-1.12** When a mobile leader receives an image request, the application shall offer the validated file snapshot for its originating pane, replacing that pane's previous image offer without rereading a changed file.
 
-**IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes with explicit image intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, while unmappable recipients, unavailable leaders, and invalid origins shall return errors.
+**IMAGE-1.13** When an image request reaches the application, it shall offer validated bytes with explicit file preview intent and recipient metadata to its iOS pane leader and leave the host tray unchanged, while unmappable recipients, unavailable leaders, and invalid origins shall return errors.
 
-**IMAGE-1.14** While the native image tray toolbar is visible, the application shall use native zoom controls and keep the Fit and Open… labels legible without clipping either action.
+**IMAGE-1.14** While the native preview tray toolbar is visible, the application shall keep collection navigation, file selection, Open… and Close controls legible and reachable in both wide and narrow panes.
 
-**IMAGE-1.15** When the user selects Open in Preview from an image tray, the application shall open the originating file specifically in Preview.app and report missing-file, unavailable-app, or launch errors without dismissing the tray.
+**IMAGE-1.15** When the user selects Open… from a native preview tray, the application shall open the selected original file in its default application and display launch errors without dismissing the collection.
 
 **IMAGE-1.16** When the user drags the image tray header, corner grip, or bottom edge, the application shall move or resize the tray within the terminal content bounds while retaining usable controls and an unobscured terminal region, without resizing the terminal grid.
 
 **IMAGE-1.17** While a user moves or resizes the image tray through pointer input, the application shall keep its native controls operable and allow clicks outside the tray to reach the unchanged terminal surface.
 
-**IMAGE-1.18** When the user clicks the native image tray zoom, Fit, or Close control, the application shall perform that action without starting a header drag, and restore terminal focus when closing a focused preview.
+**IMAGE-1.18** When the user clicks the native preview tray navigation or Close controls, the application shall perform that action without starting a header drag, and restore terminal focus when closing a focused preview.
 
 ### IMAGE-2.x
 
-**IMAGE-2.1** When an image offer crosses a host connection, the application shall preserve optional image intent and recipient metadata while decoding absent or unknown intent without treating it as an image request.
+**IMAGE-2.1** When a native preview offer crosses a host connection, the application shall preserve optional native preview intent, collection identity and recipient metadata while decoding absent or unknown intent without treating it as a native preview request.
 
 **IMAGE-2.2** When image offers arrive for a focused owned mobile pane, the application shall expose only the latest image intended for that pane and device through Images and retain absent or unknown intent in Browser resources.
 
 **IMAGE-2.3** If an image download or presentation loses its original host, worktree, pane, device, focus, ownership or latest offer, then the application shall reject its completion and cancel the stale preview.
 
-**IMAGE-2.4** When a mobile image request arrives, the application shall preserve typing and show an Images action that presents native Quick Look only after a tap, without automatically reopening a dismissed offer.
+**IMAGE-2.4** When a mobile preview request arrives for the focused owning pane, the application shall automatically present native Quick Look once and retain a Preview action for manual reopening after dismissal.
 
-**IMAGE-2.5** If the latest mobile image changes during download or viewing, then the application shall discard stale bytes, close the old preview and leave only the replacement image manually available.
+**IMAGE-2.5** If the latest mobile image changes during download or viewing, then the application shall discard stale bytes, close the old preview and automatically open the replacement when the pane remains focused and owned.
 
 **IMAGE-2.6** If a mobile image is unavailable or cannot be downloaded or natively previewed, then the application shall show an actionable image error and allow a later retry.
 
@@ -3428,7 +3450,43 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IMAGE-2.10** While a mobile image preview is mounted, the application shall retain its local file and presentation across temporary scene pauses and system sharing, until actual pane, ownership or offer changes or dismissal.
 
-**IMAGE-2.11** When the mobile pane lacks horizontal room for Images and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.
+**IMAGE-2.11** When the mobile pane lacks horizontal room for Preview and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.
+
+## PREVIEW — Native File Preview
+
+### PREVIEW-1.x
+
+**PREVIEW-1.1** When graftty preview receives a local file path, the CLI shall request a native preview through the same pane-scoped IPC as the legacy image alias.
+
+**PREVIEW-1.2** When files are requested for native preview, the application shall snapshot readable regular files of any type in order and reject empty collections, more than 20 files, files over 20 MB, or collections over 50 MB.
+
+**PREVIEW-1.3** When a native file preview collection opens on macOS, the application shall embed Quick Look, navigate files in request order, reset selection on replacement, and retain immutable snapshot files until the tray releases them.
+
+**PREVIEW-1.4** When a preview file snapshot is released, the application shall remove its private temporary directory without deleting the original file.
+
+**PREVIEW-1.5** When a native macOS preview is dismantled before attachment, after window closure, or more than once, the application shall close Quick Look safely, reject subsequent preview updates, and retain its snapshots until native teardown completes.
+
+### PREVIEW-2.x
+
+**PREVIEW-2.1** When file preview offers arrive on mobile, the application shall select the latest preview for its owning pane and device, recognize legacy image intent, and exclude both from Browser resources.
+
+**PREVIEW-2.2** When a mobile preview collection is offered, the host shall publish all files atomically with a shared collection identity, preserve their order and recipient, and replace only older previews from that pane.
+
+**PREVIEW-2.3** When a new preview is available on the focused mobile pane the user controls, the application shall open it once when presentation is available, defer while another resource is open, retry after cancellation before presentation, and retain consumption after presentation or failure across navigation and reconnect.
+
+**PREVIEW-2.4** When a mobile preview collection opens, the application shall provide all files to one native Quick Look controller in request order with a Done action.
+
+**PREVIEW-2.5** When multiple files share a native preview collection identity, mobile shall retain request order and exclude files from other collections, panes or devices.
+
+**PREVIEW-2.6** If any file in a preview collection fails to download, then mobile shall remove previously downloaded files from that collection and present no partial collection.
+
+**PREVIEW-2.7** When the host evicts or withdraws a preview collection, the application shall remove the whole collection so mobile cannot receive a partial set of files.
+
+**PREVIEW-2.8** When a multi-file preview arrives for the focused owning mobile pane, the application shall automatically download and present the complete collection in order and remove every local snapshot after dismissal.
+
+### PREVIEW-3.x
+
+**PREVIEW-3.1** When an agent session starts, the application shall instruct agents to explain visually useful material with self-contained HTML and deliver it through graftty preview.
 
 ## AGENT — AGENT
 
@@ -3608,7 +3666,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.16** While a provider sandbox denies a `graftty team` command access to a live Graftty control socket with `EPERM` or `errno 1`, the installed team skill shall instruct the agent to verify the socket and owner read-only, retry the same command with narrowly scoped elevated permission, and avoid deleting or recreating the socket or restarting Graftty as a first response.
 
-**AGENT-6.17** When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>" fallback-agent="<canonical-worktree-path>#<runtime>">` element when the sender runtime is known, marked `priority="urgent"` for urgent rows and with any peer-authored open or close of that element neutralized, without a trust preamble.
+**AGENT-6.17** When an agent sends a team message to `<canonical-worktree-path>#<agent-id>`, the application shall bind the inbox row to that exact reachable recipient, accept an XML-escaped envelope address unchanged as a reply target, persist the caller's canonical agent identity when available, and render every delivered row as one `<graftty-peer-message agent="<canonical-sender-address>" fallback-agent="<canonical-worktree-path>#<runtime>" id="<inbox-message-id>">` element when the sender runtime is known, marked `priority="urgent"` for urgent rows and with any peer-authored open or close of that element neutralized, without a trust preamble.
 
 **AGENT-6.18** When the application delivers inbox rows through Claude's native peer socket, it shall identify the sender as `<team>/<worktree-member>#<agent-id>` for agent-authored rows (omitting the `#` suffix when no agent ID was persisted), as the originating SCM's display name for system rows with a persisted source, and as `Graftty team` for other system rows.
 
@@ -3640,11 +3698,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.33** When an agent session starts, the application shall instruct the agent to load Graftty skills for Attention recaps, coordination and durable roles, and native previews of requested or completed review artifacts, and require a task-specific emoji independently of cached skill instructions.
 
-**AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that tells agents to open completed review artifacts regardless of viewing device and explains the caller's worktree scope and mobile preview limits.
+**AGENT-6.34** When Graftty prepares provider plugins, the application shall bundle a `graftty-open` skill for both providers that routes finished review artifacts through graftty preview and documents external file opening, URL routing, worktree scope and mobile limits.
 
 **AGENT-6.35** When the user installs the renamed Graftty plugin manually, the application shall remove installed legacy plugins only after verifying that the new installation is enabled, and verify that the legacy registration is gone.
 
-**AGENT-6.36** When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct sandboxed agents to request narrowly scoped permission for main control-socket commands.
+**AGENT-6.36** When Graftty installs provider skills, the recap skill shall explain its private file handoff and the team skill shall direct Codex agents in a restricted sandbox to request narrowly scoped permission before their first main control-socket command and retain that choice for subsequent commands without changing provider policy.
 
 **AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
 
@@ -3672,11 +3730,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.49** If Graftty is unreachable, busy, or reports an error for a SessionStart hook run inside a Graftty terminal, the CLI shall still emit the Graftty skill guidance; outside a Graftty terminal, and for every other event, it shall emit an empty hook result.
 
-**AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-image` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, show images with graftty image in a native tray, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures or missing previews without claiming delivery before falling back to graftty open.
+**AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-preview` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, show files with graftty preview in a native tray and create self-contained HTML when a visual explains something better, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures or missing previews without claiming delivery before falling back to graftty open.
 
 **AGENT-6.51** If Codex retains an enabled legacy Graftty Team registration that its native plugin inventory omits, then the application shall migrate that registration, preserve an explicitly disabled replacement, and verify that native removal clears the legacy registration.
 
 **AGENT-6.52** If Claude retains a legacy Graftty Team registration in user settings, then the application shall verify that the replacement is enabled, remove the legacy registration even when native inventory omits it, preserve other settings and explicit opt-outs, and report incomplete cleanup as a retryable failure.
+
+**AGENT-6.53** When a Codex session starts, the application shall instruct the agent to request narrowly scoped elevated permission before its first main control-socket command in a restricted sandbox, retain that choice for subsequent commands, and keep Attention file reports unprivileged.
+
+**AGENT-6.54** When Graftty prepares provider plugins with linked supporting reference directories or files, the application shall materialize those resources so each cached plugin remains self-contained after the source and sibling provider are removed.
+
+**AGENT-6.55** When Graftty packages progressive skill guidance, the application shall retain readable relative links within each independent provider plugin, with supporting procedures reachable from their skill entrypoints.
 
 ## CLI — CLI
 

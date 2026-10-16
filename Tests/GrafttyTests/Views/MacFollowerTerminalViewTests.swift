@@ -7,6 +7,46 @@ import Testing
 
 @MainActor
 struct MacFollowerTerminalViewTests {
+    @Test("@spec TERM-11.21: When a Mac pane resumes leading after applying an attachment grid, the application shall restore its full viewport before resizing the terminal, regardless of scrollbar style.", arguments: [NSScroller.Style.overlay, .legacy])
+    func attachmentGridRestoresFullLeaderViewport(style: NSScroller.Style) throws {
+        _ = NSApplication.shared
+        let window = FollowerBackingWindow(size: CGSize(width: 640, height: 400), scale: 2)
+        defer { window.close() }
+        let terminal = SurfaceNSView()
+        defer { terminal.surface = nil }
+        var resizes: [CGSize] = []
+        var metrics = ghostty_surface_size_s(columns: 106, rows: 50, width_px: 1280, height_px: 800,
+                                            cell_width_px: 12, cell_height_px: 16)
+        terminal.surfaceOperations = .init(
+            setSize: { _, width, height in
+                resizes.append(CGSize(width: Int(width), height: Int(height)))
+                metrics.width_px = width
+                metrics.height_px = height
+                metrics.columns = UInt16(width / 12)
+                metrics.rows = UInt16(height / 16)
+            },
+            size: { _ in metrics }, refresh: { _ in }
+        )
+        let view = MacFollowerTerminalView(terminalView: terminal, metrics: { metrics })
+        window.contentView = view
+        terminal.surface = UnsafeMutableRawPointer(bitPattern: 0x1234)!
+        view.scrollView.scrollerStyle = style
+        view.layout()
+        resizes.removeAll()
+        for index in 0..<10 {
+            view.followerGrid = try DisplayGrid(cols: 106, rows: 50)
+            view.layout()
+            view.followerGrid = nil
+            view.layout()
+            view.updateScrollbar(.init(total: UInt64(100 + index), offset: UInt64(57 + index), len: 43))
+            view.layoutSubtreeIfNeeded()
+        }
+        #expect(!view.scrollView.hasVerticalScroller)
+        #expect(!view.scrollView.hasHorizontalScroller)
+        #expect(terminal.bounds.size == view.bounds.size)
+        #expect(resizes.allSatisfy { $0 == CGSize(width: 1280, height: 800) }, "Unexpected viewport sizes: \(resizes)")
+    }
+
     @Test("@spec TERM-2.7: When a user clicks or types in a native Mac terminal pane, the application shall update the pane focus model used for dimming even when a scroll-view wrapper consumes SwiftUI tap gestures.")
     func nativeClickUpdatesFocusAndDimming() throws {
         _ = NSApplication.shared

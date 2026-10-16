@@ -88,6 +88,7 @@
 		CE7895E804A9365622D8D33C /* SSHTerminalLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9253D88D71A6DBEE9A8146C /* SSHTerminalLoopbackTests.swift */; };
 		D180563748C10B8F2CFCE625 /* RemoteBrowserButtonTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A2E2CD7C1629DD4B74B5A5E /* RemoteBrowserButtonTests.swift */; };
 		D1F96D384D62F05A9560ECF0 /* ChromeTabClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D8188F4BB4A504874737AEB /* ChromeTabClientTests.swift */; };
+		D256A6F8EEB8775B351FE00E /* RemotePreviewAutoOpenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5295F0CF36E096E97D94E4ED /* RemotePreviewAutoOpenTests.swift */; };
 		D51C1E9C417EC6CC1180FE22 /* LocalBrowserSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 155F14C63B4E8CCBE4A2885A /* LocalBrowserSessionTests.swift */; };
 		D6E07827478D558EA22701E3 /* MobileNavigationDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */; };
 		D7F58C38889D48E34A565C3C /* WorktreeListContentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 467A322DC90A1B2460F86C93 /* WorktreeListContentTests.swift */; };
@@ -160,6 +161,7 @@
 		4A52344F5699042983845BC7 /* MultiPaneDetailViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiPaneDetailViewTests.swift; sourceTree = "<group>"; };
 		4DDBE5B8D50AFB2EA47A9AB0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		51649842CE2E7ACBA47F9ACA /* IPadWorktreeNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadWorktreeNavigationTests.swift; sourceTree = "<group>"; };
+		5295F0CF36E096E97D94E4ED /* RemotePreviewAutoOpenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePreviewAutoOpenTests.swift; sourceTree = "<group>"; };
 		5366A75685B2E4909BEE2983 /* MobileAttentionNotificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAttentionNotificationTests.swift; sourceTree = "<group>"; };
 		55ACC7CB64EC668F86941A9E /* ClientIdentityStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientIdentityStoreTests.swift; sourceTree = "<group>"; };
 		5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostControllerTests.swift; sourceTree = "<group>"; };
@@ -176,7 +178,6 @@
 		7B611132035C165929688C4F /* SessionWebSocketURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionWebSocketURLTests.swift; sourceTree = "<group>"; };
 		7BD90DFCAF790E3A5A6E4E10 /* GhosttyKeybindingsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyKeybindingsFetcherTests.swift; sourceTree = "<group>"; };
 		7C3BF0DC42A2FE0E2FA11C2F /* GrafttyMobileBrowserTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GrafttyMobileBrowserTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		7CFF6F96BA12FA38D3E218FF /* chrome-tab-mux */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "chrome-tab-mux"; path = ../..; sourceTree = SOURCE_ROOT; };
 		89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReposFetcherTests.swift; sourceTree = "<group>"; };
 		8A1E0255EB1F41513A753E8A /* HostPickerViewCallbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPickerViewCallbackTests.swift; sourceTree = "<group>"; };
 		8B854EA2B7542A1A9A7DD8E5 /* WorktreePickerSwipeActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreePickerSwipeActionTests.swift; sourceTree = "<group>"; };
@@ -189,6 +190,7 @@
 		95D1019D3F14627D0AFFE97D /* WorktreeDetailPreviewPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeDetailPreviewPolicyTests.swift; sourceTree = "<group>"; };
 		98C28B7B9FD4CB73021407F1 /* KeyboardFrameInsetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardFrameInsetTests.swift; sourceTree = "<group>"; };
 		995CDEF66B2812D45A5AB90D /* WorktreeManagementRequestLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeManagementRequestLifecycleTests.swift; sourceTree = "<group>"; };
+		7CFF6F96BA12FA38D3E218FF /* chrome-tab-mux */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "chrome-tab-mux"; path = ../..; sourceTree = SOURCE_ROOT; };
 		9BC9CD23B5D3CA7F71AF6EDC /* SessionRenderPaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRenderPaceTests.swift; sourceTree = "<group>"; };
 		9EE4B20F3DAFB771A60100B3 /* WorktreePickerRefreshContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreePickerRefreshContractTests.swift; sourceTree = "<group>"; };
 		A3F859A510953425E04054E5 /* GrafttyRemoteClientExportsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrafttyRemoteClientExportsTests.swift; sourceTree = "<group>"; };
@@ -325,6 +327,7 @@
 				155F14C63B4E8CCBE4A2885A /* LocalBrowserSessionTests.swift */,
 				EE11C4BEF7AC53953B6EEA71 /* RemoteAuthenticationOffersTests.swift */,
 				8C4EAADFAE1D884195573178 /* RemoteImageOffersTests.swift */,
+				5295F0CF36E096E97D94E4ED /* RemotePreviewAutoOpenTests.swift */,
 				89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */,
 				3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */,
 				A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */,
@@ -815,6 +818,7 @@
 				6423BC64B39FEE6D4D4A3CD1 /* RemoteConnectionCoordinatorTests.swift in Sources */,
 				E56BE7F81F6457809FE8C140 /* RemoteConnectionReconnectTests.swift in Sources */,
 				4CDC04E91D07C6367FCF18A8 /* RemoteImageOffersTests.swift in Sources */,
+				D256A6F8EEB8775B351FE00E /* RemotePreviewAutoOpenTests.swift in Sources */,
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
 				16F9774F4AD6CAB9EB7BA47C /* RootViewSizeClassTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,

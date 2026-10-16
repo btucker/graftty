@@ -280,6 +280,8 @@ enum SocketClient {
             case .staleSocket(let path): throw CLIError.staleControlSocket(path: path)
             case .busy: throw CLIError.socketBusy
             case .timeout: throw CLIError.socketTimeout
+            case .permissionDenied(let path, let errno):
+                throw CLIError.socketPermissionDenied(path: path, errno: errno)
             case .failure(let errno):
                 throw CLIError.socketError(
                     "Failed to connect to control socket (errno \(errno))"

@@ -84,7 +84,7 @@ converge.
 | S6 | Non-owner never resizes PTY | A Mac backend in follower state never issues a PTY resize to its underlying zmx session. |
 | S7 | Non-owner never writes input | A Mac backend in follower state never writes input bytes to its underlying zmx session. |
 | L1 | Follower convergence | At quiescence every follower's applied epoch, applied emission sequence, and grid match the store's authoritative values. |
-| L2 | Owner detach leaves ownerless | When the current owner detaches, the store transitions to ownerless without silently promoting another client. |
+| L2 | Explicit release leaves ownerless | When the current owner explicitly releases control, the store transitions to ownerless without promoting another client. Disconnecting retains leadership. |
 
 **Why `revision`?** The store's `ownerResize` updates the grid without bumping
 the ownership epoch, so epoch alone cannot version grids within a single

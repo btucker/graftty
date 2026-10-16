@@ -96,15 +96,15 @@ struct Oracle {
         return found
     }
 
-    /// Check L2: after the current owner detaches or releases, the store must be
+    /// Check L2: after the current owner explicitly releases, the store must be
     /// ownerless — no client should be silently promoted in its place.
     ///
-    /// Call immediately after applying a detach/release op when `previousOwnerID`
+    /// Call immediately after applying a release op when `previousOwnerID`
     /// was the current owner.  Appends `.l2SilentPromotion` if the store still
     /// has a non-nil owner after the release.
     ///
     /// - Parameters:
-    ///   - store: the ownership store immediately after the detach/release was applied.
+    ///   - store: the ownership store immediately after the release was applied.
     ///   - session: session name.
     ///   - previousOwnerID: the client ID that held ownership before releasing.
     ///   - epochBeforeRelease: the epoch captured before the release was applied
@@ -120,7 +120,7 @@ struct Oracle {
         let snapshot = store.snapshot(sessionName: session)
         var found: [Violation] = []
 
-        // L2: no silent promotion — store must be ownerless after owner release/detach.
+        // L2: no silent promotion — store must be ownerless after explicit owner release.
         if snapshot.ownerClientID != nil {
             found.append(.l2SilentPromotion(previousOwnerID))
         }

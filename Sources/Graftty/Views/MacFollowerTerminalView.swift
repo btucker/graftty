@@ -214,12 +214,15 @@ final class MacFollowerTerminalView: NSView {
                 cellPixels: CGSize(width: Int(size.cell_width_px), height: Int(size.cell_height_px)),
                 displayScale: pixelScale, container: bounds.size
               ) else {
+            // Attachment grids temporarily enable scrolling even for a leader.
+            // Remove those scrollers before measuring the restored viewport;
+            // legacy scrollers otherwise subtract their gutters for one resize.
+            scrollView.hasVerticalScroller = false
+            scrollView.hasHorizontalScroller = false
             positionFrame(canvasWidth: nil, pixelScale: pixelScale)
             let viewport = scrollView.contentSize
             removeHistory()
             presentation = nil
-            scrollView.hasVerticalScroller = false
-            scrollView.hasHorizontalScroller = false
             document.frame = CGRect(origin: .zero, size: viewport)
             scaledView.frame = document.bounds
             scaledView.bounds = CGRect(origin: .zero, size: viewport)

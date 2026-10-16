@@ -3,10 +3,15 @@ import Testing
 @testable import GrafttyProtocol
 
 struct RemoteOpenOfferTests {
-    @Test("@spec IMAGE-2.1: When an image offer crosses a host connection, the application shall preserve optional image intent and recipient metadata while decoding absent or unknown intent without treating it as an image request.")
+    @Test("@spec IMAGE-2.1: When a native preview offer crosses a host connection, the application shall preserve optional native preview intent, collection identity and recipient metadata while decoding absent or unknown intent without treating it as a native preview request.")
     func imageIntentRoundTripsAndLegacyOffersRemainUnspecified() throws {
         let image = RemoteOpenOffer(id: UUID(), filename: "image.png", byteCount: 4, paneSessionName: "pane",
                                     previewKind: "image", previewOwnerDeviceID: .init(value: "phone"))
+        #expect(image.isNativePreview)
+        let collection = RemoteOpenOffer(id: UUID(), filename: "explanation.html", byteCount: 4, paneSessionName: "pane",
+                                         previewKind: "file", previewOwnerDeviceID: .init(value: "phone"), previewGroupID: UUID())
+        #expect(collection.isNativePreview)
+        #expect(try JSONDecoder().decode(RemoteOpenOffer.self, from: JSONEncoder().encode(collection)) == collection)
         let encoded = try JSONEncoder().encode(image)
         #expect(try JSONDecoder().decode(RemoteOpenOffer.self, from: encoded) == image)
         var legacy = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
@@ -14,6 +19,8 @@ struct RemoteOpenOfferTests {
         legacy.removeValue(forKey: "previewOwnerDeviceID")
         let old = try JSONDecoder().decode(RemoteOpenOffer.self, from: JSONSerialization.data(withJSONObject: legacy))
         #expect(old.previewKind == nil)
+        #expect(old.previewGroupID == nil)
+        #expect(!old.isNativePreview)
         #expect(old.previewOwnerDeviceID == nil)
         legacy["previewKind"] = "future"
         #expect(try JSONDecoder().decode(RemoteOpenOffer.self, from: JSONSerialization.data(withJSONObject: legacy)).previewKind == "future")

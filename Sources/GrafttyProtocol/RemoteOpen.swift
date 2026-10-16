@@ -1,7 +1,7 @@
 import Foundation
 
 /// @spec PORTS-5.38: When a remote open offer crosses a host connection, the application shall preserve its originating pane session and intended paired mobile device, and decode older offers without those identities as unspecified.
-/// @spec IMAGE-2.1: When an image offer crosses a host connection, the application shall preserve optional image intent and recipient metadata while decoding absent or unknown intent without treating it as an image request.
+/// @spec IMAGE-2.1: When a native preview offer crosses a host connection, the application shall preserve optional native preview intent, collection identity and recipient metadata while decoding absent or unknown intent without treating it as a native preview request.
 public struct RemoteOpenOffer: Codable, Sendable, Equatable, Identifiable {
     public static let maxBytes = 20 * 1024 * 1024
     public static let chunkBytes = 48 * 1024
@@ -11,20 +11,23 @@ public struct RemoteOpenOffer: Codable, Sendable, Equatable, Identifiable {
     public let url: URL?
     public let paneSessionName: String?
     public let browserOwnerDeviceID: RemoteDeviceID?
-    /// Only the explicit "image" value identifies a graftty image request.
+    /// The explicit "image" and "file" values identify native preview requests.
     /// Unknown intent values remain ordinary manually opened resources.
+    public var isNativePreview: Bool { previewKind == "image" || previewKind == "file" }
+    public let previewGroupID: UUID?
     public let previewKind: String?
     public let previewOwnerDeviceID: RemoteDeviceID?
 
     public init(id: UUID, filename: String, byteCount: Int, url: URL? = nil,
                 paneSessionName: String? = nil, browserOwnerDeviceID: RemoteDeviceID? = nil,
-                previewKind: String? = nil, previewOwnerDeviceID: RemoteDeviceID? = nil) {
+                previewKind: String? = nil, previewOwnerDeviceID: RemoteDeviceID? = nil, previewGroupID: UUID? = nil) {
         self.id = id
         self.filename = filename
         self.byteCount = byteCount
         self.url = url
         self.paneSessionName = paneSessionName
         self.browserOwnerDeviceID = browserOwnerDeviceID
+        self.previewGroupID = previewGroupID
         self.previewKind = previewKind
         self.previewOwnerDeviceID = previewOwnerDeviceID
     }

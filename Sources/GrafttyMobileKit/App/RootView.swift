@@ -396,6 +396,56 @@ struct SessionStep: Hashable {
     }
 }
 
+private struct TerminalControlsGroupedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var terminalControlsGrouped: Bool {
+        get { self[TerminalControlsGroupedKey.self] }
+        set { self[TerminalControlsGroupedKey.self] = newValue }
+    }
+}
+
+struct TerminalFloatingGlass: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.interactive(), in: Capsule())
+        } else {
+            content.background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(.separator.opacity(0.35), lineWidth: 0.5))
+        }
+    }
+}
+
+/// One continuous background; the buttons retain their own touch targets.
+struct TerminalFloatingControlGroup<Content: View>: View {
+    var isVisible = true
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .environment(\.terminalControlsGrouped, true)
+            .background {
+                Capsule().fill(.clear)
+                    .modifier(TerminalFloatingGlass())
+                    .opacity(isVisible ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+    }
+}
+
+private struct TerminalFloatingButtonBackground: ViewModifier {
+    @Environment(\.terminalControlsGrouped) private var grouped
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if grouped { content }
+        else { content.modifier(TerminalFloatingGlass()) }
+    }
+}
+
 /// Shared floating terminal control for Back, keyboard and browser actions.
 /// The plain style keeps each glyph in the primary foreground.
 struct TerminalFloatingGlyphButton: View {
@@ -414,8 +464,8 @@ struct TerminalFloatingGlyphButton: View {
                 .foregroundStyle(.primary)
                 .padding(10)
                 .frame(minWidth: 44, minHeight: 44)
-                .background(.ultraThinMaterial, in: Circle())
-                .shadow(radius: 1)
+                .contentShape(Rectangle())
+                .modifier(TerminalFloatingButtonBackground())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
@@ -449,6 +499,7 @@ final class TerminalContainerBox {
 /// freeing and remounting Ghostty's renderer during a QuartzCore transaction.
 struct SingleSessionView: View {
     static let sessionRole: SessionClient.Role = .fullscreen
+    static let autocorrectionDefaultsKey = "GrafttyMobile.terminalAutocorrectionEnabled"
 
     enum TerminalControlBarItem: String, Hashable {
         case escape
@@ -465,6 +516,7 @@ struct SingleSessionView: View {
         case returnDivider
         case submitReturn
         case literalLineFeed
+        case autocorrection
         case hideKeyboard
     }
 
@@ -483,6 +535,7 @@ struct SingleSessionView: View {
         .returnDivider,
         .submitReturn,
         .literalLineFeed,
+        .autocorrection,
         .hideKeyboard,
     ]
 
@@ -567,6 +620,7 @@ struct SingleSessionView: View {
     @State private var stickyControlActivation:
         TerminalInputContainerView.StickyControlActivation = .inactive
     @State private var isTrayShiftSelected = false
+    @AppStorage(autocorrectionDefaultsKey) private var isAutocorrectionEnabled = false
     /// The iOS-scaled Mac ghostty config used to build `controller`.
     /// Cached so owner-selected font preferences can be applied without re-fetching.
     @State private var baseConfigText: String?
@@ -1333,11 +1387,7 @@ struct SingleSessionView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.primary)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(
-            Capsule()
-                .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
-        )
+        .modifier(TerminalFloatingGlass())
         .accessibilityLabel("Take Control")
     }
 
@@ -1424,6 +1474,8 @@ struct SingleSessionView: View {
             terminalTextControl("LF", accessibilityLabel: "Insert newline") {
                 client?.insertNewline()
             }
+        case .autocorrection:
+            terminalAutocorrectionControl
         case .hideKeyboard:
             terminalIconControl(
                 "keyboard.chevron.compact.down",
@@ -1486,6 +1538,7 @@ struct SingleSessionView: View {
                 deleteBackward: { client.deleteBackward() }
             ) : nil,
             agentCompletion: agentCompletion,
+            isAutocorrectionEnabled: isAutocorrectionEnabled,
             hardwareKeyboardCommands: isPaneFocused ? ghosttyCommandContext.map {
                     MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: $0)
                 } ?? [] : [],
@@ -1592,7 +1645,7 @@ struct SingleSessionView: View {
 
     /// Wraps a control-bar action so that pressing any key while a
     /// terminal selection is active first cancels the selection
-    /// (IOS-11.7). Every entry in `terminalControlBar` routes its
+    /// (IOS-11.7). Terminal key entries in `terminalControlBar` route their
     /// action through this wrapper.
     private func controlBarAction(
         _ body: @escaping () -> Void,
@@ -1677,6 +1730,27 @@ struct SingleSessionView: View {
         .buttonStyle(.plain)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var terminalAutocorrectionControl: some View {
+        // A preference change must preserve the current input context and
+        // completion token, so it does not use the terminal-key action wrapper.
+        Button { isAutocorrectionEnabled.toggle() } label: {
+            Image(systemName: "textformat.abc")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(isAutocorrectionEnabled ? Color.accentColor : Color.primary)
+                .frame(width: 38, height: 34)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(isAutocorrectionEnabled ? Color.accentColor : Color.clear, lineWidth: 2)
+        }
+        .accessibilityLabel("Auto-correct")
+        .accessibilityValue(isAutocorrectionEnabled ? "On" : "Off")
+        .accessibilityAddTraits(isAutocorrectionEnabled ? .isSelected : [])
     }
 }
 

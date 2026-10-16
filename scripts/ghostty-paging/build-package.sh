@@ -32,7 +32,7 @@ xcrun metal --version >/dev/null
 
 renderer_pin=8af6897c0afc63037a8a3efee4162a380e3a4572
 wrapper_pin=da4d8ddc94ba66f89efa5208961a1116357117c3
-renderer_patches=(preserve-top-anchor resize-history-guard renderer-experiment ios-renderer-experiment production-snapshot history-viewport presentation-order scrollbar-state)
+renderer_patches=(preserve-top-anchor resize-history-guard renderer-experiment ios-renderer-experiment production-snapshot history-viewport presentation-order scrollbar-state history-boundary)
 mkdir -p "$cache" "$(dirname "$output")"
 cache=$(cd "$cache" && pwd)
 output=$(cd "$(dirname "$output")" && pwd)/$(basename "$output")

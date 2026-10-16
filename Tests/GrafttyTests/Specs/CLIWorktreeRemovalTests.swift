@@ -17,7 +17,7 @@ struct CLIWorktreeRemovalTests {
         #expect(help.contains("untracked"))
         #expect(help.contains("graftty team list"))
         #expect(
-            try GrafttyTeamSkillText.load().contains(
+            try GrafttyTeamSkillText.load(reference: "worktrees").contains(
                 "graftty worktree remove"
             )
         )

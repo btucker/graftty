@@ -28,6 +28,21 @@ struct MobileAgentCompletionTests {
               worktreePath: "/project/main", worktreeName: "main", hostName: "Mac", runtime: "codex")
     }
 
+    @Test func autocorrectionTogglePreservesCompletionToken() {
+        let (container, model, output) = setup()
+        container.terminalView.insertText("%")
+        container.terminalView.insertText("pending")
+        #expect(model.isActive)
+        for enabled in [true, false] {
+            container.terminalView.isAutocorrectionEnabled = enabled
+            #expect(model.isActive)
+            #expect(model.query == "pending")
+            #expect(output.texts.isEmpty)
+            #expect(output.deletes == 0)
+        }
+        model.cancel(preserveLiteral: false)
+    }
+
     private func key(_ usage: UIKeyboardHIDUsage, text: String = "",
                      modifiers: UIKeyModifierFlags = []) -> TerminalHardwareKeyEvent {
         .init(usage: UInt16(usage.rawValue), characters: text,

@@ -7,78 +7,6 @@ import GrafttyKit
 
 @MainActor
 struct ImagePreviewControlTests {
-    @Test("@spec IMAGE-1.14: While the native image tray toolbar is visible, the application shall use native zoom controls and keep the Fit and Open… labels legible without clipping either action.")
-    func nativeToolbarDoesNotClipActionLabels() throws {
-        _ = NSApplication.shared
-        let tray = NativeImagePreviewTray(preview: .init(image: try fixture(), filename: "a long chart filename.png"), onDismiss: {})
-        for width in [180.0, 240, 320, 480, 800] {
-            tray.frame = NSRect(x: 0, y: 0, width: width, height: 240)
-            tray.layoutSubtreeIfNeeded()
-            let buttons = descendants(tray).compactMap { $0 as? NSButton }
-            let zoom = try #require(descendants(tray).compactMap { $0 as? NSSegmentedControl }.first)
-            #expect(zoom.label(forSegment: 1) == "Fit")
-            #expect(zoom.width(forSegment: 1) >= 34)
-            let preview = try #require(buttons.first { $0.accessibilityLabel() == "Open in Preview" })
-            #expect(preview.frame.width >= preview.intrinsicContentSize.width)
-            #expect(preview.title == "Open…")
-            #expect(preview.frame.width >= (preview.cell?.cellSize.width ?? 0))
-            let close = try #require(buttons.first { $0.accessibilityLabel() == "Close image preview" })
-            #expect(preview.frame.maxX <= width)
-            #expect(close.frame.maxX <= width)
-            #expect(zoom.frame.minX >= 0 && zoom.frame.maxX <= width)
-            #expect(preview.frame.minX >= zoom.frame.maxX)
-        }
-    }
-
-    @Test("@spec IMAGE-1.15: When the user selects Open in Preview from an image tray, the application shall open the originating file specifically in Preview.app and report missing-file, unavailable-app, or launch errors without dismissing the tray.")
-    func previewActionOpensOriginatingFileAndReportsErrors() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
-        defer { try? FileManager.default.removeItem(at: root) }
-        try Data("fixture".utf8).write(to: root)
-        var requestedBundle: String?
-        let application = URL(fileURLWithPath: "/System/Applications/Preview.app")
-        let request = try ImagePreviewExternalOpen.request(file: root) { bundle in
-            requestedBundle = bundle
-            return application
-        }
-        #expect(requestedBundle == "com.apple.Preview")
-        #expect(request.file == root)
-        #expect(request.application == application)
-        let link = root.appendingPathExtension("link")
-        defer { try? FileManager.default.removeItem(at: link) }
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: root)
-        #expect(try ImagePreviewExternalOpen.request(file: link) { _ in application }.file == link)
-        let brokenLink = root.appendingPathExtension("broken-link")
-        defer { try? FileManager.default.removeItem(at: brokenLink) }
-        try FileManager.default.createSymbolicLink(at: brokenLink, withDestinationURL: root.appendingPathExtension("missing"))
-        #expect(throws: (any Error).self) { try ImagePreviewExternalOpen.request(file: brokenLink) { _ in application } }
-        #expect(throws: (any Error).self) { try ImagePreviewExternalOpen.request(file: root) { _ in nil } }
-        let missing = root.appendingPathExtension("missing")
-        #expect(throws: (any Error).self) { try ImagePreviewExternalOpen.request(file: missing) { _ in application } }
-        var opened: [URL] = [], dismissed = 0, shouldFail = true
-        let tray = NativeImagePreviewTray(preview: .init(image: try fixture(), filename: "chart.png", sourceURL: root),
-                                          onDismiss: { dismissed += 1 }, openFile: { url in
-            opened.append(url)
-            if shouldFail { throw CocoaError(.fileReadNoSuchFile) }
-        })
-        await tray.openInPreview()
-        #expect(opened == [root])
-        #expect(tray.openErrorMessage != nil)
-        let errorField = try #require(descendants(tray).compactMap { $0 as? NSTextField }.first {
-            $0.stringValue.hasPrefix("Could not open in Preview:")
-        })
-        #expect(!errorField.isHidden)
-        #expect(dismissed == 0)
-        shouldFail = false
-        await tray.openInPreview()
-        #expect(tray.openErrorMessage == nil)
-        #expect(errorField.isHidden)
-        let second = root.deletingLastPathComponent().appendingPathComponent("second.png")
-        tray.updatePreview(.init(image: try fixture(), filename: "second.png", sourceURL: second))
-        await tray.openInPreview()
-        #expect(opened == [root, root, second])
-    }
-
     @Test("@spec IMAGE-1.16: When the user drags the image tray header, corner grip, or bottom edge, the application shall move or resize the tray within the terminal content bounds while retaining usable controls and an unobscured terminal region, without resizing the terminal grid.")
     func movementAndResizeStayWithinTerminal() {
         let viewport = CGSize(width: 800, height: 600)
@@ -103,7 +31,7 @@ struct ImagePreviewControlTests {
         _ = NSApplication.shared
         let terminal = ImagePreviewControlTerminal(frame: .zero)
         let pane = PaneSlotID(id: UUID())
-        let preview = ImagePreviewStore.Preview(image: try fixture(), filename: "drag me.png")
+        let preview = try ImagePreviewStore.Preview(image: try fixture(), filename: "drag me.png")
         func root(pane: PaneSlotID, preview: ImagePreviewStore.Preview?) -> some View {
             ImagePreviewControlTerminalView(view: terminal).overlay(alignment: .top) {
                 ImagePreviewOverlay(pane: pane, preview: preview, onDismiss: {})
@@ -113,22 +41,22 @@ struct ImagePreviewControlTests {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = hosted
         hosted.layoutSubtreeIfNeeded()
-        let tray = try #require(descendants(hosted).compactMap { $0 as? NativeImagePreviewTray }.first)
-        let resizePoint = tray.resizeGrip.convert(NSPoint(x: 12, y: 12), to: nil)
+        let tray = try #require(descendants(hosted).compactMap { $0 as? NativeFilePreviewTray }.first)
+        let resizePoint = tray.grip.convert(NSPoint(x: 12, y: 12), to: nil)
         let grip = try #require(hosted.hitTest(hosted.superview?.convert(resizePoint, from: nil) ?? resizePoint))
-        #expect(grip === tray.resizeGrip)
+        #expect(grip === tray.grip)
         try drag(grip, from: resizePoint, to: NSPoint(x: resizePoint.x - 200, y: resizePoint.y - 60), window: window)
         try await Task.sleep(for: .milliseconds(20))
         hosted.layoutSubtreeIfNeeded()
         #expect(tray.bounds.size == CGSize(width: 600, height: 330))
         let bottomPoint = tray.convert(NSPoint(x: tray.bounds.midX, y: 4), to: nil)
         let bottom = try #require(hosted.hitTest(hosted.superview?.convert(bottomPoint, from: nil) ?? bottomPoint))
-        try #require(bottom.accessibilityLabel() == "Resize image preview height")
+        try #require(bottom.accessibilityLabel() == "Resize preview height")
         try drag(bottom, from: bottomPoint, to: NSPoint(x: bottomPoint.x + 100, y: bottomPoint.y - 60), window: window)
         try await Task.sleep(for: .milliseconds(20))
         hosted.layoutSubtreeIfNeeded()
         #expect(tray.bounds.size == CGSize(width: 600, height: 390))
-        let headerPoint = tray.dragHandle.convert(NSPoint(x: 40, y: 22), to: nil)
+        let headerPoint = tray.header.convert(NSPoint(x: 40, y: 22), to: nil)
         let header = try #require(hosted.hitTest(hosted.superview?.convert(headerPoint, from: nil) ?? headerPoint))
         try drag(header, from: headerPoint, to: NSPoint(x: headerPoint.x + 100, y: headerPoint.y - 100), window: window)
         try await Task.sleep(for: .milliseconds(20))
@@ -140,9 +68,9 @@ struct ImagePreviewControlTests {
         let outside = terminal.convert(NSPoint(x: 760, y: 40), to: hosted.superview)
         let hit = try #require(hosted.hitTest(outside))
         #expect(hit === terminal || hit.isDescendant(of: terminal))
-        let zoomPoint = tray.zoomControls.convert(NSPoint(x: tray.zoomControls.bounds.midX, y: tray.zoomControls.bounds.midY), to: nil)
+        let zoomPoint = tray.picker.convert(NSPoint(x: tray.picker.bounds.midX, y: tray.picker.bounds.midY), to: nil)
         let zoomHit = try #require(hosted.hitTest(hosted.superview?.convert(zoomPoint, from: nil) ?? zoomPoint))
-        #expect(zoomHit === tray.zoomControls || zoomHit.isDescendant(of: tray.zoomControls))
+        #expect(zoomHit === tray.picker || zoomHit.isDescendant(of: tray.picker))
 
         window.setContentSize(CGSize(width: 360, height: 260))
         try await Task.sleep(for: .milliseconds(20))
@@ -156,11 +84,11 @@ struct ImagePreviewControlTests {
         let otherPane = PaneSlotID(id: UUID())
         hosted.rootView = root(pane: otherPane, preview: nil)
         try await Task.sleep(for: .milliseconds(20))
-        #expect(descendants(hosted).compactMap { $0 as? NativeImagePreviewTray }.isEmpty)
-        hosted.rootView = root(pane: otherPane, preview: .init(image: try fixture(), filename: "other worktree.png"))
+        #expect(descendants(hosted).compactMap { $0 as? NativeFilePreviewTray }.isEmpty)
+        hosted.rootView = root(pane: otherPane, preview: try .init(image: try fixture(), filename: "other worktree.png"))
         try await Task.sleep(for: .milliseconds(20))
         hosted.layoutSubtreeIfNeeded()
-        let otherTray = try #require(descendants(hosted).compactMap { $0 as? NativeImagePreviewTray }.first)
+        let otherTray = try #require(descendants(hosted).compactMap { $0 as? NativeFilePreviewTray }.first)
         #expect(otherTray !== tray)
         #expect(hosted.convert(otherTray.bounds, from: otherTray).origin == .zero)
         #expect(otherTray.bounds.width == 360)
@@ -168,10 +96,10 @@ struct ImagePreviewControlTests {
         try await Task.sleep(for: .milliseconds(20))
         hosted.layoutSubtreeIfNeeded()
         #expect(otherTray.bounds.width == 180)
-        let compactFit = otherTray.zoomControls.convert(NSPoint(x: otherTray.zoomControls.bounds.midX,
-                                                               y: otherTray.zoomControls.bounds.midY), to: nil)
+        let compactFit = otherTray.picker.convert(NSPoint(x: otherTray.picker.bounds.midX,
+                                                               y: otherTray.picker.bounds.midY), to: nil)
         let compactHit = try #require(hosted.hitTest(hosted.superview?.convert(compactFit, from: nil) ?? compactFit))
-        #expect(compactHit === otherTray.zoomControls || compactHit.isDescendant(of: otherTray.zoomControls))
+        #expect(compactHit === otherTray.picker || compactHit.isDescendant(of: otherTray.picker))
     }
 
     private func drag(_ view: NSView, from start: NSPoint, to end: NSPoint, window: NSWindow) throws {

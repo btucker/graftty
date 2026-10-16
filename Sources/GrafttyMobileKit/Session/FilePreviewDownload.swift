@@ -47,6 +47,23 @@ enum FilePreviewDownload {
         }
     }
 
+    static func download(_ offers: [RemoteOpenOffer], read: (RemoteOpenOffer, Int) async throws -> Data) async throws -> [URL] {
+        guard (1...20).contains(offers.count),
+              offers.allSatisfy({ (0...RemoteOpenOffer.maxBytes).contains($0.byteCount) }),
+              offers.reduce(0, { $0 + $1.byteCount }) <= 50 * 1024 * 1024 else { throw Failure.invalidOffer }
+        var files: [URL] = []
+        do {
+            for offer in offers {
+                let file = try await download(offer) { offset in try await read(offer, offset) }
+                files.append(file)
+            }
+            return files
+        } catch {
+            files.forEach(remove)
+            throw error
+        }
+    }
+
     static func remove(_ file: URL) {
         try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
     }

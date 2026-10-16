@@ -30,7 +30,8 @@
     "REMOTE",
     "CHROME",
     "URL",
-    "IMAGE"
+    "IMAGE",
+    "PREVIEW"
   ],
   "sections": {
     "LAYOUT": "App Layout",
@@ -62,7 +63,8 @@
     "REMOTE": "Secure Remote Access",
     "CHROME": "Dedicated Chrome tabs",
     "URL": "Worktree URL Handler",
-    "IMAGE": "Native Image Preview"
+    "IMAGE": "Native Image Preview",
+    "PREVIEW": "Native File Preview"
   },
   "subsections": {
     "CHROME.1": "Host profiles and ownership",

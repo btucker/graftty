@@ -57,6 +57,7 @@ enum CLIError: Error, CustomStringConvertible {
     case notInsideWorktree
     case appNotRunning
     case staleControlSocket(path: String)
+    case socketPermissionDenied(path: String, errno: Int32)
     case socketTimeout
     case socketClosedWithoutResponse
     case socketBusy
@@ -70,6 +71,8 @@ enum CLIError: Error, CustomStringConvertible {
         case .appNotRunning: return "Graftty is not running"
         case .staleControlSocket(let path):
             return "Graftty is running but not listening on \(path). Quit and relaunch Graftty to reset the control socket."
+        case .socketPermissionDenied(let path, let errno):
+            return "Access denied to Graftty control socket at \(path) (errno \(errno)); sandbox policy or filesystem permissions may block this connection. If sandboxed, request narrowly scoped permission for this command outside the sandbox. Otherwise, check the socket and parent directory ownership and permissions."
         case .socketTimeout:
             return "Connection timed out after \(SocketClient.socketTimeoutSeconds) seconds"
         case .socketClosedWithoutResponse:

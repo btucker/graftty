@@ -1043,8 +1043,8 @@ final class TerminalSessionHandlerTests: XCTestCase {
     /// so `channelInactive`'s cleanup (coordinator detach, `stream.close()`)
     /// still runs. Before the fix, `startInboundForwarding`'s `for await`
     /// loop simply returned, leaving the channel open and the ownership
-    /// store permanently holding a stale attached/owner entry for a client
-    /// that is never coming back.
+    /// store permanently authorizing input from a closed attachment.
+    /// The device retains leadership, but the closed channel must lose input access.
     func testInboundStreamFinishingOnItsOwnClosesChannelAndDetachesCoordinator() async throws {
         let stream = FinishableStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
@@ -1082,23 +1082,23 @@ final class TerminalSessionHandlerTests: XCTestCase {
         _ = try await nextOutboundEnvelope(channel)
         try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID != nil }
 
+        let retainedOwner = try XCTUnwrap(store.snapshot(sessionName: "alpha").ownerClientID)
         // Simulate the underlying child process exiting on its own —
         // ZmxAttachEngine's reader thread finishes `inboundBytes` on EOF
         // even when the caller never calls `close()`.
         stream.finishInboundForTesting()
 
         try await waitUntil(timeout: 3.0) { !channel.isActive }
-        try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID == nil }
+        try await waitUntil { !store.isAttachedOwner(sessionName: "alpha", clientID: retainedOwner) }
+        XCTAssertEqual(store.snapshot(sessionName: "alpha").ownerClientID, retainedOwner)
 
         XCTAssertTrue(
             capture.sawExitStatus0,
             "natural terminal EOF must be identified to the client as exit-status: 0"
         )
         XCTAssertFalse(channel.isActive, "channel must close when the engine's byte stream ends on its own")
-        XCTAssertNil(
-            store.snapshot(sessionName: "alpha").ownerClientID,
-            "coordinator must detach (clearing ownership) once the channel closes"
-        )
+        XCTAssertFalse(store.isAttachedOwner(sessionName: "alpha", clientID: retainedOwner),
+                       "coordinator must detach and lose input access once the channel closes")
 
         _ = try? await channel.finish()
     }

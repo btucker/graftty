@@ -359,7 +359,7 @@ struct ClaudePeerDeliveryServiceTests {
         ).isEmpty)
     }
 
-    @Test("Native reply listener failure preserves delivery with the message-ID reply command")
+    @Test("Native reply listener failure preserves delivery with the inbox ID for CLI replies")
     func unavailableNativeBridgeKeepsCLIReply() async throws {
         let bridge = ClaudePeerReplyBridge { _, _, _ in .ok }
         await bridge.close()
@@ -369,7 +369,8 @@ struct ClaudePeerDeliveryServiceTests {
         await fixture.service.onMessageArrival(team: fixture.teamID, worktree: fixture.worktree)
         let call = try #require(await fixture.client.calls.first)
         #expect(call.replySocketPath == nil)
-        #expect(call.body.contains(TeamReplyResolver.command(messageID: message.id)))
+        #expect(call.body.contains("id=\"\(message.id)\""))
+        #expect(!call.body.contains("Graftty reply:"))
         #expect(try fixture.inbox.worktreePendingMessages(teamID: fixture.teamID, recipientWorktree: fixture.worktree).isEmpty)
     }
 

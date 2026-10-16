@@ -6,7 +6,7 @@ import GrafttyKit
 /// Native control tracking runs in XCTest's AppKit process.
 @MainActor
 final class ImagePreviewNativeControlTests: XCTestCase {
-    /// @spec IMAGE-1.18: When the user clicks the native image tray zoom, Fit, or Close control, the application shall perform that action without starting a header drag, and restore terminal focus when closing a focused preview.
+    /// @spec IMAGE-1.18: When the user clicks the native preview tray navigation or Close controls, the application shall perform that action without starting a header drag, and restore terminal focus when closing a focused preview.
     func testNativeZoomFitAndCloseTargets() throws {
         for width in [800.0, 180] { try assertNativeTargets(trayWidth: width) }
     }
@@ -26,18 +26,18 @@ final class ImagePreviewNativeControlTests: XCTestCase {
         defer { window.orderOut(nil); window.contentView = nil }
         XCTAssertTrue(window.makeFirstResponder(terminal))
         var dismissed = 0, interactions = 0
-        let tray = NativeImagePreviewTray(preview: .init(image: image, filename: "chart.png"), onDismiss: { dismissed += 1 },
+        let tray = NativeFilePreviewTray(preview: try .init(image: image, filename: "chart.png"), onDismiss: { dismissed += 1 },
                                           onInteraction: { _ in interactions += 1 })
+        defer { tray.tearDown() }
         tray.frame = NSRect(x: 0, y: 330, width: trayWidth, height: 270)
         root.addSubview(tray)
         tray.layoutSubtreeIfNeeded()
         XCTAssertTrue(window.firstResponder === terminal)
-        try click(tray.zoomControls, at: NSPoint(x: tray.zoomControls.bounds.maxX - 14, y: tray.zoomControls.bounds.midY), window: window)
-        XCTAssertEqual(tray.scrollView.magnification, 1.5)
+        XCTAssertFalse(tray.previous.isEnabled)
+        XCTAssertFalse(tray.next.isEnabled)
+        tray.claimFocus()
         XCTAssertTrue(tray.ownsFocus)
-        try click(tray.zoomControls, at: NSPoint(x: tray.zoomControls.bounds.midX, y: tray.zoomControls.bounds.midY), window: window)
-        XCTAssertEqual(tray.scrollView.magnification, 1)
-        let close = try XCTUnwrap(descendants(tray).compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "Close image preview" })
+        let close = try XCTUnwrap(descendants(tray).compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "Close preview" })
         try click(close, at: NSPoint(x: close.bounds.midX, y: close.bounds.midY), window: window)
         XCTAssertEqual(dismissed, 1)
         XCTAssertEqual(interactions, 0)
