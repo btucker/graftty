@@ -1,0 +1,938 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Graftty · 01 · Status rail</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --page: #151718;
+        --surface: #232729;
+        --terminal: #191d1f;
+        --line: #3b4245;
+        --text: #e4e8ea;
+        --muted: #a6b0b5;
+        --blue: #b2d4f2;
+        --blue-bg: #293e4e;
+        --green: #b3cda9;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--page);
+        color: var(--text);
+        font:
+          14px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        padding: 36px;
+      }
+      main {
+        max-width: 1220px;
+        margin: auto;
+      }
+      header {
+        display: flex;
+        gap: 28px;
+        justify-content: space-between;
+        align-items: start;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 24px;
+        margin-bottom: 28px;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 1.6px;
+        text-transform: uppercase;
+        color: var(--blue);
+        margin: 0 0 9px;
+      }
+      h1 {
+        font-size: 32px;
+        letter-spacing: -1px;
+        line-height: 1.15;
+        font-weight: 600;
+        margin: 0 0 12px;
+      }
+      .lede {
+        color: #bbc3c7;
+        max-width: 650px;
+        margin: 0;
+        font-size: 15px;
+      }
+      .counter {
+        color: var(--muted);
+        font:
+          12px ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        white-space: nowrap;
+        padding-top: 4px;
+      }
+      .stage-label {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .stage-label strong {
+        color: var(--text);
+        font-weight: 500;
+      }
+      .scenes {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        gap: 24px;
+        align-items: start;
+      }
+      .device-label {
+        font-size: 10px;
+        letter-spacing: 1.2px;
+        color: var(--muted);
+        text-transform: uppercase;
+        margin: 0 0 9px;
+      }
+      .mac,
+      .phone {
+        border: 1px solid #4a5155;
+        overflow: hidden;
+        background: var(--terminal);
+        position: relative;
+        box-shadow: 0 10px 25px #0002;
+      }
+      .mac {
+        border-radius: 10px;
+      }
+      .phone {
+        border-radius: 25px;
+        border: 4px solid #43494d;
+      }
+      .titlebar {
+        height: 37px;
+        background: #2b2f32;
+        display: flex;
+        align-items: center;
+        padding: 0 13px;
+        border-bottom: 1px solid var(--line);
+        font-size: 11px;
+        color: #bac2c6;
+        gap: 7px;
+      }
+      .traffic {
+        width: 9px;
+        height: 9px;
+        border-radius: 100%;
+        background: #b3736b;
+      }
+      .traffic:nth-child(2) {
+        background: #c2a36a;
+      }
+      .traffic:nth-child(3) {
+        background: #789c72;
+      }
+      .windowname {
+        flex: 1;
+        text-align: center;
+        padding-right: 32px;
+      }
+      .workspace {
+        height: 365px;
+        display: flex;
+      }
+      .sidebar {
+        width: 145px;
+        background: #25292c;
+        border-right: 1px solid var(--line);
+        padding: 15px 8px;
+        font-size: 11px;
+        flex-shrink: 0;
+      }
+      .sidebar small {
+        font-size: 10px;
+        color: var(--muted);
+        display: block;
+        margin: 0 7px 12px;
+      }
+      .project {
+        color: #cbd1d5;
+        margin: 0 7px 12px;
+        font-weight: 600;
+      }
+      .tree {
+        padding: 8px;
+        border-radius: 5px;
+        color: #aab3b8;
+        margin: 3px 0;
+      }
+      .tree.active {
+        background: #3a4146;
+        color: var(--text);
+      }
+      .tree span {
+        display: block;
+        font-size: 10px;
+        color: #9da8ae;
+        margin-top: 3px;
+      }
+      .pane {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .panehead {
+        height: 32px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 12px;
+        border-bottom: 1px solid #2d3438;
+        color: #acb7bd;
+        font-size: 10px;
+        gap: 8px;
+      }
+      .panehead b {
+        font-weight: 500;
+        color: #d7dde0;
+      }
+      .dots {
+        font-size: 19px;
+        color: #b1bbc1;
+        line-height: 1;
+        letter-spacing: 1px;
+      }
+      .terminal {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        padding: 25px 20px 15px;
+        color: #bac4c9;
+        font:
+          11px/1.9 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+      }
+      .terminal p {
+        margin: 0 0 17px;
+      }
+      .terminal b {
+        color: #e0e6e9;
+        font-weight: 600;
+      }
+      .terminal .path {
+        color: #a9c6a3;
+      }
+      .terminal .dim {
+        color: #8f9ca4;
+      }
+      .terminal .rule {
+        border-top: 1px solid #3c464c;
+        padding-top: 12px;
+        margin-top: 18px;
+        color: #d1dae0;
+      }
+      .terminal .plus {
+        color: #a8c39d;
+      }
+      .cursor {
+        display: inline-block;
+        width: 6px;
+        height: 12px;
+        background: #bdc6cb;
+        vertical-align: -2px;
+      }
+      .statusbar {
+        height: 23px;
+        border-top: 1px solid #30373b;
+        padding: 3px 11px;
+        font-size: 9px;
+        color: #98a4ac;
+        display: flex;
+        justify-content: space-between;
+        flex-shrink: 0;
+      }
+      .phone-status {
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 19px;
+        font-size: 10px;
+        font-weight: 600;
+        background: #24282a;
+      }
+      .island {
+        width: 65px;
+        height: 17px;
+        border-radius: 20px;
+        background: #101214;
+      }
+      .mobile-nav {
+        height: 46px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 13px;
+        border-bottom: 1px solid #363e43;
+        background: #24282a;
+        font-size: 12px;
+      }
+      .back {
+        font-size: 24px;
+        color: var(--blue);
+        line-height: 1;
+      }
+      .navtitle {
+        flex: 1;
+        font-weight: 600;
+      }
+      .navtitle small {
+        display: block;
+        font-size: 9px;
+        color: #a7b2b8;
+        font-weight: 400;
+      }
+      .phone .pane {
+        height: 309px;
+      }
+      .phone .terminal {
+        font-size: 9px;
+        line-height: 1.9;
+        padding: 18px 12px;
+      }
+      .phone .terminal p {
+        margin-bottom: 13px;
+      }
+      .home {
+        height: 15px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #191d1f;
+      }
+      .home:after {
+        content: "";
+        width: 90px;
+        height: 3px;
+        border-radius: 5px;
+        background: #b2b9bd;
+      }
+      .action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+        padding: 7px 11px;
+        background: var(--blue);
+        color: #162733;
+        font-size: 11px;
+        font-weight: 600;
+        border: 1px solid #c5e0f7;
+        border-radius: 6px;
+        line-height: 1.35;
+      }
+      .action.secondary {
+        background: #303b42;
+        color: #dbe4e9;
+        border-color: #58656e;
+      }
+      .rail {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 43px;
+        padding: 7px 12px;
+        background: #26343d;
+        border-bottom: 1px solid #435561;
+        flex-shrink: 0;
+        font-size: 10px;
+        color: #b9c8d1;
+      }
+      .rail strong {
+        font-weight: 500;
+        color: #d1dce3;
+      }
+      .phone .rail {
+        padding: 9px 11px;
+        min-height: 54px;
+        font-size: 9px;
+        gap: 5px;
+      }
+      .phone .rail .action {
+        padding: 8px 10px;
+        font-size: 10px;
+      }
+      .chip {
+        position: absolute;
+        top: 43px;
+        right: 12px;
+        padding: 6px 10px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        background: #2d3941;
+        border: 1px solid #586a76;
+        border-radius: 20px;
+        box-shadow: 0 3px 10px #0003;
+        font-size: 10px;
+        line-height: 1.5;
+        z-index: 1;
+      }
+      .chip .divider {
+        height: 14px;
+        width: 1px;
+        background: #687680;
+      }
+      .chip .take {
+        color: #d4e8f8;
+        font-weight: 600;
+      }
+      .phone .chip {
+        top: 11px;
+        right: 11px;
+        left: 11px;
+        justify-content: space-between;
+        padding: 9px 12px;
+      }
+      .with-chip .terminal {
+        padding-top: 65px;
+      }
+      .corner {
+        position: absolute;
+        right: 0;
+        top: 0;
+        padding: 9px 13px;
+        background: #2a3943;
+        border-left: 1px solid #5d7381;
+        border-bottom: 1px solid #5d7381;
+        border-radius: 0 0 0 11px;
+        font-size: 10px;
+        color: #d5e7f3;
+        z-index: 1;
+      }
+      .corner small {
+        display: block;
+        font-size: 8px;
+        color: #b5c6d1;
+        margin-bottom: 3px;
+      }
+      .with-corner .terminal {
+        padding-top: 72px;
+      }
+      .phone .corner {
+        padding: 10px 15px;
+      }
+      .dock {
+        position: absolute;
+        bottom: 35px;
+        left: 18px;
+        right: 18px;
+        border: 1px solid #53636f;
+        border-radius: 10px;
+        background: #29353e;
+        box-shadow: 0 5px 18px #0004;
+        padding: 10px 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 9px;
+        font-size: 10px;
+      }
+      .dock small {
+        display: block;
+        font-size: 9px;
+        color: #bdc9d1;
+      }
+      .dock strong {
+        font-weight: 600;
+      }
+      .phone .dock {
+        left: 10px;
+        right: 10px;
+        bottom: 15px;
+        padding: 12px 10px;
+      }
+      .with-dock .terminal {
+        padding-bottom: 105px;
+      }
+      .notegrid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 28px;
+        border-top: 1px solid var(--line);
+        padding-top: 18px;
+        margin-top: 24px;
+      }
+      .notegrid p {
+        color: #b6c0c6;
+        font-size: 12px;
+        margin: 0;
+      }
+      .notegrid strong {
+        font-weight: 500;
+        color: #e0e6e9;
+        display: block;
+        margin-bottom: 5px;
+      }
+      .owned-section {
+        margin-top: 30px;
+      }
+      .owned-examples {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        gap: 24px;
+      }
+      .owner-crop {
+        border: 1px solid #444e55;
+        border-radius: 9px;
+        background: #191d1f;
+        min-height: 220px;
+        position: relative;
+        overflow: hidden;
+      }
+      .owner-crop .panehead {
+        height: 36px;
+      }
+      .crop-terminal {
+        padding: 20px;
+        color: #aab7bf;
+        font:
+          10px/1.9 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+      }
+      .menu {
+        position: absolute;
+        right: 10px;
+        top: 39px;
+        background: #30373d;
+        border: 1px solid #5c6973;
+        border-radius: 8px;
+        padding: 6px;
+        width: 226px;
+        box-shadow: 0 9px 20px #0005;
+        z-index: 3;
+      }
+      .menu-title {
+        font-size: 9px;
+        color: #b9c4cc;
+        padding: 5px 8px 7px;
+        border-bottom: 1px solid #505a62;
+        margin-bottom: 4px;
+      }
+      .menu-item {
+        padding: 6px 8px;
+        font-size: 11px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .menu-item.release {
+        color: #dfebf3;
+        background: #42535f;
+        border-radius: 4px;
+      }
+      .menu-foot {
+        font-size: 9px;
+        color: #b6c3cd;
+        line-height: 1.4;
+        padding: 8px 8px 4px;
+      }
+      .owner-chip {
+        font-size: 10px;
+        color: #b9c7d0;
+        border: 1px solid #52626d;
+        border-radius: 20px;
+        padding: 4px 9px;
+        background: #2b363e;
+      }
+      .ghost {
+        color: #9caebc;
+        font-size: 10px;
+      }
+      .owner-corner {
+        background: #2d3840;
+        padding: 6px 12px;
+        font-size: 10px;
+        border-radius: 0 0 0 8px;
+        border-left: 1px solid #53626c;
+        border-bottom: 1px solid #53626c;
+        position: absolute;
+        right: 0;
+        top: 0;
+      }
+      .owner-crop.hover .panehead {
+        padding-right: 100px;
+      }
+      .owner-crop.hover .menu {
+        top: 34px;
+      }
+      .keyboardbar {
+        height: 36px;
+        background: #2b343b;
+        display: flex;
+        align-items: center;
+        justify-content: space-around;
+        font-size: 10px;
+        border-top: 1px solid #4a5964;
+      }
+      .dock-crop .menu {
+        top: 36px;
+      }
+      .dock-crop .keyboardbar {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+      }
+      .release-strip {
+        margin-top: 22px;
+        padding: 14px 16px;
+        border: 1px solid #46525b;
+        border-radius: 8px;
+        background: #222a30;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        font-size: 11px;
+      }
+      .release-strip strong {
+        display: block;
+        font-weight: 500;
+        color: #d7e0e6;
+      }
+      .release-strip small {
+        color: #b2c0c9;
+        font-size: 10px;
+      }
+      .footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 28px;
+        margin-top: 23px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        color: #a7b4bd;
+        font-size: 11px;
+      }
+      .footer p {
+        margin: 0;
+        max-width: 750px;
+      }
+      .footer strong {
+        color: #dce5eb;
+        font-weight: 500;
+      }
+      .tag {
+        white-space: nowrap;
+        color: #b7d3e6;
+        font-size: 10px;
+        border: 1px solid #4a5b68;
+        padding: 4px 8px;
+        border-radius: 4px;
+        align-self: start;
+      }
+      .mobile-owned .panehead {
+        height: 36px;
+      }
+      .mobile-owned .menu {
+        width: calc(100% - 20px);
+      }
+      @media (max-width: 850px) {
+        body {
+          padding: 24px 16px;
+        }
+        .scenes,
+        .owned-examples {
+          grid-template-columns: 1fr;
+        }
+        .phone {
+          width: 300px;
+          max-width: 100%;
+          margin: auto;
+        }
+        .sidebar {
+          width: 115px;
+        }
+        .mac .terminal {
+          font-size: 10px;
+          padding-left: 13px;
+          padding-right: 13px;
+        }
+        .mac .rail {
+          flex-wrap: wrap;
+        }
+        .notegrid {
+          grid-template-columns: 1fr;
+          gap: 14px;
+        }
+        .mobile-owned {
+          max-width: 300px;
+          width: 100%;
+          margin: auto;
+        }
+        header {
+          gap: 12px;
+        }
+        h1 {
+          font-size: 28px;
+        }
+        .footer {
+          flex-direction: column;
+          gap: 10px;
+        }
+      }
+      @media (max-width: 480px) {
+        .sidebar {
+          display: none;
+        }
+        .workspace {
+          height: 345px;
+        }
+        .mac .chip {
+          font-size: 9px;
+        }
+        .counter {
+          font-size: 10px;
+        }
+        .release-strip {
+          flex-wrap: wrap;
+        }
+      }
+      @media print {
+        body {
+          padding: 20px;
+        }
+        .mac,
+        .phone {
+          box-shadow: none;
+        }
+        .owned-section {
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">Graftty / Take control / Exploration 01</p>
+          <h1>Status rail</h1>
+          <p class="lede">
+            Clear while watching. Gone while working.<br />A slim, pane-scoped
+            rail names the controller and offers takeover. Once you control the
+            pane, the rail disappears entirely.
+          </p>
+        </div>
+        <div class="counter">01 / 04</div>
+      </header>
+      <div class="stage-label">
+        <strong>Following another device</strong
+        ><span>Take Control affects this pane only</span>
+      </div>
+      <div class="scenes">
+        <section>
+          <p class="device-label">Mac</p>
+          <div class="mac">
+            <div class="titlebar">
+              <i class="traffic"></i><i class="traffic"></i
+              ><i class="traffic"></i><span class="windowname">graftty</span>
+            </div>
+            <div class="workspace">
+              <aside class="sidebar">
+                <small>WORKTREES</small>
+                <div class="project">graftty</div>
+                <div class="tree">main<span>zsh</span></div>
+                <div class="tree active">
+                  take-control-ui<span>codex · waiting</span>
+                </div>
+                <div class="tree">
+                  crash-reports<span>claude · working</span>
+                </div>
+              </aside>
+              <div class="pane">
+                <div class="panehead">
+                  <b>codex</b><span class="dots">···</span>
+                </div>
+                <div class="pane">
+                  <div class="rail">
+                    <span><strong>iPhone controls this pane</strong></span
+                    ><span class="action">Take Control</span>
+                  </div>
+                  <div class="terminal">
+                    <p>
+                      <span class="path">~/graftty</span>
+                      <span class="dim">on</span> take-control-ui
+                    </p>
+                    <p>
+                      <b>Control handoff</b><br /><span class="dim"
+                        >Exploring the terminal ownership UI.</span
+                      >
+                    </p>
+                    <p>
+                      ✓ Reading the current pane layout<br />✓ Checking Mac and
+                      mobile behavior<br /><span class="plus"
+                        >+ Keeping the terminal in view</span
+                      >
+                    </p>
+                    <p class="rule">
+                      › Which direction should we try?
+                      <span class="cursor"></span>
+                    </p>
+                  </div>
+                  <div class="statusbar">
+                    <span>codex</span><span>take-control-ui · pane 1</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section>
+          <p class="device-label">GrafttyMobile · iPhone</p>
+          <div class="phone">
+            <div class="phone-status">
+              <span>9:41</span><span class="island"></span><span>▰</span>
+            </div>
+            <div class="mobile-nav">
+              <span class="back">‹</span>
+              <div class="navtitle">
+                take-control-ui<small>graftty · MacBook Pro</small>
+              </div>
+              <span class="dots">···</span>
+            </div>
+            <div class="pane">
+              <div class="rail">
+                <span><strong>MacBook Pro controls this pane</strong></span
+                ><span class="action">Take Control</span>
+              </div>
+              <div class="terminal">
+                <p>
+                  <span class="path">~/graftty</span>
+                  <span class="dim">on</span> take-control-ui
+                </p>
+                <p>
+                  <b>Control handoff</b><br /><span class="dim"
+                    >Exploring the terminal ownership UI.</span
+                  >
+                </p>
+                <p>
+                  ✓ Reading the current pane layout<br />✓ Checking Mac and
+                  mobile behavior<br /><span class="plus"
+                    >+ Keeping the terminal in view</span
+                  >
+                </p>
+                <p class="rule">
+                  › Which direction should we try? <span class="cursor"></span>
+                </p>
+              </div>
+            </div>
+            <div class="home"></div>
+          </div>
+        </section>
+      </div>
+      <div class="notegrid">
+        <p>
+          <strong>When you take control</strong>No extra ownership UI while
+          controlling. This concept adds Release control to the illustrated pane
+          menus on Mac and mobile.
+        </p>
+        <p>
+          <strong>Tradeoff</strong>The rail costs a little vertical space while
+          following, but leaves terminal output unobscured.
+        </p>
+      </div>
+      <section class="owned-section">
+        <div class="stage-label">
+          <strong>Controlling · pane menu open</strong
+          ><span>Menu shown for illustration</span>
+        </div>
+        <div class="owned-examples">
+          <section>
+            <p class="device-label">Mac · Proposed pane menu</p>
+            <div class="owner-crop">
+              <div class="panehead">
+                <b>codex</b><span class="dots">···</span>
+              </div>
+              <div class="crop-terminal">
+                ✓ Ready for input<br />› <span class="cursor"></span
+                ><br /><br /><span class="dim">Terminal continues here.</span>
+              </div>
+              <div class="menu">
+                <div class="menu-title">This Mac controls this pane</div>
+                <div class="menu-item">Copy</div>
+                <div class="menu-item">Split pane <span>›</span></div>
+                <div class="menu-item release">Release control</div>
+                <div class="menu-foot">
+                  Keep watching. No device takes over automatically.
+                </div>
+              </div>
+            </div>
+          </section>
+          <section>
+            <p class="device-label">GrafttyMobile · release menu</p>
+            <div class="owner-crop mobile-owned">
+              <div class="panehead">
+                <b>take-control-ui</b><span class="dots">···</span>
+              </div>
+              <div class="crop-terminal">
+                ✓ Ready for input<br />› <span class="cursor"></span
+                ><br /><br /><span class="dim">Terminal continues here.</span>
+              </div>
+              <div class="menu">
+                <div class="menu-title">This iPhone controls this pane</div>
+                <div class="menu-item">Copy</div>
+                <div class="menu-item">Split pane <span>›</span></div>
+                <div class="menu-item release">Release control</div>
+                <div class="menu-foot">
+                  Keep watching. No device takes over automatically.
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+      <div class="release-strip">
+        <div>
+          <strong
+            >Proposed after release: Viewing · No device controls this
+            pane</strong
+          ><small
+            >The session keeps running at its current size. On mobile, dismiss
+            the keyboard. Take Control enables input again.</small
+          >
+        </div>
+        <span class="action secondary">Take Control</span>
+      </div>
+      <footer class="footer">
+        <p>
+          <strong
+            >Recommended if the priority is a clear takeover action with a
+            completely quiet controlling state.</strong
+          ><br />Static design study with sample content. The illustrated
+          pane-header menus are proposed. Current Mac menus open from the
+          terminal or sidebar; current mobile terminal menus contain text
+          actions. Release control is a proposed addition. Menus are shown open
+          to explain release. The mobile pattern also applies to iPad within the
+          focused pane. Takeover moves input and terminal sizing to this device.
+        </p>
+        <span class="tag">Strongest starting point</span>
+      </footer>
+    </main>
+  </body>
+</html>
