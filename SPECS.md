@@ -4141,3 +4141,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.4** If queued SSH output exceeds its byte limit, then the transport shall close and fail writes without dropping bytes from a live SSH stream.
 
 **SSH-1.5** While bulk terminal output is active, the application shall deliver interactive terminal bytes and the complete bulk stream over shared or isolated SSH connections.
+
+**SSH-1.6** While forwarding terminal output over SSH, the host shall await each write of at most 16 KiB before sending the next, preserving byte and control-event order so other terminal channels can run between writes.
