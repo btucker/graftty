@@ -19,6 +19,7 @@ class ModelState:
         self.broker = broker
         self.cli = cli
         self.rows = rows
+        self.fixture_text = scenario_text
         self.condition = threading.Condition()
         self.barriers = {}
         self.arrived = set()
@@ -154,7 +155,7 @@ class ModelState:
                 # initial stream once the same session is handling peer context.
                 if agent not in self.initials and not any('<graftty-peer-message' in text for text in texts):
                     self.initials.add(agent)
-                    return agent, scenario_text(self.rows), None, True
+                    return agent, self.fixture_text(self.rows), None, True
             self.condition.notify_all()
         return agent, 'Graftty integration', None, False
 

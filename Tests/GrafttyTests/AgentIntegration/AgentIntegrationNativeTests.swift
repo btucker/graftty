@@ -169,7 +169,12 @@ private final class AgentIntegrationMacHost {
             let native = try #require(driver.panes[created.session])
             panes[command.provider] = Pane(path: created.path, session: created.session,
                 handle: native.handle, window: native.window)
-            return ["session": created.session, "path": created.path]
+            let keys = ["NO_COLOR", "TERM", "COLORTERM", "TERM_PROGRAM", "FORCE_COLOR"]
+            let hostEnv = ProcessInfo.processInfo.environment.filter { keys.contains($0.key) }
+            let terminalEnv = driver.configurations[created.session]?.env.filter { keys.contains($0.key) } ?? [:]
+            return ["session": created.session, "path": created.path,
+                "hostColorEnvironment": String(decoding: try JSONEncoder().encode(hostEnv), as: UTF8.self),
+                "terminalColorEnvironment": String(decoding: try JSONEncoder().encode(terminalEnv), as: UTF8.self)]
         }
         if command.operation == "roster" {
             let records = try TeamPresenceStorage(rootDirectory: runtime.configuration.stateDirectory.appendingPathComponent("teams")).listAll()
@@ -288,6 +293,12 @@ private final class AgentIntegrationMacHost {
                 let filename = "\(command.provider)-\(command.id).png"
                 try bitmap.representation(using: .png, properties: [:])?.write(to: root.appendingPathComponent(filename))
                 result["image"] = filename
+                if command.parameters["colors"] == "true" {
+                    let pixels = AgentIntegrationColorProbe.counts(image: cgImage,
+                        physicalRows: try physicalRows(pane.handle.surface),
+                        cellHeight: Int(ghostty_surface_size(pane.handle.surface).cell_height_px))
+                    result["colorPixels"] = String(decoding: try JSONEncoder().encode(pixels), as: UTF8.self)
+                }
             }
         }
         return result

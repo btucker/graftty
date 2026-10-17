@@ -6,10 +6,16 @@ import unittest
 from unittest.mock import Mock, patch
 
 from harness import Broker, InvariantFailure
-from run import Run
+from run import Run, prepare_home
 
 
 class RunnerLifecycleTests(unittest.TestCase):
+    def test_provider_home_does_not_supply_terminal_capabilities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = prepare_home(Path(directory), 'http://127.0.0.1:1234', Path('/bin/echo'), Path('/bin/echo'))
+        for key in ('TERM', 'COLORTERM', 'TERM_PROGRAM', 'NO_COLOR', 'FORCE_COLOR'):
+            self.assertNotIn(key, env, f'{key} would mask the production terminal environment')
+
     def test_mobile_build_finishes_before_native_deadline_starts(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

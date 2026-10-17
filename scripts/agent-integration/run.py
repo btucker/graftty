@@ -60,7 +60,7 @@ def prepare_home(root, endpoint, codex, claude):
     paths.extend(path for path in os.environ.get('PATH', '').split(':') if 'agent-hooks' not in path)
     env = {key: os.environ[key] for key in ('LANG', 'LC_ALL', 'DEVELOPER_DIR', 'SDKROOT') if key in os.environ}
     env.update(PATH=':'.join(dict.fromkeys(paths)), HOME=str(home), CFFIXED_USER_HOME=str(home),
-        TMPDIR=str(root / 'run'), USER='graftty-fixture', TERM='xterm-256color', COLORTERM='truecolor',
+        TMPDIR=str(root / 'run'), USER='graftty-fixture',
         SHELL='/bin/zsh', GRAFTTY_STATE_DIR=str(home / 'Library/Application Support/Graftty'), CODEX_HOME=str(home / '.codex'),
         CLAUDE_CONFIG_DIR=str(home / '.claude'), CLAUDE_SECURESTORAGE_CONFIG_DIR=str(home / '.claude'),
         ANTHROPIC_API_KEY='fixture-only', ANTHROPIC_BASE_URL=endpoint + '/model/claude', OPENAI_API_KEY='fixture-only',
@@ -557,6 +557,8 @@ def main():
     parser.add_argument('--simulator', help='Use this test device without deleting it; default creates a private device')
     parser.add_argument('--mac-only', action='store_true', help='Debug the native Mac and messaging paths without claiming mobile coverage')
     parser.add_argument('--worktree-reentry', action='store_true', help='Test retained mobile routes with keyboard changes and hidden ownership transitions')
+
+    parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
     parser.add_argument('--device', default='iPhone 17 Pro')
     parser.add_argument('--runtime', help='CoreSimulator runtime identifier; default uses its newest compatible runtime')
     parser.add_argument('--seed', type=int, default=1)
@@ -571,12 +573,20 @@ def main():
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
+    if options.worktree_reentry and options.colors:
+        parser.error('--worktree-reentry and --colors are separate scenarios')
     if options.worktree_reentry and options.mac_only:
         parser.error('--worktree-reentry requires the native mobile host')
     if options.worktree_reentry and (options.replay or options.shrink):
         parser.error('--worktree-reentry does not use generated action replay or shrinking')
     actions = [Action(**value) for value in json.loads(options.replay.read_text())] if options.replay else None
-    run = Run(options, actions)
+    if options.colors:
+        if options.replay or options.shrink:
+            parser.error('--colors does not support generated-action replay or shrinking')
+        from colors import ColorRun
+        run = ColorRun(options)
+    else:
+        run = Run(options, actions)
     try:
         run.run()
     except InvariantFailure:

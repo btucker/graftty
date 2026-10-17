@@ -1,6 +1,8 @@
 #if GRAFTTY_BROWSER_CONTROL_FIXTURE
 import CryptoKit
+import CoreImage
 import Foundation
+import IOSurface
 import GhosttyTerminal
 import GrafttyProtocol
 import GrafttyRemoteClient
@@ -185,7 +187,21 @@ final class AgentIntegrationMobileController: UIViewController {
         guard let pane = panes[command.provider] else { throw AgentIntegrationError("missing mounted pane") }
         synchronize()
         _ = await pane.client.session.flushOutput()
-        return snapshot(pane)
+        var result = snapshot(pane)
+        if command.parameters["colors"] == "true",
+           let contents = pane.container.terminalView.layer.contents,
+           CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID(),
+           let metrics = pane.container.terminalGridMetrics {
+            let surface = unsafeBitCast(contents as AnyObject, to: IOSurfaceRef.self)
+            let image = CIImage(ioSurface: surface)
+            if let cgImage = CIContext().createCGImage(image, from: image.extent) {
+                let pixels = AgentIntegrationColorProbe.counts(image: cgImage,
+                    physicalRows: pane.client.session.readViewportRowsText() ?? "",
+                    cellHeight: Int(metrics.cellHeightPixels))
+                result["colorPixels"] = String(decoding: try JSONEncoder().encode(pixels), as: UTF8.self)
+            }
+        }
+        return result
     }
 
     func focus(_ provider: String) {

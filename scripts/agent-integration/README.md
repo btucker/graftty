@@ -46,6 +46,23 @@ or a persistent grid mismatch fail the run. Native observations and screenshots
 retain the action IDs. This scenario does not run the generated action sequence
 or messaging pairings.
 
+Add `--colors` to run a bounded Codex color probe instead of the numbered-row
+and messaging sequence. It streams explicit inline code, a link, Python syntax,
+and diff additions and deletions through the real managed Codex TUI. Native
+observations require chromatic pixels on each named fixture row. A colored link,
+emoji, or status label cannot satisfy a missing syntax or diff sample. The probe
+checks Mac output, mobile ownership, mobile reconnect, mobile following, and the
+return to Mac ownership. `--colors --mac-only` checks Mac output only.
+
+The isolated home supplies no `TERM`, `COLORTERM`, or color-forcing variables.
+Production terminal creation must supply its capabilities. Start observations
+record only the host and terminal color-related environment keys. In particular,
+SwiftPM can set `NO_COLOR=1` on the native test process, just as a GUI launcher can
+on the real app. The terminal-spawn boundary removes that inherited value before
+the user's shell starts. A user's shell startup files can still set `NO_COLOR`.
+Existing shells retain their original environment until they are replaced or
+the user changes it.
+
 ## What runs
 
 Four native sessions provide both same-provider and cross-provider delivery:
@@ -104,6 +121,8 @@ Every run prints its directory under `/private/tmp/graftty-ai-*`. It contains:
 - `trace.jsonl` with correlated commands, native observations, barriers, and model requests.
 - `actions.json` with the generated sequence, when that phase starts.
 - `*-failure.json` with native text and authoritative daemon history.
+- `colors-*.json` with per-row chromatic pixel counts when `--colors` runs.
+- Mac IOSurface PNGs captured by `verify` actions.
 - `mac.log`, `mobile.log`, `ios-build.log`, and `simulator-boot.log`.
 - `mobile.xcresult` with actual UI screenshots and test output.
 

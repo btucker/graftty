@@ -139,5 +139,44 @@
     "iosBuildForTesting": "passed",
     "specGeneration": "passed",
     "fullNativeRerun": "pending after fixture review fixes"
+  },
+  "codexColorRegression": {
+    "date": "2026-10-17",
+    "rootCause": "The live Graftty GUI and its zmx terminal-launch children inherited NO_COLOR=1 despite truecolor capabilities; the same setting suppresses real Codex color emission in isolated native reproduction.",
+    "liveColorEnvironment": {
+      "NO_COLOR": "1",
+      "TERM": "xterm-ghostty",
+      "COLORTERM": "truecolor",
+      "TERM_PROGRAM": "ghostty"
+    },
+    "liveEvidence": "/private/tmp/graftty-live-color-env.jsonl",
+    "fix": "Remove host-inherited NO_COLOR at the shared terminal-spawn boundary before shell startup. Explicit user-shell startup preferences remain effective; existing shells retain their environment.",
+    "specs": [
+      "ZMX-6.10",
+      "TEST-1.9"
+    ],
+    "red": {
+      "spawnLog": "/private/tmp/graftty-color-spawn-red.log",
+      "spawnTests": 24,
+      "spawnIssues": 3,
+      "pixelLog": "/private/tmp/graftty-color-pixels-red.log",
+      "pixelIssues": 3,
+      "nativeMonochrome": "/private/tmp/graftty-ai-ys00bi88"
+    },
+    "green": {
+      "focusedSwiftTests": 35,
+      "log": "/private/tmp/graftty-color-green.log",
+      "pythonIntegrationTests": 23,
+      "pythonEndpointTests": 5,
+      "nativeMac": "/private/tmp/graftty-ai-4ptluzu6",
+      "nativeMacResult": "passed with inherited host NO_COLOR=1, no fixture override, and 865-1707 chromatic pixels on each required row"
+    },
+    "mobileDiagnostic": {
+      "artifacts": "/private/tmp/graftty-ai-v_j0_7xh",
+      "result": "Colors visibly survive owner, reconnect, follower, and return-to-Mac transitions. This diagnostic cleared fixture NO_COLOR before the production fix; final automated mobile pixel validation is pending."
+    },
+    "fullSwiftPM": "Started then canceled while queued at parent request; parent will run the full suite after integration.",
+    "finalMobilePixelValidation": "pending mobile build and shared simulator availability",
+    "preview": "/private/tmp/graftty-color-review.html"
   }
 }

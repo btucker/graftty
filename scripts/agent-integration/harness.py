@@ -14,6 +14,18 @@ class InvariantFailure(RuntimeError):
     pass
 
 
+def assert_color_samples(observation):
+    try:
+        samples = json.loads(observation['colorPixels'])
+        if not isinstance(samples, dict):
+            raise InvariantFailure('native color samples must name their fixture rows')
+        for marker in ('COLOR_INLINE', 'COLOR_LINK', 'COLOR_STRING', 'COLOR_REMOVED', 'COLOR_ADDED'):
+            if type(samples.get(marker)) is not int or samples[marker] < 16:
+                raise InvariantFailure(f'native color absent on {marker}: {samples}')
+    except (KeyError, ValueError, TypeError) as error:
+        raise InvariantFailure('native color samples unavailable') from error
+
+
 @dataclass(frozen=True)
 class Action:
     operation: str

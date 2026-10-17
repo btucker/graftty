@@ -152,6 +152,42 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.env["ZMX_SESSION"] == nil)
     }
 
+    @Test("@spec ZMX-6.10: When Graftty spawns an interactive terminal for Mac or GrafttyMobile, the application shall remove NO_COLOR inherited from the host process before starting the user's shell, while allowing the shell's startup files to set their own color preference.")
+    func inheritedHostColorSuppressionDoesNotReachInteractiveShell() {
+        let inherited = ["SHELL": "/bin/zsh", "PATH": "/usr/bin", "NO_COLOR": "1"]
+        let native = makeConfig(processEnv: inherited)
+        #expect(native.env["NO_COLOR"] == nil)
+        #expect(native.env["COLORTERM"] == "truecolor")
+        #expect(inherited["NO_COLOR"] == "1")
+
+        var remote = inherited
+        ZmxSpawnConfiguration.applyTerminalCapabilities(env: &remote, ghosttyResourcesDir: nil)
+        #expect(remote["NO_COLOR"] == nil)
+        #expect(remote["COLORTERM"] == "truecolor")
+    }
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: "/bin/zsh")))
+    func userShellCanStillChooseNoColor() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try "export NO_COLOR=user-choice\n".write(to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+        let config = makeConfig(processEnv: ["HOME": home.path, "SHELL": "/bin/zsh", "PATH": "/usr/bin", "NO_COLOR": "launcher"],
+            ghosttyResourcesDir: nil, agentHooksDisabled: true)
+        let process = Process(), output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-d", "-i", "-c", "printf '%s' \"$NO_COLOR\""]
+        process.environment = config.env
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let result = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        #expect(String(decoding: result, as: UTF8.self) == "user-choice")
+    }
+
     @Test("""
     @spec ZMX-6.5: Host-managed native panes shall synthesize terminal capability environment for the `zmx attach` child when launched from a macOS GUI process that lacks terminal env vars. If Ghostty terminfo is available next to `GHOSTTY_RESOURCES_DIR`, the env shall match Ghostty's local-shell defaults closely enough for color-aware tools such as Claude Code to enable color output.
     """)
