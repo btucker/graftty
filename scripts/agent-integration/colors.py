@@ -14,11 +14,11 @@ class ColorRun(Run):
         self.summary['scope'] = ('Real Codex colors in native Mac pixels' if options.mac_only else
                                  'Real Codex colors in native Mac and UIKit pixels over SSH/WebRTC')
 
-    def check_colors(self, stage, client='mac'):
+    def check_colors(self, stage, client='mac', suffix=''):
         deadline = time.monotonic() + 15
         while True:
             operation = 'verify' if client == 'mac' else 'snapshot'
-            value = self.act(Action(operation, 'codex', {'colors': 'true'}, client=client))
+            value = self.act(Action(operation, 'codex', {'colors': 'true', 'colorSuffix': suffix}, client=client))
             (self.root / f'colors-{client}-{stage}.json').write_text(json.dumps(value, indent=2))
             try:
                 assert_color_samples(value)
@@ -64,7 +64,7 @@ class ColorRun(Run):
             self.check_colors('owner-return')
         models.release('codex', 'middle')
         self.wait_model(lambda: ('codex', 'end') in models.arrived)
-        self.check_colors('streamed')
+        self.check_colors('streamed', suffix='_STREAMED')
         models.release('codex', 'end')
         self.wait_model(lambda: ('codex', 'recap') in models.arrived)
         models.release('codex', 'recap')

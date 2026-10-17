@@ -28,3 +28,4 @@ class NativeColorTests(unittest.TestCase):
         self.assertIn('[COLOR_LINK](https://example.invalid/color)', text)
         for marker in self.markers:
             self.assertGreaterEqual(text.count(marker), 2)
+            self.assertEqual(text.count(marker + '_STREAMED'), 1)

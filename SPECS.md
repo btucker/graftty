@@ -4190,4 +4190,4 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEST-1.8** When a scripted terminal is hidden and shown to reproduce worktree switching, the integration harness shall remount its retained surface or mobile route and observe its viewport and physical rows.
 
-**TEST-1.9** When a native integration color probe runs, the test harness shall require chromatic rendered pixels on its inline-code, link, syntax, deletion, and addition rows, and shall reject missing or monochrome samples.
+**TEST-1.9** When a native integration color probe runs, the test harness shall require chromatic rendered pixels on the current stream stage's inline-code, link, syntax, deletion, and addition rows, and shall reject missing or monochrome samples.

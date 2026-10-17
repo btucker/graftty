@@ -27,7 +27,8 @@ COLOR_STRING = "emerald"
 ```
 
 '''
-    return 'BEGIN-GRAFTTY-FIXTURE\n\n' + sample * 2 + 'END-GRAFTTY-FIXTURE'
+    streamed = re.sub(r'(COLOR_[A-Z]+)', r'\1_STREAMED', sample)
+    return 'BEGIN-GRAFTTY-FIXTURE\n\n' + sample + streamed + 'END-GRAFTTY-FIXTURE'
 
 
 def user_text(body, markers_only=False):

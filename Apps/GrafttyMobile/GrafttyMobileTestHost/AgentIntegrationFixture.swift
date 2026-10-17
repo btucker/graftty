@@ -197,7 +197,8 @@ final class AgentIntegrationMobileController: UIViewController {
             if let cgImage = CIContext().createCGImage(image, from: image.extent) {
                 let pixels = AgentIntegrationColorProbe.counts(image: cgImage,
                     physicalRows: pane.client.session.readViewportRowsText() ?? "",
-                    cellHeight: Int(metrics.cellHeightPixels))
+                    cellHeight: Int(metrics.cellHeightPixels),
+                    markerSuffix: command.parameters["colorSuffix"] ?? "")
                 result["colorPixels"] = String(decoding: try JSONEncoder().encode(pixels), as: UTF8.self)
             }
         }

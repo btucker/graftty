@@ -541,10 +541,11 @@ struct TerminalPaneViewTests {
     @Test("@spec IOS-4.46: When a retained mobile pane releases its follower canvas while its route callbacks are detached, the application shall preserve the pending physical viewport confirmation and deliver it once after the route restores its callback.")
     func canvasReleaseWaitsForRestoredViewportCallback() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
-        container.terminalView.contentScaleFactor = 2
+        container.layoutIfNeeded()
+        let scale = container.terminalView.contentScaleFactor
         container.terminalDidResize(TerminalGridMetrics(
-            columns: 80, rows: 24, widthPixels: 1200, heightPixels: 800,
-            cellWidthPixels: 15, cellHeightPixels: 33
+            columns: 80, rows: 24, widthPixels: UInt32(600 * scale), heightPixels: UInt32(400 * scale),
+            cellWidthPixels: UInt32(7.5 * scale), cellHeightPixels: UInt32(16.5 * scale)
         ))
         container.authoritativeGrid = .init(cols: 80, rows: 24)
         container.layoutIfNeeded()
@@ -553,6 +554,8 @@ struct TerminalPaneViewTests {
         container.authoritativeGrid = nil
         container.layoutIfNeeded()
         container.layoutIfNeeded()
+        #expect(container.terminalView.bounds.size == container.bounds.size)
+        #expect(container.terminalView.contentScaleFactor == scale)
         var reported: [InMemoryTerminalViewport] = []
         container.onPhysicalViewportReady = { reported.append($0) }
         container.layoutIfNeeded()

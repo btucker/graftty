@@ -296,7 +296,8 @@ private final class AgentIntegrationMacHost {
                 if command.parameters["colors"] == "true" {
                     let pixels = AgentIntegrationColorProbe.counts(image: cgImage,
                         physicalRows: try physicalRows(pane.handle.surface),
-                        cellHeight: Int(ghostty_surface_size(pane.handle.surface).cell_height_px))
+                        cellHeight: Int(ghostty_surface_size(pane.handle.surface).cell_height_px),
+                        markerSuffix: command.parameters["colorSuffix"] ?? "")
                     result["colorPixels"] = String(decoding: try JSONEncoder().encode(pixels), as: UTF8.self)
                 }
             }

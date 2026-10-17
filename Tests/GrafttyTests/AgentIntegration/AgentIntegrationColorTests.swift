@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Native agent color observations")
 struct AgentIntegrationColorTests {
-    @Test("@spec TEST-1.9: When a native integration color probe runs, the test harness shall require chromatic rendered pixels on its inline-code, link, syntax, deletion, and addition rows, and shall reject missing or monochrome samples.")
+    @Test("@spec TEST-1.9: When a native integration color probe runs, the test harness shall require chromatic rendered pixels on the current stream stage's inline-code, link, syntax, deletion, and addition rows, and shall reject missing or monochrome samples.")
     func colorSamplesBelongToTheirFixtureRows() throws {
         let width = 32, height = 12
         var rgba = [UInt8](repeating: 0, count: width * height * 4)
@@ -25,6 +25,10 @@ struct AgentIntegrationColorTests {
         #expect(samples["COLOR_INLINE"] == 0)
         #expect(samples["COLOR_STRING"] == width * 4)
         #expect(samples["COLOR_LINK"] == -1)
+        let streamed = AgentIntegrationColorProbe.counts(image: image,
+            physicalRows: "COLOR_INLINE_STREAMED\nunrelated colored row\nCOLOR_INLINE", cellHeight: 4,
+            markerSuffix: "_STREAMED")
+        #expect(streamed["COLOR_INLINE"] == 0)
         #expect(AgentIntegrationColorProbe.counts(image: image, physicalRows: "COLOR_LINK", cellHeight: 0)["COLOR_LINK"] == -1)
     }
 }

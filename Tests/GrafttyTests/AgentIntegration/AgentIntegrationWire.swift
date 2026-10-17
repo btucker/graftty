@@ -6,12 +6,12 @@ import CoreGraphics
 enum AgentIntegrationColorProbe {
     static let markers = ["COLOR_INLINE", "COLOR_LINK", "COLOR_STRING", "COLOR_REMOVED", "COLOR_ADDED"]
 
-    static func counts(image: CGImage, physicalRows: String, cellHeight: Int) -> [String: Int] {
+    static func counts(image: CGImage, physicalRows: String, cellHeight: Int, markerSuffix: String = "") -> [String: Int] {
         var result = Dictionary(uniqueKeysWithValues: markers.map { ($0, -1) })
         guard cellHeight > 0 else { return result }
         let rows = physicalRows.components(separatedBy: "\n")
         for marker in markers {
-            for (row, text) in rows.enumerated() where text.contains(marker) {
+            for (row, text) in rows.enumerated() where text.contains(marker + markerSuffix) {
                 let y = row * cellHeight
                 guard y + cellHeight <= image.height,
                       let crop = image.cropping(to: CGRect(x: 0, y: y, width: image.width, height: cellHeight)) else { continue }
