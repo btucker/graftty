@@ -1,12 +1,24 @@
 import json
 import unittest
 
-from harness import Action, Broker, InvariantFailure, assert_observation, seeded_actions, shrink, assert_buffer_matches, patch_xctestrun, approval_ready
+from harness import Action, Broker, InvariantFailure, assert_observation, seeded_actions, shrink, assert_buffer_matches, patch_xctestrun, approval_ready, assert_lower_viewport
 from model import model_events, user_text, reply_command
 from server import ModelState
 
 
 class SequenceTests(unittest.TestCase):
+    def test_lower_viewport_rejects_blank_footer_and_stale_grid(self):
+        visible = {'physicalRows': 'response\n\n> prompt\nstatus\n',
+                   'nativeGrid': '41x23', 'grid': '41x23'}
+        assert_lower_viewport(visible)
+        for bad in ({**visible, 'physicalRows': 'response\n\n\n\n'},
+                    {**visible, 'physicalRows': 'response\n\n\n\n\n'},
+                    {**visible, 'physicalRows': ''},
+                    {**visible, 'nativeGrid': '', 'grid': ''},
+                    {**visible, 'nativeGrid': '124x40'}):
+            with self.assertRaises(InvariantFailure):
+                assert_lower_viewport(bad)
+
     def test_xctestrun_paths_are_relocated_in_arrays_and_dictionaries(self):
         value = {'TestBundlePath': '__TESTHOST__/Tests.xctest',
                  'UITargetAppPath': '__TESTROOT__/app', 'DependentProductPaths': ['__TESTROOT__/app']}

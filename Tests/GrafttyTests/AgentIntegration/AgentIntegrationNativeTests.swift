@@ -1,8 +1,10 @@
 import AppKit
 import SwiftUI
 import CryptoKit
+import CoreImage
 import Foundation
 import GhosttyKit
+import IOSurface
 import GrafttyHostAgent
 import GrafttyProtocol
 import Testing
@@ -176,8 +178,40 @@ private final class AgentIntegrationMacHost {
                 "runtime": $0.runtime.rawValue, "reachable": String($0.isReachable)] }
             return ["agents": String(decoding: try JSONEncoder().encode(agents), as: UTF8.self)]
         }
+        if command.operation == "recreate" {
+            let old = try #require(panes[command.provider])
+            panes[command.provider] = nil
+            let previous = try #require(driver.configurations[old.session])
+            var environment = previous.env
+            environment["GRAFTTY_INITIAL_COMMAND"] = nil
+            environment["GRAFTTY_STARTUP_RECEIPT"] = nil
+            let spawn = ZmxSpawnConfiguration(sessionName: previous.sessionName, argv: previous.argv,
+                env: environment, workingDirectory: previous.workingDirectory,
+                shellReadySignalAvailable: previous.shellReadySignalAvailable)
+            let grid = old.handle.queryGridSize()
+            old.handle.disconnectAttachment()
+            old.window.contentView = nil
+            old.window.orderOut(nil)
+            driver.panes[old.session] = nil
+            try await driver.start(spawn, initialGrid: grid)
+            let native = try #require(driver.panes[old.session])
+            panes[command.provider] = Pane(path: old.path, session: old.session,
+                handle: native.handle, window: native.window)
+        }
         let pane = try #require(panes[command.provider])
         switch command.operation {
+        case "visibility":
+            let visible = try required(command, "visible") == "true"
+            pane.handle.setVisible(visible)
+            if visible {
+                pane.window.contentView = NSHostingView(rootView: SurfaceViewWrapper(handle: pane.handle,
+                    theme: app.theme, onFocusTerminal: {}))
+                pane.window.contentView?.layoutSubtreeIfNeeded()
+                pane.handle.resyncVisibleGrid()
+                pane.handle.refresh()
+            } else {
+                pane.window.contentView = nil
+            }
         case "resize":
             let width = try dimension(command, "width"), height = try dimension(command, "height")
             pane.window.setContentSize(NSSize(width: width, height: height))
@@ -234,7 +268,7 @@ private final class AgentIntegrationMacHost {
                 return (process.terminationStatus, data)
             }.value
             guard result.0 == 0 else { throw AgentIntegrationError(String(decoding: result.1, as: UTF8.self)) }
-        case "snapshot", "verify": break
+        case "snapshot", "verify", "recreate": break
         default: throw AgentIntegrationError("unsupported Mac action \(command.operation)")
         }
         try await Task.sleep(for: .milliseconds(30))
@@ -242,6 +276,19 @@ private final class AgentIntegrationMacHost {
         var result = try snapshot(pane)
         if command.operation == "verify" {
             result["authoritativeText"] = try await runtime.terminals.show(pane.session, lines: 10000)
+        }
+        if ["verify", "visibility", "recreate"].contains(command.operation),
+           let contents = pane.handle.view.layer?.contents,
+           CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID() {
+            let imageSurface = unsafeBitCast(contents as AnyObject, to: IOSurfaceRef.self)
+            result["imageSize"] = "\(IOSurfaceGetWidth(imageSurface))x\(IOSurfaceGetHeight(imageSurface))"
+            let image = CIImage(ioSurface: imageSurface)
+            if let cgImage = CIContext().createCGImage(image, from: image.extent) {
+                let bitmap = NSBitmapImageRep(cgImage: cgImage)
+                let filename = "\(command.provider)-\(command.id).png"
+                try bitmap.representation(using: .png, properties: [:])?.write(to: root.appendingPathComponent(filename))
+                result["image"] = filename
+            }
         }
         return result
     }
@@ -289,7 +336,12 @@ private final class AgentIntegrationMacHost {
         let hasSelection = ghostty_surface_read_selection(pane.handle.surface, &selected)
         let selectedText = hasSelection && selected.text != nil ? String(cString: selected.text) : ""
         if hasSelection { ghostty_surface_free_text(pane.handle.surface, &selected) }
+        let terminal = pane.handle.view
         return ["text": text, "nativeText": nativeText, "buffer": bufferText, "anchor": AgentIntegrationAnchor.first(in: text),
+            "physicalRows": try physicalRows(pane.handle.surface),
+            "surfaceFrame": NSStringFromRect(terminal.frame), "surfaceBounds": NSStringFromRect(terminal.bounds),
+            "visibleRect": NSStringFromRect(terminal.visibleRect),
+            "layerFrame": terminal.layer.map { NSStringFromRect($0.frame) } ?? "",
             "selected": selectedText, "revision": String(state.revision), "epoch": String(state.epoch),
             "owner": state.ownerClientID?.rawValue ?? "", "grid": "\(state.grid.cols)x\(state.grid.rows)",
             "ownerIdentity": state.ownerIdentity ?? "",
@@ -351,6 +403,7 @@ private final class AgentIntegrationMacDriver: HostTerminalDriver {
     let attachments: RemoteAttachmentRegistry
     let commands: ZmxHostTerminalDriver
     var panes: [String: Pane] = [:]
+    var configurations: [String: ZmxSpawnConfiguration] = [:]
 
     init(app: GhosttyApp, configuration: HostConfiguration,
          ownership: SessionDisplayOwnershipStore, attachments: RemoteAttachmentRegistry) {
@@ -361,11 +414,16 @@ private final class AgentIntegrationMacDriver: HostTerminalDriver {
     }
 
     func start(_ spawn: ZmxSpawnConfiguration) async throws {
+        try await start(spawn, initialGrid: nil)
+    }
+
+    func start(_ spawn: ZmxSpawnConfiguration, initialGrid: ghostty_surface_size_s?) async throws {
+        configurations[spawn.sessionName] = spawn
         let handle = try #require(SurfaceHandle(terminalID: PaneSlotID(), app: app.app,
             worktreePath: spawn.workingDirectory.path, socketPath: configuration.socketPath,
             zmxSpawnConfiguration: spawn, remoteAttachmentRegistry: attachments,
             displayOwnershipStore: ownership,
-            displayClientID: DisplayClientID("integration-mac-" + spawn.sessionName)))
+            displayClientID: DisplayClientID("integration-mac-" + spawn.sessionName), initialGridSize: initialGrid))
         let window = NSWindow(contentRect: NSRect(x: 20, y: 20, width: 1000, height: 700),
             styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.title = "Graftty integration: " + spawn.sessionName

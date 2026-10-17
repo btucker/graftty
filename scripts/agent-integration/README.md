@@ -35,6 +35,17 @@ test device, pass `--simulator UUID`; the runner does not delete that device.
 `--mac-only` is a diagnostic mode and does not establish mobile coverage.
 Use `--ios-cache /path/to/cache` to keep the Xcode build cache on another volume.
 
+To check blank lower rows after returning to a mobile worktree, add
+`--worktree-reentry` to the full Mac and mobile command. This scenario mounts
+the production `SingleSessionView` with its retained pane container. It switches
+away and back three times for each provider, receives output while hidden,
+changes ownership while hidden, and shows and hides the software keyboard.
+It waits for the keyboard geometry and native grid to settle, then gives the
+provider five seconds to repaint the lower four physical rows. Blank lower rows
+or a persistent grid mismatch fail the run. Native observations and screenshots
+retain the action IDs. This scenario does not run the generated action sequence
+or messaging pairings.
+
 ## What runs
 
 Four native sessions provide both same-provider and cross-provider delivery:

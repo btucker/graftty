@@ -120,6 +120,14 @@ def assert_observation(before, after, preserve_anchor=False, preserve_selection=
             raise InvariantFailure('selected logical text changed or disappeared')
 
 
+def assert_lower_viewport(value):
+    rows = value.get('physicalRows', '').split('\n')
+    if not rows or not '\n'.join(rows[-4:]).strip():
+        raise InvariantFailure('lower native viewport is blank')
+    if not value.get('grid') or value.get('nativeGrid') != value['grid']:
+        raise InvariantFailure('native viewport differs from the authoritative grid')
+
+
 class Broker:
     def __init__(self, directory=None):
         self.lock = threading.Condition()

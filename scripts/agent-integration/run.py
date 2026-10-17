@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 
-from harness import Action, InvariantFailure, assert_observation, seeded_actions, shrink, patch_xctestrun, assert_buffer_matches, approval_ready
+from harness import Action, InvariantFailure, assert_observation, seeded_actions, shrink, patch_xctestrun, assert_buffer_matches, approval_ready, assert_lower_viewport
 from server import IntegrationServer
 
 REPO = Path(__file__).resolve().parents[2]
@@ -241,6 +241,9 @@ class Run:
         self.summary.setdefault('generatedContentChecks', []).append({'agent': agent, 'status': status})
 
     def scenarios(self):
+        if getattr(self.options, 'worktree_reentry', False):
+            self.worktree_reentry()
+            return
         broker, models = self.server.broker, self.server.models
         if not self.options.mac_only:
             self.start_mobile()
@@ -359,6 +362,99 @@ class Run:
             self.summary['outputFailures'] = self.invariant_failures
             raise InvariantFailure('native output differed from authoritative terminal history')
 
+    def wait_mobile_keyboard(self, agent, visible):
+        self.act(Action('keyboard', agent, {'visible': str(visible).lower()}, client='gestures'))
+        def settled(value):
+            target = float(value['keyboardTop']) - 58 if visible else float(value['windowHeight'])
+            return (value['keyboard'] == str(visible).lower()
+                    and abs(float(value['terminalBottom']) - target) < 2
+                    and value['nativeGrid'] == value['grid'])
+        return self.wait_snapshot(agent, settled, 'mobile')
+
+    def check_mobile_reentry(self, agent, stage):
+        def repainted(value):
+            try:
+                assert_lower_viewport(value)
+                return True
+            except InvariantFailure:
+                return False
+        try:
+            value = self.wait_snapshot(agent, repainted, 'mobile', timeout=5)
+        except InvariantFailure:
+            value = self.snapshot(agent, 'mobile')
+        (self.root / f'{agent}-{stage}.json').write_text(json.dumps(value, indent=2))
+        self.act(Action('snapshot', agent, client='gestures'))
+        try:
+            assert_lower_viewport(value)
+        except InvariantFailure as error:
+            self.invariant_failures.append({'agent': agent, 'stage': stage, 'error': str(error)})
+        self.summary['assertions'].append({'agent': agent, 'stage': stage,
+            'grid': value['grid'], 'nativeGrid': value['nativeGrid'],
+            'keyboardTop': value['keyboardTop'], 'terminalBottom': value['terminalBottom']})
+
+    def worktree_reentry(self):
+        self.start_mobile()
+        self.phase = 'fixed'
+        models = self.server.models
+        for agent in ('claude', 'codex'):
+            self.paths[agent] = self.act(Action('start', agent))
+            deadline = time.monotonic() + 90
+            last_review = 0
+            while (agent, 'begin') not in models.arrived:
+                if time.monotonic() >= deadline:
+                    raise InvariantFailure(f'{agent} did not start its model stream')
+                value = self.snapshot(agent)
+                if 'Hooks need review' in value['text'] and time.monotonic() - last_review > 2:
+                    self.act(Action('input', agent, {'text': '2'}))
+                    last_review = time.monotonic()
+                time.sleep(.05)
+            self.act(Action('connect', agent, {'session': self.paths[agent]['session'],
+                'presentation': 'route'}, client='mobile'))
+            self.act(Action('takeControl', agent, client='mobile'))
+            self.converge(agent)
+            models.release(agent, 'begin')
+            self.wait_model(lambda: (agent, 'middle') in models.arrived)
+            self.wait_mobile_keyboard(agent, True)
+            self.check_mobile_reentry(agent, 'keyboard-before')
+            for iteration in range(3):
+                self.act(Action('visibility', agent, {'visible': 'false'}, client='mobile'))
+                if iteration == 0:
+                    models.release(agent, 'middle')
+                    self.wait_model(lambda: (agent, 'end') in models.arrived)
+                    final_row = f'ROW-{self.options.rows - 1:06d}'
+                    self.wait_hidden_snapshot(agent, lambda value: final_row in value['physicalRows'])
+                if iteration == 1:
+                    mac = self.act(Action('takeControl', agent))
+                    self.wait_hidden_snapshot(agent, lambda value: value['isOwner'] == 'false'
+                        and value['epoch'] == mac['epoch'] and value['owner'] == mac['owner'])
+                    self.act(Action('takeControl', agent, {'mount': 'false'}, client='mobile'))
+                    self.wait_hidden_snapshot(agent, lambda value: value['isOwner'] == 'true'
+                        and int(value['epoch']) > int(mac['epoch']) and value['presentationGrid'] == 'physical')
+                self.act(Action('visibility', agent, {'visible': 'true'}, client='mobile'))
+                self.wait_mobile_keyboard(agent, True)
+                self.converge(agent)
+                self.check_mobile_reentry(agent, f'reentry-{iteration}')
+            self.wait_mobile_keyboard(agent, False)
+            self.converge(agent)
+            self.check_mobile_reentry(agent, 'keyboard-hidden')
+            models.release(agent, 'end')
+            self.wait_model(lambda: (agent, 'recap') in models.arrived)
+            models.release(agent, 'recap')
+            self.act(Action('takeControl', agent))
+            self.wait_model(lambda: agent in models.recaps_done)
+        if self.invariant_failures:
+            raise InvariantFailure('native viewport failed the worktree re-entry checks')
+
+    def wait_hidden_snapshot(self, agent, predicate, timeout=20):
+        deadline = time.monotonic() + timeout
+        value = {}
+        while time.monotonic() < deadline:
+            value = self.act(Action('snapshot', agent, {'mount': 'false'}, client='mobile'))
+            if predicate(value):
+                return value
+            time.sleep(.05)
+        raise InvariantFailure(f'hidden mobile condition did not settle for {agent}: {value}')
+
     def run(self):
         self.thread.start()
         print(f'Native integration artifacts: {self.root}', flush=True)
@@ -447,7 +543,7 @@ class Run:
             (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
         if failure:
             raise InvariantFailure(f'{failure}; artifacts: {self.root}')
-        print(f'PASS: native agent sequences, message receipts, and tool replies. Artifacts: {self.root}', flush=True)
+        print(f'PASS: native agent scenarios. Artifacts: {self.root}', flush=True)
         return self.root
 
 
@@ -460,6 +556,7 @@ def main():
     parser.add_argument('--ghostty-package', type=Path, required=True, help='Snapshot-enabled local Ghostty package')
     parser.add_argument('--simulator', help='Use this test device without deleting it; default creates a private device')
     parser.add_argument('--mac-only', action='store_true', help='Debug the native Mac and messaging paths without claiming mobile coverage')
+    parser.add_argument('--worktree-reentry', action='store_true', help='Test retained mobile routes with keyboard changes and hidden ownership transitions')
     parser.add_argument('--device', default='iPhone 17 Pro')
     parser.add_argument('--runtime', help='CoreSimulator runtime identifier; default uses its newest compatible runtime')
     parser.add_argument('--seed', type=int, default=1)
@@ -474,6 +571,10 @@ def main():
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
+    if options.worktree_reentry and options.mac_only:
+        parser.error('--worktree-reentry requires the native mobile host')
+    if options.worktree_reentry and (options.replay or options.shrink):
+        parser.error('--worktree-reentry does not use generated action replay or shrinking')
     actions = [Action(**value) for value in json.loads(options.replay.read_text())] if options.replay else None
     run = Run(options, actions)
     try:

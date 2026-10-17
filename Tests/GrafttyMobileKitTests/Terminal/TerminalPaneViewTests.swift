@@ -538,6 +538,32 @@ struct TerminalPaneViewTests {
         }
     }
 
+    @Test("@spec IOS-4.46: When a retained mobile pane releases its follower canvas while its route callbacks are detached, the application shall preserve the pending physical viewport confirmation and deliver it once after the route restores its callback.")
+    func canvasReleaseWaitsForRestoredViewportCallback() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+        container.terminalView.contentScaleFactor = 2
+        container.terminalDidResize(TerminalGridMetrics(
+            columns: 80, rows: 24, widthPixels: 1200, heightPixels: 800,
+            cellWidthPixels: 15, cellHeightPixels: 33
+        ))
+        container.authoritativeGrid = .init(cols: 80, rows: 24)
+        container.layoutIfNeeded()
+        // RetainedMobilePane.detachControls removes this callback on route exit.
+        container.onPhysicalViewportReady = nil
+        container.authoritativeGrid = nil
+        container.layoutIfNeeded()
+        container.layoutIfNeeded()
+        var reported: [InMemoryTerminalViewport] = []
+        container.onPhysicalViewportReady = { reported.append($0) }
+        container.layoutIfNeeded()
+        #expect(reported.count == 1)
+        #expect(reported.first?.columns == 80)
+        #expect(reported.first?.rows == 24)
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        #expect(reported.count == 1)
+    }
+
     @Test("Canvas release confirms an unchanged physical viewport without awaiting a deduplicated resize", arguments: [CGSize.zero, CGSize(width: 0.1, height: 0.1), CGSize(width: 300, height: -100)])
     func canvasReleaseConfirmsViewportOnlyWithoutResize(sizeChange: CGSize) {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
