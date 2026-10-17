@@ -10,6 +10,7 @@ struct TerminalContentView: View {
     let focusedPaneSlotID: PaneSlotID?
     let theme: GhosttyTheme
     let onFocusTerminal: (PaneSlotID) -> Void
+    var previewWorktreePath: String? = nil
 
     private var previewPane: PaneSlotID? {
         ImagePreviewLayout.visiblePane(tree: splitTree.wrappedValue, focused: focusedPaneSlotID)
@@ -20,10 +21,22 @@ struct TerminalContentView: View {
             .overlay(alignment: .top) {
                 ImagePreviewOverlay(pane: previewPane,
                                     preview: previewPane.flatMap { imagePreviews.previews[$0] },
-                                    onDismiss: { if let pane = previewPane { imagePreviews.dismiss(pane) } })
+                                    onDismiss: { if let pane = previewPane { imagePreviews.dismiss(pane) } },
+                                    onPopOut: popOutPreview)
             }
             .clipped()
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: previewPane.flatMap { imagePreviews.previews[$0]?.id })
+    }
+
+    private var popOutPreview: (() -> Void)? {
+        guard let path = previewWorktreePath, let pane = previewPane,
+              let preview = imagePreviews.previews[pane] else { return nil }
+        return { [weak terminalManager] in
+            let entry = FilePreviewHistory.shared.entries(for: path).first { $0.id == preview.id }
+                ?? FilePreviewHistory.Entry(preview: preview, pane: pane, worktreePath: path)
+            FilePreviewWindows.shared.show(entry, inlinePane: pane,
+                resolveInlineWorktree: { [weak terminalManager] pane in terminalManager?.worktreePath(for: pane) })
+        }
     }
 
     @ViewBuilder

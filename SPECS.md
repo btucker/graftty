@@ -3470,6 +3470,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-1.5** When a native macOS preview is dismantled before attachment, after window closure, or more than once, the application shall close Quick Look safely, reject subsequent preview updates, and retain its snapshots until native teardown completes.
 
+**PREVIEW-1.6** When a Mac preview arrives, the application shall retain the latest 32 requests as immutable session history grouped by worktree, including replaced and closed previews.
+
+**PREVIEW-1.7** When a Mac preview arrives, the application shall reuse one resizable standard window per worktree without taking terminal focus, and closing that window shall retain its history for reopening.
+
+**PREVIEW-1.8** While the selected local worktree has a preview or preview history, the application shall expose a top-right Preview control that reopens its latest request and lists earlier requests from that worktree only.
+
+**PREVIEW-1.9** When a user shows a preview inside its terminal or pops it into a window, the application shall transfer the same snapshot collection without adding history entries and select its worktree and pane when returning to the terminal.
+
+**PREVIEW-1.10** When returning a preview to a registered pane whose renderer has been evicted, the application shall allow terminal navigation to wake that pane rather than require an existing renderer.
+
+**PREVIEW-1.11** When a pane with a preview moves to another worktree, the application shall resolve active preview controls and return navigation against its current worktree while retaining the original request's history grouping.
+
 ### PREVIEW-2.x
 
 **PREVIEW-2.1** When file preview offers arrive on mobile, the application shall select the latest preview for its owning pane and device, recognize legacy image intent, and exclude both from Browser resources.

@@ -6,8 +6,11 @@ struct FilePreviewTray: NSViewRepresentable {
     let preview: ImagePreviewStore.Preview
     let onDismiss: () -> Void
     let onInteraction: (ImagePreviewInteraction) -> Void
+    var isWindowed = false
+    var onPopOut: (() -> Void)? = nil
     func makeNSView(context: Context) -> NativeFilePreviewTray {
-        NativeFilePreviewTray(preview: preview, onDismiss: onDismiss, onInteraction: onInteraction)
+        NativeFilePreviewTray(preview: preview, onDismiss: onDismiss, onInteraction: onInteraction,
+                              isWindowed: isWindowed, onPopOut: onPopOut)
     }
     static func dismantleNSView(_ view: NativeFilePreviewTray, coordinator: ()) {
         view.tearDown()
@@ -15,6 +18,7 @@ struct FilePreviewTray: NSViewRepresentable {
     func updateNSView(_ view: NativeFilePreviewTray, context: Context) {
         view.onDismiss = onDismiss
         view.onInteraction = onInteraction
+        view.onPopOut = onPopOut
         view.update(preview)
     }
 }
@@ -33,6 +37,11 @@ final class NativeFilePreviewTray: NSVisualEffectView {
     private var isTornDown = false
     private(set) var openErrorMessage: String?
     let close = FilePreviewButton(title: "", target: nil, action: nil)
+    let popOut = FilePreviewButton(title: "", target: nil, action: nil)
+    var onPopOut: (() -> Void)? {
+        didSet { popOut.isHidden = onPopOut == nil || isWindowed; needsLayout = true }
+    }
+    private let isWindowed: Bool
     let header = ImagePreviewGestureHandle(kind: .move)
     let grip = ImagePreviewGestureHandle(kind: .resize)
     let bottom = ImagePreviewGestureHandle(kind: .resizeHeight)
@@ -45,11 +54,14 @@ final class NativeFilePreviewTray: NSVisualEffectView {
 
     init(preview: ImagePreviewStore.Preview, onDismiss: @escaping () -> Void,
          onInteraction: @escaping (ImagePreviewInteraction) -> Void,
-         openFile: @escaping (URL) async throws -> Void = FilePreviewExternalOpen.open) {
+         openFile: @escaping (URL) async throws -> Void = FilePreviewExternalOpen.open,
+         isWindowed: Bool = false, onPopOut: (() -> Void)? = nil) {
         self.preview = preview
         self.openFile = openFile
         self.onDismiss = onDismiss
         self.onInteraction = onInteraction
+        self.isWindowed = isWindowed
+        self.onPopOut = onPopOut
         quickLook = QLPreviewView(frame: .zero, style: .normal)
         // SwiftUI owns teardown. A window close must not independently close
         // Quick Look before dismantleNSView, since closing it twice aborts.
@@ -68,7 +80,8 @@ final class NativeFilePreviewTray: NSVisualEffectView {
         for (button, symbol, label, action) in [
             (previous, "chevron.left", "Previous preview", #selector(previousFile)),
             (next, "chevron.right", "Next preview", #selector(nextFile)),
-            (close, "xmark", "Close preview", #selector(closePreview))
+            (close, "xmark", "Close preview", #selector(closePreview)),
+            (popOut, "arrow.up.right.square", "Open preview in window", #selector(popOutPreview))
         ] {
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
             button.setAccessibilityLabel(label)
@@ -89,7 +102,12 @@ final class NativeFilePreviewTray: NSVisualEffectView {
         errorLabel.backgroundColor = .windowBackgroundColor
         errorLabel.isHidden = true
         for view in [quickLook, header, bottom, grip, errorLabel] { addSubview(view) }
-        for view in [previous, next, picker, open, close] { header.addSubview(view) }
+        for view in [previous, next, picker, open, close, popOut] { header.addSubview(view) }
+        popOut.isHidden = onPopOut == nil || isWindowed
+        close.isHidden = isWindowed
+        bottom.isHidden = isWindowed
+        grip.isHidden = isWindowed
+        header.isEnabled = !isWindowed
         for handle in [header, bottom, grip] {
             handle.onInteraction = { [weak self] interaction in
                 guard let self else { return }
@@ -150,6 +168,7 @@ final class NativeFilePreviewTray: NSVisualEffectView {
     }
     @objc func previousFile() { select(selectedIndex - 1) }
     @objc func nextFile() { select(selectedIndex + 1) }
+    @objc private func popOutPreview() { if !isTornDown { onPopOut?() } }
     @objc private func selectFile() { select(picker.indexOfSelectedItem) }
     private func select(_ index: Int) {
         guard !isTornDown, preview.files.indices.contains(index) else { return }
@@ -168,10 +187,13 @@ final class NativeFilePreviewTray: NSVisualEffectView {
         previous.frame = NSRect(x: 4, y: 10, width: 24, height: 24)
         next.frame = NSRect(x: 30, y: 10, width: 24, height: 24)
         close.frame = NSRect(x: max(0, bounds.width - 30), y: headerHeight - 34, width: 24, height: 24)
-        open.frame = NSRect(x: max(58, bounds.width - (compact ? 8 : 38) - openWidth), y: 10, width: openWidth, height: 24)
+        let trailingWidth = isWindowed ? 8.0 : (popOut.isHidden ? 38.0 : 66.0)
+        popOut.frame = NSRect(x: max(0, bounds.width - 58), y: headerHeight - 34, width: 24, height: 24)
+        open.frame = NSRect(x: max(58, bounds.width - (compact ? 8 : trailingWidth) - openWidth), y: 10, width: openWidth, height: 24)
         picker.frame = NSRect(x: compact ? 8 : 58, y: headerHeight - 36,
-                              width: max(0, compact ? bounds.width - 46 : open.frame.minX - 66), height: 28)
-        quickLook.frame = NSRect(x: 0, y: 10, width: bounds.width, height: max(0, bounds.height - headerHeight - 10))
+                              width: max(0, compact ? bounds.width - trailingWidth - 8 : open.frame.minX - 66), height: 28)
+        let bottomInset = isWindowed ? 0.0 : 10.0
+        quickLook.frame = NSRect(x: 0, y: bottomInset, width: bounds.width, height: max(0, bounds.height - headerHeight - bottomInset))
         errorLabel.frame = NSRect(x: 8, y: 12, width: max(0, bounds.width - 40), height: 36)
         bottom.frame = NSRect(x: 0, y: 0, width: max(0, bounds.width - 24), height: 10)
         grip.frame = NSRect(x: max(0, bounds.width - 24), y: 0, width: 24, height: 24)
