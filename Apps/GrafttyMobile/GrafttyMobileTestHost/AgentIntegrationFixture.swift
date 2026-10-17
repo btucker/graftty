@@ -189,8 +189,8 @@ final class AgentIntegrationMobileController: UIViewController {
         _ = await pane.client.session.flushOutput()
         var result = snapshot(pane)
         if command.parameters["colors"] == "true",
-           let contents = pane.container.terminalView.layer.contents,
-           CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID(),
+           let contents = ([pane.container.terminalView.layer] + (pane.container.terminalView.layer.sublayers ?? []))
+            .compactMap({ $0.contents }).first(where: { CFGetTypeID($0 as CFTypeRef) == IOSurfaceGetTypeID() }),
            let metrics = pane.container.terminalGridMetrics {
             let surface = unsafeBitCast(contents as AnyObject, to: IOSurfaceRef.self)
             let image = CIImage(ioSurface: surface)
