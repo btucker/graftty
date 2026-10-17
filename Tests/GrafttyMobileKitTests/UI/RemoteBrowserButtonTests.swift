@@ -39,6 +39,7 @@ struct RemoteBrowserButtonTests {
         fixture.state.slowRead = false
         fixture.state.focused = true
         try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+        try await finishPresentation(in: fixture)
     }
 
     @Test("Failed automatic previews do not retry when the pane view is recreated", .timeLimit(.minutes(1)))
@@ -49,6 +50,7 @@ struct RemoteBrowserButtonTests {
         fixture.state.offers = [imageOffer()]
         try await waitUntil { fixture.host.presentedViewController is UIAlertController }
         let reads = fixture.state.reads
+        try await finishPresentation(in: fixture)
         fixture.state.visible = false
         try await Task.sleep(for: .milliseconds(300))
         fixture.state.visible = true
@@ -599,7 +601,9 @@ struct RemoteBrowserButtonTests {
         try await Task.sleep(for: .milliseconds(50))
     }
     private func waitUntil(sourceLocation: SourceLocation = #_sourceLocation, _ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(4)
+        // Offer polling can consume three seconds before UIKit starts its
+        // presentation. Quick Look's simulator extension also starts lazily.
+        let deadline = ContinuousClock.now + .seconds(10)
         while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
         try #require(condition(), "Hosted browser condition did not become true", sourceLocation: sourceLocation)
     }
