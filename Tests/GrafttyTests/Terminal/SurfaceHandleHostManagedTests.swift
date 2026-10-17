@@ -9,6 +9,39 @@ import Testing
 @MainActor
 @Suite("SurfaceHandle host-managed zmx cutover")
 struct SurfaceHandleHostManagedTests {
+    @Test("@spec TERM-12.41: While a local Mac follows a paged terminal, the application shall preserve the last in-band source grid when a temporary restore pin is released, independently of ownership metadata.")
+    func pagedFollowerDoesNotRevertToOwnershipGrid() throws {
+        let store = SessionDisplayOwnershipStore()
+        let spawn = testSurfaceHandleSpawnConfiguration()
+        let stale = try DisplayGrid(cols: 120, rows: 40)
+        _ = store.attachClient(sessionName: spawn.sessionName, clientID: DisplayClientID("phone"),
+            kind: .ios, role: .interactive, visible: true, grid: stale)
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(terminalID: Self.terminalID(), app: fakeApp(),
+            worktreePath: "/tmp/worktree", socketPath: "/tmp/graftty.sock", zmxSpawnConfiguration: spawn,
+            displayOwnershipStore: store, displayClientID: DisplayClientID("mac"),
+            surfaceFactory: harness.factory, zmxBackendFactory: { _, _, _, _ in backend }))
+        #expect(handle.presentationGrid == stale)
+        let source = try DisplayGrid(cols: 41, rows: 23)
+        let prepare = try #require(backend.attachmentGrid)
+        prepare(source)
+        #expect(handle.presentationGrid == source)
+        // Only a successfully installed checkpoint or live source-grid event
+        // commits the stable follower grid; layout preparation is provisional.
+        let commit = try #require(backend.sourceGrid)
+        commit(source)
+        prepare(nil)
+        handle.synchronizeDisplayOwnership()
+        #expect(handle.presentationGrid == source)
+        #expect(store.snapshot(sessionName: spawn.sessionName).grid == stale)
+        commit(nil)
+        prepare(source)
+        prepare(nil) // rejected READY, followed by legacy fallback
+        handle.synchronizeDisplayOwnership()
+        #expect(handle.presentationGrid == stale)
+    }
+
     @Test("""
     @spec ZMX-4.1: When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned attachment only after `ghostty_surface_new` succeeds and, except for the explicit background-launch escape hatch in TERM-11.10, the view's first layout settles. Existing paging-capable sessions use native snapshot restoration; new sessions and older daemons use a `zmx attach` PTY. Shell exit remains wired to `close_surface_cb` through `ghostty_surface_process_exit`.
     """)

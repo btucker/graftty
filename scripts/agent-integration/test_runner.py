@@ -10,6 +10,40 @@ from run import Run, prepare_home
 
 
 class RunnerLifecycleTests(unittest.TestCase):
+    def test_reentry_waits_for_current_rows_and_keeps_both_native_observations(self):
+        runner = Run.__new__(Run)
+        runner.invariant_failures = []
+        runner.summary = {'assertions': []}
+        physical = 'ROW-000001 retained output\nROW-000002 retained output\n\n› Ask Codex to do anything\n? for shortcuts'
+        healthy = {'physicalRows': physical, 'pagedGridMismatches': '', 'grid': '41x5', 'nativeGrid': '41x5',
+                   'keyboardTop': '500', 'terminalBottom': '442'}
+        stale = {**healthy, 'physicalRows': physical.replace('ROW-000001 retained', 'ROW-000001 stale')}
+        runner.snapshot = Mock(side_effect=[stale, healthy])
+        runner.act = Mock(return_value={'authoritativeText': physical})
+        with tempfile.TemporaryDirectory() as directory, patch('run.time.sleep'):
+            runner.root = Path(directory)
+            runner.check_mobile_reentry('codex', 'reentry-0')
+            self.assertEqual(healthy, json.loads((runner.root / 'codex-reentry-0.json').read_text()))
+            self.assertEqual(physical, json.loads((runner.root / 'codex-reentry-0-mac.json').read_text())['authoritativeText'])
+        self.assertEqual(2, runner.snapshot.call_count)
+        self.assertFalse(runner.invariant_failures)
+        self.assertEqual('passed', runner.summary['assertions'][0]['status'])
+
+    def test_reentry_records_a_persistent_payload_failure_after_settling(self):
+        runner = Run.__new__(Run)
+        runner.invariant_failures = []
+        runner.summary = {'assertions': []}
+        physical = 'ROW-000001 stale output\nROW-000002 retained output\n\n› Ask Codex to do anything\n? for shortcuts'
+        runner.snapshot = Mock(return_value={'physicalRows': physical, 'pagedGridMismatches': '',
+            'grid': '41x5', 'nativeGrid': '41x5', 'keyboardTop': '500', 'terminalBottom': '442'})
+        runner.act = Mock(return_value={'authoritativeText': physical.replace('stale output', 'retained output')})
+        with tempfile.TemporaryDirectory() as directory, patch('run.time.monotonic', side_effect=[0, 6]):
+            runner.root = Path(directory)
+            runner.check_mobile_reentry('codex', 'reentry-0')
+        self.assertEqual(1, len(runner.invariant_failures))
+        self.assertIn('logical row content', runner.invariant_failures[0]['error'])
+        self.assertEqual('failed', runner.summary['assertions'][0]['status'])
+
     def test_provider_home_does_not_supply_terminal_capabilities(self):
         with tempfile.TemporaryDirectory() as directory:
             env = prepare_home(Path(directory), 'http://127.0.0.1:1234', Path('/bin/echo'), Path('/bin/echo'))

@@ -32,7 +32,7 @@ xcrun metal --version >/dev/null
 
 renderer_pin=8af6897c0afc63037a8a3efee4162a380e3a4572
 wrapper_pin=da4d8ddc94ba66f89efa5208961a1116357117c3
-renderer_patches=(preserve-top-anchor resize-history-guard renderer-experiment ios-renderer-experiment production-snapshot history-viewport presentation-order scrollbar-state history-boundary)
+renderer_patches=(preserve-top-anchor resize-history-guard renderer-experiment ios-renderer-experiment production-snapshot history-viewport presentation-order scrollbar-state history-boundary source-grid)
 mkdir -p "$cache" "$(dirname "$output")"
 cache=$(cd "$cache" && pwd)
 output=$(cd "$(dirname "$output")" && pwd)/$(basename "$output")
@@ -76,6 +76,8 @@ git -C "$stage" apply --check "$patches/production-wrapper.patch"
 git -C "$stage" apply "$patches/production-wrapper.patch"
 git -C "$stage" apply --check "$patches/history-wrapper.patch"
 git -C "$stage" apply "$patches/history-wrapper.patch"
+git -C "$stage" apply --check "$patches/source-grid-wrapper.patch"
+git -C "$stage" apply "$patches/source-grid-wrapper.patch"
 cp "$stage/Package.local.swift" "$stage/Package.swift"
 
 build_archive() {
@@ -135,7 +137,7 @@ assert found == {('macos', None): expected, ('ios', None): {'arm64'},
 PY
 {
     printf 'renderer %s\nwrapper %s\nzig 0.16.0\narm64_only %s\n' "$renderer_pin" "$wrapper_pin" "$arm64_only"
-    for name in "${renderer_patches[@]}" production-wrapper history-wrapper; do
+    for name in "${renderer_patches[@]}" production-wrapper history-wrapper source-grid-wrapper; do
         (cd "$patches"; shasum -a 256 "$name.patch")
     done
 } > "$stage/PAGING-BUILD.txt"

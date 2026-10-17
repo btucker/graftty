@@ -140,6 +140,22 @@ def assert_lower_viewport(value):
         raise InvariantFailure('native viewport differs from the authoritative grid')
 
 
+def assert_reentry_viewport(value, provider, authoritative):
+    assert_lower_viewport(value)
+    if 'pagedGridMismatches' not in value:
+        raise InvariantFailure('paged parser grid observations unavailable')
+    if value['pagedGridMismatches'] != '':
+        raise InvariantFailure(f'paged output was parsed on a mismatched grid: {value["pagedGridMismatches"]}')
+    prompt = {'codex': '›', 'claude': '❯'}[provider]
+    footer = value['physicalRows'].split('\n')[-8:]
+    prompt_rows = [row for row in footer if re.match(r'^\s*' + prompt + r'(?:\s|$)', row)]
+    if not prompt_rows:
+        raise InvariantFailure(f'{provider} input prompt is absent from the native footer')
+    if any(re.search(r'ROW-[0-9]', row) for row in prompt_rows):
+        raise InvariantFailure(f'{provider} input prompt is overprinted with numbered output')
+    assert_buffer_matches(value['physicalRows'], authoritative)
+
+
 class Broker:
     def __init__(self, directory=None):
         self.lock = threading.Condition()

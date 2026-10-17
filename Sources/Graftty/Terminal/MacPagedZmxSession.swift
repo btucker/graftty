@@ -28,6 +28,7 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
     private var startupDeadline: ContinuousClock.Instant?
     private var attachmentFailure: (String) -> Void = { _ in }
     private var prepareGrid: (DisplayGrid?) -> Void = { _ in }
+    private var sourceGridHandler: (DisplayGrid?) -> Void = { _ in }
 
     init(surface: ghostty_surface_t, configuration: ZmxSpawnConfiguration, initialSize: PtyProcess.WindowSize?, startupTimeout: Duration? = nil) {
         self.surface = MacPagedSurface(surface)
@@ -57,6 +58,10 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
 
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void) {
         lock.withLock { attachmentFailure = handler }
+    }
+
+    func bindSourceGrid(_ handler: @escaping (DisplayGrid?) -> Void) {
+        lock.withLock { sourceGridHandler = handler }
     }
 
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {
@@ -126,7 +131,8 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
 
         let prepare = lock.withLock { prepareGrid }
         let renderer = MacPagedTerminalRenderer(surface: surface, prepareGrid: prepare)
-        let attachment = MacPagedAttachment(renderer: renderer, finishGrid: { [weak self] in
+        let sourceGrid = lock.withLock { sourceGridHandler }
+        let attachment = MacPagedAttachment(renderer: renderer, sourceGrid: sourceGrid, finishGrid: { [weak self] in
             prepare(nil)
             // Completion is durable even when startup input fills the queue.
             // The marker only wakes an otherwise idle sender.
@@ -149,7 +155,10 @@ final class MacPagedZmxSession: HostManagedZmxSession, @unchecked Sendable {
             attachment.close()
             await stream.close()
             guard !Task.isCancelled, !lock.withLock({ closed }) else { return }
+            sourceGrid(nil)
             prepare(nil)
+            do { try await renderer.releaseSourceGrid() }
+            catch { reportFailure("Terminal restoration failed: \(error)"); return }
             await runLegacy()
             return
         }

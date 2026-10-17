@@ -62,7 +62,7 @@ struct RemoteTerminalSurfaceBackendTests {
     }
 
     @MainActor
-    @Test("@spec TERM-12.26: When a remote Mac finishes restoring a terminal as a follower, the application shall retain the authoritative grid until display ownership changes.")
+    @Test("@spec TERM-12.26: While a remote Mac follows a paged terminal, the application shall retain the last in-band source grid through ownership updates and restore-pin release until it becomes the display owner.")
     func pagedFollowerKeepsGridAfterHistoryAndReleasesItForOwner() async throws {
         let client = FakeRemoteTerminalWebSocketClient(supportsWebControlTextFrames: true, supportsPagedHistory: true)
         var grids: [DisplayGrid?] = []
@@ -87,7 +87,7 @@ struct RemoteTerminalSurfaceBackendTests {
             sessionName: "main", ownerClientID: DisplayClientID("other"), ownerKind: .ios,
             grid: followerGrid, epoch: 1, revision: 1)).encoded()))
         try await waitForGridUpdates(3, grids: { grids })
-        #expect(grids.last! == followerGrid)
+        #expect(grids.last! == checkpointGrid, "Ownership metadata must not resize the parser ahead of in-band VT")
         client.deliver(.text(try PagedTerminalEnvelope(event: .grid(cols: 90, rows: 30)).encoded()))
         try await waitForGridUpdates(5, grids: { grids })
         #expect(grids.last! == followerGrid, "A live grid update must preserve follower sizing after its temporary pin ends")
@@ -104,7 +104,7 @@ struct RemoteTerminalSurfaceBackendTests {
             sessionName: "main", ownerClientID: DisplayClientID("other"), ownerKind: .ios,
             grid: checkpointGrid, epoch: 3, revision: 3)).encoded()))
         try await waitForGridUpdates(7, grids: { grids })
-        #expect(grids.last! == checkpointGrid)
+        #expect(grids.last! == followerGrid, "A new remote owner does not replace the in-band source grid")
     }
 
     @MainActor

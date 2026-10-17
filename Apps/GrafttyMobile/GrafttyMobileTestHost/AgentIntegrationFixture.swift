@@ -36,6 +36,7 @@ final class AgentIntegrationMobileController: UIViewController {
     let fixtureHost = Host(label: "Integration Mac", baseURL: URL(string: "https://fixture.invalid")!)
     let retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
     var route: UIHostingController<AnyView>?
+    let focusKeyboardButton = UIButton(type: .system)
 
     init(endpoint: URL) { self.endpoint = endpoint; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
@@ -48,6 +49,10 @@ final class AgentIntegrationMobileController: UIViewController {
         status.font = .monospacedSystemFont(ofSize: 9, weight: .regular)
         status.accessibilityIdentifier = "Agent integration status"
         view.addSubview(status)
+        focusKeyboardButton.setTitle("Show keyboard", for: .normal)
+        focusKeyboardButton.accessibilityIdentifier = "Agent integration show keyboard"
+        focusKeyboardButton.addTarget(self, action: #selector(showKeyboard), for: .touchUpInside)
+        view.addSubview(focusKeyboardButton)
         dismissKeyboard.setTitle("Dismiss keyboard", for: .normal)
         dismissKeyboard.accessibilityIdentifier = "Agent integration dismiss keyboard"
         dismissKeyboard.addTarget(self, action: #selector(hideKeyboard), for: .touchUpInside)
@@ -73,7 +78,8 @@ final class AgentIntegrationMobileController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let frame = view.safeAreaLayoutGuide.layoutFrame
-        status.frame = CGRect(x: frame.minX, y: frame.minY, width: max(1, frame.width - 130), height: 35)
+        status.frame = CGRect(x: frame.minX, y: frame.minY, width: max(1, frame.width - 260), height: 35)
+        focusKeyboardButton.frame = CGRect(x: frame.maxX - 260, y: frame.minY, width: 130, height: 35)
         dismissKeyboard.frame = CGRect(x: frame.maxX - 130, y: frame.minY, width: 130, height: 35)
         if let focused, let pane = panes[focused] {
             if let route {
@@ -87,6 +93,10 @@ final class AgentIntegrationMobileController: UIViewController {
     }
 
     @objc func hideKeyboard() { view.endEditing(true) }
+    @objc func showKeyboard() {
+        guard let focused, let pane = panes[focused] else { return }
+        _ = pane.container.focusKeyboardInput()
+    }
 
     func connect() async throws -> RemoteHostConnection {
         if let connection { return connection }
@@ -221,6 +231,7 @@ final class AgentIntegrationMobileController: UIViewController {
                     host.didMove(toParent: self)
                     route = host
                     view.bringSubviewToFront(status)
+                    view.bringSubviewToFront(focusKeyboardButton)
                     view.bringSubviewToFront(dismissKeyboard)
                 } else {
                     view.addSubview(pane.container)
@@ -285,12 +296,16 @@ final class AgentIntegrationMobileController: UIViewController {
         let terminalFrame = pane.container.convert(pane.container.bounds, to: view.window)
         let keyboardFrame = view.convert(view.keyboardLayoutGuide.layoutFrame, to: view.window)
         return ["text": text, "anchor": AgentIntegrationAnchor.first(in: text),
+            "pagedGridMismatches": pane.client.diagnosticPagedGridMismatches.joined(separator: "\n"),
+            "parserGridMatches": metrics.map { String(pane.client.session.gridMatches(columns: $0.columns, rows: $0.rows)) } ?? "",
+            "parserGridAtScrollbarHeight": metrics.map { String(pane.client.session.gridMatches(columns: $0.columns, rows: UInt16(clamping: bar?.len ?? 0))) } ?? "",
             "physicalRows": pane.client.session.readViewportRowsText() ?? "",
             "surfaceFrame": NSCoder.string(for: pane.container.terminalView.frame),
             "surfaceBounds": NSCoder.string(for: pane.container.terminalView.bounds),
             "canvasGrid": pane.client.snapshotCanvasGrid.map { "\($0.cols)x\($0.rows)" } ?? "physical",
             "presentationGrid": pane.container.authoritativeGrid.map { "\($0.cols)x\($0.rows)" } ?? "physical",
             "keyboard": String(pane.container.terminalView.isFirstResponder),
+            "keyboardEligible": String(pane.container.terminalView.isKeyboardInputEnabled),
             "terminalBottom": String(Double(terminalFrame.maxY)),
             "keyboardTop": String(Double(keyboardFrame.minY)),
             "windowHeight": String(Double(view.window?.bounds.height ?? 0)),

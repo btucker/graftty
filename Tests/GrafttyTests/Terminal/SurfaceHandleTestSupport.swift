@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import GhosttyKit
 import GrafttyKit
+import GrafttyProtocol
 import Testing
 @testable import Graftty
 
@@ -132,6 +133,15 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     private(set) var resyncVisibleGridCount = 0
     private(set) var takeControlCount = 0
     private(set) var userInputScopeCount = 0
+    var attachmentGrid: ((DisplayGrid?) -> Void)?
+    var sourceGrid: ((DisplayGrid?) -> Void)?
+
+    func bindSourceGrid(_ handler: @escaping (DisplayGrid?) -> Void) { sourceGrid = handler }
+
+    func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {
+        attachmentGrid = prepareGrid
+    }
+
     var deliveryAccepted = true
 
     init(startError: Error? = nil, setSizeCountSource: @escaping () -> Int = { 0 }) {

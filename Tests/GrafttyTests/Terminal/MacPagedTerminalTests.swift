@@ -95,6 +95,66 @@ struct MacPagedTerminalTests {
     }
 
     #if GRAFTTY_PAGED_HISTORY
+    @Test("@spec TERM-12.42: While a native Mac terminal consumes a paged source stream, the application shall preserve its parser grid and synchronized output across local viewport and font resizes, report source dimensions, and release the source grid before legacy fallback.", .timeLimit(.minutes(1)))
+    func nativeParserGridFollowsOrderedSourceRatherThanPhysicalSize() async throws {
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
+        try await renderer.resize(cols: 80, rows: 24)
+        terminal.access.write(Data("\u{1b}[?2026h\u{1b}[?2048h".utf8))
+        ghostty_surface_set_size(terminal.raw, 330, 400)
+        let fontAction = "increase_font_size:1"
+        _ = fontAction.withCString { ghostty_surface_binding_action(terminal.raw, $0, UInt(fontAction.utf8.count)) }
+        // Drain Ghostty's 25ms native resize coalescer, including the font
+        // event. Parser state must remain fixed while physical size changes.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(ghostty_surface_grid_matches(terminal.raw, 80, 24))
+        terminal.access.write(Data("\u{1b}[?2026$p\u{1b}[18t".utf8))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !terminal.responses.contains("\u{1b}[8;24;80t"), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(terminal.responses.contains("\u{1b}[?2026;1$y"))
+        #expect(terminal.responses.contains("\u{1b}[8;24;80t"))
+        let physical = ghostty_surface_size(terminal.raw)
+        // The source acknowledges geometry already applied locally, so
+        // presentation produces no second resize to mask a missing report.
+        try await renderer.resize(cols: physical.columns, rows: physical.rows)
+        let report = "\u{1b}[48;\(physical.rows);\(physical.columns);"
+        while !terminal.responses.contains(report), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(terminal.responses.contains(report), "Mode 2048 must announce the acknowledged logical size")
+        #expect(ghostty_surface_grid_matches(terminal.raw, physical.columns, physical.rows))
+        let parserOnly = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: { _ in })
+        try await parserOnly.resize(cols: physical.columns + 2, rows: physical.rows + 3)
+        #expect(ghostty_surface_grid_matches(terminal.raw, physical.columns + 2, physical.rows + 3))
+        terminal.access.write(Data("\u{1b}[18t".utf8))
+        let pinnedReply = "\u{1b}[8;\(physical.rows + 3);\(physical.columns + 2)t"
+        let pinnedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !terminal.responses.contains(pinnedReply), ContinuousClock.now < pinnedDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(terminal.responses.contains(pinnedReply))
+        let reportStart = terminal.responses.snapshot().count
+        // Clear immediately after queuing a physical resize, before its
+        // coalescer updates io.size. The first report must use parser state.
+        ghostty_surface_set_size(terminal.raw, 310, 390)
+        let fallback = ghostty_surface_size(terminal.raw)
+        try await renderer.releaseSourceGrid()
+        terminal.access.write(Data("\u{1b}[18t".utf8))
+        let fallbackReply = "\u{1b}[8;\(fallback.rows);\(fallback.columns)t"
+        let fallbackDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !String(decoding: terminal.responses.snapshot().dropFirst(reportStart), as: UTF8.self).contains(fallbackReply),
+              ContinuousClock.now < fallbackDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let reports = String(decoding: terminal.responses.snapshot().dropFirst(reportStart), as: UTF8.self)
+        let firstReport = reports.range(of: "\u{1b}\\[48;[0-9]+;[0-9]+;", options: .regularExpression).map { String(reports[$0]) }
+        #expect(firstReport == "\u{1b}[48;\(fallback.rows);\(fallback.columns);")
+        #expect(ghostty_surface_grid_matches(terminal.raw, fallback.columns, fallback.rows))
+    }
+
     @Test("@spec TERM-12.37: While a Mac terminal backfills history, the application shall preserve access to older pages when live output edits the active screen or reallocates its page storage.", .timeLimit(.minutes(1)), arguments: [false, true])
     func historySurvivesLiveScreenEdits(editRows: Bool) async throws {
         let fixture = try await HistoryDaemon.make()
@@ -313,6 +373,7 @@ struct MacPagedTerminalTests {
         let view: NSView
         let raw: ghostty_surface_t
         let access: MacPagedSurface
+        let responses = HistoryOutput(marker: "unused-response-marker")
         private var ticker: Task<Void, Never>?
 
         init() throws {
@@ -328,7 +389,11 @@ struct MacPagedTerminalTests {
             config.platform.macos.nsview = Unmanaged.passUnretained(view).toOpaque()
             config.scale_factor = Double(window.backingScaleFactor)
             config.backend = GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED
-            config.receive_buffer = { _, _, _ in }
+            config.receive_userdata = Unmanaged.passUnretained(responses).toOpaque()
+            config.receive_buffer = { userdata, bytes, count in
+                guard let userdata, let bytes, count > 0 else { return }
+                Unmanaged<HistoryOutput>.fromOpaque(userdata).takeUnretainedValue().append(Data(bytes: bytes, count: Int(count)))
+            }
             config.receive_resize = { _, _, _, _, _ in }
             raw = try #require(ghostty_surface_new(app.app, &config))
             access = MacPagedSurface(raw)
@@ -438,6 +503,7 @@ struct MacPagedTerminalTests {
         func contains(_ text: String) -> Bool {
             lock.withLock { String(decoding: bytes, as: UTF8.self).contains(text) }
         }
+        func snapshot() -> Data { lock.withLock { bytes } }
         var finished: Bool { contains(marker) }
     }
 }

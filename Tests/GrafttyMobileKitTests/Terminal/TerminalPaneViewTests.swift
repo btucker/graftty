@@ -58,6 +58,7 @@ private final class TerminalResponseRecorder: @unchecked Sendable {
     }
 
     func snapshot() -> Data { lock.withLock { data } }
+    func clear() { lock.withLock { data.removeAll() } }
 
     func contains(_ response: String) -> Bool {
         lock.withLock { data.range(of: Data(response.utf8)) != nil }
@@ -1854,6 +1855,110 @@ private final class ScrollInputRecorder: @unchecked Sendable {
         lock.withLock { bytes.range(of: Data(text.utf8)) != nil }
     }
     var description: String { lock.withLock { String(decoding: bytes, as: UTF8.self).debugDescription } }
+}
+
+@Suite(.serialized)
+@MainActor
+struct PagedSourceGridTests {
+    @Test("@spec IOS-4.47: While a mobile terminal consumes a paged source stream, the application shall preserve the source parser grid across local viewport and font changes until the next in-band source grid is applied.", .enabled(if: MobilePagedTerminalRenderer.isSupported))
+    func sourceParserGridSurvivesPhysicalResizeAndFontChanges() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 700))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        container.layoutIfNeeded()
+        let responses = TerminalResponseRecorder()
+        let session = InMemoryTerminalSession(write: { responses.append($0) }, resize: { _ in })
+        let controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        container.terminalView.controller = controller
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        let grid = try #require(container.terminalGridMetrics)
+        let renderer = MobilePagedTerminalRenderer(session: session) { cols, rows in
+            container.authoritativeGrid = .init(cols: cols, rows: rows)
+            container.layoutIfNeeded()
+        }
+        try await renderer.setSourceGrid(cols: grid.columns, rows: grid.rows)
+        // Ownership releases the fitted canvas; this also leaves a native
+        // coalesced resize pending when a keyboard changes physical bounds.
+        container.authoritativeGrid = nil
+        container.frame.size = CGSize(width: 330, height: 400)
+        container.layoutIfNeeded()
+        for _ in 0..<100 where container.terminalGridMetrics?.heightPixels == grid.heightPixels {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        await expectParserGrid(session, responses: responses, cols: grid.columns, rows: grid.rows)
+        session.receive("\u{1b}[\(grid.rows);1HOLD-GRID")
+        await expectParserGrid(session, responses: responses, cols: grid.columns, rows: grid.rows)
+        #expect(session.readViewportText()?.contains("OLD-GRID") == true)
+        _ = container.terminalView.surface?.performBindingAction("increase_font_size:1")
+        try await Task.sleep(for: .milliseconds(60))
+        await expectParserGrid(session, responses: responses, cols: grid.columns, rows: grid.rows)
+        // The next source event may now change parsing dimensions. A
+        // previously queued local resize must not undo that ordered change.
+        try await renderer.setSourceGrid(cols: 41, rows: 23)
+        container.authoritativeGrid = nil
+        container.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(60))
+        await expectParserGrid(session, responses: responses, cols: 41, rows: 23)
+        session.receive("\u{1b}[23;1HNEW-GRID")
+        await expectParserGrid(session, responses: responses, cols: 41, rows: 23)
+        #expect(session.readViewportText()?.contains("NEW-GRID") == true)
+        let physical = try #require(container.terminalGridMetrics)
+        try await renderer.releaseSourceGrid()
+        await expectParserGrid(session, responses: responses, cols: physical.columns, rows: physical.rows)
+    }
+
+    @Test("@spec IOS-4.48: When a paged source grid arrives before the mobile terminal surface mounts, the application shall wait for native readiness before completing the ordered grid operation.", .enabled(if: MobilePagedTerminalRenderer.isSupported))
+    func sourceGridWaitsForFirstSurfaceMount() async throws {
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        var container: TerminalInputContainerView?
+        var prepared: SessionClient.GridSize?
+        var completed = false
+        let renderer = MobilePagedTerminalRenderer(session: session) { cols, rows in
+            prepared = .init(cols: cols, rows: rows)
+            container?.authoritativeGrid = prepared
+            container?.layoutIfNeeded()
+        }
+        let pending = Task { @MainActor in
+            try await renderer.setSourceGrid(cols: 80, rows: 24)
+            completed = true
+        }
+        defer { pending.cancel() }
+        for _ in 0..<100 where prepared == nil { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(prepared == .init(cols: 80, rows: 24))
+        #expect(!completed)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let mounted = TerminalInputContainerView(frame: window.bounds)
+        container = mounted
+        mounted.authoritativeGrid = prepared
+        mounted.terminalView.configuration = .init(backend: .inMemory(session))
+        mounted.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        host.view.addSubview(mounted)
+        mounted.layoutIfNeeded()
+        defer { mounted.removeFromSuperview(); window.isHidden = true }
+        try await pending.value
+        #expect(completed)
+    }
+
+    private func expectParserGrid(_ session: InMemoryTerminalSession, responses: TerminalResponseRecorder,
+                                  cols: UInt16, rows: UInt16) async {
+        responses.clear()
+        session.receive("\u{1b}[999;999H\u{1b}[6n")
+        let expected = "\u{1b}[\(rows);\(cols)R"
+        for _ in 0..<100 where !responses.contains(expected) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(responses.contains(expected), "Parser must retain source grid \(cols)x\(rows); reply: \(String(decoding: responses.snapshot(), as: UTF8.self).debugDescription)")
+    }
+
 }
 
 @Suite

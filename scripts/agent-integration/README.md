@@ -40,11 +40,17 @@ To check blank lower rows after returning to a mobile worktree, add
 the production `SingleSessionView` with its retained pane container. It switches
 away and back three times for each provider, receives output while hidden,
 changes ownership while hidden, and shows and hides the software keyboard.
+This bounded probe uses short ASCII rows; the comprehensive scenario retains
+its separate Unicode and wrapping checks and their recorded failures.
+XCUITest taps the fixture's explicit keyboard focus and dismissal controls;
+terminal-tap focus behavior is outside this scenario.
 It waits for the keyboard geometry and native grid to settle, then gives the
-provider five seconds to repaint the lower four physical rows. Blank lower rows
-or a persistent grid mismatch fail the run. Native observations and screenshots
-retain the action IDs. This scenario does not run the generated action sequence
-or messaging pairings.
+provider five seconds to repaint. The lower physical rows must contain a clean
+provider prompt and match the daemon's numbered output. Blank rows, prompt
+overprint, stale nonblank payload, and any observed parsing at the wrong source
+grid fail the run. Native observations and screenshots retain the action IDs;
+each stage saves the corresponding Mac observation and daemon text.
+This scenario does not run the generated action sequence or messaging pairings.
 
 Add `--colors` to run a bounded Codex color probe instead of the numbered-row
 and messaging sequence. It streams explicit inline code, a link, Python syntax,

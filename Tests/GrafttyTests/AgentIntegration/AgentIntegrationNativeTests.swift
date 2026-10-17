@@ -349,7 +349,7 @@ private final class AgentIntegrationMacHost {
         let selectedText = hasSelection && selected.text != nil ? String(cString: selected.text) : ""
         if hasSelection { ghostty_surface_free_text(pane.handle.surface, &selected) }
         let terminal = pane.handle.view
-        return ["text": text, "nativeText": nativeText, "buffer": bufferText, "anchor": AgentIntegrationAnchor.first(in: text),
+        var values = ["text": text, "nativeText": nativeText, "buffer": bufferText, "anchor": AgentIntegrationAnchor.first(in: text),
             "physicalRows": try physicalRows(pane.handle.surface),
             "surfaceFrame": NSStringFromRect(terminal.frame), "surfaceBounds": NSStringFromRect(terminal.bounds),
             "visibleRect": NSStringFromRect(terminal.visibleRect),
@@ -359,6 +359,13 @@ private final class AgentIntegrationMacHost {
             "ownerIdentity": state.ownerIdentity ?? "",
             "nativeGrid": "\(size.columns)x\(size.rows)", "offset": String(bar.offset), "total": String(bar.total),
             "len": String(bar.len), "session": pane.session]
+        #if GRAFTTY_PAGED_HISTORY
+        values["parserGridMatches"] = String(ghostty_surface_grid_matches(pane.handle.surface, size.columns, size.rows))
+        if let rows = UInt16(exactly: bar.len), rows > 0 {
+            values["parserGridAtScrollbarHeight"] = String(ghostty_surface_grid_matches(pane.handle.surface, size.columns, rows))
+        }
+        #endif
+        return values
     }
 
     func physicalRows(_ surface: ghostty_surface_t) throws -> String {

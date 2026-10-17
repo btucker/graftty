@@ -16,8 +16,9 @@ import threading
 import time
 import uuid
 
-from harness import Action, InvariantFailure, assert_observation, seeded_actions, shrink, patch_xctestrun, assert_buffer_matches, approval_ready, assert_lower_viewport
+from harness import Action, InvariantFailure, assert_observation, seeded_actions, shrink, patch_xctestrun, assert_buffer_matches, approval_ready, assert_reentry_viewport
 from server import IntegrationServer
+from model import reentry_scenario_text
 
 REPO = Path(__file__).resolve().parents[2]
 AGENTS = ('claude', 'codex', 'claude-peer', 'codex-peer')
@@ -372,23 +373,25 @@ class Run:
         return self.wait_snapshot(agent, settled, 'mobile')
 
     def check_mobile_reentry(self, agent, stage):
-        def repainted(value):
-            try:
-                assert_lower_viewport(value)
-                return True
-            except InvariantFailure:
-                return False
-        try:
-            value = self.wait_snapshot(agent, repainted, 'mobile', timeout=5)
-        except InvariantFailure:
+        deadline = time.monotonic() + 5
+        status = 'passed'
+        while True:
             value = self.snapshot(agent, 'mobile')
+            authoritative = self.act(Action('verify', agent))
+            try:
+                assert_reentry_viewport(value, agent, authoritative['authoritativeText'])
+            except InvariantFailure as error:
+                if time.monotonic() < deadline:
+                    time.sleep(.1)
+                    continue
+                status = 'failed'
+                self.invariant_failures.append({'agent': agent, 'stage': stage, 'error': str(error)})
+            break
         (self.root / f'{agent}-{stage}.json').write_text(json.dumps(value, indent=2))
+        (self.root / f'{agent}-{stage}-mac.json').write_text(json.dumps(authoritative, indent=2))
         self.act(Action('snapshot', agent, client='gestures'))
-        try:
-            assert_lower_viewport(value)
-        except InvariantFailure as error:
-            self.invariant_failures.append({'agent': agent, 'stage': stage, 'error': str(error)})
-        self.summary['assertions'].append({'agent': agent, 'stage': stage,
+        self.summary['assertions'].append({'agent': agent, 'stage': stage, 'status': status,
+            'pagedGridMismatches': value.get('pagedGridMismatches'),
             'grid': value['grid'], 'nativeGrid': value['nativeGrid'],
             'keyboardTop': value['keyboardTop'], 'terminalBottom': value['terminalBottom']})
 
@@ -396,6 +399,7 @@ class Run:
         self.start_mobile()
         self.phase = 'fixed'
         models = self.server.models
+        models.fixture_text = reentry_scenario_text
         for agent in ('claude', 'codex'):
             self.paths[agent] = self.act(Action('start', agent))
             deadline = time.monotonic() + 90

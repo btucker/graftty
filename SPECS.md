@@ -624,7 +624,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.25** When a native paged attachment negotiates pixel-size support, the application shall send current pixel metadata before each changed window size and daemon-requested size reply, including changes that preserve the cell grid.
 
-**TERM-12.26** When a remote Mac finishes restoring a terminal as a follower, the application shall retain the authoritative grid until display ownership changes.
+**TERM-12.26** While a remote Mac follows a paged terminal, the application shall retain the last in-band source grid through ownership updates and restore-pin release until it becomes the display owner.
 
 **TERM-12.27** While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until the retained history import finishes.
 
@@ -653,6 +653,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-12.39** When the Mac takes control of a restored paged terminal from mobile, the application shall resize to the Mac viewport and keep the terminal attachment available for input and live output.
 
 **TERM-12.40** While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering without disconnecting, and shall release a waiting reader when the attachment closes.
+
+**TERM-12.41** While a local Mac follows a paged terminal, the application shall preserve the last in-band source grid when a temporary restore pin is released, independently of ownership metadata.
+
+**TERM-12.42** While a native Mac terminal consumes a paged source stream, the application shall preserve its parser grid and synchronized output across local viewport and font resizes, report source dimensions, and release the source grid before legacy fallback.
 
 ## GIT — Worktree Discovery & Monitoring
 
@@ -1975,6 +1979,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-4.45** When a Mac supplies terminal presentation to GrafttyMobile, the application shall send its resolved background, foreground, and ANSI palette without host theme or config-file references, preserve non-color settings from root and included config files including fonts and keybindings, and retain explicit overrides over the selected host theme branch.
 
 **IOS-4.46** When a retained mobile pane releases its follower canvas while its route callbacks are detached, the application shall preserve the pending physical viewport confirmation and deliver it once after the route restores its callback.
+
+**IOS-4.47** While a mobile terminal consumes a paged source stream, the application shall preserve the source parser grid across local viewport and font changes until the next in-band source grid is applied.
+
+**IOS-4.48** When a paged source grid arrives before the mobile terminal surface mounts, the application shall wait for native readiness before completing the ordered grid operation.
 
 ### IOS-5.x — Multi-pane layout
 

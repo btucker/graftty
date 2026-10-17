@@ -31,6 +31,13 @@ COLOR_STRING = "emerald"
     return 'BEGIN-GRAFTTY-FIXTURE\n\n' + sample + streamed + 'END-GRAFTTY-FIXTURE'
 
 
+def reentry_scenario_text(rows=300):
+    # Keep the viewport lifecycle probe separate from the comprehensive
+    # fixture's known Unicode and wrapped-row rendering failures.
+    body = '\n'.join(f'ROW-{i:06d} retained output' for i in range(rows))
+    return f'BEGIN-GRAFTTY-FIXTURE\n\n{body}\n\nEND-GRAFTTY-FIXTURE'
+
+
 def user_text(body, markers_only=False):
     result = []
     for message in body.get('messages', body.get('input', [])):
