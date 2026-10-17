@@ -13,7 +13,7 @@ final class FilePreviewHistory: ObservableObject {
         let preview: ImagePreviewStore.Preview
         let pane: PaneSlotID
         let worktreePath: String
-        let createdAt = Date()
+        var createdAt: Date { preview.createdAt }
 
         var title: String {
             preview.files.count == 1 ? preview.filename : "\(preview.filename) + \(preview.files.count - 1) more"
@@ -22,8 +22,11 @@ final class FilePreviewHistory: ObservableObject {
 
     @Published private(set) var entries: [Entry] = []
 
-    func entries(for worktreePath: String) -> [Entry] {
-        entries.filter { $0.worktreePath == worktreePath }
+    func entries(for worktreePath: String, including active: [Entry] = []) -> [Entry] {
+        let recent = entries.filter { $0.worktreePath == worktreePath }
+        var seen = Set(recent.map(\.id))
+        let additional = active.filter { $0.worktreePath == worktreePath && seen.insert($0.id).inserted }
+        return (recent + additional).sorted { $0.preview.createdInstant > $1.preview.createdInstant }
     }
 
     @discardableResult

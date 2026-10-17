@@ -25,12 +25,13 @@ final class FilePreviewWindows: ObservableObject {
     func selectedEntry(for worktreePath: String) -> FilePreviewHistory.Entry? {
         controllers[worktreePath]?.model.entry
     }
+    /// Test seam for the history picker and return-to-terminal action.
+    func model(for worktreePath: String) -> FilePreviewWindowModel? { controllers[worktreePath]?.model }
 
     func show(_ entry: FilePreviewHistory.Entry, activate: Bool = true,
-              inlinePane: PaneSlotID? = nil, canShowInline: @escaping (PaneSlotID) -> Bool = { _ in true }) {
+              inlinePane: PaneSlotID? = nil, resolveInlineWorktree: ((PaneSlotID) -> String?)? = nil) {
         objectWillChange.send()
-        inline.dismiss(entry.pane)
-        if let inlinePane, inlinePane != entry.pane { inline.dismiss(inlinePane) }
+        inline.dismiss(previewID: entry.id)
         let controller: FilePreviewWindowController
         if let existing = controllers[entry.worktreePath] {
             controller = existing
@@ -45,21 +46,20 @@ final class FilePreviewWindows: ObservableObject {
                 self?.controllers.removeValue(forKey: path)
             }
         }
-        let targetPane = inlinePane ?? entry.pane
-        controller.model.showInline = { [weak self] selected in
-            guard canShowInline(targetPane) else { return }
-            self?.showInline(selected, pane: targetPane)
+        controller.model.configureInline(pane: inlinePane, resolveWorktree: resolveInlineWorktree) { [weak self] selected, target, path in
+            self?.showInline(selected, pane: target, worktreePath: path)
         }
-        controller.model.canShowInline = canShowInline(targetPane)
         if activate { controller.window?.makeKeyAndOrderFront(nil) }
         else { controller.window?.orderFront(nil) }
     }
 
-    func showInline(_ entry: FilePreviewHistory.Entry, pane: PaneSlotID? = nil) {
+    func showInline(_ entry: FilePreviewHistory.Entry, pane: PaneSlotID? = nil, worktreePath: String? = nil) {
         controllers[entry.worktreePath]?.close()
         let target = pane ?? entry.pane
-        inline.present(entry.preview, for: target)
-        inlineTarget = InlineTarget(worktreePath: entry.worktreePath, pane: target)
+        let path = worktreePath ?? entry.worktreePath
+        inline.dismiss(previewID: entry.id)
+        inline.present(entry.preview, for: target, worktreePath: path)
+        inlineTarget = InlineTarget(worktreePath: path, pane: target)
     }
 
     func closeAll() {
@@ -68,14 +68,34 @@ final class FilePreviewWindows: ObservableObject {
 }
 
 @MainActor
-private final class FilePreviewWindowModel: ObservableObject {
+final class FilePreviewWindowModel: ObservableObject {
     @Published var entry: FilePreviewHistory.Entry {
         willSet { selectionWillChange() }
     }
     var selectionWillChange: () -> Void = {}
-    @Published var canShowInline = true
-    var showInline: (FilePreviewHistory.Entry) -> Void = { _ in }
+    private var inlinePane: PaneSlotID?
+    private var resolveInlineWorktree: ((PaneSlotID) -> String?)?
+    private var onShowInline: (FilePreviewHistory.Entry, PaneSlotID, String) -> Void = { _, _, _ in }
+    private var targetPane: PaneSlotID { inlinePane ?? entry.pane }
+    private var targetWorktreePath: String? {
+        if let resolveInlineWorktree { return resolveInlineWorktree(targetPane) }
+        return entry.worktreePath
+    }
+    var canShowInline: Bool { targetWorktreePath != nil }
     init(entry: FilePreviewHistory.Entry) { self.entry = entry }
+
+    func configureInline(pane: PaneSlotID?, resolveWorktree: ((PaneSlotID) -> String?)?,
+                         onShow: @escaping (FilePreviewHistory.Entry, PaneSlotID, String) -> Void) {
+        objectWillChange.send()
+        inlinePane = pane
+        resolveInlineWorktree = resolveWorktree
+        onShowInline = onShow
+    }
+
+    func showInline() {
+        guard let path = targetWorktreePath else { return }
+        onShowInline(entry, targetPane, path)
+    }
 }
 
 @MainActor
@@ -114,9 +134,8 @@ private struct FilePreviewWindowContent: View {
     let onClose: () -> Void
 
     private var entries: [FilePreviewHistory.Entry] {
-        let recent = history.entries(for: model.entry.worktreePath)
         // An open window continues owning its selected snapshot after history eviction.
-        return recent.contains(where: { $0.id == model.entry.id }) ? recent : [model.entry] + recent
+        history.entries(for: model.entry.worktreePath, including: [model.entry])
     }
 
     var body: some View {
@@ -132,7 +151,7 @@ private struct FilePreviewWindowContent: View {
                 }
                 .labelsHidden()
                 .accessibilityLabel("Preview history")
-                Button("Show in Terminal") { model.showInline(model.entry) }
+                Button("Show in Terminal") { model.showInline() }
                     .disabled(!model.canShowInline)
             }
             .padding(10)

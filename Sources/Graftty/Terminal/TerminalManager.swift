@@ -996,6 +996,12 @@ final class TerminalManager: ObservableObject {
         return paneWorktreePaths[slot]
     }
 
+    /// Current pane membership remains available after renderer eviction or reassignment.
+    func worktreePath(for terminalID: PaneSlotID) -> String? {
+        guard paneSessionIDs[terminalID] != nil else { return nil }
+        return paneWorktreePaths[terminalID]
+    }
+
     /// Test seam: read the captured grid size for a pane.
     func evictedGridSize(for terminalID: PaneSlotID) -> GridSize? {
         evictedGridSizes[terminalID]

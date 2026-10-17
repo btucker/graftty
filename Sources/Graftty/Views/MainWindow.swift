@@ -193,7 +193,7 @@ struct MainWindow: View {
                     previewInlinePane: selectedWorktree.flatMap {
                         ImagePreviewLayout.visiblePane(tree: $0.splitTree, focused: $0.focusedPaneSlotID)
                     },
-                    canShowInlinePreview: { [weak terminalManager] pane in terminalManager?.handle(for: pane) != nil }
+                    previewWorktreeForPane: { [weak terminalManager] pane in terminalManager?.worktreePath(for: pane) }
                 )
 
                 if let selectedRemoteMac {

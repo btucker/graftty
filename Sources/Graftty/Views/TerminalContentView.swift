@@ -35,7 +35,7 @@ struct TerminalContentView: View {
             let entry = FilePreviewHistory.shared.entries(for: path).first { $0.id == preview.id }
                 ?? FilePreviewHistory.Entry(preview: preview, pane: pane, worktreePath: path)
             FilePreviewWindows.shared.show(entry, inlinePane: pane,
-                canShowInline: { [weak terminalManager] pane in terminalManager?.handle(for: pane) != nil })
+                resolveInlineWorktree: { [weak terminalManager] pane in terminalManager?.worktreePath(for: pane) })
         }
     }
 

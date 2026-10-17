@@ -10,6 +10,8 @@ final class ImagePreviewStore: ObservableObject {
 
     struct Preview: Identifiable {
         let id = UUID()
+        let createdAt = Date()
+        let createdInstant = ContinuousClock.now
         let files: [FilePreviewFile]
         var filename: String { files.first?.url.lastPathComponent ?? "Preview" }
         var sourceURL: URL? { files.first?.sourceURL }
@@ -27,6 +29,7 @@ final class ImagePreviewStore: ObservableObject {
     private var nextSequence: UInt64 = 0
     private var generations: [PaneSlotID: RequestGeneration] = [:]
     private var order: [PaneSlotID] = []
+    private var worktreePaths: [PaneSlotID: String] = [:]
 
     func beginRequest(for pane: PaneSlotID) -> RequestGeneration {
         nextSequence += 1
@@ -45,15 +48,25 @@ final class ImagePreviewStore: ObservableObject {
         present(Preview(files: files), for: pane)
     }
 
-    func present(_ preview: Preview, for pane: PaneSlotID) {
+    func present(_ preview: Preview, for pane: PaneSlotID, worktreePath: String? = nil) {
         order.removeAll { $0 == pane }
         if order.count >= Self.maximumPreviews, let oldest = order.first { dismiss(oldest) }
+        worktreePaths[pane] = worktreePath
         previews[pane] = preview
         order.append(pane)
     }
 
+    func previews(forWorktreePath path: String) -> [PaneSlotID: Preview] {
+        previews.filter { worktreePaths[$0.key] == path }
+    }
+
+    func dismiss(previewID: UUID) {
+        for pane in previews.filter({ $0.value.id == previewID }).map(\.key) { dismiss(pane) }
+    }
+
     func dismiss(_ pane: PaneSlotID) {
         generations.removeValue(forKey: pane)
+        worktreePaths.removeValue(forKey: pane)
         previews.removeValue(forKey: pane)
         order.removeAll { $0 == pane }
     }

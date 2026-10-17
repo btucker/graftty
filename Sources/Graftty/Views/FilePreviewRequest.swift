@@ -55,8 +55,9 @@ enum FilePreviewRequest {
                     return .error("The preview request or its display leader changed before delivery. Retry graftty preview.")
                 }
                 let entry = FilePreviewHistory.shared.record(files: files, pane: scope.pane, worktreePath: scope.worktreePath)
-                FilePreviewWindows.shared.show(entry, activate: false, canShowInline: { [weak terminalManager] pane in
-                    terminalManager?.handle(for: pane) != nil
+                previews.dismiss(scope.pane)
+                FilePreviewWindows.shared.show(entry, activate: false, resolveInlineWorktree: { [weak terminalManager] pane in
+                    terminalManager?.worktreePath(for: pane)
                 })
             case .unavailable:
                 return .error("The pane's display leader cannot receive a native preview. Take Control on this Mac or use graftty open.")

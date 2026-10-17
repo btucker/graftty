@@ -53,7 +53,7 @@ struct FilePreviewWindowTests {
             _ = history.record(files: try files("other.txt"), pane: pane, worktreePath: "/b")
         }
         let button = FilePreviewToolbarButton(worktreePath: "/a", inlinePane: pane,
-            canShowInline: { _ in true }, history: history, windows: windows, inline: inline)
+            history: history, windows: windows, inline: inline)
         #expect(button.entries.map(\.id) == [entry.id])
         windows.showInline(entry)
         #expect(button.entries.map(\.id) == [entry.id])
@@ -173,5 +173,130 @@ struct FilePreviewWindowTests {
         tray.popOut.performClick(nil)
         #expect(poppedOut == 1)
         #expect(!interacted)
+    }
+
+    @Test("Opening a history entry removes its actual inline owner and preserves unrelated previews.")
+    func popOutRemovesMatchingSnapshotAfterFocusChanges() throws {
+        _ = NSApplication.shared
+        let history = FilePreviewHistory(), inline = ImagePreviewStore()
+        let windows = FilePreviewWindows(history: history, inline: inline)
+        defer { windows.closeAll() }
+        let origin = PaneSlotID(), docked = PaneSlotID(), focused = PaneSlotID()
+        let entry = history.record(files: try files("report.txt"), pane: origin, worktreePath: "/a")
+        let unrelated = history.record(files: try files("other.txt"), pane: focused, worktreePath: "/a")
+        windows.showInline(entry, pane: docked)
+        inline.present(unrelated.preview, for: focused)
+        windows.show(entry, activate: false, inlinePane: focused)
+        #expect(inline.previews[docked] == nil)
+        #expect(inline.previews[focused]?.id == unrelated.id)
+        #expect(windows.selectedEntry(for: "/a")?.id == entry.id)
+    }
+
+    @Test("An inline preview remains in its worktree toolbar after history eviction and a sibling-pane focus change.")
+    func titlebarIncludesSiblingInlinePreviewAfterEviction() throws {
+        _ = NSApplication.shared
+        let history = FilePreviewHistory(), inline = ImagePreviewStore()
+        let windows = FilePreviewWindows(history: history, inline: inline)
+        let pane = PaneSlotID(), sibling = PaneSlotID()
+        let entry = history.record(files: try files("report.txt"), pane: pane, worktreePath: "/a")
+        windows.showInline(entry)
+        for _ in 0..<FilePreviewHistory.maximumEntries {
+            _ = history.record(files: try files("other.txt"), pane: sibling, worktreePath: "/b")
+        }
+        let button = FilePreviewToolbarButton(worktreePath: "/a", inlinePane: sibling,
+            history: history, windows: windows, inline: inline)
+        #expect(button.entries.map(\.id) == [entry.id])
+        #expect(button.entries.first?.createdAt == entry.createdAt)
+    }
+
+    @Test("An evicted open selection stays behind newer retained requests in the toolbar.")
+    func titlebarKeepsLatestRequestFirst() throws {
+        _ = NSApplication.shared
+        let history = FilePreviewHistory(), inline = ImagePreviewStore()
+        let windows = FilePreviewWindows(history: history, inline: inline)
+        defer { windows.closeAll() }
+        let pane = PaneSlotID()
+        let older = history.record(files: try files("older.txt"), pane: pane, worktreePath: "/a")
+        let newer = history.record(files: try files("newer.txt"), pane: pane, worktreePath: "/a")
+        windows.show(older, activate: false)
+        for _ in 0..<(FilePreviewHistory.maximumEntries - 1) {
+            _ = history.record(files: try files("other.txt"), pane: pane, worktreePath: "/b")
+        }
+        let button = FilePreviewToolbarButton(worktreePath: "/a", inlinePane: pane,
+            history: history, windows: windows, inline: inline)
+        #expect(button.entries.map(\.id) == [newer.id, older.id])
+    }
+
+    @Test("Selecting window history updates the default destination pane and its availability.")
+    func historySelectionUsesSelectedOriginPane() throws {
+        _ = NSApplication.shared
+        let history = FilePreviewHistory(), inline = ImagePreviewStore()
+        let windows = FilePreviewWindows(history: history, inline: inline)
+        defer { windows.closeAll() }
+        let a = PaneSlotID(), b = PaneSlotID()
+        let first = history.record(files: try files("a.txt"), pane: a, worktreePath: "/a")
+        let second = history.record(files: try files("b.txt"), pane: b, worktreePath: "/a")
+        windows.show(first, activate: false)
+        windows.show(second, activate: false, resolveInlineWorktree: { $0 == a ? "/a" : nil })
+        let model = try #require(windows.model(for: "/a"))
+        #expect(!model.canShowInline)
+        model.entry = first
+        #expect(model.canShowInline)
+        model.showInline()
+        #expect(windows.inlineTarget?.pane == a)
+        #expect(inline.previews[a]?.id == first.id)
+        #expect(inline.previews[b] == nil)
+    }
+
+    @Test("@spec PREVIEW-1.10: When returning a preview to a registered pane whose renderer has been evicted, the application shall allow terminal navigation to wake that pane rather than require an existing renderer.")
+    func returningToTerminalAllowsRegisteredPaneWithoutRenderer() throws {
+        _ = NSApplication.shared
+        let history = FilePreviewHistory(), inline = ImagePreviewStore()
+        let windows = FilePreviewWindows(history: history, inline: inline)
+        defer { windows.closeAll() }
+        let pane = PaneSlotID()
+        let manager = TerminalManager(socketPath: "/tmp/unused-preview-window-test.sock")
+        manager.recordPaneSession(PaneSessionID(), for: pane, worktreePath: "/a")
+        #expect(manager.handle(for: pane) == nil)
+        let entry = history.record(files: try files("report.txt"), pane: pane, worktreePath: "/a")
+        windows.show(entry, activate: false, resolveInlineWorktree: { manager.worktreePath(for: $0) })
+        let model = try #require(windows.model(for: "/a"))
+        #expect(model.canShowInline)
+        model.showInline()
+        #expect(windows.inlineTarget?.pane == pane)
+        #expect(inline.previews[pane]?.id == entry.id)
+    }
+
+    @Test("@spec PREVIEW-1.11: When a pane with a preview moves to another worktree, the application shall resolve active preview controls and return navigation against its current worktree while retaining the original request's history grouping.")
+    func activePreviewFollowsPaneToAnotherWorktree() throws {
+        _ = NSApplication.shared
+        let history = FilePreviewHistory(), inline = ImagePreviewStore()
+        let windows = FilePreviewWindows(history: history, inline: inline)
+        defer { windows.closeAll() }
+        let pane = PaneSlotID(), session = PaneSessionID()
+        let manager = TerminalManager(socketPath: "/tmp/unused-preview-pane-move-test.sock")
+        manager.recordPaneSession(session, for: pane, worktreePath: "/a")
+        let previous = history.record(files: try files("previous.txt"), pane: PaneSlotID(), worktreePath: "/b")
+        let entry = history.record(files: try files("report.txt"), pane: pane, worktreePath: "/a")
+        windows.showInline(entry)
+        manager.recordPaneSession(session, for: pane, worktreePath: "/b")
+        let resolve = { manager.worktreePath(for: $0) }
+        let destination = FilePreviewToolbarButton(worktreePath: "/b", inlinePane: pane,
+            resolveInlineWorktree: resolve, history: history, windows: windows, inline: inline)
+        #expect(destination.entries.map(\.id) == [entry.id, previous.id])
+        #expect(history.entries(for: "/a").first?.id == entry.id)
+        for _ in 0..<FilePreviewHistory.maximumEntries {
+            _ = history.record(files: try files("other.txt"), pane: pane, worktreePath: "/other")
+        }
+        let source = FilePreviewToolbarButton(worktreePath: "/a", inlinePane: nil,
+            resolveInlineWorktree: resolve, history: history, windows: windows, inline: inline)
+        #expect(source.entries.isEmpty)
+        #expect(destination.entries.map(\.id) == [entry.id])
+        windows.show(entry, activate: false, resolveInlineWorktree: resolve)
+        let model = try #require(windows.model(for: "/a"))
+        model.showInline()
+        #expect(windows.inlineTarget?.worktreePath == "/b")
+        #expect(windows.inlineTarget?.pane == pane)
+        #expect(inline.previews(forWorktreePath: "/b")[pane]?.id == entry.id)
     }
 }

@@ -27,7 +27,7 @@ struct BreadcrumbBar: View {
     var projectIconData: Data? = nil
     var previewWorktreePath: String? = nil
     var previewInlinePane: PaneSlotID? = nil
-    var canShowInlinePreview: (PaneSlotID) -> Bool = { _ in true }
+    var previewWorktreeForPane: ((PaneSlotID) -> String?)? = nil
     @State private var showsHistory = false
 
     /// Leading inset wide enough to clear the three traffic-light buttons
@@ -74,7 +74,7 @@ struct BreadcrumbBar: View {
             }
             if let previewWorktreePath {
                 FilePreviewToolbarButton(worktreePath: previewWorktreePath, inlinePane: previewInlinePane,
-                                         canShowInline: canShowInlinePreview)
+                                         resolveInlineWorktree: previewWorktreeForPane)
                     .foregroundColor(theme.foreground.opacity(0.8))
             }
         }

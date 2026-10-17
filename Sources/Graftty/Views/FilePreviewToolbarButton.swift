@@ -5,35 +5,40 @@ import GrafttyKit
 struct FilePreviewToolbarButton: View {
     let worktreePath: String
     let inlinePane: PaneSlotID?
-    let canShowInline: (PaneSlotID) -> Bool
+    let resolveInlineWorktree: ((PaneSlotID) -> String?)?
     @ObservedObject private var history: FilePreviewHistory
     @ObservedObject private var windows: FilePreviewWindows
     @ObservedObject private var inline: ImagePreviewStore
 
-    init(worktreePath: String, inlinePane: PaneSlotID?, canShowInline: @escaping (PaneSlotID) -> Bool) {
-        self.init(worktreePath: worktreePath, inlinePane: inlinePane, canShowInline: canShowInline,
+    init(worktreePath: String, inlinePane: PaneSlotID?, resolveInlineWorktree: ((PaneSlotID) -> String?)? = nil) {
+        self.init(worktreePath: worktreePath, inlinePane: inlinePane, resolveInlineWorktree: resolveInlineWorktree,
                   history: .shared, windows: .shared, inline: .shared)
     }
 
-    init(worktreePath: String, inlinePane: PaneSlotID?, canShowInline: @escaping (PaneSlotID) -> Bool,
+    init(worktreePath: String, inlinePane: PaneSlotID?, resolveInlineWorktree: ((PaneSlotID) -> String?)? = nil,
          history: FilePreviewHistory, windows: FilePreviewWindows, inline: ImagePreviewStore) {
         self.worktreePath = worktreePath
         self.inlinePane = inlinePane
-        self.canShowInline = canShowInline
+        self.resolveInlineWorktree = resolveInlineWorktree
         self.history = history
         self.windows = windows
         self.inline = inline
     }
 
     var entries: [FilePreviewHistory.Entry] {
-        var entries = history.entries(for: worktreePath)
-        if let open = windows.selectedEntry(for: worktreePath), !entries.contains(where: { $0.id == open.id }) {
-            entries.insert(open, at: 0)
+        let panePreviews: [PaneSlotID: ImagePreviewStore.Preview]
+        if let resolveInlineWorktree {
+            panePreviews = inline.previews.filter { resolveInlineWorktree($0.key) == worktreePath }
+        } else {
+            panePreviews = inline.previews(forWorktreePath: worktreePath)
         }
-        if let pane = inlinePane, let preview = inline.previews[pane], !entries.contains(where: { $0.id == preview.id }) {
-            entries.insert(.init(preview: preview, pane: pane, worktreePath: worktreePath), at: 0)
+        var active = panePreviews.map { pane, preview in
+            FilePreviewHistory.Entry(preview: preview, pane: pane, worktreePath: worktreePath)
         }
-        return entries
+        if let open = windows.selectedEntry(for: worktreePath) {
+            active.append(open)
+        }
+        return history.entries(for: worktreePath, including: active)
     }
 
     var body: some View {
@@ -61,6 +66,6 @@ struct FilePreviewToolbarButton: View {
     }
 
     private func show(_ entry: FilePreviewHistory.Entry) {
-        windows.show(entry, inlinePane: inlinePane, canShowInline: canShowInline)
+        windows.show(entry, inlinePane: inlinePane, resolveInlineWorktree: resolveInlineWorktree)
     }
 }
