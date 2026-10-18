@@ -70,15 +70,15 @@ fi
 
 echo "→ GRAFTTY_VERSION=$GRAFTTY_VERSION"
 echo "→ GRAFTTY_BUILD_VERSION=$GRAFTTY_BUILD_VERSION"
-PAGING_PACKAGE_PATH="${GRAFTTY_GHOSTTY_PACKAGE_PATH-$REPO/.dependencies/libghostty-spm}"
-if [[ "$CONFIGURATION" == "release" && ! -f "$PAGING_PACKAGE_PATH/PAGING-BUILD.txt" ]]; then
-  echo "Release builds require the paging renderer. Run scripts/ghostty-paging/build-package.sh first." >&2
-  exit 1
+if [[ "$CONFIGURATION" == "release" ]]; then
+  # The package manifest validates the recipe and every patch before compiling.
+  export GRAFTTY_GHOSTTY_PACKAGE_PATH="${GRAFTTY_GHOSTTY_PACKAGE_PATH-$REPO/.dependencies/libghostty-spm}"
+  export GRAFTTY_REQUIRE_PAGED_HISTORY=1
 fi
 echo "→ swift build --configuration $CONFIGURATION"
-swift build --configuration "$CONFIGURATION"
+swift build --manifest-cache none --configuration "$CONFIGURATION"
 
-BIN_DIR="$(swift build --configuration "$CONFIGURATION" --show-bin-path)"
+BIN_DIR="$(swift build --manifest-cache none --configuration "$CONFIGURATION" --show-bin-path)"
 APP="$REPO/.build/Graftty.app"
 
 echo "→ rm -rf $APP && mkdir bundle dirs"

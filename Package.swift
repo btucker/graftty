@@ -3,21 +3,92 @@
 import PackageDescription
 import Foundation
 
-// Allows the snapshot-enabled renderer to be built and tested from its
-// reproducible local package before publishing the binary dependency.
+// The same selection policy applies to SwiftPM, bundle.sh, and Xcode's local
+// package reference. Local packages are opt-in: manifest evaluation is cached,
+// so filesystem auto-discovery cannot reliably follow dependency changes.
+let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+let publishedGhosttyRevision = "da4d8ddc94ba66f89efa5208961a1116357117c3"
+#if os(macOS)
+import CryptoKit
+
+struct RendererRecipe: Decodable {
+    let renderer: String
+    let wrapper: String
+    let zig: String
+    let rendererPatches: [String]
+    let wrapperPatches: [String]
+}
+
+func digest(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
+func compatibleRenderer(at path: String) -> Bool {
+    let patchDirectory = repositoryRoot.appendingPathComponent("scripts/ghostty-paging")
+    guard let recipeData = try? Data(contentsOf: patchDirectory.appendingPathComponent("recipe.json")),
+          let recipe = try? JSONDecoder().decode(RendererRecipe.self, from: recipeData),
+          let expectedPatchLines = try? (recipe.rendererPatches + recipe.wrapperPatches).map({ name in
+              "\(digest(try Data(contentsOf: patchDirectory.appendingPathComponent(name + ".patch"))))  \(name).patch"
+          }) else { return false }
+    guard FileManager.default.fileExists(atPath: path + "/Package.swift"),
+          let stamp = try? String(contentsOfFile: path + "/PAGING-BUILD.txt", encoding: .utf8)
+    else { return false }
+    let lines = stamp.split(separator: "\n").map(String.init)
+    return lines.count == 4 + expectedPatchLines.count
+        && Array(lines.prefix(3)) == ["renderer \(recipe.renderer)", "wrapper \(recipe.wrapper)", "zig \(recipe.zig)"]
+        && ["arm64_only true", "arm64_only false"].contains(lines[3])
+        && Array(lines.dropFirst(4)) == expectedPatchLines
+}
+
 let localGhosttyPath: String? = {
-    if let path = ProcessInfo.processInfo.environment["GRAFTTY_GHOSTTY_PACKAGE_PATH"] {
-        return path.isEmpty ? nil : path
+    guard let override = ProcessInfo.processInfo.environment["GRAFTTY_GHOSTTY_PACKAGE_PATH"],
+          !override.isEmpty else {
+        let discovered = repositoryRoot.appendingPathComponent(".dependencies/libghostty-spm").path
+        if FileManager.default.fileExists(atPath: discovered) {
+            fputs("Ignoring auto-discovered paging renderer at \(discovered); using the committed published dependency without paging. Set GRAFTTY_GHOSTTY_PACKAGE_PATH explicitly to select a compatible paging renderer.\n", stderr)
+        }
+        return nil
     }
-    let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        .appendingPathComponent(".dependencies/libghostty-spm").path
-    return FileManager.default.fileExists(atPath: path + "/Package.swift") ? path : nil
+    let path = URL(fileURLWithPath: override, relativeTo: repositoryRoot).standardizedFileURL.path
+    guard compatibleRenderer(at: path) else {
+        fatalError("Incompatible paging renderer at \(path). Run scripts/ghostty-paging/build-package.sh or unset GRAFTTY_GHOSTTY_PACKAGE_PATH to use the published development dependency.")
+    }
+    return path
 }()
+if ProcessInfo.processInfo.environment["GRAFTTY_REQUIRE_PAGED_HISTORY"] == "1" && localGhosttyPath == nil {
+    fatalError("This build requires a compatible paging renderer. Run scripts/ghostty-paging/build-package.sh first.")
+}
+
+// Clang's explicit module cache can otherwise reuse libghostty.pcm after
+// Swift Build replaces the staged header at the same include path. A compiler
+// definition changes the module context hash for every Graftty consumer.
+let rendererIdentity: String = try {
+    guard let path = localGhosttyPath else { return "published_" + publishedGhosttyRevision }
+    var inputs = Data(path.utf8)
+    inputs.append(try Data(contentsOf: URL(fileURLWithPath: path + "/PAGING-BUILD.txt")))
+    let framework = URL(fileURLWithPath: path + "/BinaryTarget/GhosttyKit.xcframework")
+    let files = FileManager.default.enumerator(at: framework, includingPropertiesForKeys: [.contentModificationDateKey])
+    let headers = (files?.allObjects as? [URL] ?? []).filter { $0.pathExtension == "h" || $0.pathExtension == "modulemap" }
+    for header in headers.sorted(by: { $0.path < $1.path }) {
+        inputs.append(Data(header.path.utf8))
+        inputs.append(try Data(contentsOf: header))
+        // A rebuilt identical header also invalidates PCM file metadata.
+        inputs.append(Data(String(describing: try header.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).utf8))
+    }
+    return digest(inputs)
+}()
+let rendererSettings: [SwiftSetting] = [
+    .unsafeFlags(["-Xcc", "-DGRAFTTY_RENDERER_" + rendererIdentity]),
+] + (localGhosttyPath == nil ? [] : [.define("GRAFTTY_PAGED_HISTORY")])
+#else
+let localGhosttyPath: String? = nil
+let rendererSettings: [SwiftSetting] = []
+#endif
 let ghosttyDependency: Package.Dependency = {
     if let path = localGhosttyPath {
         return .package(name: "libghostty-spm", path: path)
     }
-    return .package(url: "https://github.com/btucker/libghostty-spm.git", revision: "da4d8ddc94ba66f89efa5208961a1116357117c3")
+    return .package(url: "https://github.com/btucker/libghostty-spm.git", revision: publishedGhosttyRevision)
 }()
 
 // CI runs `swift build` / `swift test` which default to the debug
@@ -27,7 +98,7 @@ let ghosttyDependency: Package.Dependency = {
 // warnings don't block shipping.
 let strictWarnings: [SwiftSetting] = [
     .unsafeFlags(["-warnings-as-errors"], .when(configuration: .debug)),
-] + (localGhosttyPath == nil ? [] : [.define("GRAFTTY_PAGED_HISTORY")])
+] + rendererSettings
 
 #if os(Linux)
 let isLinux = true

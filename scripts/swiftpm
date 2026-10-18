@@ -95,7 +95,10 @@ if [[ "$(uname -s)" == Linux && "$SUBCOMMAND" == test ]]; then
   INDEX_ARGUMENT=--enable-index-store
 fi
 
+# Local renderer overrides read build stamps and headers during evaluation.
+# SwiftPM does not track those files as manifest-cache inputs.
 exec swift "$SUBCOMMAND" \
+  --manifest-cache none \
   --package-path "$REPO_ROOT" \
   --scratch-path "$BUILD_DIR" \
   "$INDEX_ARGUMENT" \

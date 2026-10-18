@@ -7,7 +7,7 @@ runs:
       id: renderer
       with:
         path: .dependencies/libghostty-spm
-        key: paging-renderer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch') }}
+        key: paging-renderer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}
     - if: steps.renderer.outputs.cache-hit != 'true'
       shell: bash
       run: |
@@ -29,3 +29,8 @@ runs:
         tar -xf "$compiler.tar.xz" -C "$RUNNER_TEMP"
         if ! xcrun metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
         scripts/ghostty-paging/build-package.sh --zig "$compiler/zig"
+    - name: Select paging renderer
+      shell: bash
+      run: |
+        echo "GRAFTTY_GHOSTTY_PACKAGE_PATH=$GITHUB_WORKSPACE/.dependencies/libghostty-spm" >> "$GITHUB_ENV"
+        echo "GRAFTTY_REQUIRE_PAGED_HISTORY=1" >> "$GITHUB_ENV"

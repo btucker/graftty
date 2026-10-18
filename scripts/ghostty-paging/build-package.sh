@@ -27,12 +27,19 @@ for tool in git xcrun xcodebuild lipo shasum python3; do
 done
 zig_bin=$(command -v "$zig_bin")
 zig_bin=$(cd "$(dirname "$zig_bin")" && pwd)/$(basename "$zig_bin")
-[[ $("$zig_bin" version) == 0.16.0 ]] || { echo "Zig 0.16.0 is required." >&2; exit 1; }
+recipe_value() {
+    python3 -c 'import json, sys; value = json.load(open(sys.argv[1]))[sys.argv[2]]; print("\n".join(value) if isinstance(value, list) else value)' "$patches/recipe.json" "$1"
+}
+zig_version=$(recipe_value zig)
+[[ $("$zig_bin" version) == "$zig_version" ]] || { echo "Zig $zig_version is required." >&2; exit 1; }
 xcrun metal --version >/dev/null
 
-renderer_pin=8af6897c0afc63037a8a3efee4162a380e3a4572
-wrapper_pin=da4d8ddc94ba66f89efa5208961a1116357117c3
-renderer_patches=(preserve-top-anchor resize-history-guard renderer-experiment ios-renderer-experiment production-snapshot history-viewport presentation-order scrollbar-state history-boundary source-grid)
+renderer_pin=$(recipe_value renderer)
+wrapper_pin=$(recipe_value wrapper)
+renderer_patches=()
+while IFS= read -r name; do renderer_patches+=("$name"); done < <(recipe_value rendererPatches)
+wrapper_patches=()
+while IFS= read -r name; do wrapper_patches+=("$name"); done < <(recipe_value wrapperPatches)
 mkdir -p "$cache" "$(dirname "$output")"
 cache=$(cd "$cache" && pwd)
 output=$(cd "$(dirname "$output")" && pwd)/$(basename "$output")
@@ -72,12 +79,10 @@ cleanup() {
 }
 trap cleanup EXIT
 checkout https://github.com/btucker/libghostty-spm.git "$wrapper_pin" "$stage"
-git -C "$stage" apply --check "$patches/production-wrapper.patch"
-git -C "$stage" apply "$patches/production-wrapper.patch"
-git -C "$stage" apply --check "$patches/history-wrapper.patch"
-git -C "$stage" apply "$patches/history-wrapper.patch"
-git -C "$stage" apply --check "$patches/source-grid-wrapper.patch"
-git -C "$stage" apply "$patches/source-grid-wrapper.patch"
+for name in "${wrapper_patches[@]}"; do
+    git -C "$stage" apply --check "$patches/$name.patch"
+    git -C "$stage" apply "$patches/$name.patch"
+done
 cp "$stage/Package.local.swift" "$stage/Package.swift"
 
 build_archive() {
@@ -136,8 +141,8 @@ assert found == {('macos', None): expected, ('ios', None): {'arm64'},
                  ('ios', 'simulator'): expected}, found
 PY
 {
-    printf 'renderer %s\nwrapper %s\nzig 0.16.0\narm64_only %s\n' "$renderer_pin" "$wrapper_pin" "$arm64_only"
-    for name in "${renderer_patches[@]}" production-wrapper history-wrapper source-grid-wrapper; do
+    printf 'renderer %s\nwrapper %s\nzig %s\narm64_only %s\n' "$renderer_pin" "$wrapper_pin" "$zig_version" "$arm64_only"
+    for name in "${renderer_patches[@]}" "${wrapper_patches[@]}"; do
         (cd "$patches"; shasum -a 256 "$name.patch")
     done
 } > "$stage/PAGING-BUILD.txt"
@@ -154,4 +159,4 @@ else
 fi
 stage=''
 echo "Built paging dependency: $output"
-echo "Open or resolve the Graftty package again to use the rebuilt dependency."
+echo "Select it with GRAFTTY_GHOSTTY_PACKAGE_PATH=$output when building Graftty."

@@ -80,7 +80,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'scripts/ghostty-paging/*.patch') }}
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}
           restore-keys: |
             ${{ runner.os }}-spm-
 
@@ -234,9 +234,9 @@ jobs:
           path: |
             .spm
             .derivedData
-          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch') }}-${{ github.sha }}
+          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}-${{ github.sha }}
           restore-keys: |
-            ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch') }}-
+            ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}-
 
       - name: Build GrafttyMobile for testing (iOS Simulator SDK)
         timeout-minutes: 10
@@ -317,7 +317,7 @@ jobs:
           path: |
             .spm
             .derivedData
-          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch') }}-${{ github.sha }}
+          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}-${{ github.sha }}
           fail-on-cache-miss: true
 
       - name: Create isolated iOS simulator
