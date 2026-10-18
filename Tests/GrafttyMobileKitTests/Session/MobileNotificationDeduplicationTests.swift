@@ -41,4 +41,17 @@ struct MobileNotificationDeduplicationTests {
             from: Data(#"{"timestamps":{}}"#.utf8))
         #expect(ledger.receive([row(10)], hostID: UUID()).count == 1)
     }
+
+    @Test func previouslyDeliveredStopsAcquireReceiptsAfterUpgrade() throws {
+        let direct = UUID()
+        var ledger = MobileStopNotificationLedger()
+        #expect(ledger.receive([row(10)], hostID: direct).count == 1)
+        var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(ledger)) as? [String: Any])
+        legacy.removeValue(forKey: "stopReceipts")
+        ledger = try JSONDecoder().decode(MobileStopNotificationLedger.self,
+            from: JSONSerialization.data(withJSONObject: legacy))
+        #expect(ledger.receive([row(10)], hostID: direct).isEmpty)
+        #expect(ledger.receive([row(10, relayed: true)], hostID: UUID()).isEmpty)
+        #expect(ledger.receive([row(20)], hostID: direct).count == 1)
+    }
 }

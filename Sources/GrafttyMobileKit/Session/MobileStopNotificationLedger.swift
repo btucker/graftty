@@ -79,6 +79,24 @@ struct MobileStopNotification: Sendable {
 /// Durable high-water marks prevent polling, transport reconnects, and view recreation from replaying stops.
 struct MobileStopNotificationLedger: Codable, Equatable {
     private var timestamps: [String: Double] = [:]
+    // Optional for ledgers written before cross-connection receipts existed.
+    // Connection-local watermarks still reject old snapshots; these bounded
+    // receipts recognize the same occurrence arriving through another route.
+    private var stopReceipts: [String]?
+
+    private mutating func rememberStop(_ stop: SidebarAgentStop, row: WorktreePanes) -> Bool {
+        guard let owner = row.origin?.deviceID.value, !owner.isEmpty,
+              let worktree = row.sidebar?.id, !worktree.isEmpty else { return true }
+        let receipt = [owner, worktree, stop.agentName, stop.providerSessionKey ?? "",
+                       stop.paneSlotID ?? "", String(stop.timestamp.bitPattern)]
+            .map { "\($0.utf8.count):\($0)" }.joined()
+        guard stopReceipts?.contains(receipt) != true else { return false }
+        var receipts = stopReceipts ?? []
+        receipts.append(receipt)
+        if receipts.count > 2048 { receipts.removeFirst(receipts.count - 2048) }
+        stopReceipts = receipts
+        return true
+    }
 
     mutating func receive(_ rows: [WorktreePanes], hostID: UUID) -> [MobileStopNotification] {
         var notifications: [MobileStopNotification] = []
@@ -102,11 +120,17 @@ struct MobileStopNotificationLedger: Codable, Equatable {
                         worktreeID: row.sidebar?.id, originDeviceID: row.origin?.deviceID, paneID: paneID,
                         paneSlotID: paneSlotID ?? paneID.flatMap { row.sidebar?.paneIDs?[$0] }))
             }
+            if let stop, stop.timestamp == timestamps[identity] {
+                // An older saved ledger has watermarks but no receipts. Seeing
+                // its exact known stop teaches the cross-route identity silently.
+                _ = rememberStop(stop, row: row)
+            }
             if let stop, stop.timestamp > (timestamps[identity] ?? -.infinity) {
                 let previous = timestamps[identity]
                 timestamps[identity] = stop.timestamp
                 // Do not announce read history when a device is paired for the first time.
-                if previous != nil || row.sidebar?.unseenAgentStop?.occurrence == stop.occurrence {
+                if (previous != nil || row.sidebar?.unseenAgentStop?.occurrence == stop.occurrence),
+                   rememberStop(stop, row: row) {
                     notifications.append(notification(title: stop.recap?.title,
                         body: stop.recap?.need ?? stop.recap?.completed ?? "\(stop.agentName) stopped.", paneID: stopPane,
                         paneSlotID: stop.paneSlotID))
