@@ -2,6 +2,7 @@
 """Run isolated real-agent native Mac/mobile scenarios and preserve failure traces."""
 import argparse
 import fcntl
+import hashlib
 from dataclasses import asdict
 import json
 import os
@@ -163,6 +164,8 @@ class Run:
         selected = next((d for runtime in devices['devices'].values() for d in runtime if d['udid'] == self.simulator), None)
         if not selected:
             raise InvariantFailure('selected simulator is unavailable')
+        runtime = next(key for key, values in devices['devices'].items() if selected in values)
+        self.summary['simulator'] = {'udid': self.simulator, 'name': selected['name'], 'runtime': runtime}
         if selected['state'] != 'Booted':
             execute(['xcrun', 'simctl', 'boot', self.simulator])
         execute(['xcrun', 'simctl', 'bootstatus', self.simulator, '-b'], timeout=300, log=self.root / 'simulator-boot.log')
@@ -245,6 +248,10 @@ class Run:
         self.summary.setdefault('generatedContentChecks', []).append({'agent': agent, 'status': status})
 
     def scenarios(self):
+        if getattr(self.options, 'history', False):
+            from history_scenario import run_history
+            run_history(self)
+            return
         if getattr(self.options, 'worktree_reentry', False):
             self.worktree_reentry()
             return
@@ -468,6 +475,10 @@ class Run:
         self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude)
         self.summary['providerVersions'] = {name: execute([str(getattr(self.options, name)), '--version'], env=self.env)
                                             for name in ('claude', 'codex')}
+        self.summary['commit'] = execute(['git', 'rev-parse', 'HEAD'])
+        self.summary['dirty'] = bool(execute(['git', 'status', '--porcelain']))
+        self.summary['zmx'] = {'path': str(self.options.zmx),
+                               'sha256': hashlib.sha256(self.options.zmx.read_bytes()).hexdigest()}
         self.env['GRAFTTY_SWIFTPM_SHARED_DIR'] = str(self.options.cache)
         if self.options.ghostty_package:
             self.env['GRAFTTY_GHOSTTY_PACKAGE_PATH'] = str(self.options.ghostty_package)
@@ -564,6 +575,7 @@ def main():
     parser.add_argument('--simulator', help='Use this test device without deleting it; default creates a private device')
     parser.add_argument('--mac-only', action='store_true', help='Debug the native Mac and messaging paths without claiming mobile coverage')
     parser.add_argument('--worktree-reentry', action='store_true', help='Test retained mobile routes with keyboard changes and hidden ownership transitions')
+    parser.add_argument('--history', action='store_true', help='Test dense wide provider output through bounded mobile history paging')
 
     parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
     parser.add_argument('--device', default='iPhone 17 Pro')
@@ -580,6 +592,8 @@ def main():
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
+    if options.history and (options.worktree_reentry or options.colors or options.mac_only or options.replay or options.shrink):
+        parser.error('--history requires mobile and runs separately from other scenarios and generated actions')
     if options.worktree_reentry and options.colors:
         parser.error('--worktree-reentry and --colors are separate scenarios')
     if options.worktree_reentry and options.mac_only:

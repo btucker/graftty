@@ -477,7 +477,7 @@ diff --git a/src/paging.zig b/src/paging.zig
 new file mode 100644
 --- /dev/null
 +++ b/src/paging.zig
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,426 @@
 +//! Demand snapshot export. The owner serializes capture/next with terminal
 +//! mutations. Checkpoints borrow terminal pages through tracked pins and must
 +//! be released before the terminal is destroyed or moved.
@@ -504,6 +504,8 @@ new file mode 100644
 +        pin: ?*Pin,
 +        serial: u64,
 +        remaining_rows: u64,
++        // Unsent prefix of the current native page after a bounded suffix.
++        page_rows: ?usize = null,
 +        position: u64 = 0,
 +        cached: ?Page = null,
 +    };
@@ -589,7 +591,7 @@ new file mode 100644
 +        self.* = undefined;
 +    }
 +
-+    /// Fetch the next complete page, newest first. Retrying the most recently
++    /// Fetch the next bounded row slice, newest first. Retrying the most recently
 +    /// returned position returns identical bytes without advancing. One encoded
 +    /// page per screen remains cached until the next successful request.
 +    pub fn next(
@@ -622,26 +624,44 @@ new file mode 100644
 +        if (pin.garbage or pin.y != 0 or pin.x != 0 or
 +            pin.node.serial != cursor.serial or pin.node.serial >= cursor.serial_limit)
 +            return error.CheckpointExpired;
-+        const rows = pin.node.rows();
-+        if (rows > cursor.remaining_rows) return error.CheckpointExpired;
++        const end = cursor.page_rows orelse pin.node.rows();
++        if (end > pin.node.rows() or end > cursor.remaining_rows) return error.CheckpointExpired;
 +        const previous = pin.node.prev;
 +        // Do not return a truncated history as successful completion when
 +        // pruning removed the older suffix while this page remained alive.
-+        if (previous == null and rows != cursor.remaining_rows)
++        if (previous == null and end != cursor.remaining_rows)
 +            return error.CheckpointExpired;
 +        if (previous) |p| {
 +            if (p.serial >= cursor.serial_limit) return error.CheckpointExpired;
 +        }
 +
-+        var output: std.Io.Writer.Allocating = .init(self.alloc);
-+        defer output.deinit();
-+        var writer: snap.record.Writer = .init(self.alloc, &output.writer);
-+        defer writer.deinit();
 +        var preserved = try pin.node.pagePreservingState(self.alloc);
 +        defer preserved.deinit();
-+        try snap.page.encode(preserved.page(), &writer);
-+        if (output.written().len > byte_budget) return error.PageExceedsBudget;
-+        const bytes = try self.alloc.dupe(u8, output.written());
++        const original = preserved.page();
++        var rows = end;
++        const bytes = while (true) {
++            var output: std.Io.Writer.Allocating = .init(self.alloc);
++            defer output.deinit();
++            var writer: snap.record.Writer = .init(self.alloc, &output.writer);
++            defer writer.deinit();
++            if (rows == original.size.rows) {
++                try snap.page.encode(original, &writer);
++            } else {
++                // A PAGE remains a complete independent codec record. Copy
++                // the newest unsent whole rows, including their styles and
++                // graphemes, without modifying the daemon's retained page.
++                var slice = try vt.Page.init(original.exactRowCapacity(end - rows, end));
++                defer slice.deinit();
++                try slice.cloneFrom(original, end - rows, end);
++                try snap.page.encode(&slice, &writer);
++            }
++            // Count the PAGE header/checksum as well as its payload. No
++            // cursor state changes until a complete bounded record exists.
++            if (output.written().len <= byte_budget)
++                break try self.alloc.dupe(u8, output.written());
++            if (rows == 1) return error.PageExceedsBudget;
++            rows = (rows + 1) / 2;
++        };
 +        const reply: Page = .{
 +            .bytes = bytes,
 +            .position = position,
@@ -652,9 +672,12 @@ new file mode 100644
 +        cursor.cached = reply;
 +        cursor.remaining_rows = reply.remaining_rows;
 +        cursor.position += 1;
-+        if (previous) |p| {
-+            pin.* = .{ .node = p };
-+            cursor.serial = p.serial;
++        cursor.page_rows = if (rows < end) end - rows else null;
++        if (rows == end) {
++            if (previous) |p| {
++                pin.* = .{ .node = p };
++                cursor.serial = p.serial;
++            }
 +        }
 +        // Retain the final source pin until deinit so a cached-page retry
 +        // can still detect subsequent clear/prune/reset invalidation.
@@ -810,6 +833,76 @@ new file mode 100644
 +    try std.testing.expectError(error.CheckpointExpired, checkpoint.next(.alternate, 0, 1024 * 1024, 0));
 +    // The independent primary page remains fetchable while alternate is active.
 +    try std.testing.expect(try checkpoint.next(.primary, 0, 1024 * 1024, 0) == .page);
++}
++
++test "paging splits dense wide rows within budget and preserves retries order and retention" {
++    try denseHistory(2000);
++}
++
++test "paging split imports remain within client budget when host retention is full" {
++    try denseHistory(15000);
++}
++
++fn denseHistory(line_count: usize) !void {
++    const alloc = std.testing.allocator;
++    var term = try vt.Terminal.init(std.testing.io, alloc, .{
++        .cols = 80,
++        .rows = 24,
++        .max_scrollback_bytes = 10_000_000,
++    });
++    defer term.deinit(alloc);
++    var stream = term.vtStream();
++    defer stream.deinit();
++    for (0..line_count) |i| {
++        var buf: [200]u8 = undefined;
++        stream.nextSlice(try std.fmt.bufPrint(&buf, "🧪 history-row-{d:0>6} /workspace/project/src/components/HistoryPanel.swift:100\r\n", .{i}));
++    }
++    var checkpoint = try Checkpoint.capture(alloc, &term, .ground, 0);
++    defer checkpoint.deinit();
++    var source: std.Io.Reader = .fixed(checkpoint.ready);
++    var decoder = snap.Decoder.init(&source);
++    var decoded = try decoder.ready(alloc, std.testing.io, .{ .max_continuation_bytes = 4096 });
++    defer decoded.deinit(alloc);
++    var restored = decoded.toOwned();
++    defer restored.deinit(alloc);
++    restored.setScrollbackMaxBytes(50_000_000);
++    var live = restored.vtStream();
++    defer live.deinit();
++    var position: u64 = 0;
++    var remaining = checkpoint.historyRows(.primary);
++    while (true) {
++        // Even a single row cannot fit. Failure must not advance the cursor.
++        try std.testing.expectError(error.PageExceedsBudget, checkpoint.next(.primary, position, 1, 0));
++        const reply = try checkpoint.next(.primary, position, 256 * 1024, 0);
++        if (reply == .done) break;
++        const page = reply.page;
++        try std.testing.expect(page.bytes.len <= 256 * 1024);
++        try std.testing.expect(page.rows > 0);
++        try std.testing.expectEqual(remaining - page.rows, page.remaining_rows);
++        remaining = page.remaining_rows;
++        // Output may arrive before a retry, including inside a split page.
++        stream.nextSlice("live-between-slices\r\n");
++        live.nextSlice("live-between-slices\r\n");
++        const retry = (try checkpoint.next(.primary, position, 256 * 1024, 0)).page;
++        try std.testing.expectEqualSlices(u8, page.bytes, retry.bytes);
++        var reader: std.Io.Reader = .fixed(page.bytes);
++        try std.testing.expectEqual(page.rows, try snap.history.decodePage(&reader, alloc, restored.screens.active));
++        try std.testing.expectEqual(page.bytes.len, reader.seek);
++        try std.testing.expect(restored.screens.active.pages.page_size <= 50_000_000);
++        position += 1;
++        if (remaining == 0) break;
++    }
++    std.debug.print("history accounting lines={d} pages={d} host_bytes={d} client_bytes={d}\n", .{
++        line_count, position, term.screens.active.pages.page_size, restored.screens.active.pages.page_size,
++    });
++    try std.testing.expect(position > 3);
++    try std.testing.expectEqual(@as(u64, 0), remaining);
++    try std.testing.expect(try checkpoint.next(.primary, position, 0, 0) == .done);
++    const original = try term.screens.active.dumpStringAlloc(alloc, .{ .screen = .{} });
++    defer alloc.free(original);
++    const imported = try restored.screens.active.dumpStringAlloc(alloc, .{ .screen = .{} });
++    defer alloc.free(imported);
++    try std.testing.expectEqualStrings(original, imported);
 +}
 diff --git a/src/test.zig b/src/test.zig
 --- a/src/test.zig

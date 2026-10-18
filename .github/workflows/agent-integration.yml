@@ -11,6 +11,10 @@ on:
         description: Generated actions after the fixed regressions
         default: '60'
         required: true
+      history:
+        description: Run the focused dense history paging regression on both providers
+        type: boolean
+        default: false
   schedule:
     - cron: '23 7 * * *'
 
@@ -46,14 +50,17 @@ jobs:
         env:
           TEST_SEED: ${{ inputs.seed || github.run_number }}
           TEST_ACTIONS: ${{ inputs.actions || '60' }}
+          TEST_HISTORY: ${{ inputs.history || 'false' }}
         run: |
           cli="$HOME/Library/Caches/Graftty/SwiftPM/build/$(uname -m)-apple-macosx/debug/graftty-cli"
+          scenario=()
+          if [[ "$TEST_HISTORY" == true ]]; then scenario=(--history --rows 600); fi
           python3 -B scripts/agent-integration/run.py \
             --codex "$RUNNER_TEMP/agent-clients/node_modules/.bin/codex" \
             --claude "$RUNNER_TEMP/agent-clients/node_modules/.bin/claude" \
             --cli "$cli" --zmx "$PWD/Resources/zmx-binary/zmx" \
             --ghostty-package "$PWD/.dependencies/libghostty-spm" \
-            --seed "$TEST_SEED" --actions "$TEST_ACTIONS"
+            --seed "$TEST_SEED" --actions "$TEST_ACTIONS" "${scenario[@]}"
       - name: Preserve native failure evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -71,3 +78,4 @@ jobs:
             /private/tmp/graftty-ai-*/simulator-boot.log
             /private/tmp/graftty-ai-*/ios-build.log
             /private/tmp/graftty-ai-*/mobile.xcresult
+            /private/tmp/graftty-ai-*/history-*.json

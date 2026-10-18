@@ -95,6 +95,52 @@ struct MacPagedTerminalTests {
     }
 
     #if GRAFTTY_PAGED_HISTORY
+    @Test("@spec TERM-12.43: When retained history contains dense wide-character rows, the application shall transfer contiguous bounded pages on Mac and mobile without reporting a memory limit solely because a native page exceeds the transport budget, preserve identical retries, and continue scrolling and live output across checkpoint recovery.", .timeLimit(.minutes(1)))
+    func denseWideHistoryPagesStayBoundedAndRecover() async throws {
+        let lineCount = 2000
+        let fixture = try await HistoryDaemon.make(lineCount: lineCount, wide: true)
+        defer { fixture.close() }
+        let stream = PagedZmxAttachEngine(config: .init(zmxExecutable: fixture.launcher.executable,
+            zmxDir: fixture.launcher.zmxDir, sessionName: "history"))
+        try await stream.start()
+        defer { stream.close() }
+        var events = stream.events.makeAsyncIterator()
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
+        for generation in UInt64(1)...2 {
+            if generation > 1 { try await stream.requestCheckpoint() }
+            guard case .checkpoint(let checkpoint) = try #require(await events.next()) else {
+                Issue.record("Expected a fresh checkpoint"); return
+            }
+            try await renderer.install(checkpoint, generation: generation)
+            var ordinal: UInt64 = 0
+            while true {
+                let request = PagedTerminalHistoryRequest(incarnation: checkpoint.incarnation,
+                    checkpointID: checkpoint.id, requestID: ordinal + 1, ordinal: ordinal, screen: 0)
+                try await stream.requestHistory(request)
+                guard case .page(let page) = try #require(await events.next()) else {
+                    Issue.record("Dense history must arrive as a bounded page, not a host limit refusal"); return
+                }
+                #expect(page.data.count <= PagedTerminalLimits.pageBytes)
+                try await stream.requestHistory(request)
+                #expect(try await events.next() == .page(page))
+                try #require(await renderer.appendHistory(page.data, screen: 0, generation: generation) == .applied)
+                if page.complete { break }
+                ordinal += 1
+                try #require(ordinal < 200)
+            }
+            #expect(terminal.firstHistoryRow().contains("history-row-000000"))
+            #expect(terminal.text().contains("history-row-001999"))
+            try await stream.send(Data("after-history\n".utf8))
+            while let event = try await events.next() {
+                guard case .output(let data) = event else { continue }
+                terminal.access.write(data)
+                if terminal.text().contains("live-after-history") { break }
+            }
+        }
+    }
+
     @Test("@spec TERM-12.42: While a native Mac terminal consumes a paged source stream, the application shall preserve its parser grid and synchronized output across local viewport and font resizes, report source dimensions, and release the source grid before legacy fallback.", .timeLimit(.minutes(1)))
     func nativeParserGridFollowsOrderedSourceRatherThanPhysicalSize() async throws {
         let terminal = try NativeCanvas()
@@ -447,7 +493,7 @@ struct MacPagedTerminalTests {
         let seed: NativePtySession
         private let output: HistoryOutput
 
-        private init(lineCount: Int, redrawPrompt: Bool) throws {
+        private init(lineCount: Int, redrawPrompt: Bool, wide: Bool) throws {
             output = HistoryOutput(marker: redrawPrompt ? "history-prompt> " : String(format: "history-row-%06d", lineCount - 1))
             let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -458,15 +504,18 @@ struct MacPagedTerminalTests {
             // drains the PTY so this setup cannot block on its output buffer.
             let output = output
             let prompt = redrawPrompt ? "printf '\\033]133;A;redraw=1\\007history-prompt> \\033]133;B\\007'; " : ""
+            let historyLine = wide
+                ? "🧪 history-row-%06d /workspace/project/src/components/HistoryPanel.swift:100"
+                : "history-row-%06d"
             seed = NativePtySession(argv: [launcher.executable.path, "attach", "history", "/bin/sh", "-c",
-                "i=0; while [ $i -lt \(lineCount) ]; do printf 'history-row-%06d\\n' $i; i=$((i+1)); done; \(prompt)while read value; do printf 'live-%s\\n' \"$value\"; done"],
+                "i=0; while [ $i -lt \(lineCount) ]; do printf '\(historyLine)\\n' $i; i=$((i+1)); done; \(prompt)while read value; do printf 'live-%s\\n' \"$value\"; done"],
                 env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment),
                 workingDirectory: dir, initialSize: .init(cols: 80, rows: 24),
                 writeToSurface: { output.append($0) }, processExited: { _, _ in }, spawnFailed: { _ in })
         }
 
-        static func make(lineCount: Int = 10000, redrawPrompt: Bool = false, reflowed: Bool = false) async throws -> HistoryDaemon {
-            let fixture = try HistoryDaemon(lineCount: lineCount, redrawPrompt: redrawPrompt)
+        static func make(lineCount: Int = 10000, redrawPrompt: Bool = false, reflowed: Bool = false, wide: Bool = false) async throws -> HistoryDaemon {
+            let fixture = try HistoryDaemon(lineCount: lineCount, redrawPrompt: redrawPrompt, wide: wide)
             do {
                 try fixture.seed.start()
                 let deadline = ContinuousClock.now.advanced(by: .seconds(10))
