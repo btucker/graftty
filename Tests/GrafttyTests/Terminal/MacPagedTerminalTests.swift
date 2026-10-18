@@ -147,6 +147,56 @@ struct MacPagedTerminalTests {
         }
     }
 
+    @Test("@spec TERM-12.45: When an older daemon refuses an oversized history page, the application shall report the host page limit without automatic retries and continue live terminal input and output.",
+          .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_HISTORY_LEGACY_ZMX"] != nil,
+                   "The history CI scenario supplies the immutable graftty6 daemon"), .timeLimit(.minutes(1)))
+    func oldDaemonPageRefusalPreservesLiveTerminal() async throws {
+        let oldDaemon = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["GRAFTTY_HISTORY_LEGACY_ZMX"]))
+        let fixture = try await HistoryDaemon.make(lineCount: 2000, wide: true, executable: oldDaemon)
+        defer { fixture.close() }
+        let stream = PagedZmxAttachEngine(config: .init(zmxExecutable: fixture.launcher.executable,
+            zmxDir: fixture.launcher.zmxDir, sessionName: "history"))
+        try await stream.start()
+        defer { stream.close() }
+        var events = stream.events.makeAsyncIterator()
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
+        var requests: [PagedTerminalRequest] = []
+        let coordinator = PagedTerminalCoordinator(renderer: renderer) { request in
+            requests.append(request)
+            switch request {
+            case .history(let page): try await stream.requestHistory(page)
+            case .checkpoint: try await stream.requestCheckpoint()
+            }
+        }
+        guard case .checkpoint(let checkpoint) = try #require(await events.next()) else {
+            Issue.record("Expected old daemon checkpoint"); return
+        }
+        try await coordinator.handle(.checkpoint(checkpoint))
+        await coordinator.loadIfNeeded(prefetch: true)
+        guard case .unavailable(let refusal) = try #require(await events.next()) else {
+            Issue.record("Expected graftty6 oversized-page refusal"); return
+        }
+        #expect(refusal.reason == .limit)
+        try await coordinator.handle(.unavailable(refusal))
+        #expect(coordinator.status == .pageTooLarge)
+        await coordinator.loadIfNeeded(prefetch: true)
+        await coordinator.retry()
+        #expect(requests.count == 1)
+        try await stream.send(Data("old-daemon-still-live\n".utf8))
+        var receivedLiveResponse = false
+        while let event = try await events.next() {
+            try await coordinator.handle(event)
+            if case .output(let data) = event { terminal.access.write(data) }
+            if terminal.text().contains("live-old-daemon-still-live") { receivedLiveResponse = true; break }
+        }
+        #expect(receivedLiveResponse)
+        #expect(coordinator.status == .pageTooLarge)
+        #expect(requests.count == 1)
+        coordinator.disconnect()
+    }
+
     @Test("@spec TERM-12.42: While a native Mac terminal consumes a paged source stream, the application shall preserve its parser grid and synchronized output across local viewport and font resizes, report source dimensions, and release the source grid before legacy fallback.", .timeLimit(.minutes(1)))
     func nativeParserGridFollowsOrderedSourceRatherThanPhysicalSize() async throws {
         let terminal = try NativeCanvas()
@@ -499,13 +549,13 @@ struct MacPagedTerminalTests {
         let seed: NativePtySession
         private let output: HistoryOutput
 
-        private init(lineCount: Int, redrawPrompt: Bool, wide: Bool) throws {
+        private init(lineCount: Int, redrawPrompt: Bool, wide: Bool, executable: URL?) throws {
             output = HistoryOutput(marker: redrawPrompt ? "history-prompt> " : String(format: "history-row-%06d", lineCount - 1))
             let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             let dir = URL(fileURLWithPath: "/private/tmp/mac-paging-\(UUID().uuidString.prefix(8))")
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            launcher = ZmxLauncher(executable: root.appendingPathComponent("Resources/zmx-binary/zmx"), zmxDir: dir)
+            launcher = ZmxLauncher(executable: executable ?? root.appendingPathComponent("Resources/zmx-binary/zmx"), zmxDir: dir)
             // Keep the shell alive after producing the fixture; the client reader
             // drains the PTY so this setup cannot block on its output buffer.
             let output = output
@@ -520,8 +570,8 @@ struct MacPagedTerminalTests {
                 writeToSurface: { output.append($0) }, processExited: { _, _ in }, spawnFailed: { _ in })
         }
 
-        static func make(lineCount: Int = 10000, redrawPrompt: Bool = false, reflowed: Bool = false, wide: Bool = false) async throws -> HistoryDaemon {
-            let fixture = try HistoryDaemon(lineCount: lineCount, redrawPrompt: redrawPrompt, wide: wide)
+        static func make(lineCount: Int = 10000, redrawPrompt: Bool = false, reflowed: Bool = false, wide: Bool = false, executable: URL? = nil) async throws -> HistoryDaemon {
+            let fixture = try HistoryDaemon(lineCount: lineCount, redrawPrompt: redrawPrompt, wide: wide, executable: executable)
             do {
                 try fixture.seed.start()
                 let deadline = ContinuousClock.now.advanced(by: .seconds(10))

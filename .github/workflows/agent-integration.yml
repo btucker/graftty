@@ -61,6 +61,8 @@ jobs:
             exit 1
           fi
           grep -q 'Dense history must arrive as a bounded page, not a host limit refusal' /private/tmp/graftty-history-validation/red.log
+          export GRAFTTY_HISTORY_LEGACY_ZMX="$RUNNER_TEMP/history-legacy-zmx"
+          cp Resources/zmx-binary/zmx "$GRAFTTY_HISTORY_LEGACY_ZMX"
           cp "$candidate" Resources/zmx-binary/zmx
           scripts/swiftpm test --build-system native --filter 'MacPagedTerminalTests|PagedTerminalCoordinatorTests' 2>&1 | tee /private/tmp/graftty-history-validation/green.log
       - name: Run real agents on Mac and mobile

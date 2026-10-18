@@ -658,6 +658,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.44** If the host cannot fit a history row within its page transport budget, then the application shall distinguish that refusal from local memory exhaustion, stop automatic retries, and preserve loaded content until explicit checkpoint recovery.
 
+**TERM-12.45** When an older daemon refuses an oversized history page, the application shall report the host page limit without automatic retries and continue live terminal input and output.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery

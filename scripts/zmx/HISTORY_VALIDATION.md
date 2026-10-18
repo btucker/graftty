@@ -56,7 +56,9 @@ Dispatch `Native agent integration` with `history=true` on the PR branch. Its
 history-only step runs the Swift @spec regression against graftty6 from immutable
 commit `16287dce6ae591201092efa52c8f98bf6628cf8e`, requires the intended failure,
 restores the candidate binary, then runs `MacPagedTerminalTests` and
-`PagedTerminalCoordinatorTests` against the paging renderer.
+`PagedTerminalCoordinatorTests` against the paging renderer. The GREEN step also
+supplies the old daemon to TERM-12.45, which requires an accurate host-refusal
+state, no automatic retry, and a fresh live shell response after refusal.
 
 The focused provider command is the workflow's normal `run.py` invocation plus
 `--history --rows 600`. It uses pinned Codex 0.162.1 and Claude 2.1.296 with local
