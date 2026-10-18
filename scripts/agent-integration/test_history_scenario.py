@@ -6,12 +6,12 @@ import unittest
 from unittest.mock import Mock, patch
 
 from harness import InvariantFailure
-from history_scenario import gesture_backfill, load_history
+from history_scenario import gesture_backfill, load_history, verify_source_history
 
 
 class HistoryScenarioTests(unittest.TestCase):
     def test_gesture_requires_both_loaded_growth_and_visible_older_rows(self):
-        baseline = {'paging': 'available', 'total': '300', 'text': 'ROW-000599'}
+        baseline = {'paging': 'available', 'total': '300', 'len': '37', 'text': 'ROW-000599'}
         samples = [baseline] * 3 + [dict(baseline, total='600'), dict(baseline, total='600', text='ROW-000500')]
         with TemporaryDirectory() as directory, patch('history_scenario.time.sleep'):
             run = SimpleNamespace(root=Path(directory), summary={'assertions': []}, act=Mock(),
@@ -42,3 +42,13 @@ class HistoryScenarioTests(unittest.TestCase):
             with self.assertRaisesRegex(InvariantFailure, 'pageTooLarge'):
                 load_history(run, 'codex', 'attach')
             self.assertEqual(1, run.server.broker.command.call_count)
+
+    def test_source_history_rejects_provider_virtualization_before_attach(self):
+        with TemporaryDirectory() as directory:
+            run = SimpleNamespace(root=Path(directory), options=SimpleNamespace(rows=600),
+                summary={'assertions': []}, act=Mock(return_value={
+                    'authoritativeText': 'ROW-000599', 'total': '37', 'len': '37'}))
+            with self.assertRaisesRegex(InvariantFailure, 'source history'):
+                verify_source_history(run, 'claude')
+            self.assertEqual('verify', run.act.call_args.args[0].operation)
+            self.assertFalse(run.summary['assertions'])

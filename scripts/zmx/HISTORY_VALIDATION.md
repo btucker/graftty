@@ -82,3 +82,28 @@ an oversized host page accurately but cannot recover its missing rows by retry.
 No active user session is restarted by this change or its validation. Small
 transport slices have measurable native allocation overhead; tested default
 budgets remain bounded, and genuine local retention limits remain enforced.
+
+## Hosted evidence audit and provider rendering mode
+
+At commit `90d7d09d4def4c502d5e9299ab774dc8f1a5e3db`, run
+[39173207673](https://github.com/btucker/graftty/actions/runs/39173207673)
+executed one intended RED failure (TERM-12.43) against graftty6 and passed all
+18 focused GREEN tests, including TERM-12.43, TERM-12.44 and TERM-12.45.
+The separate provider scenario **failed** before any backfill assertion: Claude
+2.1.296 rendered the final numbered rows, but Mac and Mobile each had only 37
+native rows. The preserved daemon `authoritativeText` also has only 37 rows
+and numbered targets 590–599. Codex was not reached. Its original result/trace/xcresult remain in
+that run's artifact; this is not passing provider coverage.
+
+The focused history fixture now requests
+`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` for Claude only. The
+[official fullscreen documentation](https://code.claude.com/docs/en/fullscreen)
+explains that fresh versions since 2.1.239 can default to fullscreen, which
+virtualizes the transcript in the alternate screen, and documents this variable
+for classic rendering. Codex retains its default mode. The result records these
+choices. Coverage is **classic native terminal scrollback**, not Claude's
+fullscreen transcript history. Production settings are unchanged. Before Mobile
+attaches, the daemon must contain all 600 numbered rows exactly once in order;
+the actual touch gesture must cross an initially unloaded older-row boundary.
+Missing structured results, missing provider assertions, zero selected Swift
+tests, and missing required regression cases fail the workflow.

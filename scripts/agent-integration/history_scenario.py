@@ -48,6 +48,16 @@ def load_history(run, agent, stage):
     run.server.broker.command(Action('scroll', agent, {'position': 'bottom'}, client='mobile'))
 
 
+def verify_source_history(run, agent):
+    value = run.act(Action('verify', agent))
+    (run.root / f'history-{agent}-source.json').write_text(json.dumps(value, indent=2))
+    if row_ids(value['authoritativeText']) != list(range(run.options.rows)):
+        raise InvariantFailure(f'{agent}: daemon has missing, duplicate, or reordered source history')
+    if int(value['total']) <= int(value['len']):
+        raise InvariantFailure(f'{agent}: provider has no native terminal scrollback')
+    run.summary['assertions'].append({'agent': agent, 'sourceHistoryRows': run.options.rows})
+
+
 def gesture_backfill(run, agent):
     # Let initial prefetch settle before measuring page loading caused by a
     # touch drag. The held provider stream cannot add live rows in this phase.
@@ -63,6 +73,8 @@ def gesture_backfill(run, agent):
         baseline = current
     initial_total = int(baseline['total'])
     initial_rows = row_ids(baseline['text'])
+    if int(baseline['total']) <= int(baseline['len']) or not initial_rows or min(initial_rows) == 0:
+        raise InvariantFailure(f'{agent}: no unloaded older-row boundary for the gesture')
     observations = [baseline]
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
@@ -86,11 +98,12 @@ def gesture_backfill(run, agent):
 def run_history(run):
     run.start_mobile()
     run.phase = 'history'
-    run.summary['scope'] = 'Codex and Claude dense wide output; native mobile backfill, scrolling, reconnect and resize'
+    run.summary['providerModes'] = {'claude': 'classic (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)', 'codex': 'default'}
+    run.summary['scope'] = 'Codex default and Claude classic native scrollback; mobile backfill, touch scrolling, reconnect and resize'
     models = run.server.models
     models.fixture_text = history_text
     for agent in ('claude', 'codex'):
-        run.paths[agent] = run.act(Action('start', agent))
+        run.paths[agent] = run.act(Action('start', agent, {'history': 'true'}))
         deadline = time.monotonic() + 90
         reviewed = False
         while (agent, 'begin') not in models.arrived:
@@ -105,6 +118,7 @@ def run_history(run):
             models.release(agent, barrier)
             run.wait_model(lambda: (agent, following) in models.arrived)
         run.wait_snapshot(agent, lambda value: run.options.rows - 1 in row_ids(value['text']))
+        verify_source_history(run, agent)
         # Connect after output exists: attaching before streaming would parse
         # VT locally and never exercise the failing host history-page export.
         run.act(Action('connect', agent, {'session': run.paths[agent]['session']}, client='mobile'))

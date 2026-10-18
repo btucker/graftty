@@ -65,6 +65,7 @@ jobs:
           cp Resources/zmx-binary/zmx "$GRAFTTY_HISTORY_LEGACY_ZMX"
           cp "$candidate" Resources/zmx-binary/zmx
           scripts/swiftpm test --build-system native --filter 'MacPagedTerminalTests|PagedTerminalCoordinatorTests' 2>&1 | tee /private/tmp/graftty-history-validation/green.log
+          python3 -B scripts/agent-integration/verify_history_results.py --swift /private/tmp/graftty-history-validation
       - name: Run real agents on Mac and mobile
         env:
           TEST_SEED: ${{ inputs.seed || github.run_number }}
@@ -80,6 +81,9 @@ jobs:
             --cli "$cli" --zmx "$PWD/Resources/zmx-binary/zmx" \
             --ghostty-package "$PWD/.dependencies/libghostty-spm" \
             --seed "$TEST_SEED" --actions "$TEST_ACTIONS" "${scenario[@]}"
+      - name: Require complete history scenario results
+        if: inputs.history
+        run: python3 -B scripts/agent-integration/verify_history_results.py --results /private/tmp/graftty-ai-*/result.json
       - name: Preserve native failure evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -98,4 +102,5 @@ jobs:
             /private/tmp/graftty-ai-*/ios-build.log
             /private/tmp/graftty-ai-*/mobile.xcresult
             /private/tmp/graftty-ai-*/history-*.json
+            /private/tmp/graftty-ai-*/*.png
             /private/tmp/graftty-history-validation/*.log
