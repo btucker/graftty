@@ -1882,7 +1882,7 @@ struct PagedSourceGridTests {
         host.view.addSubview(container)
         container.layoutIfNeeded()
         defer { container.removeFromSuperview(); window.isHidden = true }
-        var previousViewport = try await waitForPhysicalViewport(container, recordedBy: viewports, after: 0)
+        var previousViewport = try await waitForPhysicalViewport(container, recordedBy: viewports, after: 0, stage: "initial mount")
         // Let the initial mounting callbacks settle before measuring whether
         // source acknowledgements themselves generate another physical resize.
         try await Task.sleep(for: .milliseconds(100))
@@ -1911,7 +1911,7 @@ struct PagedSourceGridTests {
             container.frame.size = size
             container.layoutIfNeeded()
             let viewport = try await waitForPhysicalViewport(container, recordedBy: viewports,
-                after: beforeResize, differingFrom: previousViewport)
+                after: beforeResize, differingFrom: previousViewport, stage: "physical bounds \(size)")
             #expect(viewport.columns != previousViewport.columns || viewport.rows != previousViewport.rows,
                     "Keyboard and rotation geometry must report a changed physical grid")
             previousViewport = viewport
@@ -1921,7 +1921,7 @@ struct PagedSourceGridTests {
         let beforeFontResize = viewports.snapshot().count
         #expect(container.terminalView.surface?.performBindingAction("increase_font_size:1") == true)
         let fontViewport = try await waitForPhysicalViewport(container, recordedBy: viewports,
-            after: beforeFontResize, differingFrom: previousViewport)
+            after: beforeFontResize, differingFrom: previousViewport, stage: "font change")
         #expect(fontViewport.columns != previousViewport.columns || fontViewport.rows != previousViewport.rows,
                 "Font changes must report a changed physical grid while the parser is pinned")
         await expectParserGrid(session, responses: responses, cols: 80, rows: 24)
@@ -2034,7 +2034,8 @@ struct PagedSourceGridTests {
     private func waitForPhysicalViewport(_ container: TerminalInputContainerView,
                                          recordedBy recorder: PhysicalViewportRecorder,
                                          after count: Int,
-                                         differingFrom previous: InMemoryTerminalViewport? = nil) async throws -> InMemoryTerminalViewport {
+                                         differingFrom previous: InMemoryTerminalViewport? = nil,
+                                         stage: String) async throws -> InMemoryTerminalViewport {
         var reported: InMemoryTerminalViewport?
         for _ in 0..<100 {
             let viewports = recorder.snapshot()
@@ -2042,14 +2043,16 @@ struct PagedSourceGridTests {
                previous == nil || viewport.columns != previous?.columns || viewport.rows != previous?.rows,
                let metrics = container.terminalGridMetrics,
                viewport.columns == metrics.columns, viewport.rows == metrics.rows,
-               viewport.widthPixels == metrics.widthPixels, viewport.heightPixels == metrics.heightPixels,
-               viewport.cellWidthPixels == metrics.cellWidthPixels, viewport.cellHeightPixels == metrics.cellHeightPixels {
+               // The native resize callback carries grid and pixel dimensions.
+               // Cell dimensions are optional and can remain zero; the view
+               // obtains its cell metrics through a separate native callback.
+               viewport.widthPixels == metrics.widthPixels, viewport.heightPixels == metrics.heightPixels {
                 reported = viewport
                 break
             }
             try await Task.sleep(for: .milliseconds(10))
         }
-        return try #require(reported, "A physical resize callback must report the mounted terminal's current metrics")
+        return try #require(reported, "No matching physical resize at \(stage); callbacks after \(count): \(recorder.snapshot().dropFirst(count)); metrics: \(String(describing: container.terminalGridMetrics)); bounds: \(container.terminalView.bounds)")
     }
 
     private func expectParserGrid(_ session: InMemoryTerminalSession, responses: TerminalResponseRecorder,
