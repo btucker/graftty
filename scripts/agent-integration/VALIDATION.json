@@ -232,6 +232,19 @@
           }
         }
       ]
+    },
+    "ciFollowup": {
+      "failedRun": "https://github.com/btucker/graftty/actions/runs/39081054475/job/117537892973",
+      "failure": "The macOS isolated-test step reached its ten-minute bound after userShellCanStillChooseNoColor started and did not finish.",
+      "fix": "Use existing ZmxRunner.captureAll with a three-second timeout and disable zsh job control while retaining interactive startup-file loading.",
+      "scope": "Test subprocess only; product terminal spawning is unchanged.",
+      "localVerification": {
+        "tests": 33,
+        "suites": 4,
+        "result": "passed under the same script(1) PTY wrapper used by CI",
+        "log": "/private/tmp/graftty-pr455-shell-pty-green.log"
+      },
+      "reproductionLimit": "An isolated local PTY launch passed; the exact hosted-runner stall was not reproduced locally."
     }
   },
   "terminalReentryRegression": {

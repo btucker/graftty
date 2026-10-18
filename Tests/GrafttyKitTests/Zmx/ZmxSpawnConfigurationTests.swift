@@ -174,18 +174,16 @@ struct ZmxSpawnConfigurationTests {
         try "export NO_COLOR=user-choice\n".write(to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
         let config = makeConfig(processEnv: ["HOME": home.path, "SHELL": "/bin/zsh", "PATH": "/usr/bin", "NO_COLOR": "launcher"],
             ghosttyResourcesDir: nil, agentHooksDisabled: true)
-        let process = Process(), output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-d", "-i", "-c", "printf '%s' \"$NO_COLOR\""]
-        process.environment = config.env
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        let result = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        #expect(process.terminationStatus == 0)
-        #expect(String(decoding: result, as: UTF8.self) == "user-choice")
+        // CI wraps tests in script(1). Load interactive startup files without
+        // letting shell job control claim the runner's controlling terminal.
+        let result = try ZmxRunner.captureAll(
+            executable: URL(fileURLWithPath: "/bin/zsh"),
+            args: ["-d", "-i", "+m", "-c", "printf '%s' \"$NO_COLOR\""],
+            env: config.env,
+            timeout: 3
+        )
+        #expect(result.exitCode == 0, "Shell startup failed: \(result.stderr)")
+        #expect(result.stdout == "user-choice")
     }
 
     @Test("""
