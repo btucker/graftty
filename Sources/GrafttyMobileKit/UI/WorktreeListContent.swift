@@ -1361,7 +1361,7 @@ public struct WorktreeListContent: View {
     /// Own the request outside the sheet so dismissal never cancels creation.
     private func beginCreatingWorktree(_ submission: AddWorktreeSheetView.Submission) {
         let requestHost = host
-        let provider = remoteConnectionProvider
+        let provider: RemoteConnectionProvider? = remoteConnectionProvider
         let request = submission.request
         let repository = submission.repository
         let rows: [WorktreePanes]
