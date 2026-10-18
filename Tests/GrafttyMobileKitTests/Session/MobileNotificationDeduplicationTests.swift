@@ -47,11 +47,36 @@ struct MobileNotificationDeduplicationTests {
         var ledger = MobileStopNotificationLedger()
         #expect(ledger.receive([row(10)], hostID: direct).count == 1)
         var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(ledger)) as? [String: Any])
-        legacy.removeValue(forKey: "stopReceipts")
+        legacy.removeValue(forKey: "receipts")
         ledger = try JSONDecoder().decode(MobileStopNotificationLedger.self,
             from: JSONSerialization.data(withJSONObject: legacy))
         #expect(ledger.receive([row(10)], hostID: direct).isEmpty)
         #expect(ledger.receive([row(10, relayed: true)], hostID: UUID()).isEmpty)
         #expect(ledger.receive([row(20)], hostID: direct).count == 1)
+    }
+
+    @Test("@spec NOTIF-1.25: When mobile receives the same input request through direct and relayed connections, the application shall notify once across ledger reloads while preserving later requests and distinct pane slots.")
+    func inputRequestsAreDeduplicatedAcrossRoutes() throws {
+        func prompt(_ time: Double, relayed: Bool = false, slot: String = "agent-slot") -> WorktreePanes {
+            let source = row(time, relayed: relayed)
+            let session = relayed ? "relay-pane-alias" : "local-pane"
+            return .init(path: source.path, displayName: source.displayName, repoDisplayName: source.repoDisplayName,
+                displayBranch: source.displayBranch, state: .running, isMainCheckout: false,
+                prBadge: nil, stats: nil, attentionText: nil,
+                layout: .leaf(sessionName: session, title: "Agent", attentionText: "Codex needs input",
+                    isBusy: false, attentionSource: .agentStop,
+                    attentionTimestamp: Date(timeIntervalSinceReferenceDate: time)),
+                origin: source.origin,
+                sidebar: .init(id: "stable-worktree", projectID: "stable-project", paneIDs: [session: slot]))
+        }
+        let direct = UUID(), relay = UUID()
+        var ledger = MobileStopNotificationLedger()
+        #expect(ledger.receive([prompt(10)], hostID: direct).count == 1)
+        #expect(ledger.receive([prompt(10, relayed: true)], hostID: relay).isEmpty)
+        ledger = try JSONDecoder().decode(MobileStopNotificationLedger.self, from: JSONEncoder().encode(ledger))
+        #expect(ledger.receive([prompt(10)], hostID: UUID()).isEmpty)
+        #expect(ledger.receive([prompt(20, relayed: true)], hostID: relay).count == 1)
+        #expect(ledger.receive([prompt(20)], hostID: direct).isEmpty)
+        #expect(ledger.receive([prompt(20, slot: "other-slot")], hostID: UUID()).count == 1)
     }
 }

@@ -138,6 +138,7 @@ final class NotificationActivationFixture {
         let event = configuration.stops[index]
         let originalSession = event.paneSessionName ?? "notification-target-pane"
         let session = relayed ? "relay:\(originalSession)" : originalSession
+        let inputRequest = configuration.mode == "input"
         let stop = SidebarAgentStop(agentName: event.runtime, stoppedAt: event.stoppedAt,
             recap: event.recap, paneSlotID: configuration.mode == "ambiguous" ? nil : "target-slot",
             providerSessionKey: event.sessionID)
@@ -146,13 +147,15 @@ final class NotificationActivationFixture {
             stats: nil, attentionText: nil, layout: .split(direction: .horizontal, ratio: 0.5,
                 left: .leaf(sessionName: "notification-unrelated-pane", title: "Unrelated", attentionText: nil,
                     isBusy: false, attentionSource: nil),
-                right: .leaf(sessionName: session, title: "Provider", attentionText: nil,
-                    isBusy: false, attentionSource: nil)),
+                right: .leaf(sessionName: session, title: "Provider",
+                    attentionText: inputRequest ? "\(event.runtime) needs input" : nil,
+                    isBusy: false, attentionSource: inputRequest ? .agentStop : nil,
+                    attentionTimestamp: inputRequest ? event.stoppedAt : nil)),
             origin: .init(deviceID: configuration.host.remoteDeviceID!, deviceLabel: configuration.host.label,
                 relayDepth: relayed ? 1 : 0),
             sidebar: .init(id: "fixture:\(event.worktree)", projectID: "notification-project",
                 paneIDs: ["notification-unrelated-pane": "unrelated-slot", session: "target-slot"],
-                unseenAgentStop: stop, lastAgentStop: stop))
+                unseenAgentStop: inputRequest ? nil : stop, lastAgentStop: inputRequest ? nil : stop))
     }
 
     func handle(_ command: AgentIntegrationCommand) async throws -> [String: String] {

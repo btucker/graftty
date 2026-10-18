@@ -82,19 +82,31 @@ struct MobileStopNotificationLedger: Codable, Equatable {
     // Optional for ledgers written before cross-connection receipts existed.
     // Connection-local watermarks still reject old snapshots; these bounded
     // receipts recognize the same occurrence arriving through another route.
-    private var stopReceipts: [String]?
+    private var receipts: [String]?
 
     private mutating func rememberStop(_ stop: SidebarAgentStop, row: WorktreePanes) -> Bool {
+        rememberOccurrence(["stop", stop.agentName, stop.providerSessionKey ?? "",
+                            stop.paneSlotID ?? "", String(stop.timestamp.bitPattern)], row: row)
+    }
+
+    private mutating func rememberInput(_ item: SidebarActivityItem, time: Double, row: WorktreePanes) -> Bool {
+        let slot = item.paneID.flatMap { row.sidebar?.paneIDs?[$0] }
+        // A session alias alone cannot identify a pane across relay routes.
+        guard item.paneID == nil || slot != nil else { return true }
+        return rememberOccurrence(["input", item.paneID == nil ? "worktree" : "pane",
+                                   slot ?? "", String(time.bitPattern), item.title], row: row)
+    }
+
+    private mutating func rememberOccurrence(_ occurrence: [String], row: WorktreePanes) -> Bool {
         guard let owner = row.origin?.deviceID.value, !owner.isEmpty,
               let worktree = row.sidebar?.id, !worktree.isEmpty else { return true }
-        let receipt = [owner, worktree, stop.agentName, stop.providerSessionKey ?? "",
-                       stop.paneSlotID ?? "", String(stop.timestamp.bitPattern)]
+        let receipt = ([owner, worktree] + occurrence)
             .map { "\($0.utf8.count):\($0)" }.joined()
-        guard stopReceipts?.contains(receipt) != true else { return false }
-        var receipts = stopReceipts ?? []
-        receipts.append(receipt)
-        if receipts.count > 2048 { receipts.removeFirst(receipts.count - 2048) }
-        stopReceipts = receipts
+        guard receipts?.contains(receipt) != true else { return false }
+        var updated = receipts ?? []
+        updated.append(receipt)
+        if updated.count > 2048 { updated.removeFirst(updated.count - 2048) }
+        receipts = updated
         return true
     }
 
@@ -139,10 +151,12 @@ struct MobileStopNotificationLedger: Codable, Equatable {
             for item in activity where item.agentStop == nil && item.occurrence?.source == .agentStop {
                 guard let time = item.occurrence?.timestamp?.timeIntervalSinceReferenceDate else { continue }
                 let key = identity + ":input:" + item.id
+                if time == timestamps[key] { _ = rememberInput(item, time: time, row: row) }
                 guard time > (timestamps[key] ?? -.infinity) else { continue }
                 timestamps[key] = time
                 let paneID = SidebarProjection.attentionPaneRoute(for: item, in: row)
                 if let stop, time <= stop.timestamp, paneID == stopPane { continue }
+                guard rememberInput(item, time: time, row: row) else { continue }
                 notifications.append(notification(title: nil, body: item.title, paneID: paneID))
             }
         }

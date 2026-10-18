@@ -82,6 +82,9 @@ an ambiguous target, and a disconnected host retry. Alternating direct/relay
 snapshot representations of one source stop must create one request, while the
 next distinct stop creates another. This checks canonical notification identity;
 it does not establish authenticated relay transport or APNs delivery.
+Controlled input-request snapshots reuse captured pane identities and timestamps
+to check request deduplication and tap routing. Those snapshots do not establish
+provider permission-hook delivery.
 For cold and background cases, the fixture schedules the production request's
 unchanged identifier and content with a five-second trigger. This lets XCUITest
 terminate or background the app before the operating system delivers the alert.

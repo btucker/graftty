@@ -187,6 +187,16 @@ class NotificationRun(Run):
     def mobile_scenarios(self, provider, events):
         # The app fixture consumes these captured production events, including
         # their original provider/session identity and timestamps.
+        # Input requests use controlled prompt snapshots with captured pane and
+        # occurrence identities; they are not provider permission-hook evidence.
+        prepared = self.prepare_mobile_notifications(provider, events, 'input')
+        self.deliver_mobile_stop(provider, 0, 1)
+        self.tap_mobile_notification(provider, prepared)
+        selected = self.wait_mobile_route(provider, prepared)
+        self.deliver_mobile_stop(provider, 1, 2)
+        self.summary['assertions'].append({'provider': provider, 'mobileControlledInputActivation': selected,
+            'mobileControlledInputRequestCount': 2})
+
         prepared = self.prepare_mobile_notifications(provider, events, 'warm', hold=True)
         self.deliver_mobile_stop(provider, 0, 1)
         self.tap_mobile_notification(provider, prepared)
