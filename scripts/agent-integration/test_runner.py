@@ -1,4 +1,5 @@
 import json
+import plistlib
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -49,6 +50,36 @@ class RunnerLifecycleTests(unittest.TestCase):
             env = prepare_home(Path(directory), 'http://127.0.0.1:1234', Path('/bin/echo'), Path('/bin/echo'))
         for key in ('TERM', 'COLORTERM', 'TERM_PROGRAM', 'NO_COLOR', 'FORCE_COLOR'):
             self.assertNotIn(key, env, f'{key} would mask the production terminal environment')
+
+    def test_mobile_build_forwards_renderer_context_to_cached_dependencies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = Run.__new__(Run)
+            runner.root = Path(directory)
+            derived = runner.root / 'ios-cache'
+            products = derived / 'Build/Products'
+            products.mkdir(parents=True)
+            (products / 'Fixture.xctestrun').write_bytes(plistlib.dumps({}))
+            renderer = runner.root / 'libghostty-spm'
+            runner.options = SimpleNamespace(simulator='fixture-device', ios_cache=derived, ghostty_package=renderer)
+            runner.server = Mock(endpoint='http://127.0.0.1:1234')
+
+            def execute_fixture(command, **kwargs):
+                if command[:4] == ['xcrun', 'simctl', 'list', 'devices']:
+                    return json.dumps({'devices': {'fixture': [{'udid': 'fixture-device', 'state': 'Booted'}]}})
+                if any('compiler-context.py' in str(argument) for argument in command):
+                    self.assertEqual(str(renderer), kwargs['env']['GRAFTTY_GHOSTTY_PACKAGE_PATH'])
+                    return '-DGRAFTTY_RENDERER_fixture'
+                return ''
+
+            with patch('run.execute', side_effect=execute_fixture) as execute, \
+                 patch('run.patch_xctestrun', return_value={}):
+                try:
+                    runner.prepare_mobile()
+                finally:
+                    runner.ios_lock.close()
+            build = next(call for call in execute.call_args_list if call.args[0][0] == 'xcodebuild')
+            self.assertIn('OTHER_SWIFT_FLAGS=$(inherited) -Xcc -DGRAFTTY_RENDERER_fixture', build.args[0])
+            self.assertEqual(str(renderer), build.kwargs['env']['GRAFTTY_GHOSTTY_PACKAGE_PATH'])
 
     def test_mobile_build_finishes_before_native_deadline_starts(self):
         with tempfile.TemporaryDirectory() as directory:

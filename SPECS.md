@@ -1412,7 +1412,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-1.6** When a development build has no explicit renderer override, the build shall use the committed published dependency and diagnose ignored local packages; an explicitly selected stale renderer or a release requiring paging shall fail before compilation.
 
-**DIST-1.7** When the selected renderer or its headers change, the build shall use a distinct Clang module signature so cached renderer modules cannot be reused across incompatible headers.
+**DIST-1.7** When the shared wrapper, bundle script, or CI builds with a changed renderer or headers, the build shall apply a distinct Clang module signature to application and dependency targets.
 
 ### DIST-2.x — Release Automation
 

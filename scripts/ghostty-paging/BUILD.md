@@ -79,7 +79,26 @@ Explicit overrides are checked against `recipe.json` and the current patches.
 Unsetting the override selects the published dependency; old local packages are
 ignored with a diagnostic. The shared wrapper and bundle script reevaluate the
 manifest on each invocation so rebuilt local headers get a new Clang module
-signature. This preserves unrelated cached build products.
+signature. Both wrappers forward that signature as a global compiler flag so
+GhosttyKit and GhosttyTerminal dependency targets use it too. This preserves
+unrelated cached build products.
+
+When switching renderer packages in an existing Xcode build directory, use the
+same context in `xcodebuild`, as CI does:
+
+```bash
+export GRAFTTY_GHOSTTY_PACKAGE_PATH="$PWD/.dependencies/libghostty-spm"
+export GRAFTTY_REQUIRE_PAGED_HISTORY=1
+renderer_context="$(python3 scripts/ghostty-paging/compiler-context.py "$PWD" "$PWD/.build")"
+xcodebuild -project Apps/GrafttyMobile/GrafttyMobile.xcodeproj \
+  -scheme GrafttyMobile -destination 'generic/platform=iOS Simulator' \
+  "OTHER_SWIFT_FLAGS=\$(inherited) -Xcc $renderer_context" build
+```
+
+For an arm64-only renderer, also pass `ARCHS=arm64 ONLY_ACTIVE_ARCH=YES`.
+Plain `swift build` supports the committed published renderer from a clean build
+directory. Use `scripts/swiftpm` when switching or rebuilding local renderer
+packages so dependency targets also receive the fresh context.
 Set it to an empty string to verify the published renderer's legacy fallback.
 
 Build caches remain in `~/Library/Caches/Graftty/GhosttyPaging`. Use `--cache PATH`

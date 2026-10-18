@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Evaluate the real package manifest with small renderer fixtures, without resolving dependencies."""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -55,6 +57,40 @@ class RendererSelectionTests(unittest.TestCase):
         dependency = next(d for d in data["dependencies"] if "libghostty-spm" in json.dumps(d))
         settings = next(t["settings"] for t in data["targets"] if t["name"] == "Graftty")
         return dependency, json.dumps(settings), result.stderr
+
+    def test_compiler_context_is_forwarded_to_dependency_builds(self):
+        spec = importlib.util.spec_from_file_location("compiler_context", ROOT / "scripts/ghostty-paging/compiler-context.py")
+        context = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(context)
+        result = subprocess.run(["swift", "package", "--manifest-cache", "none", "--package-path", str(self.root), "dump-package"],
+                                env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        flag = context.compiler_context(json.loads(result.stdout))
+        self.assertTrue(flag.startswith("-DGRAFTTY_RENDERER_published_"))
+        tools = self.root / "tools"
+        tools.mkdir()
+        shutil.copy(ROOT / "scripts/swiftpm", self.root / "scripts/swiftpm")
+        shutil.copy(ROOT / "scripts/ghostty-paging/compiler-context.py", self.patches)
+        manifest = self.root / "dump.json"
+        manifest.write_text(result.stdout)
+        invocation = self.root / "invocation.json"
+        swift = tools / "swift"
+        swift.write_text(f"#!{sys.executable}\n" +
+                         "import json, sys\nfrom pathlib import Path\n" +
+                         f"if sys.argv[1] == 'package': print(Path({str(manifest)!r}).read_text())\n" +
+                         f"else: Path({str(invocation)!r}).write_text(json.dumps(sys.argv[1:]))\n")
+        swift.chmod(0o755)
+        git = tools / "git"
+        git.write_text(f"#!{sys.executable}\nprint({str(self.root)!r})\n")
+        git.chmod(0o755)
+        env = {**self.env, "PATH": str(tools) + os.pathsep + self.env["PATH"],
+               "GRAFTTY_SWIFTPM_SHARED_DIR": str(self.root / "cache")}
+        built = subprocess.run([str(self.root / "scripts/swiftpm"), "build", "--product", "Graftty"],
+                               env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+        arguments = json.loads(invocation.read_text())
+        self.assertEqual(arguments[arguments.index("-Xcc") + 1], flag)
+        self.assertEqual(arguments[-2:], ["--product", "Graftty"])
 
     def test_clean_checkout_uses_published(self):
         dependency, settings, _ = self.manifest()
@@ -136,11 +172,19 @@ class ReleaseSelectionTests(unittest.TestCase):
             root = Path(directory)
             (root / "scripts").mkdir()
             shutil.copy(ROOT / "scripts/bundle.sh", root / "scripts")
+            (root / "scripts/ghostty-paging").mkdir()
+            shutil.copy(ROOT / "scripts/ghostty-paging/compiler-context.py", root / "scripts/ghostty-paging")
             tools = root / "tools"
             tools.mkdir()
             swift = tools / "swift"
-            swift.write_text("#!/bin/bash\n" +
-                             'echo "path=$GRAFTTY_GHOSTTY_PACKAGE_PATH require=$GRAFTTY_REQUIRE_PAGED_HISTORY args=$*"\nexit 37\n')
+            manifest = {"targets": [{"name": "Graftty", "settings": [
+                {"kind": {"unsafeFlags": {"_0": ["-Xcc", "-DGRAFTTY_RENDERER_fixture"]}}}]}]}
+            swift.write_text(f"#!{sys.executable}\n" +
+                             "import os, sys\n" +
+                             f"if sys.argv[1] == 'package': print({json.dumps(manifest)!r})\n" +
+                             "else:\n" +
+                             "    print('path=' + os.environ['GRAFTTY_GHOSTTY_PACKAGE_PATH'] + ' require=' + os.environ['GRAFTTY_REQUIRE_PAGED_HISTORY'] + ' args=' + ' '.join(sys.argv[1:]))\n" +
+                             "    sys.exit(37)\n")
             swift.chmod(0o755)
             env = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
                    "CONFIGURATION": "release", "GRAFTTY_BUILD_VERSION": "1",
@@ -150,7 +194,7 @@ class ReleaseSelectionTests(unittest.TestCase):
                                     capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 37, result.stdout + result.stderr)
             self.assertIn(f"path={root}/.dependencies/libghostty-spm require=1", result.stdout)
-            self.assertIn("--manifest-cache none", result.stdout)
+            self.assertIn("--manifest-cache none -Xcc -DGRAFTTY_RENDERER_fixture", result.stdout)
 
 
 if __name__ == "__main__":

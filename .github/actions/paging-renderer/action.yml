@@ -32,5 +32,9 @@ runs:
     - name: Select paging renderer
       shell: bash
       run: |
-        echo "GRAFTTY_GHOSTTY_PACKAGE_PATH=$GITHUB_WORKSPACE/.dependencies/libghostty-spm" >> "$GITHUB_ENV"
-        echo "GRAFTTY_REQUIRE_PAGED_HISTORY=1" >> "$GITHUB_ENV"
+        export GRAFTTY_GHOSTTY_PACKAGE_PATH="$GITHUB_WORKSPACE/.dependencies/libghostty-spm"
+        export GRAFTTY_REQUIRE_PAGED_HISTORY=1
+        echo "GRAFTTY_GHOSTTY_PACKAGE_PATH=$GRAFTTY_GHOSTTY_PACKAGE_PATH" >> "$GITHUB_ENV"
+        echo "GRAFTTY_REQUIRE_PAGED_HISTORY=$GRAFTTY_REQUIRE_PAGED_HISTORY" >> "$GITHUB_ENV"
+        context="$(python3 scripts/ghostty-paging/compiler-context.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/graftty-manifest")"
+        echo "GRAFTTY_RENDERER_CONTEXT=$context" >> "$GITHUB_ENV"

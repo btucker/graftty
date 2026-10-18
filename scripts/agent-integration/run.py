@@ -173,10 +173,13 @@ class Run:
         build_env = dict(os.environ)
         if options.ghostty_package:
             build_env['GRAFTTY_GHOSTTY_PACKAGE_PATH'] = str(options.ghostty_package)
+        renderer_context = execute([sys.executable, str(REPO / 'scripts/ghostty-paging/compiler-context.py'),
+            str(REPO), str(derived / 'manifest')], env=build_env)
         print('Building native mobile test host', flush=True)
         execute(['xcodebuild', '-project', str(REPO / 'Apps/GrafttyMobile/GrafttyMobile.xcodeproj'),
             '-scheme', 'GrafttyBrowserInteraction', '-destination', 'platform=iOS Simulator,id=' + self.simulator,
-            '-derivedDataPath', str(derived), 'build-for-testing'], env=build_env,
+            '-derivedDataPath', str(derived), 'OTHER_SWIFT_FLAGS=$(inherited) -Xcc ' + renderer_context,
+            'build-for-testing'], env=build_env,
             timeout=900, log=self.root / 'ios-build.log')
         run_files = [p for p in (derived / 'Build/Products').glob('*.xctestrun') if p.name != 'agent-integration.xctestrun']
         if len(run_files) != 1:

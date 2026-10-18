@@ -75,10 +75,12 @@ if [[ "$CONFIGURATION" == "release" ]]; then
   export GRAFTTY_GHOSTTY_PACKAGE_PATH="${GRAFTTY_GHOSTTY_PACKAGE_PATH-$REPO/.dependencies/libghostty-spm}"
   export GRAFTTY_REQUIRE_PAGED_HISTORY=1
 fi
+RENDERER_CONTEXT="$(python3 "$REPO/scripts/ghostty-paging/compiler-context.py" "$REPO" "$REPO/.build")"
+RENDERER_ARGUMENTS=(--manifest-cache none -Xcc "$RENDERER_CONTEXT")
 echo "→ swift build --configuration $CONFIGURATION"
-swift build --manifest-cache none --configuration "$CONFIGURATION"
+swift build "${RENDERER_ARGUMENTS[@]}" --configuration "$CONFIGURATION"
 
-BIN_DIR="$(swift build --manifest-cache none --configuration "$CONFIGURATION" --show-bin-path)"
+BIN_DIR="$(swift build "${RENDERER_ARGUMENTS[@]}" --configuration "$CONFIGURATION" --show-bin-path)"
 APP="$REPO/.build/Graftty.app"
 
 echo "→ rm -rf $APP && mkdir bundle dirs"
