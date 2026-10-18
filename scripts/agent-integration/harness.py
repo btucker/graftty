@@ -14,6 +14,18 @@ class InvariantFailure(RuntimeError):
     pass
 
 
+def assert_color_samples(observation):
+    try:
+        samples = json.loads(observation['colorPixels'])
+        if not isinstance(samples, dict):
+            raise InvariantFailure('native color samples must name their fixture rows')
+        for marker in ('COLOR_INLINE', 'COLOR_LINK', 'COLOR_STRING', 'COLOR_REMOVED', 'COLOR_ADDED'):
+            if type(samples.get(marker)) is not int or samples[marker] < 16:
+                raise InvariantFailure(f'native color absent on {marker}: {samples}')
+    except (KeyError, ValueError, TypeError) as error:
+        raise InvariantFailure('native color samples unavailable') from error
+
+
 @dataclass(frozen=True)
 class Action:
     operation: str
@@ -118,6 +130,30 @@ def assert_observation(before, after, preserve_anchor=False, preserve_selection=
             raise InvariantFailure('native selection was not established')
         if before['selected'] != after.get('selected'):
             raise InvariantFailure('selected logical text changed or disappeared')
+
+
+def assert_lower_viewport(value):
+    rows = value.get('physicalRows', '').split('\n')
+    if not rows or not '\n'.join(rows[-4:]).strip():
+        raise InvariantFailure('lower native viewport is blank')
+    if not value.get('grid') or value.get('nativeGrid') != value['grid']:
+        raise InvariantFailure('native viewport differs from the authoritative grid')
+
+
+def assert_reentry_viewport(value, provider, authoritative):
+    assert_lower_viewport(value)
+    if 'pagedGridMismatches' not in value:
+        raise InvariantFailure('paged parser grid observations unavailable')
+    if value['pagedGridMismatches'] != '':
+        raise InvariantFailure(f'paged output was parsed on a mismatched grid: {value["pagedGridMismatches"]}')
+    prompt = {'codex': '›', 'claude': '❯'}[provider]
+    footer = value['physicalRows'].split('\n')[-8:]
+    prompt_rows = [row for row in footer if re.match(r'^\s*' + prompt + r'(?:\s|$)', row)]
+    if not prompt_rows:
+        raise InvariantFailure(f'{provider} input prompt is absent from the native footer')
+    if any(re.search(r'ROW-[0-9]', row) for row in prompt_rows):
+        raise InvariantFailure(f'{provider} input prompt is overprinted with numbered output')
+    assert_buffer_matches(value['physicalRows'], authoritative)
 
 
 class Broker:

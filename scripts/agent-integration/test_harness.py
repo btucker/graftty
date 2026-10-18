@@ -1,12 +1,49 @@
 import json
 import unittest
 
-from harness import Action, Broker, InvariantFailure, assert_observation, seeded_actions, shrink, assert_buffer_matches, patch_xctestrun, approval_ready
+from harness import Action, Broker, InvariantFailure, assert_observation, seeded_actions, shrink, assert_buffer_matches, patch_xctestrun, approval_ready, assert_lower_viewport, assert_reentry_viewport
 from model import model_events, user_text, reply_command
 from server import ModelState
 
 
 class SequenceTests(unittest.TestCase):
+    def test_reentry_requires_current_payload_and_a_clean_provider_prompt(self):
+        for provider, prompt in (('codex', '› Ask Codex to do anything'), ('claude', '❯\u00a0')):
+            physical = f'ROW-000001 retained output\nROW-000002 retained output\n\n{prompt}\n\n? for shortcuts'
+            visible = {'physicalRows': physical, 'nativeGrid': '41x6', 'grid': '41x6',
+                       'pagedGridMismatches': ''}
+            with self.subTest(provider=provider):
+                assert_reentry_viewport(visible, provider, physical)
+                stale = {**visible, 'physicalRows': physical.replace('ROW-000001 retained', 'ROW-000001 stale')}
+                with self.assertRaisesRegex(InvariantFailure, 'logical row content'):
+                    assert_reentry_viewport(stale, provider, physical)
+                overprinted = {**visible, 'physicalRows': physical.replace(prompt, prompt[0] + ' ROW-000003 retained output')}
+                with self.assertRaisesRegex(InvariantFailure, 'prompt'):
+                    assert_reentry_viewport(overprinted, provider, physical)
+                missing = {**visible, 'physicalRows': physical.replace(prompt, 'nonblank stale footer')}
+                with self.assertRaisesRegex(InvariantFailure, 'prompt'):
+                    assert_reentry_viewport(missing, provider, physical)
+
+    def test_reentry_rejects_prior_parser_grid_mismatches_and_missing_evidence(self):
+        physical = 'ROW-000001 retained output\n\n› Ask Codex to do anything\n? for shortcuts'
+        visible = {'physicalRows': physical, 'nativeGrid': '41x4', 'grid': '41x4'}
+        for mismatches in (None, 'source=124x40 native=41x23 owner=true bytes=14'):
+            value = visible if mismatches is None else {**visible, 'pagedGridMismatches': mismatches}
+            with self.subTest(mismatches=mismatches), self.assertRaisesRegex(InvariantFailure, 'grid'):
+                assert_reentry_viewport(value, 'codex', physical)
+
+    def test_lower_viewport_rejects_blank_footer_and_stale_grid(self):
+        visible = {'physicalRows': 'response\n\n> prompt\nstatus\n',
+                   'nativeGrid': '41x23', 'grid': '41x23'}
+        assert_lower_viewport(visible)
+        for bad in ({**visible, 'physicalRows': 'response\n\n\n\n'},
+                    {**visible, 'physicalRows': 'response\n\n\n\n\n'},
+                    {**visible, 'physicalRows': ''},
+                    {**visible, 'nativeGrid': '', 'grid': ''},
+                    {**visible, 'nativeGrid': '124x40'}):
+            with self.assertRaises(InvariantFailure):
+                assert_lower_viewport(bad)
+
     def test_xctestrun_paths_are_relocated_in_arrays_and_dictionaries(self):
         value = {'TestBundlePath': '__TESTHOST__/Tests.xctest',
                  'UITargetAppPath': '__TESTROOT__/app', 'DependentProductPaths': ['__TESTROOT__/app']}

@@ -389,7 +389,7 @@ final class RemoteTerminalSurfaceBackend: @unchecked Sendable {
     private func updatePagedPresentation(synchronizeOwner: Bool = true) {
         let presentation = lock.withLock { () -> (((DisplayGrid?) -> Void), DisplayGrid?)? in
             guard case .running = lifecycle else { return nil }
-            let grid = attachmentGrid ?? (isOwnerLocked ? nil : ownershipSnapshot?.grid ?? lastPagedGrid)
+            let grid = attachmentGrid ?? (isOwnerLocked ? nil : lastPagedGrid ?? ownershipSnapshot?.grid)
             return (prepareAttachmentGrid, grid)
         }
         guard let (prepare, grid) = presentation else { return }

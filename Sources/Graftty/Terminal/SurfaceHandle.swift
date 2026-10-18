@@ -41,6 +41,9 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void)
     /// Main-thread presentation updates during snapshot import or remote following.
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void)
+    /// Committed in-band parser dimensions, delivered on the main thread.
+    /// Nil releases paged presentation before legacy fallback.
+    func bindSourceGrid(_ handler: @escaping (DisplayGrid?) -> Void)
     func configure(_ config: inout ghostty_surface_config_s)
     func start(surface: ghostty_surface_t) throws
     func write(_ data: Data) throws
@@ -86,6 +89,7 @@ extension SurfaceHandleZmxBackend {
     func waitForStartup() async -> Bool { true }
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void) {}
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {}
+    func bindSourceGrid(_ handler: @escaping (DisplayGrid?) -> Void) {}
     func synchronizeFollowerGrid() {}
     func writeWithDeliveryResult(_ data: Data, claimEngagement: Bool) throws -> Bool {
         try write(data, claimEngagement: claimEngagement)
@@ -161,6 +165,7 @@ final class SurfaceHandle {
     let worktreePath: String
     weak var followerPresentation: MacFollowerTerminalView?
     private var attachmentGrid: DisplayGrid?
+    private var lastPagedGrid: DisplayGrid?
     private(set) var followerScrollbar = ghostty_action_scrollbar_s()
     /// zmx session this pane is attached to, nil for direct-shell panes.
     /// Used by TerminalManager to route last-remote-detach syncs (TERM-11.4).
@@ -414,6 +419,12 @@ final class SurfaceHandle {
         }
 
         self.surface = newSurface
+        backend?.bindSourceGrid { [weak self] grid in
+            guard let self else { return }
+            self.lastPagedGrid = grid
+            self.followerPresentation?.followerGrid = self.presentationGrid
+            self.followerPresentation?.layout()
+        }
         backend?.bindAttachmentGrid { [weak self] grid in
             guard let self else { return }
             self.attachmentGrid = grid
@@ -676,7 +687,7 @@ final class SurfaceHandle {
 
     var followerDisplayGrid: DisplayGrid? {
         guard canTakeDisplayControl(), let displayOwnershipStore, let zmxSessionName else { return nil }
-        return displayOwnershipStore.snapshot(sessionName: zmxSessionName).grid
+        return lastPagedGrid ?? displayOwnershipStore.snapshot(sessionName: zmxSessionName).grid
     }
 
     var presentationGrid: DisplayGrid? { attachmentGrid ?? followerDisplayGrid }

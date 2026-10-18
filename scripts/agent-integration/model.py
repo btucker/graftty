@@ -11,6 +11,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'agent-endpoint-spi
 from fixture import anthropic_events, response_events, scenario_text
 
 
+def color_scenario_text(rows=100):
+    # Repeat so a complete sample stays visible on short mobile viewports.
+    sample = '''`COLOR_INLINE`
+
+[COLOR_LINK](https://example.invalid/color)
+
+```python
+COLOR_STRING = "emerald"
+```
+
+```diff
+-COLOR_REMOVED
++COLOR_ADDED
+```
+
+'''
+    streamed = re.sub(r'(COLOR_[A-Z]+)', r'\1_STREAMED', sample)
+    return 'BEGIN-GRAFTTY-FIXTURE\n\n' + sample + streamed + 'END-GRAFTTY-FIXTURE'
+
+
+def reentry_scenario_text(rows=300):
+    # Keep the viewport lifecycle probe separate from the comprehensive
+    # fixture's known Unicode and wrapped-row rendering failures.
+    body = '\n'.join(f'ROW-{i:06d} retained output' for i in range(rows))
+    return f'BEGIN-GRAFTTY-FIXTURE\n\n{body}\n\nEND-GRAFTTY-FIXTURE'
+
+
 def user_text(body, markers_only=False):
     result = []
     for message in body.get('messages', body.get('input', [])):

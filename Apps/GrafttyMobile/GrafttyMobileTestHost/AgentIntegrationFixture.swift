@@ -1,6 +1,8 @@
 #if GRAFTTY_BROWSER_CONTROL_FIXTURE
 import CryptoKit
+import CoreImage
 import Foundation
+import IOSurface
 import GhosttyTerminal
 import GrafttyProtocol
 import GrafttyRemoteClient
@@ -20,6 +22,7 @@ final class AgentIntegrationMobileController: UIViewController {
     struct Pane {
         let client: SessionClient
         let container: TerminalInputContainerView
+        let usesRoute: Bool
     }
     let endpoint: URL
     let status = UILabel()
@@ -30,6 +33,10 @@ final class AgentIntegrationMobileController: UIViewController {
     var task: Task<Void, Never>?
     var timer: Timer?
     var registration: [String: String] = [:]
+    let fixtureHost = Host(label: "Integration Mac", baseURL: URL(string: "https://fixture.invalid")!)
+    let retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
+    var route: UIHostingController<AnyView>?
+    let focusKeyboardButton = UIButton(type: .system)
 
     init(endpoint: URL) { self.endpoint = endpoint; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
@@ -42,6 +49,10 @@ final class AgentIntegrationMobileController: UIViewController {
         status.font = .monospacedSystemFont(ofSize: 9, weight: .regular)
         status.accessibilityIdentifier = "Agent integration status"
         view.addSubview(status)
+        focusKeyboardButton.setTitle("Show keyboard", for: .normal)
+        focusKeyboardButton.accessibilityIdentifier = "Agent integration show keyboard"
+        focusKeyboardButton.addTarget(self, action: #selector(showKeyboard), for: .touchUpInside)
+        view.addSubview(focusKeyboardButton)
         dismissKeyboard.setTitle("Dismiss keyboard", for: .normal)
         dismissKeyboard.accessibilityIdentifier = "Agent integration dismiss keyboard"
         dismissKeyboard.addTarget(self, action: #selector(hideKeyboard), for: .touchUpInside)
@@ -67,16 +78,25 @@ final class AgentIntegrationMobileController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let frame = view.safeAreaLayoutGuide.layoutFrame
-        status.frame = CGRect(x: frame.minX, y: frame.minY, width: max(1, frame.width - 130), height: 35)
+        status.frame = CGRect(x: frame.minX, y: frame.minY, width: max(1, frame.width - 260), height: 35)
+        focusKeyboardButton.frame = CGRect(x: frame.maxX - 260, y: frame.minY, width: 130, height: 35)
         dismissKeyboard.frame = CGRect(x: frame.maxX - 130, y: frame.minY, width: 130, height: 35)
         if let focused, let pane = panes[focused] {
-            pane.container.frame = CGRect(x: frame.minX, y: status.frame.maxY, width: frame.width,
-                height: max(1, frame.height - 35))
+            if let route {
+                route.view.frame = view.bounds
+            } else {
+                pane.container.frame = CGRect(x: frame.minX, y: status.frame.maxY, width: frame.width,
+                    height: max(1, frame.height - 35))
+            }
             pane.container.layoutIfNeeded()
         }
     }
 
     @objc func hideKeyboard() { view.endEditing(true) }
+    @objc func showKeyboard() {
+        guard let focused, let pane = panes[focused] else { return }
+        _ = pane.container.focusKeyboardInput()
+    }
 
     func connect() async throws -> RemoteHostConnection {
         if let connection { return connection }
@@ -123,14 +143,32 @@ final class AgentIntegrationMobileController: UIViewController {
             container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 12\nscrollback-limit = 10000000")
             container.terminalView.configuration = .init(backend: .inMemory(client.session))
             container.accessibilityIdentifier = "Agent integration terminal"
-            panes[command.provider] = Pane(client: client, container: container)
+            let usesRoute = command.parameters["presentation"] == "route"
+            if usesRoute {
+                let retained = retainedPanes.acquire(.init(hostID: fixtureHost.id, sessionName: sessionName)) {
+                    RetainedMobilePane(client: client)
+                }
+                retained.container = container
+            }
+            panes[command.provider] = Pane(client: client, container: container, usesRoute: usesRoute)
             focus(command.provider)
             client.start()
             try await waitForOwnership(client)
         } else {
             guard let pane = panes[command.provider] else { throw AgentIntegrationError("mobile pane not connected") }
-            focus(command.provider)
+            if command.parameters["mount"] != "false" { focus(command.provider) }
             switch command.operation {
+            case "visibility":
+                if command.parameters["visible"] == "false" {
+                    unmount()
+                    focused = nil
+                }
+            case "keyboard":
+                if command.parameters["visible"] == "true" {
+                    guard pane.container.focusKeyboardInput() else { throw AgentIntegrationError("keyboard focus rejected") }
+                } else {
+                    view.endEditing(true)
+                }
             case "takeControl":
                 pane.client.takeControl()
                 let deadline = ContinuousClock.now.advanced(by: .seconds(10))
@@ -159,22 +197,65 @@ final class AgentIntegrationMobileController: UIViewController {
         guard let pane = panes[command.provider] else { throw AgentIntegrationError("missing mounted pane") }
         synchronize()
         _ = await pane.client.session.flushOutput()
-        return snapshot(pane)
+        var result = snapshot(pane)
+        if command.parameters["colors"] == "true",
+           let contents = ([pane.container.terminalView.layer] + (pane.container.terminalView.layer.sublayers ?? []))
+            .compactMap({ $0.contents }).first(where: { CFGetTypeID($0 as CFTypeRef) == IOSurfaceGetTypeID() }),
+           let metrics = pane.container.terminalGridMetrics {
+            let surface = unsafeBitCast(contents as AnyObject, to: IOSurfaceRef.self)
+            let image = CIImage(ioSurface: surface)
+            if let cgImage = CIContext().createCGImage(image, from: image.extent) {
+                let pixels = AgentIntegrationColorProbe.counts(image: cgImage,
+                    physicalRows: pane.client.session.readViewportRowsText() ?? "",
+                    cellHeight: Int(metrics.cellHeightPixels),
+                    markerSuffix: command.parameters["colorSuffix"] ?? "")
+                result["colorPixels"] = String(decoding: try JSONEncoder().encode(pixels), as: UTF8.self)
+            }
+        }
+        return result
     }
 
     func focus(_ provider: String) {
         if focused != provider {
-            for pane in panes.values { pane.container.removeFromSuperview() }
+            unmount()
             focused = provider
-            if let pane = panes[provider] { view.addSubview(pane.container) }
+            if let pane = panes[provider] {
+                if pane.usesRoute {
+                    let terminal = SingleSessionView(step: SessionStep(host: fixtureHost,
+                        sessionName: pane.client.sessionName, title: provider),
+                        navigationPath: .constant(NavigationPath()), retainedPanes: retainedPanes,
+                        initialClient: pane.client, initialController: pane.container.terminalView.controller)
+                    let host = UIHostingController(rootView: AnyView(terminal.environment(\.scenePhase, .inactive)))
+                    addChild(host)
+                    view.addSubview(host.view)
+                    host.didMove(toParent: self)
+                    route = host
+                    view.bringSubviewToFront(status)
+                    view.bringSubviewToFront(focusKeyboardButton)
+                    view.bringSubviewToFront(dismissKeyboard)
+                } else {
+                    view.addSubview(pane.container)
+                }
+            }
         }
         view.setNeedsLayout()
         view.layoutIfNeeded()
         synchronize()
     }
 
+    func unmount() {
+        if let route {
+            route.willMove(toParent: nil)
+            route.view.removeFromSuperview()
+            route.removeFromParent()
+            self.route = nil
+        }
+        for pane in panes.values { pane.container.removeFromSuperview() }
+    }
+
     func synchronize() {
         for (provider, pane) in panes {
+            if pane.usesRoute { continue }
             pane.container.committedSoftwareInput = SingleSessionView.isTerminalKeyboardEligible(
                 clientIsOwner: pane.client.isOwner, isPaneFocused: provider == focused
             ) ? .init(insertText: { [weak client = pane.client] text in
@@ -212,7 +293,22 @@ final class AgentIntegrationMobileController: UIViewController {
             text = visible.filter { !$0.isEmpty }.joined(separator: "\n")
         }
         let metrics = pane.container.terminalGridMetrics
+        let terminalFrame = pane.container.convert(pane.container.bounds, to: view.window)
+        let keyboardFrame = view.convert(view.keyboardLayoutGuide.layoutFrame, to: view.window)
         return ["text": text, "anchor": AgentIntegrationAnchor.first(in: text),
+            "pagedGridMismatches": pane.client.diagnosticPagedGridMismatches.joined(separator: "\n"),
+            "parserGridMatches": metrics.map { String(pane.client.session.gridMatches(columns: $0.columns, rows: $0.rows)) } ?? "",
+            "parserGridAtScrollbarHeight": metrics.map { String(pane.client.session.gridMatches(columns: $0.columns, rows: UInt16(clamping: bar?.len ?? 0))) } ?? "",
+            "physicalRows": pane.client.session.readViewportRowsText() ?? "",
+            "surfaceFrame": NSCoder.string(for: pane.container.terminalView.frame),
+            "surfaceBounds": NSCoder.string(for: pane.container.terminalView.bounds),
+            "canvasGrid": pane.client.snapshotCanvasGrid.map { "\($0.cols)x\($0.rows)" } ?? "physical",
+            "presentationGrid": pane.container.authoritativeGrid.map { "\($0.cols)x\($0.rows)" } ?? "physical",
+            "keyboard": String(pane.container.terminalView.isFirstResponder),
+            "keyboardEligible": String(pane.container.terminalView.isKeyboardInputEnabled),
+            "terminalBottom": String(Double(terminalFrame.maxY)),
+            "keyboardTop": String(Double(keyboardFrame.minY)),
+            "windowHeight": String(Double(view.window?.bounds.height ?? 0)),
             "selected": pane.container.terminalView.surface?.readSelection() ?? "",
             "revision": String(state?.revision ?? 0), "epoch": String(state?.epoch ?? 0),
             "owner": state?.ownerClientID?.rawValue ?? "", "isOwner": String(pane.client.isOwner),

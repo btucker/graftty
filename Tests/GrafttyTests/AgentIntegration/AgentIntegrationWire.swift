@@ -1,4 +1,42 @@
 import Foundation
+import CoreGraphics
+
+/// Count chromatic glyph pixels on deliberately styled fixture rows. Row lookup
+/// prevents unrelated chrome, links, or emoji from satisfying a syntax check.
+enum AgentIntegrationColorProbe {
+    static let markers = ["COLOR_INLINE", "COLOR_LINK", "COLOR_STRING", "COLOR_REMOVED", "COLOR_ADDED"]
+
+    static func counts(image: CGImage, physicalRows: String, cellHeight: Int, markerSuffix: String = "") -> [String: Int] {
+        var result = Dictionary(uniqueKeysWithValues: markers.map { ($0, -1) })
+        guard cellHeight > 0 else { return result }
+        let rows = physicalRows.components(separatedBy: "\n")
+        for marker in markers {
+            for (row, text) in rows.enumerated() where text.contains(marker + markerSuffix) {
+                let y = row * cellHeight
+                guard y + cellHeight <= image.height,
+                      let crop = image.cropping(to: CGRect(x: 0, y: y, width: image.width, height: cellHeight)) else { continue }
+                var rgba = [UInt8](repeating: 0, count: crop.width * crop.height * 4)
+                let pixels = rgba.withUnsafeMutableBytes { bytes -> Int? in
+                    guard let context = CGContext(data: bytes.baseAddress, width: crop.width, height: crop.height,
+                        bitsPerComponent: 8, bytesPerRow: crop.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                    context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
+                    let values = bytes.bindMemory(to: UInt8.self)
+                    var count = 0
+                    for offset in stride(from: 0, to: values.count, by: 4) {
+                        let r = Int(values[offset]), g = Int(values[offset + 1]), b = Int(values[offset + 2])
+                        // The isolated fixtures use dark, neutral defaults.
+                        // Exclude gray text, its antialiasing, and the background.
+                        if max(r, g, b) - min(r, g, b) >= 40 { count += 1 }
+                    }
+                    return count
+                }
+                if let pixels { result[marker] = max(result[marker] ?? -1, pixels) }
+            }
+        }
+        return result
+    }
+}
 
 enum AgentIntegrationAnchor {
     static func first(in text: String) -> String {
@@ -27,7 +65,7 @@ struct AgentIntegrationCommand: Codable, Equatable, Sendable {
 
     var isSupported: Bool {
         ["idle", "start", "snapshot", "resize", "takeControl", "scroll", "select", "reconnect",
-         "connect", "acceptOffer", "roster", "message", "input", "keyboard", "verify", "finish"].contains(operation)
+         "connect", "acceptOffer", "roster", "message", "input", "keyboard", "visibility", "recreate", "verify", "finish"].contains(operation)
     }
 }
 

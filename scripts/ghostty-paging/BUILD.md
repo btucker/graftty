@@ -16,6 +16,14 @@ support still use the legacy attachment path. Existing daemons keep running acro
 app upgrades, so an older daemon continues to use that fallback until its session
 is restarted.
 
+Paged attachments pin the native parser to the last grid consumed from the
+ordered source stream. Local layout and font changes still report physical
+viewport intent to the host; they do not reflow the parser before the source's
+resize acknowledgment. The source-grid operation shares the mobile output queue,
+so earlier VT finishes first. Legacy fallback releases the pin before parsing
+legacy output. Terminal size reports use the host-managed parser's current
+geometry, including while a physical resize is pending.
+
 Use macOS with Xcode, the iOS SDK, and Zig 0.16.0. The first build downloads the
 pinned source repositories and their Zig dependencies. Build all five architecture
 slices with this command from the repository root:
@@ -50,7 +58,9 @@ scripts/swiftpm test
 
 For an Apple Silicon development build, add `--arm64-only` to omit the two Intel
 slices. Build without that flag before preparing artifacts for other machines.
-Use `--output PATH` to write another local package. For a custom output path,
+Use `--output PATH` to write another local package. Keep the final directory
+name `libghostty-spm` when building the Xcode project, whose package product
+references include that name. For a custom output path,
 set `GRAFTTY_GHOSTTY_PACKAGE_PATH=PATH` when resolving or building Graftty.
 Set it to an empty string to verify the published renderer's legacy fallback.
 

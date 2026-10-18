@@ -3,6 +3,15 @@ import Testing
 
 @Suite("Scripted agent integration protocol")
 struct AgentIntegrationProtocolTests {
+    @Test("@spec TEST-1.8: When a scripted terminal is hidden and shown to reproduce worktree switching, the integration harness shall remount its retained surface or mobile route and observe its viewport and physical rows.")
+    func visibilityActionRoundTrip() throws {
+        let command = AgentIntegrationCommand(id: 13, operation: "visibility", provider: "codex",
+            parameters: ["visible": "false"])
+        #expect(command.isSupported)
+        #expect(try JSONDecoder().decode(AgentIntegrationCommand.self,
+            from: JSONEncoder().encode(command)) == command)
+    }
+
     @Test("@spec TEST-1.1: When an integration client receives a scripted action, the test harness shall preserve its sequence ID, provider, operation, and parameters through JSON encoding.")
     func actionRoundTrip() throws {
         let command = AgentIntegrationCommand(id: 12, operation: "resize", provider: "codex",

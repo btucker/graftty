@@ -36,6 +36,18 @@ struct PagedTerminalCoordinatorTests {
         coordinator.disconnect()
     }
 
+    @Test("A duplicate checkpoint cannot republish a grid superseded by live output")
+    func duplicateCheckpointDoesNotCommitStaleGrid() async throws {
+        let surface = Surface()
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { _ in }
+        let first = checkpoint(1)
+        #expect(try await coordinator.handle(.checkpoint(first)) == DisplayGrid(cols: first.cols, rows: first.rows))
+        #expect(try await coordinator.handle(.grid(cols: 41, rows: 23)) == DisplayGrid(cols: 41, rows: 23))
+        #expect(try await coordinator.handle(.checkpoint(first)) == nil)
+        #expect(surface.installed == [1])
+        coordinator.disconnect()
+    }
+
     @Test("Retry accepts a delayed response to the original timed-out page request")
     func retryPreservesRequestIdentity() async throws {
         let surface = Surface()
@@ -79,7 +91,7 @@ struct PagedTerminalCoordinatorTests {
         #expect(coordinator.status == .loading)
         surface.holdImport = false
         surface.importContinuation?.resume()
-        try await importTask.value
+        _ = try await importTask.value
         await coordinator.loadIfNeeded()
         guard case .history(let next) = try #require(requests.last) else { return }
         #expect(next.ordinal == 1)

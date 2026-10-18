@@ -32,7 +32,8 @@ final class AgentNativeInteractionTests: XCTestCase {
                 }
             case "keyboard":
                 let visible = command.parameters["visible"] == "true"
-                if visible || command.parameters["attempt"] == "true" { terminal.tap() }
+                if visible { app.buttons["Agent integration show keyboard"].tap() }
+                else if command.parameters["attempt"] == "true" { terminal.tap() }
                 else { app.buttons["Agent integration dismiss keyboard"].tap() }
                 if visible { XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5)) }
                 else { XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5)) }

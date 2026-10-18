@@ -139,5 +139,269 @@
     "iosBuildForTesting": "passed",
     "specGeneration": "passed",
     "fullNativeRerun": "pending after fixture review fixes"
+  },
+  "codexColorRegression": {
+    "date": "2026-10-17",
+    "rootCause": "The live Graftty GUI and its zmx terminal-launch children inherited NO_COLOR=1 despite truecolor capabilities; the same setting suppresses real Codex color emission in isolated native reproduction.",
+    "liveColorEnvironment": {
+      "NO_COLOR": "1",
+      "TERM": "xterm-ghostty",
+      "COLORTERM": "truecolor",
+      "TERM_PROGRAM": "ghostty"
+    },
+    "liveEvidence": "/private/tmp/graftty-live-color-env.jsonl",
+    "fix": "Remove host-inherited NO_COLOR at the shared terminal-spawn boundary before shell startup. Explicit user-shell startup preferences remain effective; existing shells retain their environment.",
+    "specs": [
+      "ZMX-6.10",
+      "TEST-1.9"
+    ],
+    "red": {
+      "spawnLog": "/private/tmp/graftty-color-spawn-red.log",
+      "spawnTests": 24,
+      "spawnIssues": 3,
+      "pixelLog": "/private/tmp/graftty-color-pixels-red.log",
+      "pixelIssues": 3,
+      "nativeMonochrome": "/private/tmp/graftty-ai-ys00bi88"
+    },
+    "green": {
+      "focusedSwiftTests": 35,
+      "log": "/private/tmp/graftty-color-green.log",
+      "pythonIntegrationTests": 23,
+      "pythonEndpointTests": 5,
+      "nativeMac": "/private/tmp/graftty-ai-4ptluzu6",
+      "nativeMacResult": "Initial live-stage pixel assertions passed with inherited host NO_COLOR=1, no fixture override, and 865-1707 chromatic pixels on each required row."
+    },
+    "mobileDiagnostic": {
+      "artifacts": "/private/tmp/graftty-ai-v_j0_7xh",
+      "result": "Earlier direct UIKit diagnostic visibly preserved colors through owner, reconnect, follower, and return to Mac. It cleared fixture NO_COLOR before the production fix; final production-boundary pixel results are recorded separately."
+    },
+    "fullSwiftPM": "Started then canceled while queued at parent request; parent will run the full suite after integration.",
+    "finalMobilePixelValidation": {
+      "artifacts": "/private/tmp/graftty-ai-1v6ev36a",
+      "runnerResult": "failed",
+      "runnerError": "mobile native test process did not finish",
+      "colorAssertions": "All required row samples passed on Mac live output, mobile ownership, mobile reconnect, mobile follower, and return to Mac ownership.",
+      "mobileChromaticPixels": {
+        "COLOR_INLINE": 3705,
+        "COLOR_LINK": 3294,
+        "COLOR_STRING": 6319,
+        "COLOR_REMOVED": 4520,
+        "COLOR_ADDED": 3399
+      },
+      "macNativeTest": "passed in 24.34 seconds",
+      "mobileXCTest": "1 test passed, 0 failures in 11.99 seconds",
+      "limit": "xcodebuild did not exit within the 120-second mobile teardown bound and was terminated. The xcresult bundle was not finalized.",
+      "simulatorCleanup": "Owned disposable simulator shutdown/delete completed; no cleanup errors recorded."
+    },
+    "preview": "/private/tmp/graftty-color-review.html",
+    "mobileBuildForTesting": {
+      "result": "passed",
+      "log": "/private/tmp/graftty-color-ios-build.log"
+    },
+    "streamedStageLimit": "This branch reused first-half marker names in its final streamed check. Those results do not prove fresh second-half output arrived. The parent integration adds distinct _STREAMED markers and a suffix filter.",
+    "commits": [
+      "52c93326",
+      "185dc4f2"
+    ],
+    "parentIntegration": "Integrated production fix and native color assertions. Final renderer probe passed with distinct _STREAMED marker rows. Broad tests recorded under terminalReentryRegression.",
+    "finalNativeRendererProbe": {
+      "artifacts": "/private/tmp/graftty-ai-c_ghtcih",
+      "result": "passed",
+      "log": "/private/tmp/graftty-repaint-final-colors-native.log",
+      "assertions": [
+        {
+          "client": "mac",
+          "stage": "live",
+          "colorPixels": {
+            "COLOR_ADDED": 865,
+            "COLOR_REMOVED": 1242,
+            "COLOR_STRING": 1707,
+            "COLOR_LINK": 1015,
+            "COLOR_INLINE": 919
+          }
+        },
+        {
+          "client": "mac",
+          "stage": "streamed",
+          "colorPixels": {
+            "COLOR_ADDED": 1585,
+            "COLOR_REMOVED": 2053,
+            "COLOR_STRING": 2517,
+            "COLOR_LINK": 1950,
+            "COLOR_INLINE": 1639
+          }
+        }
+      ]
+    },
+    "ciFollowup": {
+      "failedRun": "https://github.com/btucker/graftty/actions/runs/39081054475/job/117537892973",
+      "failure": "The macOS isolated-test step reached its ten-minute bound after userShellCanStillChooseNoColor started and did not finish.",
+      "fix": "Use existing ZmxRunner.captureAll with a three-second timeout and disable zsh job control while retaining interactive startup-file loading.",
+      "scope": "Test subprocess only; product terminal spawning is unchanged.",
+      "localVerification": {
+        "tests": 33,
+        "suites": 4,
+        "result": "passed under the same script(1) PTY wrapper used by CI",
+        "log": "/private/tmp/graftty-pr455-shell-pty-green.log"
+      },
+      "reproductionLimit": "An isolated local PTY launch passed; the exact hosted-runner stall was not reproduced locally."
+    }
+  },
+  "terminalReentryRegression": {
+    "date": "2026-10-17",
+    "providers": {
+      "claude": "2.1.302",
+      "codex": "0.162.1"
+    },
+    "rootCauses": [
+      "A retained mobile route consumed pending physical viewport confirmation while its route callback was nil.",
+      "Keyboard/layout/font changes resized the local parser before the in-band source acknowledgment. Real source124x40 VT entered parsers already at41x35,41x27,41x23.",
+      "Mac follower restore-pin release could prefer stale ownership dimensions over the last consumed source grid."
+    ],
+    "fixes": [
+      "Keep route confirmation pending until callback restoration schedules a normal UIKit layout.",
+      "Pin host-managed parsing to ordered source grids; preserve physical callbacks, font controls, loaded history and selection without forced replay, reconnect or checkpoint.",
+      "Serialize mobile source-grid changes with queued VT/page imports; wait for surface readiness and clear the pin before legacy output.",
+      "Preserve synchronized output on same-grid physical/font changes and report coherent logical geometry, including through pending-resize fallback.",
+      "Publish committed grids separately from provisional layout; ignore duplicate/stale publication and release presentation state on fallback."
+    ],
+    "specs": [
+      "IOS-4.46",
+      "IOS-4.47",
+      "IOS-4.48",
+      "TERM-12.26",
+      "TERM-12.41",
+      "TERM-12.42",
+      "TEST-1.8"
+    ],
+    "red": {
+      "artifacts": "/private/tmp/graftty-ai-so_9ugwe",
+      "beforeDetach": "Both providers overprint prompt/footer rows. Phone records wrong source/parser grid; Mac Codex parserGridMatches=false.",
+      "macFollower": {
+        "tests": 38,
+        "issues": 3,
+        "log": "/private/tmp/graftty-repaint-mac-source-grid-red.log"
+      },
+      "sizeReport": {
+        "tests": 1,
+        "issues": 1,
+        "log": "/private/tmp/graftty-repaint-size-report-red.log"
+      }
+    },
+    "green": {
+      "focusedSwift": {
+        "tests": 53,
+        "suites": 4,
+        "log": "/private/tmp/graftty-repaint-final-focused.log"
+      },
+      "nativeUIKit": {
+        "swiftTestingTests": 558,
+        "suites": 77,
+        "xctests": 6,
+        "failures": 0,
+        "log": "/private/tmp/graftty-repaint-final-ios-kit.log",
+        "scope": "Precedes final applied-grid return refinement, covered by later focused coordinator tests and real-provider run."
+      },
+      "pythonIntegration": 28,
+      "pythonEndpoint": 5,
+      "nativePackage": {
+        "path": "/private/tmp/graftty-repaint-final/libghostty-spm",
+        "architectures": "arm64 macOS, iOS device, iOS Simulator",
+        "log": "/private/tmp/graftty-repaint-final-ghostty-build.log"
+      },
+      "broadSwiftPM": {
+        "result": "passed in four fresh processes",
+        "log": "/private/tmp/graftty-repaint-final-full.log",
+        "stackSample": "/private/tmp/graftty-repaint-test-helper.sample",
+        "xctests": 128,
+        "xctestSkipped": 1,
+        "xctestFailures": 0,
+        "limit": "The initial combined process recorded 11 attachment recovery issues and exhausted all 70 dispatch worker threads in AppKit NSAnimation. No complete combined summary. The same recovery suite and all broad shards pass unchanged in fresh processes.",
+        "freshRecovery": {
+          "tests": 12,
+          "suites": 1,
+          "failures": 0,
+          "log": "/private/tmp/graftty-repaint-final-recovery.log",
+          "result": "passed unchanged in a fresh process"
+        },
+        "coreTargets": {
+          "tests": 2488,
+          "suites": 379,
+          "result": "passed",
+          "log": "/private/tmp/graftty-repaint-final-core.log",
+          "command": "GRAFTTY_GHOSTTY_PACKAGE_PATH=/private/tmp/graftty-repaint-final/libghostty-spm scripts/swiftpm test --build-system native --no-parallel --skip GrafttyTests\\."
+        },
+        "nativeShards": {
+          "am": {
+            "tests": 689,
+            "suites": 102,
+            "result": "passed",
+            "log": "/private/tmp/graftty-repaint-final-native-am.log",
+            "command": "GRAFTTY_GHOSTTY_PACKAGE_PATH=/private/tmp/graftty-repaint-final/libghostty-spm scripts/swiftpm test --build-system native --no-parallel --filter GrafttyTests\\.[A-Ma-m] --skip SidebarReportPreviewTests"
+          },
+          "ns": {
+            "result": "passed",
+            "log": "/private/tmp/graftty-repaint-final-native-ns.log",
+            "tests": 457,
+            "suites": 73,
+            "command": "GRAFTTY_GHOSTTY_PACKAGE_PATH=/private/tmp/graftty-repaint-final/libghostty-spm scripts/swiftpm test --build-system native --no-parallel --filter GrafttyTests\\.[N-Sn-s] --skip SidebarReportPreviewTests"
+          },
+          "tz": {
+            "result": "passed",
+            "log": "/private/tmp/graftty-repaint-final-native-tz.log",
+            "tests": 380,
+            "suites": 49,
+            "command": "GRAFTTY_GHOSTTY_PACKAGE_PATH=/private/tmp/graftty-repaint-final/libghostty-spm scripts/swiftpm test --build-system native --no-parallel --filter GrafttyTests\\.[T-Zt-z] --skip SidebarReportPreviewTests"
+          }
+        },
+        "freshProcessSummary": {
+          "result": "passed",
+          "swiftTestingTests": 4014,
+          "suites": 603,
+          "xctests": 128,
+          "xctestSkipped": 1,
+          "failures": 0,
+          "excluded": "SidebarReportPreviewTests, which previously exited before completing the Swift Testing run"
+        },
+        "combinedProcessResult": "interrupted after failures and dispatch exhaustion"
+      }
+    },
+    "realProviderReentry": {
+      "artifacts": "/private/tmp/graftty-ai-945d1a1a",
+      "contentChecks": 10,
+      "contentChecksPassed": 10,
+      "reentriesPerProvider": 3,
+      "keyboardVisibleGrid": "41x23",
+      "keyboardHiddenGrid": "41x41",
+      "hiddenOutput": "ROW-000299 arrives for both providers",
+      "hiddenOwnership": "Mac takeover and mobile return verified while route hidden",
+      "oracle": "Clean prompt/footer and full ASCII numbered row order/content match fresh daemon export; cumulative parser mismatch evidence must be present and empty.",
+      "macTest": {
+        "passed": true,
+        "seconds": 57.061
+      },
+      "mobileUITest": {
+        "passed": true,
+        "tests": 1,
+        "failures": 0,
+        "seconds": 54.903
+      },
+      "overallResult": "failed",
+      "runnerError": "mobile native test process did not finish",
+      "teardownLimit": "All ten content checks and both native test cases passed, but xcodebuild exceeded the 120-second mobile shutdown bound. The xcresult bundle was not finalized.",
+      "cleanupErrors": [],
+      "simulatorCleanup": "Both task-owned private simulators shut down/deleted after artifact capture."
+    },
+    "limits": [
+      "Bounded reentry uses short ASCII rows. Historical comprehensive Unicode/wrapping failures remain separate and were not revalidated here.",
+      "XCUITest uses explicit fixture keyboard focus/dismiss controls; terminal-tap focus is outside this scenario.",
+      "The standalone screenshot captured during keyboard animation is not used as settled-footer evidence."
+    ],
+    "sourceCommit": "614e0c48",
+    "preview": "/private/tmp/graftty-terminal-fixes-review.html",
+    "review": {
+      "mode": "code-review xhigh --fix",
+      "result": "No remaining findings after ordered-grid publication, cancellation, source pin release, legacy fallback and strict-oracle fixes."
+    }
   }
 }

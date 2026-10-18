@@ -624,7 +624,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.25** When a native paged attachment negotiates pixel-size support, the application shall send current pixel metadata before each changed window size and daemon-requested size reply, including changes that preserve the cell grid.
 
-**TERM-12.26** When a remote Mac finishes restoring a terminal as a follower, the application shall retain the authoritative grid until display ownership changes.
+**TERM-12.26** While a remote Mac follows a paged terminal, the application shall retain the last in-band source grid through ownership updates and restore-pin release until it becomes the display owner.
 
 **TERM-12.27** While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until the retained history import finishes.
 
@@ -653,6 +653,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-12.39** When the Mac takes control of a restored paged terminal from mobile, the application shall resize to the Mac viewport and keep the terminal attachment available for input and live output.
 
 **TERM-12.40** While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering without disconnecting, and shall release a waiting reader when the attachment closes.
+
+**TERM-12.41** While a local Mac follows a paged terminal, the application shall preserve the last in-band source grid when a temporary restore pin is released, independently of ownership metadata.
+
+**TERM-12.42** While a native Mac terminal consumes a paged source stream, the application shall preserve its parser grid and synchronized output across local viewport and font resizes, report source dimensions, and release the source grid before legacy fallback.
 
 ## GIT — Worktree Discovery & Monitoring
 
@@ -1338,6 +1342,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-6.9** If agent hooks are enabled for a zsh shell and `GHOSTTY_RESOURCES_DIR` is unavailable, the host-managed `zmx attach` environment shall set `ZDOTDIR` directly to Graftty's agent-hook zsh init directory (with `GHOSTTY_ZSH_ZDOTDIR` omitted) so the ZMX-6.8 wrapper-bin PATH shim still runs without Ghostty's shell integration. Without this fallback, the spawn-time PATH prepend is the only defense and `/etc/zprofile`'s `path_helper` demotes the wrapper bin to the PATH tail in the login shell zmx spawns, so `claude` / `codex` resolve to the user's unwrapped installs.
 
+**ZMX-6.10** When Graftty spawns an interactive terminal for Mac or GrafttyMobile, the application shall remove NO_COLOR inherited from the host process before starting the user's shell, while allowing the shell's startup files to set their own color preference.
+
 ### ZMX-7.x — Session-Loss Recovery
 
 **ZMX-7.1** When the application restores a worktree's split tree on launch (per `PERSIST-3.x` and `ZMX-4.2`), it shall, before creating each pane's surface, query the live zmx session set and clear the pane's rehydration label if the expected session name is absent. This ensures a freshly-created daemon (the result of `zmx attach`'s create-on-miss semantics) is not mistaken for a surviving session by `defaultCommandDecision`.
@@ -1971,6 +1977,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-4.44** When the user swipes right across a fullscreen mobile terminal without active text selection or presentation zoom, the application shall return to its originating worktree list using the Back action, while retaining leftward and vertical scrolling and leaving pending requests unchanged.
 
 **IOS-4.45** When a Mac supplies terminal presentation to GrafttyMobile, the application shall send its resolved background, foreground, and ANSI palette without host theme or config-file references, preserve non-color settings from root and included config files including fonts and keybindings, and retain explicit overrides over the selected host theme branch.
+
+**IOS-4.46** When a retained mobile pane releases its follower canvas while its route callbacks are detached, the application shall preserve the pending physical viewport confirmation and deliver it once after the route restores its callback.
+
+**IOS-4.47** While a mobile terminal consumes a paged source stream, the application shall preserve the source parser grid across local viewport and font changes until the next in-band source grid is applied.
+
+**IOS-4.48** When a paged source grid arrives before the mobile terminal surface mounts, the application shall wait for native readiness before completing the ordered grid operation.
 
 ### IOS-5.x — Multi-pane layout
 
@@ -4183,3 +4195,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.6** When a native integration viewport contains wrapped fixture output, the test harness shall identify its reading anchor by the first logical row label rather than by physical row count.
 
 **TEST-1.7** When a native follower displays history and a clipped terminal canvas, the integration harness shall derive its text and reading anchor from intersecting physical rows in display order.
+
+**TEST-1.8** When a scripted terminal is hidden and shown to reproduce worktree switching, the integration harness shall remount its retained surface or mobile route and observe its viewport and physical rows.
+
+**TEST-1.9** When a native integration color probe runs, the test harness shall require chromatic rendered pixels on the current stream stage's inline-code, link, syntax, deletion, and addition rows, and shall reject missing or monochrome samples.

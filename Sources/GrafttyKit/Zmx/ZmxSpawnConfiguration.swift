@@ -135,6 +135,10 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         env: inout [String: String],
         ghosttyResourcesDir: String?
     ) {
+        // A GUI launcher or test runner can suppress its own tool output.
+        // That preference must not disable colors in the interactive terminal.
+        // The user's shell startup files can still opt into NO_COLOR.
+        env.removeValue(forKey: "NO_COLOR")
         let terminfoDir = ghosttyResourcesDir.flatMap(availableGhosttyTerminfoDir)
         setDefault("TERM", in: &env, to: terminfoDir == nil ? "xterm-256color" : "xterm-ghostty")
         setDefault("COLORTERM", in: &env, to: "truecolor")

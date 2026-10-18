@@ -35,6 +35,40 @@ test device, pass `--simulator UUID`; the runner does not delete that device.
 `--mac-only` is a diagnostic mode and does not establish mobile coverage.
 Use `--ios-cache /path/to/cache` to keep the Xcode build cache on another volume.
 
+To check blank lower rows after returning to a mobile worktree, add
+`--worktree-reentry` to the full Mac and mobile command. This scenario mounts
+the production `SingleSessionView` with its retained pane container. It switches
+away and back three times for each provider, receives output while hidden,
+changes ownership while hidden, and shows and hides the software keyboard.
+This bounded probe uses short ASCII rows; the comprehensive scenario retains
+its separate Unicode and wrapping checks and their recorded failures.
+XCUITest taps the fixture's explicit keyboard focus and dismissal controls;
+terminal-tap focus behavior is outside this scenario.
+It waits for the keyboard geometry and native grid to settle, then gives the
+provider five seconds to repaint. The lower physical rows must contain a clean
+provider prompt and match the daemon's numbered output. Blank rows, prompt
+overprint, stale nonblank payload, and any observed parsing at the wrong source
+grid fail the run. Native observations and screenshots retain the action IDs;
+each stage saves the corresponding Mac observation and daemon text.
+This scenario does not run the generated action sequence or messaging pairings.
+
+Add `--colors` to run a bounded Codex color probe instead of the numbered-row
+and messaging sequence. It streams explicit inline code, a link, Python syntax,
+and diff additions and deletions through the real managed Codex TUI. Native
+observations require chromatic pixels on each named fixture row. A colored link,
+emoji, or status label cannot satisfy a missing syntax or diff sample. The probe
+checks Mac output, mobile ownership, mobile reconnect, mobile following, and the
+return to Mac ownership. `--colors --mac-only` checks Mac output only.
+
+The isolated home supplies no `TERM`, `COLORTERM`, or color-forcing variables.
+Production terminal creation must supply its capabilities. Start observations
+record only the host and terminal color-related environment keys. In particular,
+SwiftPM can set `NO_COLOR=1` on the native test process, just as a GUI launcher can
+on the real app. The terminal-spawn boundary removes that inherited value before
+the user's shell starts. A user's shell startup files can still set `NO_COLOR`.
+Existing shells retain their original environment until they are replaced or
+the user changes it.
+
 ## What runs
 
 Four native sessions provide both same-provider and cross-provider delivery:
@@ -93,6 +127,8 @@ Every run prints its directory under `/private/tmp/graftty-ai-*`. It contains:
 - `trace.jsonl` with correlated commands, native observations, barriers, and model requests.
 - `actions.json` with the generated sequence, when that phase starts.
 - `*-failure.json` with native text and authoritative daemon history.
+- `colors-*.json` with per-row chromatic pixel counts when `--colors` runs.
+- Mac IOSurface PNGs captured by `verify` actions.
 - `mac.log`, `mobile.log`, `ios-build.log`, and `simulator-boot.log`.
 - `mobile.xcresult` with actual UI screenshots and test output.
 
