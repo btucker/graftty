@@ -1168,6 +1168,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.22** When the mobile application initializes, the application shall install its notification delegate before constructing the root view so launch notification responses can be received.
 
+**NOTIF-1.23** When mobile receives the same originating stop through direct and relayed connections, the application shall notify once across reconnects and relaunches while preserving distinct origins and later occurrences.
+
+**NOTIF-1.24** If a mobile notification lacks a pane identity and its worktree has multiple panes, then the application shall report that the pane cannot be identified instead of opening an unrelated pane.
+
 ### NOTIF-2.x — Attention Badge Auto-Population
 
 **NOTIF-2.1** When libghostty fires `COMMAND_FINISHED` with a zero exit code on a pane, the application shall set *that pane's* pane-scoped attention overlay to a checkmark indicator that auto-clears after 3 seconds. Sibling panes in the same worktree are unaffected.
