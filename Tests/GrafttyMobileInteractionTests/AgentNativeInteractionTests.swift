@@ -18,6 +18,9 @@ final class AgentNativeInteractionTests: XCTestCase {
         try await transport.run { command in
             let terminal = app.otherElements["Agent integration terminal"]
             if command.operation == "finish" { return [:] }
+            if ["notificationsTap", "notificationsNavigate", "notificationsAuthorize", "notificationsDismissError"].contains(command.operation) {
+                return try self.performNotificationGesture(command, app: app)
+            }
             XCTAssertTrue(terminal.waitForExistence(timeout: 15))
             switch command.operation {
             case "resize":

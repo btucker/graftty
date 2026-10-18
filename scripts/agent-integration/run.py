@@ -147,6 +147,9 @@ class Run:
                 return mac, phone
         raise InvariantFailure(f'Mac/mobile ownership and grid did not converge: mac={mac}, phone={phone}')
 
+    def record_simulator(self, device, runtime):
+        pass
+
     def prepare_mobile(self):
         options = self.options
         if options.simulator:
@@ -160,9 +163,11 @@ class Run:
         print('Preparing private iOS test device: ' + self.simulator, flush=True)
         # Boot only our device. A supplied simulator is an explicitly selected test destination.
         devices = json.loads(execute(['xcrun', 'simctl', 'list', 'devices', '--json']))
-        selected = next((d for runtime in devices['devices'].values() for d in runtime if d['udid'] == self.simulator), None)
+        runtime, selected = next(((runtime, device) for runtime, candidates in devices['devices'].items()
+                                  for device in candidates if device['udid'] == self.simulator), (None, None))
         if not selected:
             raise InvariantFailure('selected simulator is unavailable')
+        self.record_simulator(selected, runtime)
         if selected['state'] != 'Booted':
             execute(['xcrun', 'simctl', 'boot', self.simulator])
         execute(['xcrun', 'simctl', 'bootstatus', self.simulator, '-b'], timeout=300, log=self.root / 'simulator-boot.log')
@@ -462,6 +467,9 @@ class Run:
             time.sleep(.05)
         raise InvariantFailure(f'hidden mobile condition did not settle for {agent}: {value}')
 
+    def configure_fixture(self, manifest):
+        pass
+
     def run(self):
         self.thread.start()
         print(f'Native integration artifacts: {self.root}', flush=True)
@@ -481,6 +489,8 @@ class Run:
         (self.root / 'bin' / 'graftty').symlink_to(self.options.cli)
         failure = None
         try:
+            self.configure_fixture(manifest)
+            manifest_file.write_text(json.dumps(manifest))
             if not self.options.mac_only:
                 self.prepare_mobile()
             self.spawn([str(REPO / 'scripts/swiftpm'), 'test', '--build-system', 'native', '--filter', 'AgentIntegrationNativeTests'], self.env, 'mac')
@@ -566,6 +576,7 @@ def main():
     parser.add_argument('--worktree-reentry', action='store_true', help='Test retained mobile routes with keyboard changes and hidden ownership transitions')
 
     parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
+    parser.add_argument('--notifications', action='store_true', help='Capture real provider Stop hooks and exercise native notification replay and activation')
     parser.add_argument('--device', default='iPhone 17 Pro')
     parser.add_argument('--runtime', help='CoreSimulator runtime identifier; default uses its newest compatible runtime')
     parser.add_argument('--seed', type=int, default=1)
@@ -580,14 +591,19 @@ def main():
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
-    if options.worktree_reentry and options.colors:
-        parser.error('--worktree-reentry and --colors are separate scenarios')
+    if sum((options.worktree_reentry, options.colors, options.notifications)) > 1:
+        parser.error('--worktree-reentry, --colors and --notifications are separate scenarios')
+    if options.notifications and (options.replay or options.shrink):
+        parser.error('--notifications records its own bounded event replays')
     if options.worktree_reentry and options.mac_only:
         parser.error('--worktree-reentry requires the native mobile host')
     if options.worktree_reentry and (options.replay or options.shrink):
         parser.error('--worktree-reentry does not use generated action replay or shrinking')
     actions = [Action(**value) for value in json.loads(options.replay.read_text())] if options.replay else None
-    if options.colors:
+    if options.notifications:
+        from notifications import NotificationRun
+        run = NotificationRun(options)
+    elif options.colors:
         if options.replay or options.shrink:
             parser.error('--colors does not support generated-action replay or shrinking')
         from colors import ColorRun

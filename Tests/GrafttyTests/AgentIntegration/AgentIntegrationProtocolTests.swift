@@ -3,6 +3,19 @@ import Testing
 
 @Suite("Scripted agent integration protocol")
 struct AgentIntegrationProtocolTests {
+    @Test("@spec TEST-1.11: When the native notification integration replays a captured provider stop, the harness shall preserve its original payload and route explicit notification actions to native clients.")
+    func notificationActionRoundTrip() throws {
+        for operation in ["notificationsSnapshot", "notificationsReplay", "notificationsPrepare",
+                          "notificationsDeliver", "notificationsState", "notificationsRelease",
+                          "notificationsNavigate", "notificationsTap", "notificationsAuthorize", "notificationsDismissError"] {
+            let command = AgentIntegrationCommand(id: 21, operation: operation, provider: "codex",
+                parameters: ["events": "[{\"runtime\":\"codex\",\"stoppedAt\":123.456}]", "copies": "3"])
+            #expect(command.isSupported)
+            #expect(try JSONDecoder().decode(AgentIntegrationCommand.self,
+                from: JSONEncoder().encode(command)) == command)
+        }
+    }
+
     @Test("@spec TEST-1.8: When a scripted terminal is hidden and shown to reproduce worktree switching, the integration harness shall remount its retained surface or mobile route and observe its viewport and physical rows.")
     func visibilityActionRoundTrip() throws {
         let command = AgentIntegrationCommand(id: 13, operation: "visibility", provider: "codex",

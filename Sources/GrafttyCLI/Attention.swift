@@ -6,8 +6,17 @@ import GrafttyProtocol
 struct Attention: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Report what a stopped agent needs attention for",
-        subcommands: [AttentionReport.self]
+        subcommands: [AttentionReport.self, AttentionDirectory.self]
     )
+}
+
+struct AttentionDirectory: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "directory",
+        abstract: "Print the effective Attention handoff directory"
+    )
+
+    func run() { print(AttentionFileHandoff.defaultRootDirectory.path) }
 }
 
 struct AttentionReport: ParsableCommand {

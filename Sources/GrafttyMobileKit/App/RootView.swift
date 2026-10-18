@@ -27,8 +27,24 @@ public struct RootView: View {
     )
     @State private var nearbyMacBrowser = NearbyMacBrowser()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    struct NotificationIO {
+        let fetch: @MainActor (Host) async throws -> [WorktreePanes]
+        let reopen: @MainActor (Host, String) async throws -> Void
+    }
+    private var notificationIO: NotificationIO?
 
     public init() {}
+
+    // The isolated native interaction host supplies controlled remote I/O while
+    // retaining this view's real lifecycle, notification delegate and navigation.
+    init(hostStore: HostStore, gate: BiometricGate, notifications: MobileAgentNotifications,
+        appState: IPadAppState, notificationIO: NotificationIO) {
+        _hostStore = State(initialValue: hostStore)
+        _gate = State(initialValue: gate)
+        _notifications = State(initialValue: notifications)
+        _iPadAppState = State(initialValue: appState)
+        self.notificationIO = notificationIO
+    }
 
     public var body: some View {
         ZStack {
@@ -67,7 +83,7 @@ public struct RootView: View {
         .alert("Could not open notification", isPresented: Binding(
             get: { notificationError != nil }, set: { if !$0 { notificationError = nil } }
         )) { Button("OK") { notificationError = nil } } message: { Text(notificationError ?? "") }
-        .onAppear { nearbyMacBrowser.start() }
+        .onAppear { if notificationIO == nil { nearbyMacBrowser.start() } }
         .onChange(of: nearbyMacBrowser.candidates) { _, candidates in
             coordinator.updateDiscoveryCandidates(candidates)
             for candidate in candidates
@@ -131,8 +147,10 @@ public struct RootView: View {
         }
         do {
             let target = try await MobileNotificationActivation.resolve(route, fetch: {
-                try await coordinator.worktreePanes(for: host)
+                if let notificationIO { return try await notificationIO.fetch(host) }
+                return try await coordinator.worktreePanes(for: host)
             }, reopen: { path in
+                if let notificationIO { return try await notificationIO.reopen(host, path) }
                 guard try await coordinator.sendWorktreeManagement(.open(worktreeID: path), to: host) == .ok
                 else { throw MobileNotificationActivation.Failure.notReady }
             }, isCurrent: isCurrent)

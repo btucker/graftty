@@ -36,6 +36,7 @@ final class AgentIntegrationMobileController: UIViewController {
     let fixtureHost = Host(label: "Integration Mac", baseURL: URL(string: "https://fixture.invalid")!)
     let retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
     var route: UIHostingController<AnyView>?
+    var notificationFixture: NotificationActivationFixture?
     let focusKeyboardButton = UIButton(type: .system)
 
     init(endpoint: URL) { self.endpoint = endpoint; super.init(nibName: nil, bundle: nil) }
@@ -57,6 +58,9 @@ final class AgentIntegrationMobileController: UIViewController {
         dismissKeyboard.accessibilityIdentifier = "Agent integration dismiss keyboard"
         dismissKeyboard.addTarget(self, action: #selector(hideKeyboard), for: .touchUpInside)
         view.addSubview(dismissKeyboard)
+        if let restored = NotificationActivationFixture.restored {
+            mountNotificationFixture(restored)
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.synchronize() }
         }
@@ -78,6 +82,7 @@ final class AgentIntegrationMobileController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let frame = view.safeAreaLayoutGuide.layoutFrame
+        if notificationFixture != nil { route?.view.frame = view.bounds }
         status.frame = CGRect(x: frame.minX, y: frame.minY, width: max(1, frame.width - 260), height: 35)
         focusKeyboardButton.frame = CGRect(x: frame.maxX - 260, y: frame.minY, width: 130, height: 35)
         dismissKeyboard.frame = CGRect(x: frame.maxX - 130, y: frame.minY, width: 130, height: 35)
@@ -121,7 +126,17 @@ final class AgentIntegrationMobileController: UIViewController {
     }
 
     func handle(_ command: AgentIntegrationCommand) async throws -> [String: String] {
+        if command.operation == "notificationsPrepare" {
+            notificationFixture?.finish()
+            let fixture = try await NotificationActivationFixture.prepare(command, endpoint: endpoint)
+            mountNotificationFixture(fixture)
+            return try fixture.snapshot()
+        }
+        if command.operation.hasPrefix("notifications"), let notificationFixture {
+            return try await notificationFixture.handle(command)
+        }
         if command.operation == "finish" {
+            notificationFixture?.finish()
             for pane in panes.values { pane.client.stop() }
             await connection?.close()
             connection = nil
@@ -213,6 +228,17 @@ final class AgentIntegrationMobileController: UIViewController {
             }
         }
         return result
+    }
+
+    func mountNotificationFixture(_ fixture: NotificationActivationFixture) {
+        unmount()
+        notificationFixture = fixture
+        let host = UIHostingController(rootView: AnyView(NotificationActivationFixtureView(fixture: fixture)))
+        addChild(host)
+        view.addSubview(host.view)
+        host.didMove(toParent: self)
+        route = host
+        host.view.frame = view.bounds
     }
 
     private func parserGridMatches(_ session: InMemoryTerminalSession, columns: UInt16, rows: UInt16) -> String {

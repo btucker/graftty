@@ -53,6 +53,7 @@ private final class AgentIntegrationMacHost {
     var agent: WebRTCHostAgent?
     var panes: [String: Pane] = [:]
     var tickObserver: NSObjectProtocol?
+    var notificationProbe: AgentIntegrationNotificationProbe?
     var finishedSuccessfully = false
     var repo: String { root.appendingPathComponent("repository").path }
 
@@ -65,6 +66,12 @@ private final class AgentIntegrationMacHost {
         let actualState = AppState.defaultDirectory.resolvingSymlinksInPath().standardizedFileURL.path
         guard actualHome == expectedHome, actualState.hasPrefix(expectedHome + "/") else {
             throw AgentIntegrationError("native host isolation mismatch: home=\(actualHome), expected=\(expectedHome), state=\(actualState)")
+        }
+        if manifest.scenario == "notifications" {
+            let expected = root.appendingPathComponent("attention").resolvingSymlinksInPath().standardizedFileURL
+            guard AttentionFileHandoff.defaultRootDirectory.resolvingSymlinksInPath().standardizedFileURL == expected else {
+                throw AgentIntegrationError("notification fixture must use its private attention directory")
+            }
         }
         let configuration = HostConfiguration(stateDirectory: AppState.defaultDirectory,
             runtimeDirectory: root.appendingPathComponent("run"), zmxExecutable: URL(fileURLWithPath: manifest.zmx), shell: "/bin/zsh")
@@ -100,7 +107,11 @@ private final class AgentIntegrationMacHost {
             guard result.exitCode == 0 else { throw AgentIntegrationError(result.stderr) }
         }
         _ = try await runtime.registerRepository(repo)
-        runtime.startMaintenance()
+        if manifest.scenario == "notifications" {
+            notificationProbe = try AgentIntegrationNotificationProbe(runtime: runtime, root: root)
+        } else {
+            runtime.startMaintenance()
+        }
     }
 
     func makeAgent() -> WebRTCHostAgent {
@@ -143,6 +154,11 @@ private final class AgentIntegrationMacHost {
             finishedSuccessfully = command.parameters["result"] == "passed"
             return [:]
         }
+        if command.operation == "notificationsSnapshot" || command.operation == "notificationsReplay" {
+            let probe = try #require(notificationProbe)
+            let pane = try #require(panes[command.provider])
+            return try await probe.handle(command, path: pane.path)
+        }
         if command.operation == "acceptOffer" {
             await agent?.close()
             let next = makeAgent()
@@ -163,7 +179,9 @@ private final class AgentIntegrationMacHost {
             let base = manifest.endpoint.appendingPathComponent("model/\(command.provider)").absoluteString
             let environment = provider == .claude ? "ANTHROPIC_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base))"
                 : "OPENAI_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base + "/v1"))"
-            let initial = "export GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(command.provider)) \(environment)\n" + (launch.command ?? "")
+            let attention = manifest.scenario == "notifications"
+                ? " GRAFTTY_ATTENTION_DIR=\(WorktreeAgentLaunchCommand.shellLiteral(AttentionFileHandoff.defaultRootDirectory.path))" : ""
+            let initial = "export GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(command.provider)) \(environment)\(attention)\n" + (launch.command ?? "")
             let created = try await runtime.createWorktree(repository: repo, name: command.provider,
                 branch: command.provider, command: initial)
             let native = try #require(driver.panes[created.session])

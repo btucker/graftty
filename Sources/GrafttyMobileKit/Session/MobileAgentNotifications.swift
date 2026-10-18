@@ -11,13 +11,20 @@ final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate
     private(set) var pendingRoute: MobileStopNotificationRoute?
     private var center: UNUserNotificationCenter?
     private let defaults: UserDefaults
+    private let prepareRequest: (UNNotificationRequest) -> UNNotificationRequest
     private var ledger: MobileStopNotificationLedger
     private var authorizationRequested = false
+    // Observes submission without replacing the native notification service.
+    var didSubmitRequest: ((UNNotificationRequest) -> Void)?
     private static let storageKey = "GrafttyMobile.stopNotifications"
     private static let logger = Logger(subsystem: "dev.graftty.mobile", category: "Notifications")
 
-    override init() {
-        defaults = .standard
+    override convenience init() { self.init(defaults: .standard) }
+
+    init(defaults: UserDefaults,
+         prepareRequest: @escaping (UNNotificationRequest) -> UNNotificationRequest = { $0 }) {
+        self.defaults = defaults
+        self.prepareRequest = prepareRequest
         ledger = defaults.data(forKey: Self.storageKey).flatMap {
             try? JSONDecoder().decode(MobileStopNotificationLedger.self, from: $0)
         } ?? .init()
@@ -46,7 +53,11 @@ final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate
         let notifications = ledger.receive(rows, hostID: hostID)
         if ledger != previous { defaults.set(try? JSONEncoder().encode(ledger), forKey: Self.storageKey) }
         for notification in notifications {
-            do { try await center.add(Self.request(for: notification)) }
+            do {
+                let request = prepareRequest(Self.request(for: notification))
+                try await center.add(request)
+                didSubmitRequest?(request)
+            }
             catch { Self.logger.error("Stop notification failed: \(error.localizedDescription, privacy: .public)") }
         }
     }
