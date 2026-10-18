@@ -1410,6 +1410,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-1.5** When a terminal child requests microphone access, the packaged macOS application shall declare why it uses the microphone and carry the audio-input entitlement so macOS can authorize the request for Graftty.
 
+**DIST-1.6** When a development build has no explicit renderer override, the build shall use the committed published dependency and diagnose ignored local packages; an explicitly selected stale renderer or a release requiring paging shall fail before compilation.
+
+**DIST-1.7** When the shared wrapper, bundle script, or CI builds with a changed renderer or headers, the build shall apply a distinct Clang module signature to application and dependency targets.
+
 ### DIST-2.x — Release Automation
 
 **DIST-2.1** When a git tag containing valid SemVer after its leading `v` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, ensure a GitHub release tagged `v<version>` has the zip attached, and, for stable versions, ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.

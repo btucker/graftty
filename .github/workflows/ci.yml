@@ -80,7 +80,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'scripts/ghostty-paging/*.patch') }}
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}
           restore-keys: |
             ${{ runner.os }}-spm-
 
@@ -104,7 +104,7 @@ jobs:
       - name: Build app + tests (warnings as errors)
         # Resolution above prepares the lockfile and sources. Avoid a second
         # remote refresh, and fail if the resolved graph unexpectedly changes.
-        run: swift build --build-tests --disable-automatic-resolution -Xswiftc -warnings-as-errors
+        run: swift build --manifest-cache none -Xcc "$GRAFTTY_RENDERER_CONTEXT" --build-tests --disable-automatic-resolution -Xswiftc -warnings-as-errors
 
       - name: Test package targets in isolated processes
         # The complete serial suite, test discovery, and process startup can
@@ -135,7 +135,7 @@ jobs:
             exit 1
           fi
 
-          test_list="$(swift test list --skip-build)"
+          test_list="$(swift test list -Xcc "$GRAFTTY_RENDERER_CONTEXT" --skip-build)"
           while IFS= read -r target; do
             echo "::group::$target"
             suite_names="$(
@@ -167,7 +167,7 @@ jobs:
               suite_count=$((suite_count + 1))
               if [[ "$suite_count" -eq 20 ]]; then
                 /usr/bin/script -q /dev/null \
-                  swift test --skip-build --disable-xctest --no-parallel \
+                  swift test -Xcc "$GRAFTTY_RENDERER_CONTEXT" --skip-build --disable-xctest --no-parallel \
                     --filter "(${suite_filter})" \
                   < /dev/null
                 suite_filter=""
@@ -176,12 +176,12 @@ jobs:
             done <<< "$suite_names"
             if [[ -n "$suite_filter" ]]; then
               /usr/bin/script -q /dev/null \
-                swift test --skip-build --disable-xctest --no-parallel \
+                swift test -Xcc "$GRAFTTY_RENDERER_CONTEXT" --skip-build --disable-xctest --no-parallel \
                   --filter "(${suite_filter})" \
                 < /dev/null
             fi
             /usr/bin/script -q /dev/null \
-              swift test --skip-build --disable-swift-testing \
+              swift test -Xcc "$GRAFTTY_RENDERER_CONTEXT" --skip-build --disable-swift-testing \
                 --filter "^${target}\\." \
               < /dev/null
             echo "::endgroup::"
@@ -196,7 +196,7 @@ jobs:
         # — run those manually or as a nightly sweep.  The dedicated timeout above
         # is a canary: if the corpus slows past 5 min, investigate the root cause
         # rather than bumping it.
-        run: /usr/bin/script -q /dev/null swift test --filter OwnershipModel --skip-build
+        run: /usr/bin/script -q /dev/null swift test -Xcc "$GRAFTTY_RENDERER_CONTEXT" --filter OwnershipModel --skip-build
 
   ios-build-for-testing:
     runs-on: macos-26
@@ -234,9 +234,9 @@ jobs:
           path: |
             .spm
             .derivedData
-          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch') }}-${{ github.sha }}
+          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}-${{ github.sha }}
           restore-keys: |
-            ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch') }}-
+            ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}-
 
       - name: Build GrafttyMobile for testing (iOS Simulator SDK)
         timeout-minutes: 10
@@ -257,6 +257,7 @@ jobs:
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
             'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG GRAFTTY_PAGED_HISTORY' \
+            "OTHER_SWIFT_FLAGS=\$(inherited) -Xcc $GRAFTTY_RENDERER_CONTEXT" \
             build-for-testing
 
       - name: Save SPM / DerivedData cache
@@ -317,7 +318,7 @@ jobs:
           path: |
             .spm
             .derivedData
-          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch') }}-${{ github.sha }}
+          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}-${{ github.sha }}
           fail-on-cache-miss: true
 
       - name: Create isolated iOS simulator
