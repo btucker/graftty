@@ -23,7 +23,10 @@ def load_history(run, agent, stage):
     deadline = time.monotonic() + 45
     observations = []
     while time.monotonic() < deadline:
-        value = run.act(Action('scroll', agent, {'position': 'top'}, client='mobile'))
+        # Exhaustive backfill uses the native binding; a short touch drag
+        # advances only part of a viewport and cannot traverse this fixture.
+        run.server.broker.command(Action('scroll', agent, {'position': 'top'}, client='mobile'))
+        value = run.snapshot(agent, 'mobile')
         observations.append({key: value.get(key) for key in ('paging', 'total', 'offset', 'anchor')})
         if value.get('paging') in ('limit', 'pageTooLarge', 'unavailable', 'requiresRecovery'):
             raise InvariantFailure(f'{agent} {stage}: history stopped at {value["paging"]}')
@@ -42,7 +45,42 @@ def load_history(run, agent, stage):
         raise InvariantFailure(f'{agent} {stage}: missing, duplicate, or reordered history rows')
     run.summary['assertions'].append({'agent': agent, 'stage': stage,
                                      'contiguousHistoryRows': len(actual), 'paging': 'complete'})
-    run.act(Action('scroll', agent, {'position': 'bottom'}, client='mobile'))
+    run.server.broker.command(Action('scroll', agent, {'position': 'bottom'}, client='mobile'))
+
+
+def gesture_backfill(run, agent):
+    # Let initial prefetch settle before measuring page loading caused by a
+    # touch drag. The held provider stream cannot add live rows in this phase.
+    baseline = run.wait_snapshot(agent, lambda value: value['paging'] == 'available', 'mobile')
+    stable = 0
+    settle_deadline = time.monotonic() + 30
+    while stable < 3:
+        if time.monotonic() >= settle_deadline:
+            raise InvariantFailure(f'{agent}: initial history prefetch did not settle')
+        time.sleep(.35)  # More than three 100ms paging polls.
+        current = run.snapshot(agent, 'mobile')
+        stable = stable + 1 if current['paging'] == 'available' and current['total'] == baseline['total'] else 0
+        baseline = current
+    initial_total = int(baseline['total'])
+    initial_rows = row_ids(baseline['text'])
+    observations = [baseline]
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        run.act(Action('scroll', agent, {'position': 'top'}, client='gestures'))
+        value = run.snapshot(agent, 'mobile')
+        observations.append(value)
+        if value['paging'] in ('limit', 'pageTooLarge', 'unavailable', 'requiresRecovery'):
+            raise InvariantFailure(f'{agent}: gesture backfill stopped at {value["paging"]}')
+        older_rows = row_ids(value['text'])
+        if (int(value['total']) > initial_total and initial_rows and older_rows
+                and min(older_rows) < min(initial_rows)):
+            break
+    else:
+        raise InvariantFailure(f'{agent}: touch scrolling did not load and reveal older history')
+    (run.root / f'history-{agent}-gesture.json').write_text(json.dumps(observations, indent=2))
+    run.summary['assertions'].append({'agent': agent, 'gestureLoadedOlderHistory': True,
+        'totalBefore': initial_total, 'totalAfter': int(value['total']),
+        'firstRowBefore': min(initial_rows), 'firstRowAfter': min(older_rows)})
 
 
 def run_history(run):
@@ -66,12 +104,17 @@ def run_history(run):
         for barrier, following in (('begin', 'middle'), ('middle', 'end')):
             models.release(agent, barrier)
             run.wait_model(lambda: (agent, following) in models.arrived)
+        run.wait_snapshot(agent, lambda value: run.options.rows - 1 in row_ids(value['text']))
         # Connect after output exists: attaching before streaming would parse
         # VT locally and never exercise the failing host history-page export.
         run.act(Action('connect', agent, {'session': run.paths[agent]['session']}, client='mobile'))
         run.converge(agent)
+        gesture_backfill(run, agent)
         load_history(run, agent, 'attach')
+        before = run.snapshot(agent, 'mobile')
         run.act(Action('scroll', agent, {'position': 'middle'}, client='gestures'))
+        after = run.wait_snapshot(agent, lambda value: value['offset'] != before['offset'], 'mobile')
+        run.summary['assertions'].append({'agent': agent, 'gestureScrollOffsets': [before['offset'], after['offset']]})
         run.act(Action('reconnect', agent, client='mobile'))
         run.converge(agent)
         load_history(run, agent, 'reconnect')

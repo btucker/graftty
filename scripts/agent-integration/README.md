@@ -62,9 +62,11 @@ return to Mac ownership. `--colors --mac-only` checks Mac output only.
 
 Add `--history --rows 600` to exercise bounded history transfers with both
 providers. The fixture repeats emoji and source paths across physical wraps,
-then attaches Mobile after that output exists. It scrolls through backfill,
-checks ordered row markers through native selection, reconnects, changes the
-source grid, and reconnects again. `history-*.json` records paging states and
+then attaches Mobile after the final numbered row renders. Actual touch drags
+must reveal older rows and increase loaded history across the initial boundary.
+Native scroll bindings then exhaustively load history and check ordered row
+markers through native selection. The scenario reconnects, changes the source
+grid, and reconnects again. `history-*.json` records paging states and
 the selected rows; `mobile.xcresult` retains the actual gesture screenshots.
 The native workflow's `history` input runs this focused scenario. `result.json`
 also records the commit, working-tree state, provider versions, simulator

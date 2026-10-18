@@ -110,9 +110,12 @@ struct MacPagedTerminalTests {
         let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
         for generation in UInt64(1)...2 {
             if generation > 1 { try await stream.requestCheckpoint() }
-            guard case .checkpoint(let checkpoint) = try #require(await events.next()) else {
-                Issue.record("Expected a fresh checkpoint"); return
+            var freshCheckpoint: PagedTerminalCheckpoint?
+            while let event = try await events.next() {
+                if case .checkpoint(let checkpoint) = event { freshCheckpoint = checkpoint; break }
+                if case .output(let data) = event { terminal.access.write(data) }
             }
+            let checkpoint = try #require(freshCheckpoint)
             try await renderer.install(checkpoint, generation: generation)
             var ordinal: UInt64 = 0
             while true {
@@ -132,12 +135,15 @@ struct MacPagedTerminalTests {
             }
             #expect(terminal.firstHistoryRow().contains("history-row-000000"))
             #expect(terminal.text().contains("history-row-001999"))
-            try await stream.send(Data("after-history\n".utf8))
+            let marker = "after-history-\(generation)"
+            var receivedLiveResponse = false
+            try await stream.send(Data("\(marker)\n".utf8))
             while let event = try await events.next() {
                 guard case .output(let data) = event else { continue }
                 terminal.access.write(data)
-                if terminal.text().contains("live-after-history") { break }
+                if terminal.text().contains("live-\(marker)") { receivedLiveResponse = true; break }
             }
+            #expect(receivedLiveResponse)
         }
     }
 
