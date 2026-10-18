@@ -7,6 +7,29 @@ import GrafttyProtocol
 
 @MainActor
 struct SidebarWorktreeReportTests {
+    @Test("@spec CONTEXT-9: When a worktree has a pending request without a saved brief, the application shall display its message in the context report until that request is dismissed.")
+    func pendingMessageRendersWithoutBrief() {
+        let message = String(repeating: "Choose which device should receive the pending terminal session before continuing. ", count: 4)
+        let row = WorktreePanes(path: "/task", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: message, layout: nil,
+            sidebar: .init(id: "task", projectID: "p"))
+        let navigation = SidebarNavigationState(prefix: UUID().uuidString)
+        let context = navigation.worktreeContext(row)
+        #expect(context.brief == nil)
+        #expect(context.question == nil)
+        #expect(context.pending.count == 1)
+        func height(_ context: SidebarWorktreeContext) -> CGFloat {
+            let host = NSHostingView(rootView: WorktreeBriefContent(context: context)
+                .frame(width: 240).fixedSize(horizontal: false, vertical: true))
+            return host.fittingSize.height
+        }
+        let pendingHeight = height(context)
+        navigation.dismissRequest(in: context)
+        let dismissed = navigation.worktreeContext(row)
+        #expect(dismissed.pending.isEmpty)
+        #expect(pendingHeight > height(dismissed) + 20)
+    }
+
     @Test("@spec PORTS-5.3: While a worktree report popover is displayed, the application shall show each discovered listening port with its process name and a separate browser action without opening a terminal or acknowledging attention.")
     func portsFitInNarrowReport() throws {
         let ports: [WorktreePort] = [.init(port: 3000, scope: .loopback, processName: "vite"),

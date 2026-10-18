@@ -57,6 +57,41 @@ private struct RemoteScrollRegions: View {
 @Suite("Remote sidebar scroll regions", .serialized)
 @MainActor
 struct SidebarRemoteScrollTests {
+    @Test("@spec CONTEXT-8: While a local or remote Mac worktree has a retained brief, the application shall display its context or completed result beneath its sidebar name even after the request is acknowledged.", arguments: [false, true])
+    func remoteRowsDisplayRetainedBrief(hasContext: Bool) async throws {
+        let harness = try RemoteScrollHarness(metadata: true)
+        defer { try? FileManager.default.removeItem(at: harness.directory) }
+        await harness.model.loadSavedRemotes()
+        let summary = "Retained description of the work being done here, with enough detail to wrap beneath the worktree name in a narrow sidebar."
+        let recap = AttentionRecap(title: "Stable purpose", context: hasContext ? summary : nil,
+                                   completed: hasContext ? "Current progress" : summary, next: "Review")
+        let brief = WorktreeBrief(recap: recap, at: Date())
+        func row(brief: WorktreeBrief?) -> WorktreePanes {
+            .init(path: "/remote/work", displayName: "work", repoDisplayName: "Remote repo",
+                  repositoryID: "repo", displayBranch: "work", state: .closed, isMainCheckout: false,
+                  prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+                  sidebar: .init(id: "work", projectID: harness.remote.id.value + ":repo", brief: brief))
+        }
+        func remoteHeight(brief: WorktreeBrief?) -> CGFloat {
+            let hosted = NSHostingController(rootView: RemoteMacsSection(model: harness.model, expansion: .constant(.init()),
+                worktreePanesByRemote: [RemoteMacIdentity(harness.remote): [row(brief: brief)]], selectedRemoteIdentity: nil,
+                theme: .fallback, onSelectRemoteMac: { _ in }, onAddRemoteMac: {},
+                showsMacHierarchy: false, showsRepositoryHeaders: false))
+            return hosted.sizeThatFits(in: CGSize(width: 240, height: 1000)).height
+        }
+        #expect(remoteHeight(brief: brief) > remoteHeight(brief: nil), "Retained context adds a description below the remote row name")
+        var local = WorktreeEntry(path: "/local/work", branch: "work")
+        func localHeight(_ entry: WorktreeEntry) -> CGFloat {
+            let hosted = NSHostingController(rootView: WorktreeRow(entry: entry, isActive: false, displayName: "work",
+                isMainCheckout: false, theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil))
+            return hosted.sizeThatFits(in: CGSize(width: 240, height: 1000)).height
+        }
+        let emptyHeight = localHeight(local)
+        local.recordAgentStop(.init(agentName: "Codex", stoppedAt: Date(), recap: recap))
+        local.acknowledgeAttention()
+        #expect(localHeight(local) > emptyHeight, "Acknowledging a local request preserves its sidebar description")
+    }
+
     @Test(arguments: [false, true])
     func remoteHierarchySharesExpansionAcrossRegions(repository: Bool) async throws {
         let harness = try RemoteScrollHarness(metadata: true)

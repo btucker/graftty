@@ -61,7 +61,7 @@ public struct SidebarWorktreeReport: View {
 }
 
 /// Report text shared by the Mac popover and the mobile report sheet.
-/// @spec LAYOUT-2.135: While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background, label completed work, and inset pending and viewed questions with an orange accent while distinguishing them by label.
+/// @spec LAYOUT-2.135: While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background and display the retained current brief, live waiting question, and expandable checkpoint history.
 public struct SidebarWorktreeReportContent: View {
     public let context: SidebarWorktreeContext
     private let foreground: Color
@@ -138,68 +138,14 @@ public struct SidebarWorktreeReportContent: View {
     }
 
     private var sections: some View {
-        let card = SidebarAttentionCardContent(item: context.item)
-        return VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 22) {
             if !context.worktree.ports.isEmpty {
                 SidebarWorktreePorts(ports: context.worktree.ports, onOpen: onOpenPort)
             }
-            Text(context.item.agentStop?.recap == nil ? "No report yet" : card.title)
-                .font(.headline).fontWeight(.semibold)
-                .fixedSize(horizontal: false, vertical: true)
-            if card.sections.isEmpty {
-                Text(context.pending.first?.title ?? "This worktree has no saved agent recap.")
-                    .font(.callout).fontWeight(.regular).foregroundStyle(secondary)
-            }
-            ForEach(card.sections) { section in
-                if section.kind == .needsYou {
-                    questionSection(section)
-                } else {
-                    narrativeSection(section)
-                }
-            }
-        }.frame(maxWidth: .infinity, alignment: .leading)
-            .textSelection(.enabled)
-    }
-
-    private func narrativeSection(_ section: SidebarAttentionCardContent.Section) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label(section.kind)).font(.caption).fontWeight(.semibold).foregroundStyle(secondary)
-            Text(section.text).font(.callout).fontWeight(.regular).lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-            if let detail = section.detail {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Completed").font(.caption).fontWeight(.semibold)
-                    Text(detail).font(.caption).fontWeight(.regular).lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }.foregroundStyle(secondary).padding(.top, 5)
-            }
+            WorktreeBriefContent(context: context, foreground: foreground, secondary: secondary, compact: true)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func questionSection(_ section: SidebarAttentionCardContent.Section) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(label(section.kind), systemImage: "bubble.left")
-                .font(.caption).fontWeight(.semibold)
-                .foregroundStyle(foreground)
-            Text(section.text).font(.callout).fontWeight(.medium).lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8)
-            .stroke(Color.orange.opacity(0.4), lineWidth: 1)
-            .allowsHitTesting(false))
-        .accessibilityElement(children: .combine)
-    }
-
-    private func label(_ kind: SidebarAttentionCardContent.Section.Kind) -> String {
-        switch kind {
-        case .context: "Context"
-        case .needsYou: context.question == nil ? "Question from report" : "Needs your input"
-        case .upNext: "Next"
-        }
-    }
 }
 
 /// Port controls belong to the report, independently of terminal selection.

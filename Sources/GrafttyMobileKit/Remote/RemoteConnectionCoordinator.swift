@@ -66,6 +66,7 @@ public final class RemoteConnectionCoordinator {
     public private(set) var localDeviceID: RemoteDeviceID?
     private var authenticationOffers = RemoteAuthenticationOffers()
     private var previewAutoOpen = RemotePreviewAutoOpen()
+    let previewHistory = RemotePreviewHistory()
 
     func reservePreviewAutoOpen(_ offer: RemoteOpenOffer?, isReady: Bool, canPresent: Bool) -> Bool {
         previewAutoOpen.take(offer, isReady: isReady, canPresent: canPresent)
@@ -549,6 +550,7 @@ public final class RemoteConnectionCoordinator {
     /// also removes it from the Mac's paired-device list.
     public func forget(_ host: Host) async throws {
         await invalidate(host: host)
+        previewHistory.remove(hostID: host.id)
         guard let deviceID = host.remoteDeviceID else { return }
         discoveredBaseURLs[deviceID] = nil
         do {
@@ -591,7 +593,7 @@ public final class RemoteConnectionCoordinator {
 
         let connectionIdentity = ObjectIdentifier(connection)
         let attempt = Task<WorktreePanesStore?, Never> {
-            await Self.makePanesStore(connection: connection)
+            await Self.makePanesStore(connection: connection, hostID: host.id)
         }
         let attemptID = UUID()
         panesStoreAttempts[host.id] = PanesAttempt(
@@ -615,7 +617,7 @@ public final class RemoteConnectionCoordinator {
     }
 
     private nonisolated static func makePanesStore(
-        connection: RemoteHostConnection
+        connection: RemoteHostConnection, hostID: UUID
     ) async -> WorktreePanesStore? {
         for originAware in [true, false] {
             var openedStore: WorktreePanesStore?
@@ -631,6 +633,7 @@ public final class RemoteConnectionCoordinator {
                 client.setCallbacks(
                     onSnapshot: { [weak store] snapshot in
                         await store?.applySnapshot(snapshot)
+                        await MobileAgentNotifications.shared.receive(snapshot, hostID: hostID)
                     },
                     onClosed: { [weak store] reason in
                         await store?.markClosed(reason: reason)

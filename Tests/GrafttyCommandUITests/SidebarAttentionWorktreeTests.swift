@@ -148,7 +148,6 @@ struct SidebarAttentionWorktreeTests {
         navigation.finishOpening(opening, succeeded: true)
         #expect(navigation.selectedAttentionID == nil)
         #expect(navigation.attentionItems(live: [], projects: [project, remoteProject]).map(\.id) == [remote.id])
-        #expect(navigation.attentionBanner == nil)
         let restored = SidebarNavigationState(prefix: "test", defaults: defaults)
         #expect(restored.attentionItems(live: [], projects: [project, remoteProject]).map(\.id) == [remote.id])
     }

@@ -38,3 +38,8 @@ struct NotifTodo {
 """, .disabled("not yet implemented"))
     func notif_2_3() async throws { }
 }
+
+@Test("""
+@spec NOTIF-1.13: When an agent stops while GrafttyMobile is suspended or terminated, the application shall receive a native push notification through Graftty-server and APNs and route activation to its authenticated host and worktree.
+""", .disabled("Graftty-server is the provider; app enrollment, notification service extension, host event publishing, and deployment configuration remain to be connected."))
+func notif_1_13() async throws { }

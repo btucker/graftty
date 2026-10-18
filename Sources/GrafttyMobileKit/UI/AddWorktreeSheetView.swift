@@ -11,7 +11,13 @@ public struct AddWorktreeSheetView: View {
     public let host: Host
     public let includeRemoteWorktrees: Bool
     public let remoteConnectionProvider: RemoteConnectionProvider?
-    public let onCreated: (CreateWorktreeClient.Response) -> Void
+    public struct Submission {
+        public let request: CreateWorktreeClient.Request
+        public let repository: ReposFetcher.RepoInfo
+        public let existingSource: RemoteRepositoryInfo.Branch.Source?
+    }
+
+    public let onSubmit: (Submission) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var reposState: ReposState = .loading
@@ -24,7 +30,6 @@ public struct AddWorktreeSheetView: View {
     @State private var branchMirrorsWorktree: Bool = true
     @State private var branchMode: BranchMode = .newBranch
     @State private var isSubmitting: Bool = false
-    @State private var errorMessage: String?
 
     enum BranchMode { case newBranch, existing }
 
@@ -37,12 +42,12 @@ public struct AddWorktreeSheetView: View {
         host: Host,
         includeRemoteWorktrees: Bool = false,
         remoteConnectionProvider: RemoteConnectionProvider? = nil,
-        onCreated: @escaping (CreateWorktreeClient.Response) -> Void
+        onSubmit: @escaping (Submission) -> Void
     ) {
         self.host = host
         self.includeRemoteWorktrees = includeRemoteWorktrees
         self.remoteConnectionProvider = remoteConnectionProvider
-        self.onCreated = onCreated
+        self.onSubmit = onSubmit
     }
 
     public static func shouldSubmitOnReturn(canSubmit: Bool, isSubmitting: Bool) -> Bool {
@@ -113,7 +118,7 @@ public struct AddWorktreeSheetView: View {
                     if isSubmitting {
                         ProgressView().controlSize(.small)
                     } else {
-                        Button("Create") { Task { await submit() } }
+                        Button("Create") { submit() }
                             .keyboardShortcut(.defaultAction)
                             .disabled(!canSubmit)
                     }
@@ -195,14 +200,6 @@ public struct AddWorktreeSheetView: View {
                                 branchName = sanitized
                             }
                         }
-                }
-            }
-            if let errorMessage {
-                Section {
-                    Text(errorMessage)
-                        .foregroundStyle(.red)
-                        .font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -314,65 +311,28 @@ public struct AddWorktreeSheetView: View {
 
     private func submitFromReturn() {
         guard Self.shouldSubmitOnReturn(canSubmit: canSubmit, isSubmitting: isSubmitting) else { return }
-        Task { await submit() }
+        submit()
     }
 
-    private func submit() async {
-        guard canSubmit else { return }
-        guard let repoPath = selectedRepoPath else { return }
-        errorMessage = nil
+    private func submit() {
+        guard canSubmit, let repoPath = selectedRepoPath,
+              case .loaded(let repositories) = reposState,
+              let repository = repositories.first(where: { $0.path == repoPath }) else { return }
         isSubmitting = true
-        defer { isSubmitting = false }
-
-        let body = CreateWorktreeClient.Request(
+        let request = CreateWorktreeClient.Request(
             repoPath: repoPath,
             worktreeName: WorktreeNameSanitizer.trimForSubmit(worktreeName),
             branchName: WorktreeNameSanitizer.trimForSubmit(branchName),
             existing: branchMode == .existing
         )
-        do {
-            let response: CreateWorktreeClient.Response
-            if remoteConnectionProvider != nil {
-                let management = try await RelayedWorktreeManagementClient.send(
-                    .create(
-                        repositoryID: body.repoPath,
-                        worktreeName: body.worktreeName,
-                        branchName: body.branchName,
-                        existingSource: body.existing
-                            ? existingBranchSource(
-                                repositoryID: body.repoPath,
-                                branchName: body.branchName
-                            )
-                            : nil
-                    ),
-                    using: remoteConnectionProvider
-                )
-                switch management {
-                case let .created(worktreeID, paneID):
-                    response = CreateWorktreeClient.Response(
-                        sessionName: paneID,
-                        worktreePath: worktreeID
-                    )
-                case let .error(_, message, _, _):
-                    errorMessage = message
-                    return
-                default:
-                    errorMessage = "The remote Mac returned an unexpected response."
-                    return
-                }
-            } else {
-                response = try await CreateWorktreeClient.create(
-                    baseURL: host.baseURL,
-                    body: body
-                )
-            }
-            onCreated(response)
-            dismiss()
-        } catch let err as CreateWorktreeClient.CreateError {
-            errorMessage = err.userMessage
-        } catch {
-            errorMessage = CreateWorktreeClient.CreateError.transport.userMessage
-        }
+        onSubmit(Submission(
+            request: request,
+            repository: repository,
+            existingSource: request.existing
+                ? existingBranchSource(repositoryID: repoPath, branchName: request.branchName)
+                : nil
+        ))
+        dismiss()
     }
 
     private func existingBranchSource(

@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import Foundation
 import GrafttyProtocol
+import GrafttyCommandUI
 import GrafttyRemoteClient
 import SwiftUI
 
@@ -1352,6 +1353,9 @@ private struct IPadDetailColumn: View {
 
     var body: some View {
         content
+            .modifier(MobileWorktreeContextDrawer(context: selectedWorktree.map {
+                appState.sidebarNavigation.worktreeContext($0)
+            }))
             .modifier(IPadTerminalDetailChrome())
             .toolbar {
                 // IPAD-1.11: the conditional wraps the whole

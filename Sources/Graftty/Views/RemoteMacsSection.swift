@@ -529,7 +529,8 @@ struct RemoteMacsSection: View {
             },
             attentionCount: worktree.layout?.leaves.isEmpty == false ? 0 : counts.attentionByWorktree[worktree.path, default: 0],
             project: project, projectIconData: projectIcons[projectID],
-            reportButton: reportController.map { SidebarReportButton(controller: $0, context: context, theme: theme) }
+            reportButton: reportController.map { SidebarReportButton(controller: $0, context: context, theme: theme) },
+            brief: context.brief
         )
         .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
         .contentShape(Rectangle())

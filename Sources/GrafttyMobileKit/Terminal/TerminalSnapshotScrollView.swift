@@ -69,7 +69,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     }
 
     private var rowHeight: CGFloat = 0
-    private var scrollbar: TerminalScrollbar?
+    private(set) var scrollbar: TerminalScrollbar?
     private var nativeRow: UInt64 = 0
     private var adjusting = false
     private var viewportHeight: CGFloat = 0

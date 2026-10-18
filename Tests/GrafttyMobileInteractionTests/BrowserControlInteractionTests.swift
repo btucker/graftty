@@ -1,6 +1,35 @@
 import UIKit
 import XCTest
 
+final class WorktreeContextInteractionTests: XCTestCase {
+    /// @spec CONTEXT-6: When mobile worktree context is opened, the application shall show the current brief, expand its history in place, and close back to the mounted terminal without acknowledging pending attention.
+    func testBriefExpandsIntoHistoryAndEdgeGestureReopensIt() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--context-fixture"]
+        app.launch()
+        defer { app.terminate() }
+        let open = app.buttons["worktree.context.open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        open.tap()
+        let close = app.buttons["worktree.context.close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        let history = app.buttons["worktree.context.history"]
+        XCTAssertTrue(history.waitForExistence(timeout: 5), app.debugDescription)
+        history.tap()
+        XCTAssertTrue(app.staticTexts["Chose the brief with expandable history"].waitForExistence(timeout: 5))
+        try app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "/private/tmp/graftty-context-mobile.png"))
+        close.tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Terminal mounts: 1"].exists)
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.55))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.55))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        close.tap()
+        XCTAssertTrue(app.staticTexts["Terminal mounts: 1"].exists)
+    }
+}
+
 final class ScrollbackInteractionTests: XCTestCase {
     func testLeaderScrollbackGestures() throws { try exerciseScrollback(follower: false) }
     func testFollowerScrollbackGestures() throws { try exerciseScrollback(follower: true) }
