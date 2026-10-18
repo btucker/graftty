@@ -25,7 +25,7 @@ struct MobileNotificationRoutingTests {
         let route = untargetedRoute
         #expect(route.pane(in: row(split: true)) == nil)
         do {
-            try await MobileNotificationActivation.resolve(route, fetch: { [row(split: true)] },
+            _ = try await MobileNotificationActivation.resolve(route, fetch: { [row(split: true)] },
                 reopen: { _ in Issue.record("A running worktree must not be reopened") }, isCurrent: { true })
             Issue.record("An ambiguous notification must not select a pane")
         } catch MobileNotificationActivation.Failure.paneUnavailable {
