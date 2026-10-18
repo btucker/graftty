@@ -60,23 +60,40 @@ extension AgentNativeInteractionTests {
             }
             banner.tap()
             var tapCount = 1
+            var swipeCount = 0
+            var tappedOpen = false
             // On the collapsed incoming page, Notification Center consumes the
-            // first tap to reveal the list. Requery the same title after that
-            // transition and allow one more physical tap, never an app launch.
+            // first tap to reveal the list. A second tap can only show a swipe
+            // hint, so follow the native swipe-to-open interaction on that same
+            // notification. Never launch the app or synthesize its route here.
             if usedNotificationCenter, !app.wait(for: .runningForeground, timeout: 2) {
                 let revealed = springboard.staticTexts[title].firstMatch
                 if revealed.exists, revealed.isHittable {
-                    revealed.tap()
-                    tapCount += 1
+                    revealed.swipeRight()
+                    swipeCount += 1
+                    let swipeAttachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                    swipeAttachment.name = "notification-after-swipe-\(command.id)"
+                    swipeAttachment.lifetime = .keepAlways
+                    add(swipeAttachment)
+                    if !app.wait(for: .runningForeground, timeout: 2) {
+                        let open = springboard.buttons["Open"].firstMatch
+                        if open.waitForExistence(timeout: 2), open.isHittable {
+                            open.tap()
+                            tapCount += 1
+                            tappedOpen = true
+                        }
+                    }
                 }
             }
             guard app.wait(for: .runningForeground, timeout: 10) else {
-                throw AgentIntegrationError("Native notification did not foreground the app after \(tapCount) tap(s); notificationCenter=\(usedNotificationCenter), appState=\(app.state.rawValue)")
+                throw AgentIntegrationError("Native notification did not foreground the app after \(tapCount) tap(s), \(swipeCount) right swipe(s); tappedOpen=\(tappedOpen), notificationCenter=\(usedNotificationCenter), appState=\(app.state.rawValue)")
             }
             guard app.staticTexts["Notification activation selection"].waitForExistence(timeout: 10) else {
                 throw AgentIntegrationError("Native notification foregrounded the app but the production RootView fixture did not appear")
             }
             result["tapCount"] = String(tapCount)
+            result["swipeCount"] = String(swipeCount)
+            result["tappedOpen"] = String(tappedOpen)
             result["usedNotificationCenter"] = String(usedNotificationCenter)
             result["foreground"] = "true"
             result["rootVisible"] = "true"

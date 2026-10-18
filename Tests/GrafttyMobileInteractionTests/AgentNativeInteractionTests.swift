@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class AgentNativeInteractionTests: XCTestCase {
-    /// @spec TEST-1.5: When a scripted native integration run requests mobile gestures or notification taps, the test harness shall drive XCUITest, preserve screenshots with the action sequence ID, and reject notification tap success unless the application is foregrounded and its activation view is visible.
+    /// @spec TEST-1.5: When a scripted native integration run requests mobile gestures or notification taps, the test harness shall drive XCUITest, preserve screenshots with the action sequence ID, require foreground activation-view evidence for notification taps, and fail the test unless the controller finishes successfully.
     func testScriptedAgentInteractions() async throws {
         guard let endpoint = ProcessInfo.processInfo.environment["GRAFTTY_AGENT_INTEGRATION_URL"].flatMap(URL.init(string:)) else {
             throw XCTSkip("Run scripts/agent-integration/run.py to supply the isolated controller")
@@ -15,9 +15,13 @@ final class AgentNativeInteractionTests: XCTestCase {
         defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
         let transport = AgentIntegrationTransport(endpoint: endpoint, client: "gestures")
         try await transport.register(["driver": "XCUITest"])
+        var finishedSuccessfully = false
         try await transport.run { command in
             let terminal = app.otherElements["Agent integration terminal"]
-            if command.operation == "finish" { return [:] }
+            if command.operation == "finish" {
+                finishedSuccessfully = command.parameters["result"] == "passed"
+                return [:]
+            }
             if ["notificationsTap", "notificationsNavigate", "notificationsAuthorize", "notificationsDismissError"].contains(command.operation) {
                 return try self.performNotificationGesture(command, app: app)
             }
@@ -49,5 +53,6 @@ final class AgentNativeInteractionTests: XCTestCase {
             self.add(attachment)
             return ["performed": command.operation]
         }
+        XCTAssertTrue(finishedSuccessfully, "The integration controller must finish with a passing result")
     }
 }

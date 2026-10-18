@@ -148,6 +148,7 @@ class NotificationRun(Run):
         if not self.options.mac_only:
             self.start_mobile()
         models = self.server.models
+        provider_events = {}
         for provider in ('claude', 'codex'):
             self.paths[provider] = self.act(Action('start', provider))
             deadline = time.monotonic() + 60
@@ -173,7 +174,11 @@ class NotificationRun(Run):
             self.record_provider_screen(provider, 2)
             self.replay(provider, events, 2, 'repeated-both-stops')
             (self.root / f'provider-stops-{provider}.json').write_text(json.dumps(events, indent=2))
-            if not self.options.mac_only:
+            provider_events[provider] = events
+        # Capture both real providers before entering lifecycle gestures, so a
+        # mobile failure retains useful evidence from each provider.
+        if not self.options.mac_only:
+            for provider, events in provider_events.items():
                 self.mobile_scenarios(provider, events)
         # Catch delayed files that arrived while the native mobile scenarios
         # were running, including files from the earlier provider.
