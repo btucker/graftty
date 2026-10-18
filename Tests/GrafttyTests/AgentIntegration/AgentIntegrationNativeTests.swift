@@ -68,8 +68,7 @@ private final class AgentIntegrationMacHost {
             throw AgentIntegrationError("native host isolation mismatch: home=\(actualHome), expected=\(expectedHome), state=\(actualState)")
         }
         if manifest.scenario == "notifications" {
-            let expected = root.appendingPathComponent("attention").resolvingSymlinksInPath().standardizedFileURL
-            guard AttentionFileHandoff.defaultRootDirectory.resolvingSymlinksInPath().standardizedFileURL == expected else {
+            guard manifest.usesPrivateAttentionDirectory(AttentionFileHandoff.defaultRootDirectory) else {
                 throw AgentIntegrationError("notification fixture must use its private attention directory")
             }
         }

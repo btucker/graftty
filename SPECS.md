@@ -4267,3 +4267,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.9** When a native integration color probe runs, the test harness shall require chromatic rendered pixels on the current stream stage's inline-code, link, syntax, deletion, and addition rows, and shall reject missing or monochrome samples.
 
 **TEST-1.11** When the native notification integration replays a captured provider stop, the harness shall preserve its original payload and route explicit notification actions to native clients.
+
+**TEST-1.12** When the native notification fixture validates its private queue, the harness shall compare canonical directory paths independently of URL directory metadata and reject other directories.
