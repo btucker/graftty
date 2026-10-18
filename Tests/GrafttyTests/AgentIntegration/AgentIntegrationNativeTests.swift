@@ -79,7 +79,8 @@ private final class AgentIntegrationMacHost {
         app = GhosttyApp(config: GhosttyConfig()) { _, _ in true }
         driver = AgentIntegrationMacDriver(app: app, configuration: configuration,
             ownership: ownership, attachments: attachments)
-        runtime = try HeadlessHostRuntime(configuration: configuration, terminals: driver)
+        runtime = try HeadlessHostRuntime(configuration: configuration, terminals: driver,
+            agentSetup: HostAgentSetup(configuration: configuration, installer: installer))
         tickObserver = GhosttyWakeupBridge.observe { [app, driver] in
             app.tick()
             driver.updateScrollbars()
@@ -207,6 +208,15 @@ private final class AgentIntegrationMacHost {
             let keys = ["NO_COLOR", "TERM", "COLORTERM", "TERM_PROGRAM", "FORCE_COLOR"]
             let hostEnv = ProcessInfo.processInfo.environment.filter { keys.contains($0.key) }
             let terminalEnv = driver.configurations[created.session]?.env.filter { keys.contains($0.key) } ?? [:]
+            let hooksURL = runtime.configuration.stateDirectory.appendingPathComponent(
+                "agent-plugins/\(provider.rawValue)/plugins/graftty/hooks/hooks.json")
+            let launchEvidence = ["provider": command.provider, "cli": manifest.cli, "requestedPrompt": prompt,
+                "initialCommand": driver.configurations[created.session]?.env["GRAFTTY_INITIAL_COMMAND"] ?? "",
+                "installedHooks": try String(contentsOf: hooksURL, encoding: .utf8)]
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(launchEvidence).write(to: root.appendingPathComponent(
+                command.provider + "-creation-launch.txt"), options: .atomic)
             return ["session": created.session, "path": created.path,
                 "viewMounted": String(native.handle.view.window != nil),
                 "hostColorEnvironment": String(decoding: try JSONEncoder().encode(hostEnv), as: UTF8.self),

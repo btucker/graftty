@@ -3248,6 +3248,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.37** When a caller cancels while sharing another caller's connection attempt, the application shall reject the cancelled caller without cancelling the shared connection.
 
+**REMOTE-22.38** When a headless runtime receives an explicit agent installer, automatic provider setup shall retain its CLI hook path.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.

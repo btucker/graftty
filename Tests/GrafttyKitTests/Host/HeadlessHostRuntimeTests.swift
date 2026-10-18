@@ -383,6 +383,41 @@ struct HeadlessHostRuntimeTests {
         }
     }
 
+    @Test("@spec REMOTE-22.38: When a headless runtime receives an explicit agent installer, automatic provider setup shall retain its CLI hook path.", arguments: [TeamHookRuntime.claude, .codex])
+    func automaticProviderSetupRetainsInstaller(provider: TeamHookRuntime) async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid",
+            "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let cli = root.appendingPathComponent("CLI tools/graftty")
+        let installer = AgentPluginInstaller(grafttyCLIPath: cli.path,
+            codexConfigurationURL: root.appendingPathComponent("codex-config.toml"),
+            claudeSettingsURL: root.appendingPathComponent("claude-settings.json"))
+        let executor = HostPluginExecutor()
+        let setup = HostAgentSetup(configuration: config, executor: executor, installer: installer)
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals,
+            initialState: state, agentSetup: setup)
+        _ = try await runtime.createWorktree(repository: root.path, name: provider.rawValue,
+            branch: provider.rawValue, base: "HEAD", agent: provider, prompt: "Setup regression")
+        let hooksURL = config.stateDirectory.appendingPathComponent(
+            "agent-plugins/\(provider.rawValue)/plugins/graftty/hooks/hooks.json")
+        let document = try JSONSerialization.jsonObject(with: Data(contentsOf: hooksURL))
+        func commands(in value: Any) -> [String] {
+            if let object = value as? [String: Any] {
+                if let command = object["command"] as? String { return [command] }
+                return object.values.flatMap { commands(in: $0) }
+            }
+            return (value as? [Any] ?? []).flatMap { commands(in: $0) }
+        }
+        let hooks = commands(in: document)
+        #expect(!hooks.isEmpty)
+        #expect(hooks.allSatisfy { $0.contains(AgentPluginInstallStep.shellToken(cli.path) + " team hook") })
+        #expect(Set(await executor.commands) == [provider.rawValue])
+
+    }
+
     @Test("@spec REMOTE-22.14: While the headless host owns its process lease, explicit agent-plugin setup shall remain available without changing host configuration or identity, and plain setup shall remain exclusive.")
     func pluginSetupWhileHostIsRunning() async throws {
         let (root, config, state) = try fixture()
