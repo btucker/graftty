@@ -375,14 +375,17 @@ class Run:
                     and value['nativeGrid'] == value['grid'])
         return self.wait_snapshot(agent, settled, 'mobile')
 
-    def check_mobile_reentry(self, agent, stage):
+    def check_mobile_reentry(self, agent, stage, *, authoritative_viewport=None):
         deadline = time.monotonic() + 5
         status = 'passed'
         while True:
             value = self.snapshot(agent, 'mobile')
             authoritative = self.act(Action('verify', agent))
             try:
-                assert_reentry_viewport(value, agent, authoritative['authoritativeText'])
+                expected = authoritative['authoritativeText']
+                if authoritative_viewport is not None:
+                    expected = authoritative_viewport(value['physicalRows'], expected)
+                assert_reentry_viewport(value, agent, expected)
             except InvariantFailure as error:
                 if time.monotonic() < deadline:
                     time.sleep(.1)
@@ -466,6 +469,16 @@ class Run:
         self.thread.start()
         print(f'Native integration artifacts: {self.root}', flush=True)
         self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude)
+        if getattr(self.options, 'worktree_creation', False):
+            # CLI-created Codex uses its configured model header without the
+            # direct-launch export. Claude has its own endpoint and ignores it.
+            self.env['GRAFTTY_TEST_AGENT'] = 'codex'
+        if getattr(self.options, 'worktree_creation', False) and not getattr(self.options, 'worktree_creation_viewport_only', False):
+            # This scenario verifies real terminal history. Claude's fullscreen
+            # renderer virtualizes old rows inside the provider instead.
+            self.env['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN'] = '1'
+            self.summary['providerModes'] = {'claude': 'classic (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)',
+                                             'codex': 'default'}
         self.summary['providerVersions'] = {name: execute([str(getattr(self.options, name)), '--version'], env=self.env)
                                             for name in ('claude', 'codex')}
         self.env['GRAFTTY_SWIFTPM_SHARED_DIR'] = str(self.options.cache)
@@ -564,6 +577,8 @@ def main():
     parser.add_argument('--simulator', help='Use this test device without deleting it; default creates a private device')
     parser.add_argument('--mac-only', action='store_true', help='Debug the native Mac and messaging paths without claiming mobile coverage')
     parser.add_argument('--worktree-creation', action='store_true', help='Create provider worktrees through the CLI without mounting Mac panes, then verify mobile viewport stability')
+    parser.add_argument('--worktree-creation-viewport-only', action='store_true',
+                        help='Run bounded default-mode Claude lifecycle checks without a terminal-history oracle')
     parser.add_argument('--worktree-creation-source', choices=('cli', 'app-flow'), default='cli',
                         help='Startup boundary for --worktree-creation; app-flow exercises AddWorktreeFlow and TerminalManager')
     parser.add_argument('--worktree-reentry', action='store_true', help='Test retained mobile routes with keyboard changes and hidden ownership transitions')
@@ -583,6 +598,8 @@ def main():
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
+    if options.worktree_creation_viewport_only and not options.worktree_creation:
+        parser.error('--worktree-creation-viewport-only requires --worktree-creation')
     if options.worktree_creation and (options.worktree_reentry or options.colors or options.mac_only or options.replay or options.shrink):
         parser.error('--worktree-creation requires the standalone native mobile scenario')
     if options.worktree_reentry and options.colors:

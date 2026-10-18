@@ -53,16 +53,23 @@ jobs:
           "$RUNNER_TEMP/agent-clients/node_modules/.bin/claude" --version
       - name: Build Graftty CLI
         run: scripts/swiftpm build --build-system native --product graftty-cli
+      - name: Prove headless worktree prompt staging RED and GREEN
+        if: inputs.worktree_creation
+        run: |
+          python3 -B scripts/agent-integration/worktree_startup.py \
+            --output "$RUNNER_TEMP/worktree-startup" --baseline 16287dce
       - name: Prove Mobile worktree UI regressions RED and GREEN
         id: worktree-ui
         if: inputs.worktree_creation
-        continue-on-error: true
         run: |
           python3 -B scripts/agent-integration/worktree_ui.py \
             --output "$RUNNER_TEMP/worktree-ui" \
             --derived-data "$RUNNER_TEMP/worktree-ui-derived" \
             --baseline 16287dce
       - name: Run real agents on Mac and mobile
+        # Preserve independent provider evidence after a UI assertion failure;
+        # the source-restoration gate below still fails closed before building.
+        if: success() || (inputs.worktree_creation && steps.worktree-ui.outcome == 'failure')
         env:
           TEST_SEED: ${{ inputs.seed || github.run_number }}
           TEST_ACTIONS: ${{ inputs.actions || '60' }}
@@ -87,15 +94,36 @@ jobs:
           git rev-parse HEAD > "$RUNNER_TEMP/native-tested-commit.txt"
           shasum -a 256 "$cli" Resources/zmx-binary/zmx > "$RUNNER_TEMP/native-binaries.txt"
           xcrun simctl list devices --json > "$RUNNER_TEMP/native-simulators.json"
-          python3 -B scripts/agent-integration/run.py \
+          runner=(python3 -B scripts/agent-integration/run.py \
             --codex "$RUNNER_TEMP/agent-clients/node_modules/.bin/codex" \
             --claude "$RUNNER_TEMP/agent-clients/node_modules/.bin/claude" \
             --cli "$cli" --zmx "$PWD/Resources/zmx-binary/zmx" \
             --ghostty-package "$PWD/.dependencies/libghostty-spm" \
-            --seed "$TEST_SEED" --actions "$TEST_ACTIONS" "${scenario[@]}"
+            --seed "$TEST_SEED" --actions "$TEST_ACTIONS")
+          status=0
+          "${runner[@]}" "${scenario[@]}" || status=$?
+          if [[ "$TEST_WORKTREE_CREATION" == true ]]; then
+            "${runner[@]}" "${scenario[@]}" --worktree-creation-viewport-only || status=$?
+          fi
+          exit "$status"
       - name: Require passing Mobile worktree UI evidence
-        if: inputs.worktree_creation && steps.worktree-ui.outcome != 'success'
-        run: exit 1
+        if: always() && inputs.worktree_creation
+        run: |
+          python3 - <<'PY_EVIDENCE'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'worktree-ui'
+          evidence = json.loads((root / 'result.json').read_text())
+          if evidence.get('result') != 'passed' or not evidence.get('sourceRestored'):
+              raise SystemExit('Mobile UI RED/GREEN evidence did not pass or source was not restored')
+          for name in ('red', 'green'):
+              phase = evidence[name]
+              if not phase.get('passed') or not (root / name / 'tests.xcresult').is_dir():
+                  raise SystemExit('Missing passing native phase evidence: ' + name)
+              images = phase.get('renders', {}).get('images', [])
+              if not images or any(not (root / name / image).is_file() for image in images):
+                  raise SystemExit('Missing native render evidence: ' + name)
+          PY_EVIDENCE
       - name: Preserve native failure evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -105,11 +133,13 @@ jobs:
           if-no-files-found: warn
           path: |
             ${{ runner.temp }}/worktree-ui
+            ${{ runner.temp }}/worktree-startup
             ${{ runner.temp }}/native-*.txt
             ${{ runner.temp }}/native-simulators.json
             /private/tmp/graftty-ai-*/*stability.json
             /private/tmp/graftty-ai-*/*created-pane*.json
             /private/tmp/graftty-ai-*/*creation*.txt
+            /private/tmp/graftty-ai-*/*creation-hooks.json
             /private/tmp/graftty-ai-*/*production-startup.json
             /private/tmp/graftty-ai-*/*.png
             /private/tmp/graftty-ai-*/*failure.json

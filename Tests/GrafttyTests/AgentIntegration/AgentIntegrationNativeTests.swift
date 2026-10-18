@@ -211,6 +211,7 @@ private final class AgentIntegrationMacHost {
             let hooksURL = runtime.configuration.stateDirectory.appendingPathComponent(
                 "agent-plugins/\(provider.rawValue)/plugins/graftty/hooks/hooks.json")
             let launchEvidence = ["provider": command.provider, "cli": manifest.cli, "requestedPrompt": prompt,
+                "claudeDisableAlternateScreen": ProcessInfo.processInfo.environment["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] ?? "",
                 "initialCommand": driver.configurations[created.session]?.env["GRAFTTY_INITIAL_COMMAND"] ?? "",
                 "installedHooks": try String(contentsOf: hooksURL, encoding: .utf8)]
             let encoder = JSONEncoder()

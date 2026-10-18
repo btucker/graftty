@@ -26,8 +26,7 @@ BASELINE_FILES = (
 )
 TESTS = (
     'GrafttyMobileBrowserTests/WorktreeRowAlignmentTests',
-    'GrafttyMobileBrowserTests/RemoteBrowserButtonTests/drawerPreservesMountedTerminal',
-    'GrafttyMobileBrowserTests/RemoteBrowserButtonTests/contextRemainsAccessibleAfterLastPaneCloses',
+    'GrafttyMobileBrowserTests/RemoteBrowserButtonTests',
     'GrafttyMobileKitTests/PagedSourceGridTests',
 )
 RED_CASES = (

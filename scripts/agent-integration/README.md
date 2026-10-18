@@ -54,8 +54,8 @@ This scenario does not run the generated action sequence or messaging pairings.
 
 Use `--worktree-creation` to run both Claude and Codex through the supported
 `worktree add --agent --wait` CLI while their Mac panes remain unmounted. The
-provider must reach its fake model endpoint before the fixture opens its Mobile
-route. The scenario then checks resize traffic and host/mobile dimensions after
+provider must reach its fake model endpoint and register a reachable agent through
+its real provider hook before the fixture opens its Mobile route. The scenario then checks resize traffic and host/mobile dimensions after
 opening, keyboard changes, rotation, and reconnect; it also scrolls into history
 and compares complete visible numbered rows against the daemon.
 `--worktree-creation-source app-flow` runs the same checks using production
@@ -66,7 +66,24 @@ does not construct `AppServices`. Run both modes to cover both boundaries.
 The existing workflow accepts `worktree_creation=true` and
 `creation_source=cli|app-flow`. Row alignment and Context/Browser geometry use
 separate native view tests; the terminal scenario does not establish those
-visual results.
+visual results. This history-checking scenario sets Claude's supported
+`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` only in its private fixture environment
+and records that mode: the fullscreen renderer keeps old messages inside Claude
+instead of emitting terminal scrollback. Other native scenarios retain their
+existing provider mode. See [Claude rendering modes](https://code.claude.com/docs/en/fullscreen).
+The focused workflow then reuses the built hosts for a bounded default-mode
+Claude creation/open/keyboard/rotation/reconnect run using
+`--worktree-creation-viewport-only`. That run requires endpoint arrival, hook
+registration, real resize stability and matching host/Mobile output, but does
+not assert full-transcript terminal history. Each run retains separate evidence.
+The focused workflow also runs `worktree_startup.py`: it overlays
+only the baseline headless request handler, requires the targeted argv/prompt
+assertion to fail, restores and verifies the candidate source, then runs the
+headless host tests. `worktree_ui.py` similarly preserves source hashes, named
+XCTest results and actual native PNGs. A continued workflow or a successful build
+alone is not a pass: inspect each structured `result.json`, executed required
+cases and artifacts. Failed fixed cases, missing cases and missing images fail
+the workflow, while independently useful provider evidence can still be saved.
 
 Add `--colors` to run a bounded Codex color probe instead of the numbered-row
 and messaging sequence. It streams explicit inline code, a link, Python syntax,
