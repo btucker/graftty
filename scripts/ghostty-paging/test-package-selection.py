@@ -97,6 +97,15 @@ class RendererSelectionTests(unittest.TestCase):
         _, rebuilt, _ = self.manifest()
         self.assertNotEqual(local, rebuilt)
 
+    def test_identical_header_replaced_within_one_second_changes_signature(self):
+        header = self.package()
+        self.env["GRAFTTY_GHOSTTY_PACKAGE_PATH"] = str(self.local)
+        os.utime(header, ns=(1_700_000_000_100_000_000, 1_700_000_000_100_000_000))
+        _, before, _ = self.manifest()
+        os.utime(header, ns=(1_700_000_000_900_000_000, 1_700_000_000_900_000_000))
+        _, after, _ = self.manifest()
+        self.assertNotEqual(before, after)
+
     def test_valid_auto_package_is_also_ignored(self):
         self.package()
         dependency, settings, diagnostic = self.manifest()

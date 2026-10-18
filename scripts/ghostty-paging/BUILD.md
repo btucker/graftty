@@ -49,8 +49,13 @@ xcodebuild -downloadComponent MetalToolchain
 
 After the package build finishes, resolve package dependencies again in Xcode.
 Launch Xcode with `GRAFTTY_GHOSTTY_PACKAGE_PATH` in its environment to opt in.
-For a rebuilt package at the same path, reset Xcode package caches before resolving;
-Xcode can cache the evaluated manifest without tracking the files it reads.
+For Xcode Archive, use the same explicit path and set
+`GRAFTTY_REQUIRE_PAGED_HISTORY=1` in Xcode's launch environment. Plain SwiftPM
+Release builds retain the published development fallback; `bundle.sh` and CI
+require paging for production.
+Xcode can cache an explicitly selected package's manifest without tracking the
+files it reads. For local renderer iteration, use the command-line wrapper below
+or select a new package output path after rebuilding.
 Ordinary builds with no override do not depend on local renderer files.
 For `xcodebuild`, set `GRAFTTY_GHOSTTY_PACKAGE_PATH` to the absolute local package
 path and pass `'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG GRAFTTY_PAGED_HISTORY'`

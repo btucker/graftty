@@ -73,7 +73,8 @@ let rendererIdentity: String = try {
         inputs.append(Data(header.path.utf8))
         inputs.append(try Data(contentsOf: header))
         // A rebuilt identical header also invalidates PCM file metadata.
-        inputs.append(Data(String(describing: try header.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).utf8))
+        let modified = try header.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        inputs.append(Data(String(modified?.timeIntervalSince1970 ?? 0).utf8))
     }
     return digest(inputs)
 }()
