@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -5,7 +8,7 @@ from unittest.mock import patch
 from harness import InvariantFailure, assert_reentry_viewport
 from run import Run
 from worktree_creation import (WorktreeCreationRun, assert_stable_grid, assert_history_rows,
-                               authoritative_history_viewport)
+                               authoritative_history_viewport, provider_hooks_registered)
 
 
 class WorktreeCreationTests(unittest.TestCase):
@@ -100,3 +103,57 @@ class WorktreeCreationTests(unittest.TestCase):
                     run.check_mobile_reentry(provider, 'created-pane-output')
                     check.assert_called_once_with(provider, 'created-pane-output',
                         authoritative_viewport=None if viewport_only else authoritative_history_viewport)
+
+
+class ProviderHookEvidenceTests(unittest.TestCase):
+    def row(self, provider='codex', **changes):
+        row = dict(path='/fixture/worktree', runtime=provider, reachable='true',
+                   transport=provider, runtimeSessionID='session-123', paneSessionName='graftty-created',
+                   transportThreadID='session-123' if provider == 'codex' else '')
+        row.update(changes)
+        return row
+
+    def test_wrapper_presence_is_not_provider_hook_receipt(self):
+        for provider in ('claude', 'codex'):
+            row = self.row(provider, transport='', runtimeSessionID='', transportThreadID='')
+            self.assertFalse(provider_hooks_registered([row], provider, row['path'], 'graftty-created'))
+
+    def test_bound_live_provider_identity_is_required(self):
+        for provider in ('claude', 'codex'):
+            row = self.row(provider)
+            self.assertTrue(provider_hooks_registered([row], provider, row['path'], 'graftty-created'))
+            for changes in (dict(path='/other'), dict(runtime='other'), dict(reachable='false'),
+                            dict(transport='other'), dict(runtimeSessionID=''), dict(paneSessionName='graftty-other')):
+                self.assertFalse(provider_hooks_registered([self.row(provider, **changes)], provider, row['path'], 'graftty-created'))
+        for thread in ('', 'different-session'):
+            self.assertFalse(provider_hooks_registered([self.row(transportThreadID=thread)],
+                                                      'codex', '/fixture/worktree', 'graftty-created'))
+
+    def test_wait_accepts_delayed_binding_and_preserves_evidence(self):
+        run = object.__new__(WorktreeCreationRun)
+        run.paths = {'codex': {'path': '/fixture/worktree', 'session': 'graftty-created'}}
+        wrapper = self.row(transport='', runtimeSessionID='', transportThreadID='')
+        bound = self.row()
+        with tempfile.TemporaryDirectory() as root:
+            run.root = Path(root)
+            with patch.object(run, 'act', side_effect=[{'agents': json.dumps([wrapper])},
+                                                     {'agents': json.dumps([bound])}]) as act, \
+                 patch('worktree_creation.time.monotonic', side_effect=[0, 0]), \
+                 patch('worktree_creation.time.sleep'):
+                run.wait_provider_hooks('codex')
+            self.assertEqual(act.call_count, 2)
+            self.assertEqual(json.loads((run.root / 'codex-creation-hooks.json').read_text()), [bound])
+
+    def test_wait_times_out_on_wrapper_only_and_keeps_failure_evidence(self):
+        run = object.__new__(WorktreeCreationRun)
+        run.paths = {'codex': {'path': '/fixture/worktree', 'session': 'graftty-created'}}
+        wrapper = self.row(transport='', runtimeSessionID='', transportThreadID='')
+        with tempfile.TemporaryDirectory() as root:
+            run.root = Path(root)
+            with patch.object(run, 'act', return_value={'agents': json.dumps([wrapper])}) as act, \
+                 patch('worktree_creation.time.monotonic', side_effect=[0, 0, 5]), \
+                 patch('worktree_creation.time.sleep'), \
+                 self.assertRaisesRegex(InvariantFailure, 'did not bind a live native session'):
+                run.wait_provider_hooks('codex')
+            self.assertEqual(act.call_count, 2)
+            self.assertEqual(json.loads((run.root / 'codex-creation-hooks.json').read_text()), [wrapper])

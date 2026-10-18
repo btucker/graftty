@@ -16,6 +16,45 @@ import WebRTC
 @Suite("@spec TEST-1.10: When the native integration harness creates a worktree through the production background creation flow, the harness shall require backend and initial-command readiness without mounting a terminal view or changing the selected worktree, and preserve startup diagnostics on failure.", .serialized,
     .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_AGENT_INTEGRATION_MANIFEST"] != nil))
 struct AgentIntegrationNativeTests {
+    @Test("Roster JSON distinguishes native provider bindings from wrapper registration")
+    func rosterPreservesNativeIdentity() throws {
+        let records = [
+            TeamPresenceRecord(teamID: "fixture", worktree: "/fixture/claude", runtime: .claude,
+                paneSessionName: "graftty-claude", pid: 1, registeredAt: Date(timeIntervalSince1970: 1),
+                runtimeSessionID: "claude-native-session", agentID: "claude-111111111111",
+                transport: .claude(socketPath: "/fixture/claude.sock", protocolVersion: 1)),
+            TeamPresenceRecord(teamID: "fixture", worktree: "/fixture/codex", runtime: .codex,
+                paneSessionName: "graftty-codex", pid: 2, registeredAt: Date(timeIntervalSince1970: 2),
+                runtimeSessionID: "codex-native-thread", agentID: "codex-222222222222",
+                transport: .codex(binaryPath: "/fixture/codex", socketPath: "/fixture/codex.sock",
+                    threadID: "codex-native-thread", activeTurnID: nil)),
+            TeamPresenceRecord(teamID: "fixture", worktree: "/fixture/wrapper", runtime: .codex,
+                paneSessionName: "graftty-wrapper", pid: 3, registeredAt: Date(timeIntervalSince1970: 3),
+                agentID: "codex-333333333333"),
+        ]
+        let json = try AgentIntegrationRoster.encode(records: records, isReachable: { _ in true })
+        let rows = try JSONDecoder().decode([[String: String]].self, from: Data(json.utf8))
+        #expect(rows.count == records.count)
+        for record in records {
+            let row = try #require(rows.first { $0["path"] == record.worktree })
+            #expect(row["id"] == record.agentID)
+            #expect(row["runtime"] == record.runtime.rawValue)
+            #expect(row["reachable"] == "true")
+            #expect(row["paneSessionName"] == record.paneSessionName)
+            #expect(row["runtimeSessionID"] == (record.runtimeSessionID ?? ""))
+        }
+        let claude = try #require(rows.first { $0["runtime"] == "claude" })
+        #expect(claude["transport"] == "claude")
+        #expect(claude["transportThreadID"] == "")
+        let codex = try #require(rows.first { $0["path"] == "/fixture/codex" })
+        #expect(codex["transport"] == "codex")
+        #expect(codex["transportThreadID"] == "codex-native-thread")
+        let wrapper = try #require(rows.first { $0["path"] == "/fixture/wrapper" })
+        #expect(wrapper["runtimeSessionID"] == "")
+        #expect(wrapper["transport"] == "")
+        #expect(wrapper["transportThreadID"] == "")
+    }
+
     @Test("@spec TEST-1.4: When real scripted agents move between native Mac and mobile displays, the integration harness shall exercise production terminal ownership and messaging paths and fail if a commanded native action fails.", .timeLimit(.minutes(15)))
     func nativeClients() async throws {
         let path = try #require(ProcessInfo.processInfo.environment["GRAFTTY_AGENT_INTEGRATION_MANIFEST"])
@@ -28,6 +67,39 @@ struct AgentIntegrationNativeTests {
             throw error
         }
         await host.close()
+    }
+}
+
+private enum AgentIntegrationRoster {
+    static func encode(
+        records: [TeamPresenceRecord],
+        isReachable: (TeamPresenceRecord) -> Bool = TeamAgentReachability.isReachable
+    ) throws -> String {
+        let directory = TeamAgentDirectory(records: records, isReachable: isReachable)
+        let agents = directory.agents.map { agent -> [String: String] in
+            let record = records.first {
+                TeamAgentDirectory.identity(for: $0) == agent.id
+                    && $0.teamID == agent.teamID && $0.worktree == agent.worktreePath
+                    && $0.paneSessionName == agent.paneSessionName
+                    && $0.registeredAt == agent.registeredAt && $0.transport == agent.transport
+            }
+            var row = ["id": agent.id.rawValue, "path": agent.worktreePath,
+                "runtime": agent.runtime.rawValue, "reachable": String(agent.isReachable),
+                "runtimeSessionID": record?.runtimeSessionID ?? "",
+                "paneSessionName": agent.paneSessionName ?? "",
+                "transport": "", "transportThreadID": ""]
+            switch agent.transport {
+            case .claude:
+                row["transport"] = "claude"
+            case .codex(_, _, let threadID, _):
+                row["transport"] = "codex"
+                row["transportThreadID"] = threadID
+            case nil:
+                break
+            }
+            return row
+        }
+        return String(decoding: try JSONEncoder().encode(agents), as: UTF8.self)
     }
 }
 
@@ -225,10 +297,7 @@ private final class AgentIntegrationMacHost {
         }
         if command.operation == "roster" {
             let records = try TeamPresenceStorage(rootDirectory: runtime.configuration.stateDirectory.appendingPathComponent("teams")).listAll()
-            let directory = TeamAgentDirectory(records: records, isReachable: TeamAgentReachability.isReachable)
-            let agents = directory.agents.map { ["id": $0.id.rawValue, "path": $0.worktreePath,
-                "runtime": $0.runtime.rawValue, "reachable": String($0.isReachable)] }
-            return ["agents": String(decoding: try JSONEncoder().encode(agents), as: UTF8.self)]
+            return ["agents": try AgentIntegrationRoster.encode(records: records)]
         }
         if command.operation == "recreate" {
             let old = try #require(panes[command.provider])

@@ -8,6 +8,17 @@ from model import reentry_scenario_text
 from run import Run
 
 
+def provider_hooks_registered(roster, agent, path, session):
+    # Codex's wrapper registers a live PID before its TUI or hooks run.
+    # Require the native identity that SessionStart binds to that transport.
+    return any(row.get('path') == path and row.get('runtime') == agent
+               and row.get('paneSessionName') == session
+               and row.get('reachable') == 'true' and row.get('transport') == agent
+               and bool(row.get('runtimeSessionID'))
+               and (agent != 'codex' or row.get('transportThreadID') == row['runtimeSessionID'])
+               for row in roster)
+
+
 def assert_history_rows(visible, authoritative):
     # Physical clipping can truncate the first and last visible rows. Require
     # at least one complete row between them and compare against daemon history.
@@ -77,6 +88,18 @@ def assert_stable_grid(samples):
 
 
 class WorktreeCreationRun(Run):
+    def wait_provider_hooks(self, agent, timeout=5):
+        deadline = time.monotonic() + timeout
+        while True:
+            roster = json.loads(self.act(Action('roster'))['agents'])
+            # Preserve the actual last observation on success and on timeout.
+            (self.root / f'{agent}-creation-hooks.json').write_text(json.dumps(roster, indent=2))
+            if provider_hooks_registered(roster, agent, self.paths[agent]['path'], self.paths[agent]['session']):
+                return
+            if time.monotonic() >= deadline:
+                raise InvariantFailure(f'{agent} provider hooks did not bind a live native session: {roster}')
+            time.sleep(.1)
+
     def check_mobile_reentry(self, agent, stage):
         oracle = None if self.options.worktree_creation_viewport_only else authoritative_history_viewport
         super().check_mobile_reentry(agent, stage, authoritative_viewport=oracle)
@@ -154,11 +177,7 @@ class WorktreeCreationRun(Run):
                     self.act(Action('input', agent, {'text': '2'}))
                     last_review = time.monotonic()
                 time.sleep(.1)
-            roster = json.loads(self.act(Action('roster'))['agents'])
-            if not any(row['path'] == self.paths[agent]['path'] and row['runtime'] == agent
-                       and row['reachable'] == 'true' for row in roster):
-                raise InvariantFailure(f'{agent} provider hooks did not register the background agent')
-            (self.root / f'{agent}-creation-hooks.json').write_text(json.dumps(roster, indent=2))
+            self.wait_provider_hooks(agent)
             self.summary['assertions'].append({'agent': agent, 'launchedWithoutSelection': True,
                                                'providerHooksRegistered': True})
             # Only after provider startup do we open the actual mobile route.
