@@ -563,6 +563,9 @@ def main():
     parser.add_argument('--ghostty-package', type=Path, required=True, help='Snapshot-enabled local Ghostty package')
     parser.add_argument('--simulator', help='Use this test device without deleting it; default creates a private device')
     parser.add_argument('--mac-only', action='store_true', help='Debug the native Mac and messaging paths without claiming mobile coverage')
+    parser.add_argument('--worktree-creation', action='store_true', help='Create provider worktrees through the CLI without mounting Mac panes, then verify mobile viewport stability')
+    parser.add_argument('--worktree-creation-source', choices=('cli', 'app-flow'), default='cli',
+                        help='Startup boundary for --worktree-creation; app-flow exercises AddWorktreeFlow and TerminalManager')
     parser.add_argument('--worktree-reentry', action='store_true', help='Test retained mobile routes with keyboard changes and hidden ownership transitions')
 
     parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
@@ -580,6 +583,8 @@ def main():
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
+    if options.worktree_creation and (options.worktree_reentry or options.colors or options.mac_only or options.replay or options.shrink):
+        parser.error('--worktree-creation requires the standalone native mobile scenario')
     if options.worktree_reentry and options.colors:
         parser.error('--worktree-reentry and --colors are separate scenarios')
     if options.worktree_reentry and options.mac_only:
@@ -587,7 +592,10 @@ def main():
     if options.worktree_reentry and (options.replay or options.shrink):
         parser.error('--worktree-reentry does not use generated action replay or shrinking')
     actions = [Action(**value) for value in json.loads(options.replay.read_text())] if options.replay else None
-    if options.colors:
+    if options.worktree_creation:
+        from worktree_creation import WorktreeCreationRun
+        run = WorktreeCreationRun(options)
+    elif options.colors:
         if options.replay or options.shrink:
             parser.error('--colors does not support generated-action replay or shrinking')
         from colors import ColorRun

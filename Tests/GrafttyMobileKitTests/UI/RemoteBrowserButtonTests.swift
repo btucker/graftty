@@ -13,7 +13,7 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct RemoteBrowserButtonTests {
-    @Test("Opening and closing context preserves the mounted terminal and pending request", .timeLimit(.minutes(1)))
+    @Test("@spec CONTEXT-10: While mobile terminal controls are visible, the application shall display an icon-only Context action immediately left of Browser in the same floating control group, retain separate accessible actions, and preserve the mounted terminal and pending request when opening or closing context.", .timeLimit(.minutes(1)))
     func drawerPreservesMountedTerminal() async throws {
         let recap = AttentionRecap(title: "Worktree context", context: "Help me reload my context when returning to a worktree.",
             completed: "Built a current brief with expandable history.", next: "Try it on a phone.", need: "Does the drawer read well?",
@@ -28,14 +28,37 @@ struct RemoteBrowserButtonTests {
         let window = UIWindow(windowScene: scene)
         window.frame = scene.coordinateSpace.bounds
         let host = UIHostingController(rootView: Color.black
+            .overlay(alignment: .topTrailing) {
+                RemoteOpenButton(host: Host(label: "Mac", baseURL: URL(string: "https://mac.local")!),
+                    worktree: "/task", coordinator: RemoteConnectionCoordinator(), sessionName: "pane",
+                    ownerDeviceID: .init(value: "phone"), isActive: true,
+                    managementTransport: { _, _ in .openResource(.offers([])) },
+                    browserConnectionReady: true, isPaneFocused: true, hasOwnershipSnapshot: true,
+                    isPaneOwner: { true }, canPresentAuthentication: { true }, terminalRequest: .constant(nil))
+                    .padding(12)
+            }
+            .modifier(MobileWorktreeContextDrawer(context: nil))
             .modifier(MobileWorktreeContextDrawer(context: navigation.worktreeContext(row)))
             .accessibilityElement(children: .contain)
             .environment(\.accessibilityEnabled, true))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        try await Task.sleep(for: .milliseconds(150))
+        let controlsImage = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        let controlsDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-worktree-ui-renders")
+        try FileManager.default.createDirectory(at: controlsDirectory, withIntermediateDirectories: true)
+        try #require(controlsImage.pngData()).write(to: controlsDirectory.appendingPathComponent("context-browser-group.png"))
         try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Worktree context" } }
         let open = try #require(accessibilityObjects(in: host.view).first { $0.accessibilityLabel == "Worktree context" })
+        let browser = try #require(accessibilityObjects(in: host.view).first { $0.accessibilityLabel == "Browser" })
+        #expect(abs(open.accessibilityFrame.midY - browser.accessibilityFrame.midY) < 1)
+        #expect(browser.accessibilityFrame.minX - open.accessibilityFrame.maxX >= 0)
+        #expect(browser.accessibilityFrame.minX - open.accessibilityFrame.maxX <= 12)
+        #expect(open.accessibilityFrame.width >= 44 && open.accessibilityFrame.height >= 44)
+        #expect(open.accessibilityFrame.width < 60, "Context must occupy a glyph target, without a visible text label")
         try #require(open.accessibilityActivate())
         try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Close context" } }
         try await Task.sleep(for: .milliseconds(350))
@@ -44,6 +67,53 @@ struct RemoteBrowserButtonTests {
         try #require(close.accessibilityActivate())
         try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Worktree context" } }
         #expect(window.rootViewController === host)
+    }
+
+    @Test("@spec CONTEXT-11: When the selected iPad worktree has no focused terminal pane, the application shall retain an accessible icon-only Context action that opens its worktree context without starting or focusing a pane.", .timeLimit(.minutes(1)))
+    func contextRemainsAccessibleAfterLastPaneCloses() async throws {
+        let defaultsName = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let state = IPadAppState(defaults: defaults)
+        let row = WorktreePanes(path: "/task", displayName: "finished-task", repoDisplayName: "graftty",
+            displayBranch: "finished-task", state: .closed, isMainCheckout: false,
+            prBadge: nil, stats: nil, attentionText: nil, layout: nil)
+        state.selectedWorktreePath = row.path
+        state.focusedPaneId = "last-pane"
+        IPadRootLayout.onWorktreeListChanged(appState: state, list: [row])
+        #expect(state.selectedWorktreePath == row.path)
+        #expect(state.focusedPaneId == nil)
+
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        let host = UIHostingController(rootView: IPadDetailColumn(
+            host: Host(label: "Mac", baseURL: URL(string: "https://mac.local")!), appState: state,
+            coordinator: RemoteConnectionCoordinator(connectionsAllowedInitially: false),
+            paneEnvironment: .empty,
+            ghosttyCommandContext: .init(keybindingSet: .loading, perform: { _ in }, isEnabled: { _ in false }),
+            onSelectPane: { _ in Issue.record("Opening context must not select a pane") }, onBackToWorktrees: {})
+            .accessibilityElement(children: .contain).environment(\.accessibilityEnabled, true))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+
+        try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Worktree context" } }
+        let open = try #require(accessibilityObjects(in: host.view).first { $0.accessibilityLabel == "Worktree context" })
+        #expect(open.accessibilityFrame.width >= 44 && open.accessibilityFrame.height >= 44)
+        #expect(open.accessibilityFrame.width < 60)
+        #expect(!accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Browser" })
+        try #require(open.accessibilityActivate())
+        try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Close context" } }
+        let close = try #require(accessibilityObjects(in: host.view).first { $0.accessibilityLabel == "Close context" })
+        try #require(close.accessibilityActivate())
+        try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Worktree context" } }
+        #expect(state.focusedPaneId == nil)
+        #expect(state.focusRequestCount == 0)
+        state.selectedWorktreePath = nil
+        try await waitUntil { !accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Worktree context" } }
     }
 
     @Test("@spec NOTIF-1.22: When the mobile application initializes, the application shall install its notification delegate before constructing the root view so launch notification responses can be received.")

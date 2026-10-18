@@ -13,7 +13,7 @@ import WebRTC
 @testable import GrafttyKit
 
 @MainActor
-@Suite("Native scripted agent integration", .serialized,
+@Suite("@spec TEST-1.10: When the native integration harness creates a worktree through the production background creation flow, the harness shall require backend and initial-command readiness without mounting a terminal view or changing the selected worktree, and preserve startup diagnostics on failure.", .serialized,
     .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_AGENT_INTEGRATION_MANIFEST"] != nil))
 struct AgentIntegrationNativeTests {
     @Test("@spec TEST-1.4: When real scripted agents move between native Mac and mobile displays, the integration harness shall exercise production terminal ownership and messaging paths and fail if a commanded native action fails.", .timeLimit(.minutes(15)))
@@ -54,6 +54,7 @@ private final class AgentIntegrationMacHost {
     var panes: [String: Pane] = [:]
     var tickObserver: NSObjectProtocol?
     var finishedSuccessfully = false
+    var productionCreation: ProductionWorktreeCreationFixture?
     var repo: String { root.appendingPathComponent("repository").path }
 
     init(manifest: AgentIntegrationManifest) async throws {
@@ -132,7 +133,10 @@ private final class AgentIntegrationMacHost {
     func run() async throws {
         let transport = AgentIntegrationTransport(endpoint: manifest.endpoint, client: "mac")
         let fingerprint = RemoteIdentityFingerprint(of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation))
+        let executable = try #require(Bundle(for: AgentIntegrationMacHost.self).executableURL)
+        let executableHash = SHA256.hash(data: try Data(contentsOf: executable)).map { String(format: "%02x", $0) }.joined()
         try await transport.register(["fingerprint": String(decoding: JSONEncoder().encode(fingerprint), as: UTF8.self),
+            "nativeExecutable": executable.path, "nativeExecutableSHA256": executableHash,
             "clientKey": phoneKey.rawRepresentation.base64EncodedString()])
         try await transport.run { [self] in try await handle($0) }
         #expect(finishedSuccessfully, "The integration controller must finish with a passing result")
@@ -154,25 +158,57 @@ private final class AgentIntegrationMacHost {
         if command.operation == "start" {
             let provider = command.provider.hasPrefix("claude") ? TeamHookRuntime.claude : .codex
             let prompt = "GRAFTTY_TEST_BEGIN \(command.provider)"
-            let exactCommand = provider == .claude
-                ? "claude --permission-mode manual -- " + WorktreeAgentLaunchCommand.shellLiteral(prompt) : nil
-            let launch = try WorktreeAgentLaunchCommand.prepare(agent: provider, prompt: prompt, exactCommand: exactCommand,
-                promptDirectory: root.appendingPathComponent("prompts"))
-            // Per-agent model URL is inherited by both Codex processes. The
-            // generated wrapper and provider plugins remain installed and active.
-            let base = manifest.endpoint.appendingPathComponent("model/\(command.provider)").absoluteString
-            let environment = provider == .claude ? "ANTHROPIC_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base))"
-                : "OPENAI_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base + "/v1"))"
-            let initial = "export GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(command.provider)) \(environment)\n" + (launch.command ?? "")
-            let created = try await runtime.createWorktree(repository: repo, name: command.provider,
-                branch: command.provider, command: initial)
-            let native = try #require(driver.panes[created.session])
-            panes[command.provider] = Pane(path: created.path, session: created.session,
-                handle: native.handle, window: native.window)
+            let background = command.parameters["background"] == "true"
+            driver.mountNewPanes = !background
+            defer { driver.mountNewPanes = true }
+            let created: (path: String, session: String)
+            if background, command.parameters["backgroundFlow"] == "app-flow" {
+                if productionCreation == nil {
+                    productionCreation = ProductionWorktreeCreationFixture(runtime: runtime,
+                        ownership: ownership, attachments: attachments, root: root)
+                }
+                let launched = try await productionCreation!.create(repository: repo, name: command.provider,
+                    initialCommand: initialCommand(provider: provider, name: command.provider))
+                created = (launched.path, launched.session)
+                // A window is retained only for later explicit visibility actions.
+                // No view is attached during provider launch or mobile ownership.
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                    styleMask: [.titled, .resizable], backing: .buffered, defer: true)
+                panes[command.provider] = Pane(path: created.path, session: created.session,
+                    handle: launched.handle, window: window)
+            } else if background {
+                // The CLI uses the isolated control socket. No selection, layout,
+                // or visible native window is allowed to kick off this launch.
+                let result = try await CLIRunner().capture(command: "/usr/bin/env", args: [
+                    "GRAFTTY_SOCK=" + runtime.configuration.socketPath, manifest.cli,
+                    "worktree", "add", command.provider, "--base", "HEAD", "--agent", provider.rawValue,
+                    "--prompt", prompt, "--wait", "--timeout", "90"
+                ], at: repo, timeout: .seconds(100))
+                try ("exit=\(result.exitCode)\n" + result.stdout + "\nstderr:\n" + result.stderr)
+                    .write(to: root.appendingPathComponent(command.provider + "-creation-cli.txt"),
+                        atomically: true, encoding: .utf8)
+                guard result.exitCode == 0 else {
+                    throw AgentIntegrationError("Background CLI creation failed: " + result.stderr)
+                }
+                let path = repo + "/.worktrees/" + command.provider
+                let session = try #require(runtime.sessions().first { $0.worktreePath == path })
+                created = (path, session.name)
+            } else {
+                let initial = try initialCommand(provider: provider, name: command.provider)
+                created = try await runtime.createWorktree(repository: repo, name: command.provider,
+                    branch: command.provider, command: initial)
+            }
+            if panes[command.provider] == nil {
+                let native = try #require(driver.panes[created.session])
+                panes[command.provider] = Pane(path: created.path, session: created.session,
+                    handle: native.handle, window: native.window)
+            }
+            let native = try #require(panes[command.provider])
             let keys = ["NO_COLOR", "TERM", "COLORTERM", "TERM_PROGRAM", "FORCE_COLOR"]
             let hostEnv = ProcessInfo.processInfo.environment.filter { keys.contains($0.key) }
             let terminalEnv = driver.configurations[created.session]?.env.filter { keys.contains($0.key) } ?? [:]
             return ["session": created.session, "path": created.path,
+                "viewMounted": String(native.handle.view.window != nil),
                 "hostColorEnvironment": String(decoding: try JSONEncoder().encode(hostEnv), as: UTF8.self),
                 "terminalColorEnvironment": String(decoding: try JSONEncoder().encode(terminalEnv), as: UTF8.self)]
         }
@@ -349,7 +385,7 @@ private final class AgentIntegrationMacHost {
         let selectedText = hasSelection && selected.text != nil ? String(cString: selected.text) : ""
         if hasSelection { ghostty_surface_free_text(pane.handle.surface, &selected) }
         let terminal = pane.handle.view
-        var values = ["text": text, "nativeText": nativeText, "buffer": bufferText, "anchor": AgentIntegrationAnchor.first(in: text),
+        var values = ["text": text, "viewMounted": String(pane.handle.view.window != nil), "nativeText": nativeText, "buffer": bufferText, "anchor": AgentIntegrationAnchor.first(in: text),
             "physicalRows": try physicalRows(pane.handle.surface),
             "surfaceFrame": NSStringFromRect(terminal.frame), "surfaceBounds": NSStringFromRect(terminal.bounds),
             "visibleRect": NSStringFromRect(terminal.visibleRect),
@@ -396,11 +432,27 @@ private final class AgentIntegrationMacHost {
         guard let value = Double(try required(command, key)), (100...2000).contains(value) else { throw AgentIntegrationError("invalid dimension") }
         return value
     }
+    private func initialCommand(provider: TeamHookRuntime, name: String) throws -> String {
+        let prompt = "GRAFTTY_TEST_BEGIN \(name)"
+        let exactCommand = provider == .claude
+            ? "claude --permission-mode manual -- " + WorktreeAgentLaunchCommand.shellLiteral(prompt) : nil
+        let launch = try WorktreeAgentLaunchCommand.prepare(agent: provider, prompt: prompt, exactCommand: exactCommand,
+            promptDirectory: root.appendingPathComponent("prompts"))
+        // Per-agent model URL is inherited by both Codex processes. The
+        // generated wrapper and provider plugins remain installed and active.
+        let base = manifest.endpoint.appendingPathComponent("model/\(name)").absoluteString
+        let environment = provider == .claude ? "ANTHROPIC_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base))"
+            : "OPENAI_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base + "/v1"))"
+        return "export GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(name)) \(environment)\n" + (launch.command ?? "")
+    }
+
     func close() async {
         await agent?.close(); agent = nil
         if let tickObserver { NotificationCenter.default.removeObserver(tickObserver) }
         for pane in panes.values { pane.window.orderOut(nil); pane.window.contentView = nil }
         panes.removeAll()
+        productionCreation?.close()
+        productionCreation = nil
         let sessions = runtime.sessions()
         for session in sessions { try? await runtime.closePane(target: session.name) }
         try? runtime.shutdown()
@@ -423,6 +475,7 @@ private final class AgentIntegrationMacDriver: HostTerminalDriver {
     let commands: ZmxHostTerminalDriver
     var panes: [String: Pane] = [:]
     var configurations: [String: ZmxSpawnConfiguration] = [:]
+    var mountNewPanes = true
 
     init(app: GhosttyApp, configuration: HostConfiguration,
          ownership: SessionDisplayOwnershipStore, attachments: RemoteAttachmentRegistry) {
@@ -446,13 +499,21 @@ private final class AgentIntegrationMacDriver: HostTerminalDriver {
         let window = NSWindow(contentRect: NSRect(x: 20, y: 20, width: 1000, height: 700),
             styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.title = "Graftty integration: " + spawn.sessionName
-        window.contentView = NSHostingView(rootView: SurfaceViewWrapper(handle: handle,
-            theme: app.theme, onFocusTerminal: {}))
-        window.orderFront(nil)
-        window.contentView?.layoutSubtreeIfNeeded()
-        handle.setVisible(true)
+        if mountNewPanes {
+            window.contentView = NSHostingView(rootView: SurfaceViewWrapper(handle: handle,
+                theme: app.theme, onFocusTerminal: {}))
+            window.orderFront(nil)
+            window.contentView?.layoutSubtreeIfNeeded()
+            handle.setVisible(true)
+        } else {
+            window.contentView = nil
+            handle.setVisible(false)
+        }
         guard handle.startForBackgroundLaunch() else { throw AgentIntegrationError("Mac surface failed to start") }
-        handle.resyncVisibleGrid()
+        if !mountNewPanes {
+            guard await handle.waitForBackendStartup() else { throw AgentIntegrationError("Mac shell startup was not acknowledged") }
+        }
+        if mountNewPanes { handle.resyncVisibleGrid() }
         panes[spawn.sessionName] = Pane(handle: handle, window: window)
         let deadline = Date().addingTimeInterval(5)
         while !(try await sessions()).contains(spawn.sessionName) {

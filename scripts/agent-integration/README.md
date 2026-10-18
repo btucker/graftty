@@ -52,6 +52,22 @@ grid fail the run. Native observations and screenshots retain the action IDs;
 each stage saves the corresponding Mac observation and daemon text.
 This scenario does not run the generated action sequence or messaging pairings.
 
+Use `--worktree-creation` to run both Claude and Codex through the supported
+`worktree add --agent --wait` CLI while their Mac panes remain unmounted. The
+provider must reach its fake model endpoint before the fixture opens its Mobile
+route. The scenario then checks resize traffic and host/mobile dimensions after
+opening, keyboard changes, rotation, and reconnect; it also scrolls into history
+and compares complete visible numbered rows against the daemon.
+`--worktree-creation-source app-flow` runs the same checks using production
+`AddWorktreeFlow` and `TerminalManager` startup, with backend readiness, command
+delivery, shell-execution receipt, unchanged selection, and unmounted-view
+assertions. That mode shares the isolated headless control server's state; it
+does not construct `AppServices`. Run both modes to cover both boundaries.
+The existing workflow accepts `worktree_creation=true` and
+`creation_source=cli|app-flow`. Row alignment and Context/Browser geometry use
+separate native view tests; the terminal scenario does not establish those
+visual results.
+
 Add `--colors` to run a bounded Codex color probe instead of the numbered-row
 and messaging sequence. It streams explicit inline code, a link, Python syntax,
 and diff additions and deletions through the real managed Codex TUI. Native

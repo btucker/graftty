@@ -2006,6 +2006,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.48** When a paged source grid arrives before the mobile terminal surface mounts, the application shall wait for native readiness before completing the ordered grid operation.
 
+**IOS-4.49** When an owning mobile pane receives an in-band source grid, the application shall update the parser without fitting the physical viewport to that grid, while continuing to report keyboard, rotation, and font size changes.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -2163,6 +2165,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-9.14** While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and Git divergence.
 
 **IOS-9.15** When mobile worktree creation fails, the application shall remove its temporary row and show the error outside the dismissed form.
+
+**IOS-9.16** While a mobile worktree row is creating, deleting, or opening, the application shall center its progress indicator beside the primary title without moving the title baseline or enlarging the row.
 
 ### IOS-10.x
 
@@ -3836,6 +3840,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-9** When a worktree has a pending request without a saved brief, the application shall display its message in the context report until that request is dismissed.
 
+### CONTEXT-10.x
+
+**CONTEXT-10** While mobile terminal controls are visible, the application shall display an icon-only Context action immediately left of Browser in the same floating control group, retain separate accessible actions, and preserve the mounted terminal and pending request when opening or closing context.
+
+### CONTEXT-11.x
+
+**CONTEXT-11** When the selected iPad worktree has no focused terminal pane, the application shall retain an accessible icon-only Context action that opens its worktree context without starting or focusing a pane.
+
 ## MEM — MEM
 
 ### MEM-1.x
@@ -4257,3 +4269,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.8** When a scripted terminal is hidden and shown to reproduce worktree switching, the integration harness shall remount its retained surface or mobile route and observe its viewport and physical rows.
 
 **TEST-1.9** When a native integration color probe runs, the test harness shall require chromatic rendered pixels on the current stream stage's inline-code, link, syntax, deletion, and addition rows, and shall reject missing or monochrome samples.
+
+**TEST-1.10** When the native integration harness creates a worktree through the production background creation flow, the harness shall require backend and initial-command readiness without mounting a terminal view or changing the selected worktree, and preserve startup diagnostics on failure.

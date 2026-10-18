@@ -44,6 +44,7 @@ struct GrafttyMobileTestHost: App {
 #if GRAFTTY_BROWSER_CONTROL_FIXTURE
 private struct WorktreeContextFixture: View {
     @State private var mounts = 0
+    @State private var coordinator = RemoteConnectionCoordinator()
     private let row: WorktreePanes = {
         let recap = AttentionRecap(title: "Worktree context", context: "Help me reload my context when returning to a worktree.",
             completed: "Built a current brief with expandable history.", next: "Try it on a phone.",
@@ -57,6 +58,15 @@ private struct WorktreeContextFixture: View {
     var body: some View {
         ScrollbackFixture()
             .onAppear { mounts += 1 }
+            .overlay(alignment: .topTrailing) {
+                RemoteOpenButton(host: Host(label: "Fixture", baseURL: URL(string: "https://fixture.invalid")!),
+                    worktree: row.path, coordinator: coordinator, sessionName: "fixture",
+                    ownerDeviceID: .init(value: "fixture-phone"), isActive: true,
+                    managementTransport: { _, _ in .openResource(.offers([])) },
+                    browserConnectionReady: true, isPaneFocused: true, hasOwnershipSnapshot: true,
+                    isPaneOwner: { true }, canPresentAuthentication: { true }, terminalRequest: .constant(nil))
+                    .padding(12)
+            }
             .overlay(alignment: .bottom) {
                 Text("Terminal mounts: \(mounts)")
                     .accessibilityIdentifier("Context terminal mounts")
