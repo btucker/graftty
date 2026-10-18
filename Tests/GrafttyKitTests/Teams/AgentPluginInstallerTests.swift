@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 import Testing
 @testable import GrafttyKit
 
@@ -734,7 +735,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents for concise context explaining the problem and why solving it matters, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
+    @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents to lead with the stable problem being solved and why it matters, followed by verified progress, next steps, retained decisions, meaningful checkpoints, and task-related emoji choices, with a user question only when input is needed.
     """)
     func materializedRecapSkillRequestsTaskContext() throws {
         for skill in try preparedSkillTexts(named: "graftty") {
@@ -747,6 +748,14 @@ struct AgentPluginInstallerTests {
             #expect(Set(alternatives).count == alternatives.count)
             #expect(!alternatives.contains(try #require(recap["emoji"] as? String)))
             #expect(recap["need"] == nil)
+            let checkpoint = try #require(recap["checkpoint"] as? String)
+            let decisions = try #require(recap["decisions"] as? [String])
+            #expect(!checkpoint.isEmpty)
+            #expect(!decisions.isEmpty)
+            let data = try JSONSerialization.data(withJSONObject: recap)
+            let report = try JSONDecoder().decode(AttentionRecap.self, from: data)
+            #expect(report.isValid)
+            #expect(report.purposeChanged != true)
         }
     }
 

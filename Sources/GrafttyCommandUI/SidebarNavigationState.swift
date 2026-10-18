@@ -27,10 +27,6 @@ public final class SidebarNavigationState {
     private var retainedReports: [SidebarActivityItem] = []
     private var opening: [UUID: Opening] = [:]
     private var selectionOpeningID: UUID?
-    private var bannerSnapshotReceived = false
-    private var bannerOccurrences: [String: SidebarAttentionOccurrence] = [:]
-    private var attentionBanners: [SidebarActivityItem] = []
-    public var attentionBanner: SidebarActivityItem? { attentionBanners.first }
     private let defaults: UserDefaults
     private let prefix: String
     public init(prefix: String, defaults: UserDefaults = .standard, collapsed: Bool = false) {
@@ -53,7 +49,6 @@ public final class SidebarNavigationState {
         updateAttentionItems([item])
         history.open(item)
         persistHistory()
-        dismissAttentionBanner(item)
     }
     public func beginOpening(_ item: SidebarActivityItem) -> UUID {
         let id = UUID()
@@ -127,50 +122,12 @@ public final class SidebarNavigationState {
     }
     public func updateAttentionItems(_ live: [SidebarActivityItem]) {
         retainReports(live)
-        observeAttentionBanners(live)
-        pruneAttentionBanners(live: live)
         var next = workspace
         next.merge(live)
         storeWorkspace(next)
     }
 
-    private func observeAttentionBanners(_ live: [SidebarActivityItem]) {
-        var incoming: [SidebarActivityItem] = []
-        for item in SidebarActivityFilter.all.apply(to: live).reversed() where item.needsAttention {
-            guard let occurrence = item.occurrence else { continue }
-            if let previous = bannerOccurrences[item.id] {
-                if previous == occurrence { continue }
-                if let timestamp = occurrence.timestamp, let previousTimestamp = previous.timestamp,
-                   timestamp <= previousTimestamp { continue }
-            }
-            bannerOccurrences[item.id] = occurrence
-            if bannerSnapshotReceived, !item.isBusy, !hasViewed(item) {
-                incoming.append(item)
-            }
-        }
-        bannerSnapshotReceived = true
-        attentionBanners = SidebarAttentionWorkspace.cards(from: attentionBanners + incoming)
-    }
-
-    public func dismissAttentionBanner(_ item: SidebarActivityItem) {
-        attentionBanners.removeAll { $0.id == item.id && $0.occurrence == item.occurrence }
-    }
-
-    private func pruneAttentionBanners(live: [SidebarActivityItem], authoritativeProjectIDs: Set<String> = []) {
-        let current = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        attentionBanners = attentionBanners.compactMap { item in
-            guard !hasViewed(item) else { return nil }
-            guard let pending = current[item.id] else {
-                return authoritativeProjectIDs.contains(item.projectID) ? nil : item
-            }
-            if pending.occurrence != item.occurrence,
-               let timestamp = pending.occurrence?.timestamp, let queuedTimestamp = item.occurrence?.timestamp,
-               timestamp <= queuedTimestamp { return item }
-            return pending.needsAttention && !pending.isBusy && pending.occurrence == item.occurrence ? pending : nil
-        }
-    }
-
-    public func beginOpeningAttentionBanner(_ item: SidebarActivityItem, projects: [SidebarProject],
+    public func beginOpeningWorktreeRequest(_ item: SidebarActivityItem, projects: [SidebarProject],
                                             items: [SidebarActivityItem]) -> UUID {
         updateAttentionItems(items)
         showProject(item.projectID)
@@ -203,16 +160,13 @@ public final class SidebarNavigationState {
     }
 
     public func reconcile(worktrees: [WorktreePanes], projects: [SidebarProject], authoritativeProjectIDs: Set<String>? = nil) {
-        observeAttentionBanners(SidebarProjection.activity(worktrees))
         let availableProjectIDs = Set(projects.filter(\.isAvailable).map(\.id))
             .intersection(authoritativeProjectIDs ?? Set(projects.map(\.id)))
         retainReports(worktrees.map { worktreeContext($0).item }, worktrees: worktrees,
                       authoritativeProjectIDs: availableProjectIDs)
-        pruneAttentionBanners(live: SidebarProjection.activity(worktrees), authoritativeProjectIDs: availableProjectIDs)
         var cards = workspace
         cards.reconcile(worktrees: worktrees, availableProjectIDs: availableProjectIDs)
         let deletedIDs = Set(workspace.items.map(\.id)).subtracting(cards.items.map(\.id))
-        attentionBanners.removeAll { deletedIDs.contains($0.id) }
         opening = opening.filter { !deletedIDs.contains($0.value.item.id) }
         if let selectedAttentionID, deletedIDs.contains(selectedAttentionID) {
             self.selectedAttentionID = nil
@@ -229,7 +183,6 @@ public final class SidebarNavigationState {
         let forgotten = next.items.filter { $0.worktreeIdentity == target?.worktreeIdentity }.map(\.id)
         next.dismiss(id)
         storeWorkspace(next)
-        attentionBanners.removeAll { $0.worktreeIdentity == target?.worktreeIdentity }
         for forgottenID in forgotten { history.remove(forgottenID) }
         persistHistory()
     }
@@ -238,7 +191,6 @@ public final class SidebarNavigationState {
         var next = workspace
         for item in context.pending {
             next.dismissOccurrence(item)
-            dismissAttentionBanner(item)
         }
         storeWorkspace(next)
     }

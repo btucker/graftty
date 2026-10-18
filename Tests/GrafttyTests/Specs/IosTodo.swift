@@ -109,11 +109,6 @@ struct IosTodo {
     func ios_8_4() async throws { }
 
     @Test("""
-@spec IOS-8.5: The v1 iOS app shall not use push notifications for PR status, build completions, or session events.
-""", .disabled("not yet implemented"))
-    func ios_8_5() async throws { }
-
-    @Test("""
 @spec IOS-9.1: The worktree-picker screen (`IOS-4.1`) shall display an "Add Worktree" action as a primary toolbar item. Tapping it shall present a modal sheet collecting the fields required by the authenticated `.createWorktree` request: a repository picker populated by `.listRepositories` (hidden when only one repo is tracked), a worktree-name field, and a branch-name field.
 """, .disabled("not yet implemented"))
     func ios_9_1() async throws { }
@@ -123,19 +118,11 @@ struct IosTodo {
 """, .disabled("not yet implemented"))
     func ios_9_2() async throws { }
 
-    @Test("""
-@spec IOS-9.3: On submit, the application shall send `.createWorktree(repositoryID, worktreeName, branchName)` over the authenticated worktree-management channel and handle structured success or failure responses:
-""", .disabled("not yet implemented"))
-    func ios_9_3() async throws { }
 
     @Test("""
 @spec IOS-9.4: When `.listRepositories` returns an empty list, the sheet shall render an empty-state "No repositories tracked — open a repository in Graftty on the Mac first." and shall not show the input fields. The iOS app shall not implement repository-adding (the Mac-side file-picker + security-scoped bookmark mint has no iOS equivalent).
 """, .disabled("not yet implemented"))
     func ios_9_4() async throws { }
 
-    @Test("""
-@spec IOS-9.5: While an authenticated `.createWorktree` request is in flight, the Create button shall be replaced by an in-flight indicator, the Cancel button and both input fields shall be disabled, and the repository picker shall be disabled. Once the request resolves (success or failure) all controls shall re-enable.
-""", .disabled("not yet implemented"))
-    func ios_9_5() async throws { }
 
 }

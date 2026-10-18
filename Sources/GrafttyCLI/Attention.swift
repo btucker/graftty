@@ -16,7 +16,7 @@ struct AttentionReport: ParsableCommand {
         abstract: "Stage an agent recap for its next stopped turn"
     )
 
-    @Flag(name: .long, help: "Read recap JSON with title, completed, next, emoji, and optional context, need, and emojiAlternatives")
+    @Flag(name: .long, help: "Read recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, purposeChanged, checkpoint, and decisions")
     var stdin = false
 
     func run() throws {
@@ -47,7 +47,7 @@ struct AttentionReport: ParsableCommand {
         do {
             recap = try JSONDecoder().decode(AttentionRecap.self, from: data)
         } catch {
-            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, and emojiAlternatives")
+            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, purposeChanged, checkpoint, and decisions")
         }
         guard recap.isValid else {
             throw ValidationError("recap fields must be brief text, and emoji choices must be single glyphs")

@@ -5,7 +5,7 @@ import GrafttyProtocol
 
 @Suite("Agent Stop Notification")
 struct AgentStopNotificationTests {
-    @Test("@spec NOTIF-1.4: When a stopped agent turn has a recap, the application shall send a macOS notification with its task title, worktree identity, and user question or completed result; a bare Stop shall remain silent.")
+    @Test("@spec NOTIF-1.4: When any agent turn stops, the application shall send a native notification using its stable purpose title, worktree identity, and question or completed result, with a fallback for stops without a report.")
     func stoppedRecapUsesAttentionContent() throws {
         let recap = AttentionRecap(title: "Attention queue", completed: "Queue and banner tests pass.",
                                    next: "Review the sidebar.", need: "Does the banner look right?")
@@ -24,7 +24,10 @@ struct AgentStopNotificationTests {
             worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil)?.body == recap.completed)
         stop.recap = nil
         #expect(AgentStopNotification.stoppedTurnContent(runtime: .codex, worktreeName: "sidebar",
-            worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil) == nil)
+            worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil)?.body == "Codex stopped.")
+        #expect(AgentStopNotification.stoppedTurnContent(runtime: .codex, worktreeName: "sidebar",
+            worktreePath: "/repo/sidebar", sessionID: "session", paneSessionName: nil, stop: stop, emoji: nil,
+            purposeTitle: "Worktree context")?.title == "Worktree context")
     }
 
     @Test("@spec NOTIF-1.5: When another agent Attention notification is sent for the same worktree, the application shall replace its existing macOS notification while keeping other worktrees' notifications distinct.")

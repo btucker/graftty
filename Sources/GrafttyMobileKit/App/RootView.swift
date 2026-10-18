@@ -9,6 +9,8 @@ public struct RootView: View {
     @State private var hostStore = HostStore()
     @State private var gate = BiometricGate()
     @State private var navigationPath = NavigationPath()
+    @State private var notifications = MobileAgentNotifications.shared
+    @State private var notificationError: String?
     @Environment(\.scenePhase) private var scenePhase
     @State private var iPadAppState = IPadAppState()
     @State private var retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
@@ -54,7 +56,16 @@ public struct RootView: View {
         }
         .onChange(of: gate.state) { _, _ in
             updateConnectionAccess()
+            Task {
+                if gate.state == .unlocked { await notifications.requestAuthorization() }
+                await activateNotification()
+            }
         }
+        .onChange(of: notifications.pendingRoute) { _, _ in Task { await activateNotification() } }
+        .task { await activateNotification() }
+        .alert("Could not open notification", isPresented: Binding(
+            get: { notificationError != nil }, set: { if !$0 { notificationError = nil } }
+        )) { Button("OK") { notificationError = nil } } message: { Text(notificationError ?? "") }
         .onAppear { nearbyMacBrowser.start() }
         .onChange(of: nearbyMacBrowser.candidates) { _, candidates in
             coordinator.updateDiscoveryCandidates(candidates)
@@ -85,12 +96,52 @@ public struct RootView: View {
                 updateConnectionAccess()
                 Task {
                     await gate.authenticateOnActivation()
+                    await activateNotification()
                 }
             case .inactive:
                 gate.applicationDidBecomeInactive()
             @unknown default:
                 break
             }
+        }
+    }
+
+    private func activateNotification() async {
+        guard scenePhase == .active, gate.state == .unlocked,
+              let route = notifications.pendingRoute else { return }
+        guard let host = hostStore.hosts.first(where: { $0.id == route.hostID }) else {
+            notifications.consume(route)
+            notificationError = "The host for this notification is no longer paired."
+            return
+        }
+        do {
+            let rows = try await coordinator.worktreePanes(for: host)
+            guard !Task.isCancelled, scenePhase == .active, gate.state == .unlocked,
+                  notifications.pendingRoute == route else { return }
+            guard let row = rows.first(where: {
+                $0.path == route.worktreePath
+                    && (route.worktreeID == nil || $0.sidebar?.id == route.worktreeID)
+                    && (route.originDeviceID == nil || $0.origin?.deviceID == route.originDeviceID)
+            }) else {
+                notifications.consume(route)
+                notificationError = "This worktree is no longer available on \(host.label)."
+                return
+            }
+            let project = SidebarProjection.projects([row]).first
+            let pane = row.layout?.leaves.first { $0.sessionName == route.paneID } ?? row.layout?.leaves.first
+            iPadAppState.selectedHostId = host.id
+            iPadAppState.latestWorktrees = rows
+            iPadAppState.selectedWorktreePath = row.path
+            iPadAppState.focusedPaneId = pane?.sessionName
+            if let project { iPadAppState.sidebarNavigation.showProject(project.id) }
+            if horizontalSizeClass != .regular {
+                navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
+                    showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
+            }
+            notifications.consume(route)
+        } catch {
+            guard scenePhase == .active, gate.state == .unlocked, notifications.pendingRoute == route else { return }
+            notificationError = "Couldn't reconnect to \(host.label). Open the host and try again."
         }
     }
 
@@ -751,6 +802,7 @@ struct SingleSessionView: View {
             terminalBackground
             sessionView
         }
+        .modifier(MobileWorktreeContextDrawer(context: worktreeContext))
         .alert("Could not open link", isPresented: Binding(
             get: { terminalBrowserError != nil }, set: { if !$0 { terminalBrowserError = nil } }
         )) { Button("OK") { terminalBrowserError = nil } } message: { Text(terminalBrowserError ?? "") }
@@ -758,6 +810,14 @@ struct SingleSessionView: View {
             terminalBrowserRequest = nil
             paneContainerBox.view?.detachBrowserControls()
         }
+    }
+
+    private var worktreeContext: SidebarWorktreeContext? {
+        guard !isEmbeddedPane, let row = attentionWorktrees.first(where: {
+            if let path = step.worktreePath { return $0.path == path }
+            return $0.layout?.leaves.contains(where: { $0.sessionName == step.sessionName }) == true
+        }) else { return nil }
+        return sidebarNavigation?.worktreeContext(row) ?? SidebarWorktreeContext(worktree: row)
     }
 
     @ViewBuilder

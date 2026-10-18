@@ -4964,7 +4964,8 @@ struct GrafttyApp: App {
                     runtime: runtime, worktreeName: WorktreeNameSanitizer.sanitize(worktree.branch),
                     worktreePath: callerPath, sessionID: sessionID ?? callerAgentID ?? "",
                     paneSessionName: paneSessionName, stop: stop,
-                    emoji: worktree.effectiveEmoji(in: appState.wrappedValue.repos[ri])
+                    emoji: worktree.effectiveEmoji(in: appState.wrappedValue.repos[ri]),
+                    purposeTitle: worktree.brief?.title
                 ) {
                     var notification = notification
                     ProjectNotificationIdentity.apply(to: &notification, worktree: worktree, repo: appState.wrappedValue.repos[ri])

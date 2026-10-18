@@ -9,6 +9,7 @@ public struct SidebarWorktreeContext: Equatable {
     public let question: String?
     public let questionPaneID: String?
     public let isRunning: Bool
+    public let brief: WorktreeBrief?
 
     public init(worktree: WorktreePanes, retained: [SidebarActivityItem] = [],
                 isViewed: (SidebarActivityItem) -> Bool = { _ in false }) {
@@ -19,6 +20,9 @@ public struct SidebarWorktreeContext: Equatable {
         let saved = retained.filter { Self.matchesRetainedReport($0, worktree: worktree) }
         let stop = ([worktree.sidebar?.unseenAgentStop, worktree.sidebar?.lastAgentStop].compactMap { $0 }
             + saved.compactMap(\.agentStop)).max { $0.timestamp < $1.timestamp }
+        self.brief = worktree.sidebar?.brief ?? stop.flatMap { stop in
+            stop.recap.map { WorktreeBrief(recap: $0, at: stop.stoppedAt) }
+        }
         var target = live.first ?? SidebarActivityItem(id: stableID, projectID: projectID,
             worktreeID: worktree.path, paneID: nil, projectName: worktree.repoDisplayName,
             worktreeName: worktree.displayName, title: worktree.displayName, occurrence: nil, isBusy: false)

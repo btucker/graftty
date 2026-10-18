@@ -36,6 +36,7 @@ public struct WorktreeListContent: View {
     @State private var refreshError: String?
     @State private var openingWorktrees: Set<OpeningWorktreeKey> = []
     @State private var selectionIntentGeneration: UInt64 = 0
+    @State private var worktreeCreation = MobileWorktreeCreation()
     @State private var loadedHostID: UUID?
     @State private var presentedHostID: UUID?
     @State private var remoteMacConnections: [RemoteMacConnectionSummary] = []
@@ -250,6 +251,7 @@ public struct WorktreeListContent: View {
         .onChange(of: host.id) { _, _ in
             presentedHostID = host.id
             selectionIntentGeneration &+= 1
+            worktreeCreation = MobileWorktreeCreation()
             pendingDelete = nil
             pendingForceDelete = nil
             remoteMacConnections = []
@@ -262,7 +264,7 @@ public struct WorktreeListContent: View {
         }
         .task(id: RemotePollingKey(
             hostID: host.id,
-            enabled: includeRemoteWorktrees,
+            enabled: includeRemoteWorktrees || !worktreeCreation.isEmpty,
             isReady: isReadyToLoad
         )) {
             await pollRemoteWorktrees()
@@ -322,7 +324,7 @@ public struct WorktreeListContent: View {
                         .padding(.vertical, 8)
                         .background(.thinMaterial)
                     }
-                    navigationContent(worktrees)
+                    navigationContent(worktreeCreation.rows(in: worktrees))
 
                 }
             }
@@ -381,17 +383,6 @@ public struct WorktreeListContent: View {
         } message: { pending in
             Text(pending.stderr + (pending.shortStatus.isEmpty ? "" : "\n\n" + pending.shortStatus))
         }
-        .overlay(alignment: .top) {
-            if let item = navigation.attentionBanner, case .loaded(let worktrees) = state,
-               projects(for: worktrees).contains(where: { $0.id == item.projectID }) {
-                SidebarAttentionBanner(item: item,
-                    project: projects(for: worktrees).first { $0.id == item.projectID },
-                    projectIconData: projectIcons[item.projectID], onOpen: {
-                        Task { await openReportTarget(item, worktrees: worktrees) }
-                    }, onDismiss: { navigation.dismissAttentionBanner(item) })
-                    .padding(10)
-            }
-        }
         .overlay(alignment: .bottom) {
             if let msg = errorToast {
                 Text(msg)
@@ -447,8 +438,8 @@ public struct WorktreeListContent: View {
                 host: host,
                 includeRemoteWorktrees: includeRemoteWorktrees,
                 remoteConnectionProvider: remoteConnectionProvider
-            ) { response in
-                Task { await handleCreated(response) }
+            ) { submission in
+                beginCreatingWorktree(submission)
             }
         }
     }
@@ -466,7 +457,7 @@ public struct WorktreeListContent: View {
     }
 
     private func pollRemoteWorktrees() async {
-        guard includeRemoteWorktrees, isReadyToLoad else { return }
+        guard includeRemoteWorktrees || !worktreeCreation.isEmpty, isReadyToLoad else { return }
         let requestHostID = host.id
         while !Task.isCancelled {
             do {
@@ -474,7 +465,7 @@ public struct WorktreeListContent: View {
                 let list = try await fetchWorktrees(
                     host: host,
                     remoteSnapshotProvider: remoteSnapshotProvider,
-                    includeRemoteWorktrees: true
+                    includeRemoteWorktrees: includeRemoteWorktrees
                 )
                 guard Self.shouldApplyLoadResult(
                     requestHostID: requestHostID,
@@ -565,7 +556,10 @@ public struct WorktreeListContent: View {
     }
 
     private func projects(for worktrees: [WorktreePanes]) -> [SidebarProject] {
-        sidebarSnapshot?.projects ?? SidebarProjection.projects(worktrees)
+        let inferred = SidebarProjection.projects(worktrees)
+        guard let projects = sidebarSnapshot?.projects else { return inferred }
+        let known = Set(projects.map(\.id))
+        return projects + inferred.filter { !known.contains($0.id) }
     }
 
     @ViewBuilder
@@ -606,6 +600,7 @@ public struct WorktreeListContent: View {
         } else {
             List {
                 remoteMacConnectionsSection
+                pendingCreationRows()
                 ForEach(projects) { project in
                     NavigationLink(value: ProjectStep(host: host, project: project)) {
                         HStack(spacing: 10) {
@@ -636,6 +631,10 @@ public struct WorktreeListContent: View {
     private func projectDetail(_ worktrees: [WorktreePanes], projects: [SidebarProject], projectID: String? = nil) -> some View {
         let selectedProjectID = projectID ?? navigation.selectedProjectID
         return VStack(spacing: 0) {
+            if !isSidebar {
+                pendingCreationRows(excludingProjectID: selectedProjectID)
+                    .padding(.horizontal, 10)
+            }
             if let selected = projects.first(where: { $0.id == selectedProjectID }), !selected.isAvailable {
                 Text("The owning Mac is offline.").font(.caption).foregroundStyle(.secondary)
             }
@@ -645,6 +644,21 @@ public struct WorktreeListContent: View {
                 navigation.query.isEmpty ? SidebarProjection.projectID($0) == selectedProjectID
                     : navigation.worktreeContext($0).matches(query: navigation.query)
             })
+        }
+    }
+
+    /// Compact navigation may still show the project picker or another
+    /// project's detail while the requested worktree is being created.
+    private func pendingCreationRows(excludingProjectID: String? = nil) -> some View {
+        ForEach(worktreeCreation.rows(in: []).filter {
+            SidebarProjection.projectID($0) != excludingProjectID
+        }, id: \.path) { worktree in
+            VStack(alignment: .leading, spacing: 2) {
+                Text(worktree.repoDisplayName).font(.caption).foregroundStyle(.secondary)
+                WorktreeRowContent(worktree: worktree, theme: theme,
+                    isActive: false, isOpening: false, attentionCount: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }
     }
 
@@ -1153,6 +1167,10 @@ public struct WorktreeListContent: View {
             state = next
             onListChanged(list)
         }
+        if let created = worktreeCreation.takeReadySelection(in: list, generation: selectionIntentGeneration) {
+            rememberWorktree(created)
+            onSelect(created)
+        }
     }
 
     static func shouldPublishLoadedList(
@@ -1340,20 +1358,76 @@ public struct WorktreeListContent: View {
         }
     }
 
-    /// Re-fetch without blanking the existing list so the user isn't
-    /// shown a spinner over a list they just saw populated.
-    private func handleCreated(_ response: CreateWorktreeClient.Response) async {
-        for attempt in 0..<5 {
-            await refresh()
-            guard case .loaded(let list) = state else { return }
-            if let match = list.first(where: {
-                $0.path == response.worktreePath
-            }) {
-                onSelect(match)
-                return
+    /// Own the request outside the sheet so dismissal never cancels creation.
+    private func beginCreatingWorktree(_ submission: AddWorktreeSheetView.Submission) {
+        let requestHost = host
+        let provider = remoteConnectionProvider
+        let request = submission.request
+        let repository = submission.repository
+        let rows: [WorktreePanes]
+        if case .loaded(let list) = state { rows = list } else { rows = [] }
+        let targetProject = projects(for: rows).first {
+            $0.repositoryID == repository.path && $0.owner?.deviceID == repository.origin?.deviceID
+        }
+        let temporaryID = "creating-" + UUID().uuidString
+        let placeholder = WorktreePanes(
+            path: temporaryID,
+            displayName: (request.worktreeName as NSString).lastPathComponent,
+            repoDisplayName: repository.displayName,
+            repositoryID: repository.path,
+            displayBranch: request.branchName, state: .creating,
+            isMainCheckout: false, prBadge: nil, stats: nil,
+            attentionText: nil, layout: nil, origin: repository.origin,
+            sidebar: targetProject.map {
+                SidebarWorktreeMetadata(id: temporaryID, projectID: $0.id, isPinned: false)
             }
-            guard attempt < 4 else { return }
-            try? await Task.sleep(for: .milliseconds(300))
+        )
+        closeReport()
+        selectionIntentGeneration &+= 1
+        let id = worktreeCreation.begin(
+            placeholder: placeholder, knownPaths: Set(rows.map(\.path)),
+            generation: selectionIntentGeneration
+        )
+        // Reveal the destination project without selecting its unfinished row.
+        navigation.selectedProjectID = targetProject?.id ?? SidebarProjection.projectID(placeholder)
+        navigation.query = ""
+        isAddSheetPresented = false
+        Task {
+            do {
+                let response: CreateWorktreeClient.Response
+                if provider != nil {
+                    let result = try await RelayedWorktreeManagementClient.send(
+                        .create(repositoryID: request.repoPath,
+                                worktreeName: request.worktreeName,
+                                branchName: request.branchName,
+                                existingSource: submission.existingSource),
+                        using: provider
+                    )
+                    switch result {
+                    case let .created(worktreeID, paneID):
+                        response = CreateWorktreeClient.Response(sessionName: paneID, worktreePath: worktreeID)
+                    case let .error(_, message, _, _):
+                        throw CreateWorktreeClient.CreateError.serverInternal(message)
+                    default:
+                        throw CreateWorktreeClient.CreateError.serverInternal("The remote Mac returned an unexpected response.")
+                    }
+                } else {
+                    response = try await CreateWorktreeClient.create(baseURL: requestHost.baseURL, body: request)
+                }
+                guard presentedHostID == requestHost.id else { return }
+                worktreeCreation.complete(id, worktreePath: response.worktreePath)
+                // Polling may already have received the ready layout while
+                // the management response was still in flight.
+                if case .loaded(let list) = state { applyLoadedList(list) }
+                await refresh()
+            } catch {
+                guard presentedHostID == requestHost.id else { return }
+                worktreeCreation.fail(id)
+                let message = (error as? CreateWorktreeClient.CreateError)?.userMessage
+                    ?? CreateWorktreeClient.CreateError.transport.userMessage
+                showErrorToast("Could not create worktree: " + message)
+                await refresh()
+            }
         }
     }
 
@@ -1765,6 +1839,11 @@ private struct WorktreeRowContent: View {
                         .font(.caption)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
+                }
+                if let brief = worktree.sidebar?.brief {
+                    Text(brief.context ?? brief.completed)
+                        .font(.caption).lineLimit(2)
                         .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
                 }
             }

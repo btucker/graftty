@@ -109,6 +109,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// Last stop remains available after the user views its card, so its
     /// first subsequent progress event can retire that viewed occurrence.
     public private(set) var lastAgentStop: SidebarAgentStop?
+    public private(set) var brief: WorktreeBrief?
     /// Recent provider progress timestamps let viewed stopped cards retire
     /// even after acknowledging them cleared `unseenAgentStop`.
     public var agentProgressTimes: [String: Double]
@@ -161,6 +162,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.attention = attention
         self.unseenAgentStop = nil
         self.lastAgentStop = nil
+        self.brief = nil
         self.agentProgressTimes = [:]
         self.paneAttention = [:]
         self.paneSessions = [:]
@@ -176,7 +178,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, state, staleSince, attention, unseenAgentStop, lastAgentStop, agentProgressTimes, paneAttention,
+        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, agentProgressTimes, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -197,6 +199,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)
         self.unseenAgentStop = try container.decodeIfPresent(SidebarAgentStop.self, forKey: .unseenAgentStop)
         self.lastAgentStop = try container.decodeIfPresent(SidebarAgentStop.self, forKey: .lastAgentStop)
+        self.brief = try container.decodeIfPresent(WorktreeBrief.self, forKey: .brief)
+            ?? lastAgentStop.flatMap { stop in stop.recap.map { WorktreeBrief(recap: $0, at: stop.stoppedAt) } }
         self.agentProgressTimes = try container.decodeIfPresent([String: Double].self, forKey: .agentProgressTimes) ?? [:]
         self.paneAttention = try container.decodeIfPresent(
             [PaneSlotID: Attention].self,
@@ -230,6 +234,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     }
 
     public mutating func recordAgentStop(_ stop: SidebarAgentStop) {
+        if let recap = stop.recap {
+            if brief == nil { brief = WorktreeBrief(recap: recap, at: stop.stoppedAt) }
+            else { brief?.update(recap, at: stop.stoppedAt) }
+        }
         unseenAgentStop = stop
         lastAgentStop = stop
     }

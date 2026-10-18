@@ -194,13 +194,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.89** While the ordinary worktree list scrolls, the application shall keep Pinned Agents and the Sort order and Add Worktree line fixed above its viewport in both macOS sidebar modes.
 
-**LAYOUT-2.90** When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots.
-
-**LAYOUT-2.91** When an Attention banner is clicked, the application shall open its worktree directly in the project worktree list and acknowledge only a successful visit.
+**LAYOUT-2.91** When a worktree request is opened, the application shall open its worktree directly in the project worktree list and acknowledge only a successful visit.
 
 **LAYOUT-2.92** When an available project's worktree is deleted, the application shall remove all of its retained Attention cards and queued banners while preserving cards for offline projects.
-
-**LAYOUT-2.93** When a queued Attention request resumes, is viewed, or is dismissed, the application shall remove its banner while preserving requests absent from incomplete or offline snapshots.
 
 **LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
 
@@ -282,7 +278,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.134** When a worktree question's pane is not displayed, the application shall show its question beneath the worktree instead of hiding it.
 
-**LAYOUT-2.135** While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background, label completed work, and inset pending and viewed questions with an orange accent while distinguishing them by label.
+**LAYOUT-2.135** While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background and display the retained current brief, live waiting question, and expandable checkpoint history.
 
 **LAYOUT-2.140** While a mobile worktree report is displayed, the application shall freeze host-published project and worktree positions and folder and pin membership while keeping report and row content live.
 
@@ -1134,21 +1130,35 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.3** If the user has denied notification authorization, the application shall silently skip the notification rather than surfacing an error.
 
-**NOTIF-1.4** When a stopped agent turn has a recap, the application shall send a macOS notification with its task title, worktree identity, and user question or completed result; a bare Stop shall remain silent.
+**NOTIF-1.4** When any agent turn stops, the application shall send a native notification using its stable purpose title, worktree identity, and question or completed result, with a fallback for stops without a report.
 
 **NOTIF-1.5** When another agent Attention notification is sent for the same worktree, the application shall replace its existing macOS notification while keeping other worktrees' notifications distinct.
 
 **NOTIF-1.6** While Graftty is active, agent Attention notifications shall display native banners and sounds using the user's macOS notification settings.
 
-**NOTIF-1.7** When a stopped recap reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate deliveries or stops older than a recorded stop or that provider's progress.
+**NOTIF-1.7** When a stopped turn reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate deliveries or stops older than a recorded stop or that provider's progress.
 
-**NOTIF-1.8** When a connected Remote Mac records a new stopped recap, the application shall send one macOS notification with the recap and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
+**NOTIF-1.8** When a connected Remote Mac records any new stopped turn, the application shall send one macOS notification with its stable purpose title and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
 
 **NOTIF-1.9** When a native Attention notification represents the home checkout, the application shall use the current project icon and fallback instead of its stored worktree emoji while preserving linked worktree identities and notification activation routes.
 
 **NOTIF-1.10** When identity lookup or notification authorization overlaps a newer Attention notification for the same worktree, the application shall deliver only the latest pending notification while preserving independent worktree deliveries and cleaning its original attachment source file.
 
 **NOTIF-1.11** When the user activates a local agent notification, the application shall retain the request until a window can open its worktree through the normal selection path, restoring terminal surfaces and the originating pane without changing selection or acknowledging attention if the worktree cannot wake.
+
+**NOTIF-1.12** When a mobile client receives a new stopped turn, the application shall create a native notification for stops with or without reports, deduplicate repeated and older snapshots across reconnects and relaunches, and keep hosts distinct.
+
+**NOTIF-1.13** When an agent stops while GrafttyMobile is suspended or terminated, the application shall receive a native push notification through Graftty-server and APNs and route activation to its authenticated host and worktree.
+
+**NOTIF-1.14** When an agent requests permission or input on mobile, the application shall deliver a native notification once per new request, suppress command-finished markers, and suppress an older prompt superseded by a stop at the same pane.
+
+**NOTIF-1.15** When preparing a Graftty-server push, the application shall encrypt notification content and routing identity for each phone using HPKE, and reject tampered or oversized ciphertext.
+
+**NOTIF-1.16** When encoding a Graftty-server push request, the application shall use the relay's protojson field names, enum names, base64 bytes, and a stable event identifier for retries.
+
+**NOTIF-1.17** When enrolling a phone with Graftty-server, the application shall send its APNs token and encryption public key over authenticated HTTPS using the server's registration contract.
+
+**NOTIF-1.18** When Graftty-server batches or rejects a push, the application shall preserve that delivery result instead of reporting that APNs delivered it.
 
 ### NOTIF-2.x — Attention Badge Auto-Population
 
@@ -2110,19 +2120,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-8.4** The v1 iOS app shall not persist terminal scrollback on the device. On reconnect, it renders whatever the zmx daemon's buffer still contains.
 
-**IOS-8.5** The v1 iOS app shall not use push notifications for PR status, build completions, or session events.
-
 ### IOS-9.x — Creating worktrees from the iOS client
 
 **IOS-9.1** The worktree-picker screen (`IOS-4.1`) shall display an "Add Worktree" action as a primary toolbar item. Tapping it shall present a modal sheet collecting the fields required by the authenticated `.createWorktree` request: a repository picker populated by `.listRepositories` (hidden when only one repo is tracked), a worktree-name field, and a branch-name field.
 
 **IOS-9.2** Both the worktree-name and branch-name fields shall sanitize input live with `WorktreeNameSanitizer` (same allowed set as the Mac sheet and the web client: `A-Z a-z 0-9 . _ - /`, consecutive disallowed chars collapsing to a single `-`). The branch field shall auto-mirror the worktree-name field until the user types a branch that differs, at which point the mirror breaks and further edits to the worktree field stop overwriting the branch. On submit, both fields shall be trimmed of leading/trailing whitespace plus `-` and `.` (matching the macOS sheet's `submitTrimSet` and the web client's `trimForSubmit`). The sheet's Create button shall be disabled while either field is empty after trim.
 
-**IOS-9.3** On submit, the application shall send `.createWorktree(repositoryID, worktreeName, branchName)` over the authenticated worktree-management channel and handle structured success or failure responses:
+**IOS-9.3** When mobile worktree creation succeeds, the application shall auto-select the created worktree only after a running pane appears and only if no newer navigation intent has superseded creation.
 
 **IOS-9.4** When `.listRepositories` returns an empty list, the sheet shall render an empty-state "No repositories tracked — open a repository in Graftty on the Mac first." and shall not show the input fields. The iOS app shall not implement repository-adding (the Mac-side file-picker + security-scoped bookmark mint has no iOS equivalent).
 
-**IOS-9.5** While an authenticated `.createWorktree` request is in flight, the Create button shall be replaced by an in-flight indicator, the Cancel button and both input fields shall be disabled, and the repository picker shall be disabled. Once the request resolves (success or failure) all controls shall re-enable.
+**IOS-9.5** When a valid mobile Add Worktree form is submitted, the application shall dismiss the form immediately and display a non-selectable creating row in the target repository while creation runs.
 
 **IOS-9.6** When the user swipes a worktree row in `WorktreePickerView` that is neither the repo's main checkout nor in an in-flight state (`.creating` / `.deleting`), the application shall reveal a trailing destructive action labeled "Delete" for non-stale rows and "Dismiss" for `.stale` rows. Rows for the main checkout or for in-flight worktrees shall expose no swipe action.
 
@@ -2141,6 +2149,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-9.13** When the user taps a mobile worktree's information button, the application shall show its report without selecting the worktree or acknowledging its request; the button shall provide a 44-point touch target.
 
 **IOS-9.14** While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and Git divergence.
+
+**IOS-9.15** When mobile worktree creation fails, the application shall remove its temporary row and show the error outside the dismissed form.
 
 ### IOS-10.x
 
@@ -3510,7 +3520,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-2.7** When the host evicts or withdraws a preview collection, the application shall remove the whole collection so mobile cannot receive a partial set of files.
 
-**PREVIEW-2.8** When a multi-file preview arrives for the focused owning mobile pane, the application shall automatically download and present the complete collection in order and remove every local snapshot after dismissal.
+**PREVIEW-2.8** When a multi-file preview arrives for the focused owning mobile pane, the application shall automatically download and present the complete collection in order and retain the downloaded snapshots after dismissal for reopening during the session.
+
+**PREVIEW-2.9** When a downloaded mobile preview is dismissed, the application shall retain session-scoped access to its snapshots after host offers expire and pane views are recreated, without downloading again or automatically reopening it.
 
 ### PREVIEW-3.x
 
@@ -3734,7 +3746,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
 
-**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for concise context explaining the problem and why solving it matters, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
+**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents to lead with the stable problem being solved and why it matters, followed by verified progress, next steps, retained decisions, meaningful checkpoints, and task-related emoji choices, with a user question only when input is needed.
 
 **AGENT-6.39** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
 
@@ -3777,6 +3789,32 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CLI-1.1** When a subprocess pipe's read fd is closed out from under the in-flight readability handler (process/pipe teardown after a timeout SIGTERM, where the per-stream EOF wait lapsed under load), the application shall treat the read as EOF rather than crash. The legacy `NSFileHandle.availableData` raises an *uncatchable* `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd, SIGABRT-ing the whole process; the crash-safe drain returns `nil`.
 
 **CLI-1.2** When a timeout-enabled subprocess exits before its deadline, the application shall allow its Process and pipe descriptors to be released immediately rather than retain them in the delayed timeout work item until the original deadline.
+
+## CONTEXT — CONTEXT
+
+### CONTEXT-1.x
+
+**CONTEXT-1** When an agent updates a worktree report, the application shall retain its purpose title until a report explicitly declares a purpose change, while updating its current context, progress, decisions, and next step.
+
+### CONTEXT-2.x
+
+**CONTEXT-2** When an agent reports a meaningful checkpoint or purpose change, the application shall retain it in the worktree history, merge consecutive updates to the same checkpoint, ignore repeated reports and older updates, and retain at most 32 checkpoints.
+
+### CONTEXT-3.x
+
+**CONTEXT-3** When a report includes purpose-change, checkpoint, or decision fields, the application shall validate their text bounds and preserve legacy reports that omit those fields.
+
+### CONTEXT-4.x
+
+**CONTEXT-4** When a worktree report is viewed, dismissed, resumed, serialized, or sent to a paired device, the application shall retain its current brief and checkpoint history independently of unread attention.
+
+### CONTEXT-5.x
+
+**CONTEXT-5** When the user drags inward from the right edge on mobile, the application shall open the worktree context drawer only for a deliberate horizontal drag and shall preserve ordinary vertical scrolling.
+
+### CONTEXT-6.x
+
+**CONTEXT-6** When mobile worktree context is opened, the application shall show the current brief, expand its history in place, and close back to the mounted terminal without acknowledging pending attention.
 
 ## MEM — MEM
 

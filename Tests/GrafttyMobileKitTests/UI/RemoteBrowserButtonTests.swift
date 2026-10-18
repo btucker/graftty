@@ -1,5 +1,7 @@
 #if canImport(UIKit)
 import GrafttyProtocol
+import GrafttyCommandUI
+import UserNotifications
 import Observation
 import QuickLook
 import SafariServices
@@ -11,6 +13,51 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct RemoteBrowserButtonTests {
+    @Test("Opening and closing context preserves the mounted terminal and pending request", .timeLimit(.minutes(1)))
+    func drawerPreservesMountedTerminal() async throws {
+        let recap = AttentionRecap(title: "Worktree context", context: "Help me reload my context when returning to a worktree.",
+            completed: "Built a current brief with expandable history.", next: "Try it on a phone.", need: "Does the drawer read well?",
+            checkpoint: "Chose the brief with expandable history", decisions: ["Keep the purpose title stable.", "Use native stop notifications."])
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now, recap: recap)
+        let row = WorktreePanes(path: "/task", displayName: "rethink-notifications", repoDisplayName: "graftty", displayBranch: "rethink-notifications",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "task", projectID: "p", unseenAgentStop: stop, lastAgentStop: stop, brief: WorktreeBrief(recap: recap, at: .now)))
+        let navigation = SidebarNavigationState(prefix: UUID().uuidString)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        let host = UIHostingController(rootView: Color.black
+            .modifier(MobileWorktreeContextDrawer(context: navigation.worktreeContext(row)))
+            .accessibilityElement(children: .contain)
+            .environment(\.accessibilityEnabled, true))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Worktree context" } }
+        let open = try #require(accessibilityObjects(in: host.view).first { $0.accessibilityLabel == "Worktree context" })
+        try #require(open.accessibilityActivate())
+        try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Close context" } }
+        try await Task.sleep(for: .milliseconds(350))
+        #expect(navigation.worktreeContext(row).pending.count == 1)
+        let close = try #require(accessibilityObjects(in: host.view).first { $0.accessibilityLabel == "Close context" })
+        try #require(close.accessibilityActivate())
+        try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Worktree context" } }
+        #expect(window.rootViewController === host)
+    }
+
+    @Test func nativeStopNotificationHasSoundAndActivationRoute() throws {
+        let route = MobileStopNotificationRoute(hostID: UUID(), worktreePath: "/task", worktreeID: "task", originDeviceID: nil, paneID: "pane")
+        let request = MobileAgentNotifications.request(for: .init(identifier: "stop", title: "Worktree context",
+            subtitle: "graftty · rethink-notifications", body: "Built the drawer.", route: route))
+        #expect(request.identifier == "stop")
+        #expect(request.content.sound != nil)
+        #expect(request.trigger == nil)
+        #expect(request.content.title == "Worktree context")
+        let encoded = try #require(request.content.userInfo["route"] as? String)
+        #expect(try JSONDecoder().decode(MobileStopNotificationRoute.self, from: #require(Data(base64Encoded: encoded))) == route)
+    }
+
     @Test("Dismissed automatic previews stay consumed when the pane view is recreated", .timeLimit(.minutes(1)))
     func dismissedPreviewStaysClosedAfterViewRecreation() async throws {
         let fixture = try makeButtonFixture(owner: true, image: true, autoPreview: true)
@@ -59,8 +106,8 @@ struct RemoteBrowserButtonTests {
         #expect(fixture.state.reads == reads)
     }
 
-    @Test("@spec PREVIEW-2.8: When a multi-file preview arrives for the focused owning mobile pane, the application shall automatically download and present the complete collection in order and remove every local snapshot after dismissal.", .timeLimit(.minutes(1)))
-    func collectionAutoOpensAndCleansUpEveryFile() async throws {
+    @Test("@spec PREVIEW-2.8: When a multi-file preview arrives for the focused owning mobile pane, the application shall automatically download and present the complete collection in order and retain the downloaded snapshots after dismissal for reopening during the session.", .timeLimit(.minutes(1)))
+    func collectionAutoOpensAndRetainsEveryFile() async throws {
         let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false, autoPreview: true)
         defer { close(fixture) }
         let group = UUID()
@@ -79,7 +126,34 @@ struct RemoteBrowserButtonTests {
         controller.currentPreviewItemIndex = 1
         try await waitUntil { controller.currentPreviewItem?.previewItemURL == files[1] }
         try await finishPresentation(in: fixture)
-        try await waitUntil { files.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) } }
+        #expect(files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+    }
+
+    @Test("@spec PREVIEW-2.9: When a downloaded mobile preview is dismissed, the application shall retain session-scoped access to its snapshots after host offers expire and pane views are recreated, without downloading again or automatically reopening it.", .timeLimit(.minutes(1)))
+    func downloadedPreviewSurvivesAbsentOffersAndViewRecreation() async throws {
+        let fixture = try makeButtonFixture(owner: true, image: true, autoPreview: true)
+        defer { close(fixture) }
+        try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+        let controller = try #require(quickLook(in: fixture.host.presentedViewController))
+        let source = try #require(controller.dataSource)
+        let file = try #require(source.previewController(controller, previewItemAt: 0).previewItemURL)
+        try await finishPresentation(in: fixture)
+        let reads = fixture.state.reads
+        fixture.state.offers = []
+        // Model expiry at the host, then destroy the pane's view state.
+        try await Task.sleep(for: .seconds(3.3))
+        fixture.state.visible = false
+        try await Task.sleep(for: .milliseconds(300))
+        fixture.state.visible = true
+        try await waitForImages(fixture)
+        #expect(fixture.host.presentedViewController == nil)
+        try activateImages(in: fixture.host.view)
+        try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
+        let reopened = try #require(quickLook(in: fixture.host.presentedViewController))
+        #expect(reopened.dataSource?.previewController(reopened, previewItemAt: 0).previewItemURL == file)
+        #expect(try Data(contentsOf: file) == imageBytes)
+        #expect(fixture.state.reads == reads)
+        try await finishPresentation(in: fixture)
     }
 
     @Test("@spec IMAGE-2.11: When the mobile pane lacks horizontal room for Preview and Browser, the application shall stack their existing minimum 44-point targets vertically, scroll the column if pane height is insufficient, and keep each action reachable within the clipped pane while retaining horizontal controls in wider panes.", .timeLimit(.minutes(1)), arguments: [CGFloat(78), CGFloat(320)])
@@ -195,7 +269,7 @@ struct RemoteBrowserButtonTests {
         let url = try #require(source.previewController(controller, previewItemAt: 0).previewItemURL)
         #expect(FileManager.default.fileExists(atPath: url.path))
         try await finishPresentation(in: fixture)
-        try await waitUntil { !FileManager.default.fileExists(atPath: url.path) }
+        #expect(FileManager.default.fileExists(atPath: url.path))
         try await Task.sleep(for: .seconds(3.2))
         #expect(fixture.host.presentedViewController == nil)
         try await waitForImages(fixture)
@@ -234,7 +308,7 @@ struct RemoteBrowserButtonTests {
         try await Task.sleep(for: .milliseconds(500))
         #expect(Bool(fixture.host.presentedViewController === sheet))
         try await finishPresentation(in: fixture)
-        try await waitUntil { !FileManager.default.fileExists(atPath: url.path) }
+        #expect(FileManager.default.fileExists(atPath: url.path))
     }
 
     @Test("@spec IMAGE-2.5: If the latest mobile image changes during download or viewing, then the application shall discard stale bytes, close the old preview and automatically open the replacement when the pane remains focused and owned.", .timeLimit(.minutes(1)))
@@ -253,12 +327,10 @@ struct RemoteBrowserButtonTests {
         let url = try #require(controller.dataSource?.previewController(controller, previewItemAt: 0).previewItemURL)
         #expect(url.lastPathComponent == "replacement.png")
         fixture.state.offers = [imageOffer("newest.png")]
-        try await waitUntil { !FileManager.default.fileExists(atPath: url.path) }
         try await waitUntil {
-            guard let next = quickLook(in: fixture.host.presentedViewController) else { return false }
+            guard let next = quickLook(in: fixture.host.presentedViewController), next !== controller else { return false }
             return next.dataSource?.previewController(next, previewItemAt: 0).previewItemURL?.lastPathComponent == "newest.png"
         }
-
     }
 
     @Test("@spec IMAGE-2.6: If a mobile image is unavailable or cannot be downloaded or natively previewed, then the application shall show an actionable image error and allow a later retry.", .timeLimit(.minutes(1)), arguments: [false, true])

@@ -181,7 +181,7 @@ final class AgentIntegrationMobileController: UIViewController {
                 try await waitForOwnership(pane.client)
             case "scroll":
                 var action = command.parameters["position"] == "bottom" ? "scroll_to_bottom" : "scroll_to_top"
-                if command.parameters["position"] == "middle", let bar = pane.container.terminalView.surface?.currentScrollbar {
+                if command.parameters["position"] == "middle", let bar = pane.container.snapshotScrollView.scrollbar {
                     action = "scroll_to_row:\((bar.total - min(bar.total, bar.len)) / 2)"
                 }
                 guard pane.container.terminalView.surface?.performAction(action) == true else { throw AgentIntegrationError("mobile scroll rejected") }
@@ -196,7 +196,7 @@ final class AgentIntegrationMobileController: UIViewController {
         }
         guard let pane = panes[command.provider] else { throw AgentIntegrationError("missing mounted pane") }
         synchronize()
-        _ = await pane.client.session.flushOutput()
+        try await MobilePagedTerminalRenderer(session: pane.client.session, prepareGrid: { _, _ in }).flushOutput()
         var result = snapshot(pane)
         if command.parameters["colors"] == "true",
            let contents = ([pane.container.terminalView.layer] + (pane.container.terminalView.layer.sublayers ?? []))
@@ -213,6 +213,15 @@ final class AgentIntegrationMobileController: UIViewController {
             }
         }
         return result
+    }
+
+    private func parserGridMatches(_ session: InMemoryTerminalSession, columns: UInt16, rows: UInt16) -> String {
+        #if GRAFTTY_PAGED_HISTORY
+        String(session.gridMatches(columns: columns, rows: rows))
+        #else
+        // The pinned renderer cannot expose parser-grid diagnostics.
+        ""
+        #endif
     }
 
     func focus(_ provider: String) {
@@ -278,7 +287,7 @@ final class AgentIntegrationMobileController: UIViewController {
     func snapshot(_ pane: Pane) -> [String: String] {
         var text = ""
         let state = pane.client.ownershipSnapshot
-        let bar = pane.container.terminalView.surface?.currentScrollbar
+        let bar = pane.container.snapshotScrollView.scrollbar
         let scroll = pane.container.snapshotScrollView
         if let metrics = pane.container.terminalGridMetrics {
             let rowHeight = CGFloat(metrics.cellHeightPixels) / pane.container.terminalView.contentScaleFactor
@@ -297,8 +306,8 @@ final class AgentIntegrationMobileController: UIViewController {
         let keyboardFrame = view.convert(view.keyboardLayoutGuide.layoutFrame, to: view.window)
         return ["text": text, "anchor": AgentIntegrationAnchor.first(in: text),
             "pagedGridMismatches": pane.client.diagnosticPagedGridMismatches.joined(separator: "\n"),
-            "parserGridMatches": metrics.map { String(pane.client.session.gridMatches(columns: $0.columns, rows: $0.rows)) } ?? "",
-            "parserGridAtScrollbarHeight": metrics.map { String(pane.client.session.gridMatches(columns: $0.columns, rows: UInt16(clamping: bar?.len ?? 0))) } ?? "",
+            "parserGridMatches": metrics.map { parserGridMatches(pane.client.session, columns: $0.columns, rows: $0.rows) } ?? "",
+            "parserGridAtScrollbarHeight": metrics.map { parserGridMatches(pane.client.session, columns: $0.columns, rows: UInt16(clamping: bar?.len ?? 0)) } ?? "",
             "physicalRows": pane.client.session.readViewportRowsText() ?? "",
             "surfaceFrame": NSCoder.string(for: pane.container.terminalView.frame),
             "surfaceBounds": NSCoder.string(for: pane.container.terminalView.bounds),
