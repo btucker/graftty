@@ -37,7 +37,9 @@ public struct PushRelayClient: Sendable {
     private let baseURL: URL
     private let transport: Transport
 
-    public init(baseURL: URL, transport: @escaping Transport = Self.defaultTransport) throws {
+    public init(baseURL: URL, transport: @escaping Transport = { request in
+        try await Self.defaultTransport(request)
+    }) throws {
         guard baseURL.scheme?.lowercased() == "https", baseURL.host?.isEmpty == false,
               baseURL.user == nil, baseURL.password == nil, baseURL.query == nil, baseURL.fragment == nil,
               baseURL.path.isEmpty || baseURL.path == "/" else { throw Failure.invalidServerURL }
