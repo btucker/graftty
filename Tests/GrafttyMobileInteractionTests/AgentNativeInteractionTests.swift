@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class AgentNativeInteractionTests: XCTestCase {
-    /// @spec TEST-1.5: When a scripted native integration run requests mobile gestures, rotation, or keyboard input, the test harness shall drive the mounted terminal through XCUITest and preserve screenshots with the action sequence ID.
+    /// @spec TEST-1.5: When a scripted native integration run requests mobile gestures or notification taps, the test harness shall drive XCUITest, preserve screenshots with the action sequence ID, and reject notification tap success unless the application is foregrounded and its activation view is visible.
     func testScriptedAgentInteractions() async throws {
         guard let endpoint = ProcessInfo.processInfo.environment["GRAFTTY_AGENT_INTEGRATION_URL"].flatMap(URL.init(string:)) else {
             throw XCTSkip("Run scripts/agent-integration/run.py to supply the isolated controller")

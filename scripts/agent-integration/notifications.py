@@ -266,13 +266,17 @@ class NotificationRun(Run):
         return value
 
     def tap_mobile_notification(self, provider, prepared, lifecycle='warm'):
-        return self.act(Action('notificationsTap', provider,
+        value = self.act(Action('notificationsTap', provider,
             {'title': prepared['title'], 'lifecycle': lifecycle}, client='gestures'))
+        if value.get('foreground') != 'true' or value.get('rootVisible') != 'true':
+            raise InvariantFailure(f'{provider} {lifecycle} tap lacks observed foreground/RootView: {value}')
+        return value
 
     def wait_mobile_route(self, provider, prepared):
         return self.wait_mobile_notification(provider, lambda value: value['pending'] == 'false'
             and value['selectedHost'] == prepared['expectedHost']
-            and value['worktree'] == prepared['expectedWorktree'] and value['pane'] == prepared['expectedPane'])
+            and value['worktree'] == prepared['expectedWorktree'] and value['pane'] == prepared['expectedPane']
+            and int(value['fetchCount']) > 0)
 
     def wait_mobile_notification(self, provider, predicate, timeout=30):
         deadline = time.monotonic() + timeout

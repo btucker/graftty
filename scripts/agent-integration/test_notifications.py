@@ -12,6 +12,18 @@ from notifications import NotificationRun, assert_notification_evidence, verify_
 
 
 class NotificationEvidenceTests(unittest.TestCase):
+    def test_native_tap_requires_observed_foreground_and_root_view(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        for result in ({'performed': 'notificationsTap'},
+                       {'foreground': 'false', 'rootVisible': 'true'},
+                       {'foreground': 'true', 'rootVisible': 'false'}):
+            runner.act = Mock(return_value=result)
+            with self.subTest(result=result), self.assertRaises(InvariantFailure):
+                runner.tap_mobile_notification('claude', {'title': 'Fixture'}, 'cold')
+        success = {'foreground': 'true', 'rootVisible': 'true', 'tapCount': '2'}
+        runner.act = Mock(return_value=success)
+        self.assertEqual(success, runner.tap_mobile_notification('claude', {'title': 'Fixture'}, 'cold'))
+
     def test_simulator_metadata_uses_the_selected_runtime_not_the_default_option(self):
         runner = NotificationRun.__new__(NotificationRun)
         runner.summary = {}

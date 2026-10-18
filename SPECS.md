@@ -4256,7 +4256,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEST-1.4** When real scripted agents move between native Mac and mobile displays, the integration harness shall exercise production terminal ownership and messaging paths and fail if a commanded native action fails.
 
-**TEST-1.5** When a scripted native integration run requests mobile gestures, rotation, or keyboard input, the test harness shall drive the mounted terminal through XCUITest and preserve screenshots with the action sequence ID.
+**TEST-1.5** When a scripted native integration run requests mobile gestures or notification taps, the test harness shall drive XCUITest, preserve screenshots with the action sequence ID, and reject notification tap success unless the application is foregrounded and its activation view is visible.
 
 **TEST-1.6** When a native integration viewport contains wrapped fixture output, the test harness shall identify its reading anchor by the first logical row label rather than by physical row count.
 
