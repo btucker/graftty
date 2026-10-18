@@ -19,7 +19,7 @@ struct MobileStopNotificationRoute: Codable, Equatable, Sendable {
         let leaves = row.layout?.leaves ?? []
         if let paneSlotID { return leaves.first { row.sidebar?.paneIDs?[$0.sessionName] == paneSlotID } }
         if let paneID { return leaves.first { $0.sessionName == paneID } }
-        return leaves.first
+        return leaves.count == 1 ? leaves.first : nil
     }
 }
 
