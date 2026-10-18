@@ -266,6 +266,7 @@ struct WorktreeRow: View {
     /// whose identity is not editable.
     var identityMenu: ((NSView) -> NSMenu)? = nil
     var reportButton: SidebarReportButton? = nil
+    var brief: WorktreeBrief? = nil
 
     enum LeadingItem: Hashable {
         case projectIcon, emoji, typeIcon, prBadge, label
@@ -305,7 +306,7 @@ struct WorktreeRow: View {
                 case .label:
                     VStack(alignment: .leading, spacing: 2) {
                         branchLabel
-                        if let brief = entry.brief {
+                        if let brief = brief ?? entry.brief {
                             Text(brief.context ?? brief.completed)
                                 .font(.caption).lineLimit(2)
                                 .foregroundColor(theme.sidebarSecondaryText)

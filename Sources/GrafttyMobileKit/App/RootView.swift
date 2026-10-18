@@ -11,6 +11,7 @@ public struct RootView: View {
     @State private var navigationPath = NavigationPath()
     @State private var notifications = MobileAgentNotifications.shared
     @State private var notificationError: String?
+    @State private var activatingNotificationRoute: MobileStopNotificationRoute?
     @Environment(\.scenePhase) private var scenePhase
     @State private var iPadAppState = IPadAppState()
     @State private var retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
@@ -108,41 +109,64 @@ public struct RootView: View {
 
     private func activateNotification() async {
         guard scenePhase == .active, gate.state == .unlocked,
-              let route = notifications.pendingRoute else { return }
+              let route = notifications.pendingRoute, activatingNotificationRoute != route else { return }
+        activatingNotificationRoute = route
+        let initialPath = navigationPath
+        let initialSelection = notificationSelection
+        func isCurrent() -> Bool {
+            scenePhase == .active && gate.state == .unlocked && notifications.pendingRoute == route
+                && navigationPath == initialPath && notificationSelection == initialSelection
+        }
+        defer {
+            if activatingNotificationRoute == route { activatingNotificationRoute = nil }
+            // Newer navigation supersedes the tap even if reconnecting throws.
+            if navigationPath != initialPath || notificationSelection != initialSelection { notifications.consume(route) }
+        }
+        await hostStore.loadIfNeeded()
+        guard !Task.isCancelled, isCurrent() else { return }
         guard let host = hostStore.hosts.first(where: { $0.id == route.hostID }) else {
             notifications.consume(route)
             notificationError = "The host for this notification is no longer paired."
             return
         }
         do {
-            let rows = try await coordinator.worktreePanes(for: host)
-            guard !Task.isCancelled, scenePhase == .active, gate.state == .unlocked,
-                  notifications.pendingRoute == route else { return }
-            guard let row = rows.first(where: {
-                $0.path == route.worktreePath
-                    && (route.worktreeID == nil || $0.sidebar?.id == route.worktreeID)
-                    && (route.originDeviceID == nil || $0.origin?.deviceID == route.originDeviceID)
-            }) else {
-                notifications.consume(route)
-                notificationError = "This worktree is no longer available on \(host.label)."
-                return
-            }
+            let target = try await MobileNotificationActivation.resolve(route, fetch: {
+                try await coordinator.worktreePanes(for: host)
+            }, reopen: { path in
+                guard try await coordinator.sendWorktreeManagement(.open(worktreeID: path), to: host) == .ok
+                else { throw MobileNotificationActivation.Failure.notReady }
+            }, isCurrent: isCurrent)
+            let row = target.worktree
             let project = SidebarProjection.projects([row]).first
-            let pane = row.layout?.leaves.first { $0.sessionName == route.paneID } ?? row.layout?.leaves.first
             iPadAppState.selectedHostId = host.id
-            iPadAppState.latestWorktrees = rows
+            iPadAppState.latestWorktrees = target.rows
             iPadAppState.selectedWorktreePath = row.path
-            iPadAppState.focusedPaneId = pane?.sessionName
+            iPadAppState.focusedPaneId = target.pane.sessionName
             if let project { iPadAppState.sidebarNavigation.showProject(project.id) }
             if horizontalSizeClass != .regular {
                 navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
                     showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
             }
             notifications.consume(route)
+        } catch is CancellationError {
+            // Lifecycle cancellation retains the tap for the next activation.
+        } catch let error as MobileNotificationActivation.Failure {
+            guard isCurrent() else { return }
+            notifications.consume(route)
+            switch error {
+            case .worktreeUnavailable: notificationError = "This worktree is no longer available on \(host.label)."
+            case .paneUnavailable: notificationError = "The pane for this notification is no longer available."
+            case .notReady: notificationError = "The worktree hasn't started yet. Open it from \(host.label) and try again."
+            }
         } catch {
-            guard scenePhase == .active, gate.state == .unlocked, notifications.pendingRoute == route else { return }
+            guard isCurrent() else { return }
             notificationError = "Couldn't reconnect to \(host.label). Open the host and try again."
         }
+    }
+
+    private var notificationSelection: [String?] {
+        [iPadAppState.selectedHostId?.uuidString, iPadAppState.selectedWorktreePath,
+         iPadAppState.focusedPaneId, iPadAppState.sidebarNavigation.selectedProjectID]
     }
 
     private func updateConnectionAccess() {

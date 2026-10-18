@@ -199,8 +199,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)
         self.unseenAgentStop = try container.decodeIfPresent(SidebarAgentStop.self, forKey: .unseenAgentStop)
         self.lastAgentStop = try container.decodeIfPresent(SidebarAgentStop.self, forKey: .lastAgentStop)
+        let legacyReport = [lastAgentStop, unseenAgentStop].compactMap { $0 }
+            .filter { $0.recap != nil }.max { $0.timestamp < $1.timestamp }
         self.brief = try container.decodeIfPresent(WorktreeBrief.self, forKey: .brief)
-            ?? lastAgentStop.flatMap { stop in stop.recap.map { WorktreeBrief(recap: $0, at: stop.stoppedAt) } }
+            ?? legacyReport.flatMap { stop in stop.recap.map { WorktreeBrief(recap: $0, at: stop.stoppedAt) } }
         self.agentProgressTimes = try container.decodeIfPresent([String: Double].self, forKey: .agentProgressTimes) ?? [:]
         self.paneAttention = try container.decodeIfPresent(
             [PaneSlotID: Attention].self,

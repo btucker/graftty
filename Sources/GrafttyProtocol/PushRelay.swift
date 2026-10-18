@@ -67,6 +67,18 @@ public struct PushRelayRequest: Encodable, Sendable {
               targets.allSatisfy({ !$0.phoneDeviceId.isEmpty && !$0.hpkeEncap.isEmpty
                   && !$0.ciphertext.isEmpty && $0.ciphertext.count <= PushRelayEnvelope.maximumCiphertextBytes })
         else { throw Failure.invalidRequest }
+        // The relay's 3KB ciphertext guard does not include base64 expansion
+        // or its APNs wrapper. Match that wrapper before submitting a request
+        // that APNs would reject for exceeding its 4096-byte alert limit.
+        for target in targets {
+            let payload: [String: Any] = [
+                "aps": ["alert": ["title": "Graftty", "body": ""], "mutable-content": 1, "sound": "default"],
+                "encrypted": ["encap": target.hpkeEncap.base64EncodedString(), "ciphertext": target.ciphertext.base64EncodedString()],
+                "meta": ["event_type": 4, "source_device_name": sourceDeviceName, "tier": 4]
+            ]
+            guard try JSONSerialization.data(withJSONObject: payload, options: [.withoutEscapingSlashes]).count <= 4096
+            else { throw PushRelayEnvelope.Failure.payloadTooLarge }
+        }
         self.clientEventId = clientEventId
         self.sourceDeviceName = sourceDeviceName
         self.targets = targets

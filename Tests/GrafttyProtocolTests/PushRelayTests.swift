@@ -8,6 +8,18 @@ import Crypto
 #endif
 
 @Suite struct PushRelayTests {
+    @Test("@spec NOTIF-1.19: When preparing a Graftty-server push request, the application shall reject targets whose projected APNs JSON exceeds 4096 bytes including base64 content and relay metadata.")
+    func accountsForAPNSWrapperOverhead() throws {
+        func request(bytes: Int, name: String = "Mac") throws -> PushRelayRequest {
+            try .init(clientEventId: "event", sourceDeviceName: name,
+                targets: [.init(phoneDeviceId: "phone", hpkeEncap: Data(repeating: 1, count: 32),
+                                ciphertext: Data(repeating: 2, count: bytes))])
+        }
+        #expect(throws: PushRelayEnvelope.Failure.payloadTooLarge) { try request(bytes: 2900) }
+        #expect(throws: PushRelayEnvelope.Failure.payloadTooLarge) { try request(bytes: 2800, name: String(repeating: "🔥", count: 100)) }
+        _ = try request(bytes: 2800)
+    }
+
     private var event: RemoteNotificationEvent {
         .init(id: UUID(), kind: .agentStop,
               origin: .init(deviceID: .init(value: "paired-mac"), deviceLabel: "Mac", relayDepth: 0),

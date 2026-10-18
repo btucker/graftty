@@ -50,18 +50,29 @@ final class SidebarReportController: NSObject, ObservableObject, NSPopoverDelega
                 .fixedSize(horizontal: false, vertical: true)
                 .background(theme.highlightedWorktreeBackground)
                 .environment(\.colorScheme, theme.isDark ? .dark : .light)
+                .onGeometryChange(for: CGSize.self) { $0.size } action: { [weak self] size in
+                    self?.resizeContent(to: size)
+                }
         )
-        let height = ceil(host.fittingSize.height)
-        host.setFrameSize(NSSize(width: width, height: height))
         popover.appearance = theme.nsAppearance
         if let scroll = popover.contentViewController?.view as? SidebarReportScrollView {
             scroll.backgroundColor = theme.highlightedWorktreeBackgroundNSColor
             scroll.borderColor = NSColor(theme.foreground.opacity(0.2))
             scroll.needsDisplay = true
         }
-        let size = NSSize(width: width, height: min(height, 540, max(1, window.contentLayoutRect.height - 24)))
-        popover.contentViewController?.view.setFrameSize(size)
-        popover.contentSize = size
+        resizeContent(to: NSSize(width: width, height: host.fittingSize.height))
+    }
+
+    private func resizeContent(to contentSize: CGSize) {
+        guard let popover, let window = anchor?.window else { return }
+        let documentSize = NSSize(width: contentSize.width, height: ceil(contentSize.height))
+        if host.frame.size != documentSize { host.setFrameSize(documentSize) }
+        let size = NSSize(width: documentSize.width,
+                          height: min(documentSize.height, 540, max(1, window.contentLayoutRect.height - 24)))
+        if popover.contentSize != size {
+            popover.contentViewController?.view.setFrameSize(size)
+            popover.contentSize = size
+        }
     }
 
     func removed(_ view: SidebarReportButtonView) { if anchor === view { close() } }

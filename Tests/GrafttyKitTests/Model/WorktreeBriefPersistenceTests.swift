@@ -24,4 +24,27 @@ struct WorktreeBriefPersistenceTests {
         let migrated = try JSONDecoder().decode(WorktreeEntry.self, from: JSONSerialization.data(withJSONObject: legacy))
         #expect(migrated.brief?.title == "Worktree context")
     }
+
+    @Test func migratesMostRecentAvailableLegacyRecap() throws {
+        let first = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+            recap: .init(title: "Reconnect", context: "Recover sleeping Macs", completed: "Reproduced", next: "Implement"))
+        let later = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 200),
+            recap: .init(title: "Recovery", context: "Keep terminals available", completed: "Built", next: "Verify"))
+        for last in [nil, first, SidebarAgentStop(agentName: "Codex", stoppedAt: later.stoppedAt.addingTimeInterval(1))] {
+            var worktree = WorktreeEntry(path: "/repo/task", branch: "task")
+            if let last { worktree.recordAgentStop(last) }
+            worktree.unseenAgentStop = later
+            var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(worktree)) as? [String: Any])
+            legacy.removeValue(forKey: "brief")
+            var restored = try JSONDecoder().decode(WorktreeEntry.self, from: JSONSerialization.data(withJSONObject: legacy))
+            #expect(restored.brief?.title == "Recovery")
+            #expect(restored.brief?.context == "Keep terminals available")
+            restored.acknowledgeAttention()
+            let metadata = SidebarHostNavigation.metadata(for: restored, projectID: "repo", folders: [])
+            #expect(metadata.brief?.title == "Recovery")
+            restored.recordAgentStop(.init(agentName: "Codex", stoppedAt: later.stoppedAt.addingTimeInterval(2),
+                recap: .init(title: "Tests passed", completed: "Verified", next: "Review")))
+            #expect(restored.brief?.title == "Recovery")
+        }
+    }
 }

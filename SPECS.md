@@ -262,7 +262,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.126** When a remote client receives a retained agent recap, the application shall expose its context without counting it as a pending request and decode snapshots from older hosts without a retained recap.
 
-**LAYOUT-2.127** When worktree search matches a retained report field, the application shall include that worktree without acknowledging its pending request.
+**LAYOUT-2.127** When worktree search matches a retained report or current brief field, the application shall include that worktree without acknowledging its pending request.
 
 **LAYOUT-2.128** When pending-worktree navigation is invoked, the application shall select the next pending worktree in displayed order within the requested project and wrap at the end.
 
@@ -1159,6 +1159,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **NOTIF-1.17** When enrolling a phone with Graftty-server, the application shall send its APNs token and encryption public key over authenticated HTTPS using the server's registration contract.
 
 **NOTIF-1.18** When Graftty-server batches or rejects a push, the application shall preserve that delivery result instead of reporting that APNs delivered it.
+
+**NOTIF-1.19** When preparing a Graftty-server push request, the application shall reject targets whose projected APNs JSON exceeds 4096 bytes including base64 content and relay metadata.
+
+**NOTIF-1.20** When a mobile notification opens a closed worktree, the application shall reopen it and wait for a running pane, restore the stable pane target, and cancel activation if newer navigation supersedes it.
 
 ### NOTIF-2.x — Attention Badge Auto-Population
 
@@ -3815,6 +3819,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-6.x
 
 **CONTEXT-6** When mobile worktree context is opened, the application shall show the current brief, expand its history in place, and close back to the mounted terminal without acknowledging pending attention.
+
+### CONTEXT-8.x
+
+**CONTEXT-8** While a local or remote Mac worktree has a retained brief, the application shall display its context or completed result beneath its sidebar name even after the request is acknowledged.
+
+### CONTEXT-9.x
+
+**CONTEXT-9** When a worktree has a pending request without a saved brief, the application shall display its message in the context report until that request is dismissed.
 
 ## MEM — MEM
 

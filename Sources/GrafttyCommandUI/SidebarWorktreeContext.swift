@@ -61,8 +61,12 @@ public struct SidebarWorktreeContext: Equatable {
     }
 
     public func matches(query: String) -> Bool {
-        SidebarInteractionPolicy.matches(worktree, query: query)
+        let briefFields = brief.map { brief in
+            [brief.title, brief.context, brief.completed, brief.next].compactMap { $0 } + brief.decisions
+        } ?? []
+        return SidebarInteractionPolicy.matches(worktree, query: query)
             || !SidebarActivityFilter.all.apply(to: [item] + pending, query: query).isEmpty
+            || briefFields.joined(separator: " ").localizedCaseInsensitiveContains(query)
     }
 
     static func matchesRetainedReport(_ item: SidebarActivityItem, worktree: WorktreePanes) -> Bool {

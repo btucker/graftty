@@ -90,7 +90,7 @@ public struct WorktreeBriefContent: View {
                 }
             } else {
                 Text("No context yet").font(.headline)
-                Text("Agent reports will build a current brief and decision history here.")
+                Text(context.pending.first?.title ?? "Agent reports will build a current brief and decision history here.")
                     .font(.callout).foregroundStyle(secondary)
                 if let question = context.question { section("Waiting for you", text: question) }
             }
