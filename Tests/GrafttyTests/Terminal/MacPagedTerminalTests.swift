@@ -111,7 +111,7 @@ struct MacPagedTerminalTests {
         for generation in UInt64(1)...2 {
             if generation > 1 { try await stream.requestCheckpoint() }
             var freshCheckpoint: PagedTerminalCheckpoint?
-            while let event = try await events.next() {
+            while let event = await events.next() {
                 if case .checkpoint(let checkpoint) = event { freshCheckpoint = checkpoint; break }
                 if case .output(let data) = event { terminal.access.write(data) }
             }
@@ -127,7 +127,7 @@ struct MacPagedTerminalTests {
                 }
                 #expect(page.data.count <= PagedTerminalLimits.pageBytes)
                 try await stream.requestHistory(request)
-                #expect(try await events.next() == .page(page))
+                #expect(await events.next() == .page(page))
                 try #require(await renderer.appendHistory(page.data, screen: 0, generation: generation) == .applied)
                 if page.complete { break }
                 ordinal += 1
@@ -138,7 +138,7 @@ struct MacPagedTerminalTests {
             let marker = "after-history-\(generation)"
             var receivedLiveResponse = false
             try await stream.send(Data("\(marker)\n".utf8))
-            while let event = try await events.next() {
+            while let event = await events.next() {
                 guard case .output(let data) = event else { continue }
                 terminal.access.write(data)
                 if terminal.text().contains("live-\(marker)") { receivedLiveResponse = true; break }
@@ -186,7 +186,7 @@ struct MacPagedTerminalTests {
         #expect(requests.count == 1)
         try await stream.send(Data("old-daemon-still-live\n".utf8))
         var receivedLiveResponse = false
-        while let event = try await events.next() {
+        while let event = await events.next() {
             try await coordinator.handle(event)
             if case .output(let data) = event { terminal.access.write(data) }
             if terminal.text().contains("live-old-daemon-still-live") { receivedLiveResponse = true; break }
