@@ -46,6 +46,12 @@ struct RemoteBrowserButtonTests {
         #expect(window.rootViewController === host)
     }
 
+    @Test("@spec NOTIF-1.22: When the mobile application initializes, the application shall install its notification delegate before constructing the root view so launch notification responses can be received.")
+    func applicationInstallsNotificationDelegateBeforeBuildingRoot() {
+        _ = GrafttyMobileApp()
+        #expect(UNUserNotificationCenter.current().delegate === MobileAgentNotifications.shared)
+    }
+
     @Test func nativeStopNotificationHasSoundAndActivationRoute() throws {
         let route = MobileStopNotificationRoute(hostID: UUID(), worktreePath: "/task", worktreeID: "task", originDeviceID: nil, paneID: "pane")
         let request = MobileAgentNotifications.request(for: .init(identifier: "stop", title: "Worktree context",

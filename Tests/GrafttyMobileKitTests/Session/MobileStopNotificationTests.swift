@@ -4,6 +4,16 @@ import Testing
 @testable import GrafttyMobileKit
 
 struct MobileStopNotificationTests {
+    #if canImport(UIKit)
+    @Test("@spec NOTIF-1.21: While the mobile application has not installed its notification delegate, creating notification state and receiving snapshots shall not access the system notification service.")
+    @MainActor func notificationStateDoesNotRequireApplicationStartup() async {
+        let notifications = MobileAgentNotifications()
+        await notifications.requestAuthorization()
+        await notifications.receive([row(10)], hostID: UUID())
+        #expect(notifications.pendingRoute == nil)
+    }
+    #endif
+
     private func splitRow(_ time: Double, state: WorktreeWireState = .running, suffix: String = "", unseen: Bool = false) -> WorktreePanes {
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSinceReferenceDate: time), paneSlotID: "second-slot")
         return .init(path: "/task", displayName: "Task", repoDisplayName: "Project", displayBranch: "task",

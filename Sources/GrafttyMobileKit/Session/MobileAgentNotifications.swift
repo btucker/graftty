@@ -9,7 +9,7 @@ import os
 final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate {
     static let shared = MobileAgentNotifications()
     private(set) var pendingRoute: MobileStopNotificationRoute?
-    private let center: UNUserNotificationCenter
+    private var center: UNUserNotificationCenter?
     private let defaults: UserDefaults
     private var ledger: MobileStopNotificationLedger
     private var authorizationRequested = false
@@ -17,23 +17,31 @@ final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate
     private static let logger = Logger(subsystem: "dev.graftty.mobile", category: "Notifications")
 
     override init() {
-        center = .current()
         defaults = .standard
         ledger = defaults.data(forKey: Self.storageKey).flatMap {
             try? JSONDecoder().decode(MobileStopNotificationLedger.self, from: $0)
         } ?? .init()
         super.init()
+    }
+
+    /// Called by the application entry point before launch completes. Keeping
+    /// system access here lets views and standalone tests construct state safely.
+    func install() {
+        guard center == nil else { return }
+        let center = UNUserNotificationCenter.current()
         center.delegate = self
+        self.center = center
     }
 
     func requestAuthorization() async {
-        guard !authorizationRequested else { return }
+        guard let center, !authorizationRequested else { return }
         authorizationRequested = true
         do { _ = try await center.requestAuthorization(options: [.alert, .sound]) }
         catch { Self.logger.error("Notification authorization failed: \(error.localizedDescription, privacy: .public)") }
     }
 
     func receive(_ rows: [WorktreePanes], hostID: UUID) async {
+        guard let center else { return }
         let previous = ledger
         let notifications = ledger.receive(rows, hostID: hostID)
         if ledger != previous { defaults.set(try? JSONEncoder().encode(ledger), forKey: Self.storageKey) }

@@ -1164,6 +1164,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.20** When a mobile notification opens a closed worktree, the application shall reopen it and wait for a running pane, restore the stable pane target, and cancel activation if newer navigation supersedes it.
 
+**NOTIF-1.21** While the mobile application has not installed its notification delegate, creating notification state and receiving snapshots shall not access the system notification service.
+
+**NOTIF-1.22** When the mobile application initializes, the application shall install its notification delegate before constructing the root view so launch notification responses can be received.
+
 ### NOTIF-2.x — Attention Badge Auto-Population
 
 **NOTIF-2.1** When libghostty fires `COMMAND_FINISHED` with a zero exit code on a pane, the application shall set *that pane's* pane-scoped attention overlay to a checkmark indicator that auto-clears after 3 seconds. Sibling panes in the same worktree are unaffected.
