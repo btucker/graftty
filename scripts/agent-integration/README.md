@@ -6,8 +6,9 @@ provider tool calls. No model API credentials or inference are needed.
 
 ## Run locally
 
-Use macOS with Xcode, an installed iOS Simulator runtime, Python 3, and the
-snapshot-enabled Ghostty package used by the paging tests. Build the CLI first:
+Use macOS with Xcode, an installed iOS Simulator runtime, Python 3.11 or newer, and the
+snapshot-enabled Ghostty package used by the paging tests. The `python3` command
+below must select that interpreter; CI uses Python 3.12. Build the CLI first:
 
 ```sh
 GRAFTTY_GHOSTTY_PACKAGE_PATH=/absolute/path/to/libghostty-spm \
@@ -68,9 +69,16 @@ The existing workflow accepts `worktree_creation=true` and
 separate native view tests; the terminal scenario does not establish those
 visual results. This history-checking scenario sets Claude's supported
 `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` only in its private fixture environment
-and records that mode: the fullscreen renderer keeps old messages inside Claude
+and sets Codex `tui.alternate_screen="never"` in its private config. It records
+both rendering modes: fullscreen renderers keep old messages inside the provider
 instead of emitting terminal scrollback. Other native scenarios retain their
 existing provider mode. See [Claude rendering modes](https://code.claude.com/docs/en/fullscreen).
+Both creation legs use Claude's manual permission mode in the isolated settings
+file, preserving actual one-time tool approval and authentic recap receipts. The
+scripted endpoint does not implement auto-mode permission classification. Permission
+mode is recorded separately from rendering mode; other scenarios keep their defaults.
+The output gate finalizes Claude's text block before checking its end sentinel,
+while holding turn completion so Stop hooks cannot replace the output being checked.
 The focused workflow then reuses the built hosts for a bounded default-mode
 Claude creation/open/keyboard/rotation/reconnect run using
 `--worktree-creation-viewport-only`. That run requires endpoint arrival, hook

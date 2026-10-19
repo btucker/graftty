@@ -265,10 +265,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n'.encode())
                 self.wfile.flush()
                 if (initial and self.server.models.pause_after_output and ordinal == deltas
-                        and event['type'] in ('content_block_delta', 'response.output_text.delta')):
-                    # Creation checks need all text, including its final sentinel,
-                    # before terminal response events let provider Stop hooks
-                    # replace the viewport. Other scenarios retain their gates.
+                        and ((protocol == 'claude' and event['type'] == 'content_block_stop')
+                             or (protocol == 'codex' and event['type'] == 'response.output_text.delta'))):
+                    # Finalize Claude's text block before checking its trailing
+                    # paragraph. Hold before message_delta/end_turn can trigger
+                    # Stop hooks; retain Codex's final-delta boundary.
                     self.server.models.gate(agent, 'output')
             if initial:
                 with self.server.models.condition:

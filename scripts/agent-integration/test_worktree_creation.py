@@ -8,7 +8,7 @@ from unittest.mock import patch
 from harness import InvariantFailure, assert_reentry_viewport
 from run import Run
 from worktree_creation import (WorktreeCreationRun, assert_stable_grid, assert_history_rows,
-                               authoritative_history_viewport, provider_hooks_registered)
+                               authoritative_history_viewport, authoritative_completed_viewport, provider_hooks_registered)
 
 
 class WorktreeCreationTests(unittest.TestCase):
@@ -145,6 +145,20 @@ class WorktreeCreationTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(InvariantFailure):
                 self.assert_history_viewport(visible, source)
 
+    def test_default_viewport_requires_complete_output_before_comparison(self):
+        run = object.__new__(WorktreeCreationRun)
+        run.options = SimpleNamespace(worktree_creation_viewport_only=True)
+        complete = 'ROW-000299 final row\nEND-GRAFTTY-FIXTURE\n❯ '
+        with patch.object(Run, 'check_mobile_reentry') as check:
+            run.check_mobile_reentry('claude', 'created-pane-output')
+        oracle = check.call_args.kwargs['authoritative_viewport']
+        self.assertTrue(callable(oracle), 'default-mode output must have a completion oracle')
+        self.assertEqual(complete, oracle(complete, complete))
+        incomplete = complete.replace('END-GRAFTTY-FIXTURE', '')
+        for visible, source in ((incomplete, complete), (complete, incomplete), (incomplete, incomplete)):
+            with self.subTest(visible=visible, source=source), self.assertRaises(InvariantFailure):
+                oracle(visible, source)
+
     def test_only_native_history_leg_selects_a_history_suffix(self):
         run = object.__new__(WorktreeCreationRun)
         for viewport_only in (False, True):
@@ -153,7 +167,7 @@ class WorktreeCreationTests(unittest.TestCase):
                 with patch.object(Run, 'check_mobile_reentry') as check:
                     run.check_mobile_reentry(provider, 'created-pane-output')
                     check.assert_called_once_with(provider, 'created-pane-output',
-                        authoritative_viewport=None if viewport_only else authoritative_history_viewport)
+                        authoritative_viewport=authoritative_completed_viewport if viewport_only else authoritative_history_viewport)
 
 
 class ProviderHookEvidenceTests(unittest.TestCase):
