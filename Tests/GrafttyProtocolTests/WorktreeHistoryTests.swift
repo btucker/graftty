@@ -32,7 +32,9 @@ struct WorktreeHistoryTests {
         let timeline = WorktreeTimeline(history: history, brief: brief(count: 10))
         #expect(timeline.events.count == 12)
         #expect(timeline.events.filter { $0.kind == .user }.count == 1)
-        #expect(timeline.events.filter { $0.kind != .creation }.map(\.timestamp) == timeline.events.filter { $0.kind != .creation }.map(\.timestamp).sorted { ($0 ?? 0) < ($1 ?? 0) })
+        let eventTimestamps: [Double?] = timeline.events.filter { $0.kind != .creation }.map(\.timestamp)
+        let sortedTimestamps = eventTimestamps.sorted { ($0 ?? 0) < ($1 ?? 0) }
+        #expect(eventTimestamps == sortedTimestamps)
         let rows = timeline.rows(showAll: false)
         #expect(rows.map(\.events.count) == [1, 4, 1, 4, 1, 1])
         #expect(rows.filter(\.isGroup).allSatisfy { $0.events.allSatisfy { $0.kind == .checkpoint } })
