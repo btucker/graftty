@@ -233,6 +233,7 @@ class WorktreeCreationRun(Run):
         self.phase = 'fixed'
         models = self.server.models
         models.fixture_text = reentry_scenario_text
+        models.pause_after_output = True
         for agent in (('claude',) if viewport_only else ('claude', 'codex')):
             self.paths[agent] = self.server.broker.command(
                 Action('start', agent, {'background': 'true', 'backgroundFlow': source}), timeout=120)
@@ -274,14 +275,18 @@ class WorktreeCreationRun(Run):
             models.release(agent, 'middle')
             self.wait_model(lambda: (agent, 'end') in models.arrived)
             models.release(agent, 'end')
-            self.wait_model(lambda: agent in models.completed)
-            self.wait_model(lambda: (agent, 'recap') in models.arrived)
+            self.wait_model(lambda: (agent, 'output') in models.arrived)
             self.check_mobile_reentry(agent, 'created-pane-output')
             if not viewport_only:
                 self.check_history(agent)
             self.act(Action('reconnect', agent, client='mobile'))
             self.record_stability(agent, 'reconnected')
             self.check_mobile_reentry(agent, 'created-pane-reconnected-output')
+            # All text is rendered before end-turn Stop-hook UI can replace it.
+            # Still require genuine provider completion and its real recap tool.
+            models.release(agent, 'output')
+            self.wait_model(lambda: agent in models.completed)
+            self.wait_model(lambda: (agent, 'recap') in models.arrived)
             self.complete_provider_recap(agent)
         if self.invariant_failures:
             raise InvariantFailure('created mobile pane failed output checks')

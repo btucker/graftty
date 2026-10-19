@@ -7,22 +7,25 @@ from worktree_creation import WorktreeCreationRun
 
 
 class CreationOutputBarrierTests(unittest.TestCase):
-    def test_complete_output_is_checked_while_recap_is_held(self):
+    def test_complete_output_is_checked_before_response_completion(self):
         for viewport_only in (False, True):
             with self.subTest(viewport_only=viewport_only):
                 self.check_sequence(viewport_only)
 
     def check_sequence(self, viewport_only):
         providers = ('claude',) if viewport_only else ('claude', 'codex')
-        # The server holds the final text delta at `end`; it holds the next
-        # Stop-hook tool stream at `recap`. Only the latter has complete output.
+        # `end` holds the final text delta. The opt-in `output` gate holds
+        # completion events after all text is flushed, before Stop-hook UI.
         models = SimpleNamespace(
             arrived={(agent, phase) for agent in providers for phase in ('begin', 'middle', 'end')},
-            completed=set(), recaps_done=set(), released=set())
+            completed=set(), recaps_done=set(), released=set(), pause_after_output=False)
 
         def release(agent, phase):
             models.released.add((agent, phase))
             if phase == 'end':
+                self.assertTrue(models.pause_after_output)
+                models.arrived.add((agent, 'output'))
+            elif phase == 'output':
                 models.completed.add(agent)
                 models.arrived.add((agent, 'recap'))
             elif phase == 'recap':
@@ -51,16 +54,17 @@ class CreationOutputBarrierTests(unittest.TestCase):
         checked = []
 
         def check_output(agent, stage):
-            self.assertIn(agent, models.completed, 'Complete-output assertions ran before the final text delta')
-            self.assertIn((agent, 'recap'), models.arrived)
-            self.assertNotIn((agent, 'recap'), models.released,
-                             'Stop-hook tool UI may replace output while checking it')
+            self.assertIn((agent, 'output'), models.arrived, 'Final text delta has not been flushed')
+            self.assertNotIn((agent, 'output'), models.released)
+            self.assertNotIn(agent, models.completed, 'Stop hook can replace output after completion')
             checked.append((agent, stage))
         run.check_mobile_reentry = check_output
         run.check_history = lambda agent: check_output(agent, 'history')
 
         def complete_recap(agent):
             self.assertIn((agent, 'created-pane-reconnected-output'), checked)
+            self.assertIn(agent, models.completed)
+            self.assertIn((agent, 'recap'), models.arrived)
             release(agent, 'recap')
         run.complete_provider_recap = complete_recap
         run.scenarios()

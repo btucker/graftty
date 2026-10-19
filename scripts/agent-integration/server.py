@@ -20,6 +20,7 @@ class ModelState:
         self.cli = cli
         self.rows = rows
         self.fixture_text = scenario_text
+        self.pause_after_output = False
         self.condition = threading.Condition()
         self.barriers = {}
         self.arrived = set()
@@ -247,8 +248,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         ordinal = 0
         try:
             if tool and self.server.models.pending_tools.get(agent, '').startswith('recap:'):
-                # Preserve completed output for renderer/history checks before
-                # the first stop-hook approval replaces the native viewport.
+                # Hold the recap tool response until the controller can handle
+                # its approval. Provider Stop hooks may already have rendered;
+                # only the opt-in output gate preserves the pre-hook viewport.
                 self.server.models.gate(agent, 'recap')
             for event in events:
                 if initial and event['type'] in ('content_block_delta', 'response.output_text.delta'):
@@ -261,6 +263,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     ordinal += 1
                 self.wfile.write(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n'.encode())
                 self.wfile.flush()
+                if (initial and self.server.models.pause_after_output and ordinal == deltas
+                        and event['type'] in ('content_block_delta', 'response.output_text.delta')):
+                    # Creation checks need all text, including its final sentinel,
+                    # before terminal response events let provider Stop hooks
+                    # replace the viewport. Other scenarios retain their gates.
+                    self.server.models.gate(agent, 'output')
             if initial:
                 with self.server.models.condition:
                     self.server.models.completed.add(agent)
