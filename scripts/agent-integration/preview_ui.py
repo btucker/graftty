@@ -28,7 +28,8 @@ EXPECTED_CASES = {LIFECYCLE_ID + '[' + embedded + ', ' + retained + ']'
                   for embedded in ('false', 'true') for retained in ('false', 'true')}
 FOCUS_ID = TESTS[1] + '()'
 RETENTION_ASSERTION = re.compile(
-    r'^Expectation failed:.*\b(?:socket\.closeCount|returnedContainer|client\.isOwner|container\.agentCompletion|container\.committedSoftwareInput)\b')
+    r'^(?:RemoteBrowserButtonTests\.swift:[1-9][0-9]*: )?Expectation failed:.*\b'
+    r'(?:socket\.closeCount|returnedContainer|client\.isOwner|container\.agentCompletion|container\.committedSoftwareInput)\b')
 
 
 @contextmanager

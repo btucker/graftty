@@ -103,6 +103,36 @@ class PreviewEvidenceTests(unittest.TestCase):
             cases[0]['failures'] = [message]
             self.assertFalse(evaluate_cases(cases, red=True))
 
+    def test_red_accepts_xcode_source_locations_without_changing_raw_failures(self):
+        cases = records(red=True)
+        messages = [
+            'RemoteBrowserButtonTests.swift:895: Expectation failed: (socket.closeCount → 1) == 0',
+            'RemoteBrowserButtonTests.swift:898: Expectation failed: (container.agentCompletion → nil) != nil',
+            'RemoteBrowserButtonTests.swift:895: Expectation failed: (socket.closeCount → 1) == 0',
+            'RemoteBrowserButtonTests.swift:899: Expectation failed: (container.committedSoftwareInput → nil) != nil',
+        ]
+        for case, message in zip(cases, messages):
+            case['failures'] = [message,
+                'RemoteBrowserButtonTests.swift:934: Expectation failed: condition(): Timed out waiting for mounted terminal']
+        original = copy.deepcopy(cases)
+        self.assertTrue(evaluate_cases(cases, red=True))
+        self.assertEqual(original, cases)
+
+    def test_source_location_does_not_make_unrelated_or_quoted_failure_targeted(self):
+        for message in (
+            'RemoteBrowserButtonTests.swift:934: Expectation failed: condition(): Timed out waiting for mounted terminal',
+            'RemoteBrowserButtonTests.swift:895: Timed out waiting for socket.closeCount',
+            'RemoteBrowserButtonTests.swift:895: Expectation failed: unrelatedCloseCount == 0',
+            'RemoteBrowserButtonTests.swift:895: Expectation failed: other.client.isOwnerCopy',
+            'Log says RemoteBrowserButtonTests.swift:895: Expectation failed: socket.closeCount == 0',
+            '"RemoteBrowserButtonTests.swift:895: Expectation failed: socket.closeCount == 0"',
+            'RemoteBrowserButtonTests.swift:invalid: Expectation failed: socket.closeCount == 0',
+        ):
+            with self.subTest(message=message):
+                cases = records(red=True)
+                cases[0]['failures'] = [message]
+                self.assertFalse(evaluate_cases(cases, red=True))
+
     def test_green_rejects_failure_messages_even_after_successful_retry(self):
         cases = records()
         cases[0]['failures'] = ['Expectation failed: socket.closeCount == 0']
