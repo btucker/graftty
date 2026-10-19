@@ -107,11 +107,11 @@ jobs:
         run: swift build --manifest-cache none -Xcc "$GRAFTTY_RENDERER_CONTEXT" --build-tests --disable-automatic-resolution -Xswiftc -warnings-as-errors
 
       - name: Test package targets in isolated processes
-        # The complete serial suite, test discovery, and process startup can
-        # exceed five minutes on hosted runners even when every test passes.
-        # Keep a finite limit with room for runner variance; the ownership
+        # The complete serial suite took 9m04s on a passing hosted run and
+        # exceeded 10m while still making progress on another. Allow runner
+        # variance across discovery and per-batch process startup; the ownership
         # corpus below retains its separate five-minute performance gate.
-        timeout-minutes: 10
+        timeout-minutes: 15
         # `script` gives swift test a PTY-like stdout so output streams
         # in real time instead of being block-buffered by the CI log pipe.
         # A package-wide invocation intermittently stalls while the many async,
