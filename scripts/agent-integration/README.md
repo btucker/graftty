@@ -113,11 +113,13 @@ versions, Simulator UDID, device type, runtime version/build, executed native
 commands, CLI/zmx SHA256 hashes, tested commit, tracked diff hash, hashes of
 untracked source files, and per-stage stop/request counts. `tested.patch`
 preserves the tracked changes.
-The continuously-active retry case fixes the production view's scene environment
-to active. It records actual decoded OS response IDs/routes, effective scene
+The controlled effective-scene-phase retry case fixes the production view's
+scene environment to active, while recording the system scene phase separately.
+It records actual decoded OS response IDs/routes, effective scene
 transitions, and stable probe identity. After a reported fetch failure, a second
 same-target response must cause a second fetch and render the exact live target.
-No scene transition or view remount may supply the retry. Use
+No effective scene transition or view remount may supply the retry. This does
+not claim the OS remained foreground during Notification Center interaction. Use
 `--notifications --notification-case active-retry` for that focused case, or the
 workflow's `notification_case` input. The default `all` includes it after the
 other lifecycle and error cases. A response observer records real delegate

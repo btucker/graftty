@@ -292,7 +292,7 @@ class NotificationRun(Run):
         self.assert_active_retry(attempted, responses=2, fetches=2)
         selected = self.wait_mobile_route(provider, prepared)
         self.assert_active_retry(selected, responses=2, fetches=2)
-        self.summary['assertions'].append({'provider': provider, 'mobileContinuouslyActiveRetry': selected,
+        self.summary['assertions'].append({'provider': provider, 'mobileEffectiveActiveRetry': selected,
             'firstFailure': first, 'secondResponse': second})
 
     @staticmethod

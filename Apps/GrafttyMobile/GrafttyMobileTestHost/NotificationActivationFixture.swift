@@ -57,6 +57,7 @@ final class NotificationActivationFixture {
     private var responseIDs: [String] = []
     private var responseRoutes: [MobileStopNotificationRoute] = []
     private var observedScenePhases: [String] = []
+    private var observedSystemScenePhases: [String] = []
     private var sceneProbeIDs: [UUID] = []
 
     struct FixtureAuthenticator: BiometricAuthenticator {
@@ -160,14 +161,22 @@ final class NotificationActivationFixture {
     }
 
     func observeScenePhase(_ phase: ScenePhase) {
-        let value: String
-        switch phase {
-        case .active: value = "active"
-        case .inactive: value = "inactive"
-        case .background: value = "background"
-        @unknown default: value = "unknown"
-        }
+        let value = Self.name(for: phase)
         if observedScenePhases.last != value { observedScenePhases.append(value) }
+    }
+
+    func observeSystemScenePhase(_ phase: ScenePhase) {
+        let value = Self.name(for: phase)
+        if observedSystemScenePhases.last != value { observedSystemScenePhases.append(value) }
+    }
+
+    private static func name(for phase: ScenePhase) -> String {
+        switch phase {
+        case .active: return "active"
+        case .inactive: return "inactive"
+        case .background: return "background"
+        @unknown default: return "unknown"
+        }
     }
 
     func sceneProbeAppeared(_ id: UUID, phase: ScenePhase) {
@@ -295,6 +304,8 @@ final class NotificationActivationFixture {
             "observedScenePhase": observedScenePhases.last ?? "unobserved",
             "sceneTransitions": String(max(0, observedScenePhases.count - 1)),
             "scenePhases": String(decoding: try JSONEncoder().encode(observedScenePhases), as: UTF8.self),
+            "systemScenePhase": observedSystemScenePhases.last ?? "unobserved",
+            "systemScenePhases": String(decoding: try JSONEncoder().encode(observedSystemScenePhases), as: UTF8.self),
             "sceneProbeIDs": String(decoding: try JSONEncoder().encode(sceneProbeIDs), as: UTF8.self),
             "session": selectedPane?.sessionName ?? "",
             "live": String(selectedPane?.client.connectionState == .live),
@@ -351,14 +362,19 @@ final class NotificationActivationFixture {
 /// selection changes and the native accessibility overlay stays current.
 struct NotificationActivationFixtureView: View {
     let fixture: NotificationActivationFixture
+    @Environment(\.scenePhase) private var systemScenePhase
     var body: some View {
-        if fixture.configuration.mode == "active-retry" {
-            // Keep RootView and its probe continuously active so an OS scene
-            // transition cannot retry the failed route on the second tap.
-            fixture.root.environment(\.scenePhase, .active)
-        } else {
-            fixture.root
+        Group {
+            if fixture.configuration.mode == "active-retry" {
+                // Control only RootView's effective phase. The outer probe
+                // records the independent OS lifecycle during physical taps.
+                fixture.root.environment(\.scenePhase, .active)
+            } else {
+                fixture.root
+            }
         }
+        .onAppear { fixture.observeSystemScenePhase(systemScenePhase) }
+        .onChange(of: systemScenePhase) { _, phase in fixture.observeSystemScenePhase(phase) }
     }
 }
 
