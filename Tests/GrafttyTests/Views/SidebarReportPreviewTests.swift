@@ -86,7 +86,7 @@ struct SidebarReportPreviewTests {
         #expect(!popover.isShown)
     }
 
-    @Test("@spec LAYOUT-2.132: While a Mac worktree report popover is visible, the application shall fit short reports to their content and use the highlighted worktree background and Ghostty foreground colors in light and dark themes.")
+    @Test("@spec LAYOUT-2.132: While a Mac worktree report popover is visible, the application shall fit short reports including visible history to their content and use the highlighted worktree background and Ghostty foreground colors in light and dark themes.")
     func reportFitsContentAndTheme() throws {
         let window = makeWindow()
         defer { window.close() }
@@ -101,7 +101,10 @@ struct SidebarReportPreviewTests {
             button.theme = theme
             controller.show(button)
             let popover = try #require(controller.popover)
-            #expect(popover.contentSize.height < 340)
+            #expect(popover.contentSize.height < 540)
+            let scroll = try #require(popover.contentViewController?.view as? NSScrollView)
+            let document = try #require(scroll.documentView)
+            #expect(abs(popover.contentSize.height - ceil(document.frame.height)) <= 1)
             #expect(popover.contentSize.height > 100)
             #expect(popover.appearance?.bestMatch(from: [.darkAqua, .aqua]) == (theme.isDark ? .darkAqua : .aqua))
             let view = try #require(popover.contentViewController?.view)

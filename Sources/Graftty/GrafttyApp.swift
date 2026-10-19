@@ -1686,7 +1686,10 @@ struct GrafttyApp: App {
                         try attentionHandoff.consumeActivities { activity in
                             switch activity {
                             case .progress(let event):
-                                guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
+                                guard let index = binding.wrappedValue.indices(forWorktreePath: event.worktree) else { return }
+                                if let input = event.userInput {
+                                    binding.wrappedValue.repos[index.repo].worktrees[index.worktree].recordUserInput(input)
+                                }
                                 Self.clearAgentAttention(
                                     callerPath: event.worktree,
                                     callerAgentID: event.agentID,
@@ -4520,6 +4523,11 @@ struct GrafttyApp: App {
             worktreeName: worktreeName,
             branch: branch,
             base: base,
+            creationOrigin: .init(date: Date(), source: .worktree, worktreePath: callerPath,
+                worktreeName: repo.worktrees.first(where: { $0.path == callerPath }).map {
+                    SidebarWorktreeLabel.text(for: $0, inRepoAtPath: repo.path,
+                        siblingPaths: repo.worktrees.map(\.path), defaultBranch: repo.defaultBranchHint)
+                }),
             appState: appState
         ) {
         case .success(let path):

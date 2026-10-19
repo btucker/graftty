@@ -272,7 +272,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.131** While a mobile worktree report is previewed, the application shall wrap its full question and recap within the available width and keep Open and Close controls accessible without acknowledging the request.
 
-**LAYOUT-2.132** While a Mac worktree report popover is visible, the application shall fit short reports to their content and use the highlighted worktree background and Ghostty foreground colors in light and dark themes.
+**LAYOUT-2.132** While a Mac worktree report popover is visible, the application shall fit short reports including visible history to their content and use the highlighted worktree background and Ghostty foreground colors in light and dark themes.
 
 **LAYOUT-2.133** While an inline worktree question is displayed, the application shall align its accent and text to the leading edge regardless of question length.
 
@@ -3850,7 +3850,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-6.x
 
-**CONTEXT-6** When mobile worktree context is opened, the application shall show the current brief, expand its history in place, and close back to the mounted terminal without acknowledging pending attention.
+**CONTEXT-6** When mobile worktree context is opened, the application shall show the current brief and chronological history without collapsing the section, and close back to the mounted terminal without acknowledging pending attention.
 
 ### CONTEXT-8.x
 
@@ -3867,6 +3867,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-11.x
 
 **CONTEXT-11** When the selected iPad worktree has no focused terminal pane, the application shall retain an accessible icon-only Context action that opens its worktree context without starting or focusing a pane.
+
+### CONTEXT-12.x
+
+**CONTEXT-12** When a worktree creation is recorded, the application shall retain its timestamp and distinguish human UI creation from creation in another worktree, without inferring an unknown creator from the Git base branch.
+
+### CONTEXT-13.x
+
+**CONTEXT-13** When a provider emits a user-prompt hook, the application shall retain the actual user input once through the durable handoff, persist it independently of unread attention, and project creation and input history to paired devices before or after the first agent report.
+
+### CONTEXT-14.x
+
+**CONTEXT-14** While a worktree history has more than eight events, the application shall fold only consecutive runs of at least two older agent checkpoints, retain creation, every user input, and the latest two checkpoints, and expand each run or all events in chronological order.
+
+### CONTEXT-15.x
+
+**CONTEXT-15** When Context is opened on Mac or mobile, the application shall show its history section without a disclosure, label human input separately from agent progress, and show a local date and time for each visible event while fitting the available width.
 
 ## MEM — MEM
 

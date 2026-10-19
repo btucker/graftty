@@ -187,14 +187,15 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     /// Latest recap remains available to clients after acknowledgement.
     public var lastAgentStop: SidebarAgentStop?
     public var brief: WorktreeBrief?
+    public var history: WorktreeHistory?
     /// Latest progress from each provider session, used to retire viewed
     /// stopped cards after their agent resumes.
     public var agentProgressTimes: [String: Double]?
     public var emoji: String?
     /// Nil for hosts that predate the temporary / pinned distinction.
     public var isPinned: Bool?
-    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, lastAgentStop: SidebarAgentStop? = nil, brief: WorktreeBrief? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isPinned: Bool? = nil) {
-        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.lastAgentStop = lastAgentStop; self.brief = brief; self.agentProgressTimes = agentProgressTimes; self.emoji = emoji
+    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, lastAgentStop: SidebarAgentStop? = nil, brief: WorktreeBrief? = nil, history: WorktreeHistory? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isPinned: Bool? = nil) {
+        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.lastAgentStop = lastAgentStop; self.brief = brief; self.history = history; self.agentProgressTimes = agentProgressTimes; self.emoji = emoji
         self.isPinned = isPinned
     }
 

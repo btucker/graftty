@@ -234,7 +234,8 @@ struct TeamHook: ParsableCommand {
                 worktree: worktreePath,
                 agentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
                 runtime: runtime,
-                sessionID: resolvedSessionID
+                sessionID: resolvedSessionID,
+                userPrompt: event == .userPromptSubmit ? (stdinPayload["prompt"] as? String ?? "") : nil
             )
         }
         if event == .sessionStart || event == .userPromptSubmit {

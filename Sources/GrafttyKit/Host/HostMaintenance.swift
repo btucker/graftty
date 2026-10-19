@@ -122,7 +122,10 @@ public extension HeadlessHostRuntime {
                 SidebarHostNavigation.adoptReportedEmoji(stop.recap, worktreePath: stop.worktree, in: &state.repos)
                 if let pane = stop.paneSessionName { busyAgents.remove(pane) }
             case .progress(let progress):
-                guard state.worktree(forPath: progress.worktree) != nil else { return }
+                guard let index = state.indices(forWorktreePath: progress.worktree) else { return }
+                if let input = progress.userInput {
+                    state.repos[index.repo].worktrees[index.worktree].recordUserInput(input)
+                }
                 let key = AgentHookAttentionIdentity.key(runtime: progress.runtime, sessionID: progress.sessionID, callerAgentID: progress.agentID)
                 state.clearAgentStopAttention(worktreePath: progress.worktree, providerSessionKey: key, progressedAt: progress.progressedAt)
             }

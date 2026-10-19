@@ -58,6 +58,21 @@ struct HeadlessHostRuntimeTests {
         return (root, configuration, state)
     }
 
+    @Test func userPromptHandoffPersistsAndPublishesHistory() throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("attention"))
+        try handoff.progress(worktree: root.path, agentID: "agent", runtime: .codex,
+            sessionID: "session", userPrompt: "yes, implement it")
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.state.repos[0].worktrees[0].history?.inputs.first?.text == "yes, implement it")
+        #expect(try AppState.load(from: root).repos[0].worktrees[0].history?.inputs.count == 1)
+        #expect(runtime.snapshot().first?.sidebar?.history?.inputs.count == 1)
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.state.repos[0].worktrees[0].history?.inputs.count == 1)
+    }
+
     @Test("@spec LAYOUT-2.153: When a remote client changes a repository's worktree order mode, the owning host shall persist the mode and publish that order while preserving pinned order and the saved manual order.")
     func remoteOrderPersistsAndPublishesHostOrder() async throws {
         let (root, config, initial) = try fixture()

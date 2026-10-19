@@ -57,14 +57,22 @@ private struct WorktreeContextFixture: View {
     @State private var mounts = 0
     @State private var coordinator = RemoteConnectionCoordinator()
     private let row: WorktreePanes = {
+        let start = Date().addingTimeInterval(-3600)
         let recap = AttentionRecap(title: "Worktree context", context: "Help me reload my context when returning to a worktree.",
             completed: "Built a current brief with expandable history.", next: "Try it on a phone.",
             checkpoint: "Chose the brief with expandable history", decisions: ["Keep the purpose title stable."])
+        var brief = WorktreeBrief(recap: recap, at: start.addingTimeInterval(60))
+        for index in 1...9 {
+            brief.update(.init(title: "Worktree context", completed: "Agent progress \(index)", next: "Review the timeline.",
+                checkpoint: "Timeline checkpoint \(index)"), at: start.addingTimeInterval(Double(index + 1) * 60))
+        }
+        var history = WorktreeHistory(origin: .init(date: start, source: .user))
+        history.record(.init(text: "Keep my decisions visible.", at: start.addingTimeInterval(270)))
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now, recap: recap)
         return .init(path: "/task", displayName: "rethink-notifications", repoDisplayName: "graftty", displayBranch: "task",
             state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
             sidebar: .init(id: "task", projectID: "p", unseenAgentStop: stop, lastAgentStop: stop,
-                brief: WorktreeBrief(recap: recap, at: .now)))
+                brief: brief, history: history))
     }()
     var body: some View {
         ScrollbackFixture()

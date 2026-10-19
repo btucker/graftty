@@ -217,7 +217,13 @@ public final class HeadlessHostRuntime {
                 startPoint: existing ? nil : base, startPointResolutionPath: callerPath ?? repo.path)
         } catch { launch.discardPromptFile(); throw error }
         guard let ri = state.repos.firstIndex(where: { $0.path == repo.path }) else { throw HostRuntimeError.notFound("repository removed during creation") }
-        state.repos[ri].worktrees.append(WorktreeEntry(path: path, branch: branch, createdAt: Date()))
+        let createdAt = Date()
+        let origin = WorktreeHistory.Origin(date: createdAt, source: callerPath == nil ? .user : .worktree,
+            worktreePath: callerPath, worktreeName: repo.worktrees.first(where: { $0.path == callerPath }).map {
+                SidebarWorktreeLabel.text(for: $0, inRepoAtPath: repo.path,
+                    siblingPaths: repo.worktrees.map(\.path), defaultBranch: repo.defaultBranchHint)
+            })
+        state.repos[ri].worktrees.append(WorktreeEntry(path: path, branch: branch, createdAt: createdAt, creationOrigin: origin))
         try save() // Retain successful Git creation even if shell startup fails.
         if let agent {
             try WorktreeAgentLaunchCommand.saveInitialPrompt(prompt, runtime: agent, repo: repo,

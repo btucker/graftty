@@ -29,7 +29,7 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
             title: recap.checkpoint ?? recap.title, completed: recap.completed, decisions: decisions)]
     }
 
-    public mutating func update(_ recap: AttentionRecap, at date: Date) {
+    public mutating func update(_ recap: AttentionRecap, at date: Date, preservingCheckpointBefore boundary: Date? = nil) {
         let timestamp = date.timeIntervalSinceReferenceDate
         guard timestamp >= updatedAt else { return }
         let newTitle = recap.purposeChanged == true ? recap.title : title
@@ -47,7 +47,8 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
         let checkpointChanged = recap.checkpoint.map { $0 != history.last?.title } ?? false
         guard changed || checkpointChanged, recap.checkpoint != nil || purposeChanged else { return }
         let heading = recap.checkpoint ?? title
-        if !purposeChanged, history.last?.title == heading {
+        let canMerge = boundary.map { (history.last?.timestamp ?? -.infinity) > $0.timeIntervalSinceReferenceDate } ?? true
+        if !purposeChanged, canMerge, history.last?.title == heading {
             history[history.count - 1].timestamp = timestamp
             history[history.count - 1].completed = completed
             history[history.count - 1].decisions = decisions
