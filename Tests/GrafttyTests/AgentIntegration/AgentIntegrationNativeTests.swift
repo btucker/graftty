@@ -163,7 +163,11 @@ private final class AgentIntegrationMacHost {
             let base = manifest.endpoint.appendingPathComponent("model/\(command.provider)").absoluteString
             let environment = provider == .claude ? "ANTHROPIC_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base))"
                 : "OPENAI_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base + "/v1"))"
-            let initial = "export GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(command.provider)) \(environment)\n" + (launch.command ?? "")
+            // Fullscreen provider virtualization has no terminal scrollback. The
+            // history scenario explicitly selects Claude's supported classic mode.
+            let historyEnvironment = command.parameters["history"] == "true" && provider == .claude
+                ? "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 " : ""
+            let initial = "export \(historyEnvironment)GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(command.provider)) \(environment)\n" + (launch.command ?? "")
             let created = try await runtime.createWorktree(repository: repo, name: command.provider,
                 branch: command.provider, command: initial)
             let native = try #require(driver.panes[created.session])

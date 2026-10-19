@@ -175,6 +175,36 @@ struct PagedTerminalCoordinatorTests {
         #expect(surface.installed == [1])
     }
 
+    @Test("@spec TERM-12.44: If the host cannot fit a history row within its page transport budget, then the application shall distinguish that refusal from local memory exhaustion, stop automatic retries, and preserve loaded content until explicit checkpoint recovery.")
+    func hostPageBudgetIsDistinctFromLocalRetention() async throws {
+        let surface = Surface()
+        surface.nearTop = true
+        var requests: [PagedTerminalRequest] = []
+        let coordinator = PagedTerminalCoordinator(renderer: surface) { requests.append($0) }
+        try await coordinator.handle(.checkpoint(checkpoint(1)))
+        await coordinator.loadIfNeeded()
+        guard case .history(let first) = try #require(requests.last) else { return }
+        try await coordinator.handle(.page(page(first)))
+        await coordinator.loadIfNeeded()
+        guard case .history(let second) = try #require(requests.last) else { return }
+        try await coordinator.handle(.unavailable(.init(request: second, reason: .limit)))
+        #expect(String(describing: coordinator.status) == "pageTooLarge")
+        await coordinator.loadIfNeeded(prefetch: true)
+        await coordinator.retry()
+        #expect(requests.count == 2)
+        #expect(surface.pages == [0])
+        await coordinator.recover()
+        #expect(requests.last == .checkpoint)
+        #expect(surface.pages == [0])
+        try await coordinator.handle(.checkpoint(checkpoint(2)))
+        surface.result = .limit
+        await coordinator.loadIfNeeded()
+        guard case .history(let next) = try #require(requests.last) else { return }
+        try await coordinator.handle(.page(page(next)))
+        #expect(coordinator.status == .limit)
+        coordinator.disconnect()
+    }
+
     private func checkpoint(_ id: UInt64) -> PagedTerminalCheckpoint {
         .init(incarnation: 7, id: id, cols: 80, rows: 24, ready: Data([1]),
               hasPrimaryHistory: true, hasAlternateHistory: false)

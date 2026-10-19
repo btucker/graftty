@@ -70,6 +70,19 @@ Graftty's current libghostty surface API. This PR adopts and hardens the
 transport, but demand-loaded scrollback still requires a libghostty surface
 snapshot-import bridge.
 
+Paged attachments keep each encoded PAGE record, including its codec header
+and checksum, within 256 KiB. Dense wide-character rows can make one native
+page exceed that transport budget. The daemon sends its newest whole rows
+first and keeps the unsent prefix for subsequent ordinals. Retries return
+identical bytes and completion metadata. A row that cannot fit by itself
+returns a host page-size refusal without advancing the cursor. Client memory
+limits remain separate and unchanged.
+
+This behavior ships in `graftty7`. Existing daemon processes keep their old
+export behavior until their sessions are deliberately restarted. A new client
+labels an old daemon's oversized-page refusal as a transfer limit, rather than
+client memory exhaustion. Upgrading the app does not restart active sessions.
+
 `zmx attach --replay-grid` is the host's legacy VT bridge mode. It prefixes
 stdout with `GFTGRID1`, then two little-endian u16 fields for columns and rows,
 before any clear-screen or replay bytes. The dimensions come from the decoded

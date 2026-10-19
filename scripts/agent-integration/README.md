@@ -60,6 +60,19 @@ emoji, or status label cannot satisfy a missing syntax or diff sample. The probe
 checks Mac output, mobile ownership, mobile reconnect, mobile following, and the
 return to Mac ownership. `--colors --mac-only` checks Mac output only.
 
+Add `--history --rows 600` to exercise bounded history transfers with both
+providers. The fixture repeats emoji and source paths across physical wraps,
+then attaches Mobile after the final numbered row renders. Actual touch drags
+must reveal older rows and increase loaded history across the initial boundary.
+Native scroll bindings then exhaustively load history and check ordered row
+markers through native selection. The scenario reconnects, changes the source
+grid, and reconnects again. `history-*.json` records paging states and
+the selected rows; `mobile.xcresult` retains the actual gesture screenshots.
+The native workflow's `history` input runs this focused scenario. `result.json`
+also records the commit, working-tree state, provider versions, simulator
+runtime, and exact zmx path and SHA256. Existing daemons must be tested
+separately because this runner creates fresh isolated sessions.
+
 The isolated home supplies no `TERM`, `COLORTERM`, or color-forcing variables.
 Production terminal creation must supply its capabilities. Start observations
 record only the host and terminal color-related environment keys. In particular,

@@ -55,6 +55,7 @@ class RunnerLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runner = Run.__new__(Run)
             runner.root = Path(directory)
+            runner.summary = {}
             derived = runner.root / 'ios-cache'
             products = derived / 'Build/Products'
             products.mkdir(parents=True)
@@ -65,7 +66,7 @@ class RunnerLifecycleTests(unittest.TestCase):
 
             def execute_fixture(command, **kwargs):
                 if command[:4] == ['xcrun', 'simctl', 'list', 'devices']:
-                    return json.dumps({'devices': {'fixture': [{'udid': 'fixture-device', 'state': 'Booted'}]}})
+                    return json.dumps({'devices': {'fixture': [{'udid': 'fixture-device', 'name': 'Fixture phone', 'state': 'Booted'}]}})
                 if any('compiler-context.py' in str(argument) for argument in command):
                     self.assertEqual(str(renderer), kwargs['env']['GRAFTTY_GHOSTTY_PACKAGE_PATH'])
                     return '-DGRAFTTY_RENDERER_fixture'
@@ -80,6 +81,7 @@ class RunnerLifecycleTests(unittest.TestCase):
             build = next(call for call in execute.call_args_list if call.args[0][0] == 'xcodebuild')
             self.assertIn('OTHER_SWIFT_FLAGS=$(inherited) -Xcc -DGRAFTTY_RENDERER_fixture', build.args[0])
             self.assertEqual(str(renderer), build.kwargs['env']['GRAFTTY_GHOSTTY_PACKAGE_PATH'])
+            self.assertEqual({'udid': 'fixture-device', 'name': 'Fixture phone', 'runtime': 'fixture'}, runner.summary['simulator'])
 
     def test_mobile_build_finishes_before_native_deadline_starts(self):
         with tempfile.TemporaryDirectory() as directory:
