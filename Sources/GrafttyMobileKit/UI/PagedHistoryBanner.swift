@@ -21,6 +21,10 @@ struct PagedHistoryBanner: View {
             }
         case .limit:
             message("History memory limit reached") { EmptyView() }
+        case .pageTooLarge:
+            message("An older history page is too large to transfer") {
+                Button("Reload from live screen") { Task { await paging.recover() } }
+            }
         case .inactive, .available, .complete:
             EmptyView()
         }

@@ -2,6 +2,7 @@
 """Run isolated real-agent native Mac/mobile scenarios and preserve failure traces."""
 import argparse
 import fcntl
+import hashlib
 from dataclasses import asdict
 import json
 import os
@@ -148,7 +149,7 @@ class Run:
         raise InvariantFailure(f'Mac/mobile ownership and grid did not converge: mac={mac}, phone={phone}')
 
     def record_simulator(self, device, runtime):
-        pass
+        self.summary['simulator'] = {'udid': device['udid'], 'name': device['name'], 'runtime': runtime}
 
     def prepare_mobile(self):
         options = self.options
@@ -252,6 +253,10 @@ class Run:
         self.summary.setdefault('generatedContentChecks', []).append({'agent': agent, 'status': status})
 
     def scenarios(self):
+        if getattr(self.options, 'history', False):
+            from history_scenario import run_history
+            run_history(self)
+            return
         if getattr(self.options, 'worktree_reentry', False):
             self.worktree_reentry()
             return
@@ -478,6 +483,10 @@ class Run:
         self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude)
         self.summary['providerVersions'] = {name: execute([str(getattr(self.options, name)), '--version'], env=self.env)
                                             for name in ('claude', 'codex')}
+        self.summary['commit'] = execute(['git', 'rev-parse', 'HEAD'])
+        self.summary['dirty'] = bool(execute(['git', 'status', '--porcelain']))
+        self.summary['zmx'] = {'path': str(self.options.zmx),
+                               'sha256': hashlib.sha256(self.options.zmx.read_bytes()).hexdigest()}
         self.env['GRAFTTY_SWIFTPM_SHARED_DIR'] = str(self.options.cache)
         if self.options.ghostty_package:
             self.env['GRAFTTY_GHOSTTY_PACKAGE_PATH'] = str(self.options.ghostty_package)
@@ -576,6 +585,7 @@ def main():
     parser.add_argument('--simulator', help='Use this test device without deleting it; default creates a private device')
     parser.add_argument('--mac-only', action='store_true', help='Debug the native Mac and messaging paths without claiming mobile coverage')
     parser.add_argument('--worktree-reentry', action='store_true', help='Test retained mobile routes with keyboard changes and hidden ownership transitions')
+    parser.add_argument('--history', action='store_true', help='Test dense wide provider output through bounded mobile history paging')
 
     parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
     parser.add_argument('--notifications', action='store_true', help='Capture real provider Stop hooks and exercise native notification replay and activation')
@@ -595,12 +605,14 @@ def main():
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
-    if sum((options.worktree_reentry, options.colors, options.notifications)) > 1:
-        parser.error('--worktree-reentry, --colors and --notifications are separate scenarios')
+    if sum((options.worktree_reentry, options.colors, options.notifications, options.history)) > 1:
+        parser.error('--worktree-reentry, --colors, --notifications and --history are separate scenarios')
     if options.notification_case != 'all' and (not options.notifications or options.mac_only):
         parser.error('--notification-case requires --notifications with mobile coverage')
     if options.notifications and (options.replay or options.shrink):
         parser.error('--notifications records its own bounded event replays')
+    if options.history and (options.mac_only or options.replay or options.shrink):
+        parser.error('--history requires mobile and runs separately from generated actions')
     if options.worktree_reentry and options.mac_only:
         parser.error('--worktree-reentry requires the native mobile host')
     if options.worktree_reentry and (options.replay or options.shrink):

@@ -30,7 +30,7 @@ public extension PagedTerminalRenderer {
 @MainActor
 public final class PagedTerminalCoordinator {
     public enum Status: Equatable, Sendable {
-        case inactive, installing, available, loading, complete, requiresRecovery, unavailable, limit
+        case inactive, installing, available, loading, complete, requiresRecovery, unavailable, limit, pageTooLarge
     }
     public private(set) var status: Status = .inactive
     private let renderer: any PagedTerminalRenderer
@@ -46,6 +46,11 @@ public final class PagedTerminalCoordinator {
     private var timeout: Task<Void, Never>?
 
 #if DEBUG
+    /// Read-only evidence for gesture-driven request/import correlation.
+    public var historyDiagnosticsForTesting: (generation: UInt64, requests: UInt64, imports: UInt64) {
+        (generation, nextRequestID, nextOrdinal.reduce(0, &+))
+    }
+
     /// Lets tests await timeout completion or cancellation without fixed sleeps.
     var timeoutTaskForTesting: Task<Void, Never>? { timeout }
 #endif
@@ -124,7 +129,9 @@ public final class PagedTerminalCoordinator {
             cancelPending()
             switch failure.reason {
             case .expired, .incompatible: status = .requiresRecovery
-            case .limit: status = .limit
+            // The host's limit is an encoded PAGE budget. Native retention
+            // refusals arrive separately from renderer.appendHistory above.
+            case .limit: status = .pageTooLarge
             case .unavailable:
                 retryRequest = failure.request
                 status = .unavailable

@@ -229,6 +229,11 @@ final class AgentIntegrationMobileController: UIViewController {
                 guard pane.container.terminalView.surface?.performAction(action) == true else { throw AgentIntegrationError("mobile scroll rejected") }
             case "select":
                 guard pane.container.terminalView.surface?.performAction("select_all") == true else { throw AgentIntegrationError("mobile selection rejected") }
+            case "loadedHistory":
+                guard let surface = pane.container.terminalView.surface,
+                      surface.performAction("select_all") else { throw AgentIntegrationError("mobile history read rejected") }
+                defer { _ = surface.performAction("clear_selection") }
+                return ["loadedHistory": surface.readSelection() ?? ""]
             case "input":
                 pane.client.sendSoftwareKeyboardText(command.parameters["text"] ?? "")
                 pane.client.submitReturn()
@@ -357,7 +362,7 @@ final class AgentIntegrationMobileController: UIViewController {
         let metrics = pane.container.terminalGridMetrics
         let terminalFrame = pane.container.convert(pane.container.bounds, to: view.window)
         let keyboardFrame = view.convert(view.keyboardLayoutGuide.layoutFrame, to: view.window)
-        return ["text": text, "anchor": AgentIntegrationAnchor.first(in: text),
+        var values = ["text": text, "anchor": AgentIntegrationAnchor.first(in: text),
             "pagedGridMismatches": pane.client.diagnosticPagedGridMismatches.joined(separator: "\n"),
             "parserGridMatches": metrics.map { parserGridMatches(pane.client.session, columns: $0.columns, rows: $0.rows) } ?? "",
             "parserGridAtScrollbarHeight": metrics.map { parserGridMatches(pane.client.session, columns: $0.columns, rows: UInt16(clamping: bar?.len ?? 0)) } ?? "",
@@ -381,6 +386,14 @@ final class AgentIntegrationMobileController: UIViewController {
             "offset": String(bar?.offset ?? 0), "total": String(bar?.total ?? 0), "len": String(bar?.len ?? 0),
             "width": String(Int(pane.container.bounds.width)), "height": String(Int(pane.container.bounds.height)),
             "session": pane.client.sessionName, "paging": pane.client.paging.map { String(describing: $0.status) } ?? "inactive"]
+        #if DEBUG
+        if let diagnostic = pane.client.paging?.historyDiagnosticsForTesting {
+            values["historyGeneration"] = String(diagnostic.generation)
+            values["issuedHistoryRequests"] = String(diagnostic.requests)
+            values["importedHistoryPages"] = String(diagnostic.imports)
+        }
+        #endif
+        return values
     }
 
     func waitForOwnership(_ client: SessionClient) async throws {
