@@ -261,7 +261,7 @@ private final class AgentIntegrationMacHost {
             if let text = command.parameters["text"], !text.isEmpty, !pane.handle.writeText(text) {
                 throw AgentIntegrationError("Mac input rejected")
             }
-            pane.handle.pressReturn()
+            if command.parameters["submit"] != "false" { pane.handle.pressReturn() }
         case "message":
             let destination = try required(command, "destination")
             let text = try required(command, "text")

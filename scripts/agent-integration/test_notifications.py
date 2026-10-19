@@ -6,13 +6,54 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from harness import InvariantFailure
+from harness import InvariantFailure, Broker
 from server import ModelState
 from model import model_events
 from notifications import NotificationRun, assert_notification_evidence, verify_attention_isolation, notification_scenario_text
 
 
 class NotificationEvidenceTests(unittest.TestCase):
+    def test_next_stop_waits_for_rendered_input_then_submits_once(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        runner.act = Mock()
+        runner.wait_snapshot = Mock()
+        runner.wait_model = Mock()
+        runner.model_prompt_receipt = Mock(return_value={'requestID': 'request', 'occurrences': 1})
+        runner.summary = {'assertions': []}
+        with patch('notifications.time.sleep') as settle:
+            runner.submit_next_stop('codex')
+        actions = [call.args[0] for call in runner.act.call_args_list]
+        self.assertEqual(2, len(actions))
+        prompt = actions[0].parameters['text']
+        self.assertTrue(prompt.startswith('GRAFTTY_TEST_NEXT_STOP codex '))
+        self.assertEqual('false', actions[0].parameters['submit'])
+        self.assertEqual({}, actions[1].parameters)
+        predicate = runner.wait_snapshot.call_args.args[1]
+        self.assertTrue(predicate({'text': prompt}))
+        self.assertFalse(predicate({'text': 'not yet entered'}))
+        settle.assert_called_once_with(.25)
+        self.assertEqual('request', runner.summary['assertions'][0]['nextStopSubmission']['requestID'])
+
+    def test_next_stop_receipt_requires_one_exact_user_prompt(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        broker = Broker()
+        runner.server = SimpleNamespace(broker=broker)
+        prompt = 'GRAFTTY_TEST_NEXT_STOP codex nonce'
+        def request(text, identifier='request', agent='codex'):
+            return {'kind': 'model-request', 'agent': agent, 'requestID': identifier,
+                    'body': {'input': [{'role': 'user', 'content': text}]}}
+        broker.record(request('<session>' + prompt + '</session>'))
+        broker.record(request(prompt, agent='claude'))
+        self.assertIsNone(runner.model_prompt_receipt('codex', prompt))
+        broker.record(request(prompt))
+        broker.record(request(prompt, identifier='continuation'))
+        self.assertEqual({'requestID': 'request', 'occurrences': 1}, runner.model_prompt_receipt('codex', prompt))
+        duplicate = request(prompt)
+        duplicate['body']['input'] *= 2
+        broker.record(duplicate)
+        with self.assertRaises(InvariantFailure):
+            runner.model_prompt_receipt('codex', prompt)
+
     def test_notification_route_requires_fresh_visible_target_session_content(self):
         runner = NotificationRun.__new__(NotificationRun)
         runner.markers = {'claude': 'NOTIFY_CLAUDE_123', 'codex': 'NOTIFY_CODEX_123'}

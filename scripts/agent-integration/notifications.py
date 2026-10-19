@@ -7,6 +7,7 @@ import time
 import uuid
 
 from harness import Action, InvariantFailure
+from model import user_text
 from run import REPO, Run, execute
 
 
@@ -146,6 +147,32 @@ class NotificationRun(Run):
         value = self.evidence(provider, stage, 'notificationsReplay', parameters)
         self.assert_stops(provider, value, count, stage)
 
+    def model_prompt_receipt(self, provider, prompt):
+        receipt = None
+        with self.server.broker.lock:
+            for event in self.server.broker.events:
+                if event.get('kind') != 'model-request' or event.get('agent') != provider:
+                    continue
+                occurrences = user_text(event['body'], markers_only=True).count(prompt)
+                if occurrences > 1:
+                    raise InvariantFailure(f'{provider} received the next-stop prompt more than once')
+                if occurrences == 1 and receipt is None:
+                    receipt = {'requestID': event['requestID'], 'occurrences': occurrences}
+        return receipt
+
+    def submit_next_stop(self, provider):
+        prompt = f'GRAFTTY_TEST_NEXT_STOP {provider} {uuid.uuid4().hex}'
+        self.act(Action('input', provider, {'text': prompt, 'submit': 'false'}))
+        self.wait_snapshot(provider, lambda value: prompt in value['text'])
+        # Codex 0.162.1 treats Enter within 120 ms of a paste burst as a
+        # newline. Let the observed text settle before one separate Return.
+        time.sleep(.25)
+        self.act(Action('input', provider))
+        self.wait_model(lambda: self.model_prompt_receipt(provider, prompt) is not None)
+        self.summary['assertions'].append({'provider': provider, 'nextStopPrompt': prompt,
+            'nextStopSubmission': self.model_prompt_receipt(provider, prompt)})
+        return prompt
+
     def scenarios(self):
         self.phase = 'notifications'
         # The native test build has completed now; fingerprint the executables
@@ -155,6 +182,7 @@ class NotificationRun(Run):
             self.start_mobile()
         models = self.server.models
         provider_events = self.provider_events = {}
+        next_stop_prompts = {}
         for provider in ('claude', 'codex'):
             self.paths[provider] = self.act(Action('start', provider))
             deadline = time.monotonic() + 60
@@ -175,7 +203,7 @@ class NotificationRun(Run):
             first = self.assert_stops(provider, self.wait_stops(provider, 1), 1, 'genuine-first-stop')
             self.record_provider_screen(provider, 1)
             self.replay(provider, first, 1, 'repeated-first-stop')
-            self.act(Action('input', provider, {'text': 'GRAFTTY_TEST_NEXT_STOP ' + provider}))
+            next_stop_prompts[provider] = self.submit_next_stop(provider)
             events = self.assert_stops(provider, self.wait_stops(provider, 2), 2, 'genuine-second-stop')
             self.record_provider_screen(provider, 2)
             self.replay(provider, events, 2, 'repeated-both-stops')
@@ -192,6 +220,7 @@ class NotificationRun(Run):
         # were running, including files from the earlier provider.
         for provider in ('claude', 'codex'):
             self.assert_stops(provider, self.evidence(provider, 'final'), 2, 'final-provider-count')
+            self.model_prompt_receipt(provider, next_stop_prompts[provider])
 
     def record_provider_screen(self, provider, stop):
         value = self.act(Action('verify', provider))
