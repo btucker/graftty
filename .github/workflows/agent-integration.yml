@@ -64,7 +64,7 @@ jobs:
           export GRAFTTY_HISTORY_LEGACY_ZMX="$RUNNER_TEMP/history-legacy-zmx"
           cp Resources/zmx-binary/zmx "$GRAFTTY_HISTORY_LEGACY_ZMX"
           cp "$candidate" Resources/zmx-binary/zmx
-          scripts/swiftpm test --build-system native --filter 'MacPagedTerminalTests|PagedTerminalCoordinatorTests' 2>&1 | tee /private/tmp/graftty-history-validation/green.log
+          scripts/swiftpm test --build-system native --filter 'MacPagedTerminalTests|PagedTerminalCoordinatorTests|AgentIntegrationProtocolTests' 2>&1 | tee /private/tmp/graftty-history-validation/green.log
           python3 -B scripts/agent-integration/verify_history_results.py --swift /private/tmp/graftty-history-validation
       - name: Run real agents on Mac and mobile
         env:
