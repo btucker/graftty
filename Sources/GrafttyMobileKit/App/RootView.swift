@@ -182,7 +182,10 @@ public struct RootView: View {
             case .notReady: notificationError = "The worktree hasn't started yet. Open it from \(host.label) and try again."
             }
         } catch {
-            guard isCurrent() else { return }
+            guard !Task.isCancelled, isCurrent() else { return }
+            // A reported failure completes this attempt. A later response for
+            // the same target must change pendingRoute and start a fresh fetch.
+            notifications.consume(route)
             notificationError = "Couldn't reconnect to \(host.label). Open the host and try again."
         }
     }
