@@ -161,6 +161,12 @@ final class AgentIntegrationMobileController: UIViewController {
 
     func handle(_ command: AgentIntegrationCommand) async throws -> [String: String] {
         if command.operation == "previewPrepare" {
+            // The preview scenario owns production chrome. Fixture buttons
+            // must not remain discoverable beneath its hosting controller.
+            for control in [status, focusKeyboardButton, dismissKeyboard] {
+                control.isHidden = true
+                control.accessibilityElementsHidden = true
+            }
             previewFixture?.client.stop()
             unmount()
             focused = nil
@@ -563,6 +569,28 @@ final class AgentPreviewFixture {
         }
         guard client.ownershipSnapshot?.ownerIdentity == "ssh-device:integration-phone" else {
             throw AgentIntegrationError("preview offer identity differs from authenticated SSH owner")
+        }
+        // Ownership changes before SwiftUI applies the owner layout and its
+        // deferred physical-viewport confirmation. Observe that normal path
+        // through the resulting source/native/parser grids before typing.
+        let gridDeadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while true {
+            if let container = terminal(in: host.view), let metrics = container.terminalGridMetrics,
+               let state = client.ownershipSnapshot, container.authoritativeGrid == nil,
+               state.grid.cols == metrics.columns, state.grid.rows == metrics.rows {
+                #if GRAFTTY_PAGED_HISTORY
+                if client.session.gridMatches(columns: metrics.columns, rows: metrics.rows) { break }
+                #else
+                throw AgentIntegrationError("preview parser diagnostics require GRAFTTY_PAGED_HISTORY")
+                #endif
+            }
+            guard ContinuousClock.now < gridDeadline else {
+                let metrics = terminal(in: host.view)?.terminalGridMetrics
+                let native = metrics.map { "\($0.columns)x\($0.rows)" } ?? "missing"
+                let source = client.ownershipSnapshot.map { "\($0.grid.cols)x\($0.grid.rows)" } ?? "missing"
+                throw AgentIntegrationError("preview owner viewport did not converge: source=\(source), native=\(native), ownerResizes=\(client.diagnosticOwnerResizeRequests)")
+            }
+            try await Task.sleep(for: .milliseconds(20))
         }
     }
 
