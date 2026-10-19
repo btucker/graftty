@@ -137,3 +137,37 @@ and reordered rows. Review found and fixed a length-clipping hole using an
 extra-wrap RED regression: comparisons now extend to the next row or explicit
 model-output end marker, excluding provider footer UI without truncating payload.
 Original artifacts remain unchanged.
+
+### Follow-up protocol validation and Codex rendering mode
+
+Follow-up PR #462 admits `loadedHistory` through the shared transport guard.
+An actual isolated SwiftPM RED failed only that parameterized TEST-1.1 case;
+all six protocol tests passed after the allowlist correction. The hosted gate
+now requires that argument case, alongside 24 tests in three focused suites.
+
+At `e05799dca297c31ae916ddbf8a3cf378c520ee6e`,
+[run 39186009589](https://github.com/btucker/graftty/actions/runs/39186009589)
+passed that Swift gate and completed the Mobile fixture build. The prior
+`b927c5df` build timed out at 900 seconds compiling the fixture; adding an
+explicit dictionary type restored its former return-type context. No setup or
+behavioral deadline was increased.
+
+Claude passed authoritative 600-row source, actual gesture backfill from an
+initial loaded boundary of row 508 to visible row 485, with page requests and
+imports both increasing from zero to one. Attach and reconnect preserved all
+600 rows. Resize matched all 900 source redraw occurrences and preserved every
+original payload. The genuine recap tool also completed. Simulator
+`B7F9ADB7-1DD7-482F-A2D0-9D69ACA2A896` ran iOS 26.5 with the pinned versions
+and daemon hash above. Logs, exact source/selection comparisons, screenshots,
+and `mobile.xcresult` are retained in the run artifact.
+
+The run **failed overall** at Codex's authoritative-source preflight, before
+Mobile attached to Codex: only 37 native rows and numbered targets 591–599
+existed. Codex 0.162.1's installed `--help` documents `--no-alt-screen` as its
+inline mode preserving terminal scrollback, also listed in the
+[official CLI reference](https://developers.openai.com/codex/cli/reference/).
+The focused history fixture now passes that option, records it in result
+metadata, and retains the same exact source/content and gesture assertions.
+This coverage is Codex inline and Claude classic native scrollback, not either
+provider's fullscreen transcript. Production provider settings are unchanged;
+the original failed Codex-default evidence is preserved.

@@ -155,7 +155,9 @@ private final class AgentIntegrationMacHost {
             let provider = command.provider.hasPrefix("claude") ? TeamHookRuntime.claude : .codex
             let prompt = "GRAFTTY_TEST_BEGIN \(command.provider)"
             let exactCommand = provider == .claude
-                ? "claude --permission-mode manual -- " + WorktreeAgentLaunchCommand.shellLiteral(prompt) : nil
+                ? "claude --permission-mode manual -- " + WorktreeAgentLaunchCommand.shellLiteral(prompt)
+                : command.parameters["history"] == "true"
+                    ? "codex --no-alt-screen -- " + WorktreeAgentLaunchCommand.shellLiteral(prompt) : nil
             let launch = try WorktreeAgentLaunchCommand.prepare(agent: provider, prompt: prompt, exactCommand: exactCommand,
                 promptDirectory: root.appendingPathComponent("prompts"))
             // Per-agent model URL is inherited by both Codex processes. The
@@ -164,7 +166,7 @@ private final class AgentIntegrationMacHost {
             let environment = provider == .claude ? "ANTHROPIC_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base))"
                 : "OPENAI_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base + "/v1"))"
             // Fullscreen provider virtualization has no terminal scrollback. The
-            // history scenario explicitly selects Claude's supported classic mode.
+            // history scenario selects Codex inline and Claude classic modes.
             let historyEnvironment = command.parameters["history"] == "true" && provider == .claude
                 ? "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 " : ""
             let initial = "export \(historyEnvironment)GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(command.provider)) \(environment)\n" + (launch.command ?? "")
