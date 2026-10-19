@@ -150,10 +150,12 @@ jobs:
             /private/tmp/graftty-ai-*/*created-pane*.json
             /private/tmp/graftty-ai-*/*creation*.txt
             /private/tmp/graftty-ai-*/*creation-hooks.json
+            /private/tmp/graftty-ai-*/*creation-completion-notice.json
             /private/tmp/graftty-ai-*/*production-startup.json
             /private/tmp/graftty-ai-*/*.png
             /private/tmp/graftty-ai-*/*failure.json
             /private/tmp/graftty-ai-*/result.json
+            /private/tmp/graftty-ai-*/source.diff
             /private/tmp/graftty-ai-*/actions.json
             /private/tmp/graftty-ai-*/trace.jsonl
             /private/tmp/graftty-ai-*/mac.log

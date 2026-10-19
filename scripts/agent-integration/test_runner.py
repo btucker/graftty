@@ -1,3 +1,4 @@
+import hashlib
 import json
 import plistlib
 from pathlib import Path
@@ -7,10 +8,112 @@ import unittest
 from unittest.mock import Mock, patch
 
 from harness import Broker, InvariantFailure
-from run import Run, prepare_home
+from run import Run, execute, prepare_home
 
 
 class RunnerLifecycleTests(unittest.TestCase):
+    def test_source_provenance_keeps_git_status_columns_and_patch_newlines(self):
+        raw = b' M fixture.py\n\n'
+        with patch('run.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=raw)):
+            self.assertEqual(raw.decode(), execute(['git', 'status', '--porcelain'], strip=False))
+            self.assertEqual('M fixture.py', execute(['git', 'status', '--porcelain']))
+
+    def test_provenance_survives_setup_and_scenario_failures_and_success(self):
+        for failure_stage in ('home', 'version', 'mobile-build', 'scenario', None):
+            with self.subTest(failure_stage=failure_stage), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                binaries = {}
+                for name in ('cli', 'zmx', 'codex', 'claude'):
+                    binaries[name] = root / name
+                    binaries[name].write_bytes((name + '-fixture').encode())
+                options = SimpleNamespace(**binaries, rows=100, seed=7, mac_only=False,
+                    cache=root / 'cache', ios_cache=root / 'ios', ghostty_package=None,
+                    simulator='fixture-device', worktree_creation=True,
+                    worktree_creation_source='app-flow', worktree_creation_viewport_only=False)
+                server = Mock(endpoint='http://127.0.0.1:1234', broker=Broker())
+                with patch('run.tempfile.mkdtemp', return_value=directory), \
+                     patch('run.IntegrationServer', return_value=server), patch('run.threading.Thread'):
+                    runner = Run(options)
+
+                def execute_fixture(command, **kwargs):
+                    if command == ['git', 'rev-parse', 'HEAD']:
+                        return 'fixture-head'
+                    if command[:3] == ['git', 'status', '--porcelain']:
+                        return ' M scripts/agent-integration/run.py'
+                    if command[:3] == ['git', 'diff', '--binary']:
+                        return 'fixture diff'
+                    if command[-1] == '--version':
+                        if failure_stage == 'version' and command[0] == str(options.codex):
+                            raise InvariantFailure('version failure')
+                        return Path(command[0]).name + '-version'
+                    if command[:4] == ['xcrun', 'simctl', 'list', 'devices']:
+                        return json.dumps({'devices': {'fixture-runtime': [{'udid': 'fixture-device',
+                            'name': 'Fixture phone', 'state': 'Booted'}]}})
+                    if command[0] == 'xcodebuild':
+                        raise InvariantFailure('mobile-build failure')
+                    return ''
+
+                def home_fixture(*args):
+                    # Provenance must already be durable before setup can fail.
+                    early = json.loads((root / 'result.json').read_text())
+                    self.assertEqual('fixture-head', early['commit'])
+                    self.assertEqual(hashlib.sha256(b'cli-fixture').hexdigest(), early['cli']['sha256'])
+                    if failure_stage == 'home':
+                        raise InvariantFailure('home failure')
+                    return prepare_home(*args)
+
+                def scenario_fixture():
+                    if failure_stage == 'scenario':
+                        runner.phase = 'fixed'
+                        raise InvariantFailure('scenario failure')
+
+                with patch('run.execute', side_effect=execute_fixture), \
+                     patch('run.prepare_home', side_effect=home_fixture), \
+                     patch('run.subprocess.run', return_value=SimpleNamespace(stdout=b'')) as cleanup, \
+                     patch.object(runner, 'spawn') as spawn, patch.object(runner, 'wait_registered'), \
+                     patch.object(runner, 'scenarios', side_effect=scenario_fixture), \
+                     patch.object(runner, 'prepare_mobile',
+                         side_effect=runner.prepare_mobile if failure_stage == 'mobile-build' else lambda: None):
+                    if failure_stage:
+                        with self.assertRaisesRegex(InvariantFailure, failure_stage + ' failure'):
+                            runner.run()
+                    else:
+                        runner.run()
+                    if failure_stage in ('home', 'version', 'mobile-build'):
+                        spawn.assert_not_called()
+                    if failure_stage == 'home':
+                        cleanup.assert_not_called()
+                result = json.loads((root / 'result.json').read_text())
+                self.assertEqual('failed' if failure_stage else 'passed', result['result'])
+                self.assertEqual('fixture-head', result['commit'])
+                self.assertTrue(result['dirty'])
+                self.assertEqual(' M scripts/agent-integration/run.py', result['sourceStatus'])
+                self.assertEqual(hashlib.sha256(b'fixture diff').hexdigest(), result['sourceDiffSHA256'])
+                self.assertEqual('fixture diff', (root / 'source.diff').read_text())
+                self.assertEqual('app-flow', result['inputs']['worktree_creation_source'])
+                for name in ('cli', 'zmx'):
+                    self.assertEqual({'path': str(binaries[name]),
+                        'sha256': hashlib.sha256((name + '-fixture').encode()).hexdigest()}, result[name])
+                if failure_stage != 'home':
+                    self.assertEqual('claude-version', result['providerVersions']['claude'])
+                    self.assertEqual('codex', runner.env['GRAFTTY_TEST_AGENT'])
+                    self.assertEqual('1', runner.env['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN'])
+                else:
+                    self.assertEqual({}, result['providerVersions'])
+                    self.assertNotIn('simulator', result)
+                self.assertEqual(str(options.cli), result['inputs']['cli'])
+                self.assertIn('argv', result['invocation'])
+                if failure_stage == 'version':
+                    self.assertNotIn('codex', result['providerVersions'])
+                if failure_stage == 'mobile-build':
+                    self.assertEqual({'udid': 'fixture-device', 'name': 'Fixture phone',
+                        'runtime': 'fixture-runtime'}, result['simulator'])
+                    self.assertTrue(runner.ios_lock.closed)
+                if failure_stage:
+                    self.assertEqual('fixed' if failure_stage == 'scenario' else 'setup', result['failurePhase'])
+                server.shutdown.assert_called_once()
+                server.server_close.assert_called_once()
+
     def test_reentry_waits_for_current_rows_and_keeps_both_native_observations(self):
         runner = Run.__new__(Run)
         runner.invariant_failures = []
@@ -55,6 +158,7 @@ class RunnerLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runner = Run.__new__(Run)
             runner.root = Path(directory)
+            runner.summary = {}
             derived = runner.root / 'ios-cache'
             products = derived / 'Build/Products'
             products.mkdir(parents=True)
@@ -65,7 +169,7 @@ class RunnerLifecycleTests(unittest.TestCase):
 
             def execute_fixture(command, **kwargs):
                 if command[:4] == ['xcrun', 'simctl', 'list', 'devices']:
-                    return json.dumps({'devices': {'fixture': [{'udid': 'fixture-device', 'state': 'Booted'}]}})
+                    return json.dumps({'devices': {'fixture': [{'udid': 'fixture-device', 'name': 'Fixture phone', 'state': 'Booted'}]}})
                 if any('compiler-context.py' in str(argument) for argument in command):
                     self.assertEqual(str(renderer), kwargs['env']['GRAFTTY_GHOSTTY_PACKAGE_PATH'])
                     return '-DGRAFTTY_RENDERER_fixture'
@@ -80,6 +184,8 @@ class RunnerLifecycleTests(unittest.TestCase):
             build = next(call for call in execute.call_args_list if call.args[0][0] == 'xcodebuild')
             self.assertIn('OTHER_SWIFT_FLAGS=$(inherited) -Xcc -DGRAFTTY_RENDERER_fixture', build.args[0])
             self.assertEqual(str(renderer), build.kwargs['env']['GRAFTTY_GHOSTTY_PACKAGE_PATH'])
+            self.assertEqual({'udid': 'fixture-device', 'name': 'Fixture phone', 'runtime': 'fixture'},
+                             runner.summary['simulator'])
 
     def test_mobile_build_finishes_before_native_deadline_starts(self):
         with tempfile.TemporaryDirectory() as directory:

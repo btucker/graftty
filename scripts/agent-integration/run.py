@@ -2,6 +2,7 @@
 """Run isolated real-agent native Mac/mobile scenarios and preserve failure traces."""
 import argparse
 import fcntl
+import hashlib
 from dataclasses import asdict
 import json
 import os
@@ -24,7 +25,7 @@ REPO = Path(__file__).resolve().parents[2]
 AGENTS = ('claude', 'codex', 'claude-peer', 'codex-peer')
 
 
-def execute(command, *, env=None, timeout=180, log=None):
+def execute(command, *, env=None, timeout=180, log=None, strip=True):
     if log:
         with Path(log).open('wb') as output:
             result = subprocess.run(command, cwd=REPO, env=env, stdout=output, stderr=subprocess.STDOUT, timeout=timeout)
@@ -32,7 +33,8 @@ def execute(command, *, env=None, timeout=180, log=None):
         result = subprocess.run(command, cwd=REPO, env=env, capture_output=True, timeout=timeout)
     if result.returncode:
         raise InvariantFailure(f'command failed ({result.returncode}): {command}; log={log or result.stderr.decode(errors="replace")}')
-    return result.stdout.decode().strip() if not log else ''
+    output = result.stdout.decode() if not log else ''
+    return output.strip() if strip else output
 
 
 def prepare_home(root, endpoint, codex, claude):
@@ -163,6 +165,9 @@ class Run:
         selected = next((d for runtime in devices['devices'].values() for d in runtime if d['udid'] == self.simulator), None)
         if not selected:
             raise InvariantFailure('selected simulator is unavailable')
+        runtime = next(key for key, values in devices['devices'].items() if selected in values)
+        self.summary['simulator'] = {'udid': self.simulator, 'name': selected['name'], 'runtime': runtime}
+        (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
         if selected['state'] != 'Booted':
             execute(['xcrun', 'simctl', 'boot', self.simulator])
         execute(['xcrun', 'simctl', 'bootstatus', self.simulator, '-b'], timeout=300, log=self.root / 'simulator-boot.log')
@@ -468,32 +473,52 @@ class Run:
     def run(self):
         self.thread.start()
         print(f'Native integration artifacts: {self.root}', flush=True)
-        self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude)
-        if getattr(self.options, 'worktree_creation', False):
-            # CLI-created Codex uses its configured model header without the
-            # direct-launch export. Claude has its own endpoint and ignores it.
-            self.env['GRAFTTY_TEST_AGENT'] = 'codex'
-        if getattr(self.options, 'worktree_creation', False) and not getattr(self.options, 'worktree_creation_viewport_only', False):
-            # This scenario verifies real terminal history. Claude's fullscreen
-            # renderer virtualizes old rows inside the provider instead.
-            self.env['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN'] = '1'
-            self.summary['providerModes'] = {'claude': 'classic (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)',
-                                             'codex': 'default'}
-        self.summary['providerVersions'] = {name: execute([str(getattr(self.options, name)), '--version'], env=self.env)
-                                            for name in ('claude', 'codex')}
-        self.env['GRAFTTY_SWIFTPM_SHARED_DIR'] = str(self.options.cache)
-        if self.options.ghostty_package:
-            self.env['GRAFTTY_GHOSTTY_PACKAGE_PATH'] = str(self.options.ghostty_package)
-        manifest = {'endpoint': self.server.endpoint, 'root': str(self.root), 'cli': str(self.options.cli),
-                    'zmx': str(self.options.zmx), 'codex': str(self.options.codex), 'claude': str(self.options.claude),
-                    'seed': self.options.seed}
-        self.server.manifest = manifest
-        manifest_file = self.root / 'manifest.json'
-        manifest_file.write_text(json.dumps(manifest))
-        self.env['GRAFTTY_AGENT_INTEGRATION_MANIFEST'] = str(manifest_file)
-        (self.root / 'bin' / 'graftty').symlink_to(self.options.cli)
+        self.env = {}
         failure = None
         try:
+            self.summary['invocation'] = {'executable': sys.executable, 'argv': list(sys.argv),
+                'interpreterArgv': list(sys.orig_argv) if hasattr(sys, 'orig_argv') else None, 'cwd': os.getcwd()}
+            self.summary['inputs'] = {key: str(value) if isinstance(value, Path) else value
+                                     for key, value in vars(self.options).items()}
+            self.summary['providerVersions'] = {}
+            self.summary['commit'] = execute(['git', 'rev-parse', 'HEAD'])
+            self.summary['sourceStatus'] = execute(['git', 'status', '--porcelain'], strip=False)
+            self.summary['dirty'] = bool(self.summary['sourceStatus'])
+            source_diff = execute(['git', 'diff', '--binary', 'HEAD'], strip=False)
+            (self.root / 'source.diff').write_text(source_diff)
+            self.summary['sourceDiffSHA256'] = hashlib.sha256(source_diff.encode()).hexdigest()
+            for name in ('cli', 'zmx'):
+                path = getattr(self.options, name)
+                self.summary[name] = {'path': str(path)}
+                self.summary[name]['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+            # Persist provenance before home setup, version commands, or native
+            # builds can fail. Unobserved metadata stays absent, never guessed.
+            (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
+            self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude)
+            if getattr(self.options, 'worktree_creation', False):
+                # CLI-created Codex uses its configured model header without the
+                # direct-launch export. Claude has its own endpoint and ignores it.
+                self.env['GRAFTTY_TEST_AGENT'] = 'codex'
+            if getattr(self.options, 'worktree_creation', False) and not getattr(self.options, 'worktree_creation_viewport_only', False):
+                # This scenario verifies real terminal history. Claude's fullscreen
+                # renderer virtualizes old rows inside the provider instead.
+                self.env['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN'] = '1'
+                self.summary['providerModes'] = {'claude': 'classic (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)',
+                                                 'codex': 'default'}
+            for name in ('claude', 'codex'):
+                self.summary['providerVersions'][name] = execute([str(getattr(self.options, name)), '--version'], env=self.env)
+            self.env['GRAFTTY_SWIFTPM_SHARED_DIR'] = str(self.options.cache)
+            if self.options.ghostty_package:
+                self.env['GRAFTTY_GHOSTTY_PACKAGE_PATH'] = str(self.options.ghostty_package)
+            manifest = {'endpoint': self.server.endpoint, 'root': str(self.root), 'cli': str(self.options.cli),
+                        'zmx': str(self.options.zmx), 'codex': str(self.options.codex), 'claude': str(self.options.claude),
+                        'seed': self.options.seed}
+            self.server.manifest = manifest
+            manifest_file = self.root / 'manifest.json'
+            manifest_file.write_text(json.dumps(manifest))
+            self.env['GRAFTTY_AGENT_INTEGRATION_MANIFEST'] = str(manifest_file)
+            (self.root / 'bin' / 'graftty').symlink_to(self.options.cli)
+            (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
             if not self.options.mac_only:
                 self.prepare_mobile()
             self.spawn([str(REPO / 'scripts/swiftpm'), 'test', '--build-system', 'native', '--filter', 'AgentIntegrationNativeTests'], self.env, 'mac')
@@ -537,13 +562,14 @@ class Run:
                     if failure is None:
                         failure = InvariantFailure(f'{name} native test process did not finish')
             # All commands are scoped to this run's private daemon directory.
-            zmx_env = dict(self.env, ZMX_DIR=str(Path(self.env['GRAFTTY_STATE_DIR']) / 'zmx'))
             try:
-                result = subprocess.run([str(self.options.zmx), 'list'], env=zmx_env, capture_output=True, timeout=5)
-                for line in result.stdout.decode().splitlines():
-                    session = line.split()[0] if line.split() else ''
-                    if session.startswith('graftty-'):
-                        subprocess.run([str(self.options.zmx), 'kill', '--force', session], env=zmx_env, capture_output=True, timeout=5)
+                if self.env.get('GRAFTTY_STATE_DIR'):
+                    zmx_env = dict(self.env, ZMX_DIR=str(Path(self.env['GRAFTTY_STATE_DIR']) / 'zmx'))
+                    result = subprocess.run([str(self.options.zmx), 'list'], env=zmx_env, capture_output=True, timeout=5)
+                    for line in result.stdout.decode().splitlines():
+                        session = line.split()[0] if line.split() else ''
+                        if session.startswith('graftty-'):
+                            subprocess.run([str(self.options.zmx), 'kill', '--force', session], env=zmx_env, capture_output=True, timeout=5)
             except (OSError, subprocess.TimeoutExpired) as error:
                 self.summary.setdefault('cleanupErrors', []).append(str(error))
             if self.owns_simulator:
