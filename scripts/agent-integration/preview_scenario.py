@@ -13,6 +13,11 @@ IDENTITIES = ('session', 'clientID', 'containerID', 'surfaceID', 'channelID', 'c
               'attachmentID', 'navigationID', 'channelCloses')
 
 
+def contains_terminal_marker(text, marker):
+    """Match the complete unique marker across native terminal row wraps."""
+    return marker in re.sub(r'\s+', '', text)
+
+
 def require_continuity(before, after, *, covered=False):
     for key in IDENTITIES:
         if not before.get(key) or not after.get(key) or before[key] != after[key]:
@@ -134,7 +139,7 @@ def run_preview(run):
                 while True:
                     output = run.act(Action('previewSnapshot', agent, client='mobile'))
                     require_continuity(before, output, covered=True)
-                    if marker in output.get('loadedHistory', ''):
+                    if contains_terminal_marker(output.get('loadedHistory', ''), marker):
                         break
                     if time.monotonic() >= deadline:
                         raise InvariantFailure('Provider output did not reach the original renderer during Quick Look')
@@ -146,9 +151,9 @@ def run_preview(run):
                 after = run.act(Action('previewSnapshot', agent, client='mobile'))
                 require_continuity(before, after)
                 execute(['xcrun', 'simctl', 'io', run.simulator, 'screenshot', str(run.root / (image_prefix + '-dismissed.png'))])
-                if after['quickLook'] != 'false' or marker not in after.get('loadedHistory', ''):
+                if after['quickLook'] != 'false' or not contains_terminal_marker(after.get('loadedHistory', ''), marker):
                     raise InvariantFailure('Quick Look dismissal lost native terminal output or retained the preview')
-                if any(marker not in re.sub(r'\s+', '', after.get(key, '')) for key in ('physicalRows', 'text')):
+                if any(not contains_terminal_marker(after.get(key, ''), marker) for key in ('physicalRows', 'text')):
                     raise InvariantFailure('Fresh provider output is not visible in native rows after Quick Look dismissal')
                 before_rows = set(before.get('loadedHistory', '').splitlines())
                 prior_markers = {row for row in before_rows if 'ROW-' in row or 'PREVIEW-OUTPUT-' in row}

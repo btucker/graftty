@@ -6,6 +6,25 @@ from preview_scenario import require_continuity, require_matrix
 
 
 class PreviewEvidenceTests(unittest.TestCase):
+    def test_complete_marker_survives_native_row_wrapping(self):
+        from preview_scenario import contains_terminal_marker
+        marker = 'PREVIEW-OUTPUT-0123456789abcdef0123456789abcdef'
+        wrapped = 'row 027 ' + marker[:41] + '\r\n  ' + marker[41:] + '\nrow 028'
+        self.assertTrue(contains_terminal_marker(wrapped, marker))
+
+    def test_incomplete_marker_does_not_prove_provider_output(self):
+        from preview_scenario import contains_terminal_marker
+        marker = 'PREVIEW-OUTPUT-0123456789abcdef0123456789abcdef'
+        for text in ('PREVIEW-OUTPUT-', marker[:-1], marker[:41] + '\n' + marker[42:]):
+            with self.subTest(text=text):
+                self.assertFalse(contains_terminal_marker(text, marker))
+
+    def test_other_nonce_does_not_prove_provider_output(self):
+        from preview_scenario import contains_terminal_marker
+        marker = 'PREVIEW-OUTPUT-0123456789abcdef0123456789abcdef'
+        wrong = marker[:-1] + '0'
+        self.assertFalse(contains_terminal_marker(wrong[:41] + '\n' + wrong[41:], marker))
+
     def baseline(self):
         return {key: 'identity' for key in ('session', 'clientID', 'containerID', 'surfaceID',
             'channelID', 'channelOpens', 'ownerIdentity', 'owner', 'epoch', 'revision', 'grid',
