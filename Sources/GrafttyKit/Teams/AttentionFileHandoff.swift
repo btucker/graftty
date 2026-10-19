@@ -32,6 +32,7 @@ public struct AttentionFileProgressEvent: Codable, Sendable {
     public let runtime: TeamHookRuntime
     public let sessionID: String?
     public let progressedAt: Date
+    public let userInput: WorktreeHistory.UserInput?
 }
 
 public enum AttentionFileActivityEvent: Sendable {
@@ -175,13 +176,15 @@ public struct AttentionFileHandoff: Sendable {
         agentID: String?,
         runtime: TeamHookRuntime,
         sessionID: String?,
-        progressedAt: Date = Date()
+        progressedAt: Date = Date(),
+        userPrompt: String? = nil
     ) throws {
         guard !worktree.isEmpty else { throw AttentionFileHandoffError.invalidRecap }
         try ensureDirectory()
         let event = AttentionFileProgressEvent(
             worktree: worktree, agentID: agentID, runtime: runtime,
-            sessionID: sessionID, progressedAt: progressedAt
+            sessionID: sessionID, progressedAt: progressedAt,
+            userInput: userPrompt.map { .init(text: $0, at: progressedAt, runtime: runtime.rawValue) }
         )
         let micros = Int64(progressedAt.timeIntervalSince1970 * 1_000_000)
         let name = "progress-\(micros)-\(UUID().uuidString).json"

@@ -110,6 +110,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// first subsequent progress event can retire that viewed occurrence.
     public private(set) var lastAgentStop: SidebarAgentStop?
     public private(set) var brief: WorktreeBrief?
+    public private(set) var history: WorktreeHistory?
     /// Recent provider progress timestamps let viewed stopped cards retire
     /// even after acknowledging them cleared `unseenAgentStop`.
     public var agentProgressTimes: [String: Double]
@@ -147,6 +148,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         branch: String,
         state: WorktreeState = .closed,
         createdAt: Date? = nil,
+        creationOrigin: WorktreeHistory.Origin? = nil,
         staleSince: Date? = nil,
         attention: Attention? = nil,
         splitTree: SplitTree = SplitTree(root: nil)
@@ -157,6 +159,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.emoji = nil
         self.emojiSource = nil
         self.createdAt = createdAt
+        self.history = creationOrigin.map { WorktreeHistory(origin: $0) }
+            ?? createdAt.map { WorktreeHistory(origin: .init(date: $0, source: .unknown)) }
         self.state = state
         self.staleSince = state == .stale ? (staleSince ?? Date()) : nil
         self.attention = attention
@@ -178,7 +182,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, agentProgressTimes, paneAttention,
+        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -194,6 +198,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.autoTrackEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoTrackEnabled) ?? false
         self.autoTrackLastAttempt = try container.decodeIfPresent(GitAutoTracking.Target.self, forKey: .autoTrackLastAttempt)
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
+        self.history = try container.decodeIfPresent(WorktreeHistory.self, forKey: .history)
+            ?? createdAt.map { WorktreeHistory(origin: .init(date: $0, source: .unknown)) }
         self.state = try container.decode(WorktreeState.self, forKey: .state)
         self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)
@@ -238,10 +244,28 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public mutating func recordAgentStop(_ stop: SidebarAgentStop) {
         if let recap = stop.recap {
             if brief == nil { brief = WorktreeBrief(recap: recap, at: stop.stoppedAt) }
-            else { brief?.update(recap, at: stop.stoppedAt) }
+            else {
+                let boundary = history?.inputs.last(where: { $0.timestamp <= stop.timestamp })
+                    .map { Date(timeIntervalSinceReferenceDate: $0.timestamp) }
+                brief?.update(recap, at: stop.stoppedAt, preservingCheckpointBefore: boundary)
+            }
         }
         unseenAgentStop = stop
         lastAgentStop = stop
+    }
+
+    public mutating func expectLaunchPrompt(_ prompt: String, runtime: TeamHookRuntime) {
+        if history == nil { history = WorktreeHistory() }
+        history?.expectLaunchPrompt(prompt, runtime: runtime.rawValue)
+    }
+
+    public mutating func cancelExpectedLaunch() {
+        history?.cancelExpectedLaunch()
+    }
+
+    public mutating func recordUserInput(_ input: WorktreeHistory.UserInput) {
+        if history == nil { history = WorktreeHistory() }
+        history?.record(input)
     }
 
     /// Single setter for attention: pane-scoped when `pane` is non-nil,

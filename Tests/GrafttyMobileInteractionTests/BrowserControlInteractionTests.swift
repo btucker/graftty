@@ -2,7 +2,7 @@ import UIKit
 import XCTest
 
 final class WorktreeContextInteractionTests: XCTestCase {
-    /// @spec CONTEXT-6: When mobile worktree context is opened, the application shall show the current brief, expand its history in place, and close back to the mounted terminal without acknowledging pending attention.
+    /// @spec CONTEXT-6: When mobile worktree context is opened, the application shall show the current brief and chronological history without collapsing the section, and close back to the mounted terminal without acknowledging pending attention.
     func testBriefExpandsIntoHistoryAndEdgeGestureReopensIt() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--context-fixture"]
@@ -13,10 +13,24 @@ final class WorktreeContextInteractionTests: XCTestCase {
         open.tap()
         let close = app.buttons["worktree.context.close"]
         XCTAssertTrue(close.waitForExistence(timeout: 5))
-        let history = app.buttons["worktree.context.history"]
-        XCTAssertTrue(history.waitForExistence(timeout: 5), app.debugDescription)
-        history.tap()
-        XCTAssertTrue(app.staticTexts["Chose the brief with expandable history"].waitForExistence(timeout: 5))
+        let showAll = app.buttons["worktree.context.history.all"]
+        for _ in 0..<5 where !showAll.isHittable { app.swipeUp() }
+        XCTAssertTrue(showAll.waitForExistence(timeout: 5), app.debugDescription)
+        let creation = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Created by you")).firstMatch
+        let checkpoint = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Chose the brief with expandable history")).firstMatch
+        XCTAssertTrue(creation.exists)
+        XCTAssertFalse(checkpoint.exists)
+        showAll.tap()
+        XCTAssertTrue(checkpoint.waitForExistence(timeout: 5))
+        XCTAssertEqual(showAll.label, "Show highlights")
+        showAll.tap()
+        XCTAssertFalse(checkpoint.exists)
+        let group = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "worktree.context.history.group.")).firstMatch
+        for _ in 0..<4 where !group.isHittable { app.swipeUp() }
+        XCTAssertTrue(group.waitForExistence(timeout: 5))
+        XCTAssertTrue((group.value as? String)?.contains(" to ") == true)
+        group.tap()
+        XCTAssertTrue(checkpoint.waitForExistence(timeout: 5))
         try app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "/private/tmp/graftty-context-mobile.png"))
         close.tap()
         XCTAssertTrue(open.waitForExistence(timeout: 5))

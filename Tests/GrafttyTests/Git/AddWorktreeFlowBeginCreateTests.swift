@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 @testable import Graftty
 import GrafttyKit
+import GrafttyProtocol
 
 @MainActor
 @Suite("AddWorktreeFlow.beginCreate")
@@ -62,6 +63,21 @@ struct AddWorktreeFlowBeginCreateTests {
         #expect(SidebarHostNavigation.displayedWorktrees(in: restored).first?.branch == "new")
         state.repos[0].worktrees[0].attention = Attention(text: "Later", timestamp: created.addingTimeInterval(1))
         #expect(SidebarHostNavigation.displayedWorktrees(in: state.repos[0]).first?.branch == "active")
+    }
+
+    @Test func creationRecordsHumanOrExplicitSourceBeforeTheFirstReport() throws {
+        var state = AppState(repos: [RepoEntry(path: "/r", displayName: "r", worktrees: [])])
+        let binding = Binding<AppState>(get: { state }, set: { state = $0 })
+        #expect(AddWorktreeFlow.beginCreate(repoPath: "/r", worktreeName: "human",
+            branch: .createNew(name: "human"), appState: binding) == .success("/r/.worktrees/human"))
+        let human = try #require(state.worktree(forPath: "/r/.worktrees/human"))
+        #expect(human.history?.origin?.source == .user)
+        #expect(human.brief == nil)
+        let source = WorktreeHistory.Origin(date: .now, source: .worktree,
+            worktreePath: "/r/.worktrees/parent", worktreeName: "parent")
+        #expect(AddWorktreeFlow.beginCreate(repoPath: "/r", worktreeName: "child",
+            branch: .createNew(name: "child"), creationOrigin: source, appState: binding) == .success("/r/.worktrees/child"))
+        #expect(state.worktree(forPath: "/r/.worktrees/child")?.history?.origin == source)
     }
 
     @Test("Raw clients cannot escape the repository's .worktrees directory")

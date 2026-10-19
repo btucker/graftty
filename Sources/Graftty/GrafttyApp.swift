@@ -1582,6 +1582,9 @@ struct GrafttyApp: App {
             do {
                 let request = try JSONDecoder().decode(RemoteTeamRequest.self, from: data)
                 if case .worktree(let operation) = request {
+                    let remoteOrigin: WorktreeHistory.Origin?
+                    if case .create(let creation) = operation { remoteOrigin = creation.historyOrigin() }
+                    else { remoteOrigin = nil }
                     let response = await RemoteCLIWorktreeService.handle(
                         operation, from: deviceID, repos: binding.wrappedValue.repos,
                         status: { services.cliWorktreeCreations.status(operationID: $0) },
@@ -1593,7 +1596,7 @@ struct GrafttyApp: App {
                                 callerPath: caller, worktreeName: name, branchName: branch,
                                 existing: existing, base: base, command: command,
                                 agentRuntime: runtime, agentPrompt: prompt, operationID: id,
-                                appState: binding, terminalManager: tm,
+                                creationOrigin: remoteOrigin, appState: binding, terminalManager: tm,
                                 teamInbox: teamInbox,
                                 teamEventDispatcher: teamEventDispatcher,
                                 worktreeMonitor: services.worktreeMonitor,
@@ -1686,7 +1689,10 @@ struct GrafttyApp: App {
                         try attentionHandoff.consumeActivities { activity in
                             switch activity {
                             case .progress(let event):
-                                guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
+                                guard let index = binding.wrappedValue.indices(forWorktreePath: event.worktree) else { return }
+                                if let input = event.userInput {
+                                    binding.wrappedValue.repos[index.repo].worktrees[index.worktree].recordUserInput(input)
+                                }
                                 Self.clearAgentAttention(
                                     callerPath: event.worktree,
                                     callerAgentID: event.agentID,
@@ -1714,7 +1720,7 @@ struct GrafttyApp: App {
                                     terminalManager: tm
                                 )
                             }
-                            Self.persistAppState(binding.wrappedValue)
+                            try binding.wrappedValue.save(to: AppState.defaultDirectory)
                         }
                     } catch {
                         NSLog("[Graftty] Attention file handoff failed: %@", String(describing: error))
@@ -4437,6 +4443,7 @@ struct GrafttyApp: App {
         agentRuntime: TeamHookRuntime?,
         agentPrompt: String?,
         operationID: String?,
+        creationOrigin: WorktreeHistory.Origin? = nil,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         teamInbox: TeamInbox,
@@ -4520,6 +4527,11 @@ struct GrafttyApp: App {
             worktreeName: worktreeName,
             branch: branch,
             base: base,
+            creationOrigin: creationOrigin ?? .init(date: Date(), source: .worktree, worktreePath: callerPath,
+                worktreeName: repo.worktrees.first(where: { $0.path == callerPath }).map {
+                    SidebarWorktreeLabel.text(for: $0, inRepoAtPath: repo.path,
+                        siblingPaths: repo.worktrees.map(\.path), defaultBranch: repo.defaultBranchHint)
+                }),
             appState: appState
         ) {
         case .success(let path):
@@ -4527,6 +4539,12 @@ struct GrafttyApp: App {
         case .failure(let error):
             launch.discardPromptFile()
             return .error(error.userMessage ?? "could not begin worktree creation")
+        }
+
+        if let runtime = agentRuntime, launch.promptFile != nil,
+           let index = appState.wrappedValue.indices(forWorktreePath: worktreePath) {
+            appState.wrappedValue.repos[index.repo].worktrees[index.worktree]
+                .expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(agentPrompt), runtime: runtime)
         }
 
         // Persist before starting Git, so both a failed launch and a later
@@ -4538,10 +4556,13 @@ struct GrafttyApp: App {
                     agentPrompt, runtime: agentRuntime, repo: repo,
                     worktreePath: worktreePath, branchName: branchName, inbox: teamInbox
                 )
+                // A background CLI request may have no window observing state.
+                // Save the launch expectation before its first hook can arrive.
+                try appState.wrappedValue.save(to: AppState.defaultDirectory)
             } catch {
                 appState.wrappedValue.removeWorktree(atPath: worktreePath)
                 launch.discardPromptFile()
-                return .error("could not save initial agent prompt: \(error.localizedDescription)")
+                return .error("could not save initial agent task: \(error.localizedDescription)")
             }
         }
         let initialCommand = launch.command.flatMap { value in
@@ -4570,6 +4591,12 @@ struct GrafttyApp: App {
             case .success:
                 return nil
             case .failure(let error):
+                // A background request may have no view persisting removal of
+                // a failed placeholder or cancellation of its launch marker.
+                if let index = appState.wrappedValue.indices(forWorktreePath: worktreePath) {
+                    appState.wrappedValue.repos[index.repo].worktrees[index.worktree].cancelExpectedLaunch()
+                }
+                Self.persistAppState(appState.wrappedValue)
                 let message: String
                 if case .discoveryFailed(let detail) = error {
                     message = detail

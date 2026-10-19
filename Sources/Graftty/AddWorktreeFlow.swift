@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import GrafttyKit
+import GrafttyProtocol
 
 /// Shared "add a worktree" flow used by the native sidebar sheet (via
 /// `MainWindow.addWorktree`) and the web client's `POST /worktrees`
@@ -112,6 +113,7 @@ enum AddWorktreeFlow {
         worktreeName: String,
         branch: BranchSelection,
         base: String? = nil,
+        creationOrigin: WorktreeHistory.Origin? = nil,
         appState: Binding<AppState>
     ) -> Swift.Result<String, FlowError> {
         let usesExistingBranch: Bool
@@ -146,7 +148,9 @@ enum AddWorktreeFlow {
             return .failure(.branchAlreadyMounted(at: existing))
         }
 
-        var placeholder = WorktreeEntry(path: worktreePath, branch: branch.branchName, createdAt: Date())
+        let createdAt = Date()
+        var placeholder = WorktreeEntry(path: worktreePath, branch: branch.branchName, createdAt: createdAt,
+            creationOrigin: creationOrigin ?? .init(date: createdAt, source: .user))
         placeholder.state = .creating
         appState.wrappedValue.repos[repoIdx].worktrees.append(placeholder)
         return .success(worktreePath)
