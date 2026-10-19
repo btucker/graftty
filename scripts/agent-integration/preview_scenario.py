@@ -305,9 +305,29 @@ def keep_claude_manual(run):
             raise InvariantFailure('Claude permission prompt has no recognized native selection')
         run.act(Action('input', 'claude', {'text': '\x1b[B', 'submit': 'false'}))
         selected = run.wait_snapshot('claude', selected_no, timeout=10)
-    # Do not submit until native output proves the No choice is selected.
-    run.act(Action('input', 'claude', {'text': ''}))
-    after = run.wait_snapshot('claude', lambda value: question not in native(value), timeout=10)
+    confirmations = []
+    for attempt in range(2):
+        # The prompt can appear immediately after the previous tool approval.
+        # Its input debounce can reject that turn's next Return even though
+        # Down has already repainted the selection. Wait, then re-read the UI.
+        time.sleep(1.0)
+        selected = run.snapshot('claude')
+        if question not in native(selected) or not selected_no(selected):
+            raise InvariantFailure('Claude manual-mode selection changed before confirmation')
+        confirmations.append(native(selected))
+        run.act(Action('input', 'claude', {'text': ''}))
+        try:
+            after = run.wait_snapshot('claude', lambda value: question not in native(value), timeout=3)
+            break
+        except InvariantFailure:
+            if attempt == 1:
+                raise
+            pending = run.snapshot('claude')
+            if question not in native(pending) or not selected_no(pending):
+                raise InvariantFailure('Claude permission prompt changed after confirmation; refusing retry')
+            # Retry once only if the same native No choice remains selected.
+            # The next iteration settles and revalidates it again before input.
     (run.root / 'preview-claude-manual-permissions.json').write_text(json.dumps(
-        {'before': native(before), 'selected': native(selected), 'after': native(after)}, indent=2))
+        {'before': native(before), 'selected': native(selected), 'confirmations': confirmations,
+         'after': native(after)}, indent=2))
     run.summary['assertions'].append({'provider': 'claude', 'declinedAutoPermissionsInNativeUI': True})

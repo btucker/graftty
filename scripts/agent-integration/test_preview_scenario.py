@@ -231,8 +231,15 @@ class PreviewManualPermissionTests(unittest.TestCase):
         selected = prompt.replace('❯ Yes', '  Yes').replace('  No', '❯ No')
         with tempfile.TemporaryDirectory() as directory:
             run = SimpleNamespace(root=Path(directory), summary={'assertions': []}, act=Mock(),
+                snapshot=Mock(return_value={'nativeText': selected}),
                 wait_snapshot=Mock(side_effect=[{'nativeText': prompt}, {'nativeText': selected}, {'nativeText': '❯ '}]))
-            keep_claude_manual(run)
+            from unittest.mock import patch
+            events = []
+            run.act.side_effect = lambda action: events.append('Down' if action.parameters.get('submit') == 'false' else 'Return')
+            run.snapshot.side_effect = lambda agent: events.append('revalidate No') or {'nativeText': selected}
+            with patch('preview_scenario.time.sleep', side_effect=lambda delay: events.append(('settle', delay))):
+                keep_claude_manual(run)
+            self.assertEqual(['Down', ('settle', 1.0), 'revalidate No', 'Return'], events)
             actions = [call.args[0] for call in run.act.call_args_list]
             self.assertEqual([{'text': '\x1b[B', 'submit': 'false'}, {'text': ''}], [a.parameters for a in actions])
             self.assertTrue(run.summary['assertions'][0]['declinedAutoPermissionsInNativeUI'])
@@ -240,3 +247,36 @@ class PreviewManualPermissionTests(unittest.TestCase):
             selected_predicate = run.wait_snapshot.call_args_list[1].args[1]
             self.assertFalse(selected_predicate({'nativeText': prompt}))
             self.assertTrue(selected_predicate({'nativeText': selected}))
+
+
+    def test_changed_selection_after_settling_never_submits_return(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from preview_scenario import keep_claude_manual
+        prompt = 'Make auto mode your default permission mode?\n  Yes, set auto mode as my default permission mode\n❯ No, keep manual mode'
+        with tempfile.TemporaryDirectory() as directory:
+            run = SimpleNamespace(root=Path(directory), summary={'assertions': []}, act=Mock(),
+                wait_snapshot=Mock(return_value={'nativeText': prompt}),
+                snapshot=Mock(return_value={'nativeText': prompt.replace('❯ No', '  No').replace('  Yes', '❯ Yes')}))
+            with patch('preview_scenario.time.sleep'), self.assertRaises(InvariantFailure):
+                keep_claude_manual(run)
+            run.act.assert_not_called()
+
+    def test_dropped_return_retries_once_only_while_no_remains_selected(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from preview_scenario import keep_claude_manual
+        prompt = {'nativeText': 'Make auto mode your default permission mode?\n  Yes, set auto mode as my default permission mode\n❯ No, keep manual mode'}
+        with tempfile.TemporaryDirectory() as directory:
+            run = SimpleNamespace(root=Path(directory), summary={'assertions': []}, act=Mock(),
+                wait_snapshot=Mock(side_effect=[prompt, InvariantFailure('did not dismiss'), {'nativeText': 'idle'}]),
+                snapshot=Mock(return_value=prompt))
+            with patch('preview_scenario.time.sleep') as settle:
+                keep_claude_manual(run)
+            self.assertEqual(2, run.act.call_count)
+            self.assertEqual(2, settle.call_count)
+            self.assertTrue(all(call.args[0].parameters == {'text': ''} for call in run.act.call_args_list))
