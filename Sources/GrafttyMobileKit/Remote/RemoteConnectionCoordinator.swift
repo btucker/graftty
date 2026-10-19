@@ -220,6 +220,13 @@ public final class RemoteConnectionCoordinator {
         self.connectionsAllowed = connectionsAllowedInitially
     }
 
+    /// Native integration fixtures authenticate their transport directly and
+    /// supply that transport's device identity without starting a second dial.
+    convenience init(authenticatedDeviceID: RemoteDeviceID, directory: URL) {
+        self.init(directory: directory, connectionsAllowedInitially: false)
+        self.localDeviceID = authenticatedDeviceID
+    }
+
     /// Enables or suspends all coordinator consumers. Suspension takes
     /// effect synchronously so polling/list/presentation tasks cannot redial
     /// while the existing channels are being closed. A resume waits for that

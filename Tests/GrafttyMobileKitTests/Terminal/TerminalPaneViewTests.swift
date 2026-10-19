@@ -1619,7 +1619,7 @@ struct TerminalPaneViewTests {
         #expect(maskedPans().map(\.allowedTouchTypes) == savedTouchTypes)
     }
 
-    @Test("focus requests remain pending until the terminal can become first responder")
+    @Test("focus requests require an eligible terminal owned by the requesting attachment")
     func focusRequestNotConsumedUntilTerminalCanFocus() async {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         let controller = UIViewController()
@@ -1628,6 +1628,7 @@ struct TerminalPaneViewTests {
         window.rootViewController = controller
         window.makeKeyAndVisible()
         let coordinator = TerminalPaneView.Coordinator()
+        container.controlAttachmentID = coordinator.controlAttachmentID
         var consumedCount = 0
         coordinator.onFocusRequestsConsumed = { consumedCount += 1 }
         container.committedSoftwareInput = nil
@@ -1641,6 +1642,13 @@ struct TerminalPaneViewTests {
         try? await Task.sleep(nanoseconds: 10_000_000)
         #expect(consumedCount == 1)
         #expect(container.terminalView.isFirstResponder)
+
+        container.terminalView.resignFirstResponder()
+        coordinator.applyFocusRequest(1, to: container)
+        container.controlAttachmentID = UUID()
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(consumedCount == 1)
+        #expect(!container.terminalView.isFirstResponder)
     }
 
     @Test("""
@@ -1659,6 +1667,7 @@ struct TerminalPaneViewTests {
         // A remount creates a fresh Coordinator with no memory; the counter
         // owners survive the remount and report zero pending requests.
         let freshCoordinator = TerminalPaneView.Coordinator()
+        container.controlAttachmentID = freshCoordinator.controlAttachmentID
         var consumedCount = 0
         freshCoordinator.onFocusRequestsConsumed = { consumedCount += 1 }
         freshCoordinator.applyFocusRequest(0, to: container)

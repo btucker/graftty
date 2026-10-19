@@ -189,10 +189,13 @@ class Run:
             build_env['GRAFTTY_GHOSTTY_PACKAGE_PATH'] = str(options.ghostty_package)
         renderer_context = execute([sys.executable, str(REPO / 'scripts/ghostty-paging/compiler-context.py'),
             str(REPO), str(derived / 'manifest')], env=build_env)
+        swift_flags = 'OTHER_SWIFT_FLAGS=$(inherited) -Xcc ' + renderer_context
+        if getattr(options, 'preview', False):
+            swift_flags += ' -D GRAFTTY_PAGED_HISTORY'
         print('Building native mobile test host', flush=True)
         execute(['xcodebuild', '-project', str(REPO / 'Apps/GrafttyMobile/GrafttyMobile.xcodeproj'),
             '-scheme', 'GrafttyBrowserInteraction', '-destination', 'platform=iOS Simulator,id=' + self.simulator,
-            '-derivedDataPath', str(derived), 'OTHER_SWIFT_FLAGS=$(inherited) -Xcc ' + renderer_context,
+            '-derivedDataPath', str(derived), swift_flags,
             'build-for-testing'], env=build_env,
             timeout=900, log=self.root / 'ios-build.log')
         run_files = [p for p in (derived / 'Build/Products').glob('*.xctestrun') if p.name != 'agent-integration.xctestrun']
@@ -206,6 +209,7 @@ class Run:
             '-resultBundlePath', str(self.root / 'mobile.xcresult'), '-parallel-testing-enabled', 'NO',
             '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests/'
                 + ('testNativeNotificationActivation' if getattr(options, 'notifications', False)
+                   else 'testNativeQuickLookRetention' if getattr(options, 'preview', False)
                    else 'testScriptedAgentInteractions'), 'test-without-building']
         self.mobile_environment = build_env
 
@@ -261,6 +265,10 @@ class Run:
         self.summary.setdefault('generatedContentChecks', []).append({'agent': agent, 'status': status})
 
     def scenarios(self):
+        if getattr(self.options, 'preview', False):
+            from preview_scenario import run_preview
+            run_preview(self)
+            return
         if getattr(self.options, 'history', False):
             from history_scenario import run_history
             run_history(self)
@@ -486,7 +494,11 @@ class Run:
         raise InvariantFailure(f'hidden mobile condition did not settle for {agent}: {value}')
 
     def configure_fixture(self, manifest):
-        pass
+        if getattr(self.options, 'preview', False):
+            from notifications import verify_attention_isolation
+            verify_attention_isolation(self.root, self.options.cli, self.env, command=execute)
+            manifest['scenario'] = 'preview'
+            self.summary['attentionDirectory'] = self.env['GRAFTTY_ATTENTION_DIR']
 
     def run(self):
         self.thread.start()
@@ -505,7 +517,10 @@ class Run:
             source_diff = execute(['git', 'diff', '--binary', 'HEAD'], strip=False)
             (self.root / 'source.diff').write_text(source_diff)
             self.summary['sourceDiffSHA256'] = hashlib.sha256(source_diff.encode()).hexdigest()
-            for name in ('cli', 'zmx'):
+            if getattr(self.options, 'preview', False):
+                from preview_scenario import require_tracked_preview_sources
+                require_tracked_preview_sources()
+            for name in ('cli', 'zmx', 'codex', 'claude'):
                 path = getattr(self.options, name)
                 self.summary[name] = {'path': str(path)}
                 self.summary[name]['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -514,8 +529,9 @@ class Run:
             (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
             creation = getattr(self.options, 'worktree_creation', False)
             creation_history = creation and not getattr(self.options, 'worktree_creation_viewport_only', False)
+            preview = getattr(self.options, 'preview', False)
             self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude,
-                                    manual_claude=creation, inline_codex=creation_history)
+                                    manual_claude=creation or preview, inline_codex=creation_history or preview)
             if creation:
                 self.summary['providerPermissions'] = {'claude': 'manual (permissions.defaultMode=default)',
                                                        'codex': 'on-request'}
@@ -585,6 +601,14 @@ class Run:
                         child.wait()
                     if failure is None:
                         failure = InvariantFailure(f'{name} native test process did not finish')
+            if getattr(self.options, 'preview', False):
+                try:
+                    from preview_scenario import validate_native_results
+                    validate_native_results(self)
+                except Exception as error:
+                    self.summary['nativeEvidenceError'] = str(error)
+                    if failure is None:
+                        failure = error
             # All commands are scoped to this run's private daemon directory.
             try:
                 if self.env.get('GRAFTTY_STATE_DIR'):
@@ -632,6 +656,7 @@ def main():
     parser.add_argument('--worktree-creation-source', choices=('cli', 'app-flow'), default='cli',
                         help='Startup boundary for --worktree-creation; app-flow exercises AddWorktreeFlow and TerminalManager')
     parser.add_argument('--worktree-reentry', action='store_true', help='Test retained mobile routes with keyboard changes and hidden ownership transitions')
+    parser.add_argument('--preview', action='store_true', help='Test production Quick Look with both real provider TUIs')
     parser.add_argument('--history', action='store_true', help='Test dense wide provider output through bounded mobile history paging')
 
     parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
@@ -652,12 +677,14 @@ def main():
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
-    if sum((options.worktree_reentry, options.colors, options.notifications, options.history, options.worktree_creation)) > 1:
+    if sum((options.worktree_reentry, options.colors, options.notifications, options.history, options.worktree_creation, options.preview)) > 1:
         parser.error('--worktree-reentry, --colors, --notifications, --history and --worktree-creation are separate scenarios')
     if options.notification_case != 'all' and (not options.notifications or options.mac_only):
         parser.error('--notification-case requires --notifications with mobile coverage')
     if options.notifications and (options.replay or options.shrink):
         parser.error('--notifications records its own bounded event replays')
+    if options.preview and (options.mac_only or options.replay or options.shrink):
+        parser.error('--preview requires standalone native mobile coverage')
     if options.history and (options.mac_only or options.replay or options.shrink):
         parser.error('--history requires mobile and runs separately from generated actions')
     if options.worktree_creation_viewport_only and not options.worktree_creation:

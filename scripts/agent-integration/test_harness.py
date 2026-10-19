@@ -134,6 +134,51 @@ class SequenceTests(unittest.TestCase):
 
 
 class ModelTests(unittest.TestCase):
+    def claude_midturn_ack(self, nonce):
+        return ('The user sent a new message while you were working:\nGRAFTTY_TEST_PREVIEW_ACK ' + nonce
+                + '\n\nThis is how Claude Code surfaces messages the user sends mid-turn — within the running turn, '
+                'often alongside the next tool result, rather than as a separate conversation turn. '
+                'Address the message above as you continue this turn.')
+
+    def test_claude_native_midturn_ack_receipt_still_requires_completed_recap(self):
+        state = ModelState(Broker(), '/tmp/graftty')
+        nonce = 'a' * 32
+        body = {'messages': [{'role': 'user', 'content': [
+            {'type': 'tool_result', 'tool_use_id': 'prior-recap', 'content': 'GRAFTTY_RECAP_OK claude ' + 'b' * 64},
+            {'type': 'text', 'text': self.claude_midturn_ack(nonce)}]}]}
+        result = state.plan(body, 'claude', 'claude')
+        self.assertEqual('preview-ack:' + nonce, result[3])
+        self.assertEqual('GRAFTTY_TEST_PREVIEW_ACK ' + nonce, state.receipts[('claude', nonce, 'preview-ack')]['prompt'])
+        self.assertNotIn(('claude', nonce), state.completed_preview_recaps)
+        self.assertFalse(state.plan(body, 'claude', 'claude')[3])
+        body['messages'].append({'role': 'user', 'content': 'Stop hook: Before finishing, run graftty attention report --stdin'})
+        self.assertIsNotNone(state.plan(body, 'claude', 'claude')[2])
+        key = next(iter(state.recaps_issued))
+        self.assertEqual(nonce, state.recap_contexts[key])
+        body['messages'].append({'role': 'user', 'content': [
+            {'type': 'tool_result', 'content': f'GRAFTTY_RECAP_OK claude {key}'}]})
+        state.plan(body, 'claude', 'claude')
+        self.assertIn(('claude', nonce), state.completed_preview_recaps)
+
+    def test_only_exact_claude_native_user_text_wrapper_can_claim_ack(self):
+        wrapped = self.claude_midturn_ack('a' * 32)
+        variants = [
+            ('claude', 'user', {'type': 'text', 'text': 'Generate a title: ' + wrapped}),
+            ('claude', 'user', {'type': 'text', 'text': '"' + wrapped + '"'}),
+            ('claude', 'assistant', {'type': 'text', 'text': wrapped}),
+            ('claude', 'user', {'type': 'tool_result', 'content': wrapped}),
+            ('claude', 'user', {'type': 'tool_result', 'text': wrapped}),
+            ('codex', 'user', {'type': 'text', 'text': wrapped}),
+            ('claude', 'user', {'type': 'text', 'text': wrapped + '\nextra'}),
+            ('claude', 'user', {'type': 'text', 'text': wrapped.replace('_ACK', '')}),
+            ('claude', 'user', {'type': 'text', 'text': wrapped.replace('a' * 32, 'a' * 31)}),
+        ]
+        for protocol, role, part in variants:
+            with self.subTest(protocol=protocol, role=role, part=part):
+                state = ModelState(Broker(), '/tmp/graftty')
+                state.plan({'messages': [{'role': role, 'content': [part]}]}, protocol, protocol)
+                self.assertEqual({}, state.receipts)
+
     def test_auxiliary_title_cannot_claim_a_message_receipt(self):
         body = {'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': 'Generate a title for GRAFTTY_TEST_MESSAGE abc'}]}]}
         self.assertEqual([], user_text(body, markers_only=True))

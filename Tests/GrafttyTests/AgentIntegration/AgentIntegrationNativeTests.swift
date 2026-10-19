@@ -125,6 +125,7 @@ private final class AgentIntegrationMacHost {
     var agent: WebRTCHostAgent?
     var panes: [String: Pane] = [:]
     var tickObserver: NSObjectProtocol?
+    var previewOwnershipObserver: SessionDisplayOwnershipStore.ObserverToken?
     var notificationProbe: AgentIntegrationNotificationProbe?
     var finishedSuccessfully = false
     var productionCreation: ProductionWorktreeCreationFixture?
@@ -140,9 +141,9 @@ private final class AgentIntegrationMacHost {
         guard actualHome == expectedHome, actualState.hasPrefix(expectedHome + "/") else {
             throw AgentIntegrationError("native host isolation mismatch: home=\(actualHome), expected=\(expectedHome), state=\(actualState)")
         }
-        if manifest.scenario == "notifications" {
+        if manifest.scenario == "notifications" || manifest.scenario == "preview" {
             guard manifest.usesPrivateAttentionDirectory(AttentionFileHandoff.defaultRootDirectory) else {
-                throw AgentIntegrationError("notification fixture must use its private attention directory")
+                throw AgentIntegrationError("integration fixture must use its private attention directory")
             }
         }
         let configuration = HostConfiguration(stateDirectory: AppState.defaultDirectory,
@@ -184,6 +185,17 @@ private final class AgentIntegrationMacHost {
             notificationProbe = try AgentIntegrationNotificationProbe(runtime: runtime, root: root)
         } else {
             runtime.startMaintenance()
+        }
+        if manifest.scenario == "preview" {
+            // This driver bypasses TerminalManager, so mirror its ownership
+            // observer: the existing zmx leader must adopt the new owner's
+            // grid even before that owner sends its first input.
+            previewOwnershipObserver = ownership.addObserver { [weak self] snapshot in
+                Task { @MainActor [weak self] in
+                    guard let self, self.previewOwnershipObserver != nil else { return }
+                    self.driver.panes[snapshot.sessionName]?.handle.synchronizeDisplayOwnership()
+                }
+            }
         }
     }
 
@@ -542,7 +554,7 @@ private final class AgentIntegrationMacHost {
         let base = manifest.endpoint.appendingPathComponent("model/\(name)").absoluteString
         let environment = provider == .claude ? "ANTHROPIC_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base))"
             : "OPENAI_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base + "/v1"))"
-        let attention = manifest.scenario == "notifications"
+        let attention = manifest.scenario == "notifications" || manifest.scenario == "preview"
             ? " GRAFTTY_ATTENTION_DIR=\(WorktreeAgentLaunchCommand.shellLiteral(AttentionFileHandoff.defaultRootDirectory.path))" : ""
         // Fullscreen provider virtualization has no terminal scrollback. The
         // history scenario selects Codex inline and Claude classic modes.
@@ -554,6 +566,8 @@ private final class AgentIntegrationMacHost {
     }
 
     func close() async {
+        previewOwnershipObserver?.cancel()
+        previewOwnershipObserver = nil
         await agent?.close(); agent = nil
         if let tickObserver { NotificationCenter.default.removeObserver(tickObserver) }
         for pane in panes.values { pane.window.orderOut(nil); pane.window.contentView = nil }

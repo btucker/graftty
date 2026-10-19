@@ -2120,6 +2120,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.38** When the user toggles Auto-correct in the iOS keyboard accessory tray, the application shall enable or disable native terminal autocorrection without changing existing text or sending terminal input, default to off, and remember the preference across panes and app launches.
 
+**IOS-6.39** When mobile terminal writes suspend, the application shall preserve input order through subsequent typing, control keys, owner-transition resizes, and image paste, and discard unsent input when its transport is replaced or its ownership tenure changes.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.
@@ -3558,6 +3560,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-2.9** When a downloaded mobile preview is dismissed, the application shall retain session-scoped access to its snapshots after host offers expire and pane views are recreated, without downloading again or automatically reopening it.
 
+**PREVIEW-2.10** While a native preview covers a mobile terminal, the application shall preserve its live terminal channel and mounted session through presentation and dismissal, and perform normal pane cleanup only when the pane is actually removed.
+
 ### PREVIEW-3.x
 
 **PREVIEW-3.1** When an agent session starts, the application shall instruct agents to explain visually useful material with self-contained HTML and deliver it through graftty preview.
@@ -4272,7 +4276,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEST-1.x
 
-**TEST-1.1** When an integration client receives a resize or loaded-history read action, the test harness shall preserve its sequence ID, provider, operation, and parameters through JSON encoding and admit it for dispatch.
+**TEST-1.1** When an integration client receives a resize, loaded-history read, or Quick Look action, the test harness shall preserve its sequence ID, provider, operation, and parameters through JSON encoding and admit it for dispatch.
 
 **TEST-1.2** If a scripted integration action names an unsupported operation, then the test harness shall reject it rather than report a successful observation.
 
@@ -4295,3 +4299,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.11** When the native notification integration replays a captured provider stop, the harness shall preserve its original payload and route explicit notification actions to native clients.
 
 **TEST-1.12** When the native notification fixture validates its private queue, the harness shall compare canonical directory paths independently of URL directory metadata and reject other directories.
+
+**TEST-1.13** When a Quick Look integration run drives both provider TUIs, the test harness shall type unique prompts through the native keyboard, open and dismiss the production preview, capture every action, and fail unless all required retained and transient pane cases finish successfully.
