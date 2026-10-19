@@ -1,6 +1,8 @@
 import copy
 import fcntl
+import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import subprocess
@@ -178,8 +180,29 @@ class PreviewReportTests(unittest.TestCase):
                 self.assertEqual(result['passed'], passed)
                 self.assertEqual(result['executedCount'], count)
                 self.assertIn('-only-testing:' + LIFECYCLE, result['command'])
+                self.assertNotIn('-collect-test-diagnostics', result['command'])
                 self.assertEqual(json.loads((directory / 'green' / 'xcresult-test-report.json').read_text()), tree)
                 self.assertIn('test-results', capture.call_args.args[0])
+
+    def test_red_skips_sysdiagnose_but_keeps_argument_failure_evidence(self):
+        tree = report(red=True)
+        tree['testNodes'][0]['children'].pop()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            options = SimpleNamespace(output=directory, derived_data=directory / 'derived',
+                                      source_packages=None, timeout=10)
+            with patch.dict('os.environ', {'GRAFTTY_RENDERER_CONTEXT': 'fixture'}), \
+                 patch('preview_ui.execute', return_value=(65, '')), \
+                 patch('preview_ui.read_result', return_value=([], [], [])), \
+                 patch('preview_ui.capture', return_value=json.dumps(tree)):
+                result = run_phase('red', options, 'fixture-simulator')
+            command = result['command']
+            self.assertEqual(command[command.index('-collect-test-diagnostics') + 1], 'never')
+            self.assertIn('-resultBundlePath', command)
+            self.assertTrue(result['passed'])
+            self.assertEqual(result['executedCount'], 4)
+            self.assertTrue(all(case['failures'] for case in result['tests']))
+            self.assertTrue((directory / 'red' / 'xcresult-test-report.json').exists())
 
 
 class PreviewBaselineTests(unittest.TestCase):
@@ -316,15 +339,89 @@ class PreviewOverlaySafetyTests(unittest.TestCase):
         self.assertEqual(self.source.read_bytes(), edited)
         self.assertFalse((self.options.output / 'RootView.backup.swift').exists())
 
+    def test_edit_during_red_is_preserved_before_restore_even_on_interrupt(self):
+        for error in (None, RuntimeError('RED failed'), SystemExit('SIGTERM'), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__):
+                summary = {}
+                edited = self.original + b'// editor work during RED\n'
+                with self.assertRaises(BaseException) as caught:
+                    with baseline_overlay(self.options, summary, self.original):
+                        self.source.write_bytes(edited)
+                        if error is not None:
+                            raise error
+                    self.fail('GREEN must not follow a conflicting edit')
+                self.assertIsInstance(caught.exception, RuntimeError)
+                self.assertRegex(str(caught.exception), 'Source changed during RED.*GREEN will not run')
+                recovery = Path(summary['sourceConflictRecovery'])
+                self.assertEqual(recovery.read_bytes(), edited)
+                self.assertEqual(summary['sourceConflictHash'], hashlib.sha256(edited).hexdigest())
+                self.assertEqual(self.source.read_bytes(), self.original)
+                self.assertTrue(summary['sourceRestored'])
+
+    def test_failed_conflict_preservation_leaves_editor_bytes_untouched(self):
+        summary = {}
+        edited = self.original + b'// irreplaceable editor work\n'
+        with patch('preview_ui.os.fsync', wraps=os.fsync) as fsync:
+            with self.assertRaisesRegex(RuntimeError, 'GREEN will not run'):
+                with baseline_overlay(self.options, summary, self.original):
+                    self.source.write_bytes(edited)
+                    fsync.side_effect = OSError('Evidence disk full')
+                self.fail('GREEN must not follow failed conflict preservation')
+        self.assertEqual(self.source.read_bytes(), edited)
+        self.assertFalse(summary['sourceRestored'])
+        self.assertIn('Evidence disk full', summary['sourceRestoreError'])
+        self.assertNotIn('sourceConflictRecovery', summary)
+
+    def test_another_edit_during_conflict_preservation_is_left_untouched(self):
+        summary = {}
+        edited = self.original + b'// editor first revision\n'
+        latest = self.original + b'// editor second revision\n'
+        original_fsync = os.fsync
+        change_again = False
+
+        def fsync(descriptor):
+            nonlocal change_again
+            original_fsync(descriptor)
+            if change_again:
+                self.source.write_bytes(latest)
+                change_again = False
+
+        with patch('preview_ui.os.fsync', side_effect=fsync):
+            with self.assertRaisesRegex(RuntimeError, 'GREEN will not run'):
+                with baseline_overlay(self.options, summary, self.original):
+                    self.source.write_bytes(edited)
+                    change_again = True
+        self.assertEqual(Path(summary['sourceConflictRecovery']).read_bytes(), edited)
+        self.assertEqual(self.source.read_bytes(), latest)
+        self.assertFalse(summary['sourceRestored'])
+
+    def test_edit_during_restore_file_preparation_is_left_untouched(self):
+        summary = {}
+        edited = self.original + b'// editor wrote while restore was being fsynced\n'
+        original_fsync = os.fsync
+        change_during_restore = False
+
+        def fsync(descriptor):
+            original_fsync(descriptor)
+            if change_during_restore:
+                self.source.write_bytes(edited)
+
+        with patch('preview_ui.os.fsync', side_effect=fsync):
+            with self.assertRaisesRegex(RuntimeError, 'GREEN will not run'):
+                with baseline_overlay(self.options, summary, self.original):
+                    change_during_restore = True
+        self.assertEqual(self.source.read_bytes(), edited)
+        self.assertFalse(summary['sourceRestored'])
+
     def test_restoration_mismatch_prevents_continuing_to_green_and_keeps_backup(self):
         summary = {}
         writes = 0
 
-        def fail_restore(source, data):
+        def fail_restore(source, data, **kwargs):
             nonlocal writes
             writes += 1
             if writes == 1:
-                replace_source(source, data)
+                replace_source(source, data, **kwargs)
 
         with patch('preview_ui.replace_source', side_effect=fail_restore):
             with self.assertRaisesRegex(RuntimeError, 'GREEN will not run'):

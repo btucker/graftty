@@ -58,7 +58,7 @@ def require_clean_baseline_source(expected=None):
     return original
 
 
-def replace_source(source, data):
+def replace_source(source, data, *, expected=None):
     """Replace complete bytes atomically and preserve the source file mode."""
     mode = source.stat().st_mode & 0o777
     descriptor, temporary = tempfile.mkstemp(prefix='.' + source.name + '.', suffix='.tmp', dir=source.parent)
@@ -68,6 +68,8 @@ def replace_source(source, data):
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
+        if expected is not None and source.read_bytes() != expected:
+            raise RuntimeError('Source changed during replacement; leaving it untouched')
         os.replace(temporary, source)
     finally:
         if os.path.exists(temporary):
@@ -93,17 +95,34 @@ def baseline_overlay(options, summary, original):
     summary['baselineSourceHash'] = hashlib.sha256(baseline).hexdigest()
     summary['sourceRestored'] = False
     try:
-        replace_source(REPO / SOURCE, baseline)
+        replace_source(REPO / SOURCE, baseline, expected=original)
         yield
     finally:
+        recovery = None
         try:
-            replace_source(REPO / SOURCE, original)
+            current = (REPO / SOURCE).read_bytes()
+            if current != baseline:
+                # An editor can write while xcodebuild runs. Never discard
+                # those bytes when restoring our temporary source overlay.
+                recovery = options.output / ('RootView.concurrent-edit.' + uuid.uuid4().hex + '.swift')
+                with recovery.open('xb') as saved:
+                    saved.write(current)
+                    saved.flush()
+                    os.fsync(saved.fileno())
+                summary['sourceConflictRecovery'] = str(recovery)
+                summary['sourceConflictHash'] = hashlib.sha256(current).hexdigest()
+                if (REPO / SOURCE).read_bytes() != current:
+                    raise RuntimeError('Source changed again during conflict preservation; leaving it untouched')
+            replace_source(REPO / SOURCE, original, expected=current)
             summary['sourceRestored'] = (REPO / SOURCE).read_bytes() == original
             if not summary['sourceRestored']:
                 raise RuntimeError('Restored bytes differ from source backup')
         except Exception as error:
             summary['sourceRestoreError'] = str(error)
             raise RuntimeError('Source restoration failed; GREEN will not run; recover RootView.backup.swift') from error
+        if recovery is not None:
+            raise RuntimeError('Source changed during RED; saved to ' + str(recovery)
+                               + '; original restored; GREEN will not run')
 
 
 def adapt_baseline_source(source):
@@ -212,6 +231,10 @@ def run_phase(name, options, simulator):
                'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG GRAFTTY_PAGED_HISTORY',
                'OTHER_SWIFT_FLAGS=$(inherited) -Xcc ' + os.environ['GRAFTTY_RENDERER_CONTEXT'],
                *('-only-testing:' + test for test in selections), 'test']
+    if name == 'red':
+        # Expected assertion failures already have xcresult/log evidence.
+        # Avoid spending minutes collecting an unrelated full sysdiagnose.
+        command[1:1] = ['-collect-test-diagnostics', 'never']
     if options.source_packages:
         command[1:1] = ['-clonedSourcePackagesDirPath', str(options.source_packages)]
     result = {'command': command, 'passed': False}
