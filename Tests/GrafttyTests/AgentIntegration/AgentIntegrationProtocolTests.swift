@@ -44,10 +44,11 @@ struct AgentIntegrationProtocolTests {
             from: JSONEncoder().encode(command)) == command)
     }
 
-    @Test("@spec TEST-1.1: When an integration client receives a scripted action, the test harness shall preserve its sequence ID, provider, operation, and parameters through JSON encoding.")
-    func actionRoundTrip() throws {
-        let command = AgentIntegrationCommand(id: 12, operation: "resize", provider: "codex",
+    @Test("@spec TEST-1.1: When an integration client receives a resize or loaded-history read action, the test harness shall preserve its sequence ID, provider, operation, and parameters through JSON encoding and admit it for dispatch.", arguments: ["resize", "loadedHistory"])
+    func actionRoundTrip(operation: String) throws {
+        let command = AgentIntegrationCommand(id: 12, operation: operation, provider: "codex",
             parameters: ["width": "393", "height": "852"])
+        #expect(command.isSupported)
         #expect(try JSONDecoder().decode(AgentIntegrationCommand.self,
             from: JSONEncoder().encode(command)) == command)
     }

@@ -12,12 +12,14 @@ def verify_swift(directory):
         raise ValueError('RED must execute exactly one test with one intended issue')
     if 'Dense history must arrive as a bounded page, not a host limit refusal' not in red:
         raise ValueError('RED did not reproduce the host page refusal')
-    match = re.search(r'Test run with (\d+) tests in 2 suites passed', green)
-    if not match or int(match[1]) < 18:
+    match = re.search(r'Test run with (\d+) tests in 3 suites passed', green)
+    if not match or int(match[1]) < 24:
         raise ValueError('GREEN did not execute the required focused suites')
-    for spec in ('TERM-12.43', 'TERM-12.44', 'TERM-12.45'):
-        if not re.search(r'✔ Test "@spec ' + re.escape(spec) + r':[^\n]+ passed after', green):
+    for spec in ('TERM-12.43', 'TERM-12.44', 'TERM-12.45', 'TEST-1.1'):
+        if not re.search(r'Test "@spec ' + re.escape(spec) + r':[^\n]+ passed after', green):
             raise ValueError(f'GREEN did not execute and pass {spec}')
+    if not re.search(r'Test case passing 1 argument operation → "loadedHistory" to "@spec TEST-1\.1:[^\n]+ started', green):
+        raise ValueError('GREEN did not execute the loadedHistory protocol case')
 
 
 def verify_provider_result(path):

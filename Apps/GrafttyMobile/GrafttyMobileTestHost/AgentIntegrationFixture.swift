@@ -362,7 +362,7 @@ final class AgentIntegrationMobileController: UIViewController {
         let metrics = pane.container.terminalGridMetrics
         let terminalFrame = pane.container.convert(pane.container.bounds, to: view.window)
         let keyboardFrame = view.convert(view.keyboardLayoutGuide.layoutFrame, to: view.window)
-        var values = ["text": text, "anchor": AgentIntegrationAnchor.first(in: text),
+        var values: [String: String] = ["text": text, "anchor": AgentIntegrationAnchor.first(in: text),
             "pagedGridMismatches": pane.client.diagnosticPagedGridMismatches.joined(separator: "\n"),
             "parserGridMatches": metrics.map { parserGridMatches(pane.client.session, columns: $0.columns, rows: $0.rows) } ?? "",
             "parserGridAtScrollbarHeight": metrics.map { parserGridMatches(pane.client.session, columns: $0.columns, rows: UInt16(clamping: bar?.len ?? 0)) } ?? "",

@@ -4256,7 +4256,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEST-1.x
 
-**TEST-1.1** When an integration client receives a scripted action, the test harness shall preserve its sequence ID, provider, operation, and parameters through JSON encoding.
+**TEST-1.1** When an integration client receives a resize or loaded-history read action, the test harness shall preserve its sequence ID, provider, operation, and parameters through JSON encoding and admit it for dispatch.
 
 **TEST-1.2** If a scripted integration action names an unsupported operation, then the test harness shall reject it rather than report a successful observation.
 
