@@ -1174,6 +1174,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.22** When the mobile application initializes, the application shall install its notification delegate before constructing the root view so launch notification responses can be received.
 
+**NOTIF-1.23** When mobile receives the same originating stop through direct and relayed connections, the application shall notify once across reconnects and relaunches while preserving distinct origins and later occurrences.
+
+**NOTIF-1.24** If a mobile notification lacks a pane identity and its worktree has multiple panes, then the application shall report that the pane cannot be identified instead of opening an unrelated pane.
+
+**NOTIF-1.25** When mobile receives the same input request through direct and relayed connections, the application shall notify once across ledger reloads while preserving later requests and distinct pane slots.
+
+**NOTIF-1.26** While the mobile notification view remains active after a reported reconnect failure, a later same-target notification response shall trigger a fresh activation attempt and display its live session without requiring a scene transition or view remount.
+
 ### NOTIF-2.x — Attention Badge Auto-Population
 
 **NOTIF-2.1** When libghostty fires `COMMAND_FINISHED` with a zero exit code on a pane, the application shall set *that pane's* pane-scoped attention overlay to a checkmark indicator that auto-clears after 3 seconds. Sibling panes in the same worktree are unaffected.
@@ -3630,6 +3638,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.24** When the Stop hook requests an Attention recap, the application shall instruct the agent not to mention the report in its response unless the report command fails.
 
+**AGENT-3.25** When an absolute GRAFTTY_ATTENTION_DIR is configured, the application shall use that directory for Attention handoff so isolated provider tests cannot publish into the user's notification queue.
+
 ### AGENT-4.x
 
 **AGENT-4.1** When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.
@@ -4270,7 +4280,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEST-1.4** When real scripted agents move between native Mac and mobile displays, the integration harness shall exercise production terminal ownership and messaging paths and fail if a commanded native action fails.
 
-**TEST-1.5** When a scripted native integration run requests mobile gestures, rotation, or keyboard input, the test harness shall drive the mounted terminal through XCUITest and preserve screenshots with the action sequence ID.
+**TEST-1.5** When a scripted native integration run requests mobile gestures or notification taps, the test harness shall drive XCUITest, preserve screenshots with the action sequence ID, require foreground activation-view evidence for notification taps and selected live renderer evidence before completion, and fail the test unless the controller finishes successfully.
 
 **TEST-1.6** When a native integration viewport contains wrapped fixture output, the test harness shall identify its reading anchor by the first logical row label rather than by physical row count.
 
@@ -4281,3 +4291,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.9** When a native integration color probe runs, the test harness shall require chromatic rendered pixels on the current stream stage's inline-code, link, syntax, deletion, and addition rows, and shall reject missing or monochrome samples.
 
 **TEST-1.10** When the native integration harness creates a worktree through the production background creation flow, the harness shall require backend and initial-command readiness without mounting a terminal view or changing the selected worktree, and preserve startup diagnostics on failure.
+
+**TEST-1.11** When the native notification integration replays a captured provider stop, the harness shall preserve its original payload and route explicit notification actions to native clients.
+
+**TEST-1.12** When the native notification fixture validates its private queue, the harness shall compare canonical directory paths independently of URL directory metadata and reject other directories.

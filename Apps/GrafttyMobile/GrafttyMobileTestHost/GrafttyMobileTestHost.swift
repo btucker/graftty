@@ -11,6 +11,11 @@ import GhosttyTerminal
 // events, without starting production pairing, session, or biometric state.
 @main
 struct GrafttyMobileTestHost: App {
+    init() {
+        #if GRAFTTY_BROWSER_CONTROL_FIXTURE
+        if Self.agentIntegrationEndpoint != nil { NotificationActivationFixture.installRestoredIfNeeded() }
+        #endif
+    }
     var body: some Scene {
         WindowGroup {
             #if GRAFTTY_BROWSER_CONTROL_FIXTURE
@@ -35,7 +40,13 @@ struct GrafttyMobileTestHost: App {
     private static var agentIntegrationEndpoint: URL? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--agent-integration-url"),
-              arguments.indices.contains(index + 1) else { return nil }
+              arguments.indices.contains(index + 1) else {
+            if arguments.contains(where: ["--context-fixture", "--scrollback-fixture",
+                "--image-controls-fixture", "--browser-control-fixture"].contains) { return nil }
+            // A notification launches the executable through Springboard,
+            // which does not retain XCUIApplication's launch arguments.
+            return NotificationActivationFixture.restoredEndpoint
+        }
         return URL(string: arguments[index + 1])
     }
     #endif

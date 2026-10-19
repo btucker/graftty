@@ -20,6 +20,7 @@ class ModelState:
         self.cli = cli
         self.rows = rows
         self.fixture_text = scenario_text
+        self.completion_text = lambda agent: 'Graftty integration'
         self.pause_after_output = False
         self.condition = threading.Condition()
         self.barriers = {}
@@ -158,7 +159,7 @@ class ModelState:
                     self.initials.add(agent)
                     return agent, self.fixture_text(self.rows), None, True
             self.condition.notify_all()
-        return agent, 'Graftty integration', None, False
+        return agent, self.completion_text(agent), None, False
 
 
 class IntegrationServer(http.server.ThreadingHTTPServer):

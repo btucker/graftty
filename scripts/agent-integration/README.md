@@ -93,6 +93,74 @@ emoji, or status label cannot satisfy a missing syntax or diff sample. The probe
 checks Mac output, mobile ownership, mobile reconnect, mobile following, and the
 return to Mac ownership. `--colors --mac-only` checks Mac output only.
 
+Add `--notifications` for the bounded native notification scenario. It runs both
+real providers, lets each production Stop hook request and submit its Attention
+recap through the provider's shell tool, then captures the resulting handoff
+files. A second prompt produces a distinct real stop. Exact event replays must
+leave the delivery count unchanged; the second turn must increment it.
+
+This scenario requires a current CLI supporting `graftty attention directory`.
+Before launching providers, the runner verifies that the CLI and native host
+use `GRAFTTY_ATTENTION_DIR` under the private run directory. An older CLI or a
+path mismatch aborts the run. The private Mac host disables only its maintenance
+consumer so the probe can archive actual hook files before acknowledging them.
+It uses production stopped-turn recording and notification request construction
+with an injected delivery sink. It never posts a desktop system notification.
+
+The iOS test host receives the captured events through the same command channel.
+It mounts production `RootView` with isolated host storage and controlled host
+fetches. Native Simulator notifications and XCUITest taps exercise warm,
+background, and cold opening, delayed fetch completion, later user navigation,
+an ambiguous target, and a disconnected host retry. Alternating direct/relay
+snapshot representations of one source stop must create one request, while the
+next distinct stop creates another. This checks canonical notification identity;
+it does not establish authenticated relay transport or APNs delivery.
+Successful activation must also mount the selected retained client through
+production `SingleSessionView` and `SessionClient.live`, using the fixture's
+existing authenticated SSH-over-WebRTC transport. The selected visible native
+renderer must share that client's exact session, report a live connection, and
+contain its unique provider completion marker in a fresh viewport observation.
+The other real provider is the split sibling and emits a different marker;
+seeing its marker fails the target check. A screenshot is captured after these
+conditions hold. Cold launch retrieves fresh ephemeral credentials and verifies
+the original host fingerprint. Controlled host lists remain separate from this
+real terminal transport; full pairing UI and coordinator negotiation are outside
+this probe. The delayed-user-selection control changes production selection
+state to test cancellation, but does not mount the sibling route, so that case
+is explicitly reported as route-state-only coverage.
+Controlled input-request snapshots reuse captured pane identities and timestamps
+to check request deduplication and tap routing. Those snapshots do not establish
+provider permission-hook delivery.
+For cold and background cases, the fixture schedules the production request's
+unchanged identifier and content with a five-second trigger. This lets XCUITest
+terminate or background the app before the operating system delivers the alert.
+The native tap and resulting route provide delivery evidence; the submission
+counter alone confirms only that the system accepted the request.
+`--notifications --mac-only` skips all iOS assertions and reports that scope.
+
+Notification artifacts include the original files in `provider-handoff/`,
+`provider-stops-{claude,codex}.json`, controlled replay actions in `actions.json`,
+native observations and screenshots, provider model requests and tool results in
+`trace.jsonl`, and the Simulator `mobile.xcresult`. `result.json` records provider
+versions, Simulator UDID, device type, runtime version/build, executed native
+commands, CLI/zmx SHA256 hashes, tested commit, tracked diff hash, hashes of
+untracked source files, and per-stage stop/request counts. `tested.patch`
+preserves the tracked changes.
+The controlled effective-scene-phase retry case fixes the production view's
+scene environment to active, while recording the system scene phase separately.
+It records actual decoded OS response IDs/routes, effective scene
+transitions, and stable probe identity. After a reported fetch failure, a second
+same-target response must cause a second fetch and render the exact live target.
+No effective scene transition or view remount may supply the retry. This does
+not claim the OS remained foreground during Notification Center interaction. Use
+`--notifications --notification-case active-retry` for that focused case, or the
+workflow's `notification_case` input. The default `all` includes it after the
+other lifecycle and error cases. A response observer records real delegate
+callbacks and does not inject routes.
+The notification scenario does not use generated-action replay or shrinking.
+On the Native agent integration workflow, select the independent `notifications`
+boolean input to run this scenario. Scheduled runs retain the general scenario.
+
 Add `--history --rows 600` to exercise bounded history transfers with both
 providers. The fixture repeats emoji and source paths across physical wraps,
 then attaches Mobile after the final numbered row renders. Actual touch drags

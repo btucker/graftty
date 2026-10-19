@@ -65,7 +65,10 @@ struct AgentIntegrationCommand: Codable, Equatable, Sendable {
 
     var isSupported: Bool {
         ["idle", "start", "snapshot", "resize", "takeControl", "scroll", "select", "loadedHistory", "reconnect",
-         "connect", "acceptOffer", "roster", "message", "input", "keyboard", "visibility", "recreate", "verify", "finish"].contains(operation)
+         "connect", "acceptOffer", "roster", "message", "input", "keyboard", "visibility", "recreate", "verify", "finish",
+         "notificationsSnapshot", "notificationsReplay", "notificationsPrepare", "notificationsDeliver",
+         "notificationsState", "notificationsRelease", "notificationsNavigate", "notificationsTap",
+         "notificationsAuthorize", "notificationsDismissError", "notificationsCapture"].contains(operation)
     }
 }
 
@@ -90,6 +93,13 @@ struct AgentIntegrationManifest: Codable, Sendable {
     let codex: String
     let claude: String
     let seed: UInt64
+    var scenario: String? = nil
+
+    func usesPrivateAttentionDirectory(_ directory: URL) -> Bool {
+        let expected = URL(fileURLWithPath: root).appendingPathComponent("attention")
+            .resolvingSymlinksInPath().standardizedFileURL
+        return directory.isFileURL && directory.resolvingSymlinksInPath().standardizedFileURL.path == expected.path
+    }
 }
 
 /// The controller owns the queue. A native client never invents a pass locally.

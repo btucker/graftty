@@ -3,6 +3,38 @@ import Testing
 
 @Suite("Scripted agent integration protocol")
 struct AgentIntegrationProtocolTests {
+    @Test("@spec TEST-1.12: When the native notification fixture validates its private queue, the harness shall compare canonical directory paths independently of URL directory metadata and reject other directories.")
+    func privateAttentionDirectory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let manifest = AgentIntegrationManifest(endpoint: URL(string: "http://127.0.0.1")!,
+            root: root.path, cli: "", zmx: "", codex: "", claude: "", seed: 1)
+        let path = root.appendingPathComponent("attention").path
+        #expect(manifest.usesPrivateAttentionDirectory(URL(fileURLWithPath: path, isDirectory: true)))
+        #expect(manifest.usesPrivateAttentionDirectory(URL(fileURLWithPath: path, isDirectory: false)))
+        #expect(!manifest.usesPrivateAttentionDirectory(root.appendingPathComponent("attention-other")))
+        #expect(!manifest.usesPrivateAttentionDirectory(root.appendingPathComponent("attention/child")))
+        #expect(!manifest.usesPrivateAttentionDirectory(URL(string: "https://example.invalid" + path)!))
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        let alias = root.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
+        #expect(manifest.usesPrivateAttentionDirectory(alias.appendingPathComponent("attention", isDirectory: true)))
+    }
+
+    @Test("@spec TEST-1.11: When the native notification integration replays a captured provider stop, the harness shall preserve its original payload and route explicit notification actions to native clients.")
+    func notificationActionRoundTrip() throws {
+        for operation in ["notificationsSnapshot", "notificationsReplay", "notificationsPrepare",
+                          "notificationsDeliver", "notificationsState", "notificationsRelease",
+                          "notificationsNavigate", "notificationsTap", "notificationsAuthorize", "notificationsDismissError", "notificationsCapture"] {
+            let command = AgentIntegrationCommand(id: 21, operation: operation, provider: "codex",
+                parameters: ["events": "[{\"runtime\":\"codex\",\"stoppedAt\":123.456}]", "copies": "3"])
+            #expect(command.isSupported)
+            #expect(try JSONDecoder().decode(AgentIntegrationCommand.self,
+                from: JSONEncoder().encode(command)) == command)
+        }
+    }
+
     @Test("@spec TEST-1.8: When a scripted terminal is hidden and shown to reproduce worktree switching, the integration harness shall remount its retained surface or mobile route and observe its viewport and physical rows.")
     func visibilityActionRoundTrip() throws {
         let command = AgentIntegrationCommand(id: 13, operation: "visibility", provider: "codex",

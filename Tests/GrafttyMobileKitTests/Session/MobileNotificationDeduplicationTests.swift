@@ -1,0 +1,82 @@
+import Foundation
+import GrafttyProtocol
+import Testing
+@testable import GrafttyMobileKit
+
+struct MobileNotificationDeduplicationTests {
+    private func row(_ time: Double, owner: String = "origin-mac", relayed: Bool = false,
+                     body: String = "Tests passed.") -> WorktreePanes {
+        let stop = SidebarAgentStop(agentName: "Codex",
+            stoppedAt: Date(timeIntervalSinceReferenceDate: time),
+            recap: .init(title: "Notification routing", completed: body, next: "Review."),
+            paneSlotID: "agent-slot", providerSessionKey: "codex:session:fixture")
+        let session = relayed ? "relay-pane-alias" : "local-pane"
+        return .init(path: relayed ? "relay-worktree-alias" : "/repo/task", displayName: "Task",
+            repoDisplayName: "Project", displayBranch: "task", state: .running,
+            isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: session, title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil),
+            origin: .init(deviceID: .init(value: owner), deviceLabel: "Origin Mac", relayDepth: relayed ? 1 : 0),
+            sidebar: .init(id: "stable-worktree", projectID: "stable-project", paneIDs: [session: "agent-slot"],
+                unseenAgentStop: stop, lastAgentStop: stop))
+    }
+
+    @Test("@spec NOTIF-1.23: When mobile receives the same originating stop through direct and relayed connections, the application shall notify once across reconnects and relaunches while preserving distinct origins and later occurrences.", arguments: [false, true])
+    func directAndRelayedOccurrencesNotifyOnce(relayFirst: Bool) throws {
+        var ledger = MobileStopNotificationLedger()
+        let direct = UUID(), relay = UUID()
+        #expect(ledger.receive([row(10, relayed: relayFirst)], hostID: relayFirst ? relay : direct).count == 1)
+        #expect(ledger.receive([row(10, relayed: !relayFirst)], hostID: relayFirst ? direct : relay).isEmpty)
+        #expect(ledger.receive([row(10)], hostID: direct).isEmpty)
+        var restored = try JSONDecoder().decode(MobileStopNotificationLedger.self, from: JSONEncoder().encode(ledger))
+        // A re-added connection can have another local UUID for the same owner.
+        #expect(restored.receive([row(10)], hostID: UUID()).isEmpty)
+        #expect(restored.receive([row(20)], hostID: direct).count == 1)
+        #expect(restored.receive([row(20, relayed: true)], hostID: relay).isEmpty)
+        #expect(restored.receive([row(20, owner: "another-mac")], hostID: UUID()).count == 1)
+        #expect(restored.receive([row(21, body: "A different result.")], hostID: UUID()).count == 1)
+    }
+
+    @Test func legacyLedgerStillDecodes() throws {
+        var ledger = try JSONDecoder().decode(MobileStopNotificationLedger.self,
+            from: Data(#"{"timestamps":{}}"#.utf8))
+        #expect(ledger.receive([row(10)], hostID: UUID()).count == 1)
+    }
+
+    @Test func previouslyDeliveredStopsAcquireReceiptsAfterUpgrade() throws {
+        let direct = UUID()
+        var ledger = MobileStopNotificationLedger()
+        #expect(ledger.receive([row(10)], hostID: direct).count == 1)
+        var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(ledger)) as? [String: Any])
+        legacy.removeValue(forKey: "receipts")
+        ledger = try JSONDecoder().decode(MobileStopNotificationLedger.self,
+            from: JSONSerialization.data(withJSONObject: legacy))
+        #expect(ledger.receive([row(10)], hostID: direct).isEmpty)
+        #expect(ledger.receive([row(10, relayed: true)], hostID: UUID()).isEmpty)
+        #expect(ledger.receive([row(20)], hostID: direct).count == 1)
+    }
+
+    @Test("@spec NOTIF-1.25: When mobile receives the same input request through direct and relayed connections, the application shall notify once across ledger reloads while preserving later requests and distinct pane slots.")
+    func inputRequestsAreDeduplicatedAcrossRoutes() throws {
+        func prompt(_ time: Double, relayed: Bool = false, slot: String = "agent-slot") -> WorktreePanes {
+            let source = row(time, relayed: relayed)
+            let session = relayed ? "relay-pane-alias" : "local-pane"
+            return .init(path: source.path, displayName: source.displayName, repoDisplayName: source.repoDisplayName,
+                displayBranch: source.displayBranch, state: .running, isMainCheckout: false,
+                prBadge: nil, stats: nil, attentionText: nil,
+                layout: .leaf(sessionName: session, title: "Agent", attentionText: "Codex needs input",
+                    isBusy: false, attentionSource: .agentStop,
+                    attentionTimestamp: Date(timeIntervalSinceReferenceDate: time)),
+                origin: source.origin,
+                sidebar: .init(id: "stable-worktree", projectID: "stable-project", paneIDs: [session: slot]))
+        }
+        let direct = UUID(), relay = UUID()
+        var ledger = MobileStopNotificationLedger()
+        #expect(ledger.receive([prompt(10)], hostID: direct).count == 1)
+        #expect(ledger.receive([prompt(10, relayed: true)], hostID: relay).isEmpty)
+        ledger = try JSONDecoder().decode(MobileStopNotificationLedger.self, from: JSONEncoder().encode(ledger))
+        #expect(ledger.receive([prompt(10)], hostID: UUID()).isEmpty)
+        #expect(ledger.receive([prompt(20, relayed: true)], hostID: relay).count == 1)
+        #expect(ledger.receive([prompt(20)], hostID: direct).isEmpty)
+        #expect(ledger.receive([prompt(20, slot: "other-slot")], hostID: UUID()).count == 1)
+    }
+}

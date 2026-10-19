@@ -149,6 +149,9 @@ class Run:
                 return mac, phone
         raise InvariantFailure(f'Mac/mobile ownership and grid did not converge: mac={mac}, phone={phone}')
 
+    def record_simulator(self, device, runtime):
+        self.summary['simulator'] = {'udid': device['udid'], 'name': device['name'], 'runtime': runtime}
+
     def prepare_mobile(self):
         options = self.options
         if options.simulator:
@@ -162,11 +165,11 @@ class Run:
         print('Preparing private iOS test device: ' + self.simulator, flush=True)
         # Boot only our device. A supplied simulator is an explicitly selected test destination.
         devices = json.loads(execute(['xcrun', 'simctl', 'list', 'devices', '--json']))
-        selected = next((d for runtime in devices['devices'].values() for d in runtime if d['udid'] == self.simulator), None)
+        runtime, selected = next(((runtime, device) for runtime, candidates in devices['devices'].items()
+                                  for device in candidates if device['udid'] == self.simulator), (None, None))
         if not selected:
             raise InvariantFailure('selected simulator is unavailable')
-        runtime = next(key for key, values in devices['devices'].items() if selected in values)
-        self.summary['simulator'] = {'udid': self.simulator, 'name': selected['name'], 'runtime': runtime}
+        self.record_simulator(selected, runtime)
         (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
         if selected['state'] != 'Booted':
             execute(['xcrun', 'simctl', 'boot', self.simulator])
@@ -195,7 +198,9 @@ class Run:
         run_file.write_bytes(plistlib.dumps(data))
         self.mobile_command = ['xcodebuild', '-xctestrun', str(run_file), '-destination', 'platform=iOS Simulator,id=' + self.simulator,
             '-resultBundlePath', str(self.root / 'mobile.xcresult'), '-parallel-testing-enabled', 'NO',
-            '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests', 'test-without-building']
+            '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests/'
+                + ('testNativeNotificationActivation' if getattr(options, 'notifications', False)
+                   else 'testScriptedAgentInteractions'), 'test-without-building']
         self.mobile_environment = build_env
 
     def start_mobile(self):
@@ -474,6 +479,9 @@ class Run:
             time.sleep(.05)
         raise InvariantFailure(f'hidden mobile condition did not settle for {agent}: {value}')
 
+    def configure_fixture(self, manifest):
+        pass
+
     def run(self):
         self.thread.start()
         print(f'Native integration artifacts: {self.root}', flush=True)
@@ -519,6 +527,7 @@ class Run:
                         'seed': self.options.seed}
             self.server.manifest = manifest
             manifest_file = self.root / 'manifest.json'
+            self.configure_fixture(manifest)
             manifest_file.write_text(json.dumps(manifest))
             self.env['GRAFTTY_AGENT_INTEGRATION_MANIFEST'] = str(manifest_file)
             (self.root / 'bin' / 'graftty').symlink_to(self.options.cli)
@@ -615,6 +624,9 @@ def main():
     parser.add_argument('--history', action='store_true', help='Test dense wide provider output through bounded mobile history paging')
 
     parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
+    parser.add_argument('--notifications', action='store_true', help='Capture real provider Stop hooks and exercise native notification replay and activation')
+    parser.add_argument('--notification-case', choices=('all', 'active-retry'), default='all',
+                        help='Select bounded notification cases; active-retry holds the production view scene active')
     parser.add_argument('--device', default='iPhone 17 Pro')
     parser.add_argument('--runtime', help='CoreSimulator runtime identifier; default uses its newest compatible runtime')
     parser.add_argument('--seed', type=int, default=1)
@@ -629,20 +641,27 @@ def main():
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
+    if sum((options.worktree_reentry, options.colors, options.notifications, options.history, options.worktree_creation)) > 1:
+        parser.error('--worktree-reentry, --colors, --notifications, --history and --worktree-creation are separate scenarios')
+    if options.notification_case != 'all' and (not options.notifications or options.mac_only):
+        parser.error('--notification-case requires --notifications with mobile coverage')
+    if options.notifications and (options.replay or options.shrink):
+        parser.error('--notifications records its own bounded event replays')
+    if options.history and (options.mac_only or options.replay or options.shrink):
+        parser.error('--history requires mobile and runs separately from generated actions')
     if options.worktree_creation_viewport_only and not options.worktree_creation:
         parser.error('--worktree-creation-viewport-only requires --worktree-creation')
-    if options.worktree_creation and (options.history or options.worktree_reentry or options.colors or options.mac_only or options.replay or options.shrink):
+    if options.worktree_creation and (options.mac_only or options.replay or options.shrink):
         parser.error('--worktree-creation requires the standalone native mobile scenario')
-    if options.history and (options.worktree_reentry or options.colors or options.mac_only or options.replay or options.shrink):
-        parser.error('--history requires mobile and runs separately from other scenarios and generated actions')
-    if options.worktree_reentry and options.colors:
-        parser.error('--worktree-reentry and --colors are separate scenarios')
     if options.worktree_reentry and options.mac_only:
         parser.error('--worktree-reentry requires the native mobile host')
     if options.worktree_reentry and (options.replay or options.shrink):
         parser.error('--worktree-reentry does not use generated action replay or shrinking')
     actions = [Action(**value) for value in json.loads(options.replay.read_text())] if options.replay else None
-    if options.worktree_creation:
+    if options.notifications:
+        from notifications import NotificationRun
+        run = NotificationRun(options)
+    elif options.worktree_creation:
         from worktree_creation import WorktreeCreationRun
         run = WorktreeCreationRun(options)
     elif options.colors:

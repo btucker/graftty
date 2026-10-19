@@ -11,6 +11,17 @@ on:
         description: Generated actions after the fixed regressions
         default: '60'
         required: true
+      notifications:
+        description: Run provider Stop replay and native mobile notification activation
+        type: boolean
+        default: false
+        required: false
+      notification_case:
+        description: Notification case selection
+        type: choice
+        options: [all, active-retry]
+        default: all
+        required: false
       history:
         description: Run the focused dense history paging regression on both providers
         type: boolean
@@ -40,9 +51,9 @@ jobs:
     timeout-minutes: 75
     steps:
       - name: Validate standalone scenario selection
-        if: inputs.history && inputs.worktree_creation
+        if: (inputs.history && inputs.worktree_creation) || (inputs.notifications && (inputs.history || inputs.worktree_creation))
         run: |
-          echo 'Select history or worktree_creation in separate workflow runs.'
+          echo 'Select notifications, history or worktree_creation in separate workflow runs.'
           exit 1
       - uses: actions/checkout@v4
         with:
@@ -112,12 +123,17 @@ jobs:
         env:
           TEST_SEED: ${{ inputs.seed || github.run_number }}
           TEST_ACTIONS: ${{ inputs.actions || '60' }}
+          TEST_NOTIFICATIONS: ${{ inputs.notifications || 'false' }}
+          TEST_NOTIFICATION_CASE: ${{ inputs.notification_case || 'all' }}
           TEST_HISTORY: ${{ inputs.history || 'false' }}
           TEST_WORKTREE_CREATION: ${{ inputs.worktree_creation || 'false' }}
           TEST_CREATION_SOURCE: ${{ inputs.creation_source || 'cli' }}
         run: |
           cli="$HOME/Library/Caches/Graftty/SwiftPM/build/$(uname -m)-apple-macosx/debug/graftty-cli"
           scenario=()
+          if [[ "$TEST_NOTIFICATIONS" == true ]]; then
+            scenario+=(--notifications --notification-case "$TEST_NOTIFICATION_CASE")
+          fi
           if [[ "$TEST_HISTORY" == true ]]; then scenario=(--history --rows 600); fi
           if [[ "$TEST_WORKTREE_CREATION" == true ]]; then
             python3 - <<'PY'
@@ -196,6 +212,11 @@ jobs:
             /private/tmp/graftty-ai-*/mobile.log
             /private/tmp/graftty-ai-*/simulator-boot.log
             /private/tmp/graftty-ai-*/ios-build.log
+            /private/tmp/graftty-ai-*/notifications-*.json
+            /private/tmp/graftty-ai-*/provider-stops-*.json
+            /private/tmp/graftty-ai-*/provider-handoff/**
+            /private/tmp/graftty-ai-*/*.png
+            /private/tmp/graftty-ai-*/tested.patch
             /private/tmp/graftty-ai-*/mobile.xcresult
             /private/tmp/graftty-ai-*/history-*.json
             /private/tmp/graftty-history-validation/*.log

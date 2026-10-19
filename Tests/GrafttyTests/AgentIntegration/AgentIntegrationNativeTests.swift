@@ -125,6 +125,7 @@ private final class AgentIntegrationMacHost {
     var agent: WebRTCHostAgent?
     var panes: [String: Pane] = [:]
     var tickObserver: NSObjectProtocol?
+    var notificationProbe: AgentIntegrationNotificationProbe?
     var finishedSuccessfully = false
     var productionCreation: ProductionWorktreeCreationFixture?
     var repo: String { root.appendingPathComponent("repository").path }
@@ -138,6 +139,11 @@ private final class AgentIntegrationMacHost {
         let actualState = AppState.defaultDirectory.resolvingSymlinksInPath().standardizedFileURL.path
         guard actualHome == expectedHome, actualState.hasPrefix(expectedHome + "/") else {
             throw AgentIntegrationError("native host isolation mismatch: home=\(actualHome), expected=\(expectedHome), state=\(actualState)")
+        }
+        if manifest.scenario == "notifications" {
+            guard manifest.usesPrivateAttentionDirectory(AttentionFileHandoff.defaultRootDirectory) else {
+                throw AgentIntegrationError("notification fixture must use its private attention directory")
+            }
         }
         let configuration = HostConfiguration(stateDirectory: AppState.defaultDirectory,
             runtimeDirectory: root.appendingPathComponent("run"), zmxExecutable: URL(fileURLWithPath: manifest.zmx), shell: "/bin/zsh")
@@ -174,7 +180,11 @@ private final class AgentIntegrationMacHost {
             guard result.exitCode == 0 else { throw AgentIntegrationError(result.stderr) }
         }
         _ = try await runtime.registerRepository(repo)
-        runtime.startMaintenance()
+        if manifest.scenario == "notifications" {
+            notificationProbe = try AgentIntegrationNotificationProbe(runtime: runtime, root: root)
+        } else {
+            runtime.startMaintenance()
+        }
     }
 
     func makeAgent() -> WebRTCHostAgent {
@@ -219,6 +229,11 @@ private final class AgentIntegrationMacHost {
         if command.operation == "finish" {
             finishedSuccessfully = command.parameters["result"] == "passed"
             return [:]
+        }
+        if command.operation == "notificationsSnapshot" || command.operation == "notificationsReplay" {
+            let probe = try #require(notificationProbe)
+            let pane = try #require(panes[command.provider])
+            return try await probe.handle(command, path: pane.path)
         }
         if command.operation == "acceptOffer" {
             await agent?.close()
@@ -361,7 +376,7 @@ private final class AgentIntegrationMacHost {
             if let text = command.parameters["text"], !text.isEmpty, !pane.handle.writeText(text) {
                 throw AgentIntegrationError("Mac input rejected")
             }
-            pane.handle.pressReturn()
+            if command.parameters["submit"] != "false" { pane.handle.pressReturn() }
         case "message":
             let destination = try required(command, "destination")
             let text = try required(command, "text")
@@ -524,11 +539,13 @@ private final class AgentIntegrationMacHost {
         let base = manifest.endpoint.appendingPathComponent("model/\(name)").absoluteString
         let environment = provider == .claude ? "ANTHROPIC_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base))"
             : "OPENAI_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base + "/v1"))"
+        let attention = manifest.scenario == "notifications"
+            ? " GRAFTTY_ATTENTION_DIR=\(WorktreeAgentLaunchCommand.shellLiteral(AttentionFileHandoff.defaultRootDirectory.path))" : ""
         // Fullscreen provider virtualization has no terminal scrollback. The
         // history scenario explicitly selects Claude's supported classic mode.
         let historyEnvironment = history && provider == .claude
             ? "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 " : ""
-        return "export \(historyEnvironment)GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(name)) \(environment)\n" + (launch.command ?? "")
+        return "export \(historyEnvironment)GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(name)) \(environment)\(attention)\n" + (launch.command ?? "")
     }
 
     func close() async {

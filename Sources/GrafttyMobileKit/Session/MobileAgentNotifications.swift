@@ -11,13 +11,24 @@ final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate
     private(set) var pendingRoute: MobileStopNotificationRoute?
     private var center: UNUserNotificationCenter?
     private let defaults: UserDefaults
+    private let prepareRequest: (UNNotificationRequest) -> UNNotificationRequest
     private var ledger: MobileStopNotificationLedger
     private var authorizationRequested = false
+    // Observes submission without replacing the native notification service.
+    var didSubmitRequest: ((UNNotificationRequest) -> Void)?
+    // Observes only decoded, native default-action responses; never supplies a route.
+    var didReceiveResponse: ((String, MobileStopNotificationRoute) -> Void)?
+    // Observes the OS presentation callback without changing its options.
+    var didReceivePresentationRequest: ((String, UInt) -> Void)?
     private static let storageKey = "GrafttyMobile.stopNotifications"
     private static let logger = Logger(subsystem: "dev.graftty.mobile", category: "Notifications")
 
-    override init() {
-        defaults = .standard
+    override convenience init() { self.init(defaults: .standard) }
+
+    init(defaults: UserDefaults,
+         prepareRequest: @escaping (UNNotificationRequest) -> UNNotificationRequest = { $0 }) {
+        self.defaults = defaults
+        self.prepareRequest = prepareRequest
         ledger = defaults.data(forKey: Self.storageKey).flatMap {
             try? JSONDecoder().decode(MobileStopNotificationLedger.self, from: $0)
         } ?? .init()
@@ -46,7 +57,11 @@ final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate
         let notifications = ledger.receive(rows, hostID: hostID)
         if ledger != previous { defaults.set(try? JSONEncoder().encode(ledger), forKey: Self.storageKey) }
         for notification in notifications {
-            do { try await center.add(Self.request(for: notification)) }
+            do {
+                let request = prepareRequest(Self.request(for: notification))
+                try await center.add(request)
+                didSubmitRequest?(request)
+            }
             catch { Self.logger.error("Stop notification failed: \(error.localizedDescription, privacy: .public)") }
         }
     }
@@ -69,7 +84,10 @@ final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
         willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler(notification.request.content.userInfo["kind"] as? String == "mobile_agent_stop" ? [.banner, .sound] : [])
+        let options: UNNotificationPresentationOptions = notification.request.content.userInfo["kind"] as? String == "mobile_agent_stop" ? [.banner, .sound] : []
+        let identifier = notification.request.identifier
+        Task { @MainActor in self.didReceivePresentationRequest?(identifier, options.rawValue) }
+        completionHandler(options)
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
@@ -79,7 +97,11 @@ final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate
            let encoded = response.notification.request.content.userInfo["route"] as? String,
            let data = Data(base64Encoded: encoded),
            let route = try? JSONDecoder().decode(MobileStopNotificationRoute.self, from: data) {
-            Task { @MainActor in self.pendingRoute = route }
+            let identifier = response.notification.request.identifier
+            Task { @MainActor in
+                self.pendingRoute = route
+                self.didReceiveResponse?(identifier, route)
+            }
         }
         completionHandler()
     }

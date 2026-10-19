@@ -19,7 +19,7 @@ struct MobileStopNotificationRoute: Codable, Equatable, Sendable {
         let leaves = row.layout?.leaves ?? []
         if let paneSlotID { return leaves.first { row.sidebar?.paneIDs?[$0.sessionName] == paneSlotID } }
         if let paneID { return leaves.first { $0.sessionName == paneID } }
-        return leaves.first
+        return leaves.count == 1 ? leaves.first : nil
     }
 }
 
@@ -79,6 +79,36 @@ struct MobileStopNotification: Sendable {
 /// Durable high-water marks prevent polling, transport reconnects, and view recreation from replaying stops.
 struct MobileStopNotificationLedger: Codable, Equatable {
     private var timestamps: [String: Double] = [:]
+    // Optional for ledgers written before cross-connection receipts existed.
+    // Connection-local watermarks still reject old snapshots; these bounded
+    // receipts recognize the same occurrence arriving through another route.
+    private var receipts: [String]?
+
+    private mutating func rememberStop(_ stop: SidebarAgentStop, row: WorktreePanes) -> Bool {
+        rememberOccurrence(["stop", stop.agentName, stop.providerSessionKey ?? "",
+                            stop.paneSlotID ?? "", String(stop.timestamp.bitPattern)], row: row)
+    }
+
+    private mutating func rememberInput(_ item: SidebarActivityItem, time: Double, row: WorktreePanes) -> Bool {
+        let slot = item.paneID.flatMap { row.sidebar?.paneIDs?[$0] }
+        // A session alias alone cannot identify a pane across relay routes.
+        guard item.paneID == nil || slot != nil else { return true }
+        return rememberOccurrence(["input", item.paneID == nil ? "worktree" : "pane",
+                                   slot ?? "", String(time.bitPattern), item.title], row: row)
+    }
+
+    private mutating func rememberOccurrence(_ occurrence: [String], row: WorktreePanes) -> Bool {
+        guard let owner = row.origin?.deviceID.value, !owner.isEmpty,
+              let worktree = row.sidebar?.id, !worktree.isEmpty else { return true }
+        let receipt = ([owner, worktree] + occurrence)
+            .map { "\($0.utf8.count):\($0)" }.joined()
+        guard receipts?.contains(receipt) != true else { return false }
+        var updated = receipts ?? []
+        updated.append(receipt)
+        if updated.count > 2048 { updated.removeFirst(updated.count - 2048) }
+        receipts = updated
+        return true
+    }
 
     mutating func receive(_ rows: [WorktreePanes], hostID: UUID) -> [MobileStopNotification] {
         var notifications: [MobileStopNotification] = []
@@ -102,11 +132,17 @@ struct MobileStopNotificationLedger: Codable, Equatable {
                         worktreeID: row.sidebar?.id, originDeviceID: row.origin?.deviceID, paneID: paneID,
                         paneSlotID: paneSlotID ?? paneID.flatMap { row.sidebar?.paneIDs?[$0] }))
             }
+            if let stop, stop.timestamp == timestamps[identity] {
+                // An older saved ledger has watermarks but no receipts. Seeing
+                // its exact known stop teaches the cross-route identity silently.
+                _ = rememberStop(stop, row: row)
+            }
             if let stop, stop.timestamp > (timestamps[identity] ?? -.infinity) {
                 let previous = timestamps[identity]
                 timestamps[identity] = stop.timestamp
                 // Do not announce read history when a device is paired for the first time.
-                if previous != nil || row.sidebar?.unseenAgentStop?.occurrence == stop.occurrence {
+                if (previous != nil || row.sidebar?.unseenAgentStop?.occurrence == stop.occurrence),
+                   rememberStop(stop, row: row) {
                     notifications.append(notification(title: stop.recap?.title,
                         body: stop.recap?.need ?? stop.recap?.completed ?? "\(stop.agentName) stopped.", paneID: stopPane,
                         paneSlotID: stop.paneSlotID))
@@ -115,10 +151,12 @@ struct MobileStopNotificationLedger: Codable, Equatable {
             for item in activity where item.agentStop == nil && item.occurrence?.source == .agentStop {
                 guard let time = item.occurrence?.timestamp?.timeIntervalSinceReferenceDate else { continue }
                 let key = identity + ":input:" + item.id
+                if time == timestamps[key] { _ = rememberInput(item, time: time, row: row) }
                 guard time > (timestamps[key] ?? -.infinity) else { continue }
                 timestamps[key] = time
                 let paneID = SidebarProjection.attentionPaneRoute(for: item, in: row)
                 if let stop, time <= stop.timestamp, paneID == stopPane { continue }
+                guard rememberInput(item, time: time, row: row) else { continue }
                 notifications.append(notification(title: nil, body: item.title, paneID: paneID))
             }
         }

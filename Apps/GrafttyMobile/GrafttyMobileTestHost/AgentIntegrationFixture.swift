@@ -17,6 +17,45 @@ struct AgentIntegrationFixture: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: AgentIntegrationMobileController, context: Context) {}
 }
 
+/// Shared by the explicit terminal fixture and notification-selected routes.
+/// Credentials are ephemeral harness data; SSH still verifies the pinned host.
+enum AgentIntegrationConnection {
+    static func fingerprint(_ registration: [String: String]) throws -> RemoteIdentityFingerprint {
+        guard let encoded = registration["fingerprint"] else {
+            throw AgentIntegrationError("missing ephemeral host fingerprint")
+        }
+        return try JSONDecoder().decode(RemoteIdentityFingerprint.self, from: Data(encoded.utf8))
+    }
+
+    static func open(endpoint: URL, registration: [String: String],
+        expectedFingerprint: RemoteIdentityFingerprint) async throws -> RemoteHostConnection {
+        guard try fingerprint(registration) == expectedFingerprint,
+              let encodedKey = registration["clientKey"], let key = Data(base64Encoded: encodedKey) else {
+            throw AgentIntegrationError("ephemeral pairing credentials missing or host fingerprint changed")
+        }
+        let next = RemoteHostConnection(clientKey: try Curve25519.Signing.PrivateKey(rawRepresentation: key),
+            expectedHostFingerprint: expectedFingerprint)
+        do {
+            let offer = try await next.createOffer()
+            let transport = AgentIntegrationTransport(endpoint: endpoint, client: "mobile")
+            let data = try await transport.request("rtc/offer", body: JSONEncoder().encode(["sdp": offer.sdp]))
+            let answer = try JSONDecoder().decode([String: String].self, from: data)
+            guard let sdp = answer["sdp"] else { throw AgentIntegrationError("missing WebRTC answer") }
+            try await next.applyAnswer(RTCSessionDescription(type: .answer, sdp: sdp))
+            let deadline = ContinuousClock.now.advanced(by: .seconds(20))
+            while await next.state != .connected {
+                guard ContinuousClock.now < deadline else { throw AgentIntegrationError("SSH-over-WebRTC connection timed out") }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try Task.checkCancellation()
+            return next
+        } catch {
+            await next.close()
+            throw error
+        }
+    }
+}
+
 @MainActor
 final class AgentIntegrationMobileController: UIViewController {
     struct Pane {
@@ -36,6 +75,7 @@ final class AgentIntegrationMobileController: UIViewController {
     let fixtureHost = Host(label: "Integration Mac", baseURL: URL(string: "https://fixture.invalid")!)
     let retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
     var route: UIHostingController<AnyView>?
+    var notificationFixture: NotificationActivationFixture?
     let focusKeyboardButton = UIButton(type: .system)
 
     init(endpoint: URL) { self.endpoint = endpoint; super.init(nibName: nil, bundle: nil) }
@@ -57,6 +97,9 @@ final class AgentIntegrationMobileController: UIViewController {
         dismissKeyboard.accessibilityIdentifier = "Agent integration dismiss keyboard"
         dismissKeyboard.addTarget(self, action: #selector(hideKeyboard), for: .touchUpInside)
         view.addSubview(dismissKeyboard)
+        if let restored = NotificationActivationFixture.restored {
+            mountNotificationFixture(restored)
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.synchronize() }
         }
@@ -83,6 +126,7 @@ final class AgentIntegrationMobileController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let frame = view.safeAreaLayoutGuide.layoutFrame
+        if notificationFixture != nil { route?.view.frame = view.bounds }
         status.frame = CGRect(x: frame.minX, y: frame.minY, width: max(1, frame.width - 260), height: 35)
         focusKeyboardButton.frame = CGRect(x: frame.maxX - 260, y: frame.minY, width: 130, height: 35)
         dismissKeyboard.frame = CGRect(x: frame.maxX - 130, y: frame.minY, width: 130, height: 35)
@@ -104,29 +148,27 @@ final class AgentIntegrationMobileController: UIViewController {
     }
 
     func connect() async throws -> RemoteHostConnection {
-        if let connection { return connection }
-        guard let encoded = registration["fingerprint"], let encodedKey = registration["clientKey"],
-              let key = Data(base64Encoded: encodedKey) else { throw AgentIntegrationError("missing ephemeral pairing credentials") }
-        let fingerprint = try JSONDecoder().decode(RemoteIdentityFingerprint.self, from: Data(encoded.utf8))
-        let next = RemoteHostConnection(clientKey: try Curve25519.Signing.PrivateKey(rawRepresentation: key),
-            expectedHostFingerprint: fingerprint)
-        let offer = try await next.createOffer()
-        let transport = AgentIntegrationTransport(endpoint: endpoint, client: "mobile")
-        let data = try await transport.request("rtc/offer", body: JSONEncoder().encode(["sdp": offer.sdp]))
-        let answer = try JSONDecoder().decode([String: String].self, from: data)
-        guard let sdp = answer["sdp"] else { throw AgentIntegrationError("missing WebRTC answer") }
-        try await next.applyAnswer(RTCSessionDescription(type: .answer, sdp: sdp))
-        let deadline = ContinuousClock.now.advanced(by: .seconds(20))
-        while await next.state != .connected {
-            guard ContinuousClock.now < deadline else { await next.close(); throw AgentIntegrationError("SSH-over-WebRTC connection timed out") }
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        if let connection, await connection.state == .connected { return connection }
+        await connection?.close()
+        let next = try await AgentIntegrationConnection.open(endpoint: endpoint, registration: registration,
+            expectedFingerprint: AgentIntegrationConnection.fingerprint(registration))
         connection = next
         return next
     }
 
     func handle(_ command: AgentIntegrationCommand) async throws -> [String: String] {
+        if command.operation == "notificationsPrepare" {
+            notificationFixture?.finish()
+            let fixture = try await NotificationActivationFixture.prepare(command, endpoint: endpoint,
+                fingerprint: AgentIntegrationConnection.fingerprint(registration))
+            mountNotificationFixture(fixture)
+            return try fixture.snapshot()
+        }
+        if command.operation.hasPrefix("notifications"), let notificationFixture {
+            return try await notificationFixture.handle(command)
+        }
         if command.operation == "finish" {
+            notificationFixture?.finish()
             for pane in panes.values { pane.client.stop() }
             await connection?.close()
             connection = nil
@@ -223,6 +265,17 @@ final class AgentIntegrationMobileController: UIViewController {
             }
         }
         return result
+    }
+
+    func mountNotificationFixture(_ fixture: NotificationActivationFixture) {
+        unmount()
+        notificationFixture = fixture
+        let host = UIHostingController(rootView: AnyView(NotificationActivationFixtureView(fixture: fixture)))
+        addChild(host)
+        view.addSubview(host.view)
+        host.didMove(toParent: self)
+        route = host
+        host.view.frame = view.bounds
     }
 
     private func parserGridMatches(_ session: InMemoryTerminalSession, columns: UInt16, rows: UInt16) -> String {
