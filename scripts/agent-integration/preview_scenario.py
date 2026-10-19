@@ -54,6 +54,7 @@ def require_tracked_preview_sources():
 def run_preview(run):
     from run import execute
     run.start_mobile()
+    record_preview_provenance(run)
     run.phase = 'preview'
     run.summary['scope'] = 'Production mobile Quick Look with real provider input and SSH terminal continuity'
     run.summary['providerModes'] = {'claude': 'classic; manual approvals (--permission-mode manual, permissions.defaultMode=default; CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)',
@@ -172,6 +173,7 @@ def validate_native_results(run):
     records, errors, failures = read_result(bundle, directory)
     run.summary['nativeTestResults'] = {'executed': len(records), 'records': records,
                                        'errors': errors, 'failures': failures}
+    verify_preview_executables(run)
     required = [record for record in records if 'AgentNativeInteractionTests/testNativeQuickLookRetention' in record['id']]
     if len(required) != 1 or required[0]['status'] != 'Success' or errors or failures:
         raise InvariantFailure('Quick Look XCUITest missing, skipped, duplicated or failed')
@@ -188,3 +190,100 @@ def validate_native_results(run):
             path = run.root / f'{prefix}-{suffix}.png'
             if not path.is_file() or not path.read_bytes().startswith(b'\x89PNG\r\n\x1a\n'):
                 raise InvariantFailure('Missing native Quick Look visual evidence: ' + path.name)
+
+
+# Match the pinned Codex npm launcher's package lookup. Asking Node to resolve
+# from the actual entry point handles hoisted and nested optional dependencies.
+CODEX_EXECUTABLE_QUERY = r'''
+const fs = require('fs');
+const path = require('path');
+const {createRequire} = require('module');
+const entry = fs.realpathSync(process.argv[1]);
+const arch = {arm64: 'aarch64', x64: 'x86_64'}[process.arch];
+const suffix = {darwin: 'apple-darwin', linux: 'unknown-linux-musl', win32: 'pc-windows-msvc'}[process.platform];
+if (!arch || !suffix) throw new Error('Unsupported provider architecture');
+const triple = arch + '-' + suffix;
+const packageName = '@openai/codex-' + {darwin: 'darwin', linux: 'linux', win32: 'win32'}[process.platform] + '-' + process.arch;
+let vendor;
+try { vendor = path.join(path.dirname(createRequire(entry).resolve(packageName + '/package.json')), 'vendor'); }
+catch { vendor = path.join(path.dirname(entry), '..', 'vendor'); }
+const executable = fs.realpathSync(path.join(vendor, triple, 'bin', process.platform === 'win32' ? 'codex.exe' : 'codex'));
+console.log(JSON.stringify({path: executable, targetTriple: triple,
+    nodeExecutable: fs.realpathSync(process.execPath), nodeVersion: process.version}));
+'''
+
+
+def executable_digest(path):
+    # Stream large native executables instead of keeping another copy in memory.
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def resolve_codex_executable(entry, env):
+    from pathlib import Path
+    from run import execute
+    entry = entry.resolve(strict=True)
+    if entry.suffix == '.js':
+        resolved = json.loads(execute(['node', '-e', CODEX_EXECUTABLE_QUERY, str(entry)], env=env))
+        binary = Path(resolved['path']).resolve(strict=True)
+        interpreter = Path(resolved['nodeExecutable']).resolve(strict=True)
+        resolved['nodeExecutableSHA256'] = executable_digest(interpreter)
+    else:
+        binary = entry
+        resolved = {'path': str(binary)}
+    if not binary.is_file() or binary == entry and entry.suffix == '.js':
+        raise InvariantFailure('Codex native executable could not be resolved independently of its JavaScript launcher')
+    resolved['sha256'] = executable_digest(binary)
+    return resolved
+
+
+def native_registration_evidence(registrations):
+    result = {}
+    fields = ('nativeExecutable', 'nativeExecutableSHA256', 'native', 'transport', 'systemVersion', 'simulator')
+    for client in ('mac', 'mobile'):
+        registration = registrations.get(client, {})
+        if not registration.get('nativeExecutable') or not re.fullmatch(r'[a-f0-9]{64}', registration.get('nativeExecutableSHA256', '')):
+            raise InvariantFailure('Native ' + client + ' executable provenance missing')
+        result[client] = {key: registration[key] for key in fields if key in registration}
+    if registrations.get('gestures', {}).get('driver') != 'XCUITest':
+        raise InvariantFailure('Native XCUITest driver registration missing')
+    result['gestures'] = {'driver': 'XCUITest'}
+    return result
+
+
+def record_preview_provenance(run):
+    from run import execute
+    run.summary['nativeClients'] = native_registration_evidence(run.server.broker.registrations)
+    native = resolve_codex_executable(run.options.codex, run.env)
+    native['version'] = execute([native['path'], '--version'], env=run.env)
+    if native['version'] != run.summary['providerVersions']['codex']:
+        raise InvariantFailure('Resolved Codex executable version differs from its actual launcher')
+    run.summary['codexNativeExecutable'] = native
+    runtimes = json.loads(execute(['xcrun', 'simctl', 'list', 'runtimes', '--json']))
+    selected = next((value for value in runtimes['runtimes']
+                     if value['identifier'] == run.summary['simulator']['runtime']), None)
+    if not selected or not selected.get('version') or not selected.get('buildversion'):
+        raise InvariantFailure('Simulator runtime version/build provenance missing')
+    run.summary['simulator'].update(runtimeVersion=selected['version'], runtimeBuild=selected['buildversion'])
+    (run.root / 'result.json').write_text(json.dumps(run.summary, indent=2))
+
+
+def verify_preview_executables(run):
+    from pathlib import Path
+    recorded = {name: run.summary[name] for name in ('cli', 'zmx', 'codex', 'claude')}
+    if native := run.summary.get('codexNativeExecutable'):
+        recorded['codexNative'] = native
+        if native.get('nodeExecutable'):
+            recorded['node'] = {'path': native['nodeExecutable'], 'sha256': native['nodeExecutableSHA256']}
+    else:
+        raise InvariantFailure('Native provider executable provenance missing at completion')
+    observed = {}
+    run.summary['executableRecheck'] = observed
+    for name, original in recorded.items():
+        actual = executable_digest(Path(original['path']))
+        observed[name] = {'path': original['path'], 'sha256': actual}
+        if actual != original['sha256']:
+            raise InvariantFailure('Executable changed during preview validation: ' + name)

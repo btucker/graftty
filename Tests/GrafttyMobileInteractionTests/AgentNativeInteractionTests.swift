@@ -120,9 +120,10 @@ final class AgentNativeInteractionTests: XCTestCase {
         default: throw AgentIntegrationError("unsupported preview gesture \(command.operation)")
         }
         let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = "preview-action-\(command.id)-\(command.provider)-\(command.operation)"
+        let name = "preview-action-\(command.id)-\(command.provider)-\(command.operation)"
+        attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
-        return ["performed": command.operation, "screenshot": attachment.name]
+        return ["performed": command.operation, "screenshot": name]
     }
 }

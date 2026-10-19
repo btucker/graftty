@@ -140,9 +140,9 @@ private final class AgentIntegrationMacHost {
         guard actualHome == expectedHome, actualState.hasPrefix(expectedHome + "/") else {
             throw AgentIntegrationError("native host isolation mismatch: home=\(actualHome), expected=\(expectedHome), state=\(actualState)")
         }
-        if manifest.scenario == "notifications" {
+        if manifest.scenario == "notifications" || manifest.scenario == "preview" {
             guard manifest.usesPrivateAttentionDirectory(AttentionFileHandoff.defaultRootDirectory) else {
-                throw AgentIntegrationError("notification fixture must use its private attention directory")
+                throw AgentIntegrationError("integration fixture must use its private attention directory")
             }
         }
         let configuration = HostConfiguration(stateDirectory: AppState.defaultDirectory,
@@ -542,7 +542,7 @@ private final class AgentIntegrationMacHost {
         let base = manifest.endpoint.appendingPathComponent("model/\(name)").absoluteString
         let environment = provider == .claude ? "ANTHROPIC_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base))"
             : "OPENAI_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base + "/v1"))"
-        let attention = manifest.scenario == "notifications"
+        let attention = manifest.scenario == "notifications" || manifest.scenario == "preview"
             ? " GRAFTTY_ATTENTION_DIR=\(WorktreeAgentLaunchCommand.shellLiteral(AttentionFileHandoff.defaultRootDirectory.path))" : ""
         // Fullscreen provider virtualization has no terminal scrollback. The
         // history scenario selects Codex inline and Claude classic modes.

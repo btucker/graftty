@@ -114,3 +114,105 @@ class PreviewSourceProvenanceTests(unittest.TestCase):
                     require_tracked_preview_sources()
                 subprocess.run(['git', '-C', str(root), 'add', 'scripts'], check=True)
                 require_tracked_preview_sources()
+
+
+class PreviewExecutableProvenanceTests(unittest.TestCase):
+    def test_registration_evidence_requires_real_hashes_and_excludes_pairing_keys(self):
+        from preview_scenario import native_registration_evidence
+        registrations = {client: {'nativeExecutable': '/fixture/' + client,
+            'nativeExecutableSHA256': 'a' * 64, 'clientKey': 'ephemeral-private-key',
+            'fingerprint': 'pairing-record'} for client in ('mac', 'mobile')}
+        registrations['gestures'] = {'driver': 'XCUITest'}
+        result = native_registration_evidence(registrations)
+        self.assertEqual('a' * 64, result['mobile']['nativeExecutableSHA256'])
+        self.assertNotIn('clientKey', result['mac'])
+        self.assertNotIn('fingerprint', result['mac'])
+        for client in ('mac', 'mobile'):
+            broken = copy.deepcopy(registrations)
+            broken[client]['nativeExecutableSHA256'] = ''
+            with self.subTest(client=client), self.assertRaises(InvariantFailure):
+                native_registration_evidence(broken)
+
+    def test_node_resolves_actual_optional_package_binary_instead_of_wrapper(self):
+        import hashlib
+        import json
+        import os
+        from pathlib import Path
+        import subprocess
+        import tempfile
+        from preview_scenario import resolve_codex_executable
+        node = json.loads(subprocess.check_output(['node', '-p',
+            'JSON.stringify({platform:process.platform, arch:process.arch})']))
+        arch = {'arm64': 'aarch64', 'x64': 'x86_64'}[node['arch']]
+        suffix = {'darwin': 'apple-darwin', 'linux': 'unknown-linux-musl', 'win32': 'pc-windows-msvc'}[node['platform']]
+        triple = arch + '-' + suffix
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / 'node_modules/@openai/codex'
+            entry = package / 'bin/codex.js'
+            entry.parent.mkdir(parents=True)
+            entry.write_text('// JavaScript launcher, not the native binary\n')
+            platform = package.parent / ('codex-' + node['platform'] + '-' + node['arch'])
+            platform.mkdir()
+            (platform / 'package.json').write_text(json.dumps({'name': '@openai/' + platform.name}))
+            native = platform / 'vendor' / triple / 'bin/codex'
+            native.parent.mkdir(parents=True)
+            native.write_bytes(b'actual native executable bytes')
+            evidence = resolve_codex_executable(entry, os.environ.copy())
+            self.assertEqual(str(native.resolve()), evidence['path'])
+            self.assertEqual(hashlib.sha256(native.read_bytes()).hexdigest(), evidence['sha256'])
+            self.assertNotEqual(hashlib.sha256(entry.read_bytes()).hexdigest(), evidence['sha256'])
+            self.assertEqual(triple, evidence['targetTriple'])
+            self.assertEqual(64, len(evidence['nodeExecutableSHA256']))
+            native.unlink()
+            with self.assertRaises(InvariantFailure):
+                resolve_codex_executable(entry, os.environ.copy())
+
+
+class PreviewAttentionIsolationTests(unittest.TestCase):
+    def test_preview_checks_private_attention_directory_before_marking_manifest(self):
+        from pathlib import Path
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from run import Run
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = Run.__new__(Run)
+            runner.root = root
+            runner.options = SimpleNamespace(preview=True, cli=Path('/fixture/graftty'))
+            runner.env, runner.summary = {}, {}
+            manifest = {}
+            expected = str((root / 'attention').resolve())
+            with patch('run.execute', return_value=expected) as execute:
+                runner.configure_fixture(manifest)
+            self.assertEqual(expected, runner.env['GRAFTTY_ATTENTION_DIR'])
+            self.assertEqual(expected, runner.summary['attentionDirectory'])
+            self.assertEqual('preview', manifest['scenario'])
+            execute.assert_called_once_with(['/fixture/graftty', 'attention', 'directory'], env=runner.env)
+            for actual in ('/private/tmp/graftty-attention-501', '', 'attention'):
+                manifest = {}
+                with patch('run.execute', return_value=actual), self.assertRaises(InvariantFailure):
+                    runner.configure_fixture(manifest)
+                self.assertNotIn('scenario', manifest)
+
+
+class PreviewExecutableStabilityTests(unittest.TestCase):
+    def test_shared_binary_replacement_fails_even_if_native_tests_pass(self):
+        import hashlib
+        from pathlib import Path
+        import tempfile
+        from types import SimpleNamespace
+        from preview_scenario import verify_preview_executables
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            summary = {}
+            for name in ('cli', 'zmx', 'codex', 'claude', 'codexNativeExecutable'):
+                path = root / name
+                path.write_bytes(name.encode())
+                summary[name] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+            runner = SimpleNamespace(summary=summary)
+            verify_preview_executables(runner)
+            (root / 'cli').write_bytes(b'other worktree rebuilt this executable')
+            with self.assertRaisesRegex(InvariantFailure, 'Executable changed.*cli'):
+                verify_preview_executables(runner)

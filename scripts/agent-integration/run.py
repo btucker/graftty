@@ -491,7 +491,11 @@ class Run:
         raise InvariantFailure(f'hidden mobile condition did not settle for {agent}: {value}')
 
     def configure_fixture(self, manifest):
-        pass
+        if getattr(self.options, 'preview', False):
+            from notifications import verify_attention_isolation
+            verify_attention_isolation(self.root, self.options.cli, self.env, command=execute)
+            manifest['scenario'] = 'preview'
+            self.summary['attentionDirectory'] = self.env['GRAFTTY_ATTENTION_DIR']
 
     def run(self):
         self.thread.start()
