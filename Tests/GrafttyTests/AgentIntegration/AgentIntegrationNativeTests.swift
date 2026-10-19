@@ -125,6 +125,7 @@ private final class AgentIntegrationMacHost {
     var agent: WebRTCHostAgent?
     var panes: [String: Pane] = [:]
     var tickObserver: NSObjectProtocol?
+    var previewOwnershipObserver: SessionDisplayOwnershipStore.ObserverToken?
     var notificationProbe: AgentIntegrationNotificationProbe?
     var finishedSuccessfully = false
     var productionCreation: ProductionWorktreeCreationFixture?
@@ -184,6 +185,17 @@ private final class AgentIntegrationMacHost {
             notificationProbe = try AgentIntegrationNotificationProbe(runtime: runtime, root: root)
         } else {
             runtime.startMaintenance()
+        }
+        if manifest.scenario == "preview" {
+            // This driver bypasses TerminalManager, so mirror its ownership
+            // observer: the existing zmx leader must adopt the new owner's
+            // grid even before that owner sends its first input.
+            previewOwnershipObserver = ownership.addObserver { [weak self] snapshot in
+                Task { @MainActor [weak self] in
+                    guard let self, self.previewOwnershipObserver != nil else { return }
+                    self.driver.panes[snapshot.sessionName]?.handle.synchronizeDisplayOwnership()
+                }
+            }
         }
     }
 
@@ -554,6 +566,8 @@ private final class AgentIntegrationMacHost {
     }
 
     func close() async {
+        previewOwnershipObserver?.cancel()
+        previewOwnershipObserver = nil
         await agent?.close(); agent = nil
         if let tickObserver { NotificationCenter.default.removeObserver(tickObserver) }
         for pane in panes.values { pane.window.orderOut(nil); pane.window.contentView = nil }

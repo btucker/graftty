@@ -570,28 +570,19 @@ final class AgentPreviewFixture {
         guard client.ownershipSnapshot?.ownerIdentity == "ssh-device:integration-phone" else {
             throw AgentIntegrationError("preview offer identity differs from authenticated SSH owner")
         }
-        // Ownership changes before SwiftUI applies the owner layout and its
-        // deferred physical-viewport confirmation. Observe that normal path
-        // through the resulting source/native/parser grids before typing.
-        let gridDeadline = ContinuousClock.now.advanced(by: .seconds(15))
+        let controlsDeadline = ContinuousClock.now.advanced(by: .seconds(15))
         while true {
-            if let container = terminal(in: host.view), let metrics = container.terminalGridMetrics,
-               let state = client.ownershipSnapshot, container.authoritativeGrid == nil,
-               state.grid.cols == metrics.columns, state.grid.rows == metrics.rows {
-                #if GRAFTTY_PAGED_HISTORY
-                if client.session.gridMatches(columns: metrics.columns, rows: metrics.rows) { break }
-                #else
-                throw AgentIntegrationError("preview parser diagnostics require GRAFTTY_PAGED_HISTORY")
-                #endif
-            }
-            guard ContinuousClock.now < gridDeadline else {
-                let metrics = terminal(in: host.view)?.terminalGridMetrics
-                let native = metrics.map { "\($0.columns)x\($0.rows)" } ?? "missing"
-                let source = client.ownershipSnapshot.map { "\($0.grid.cols)x\($0.grid.rows)" } ?? "missing"
-                throw AgentIntegrationError("preview owner viewport did not converge: source=\(source), native=\(native), ownerResizes=\(client.diagnosticOwnerResizeRequests)")
+            if let container = terminal(in: host.view), container.window != nil,
+               container.controlAttachmentID != nil, container.committedSoftwareInput != nil,
+               container.terminalView.isKeyboardInputEnabled { break }
+            guard ContinuousClock.now < controlsDeadline else {
+                throw AgentIntegrationError("preview production input controls did not become ready")
             }
             try await Task.sleep(for: .milliseconds(20))
         }
+        // The runner checks source/native/parser convergence after genuine
+        // provider input and keyboard dismissal, before opening Quick Look.
+        // Ownership alone can precede the zmx leader applying its stored size.
     }
 
     func management(_ request: WorktreeManagementRequest, host: Host) async throws -> WorktreeManagementResponse {
@@ -648,6 +639,7 @@ final class AgentPreviewFixture {
         values["previewReads"] = String(reads)
         values["previewOwnerIdentity"] = offer.previewOwnerDeviceID.map { "ssh-device:\($0.value)" } ?? ""
         values["controlsDetached"] = String(container.controlAttachmentID == nil && container.committedSoftwareInput == nil)
+        values["pendingOutputBytes"] = String(client.session.pendingOutputByteCount)
         values["browserDetached"] = String(container.linkContext == nil && container.onBackRequested == nil)
         values["ownershipCleared"] = String(client.ownershipSnapshot == nil)
         if let surface = container.terminalView.surface, surface.performAction("select_all") {

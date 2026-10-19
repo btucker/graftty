@@ -59,6 +59,35 @@ class PreviewEvidenceTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(InvariantFailure):
                 require_continuity(before, covered | {key: 'false'}, covered=True)
 
+    def test_owner_grid_waits_for_real_parser_and_canvas_convergence(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from preview_scenario import wait_preview_owner_grid
+        ready = self.baseline() | {'isOwner': 'true', 'canvasGrid': 'physical',
+                                  'presentationGrid': 'physical'}
+        for changes in ({'parserGridMatches': 'false'}, {'nativeGrid': 'other'},
+                        {'canvasGrid': '124x40'}, {'presentationGrid': '124x40'},
+                        {'isOwner': 'false'}, {'pagedGridMismatches': 'source mismatch'}):
+            with self.subTest(changes=changes), patch('preview_scenario.time.sleep'):
+                run = SimpleNamespace(act=Mock(side_effect=[ready | changes, ready]))
+                self.assertEqual(ready, wait_preview_owner_grid(run, 'claude'))
+                self.assertEqual(2, run.act.call_count)
+                self.assertTrue(all(call.args[0].operation == 'previewSnapshot' for call in run.act.call_args_list))
+
+    def test_owner_grid_timeout_reports_parser_canvas_and_paging_evidence(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from preview_scenario import wait_preview_owner_grid
+        pending = self.baseline() | {'isOwner': 'true', 'canvasGrid': 'physical',
+            'presentationGrid': 'physical', 'parserGridMatches': 'false',
+            'paging': 'live', 'ownerResizeRequests': '1'}
+        run = SimpleNamespace(act=Mock(return_value=pending))
+        with self.assertRaises(InvariantFailure) as failure:
+            wait_preview_owner_grid(run, 'claude', timeout=0)
+        for key in ('isOwner', 'canvasGrid', 'presentationGrid', 'parserGridMatches',
+                    'grid', 'nativeGrid', 'paging', 'pagedGridMismatches', 'ownerResizeRequests'):
+            self.assertIn(key, str(failure.exception))
+
 
 class PreviewProviderProtocolTests(unittest.TestCase):
     def test_native_input_receipt_is_distinct_from_stream_and_recap_completion(self):

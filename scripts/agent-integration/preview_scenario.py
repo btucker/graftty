@@ -51,6 +51,30 @@ def require_tracked_preview_sources():
         raise InvariantFailure('Stage new integration source files before running preview validation: ' + untracked)
 
 
+def wait_preview_owner_grid(run, agent, timeout=15):
+    """Observe the parser after real input and the resulting keyboard layout."""
+    deadline = time.monotonic() + timeout
+    while True:
+        # The native snapshot flushes actual session output before reading its
+        # parser. This neither injects a resize nor changes display ownership.
+        value = run.act(Action('previewSnapshot', agent, client='mobile'))
+        if (value.get('isOwner') == 'true' and value.get('canvasGrid') == 'physical'
+                and value.get('presentationGrid') == 'physical' and value.get('grid')
+                and value.get('grid') == value.get('nativeGrid')
+                and value.get('parserGridMatches') == 'true'
+                and value.get('pagedGridMismatches') == ''):
+            require_continuity(value, value)
+            return value
+        if time.monotonic() >= deadline:
+            fields = ('isOwner', 'grid', 'nativeGrid', 'canvasGrid', 'presentationGrid',
+                      'parserGridMatches', 'paging', 'pagedGridMismatches', 'ownerResizeRequests',
+                      'pendingOutputBytes', 'terminalMounted', 'connection')
+            evidence = {key: value.get(key) for key in fields}
+            raise InvariantFailure('Preview owner viewport did not converge after native input: '
+                                   + json.dumps(evidence, sort_keys=True))
+        time.sleep(.1)
+
+
 def run_preview(run):
     from run import execute
     run.start_mobile()
@@ -96,7 +120,7 @@ def run_preview(run):
                 phase = 'preview:' + nonce
                 run.wait_model(lambda: (agent, phase + ':begin') in models.arrived)
                 run.act(Action('previewHideKeyboard', agent, client='gestures'))
-                before = run.act(Action('previewSnapshot', agent, client='mobile'))
+                before = wait_preview_owner_grid(run, agent)
                 run.act(Action('previewOpen', agent, client='gestures'))
                 during = run.act(Action('previewSnapshot', agent, client='mobile'))
                 require_continuity(before, during, covered=True)
