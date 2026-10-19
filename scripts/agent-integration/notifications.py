@@ -354,11 +354,24 @@ class NotificationRun(Run):
         return value
 
     def tap_mobile_notification(self, provider, prepared, lifecycle='warm'):
-        value = self.act(Action('notificationsTap', provider,
-            {'title': prepared['title'], 'lifecycle': lifecycle}, client='gestures'))
-        if value.get('foreground') != 'true' or value.get('rootVisible') != 'true':
-            raise InvariantFailure(f'{provider} {lifecycle} tap lacks observed foreground/RootView: {value}')
-        return value
+        try:
+            value = self.act(Action('notificationsTap', provider,
+                {'title': prepared['title'], 'lifecycle': lifecycle}, client='gestures'))
+            if value.get('foreground') != 'true' or value.get('rootVisible') != 'true':
+                raise InvariantFailure(f'{provider} {lifecycle} tap lacks observed foreground/RootView: {value}')
+            return value
+        except Exception:
+            self.capture_delivery_diagnostic(provider)
+            raise
+
+    def capture_delivery_diagnostic(self, provider):
+        # Read before finish removes OS notifications. A suspended test host may
+        # not respond; preserve the original failure and never resend its alert.
+        try:
+            state = self.server.broker.command(Action('notificationsState', provider, client='mobile'), timeout=5)
+            (self.root / f'notifications-{provider}-tap-failure.json').write_text(json.dumps(state, indent=2))
+        except Exception as error:
+            self.summary.setdefault('diagnosticErrors', []).append(str(error))
 
     def wait_mobile_route(self, provider, prepared):
         wrong_marker = self.markers['codex' if provider == 'claude' else 'claude']

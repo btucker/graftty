@@ -18,6 +18,8 @@ final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate
     var didSubmitRequest: ((UNNotificationRequest) -> Void)?
     // Observes only decoded, native default-action responses; never supplies a route.
     var didReceiveResponse: ((String, MobileStopNotificationRoute) -> Void)?
+    // Observes the OS presentation callback without changing its options.
+    var didReceivePresentationRequest: ((String, UInt) -> Void)?
     private static let storageKey = "GrafttyMobile.stopNotifications"
     private static let logger = Logger(subsystem: "dev.graftty.mobile", category: "Notifications")
 
@@ -82,7 +84,10 @@ final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
         willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler(notification.request.content.userInfo["kind"] as? String == "mobile_agent_stop" ? [.banner, .sound] : [])
+        let options: UNNotificationPresentationOptions = notification.request.content.userInfo["kind"] as? String == "mobile_agent_stop" ? [.banner, .sound] : []
+        let identifier = notification.request.identifier
+        Task { @MainActor in self.didReceivePresentationRequest?(identifier, options.rawValue) }
+        completionHandler(options)
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,

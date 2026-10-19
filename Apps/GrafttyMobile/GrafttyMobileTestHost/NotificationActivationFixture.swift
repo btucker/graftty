@@ -56,6 +56,7 @@ final class NotificationActivationFixture {
     private var observationSequence = 0
     private var responseIDs: [String] = []
     private var responseRoutes: [MobileStopNotificationRoute] = []
+    private var presentationCallbacks: [[String: String]] = []
     private var observedScenePhases: [String] = []
     private var observedSystemScenePhases: [String] = []
     private var sceneProbeIDs: [UUID] = []
@@ -93,6 +94,10 @@ final class NotificationActivationFixture {
         notifications.didReceiveResponse = { [weak self] identifier, route in
             self?.responseIDs.append(identifier)
             self?.responseRoutes.append(route)
+        }
+        notifications.didReceivePresentationRequest = { [weak self] identifier, options in
+            self?.presentationCallbacks.append(["identifier": identifier, "options": String(options),
+                "observedAt": String(Date().timeIntervalSince1970)])
         }
         notifications.install()
     }
@@ -268,7 +273,24 @@ final class NotificationActivationFixture {
         default: throw AgentIntegrationError("unsupported notification fixture command \(command.operation)")
         }
         var result = try snapshot()
-        result["authorization"] = String(describing: await UNUserNotificationCenter.current().notificationSettings().authorizationStatus)
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        result["authorization"] = String(describing: settings.authorizationStatus)
+        result["alertSetting"] = String(settings.alertSetting.rawValue)
+        result["notificationCenterSetting"] = String(settings.notificationCenterSetting.rawValue)
+        result["alertStyle"] = String(settings.alertStyle.rawValue)
+        result["delegateMatchesFixture"] = String(center.delegate === notifications)
+        let pending = await center.pendingNotificationRequests().map { request in
+            ["identifier": request.identifier, "title": request.content.title]
+        }
+        let delivered = await center.deliveredNotifications().map { notification in
+            ["identifier": notification.request.identifier, "title": notification.request.content.title,
+             "deliveredAt": String(notification.date.timeIntervalSince1970)]
+        }
+        result["pendingRequests"] = String(decoding: try JSONEncoder().encode(pending), as: UTF8.self)
+        result["deliveredRequests"] = String(decoding: try JSONEncoder().encode(delivered), as: UTF8.self)
+        result["presentationCallbacks"] = String(decoding: try JSONEncoder().encode(presentationCallbacks), as: UTF8.self)
+        result["notificationStateObservedAt"] = String(Date().timeIntervalSince1970)
         return result
     }
 

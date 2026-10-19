@@ -13,6 +13,33 @@ from notifications import NotificationRun, assert_notification_evidence, verify_
 
 
 class NotificationEvidenceTests(unittest.TestCase):
+    def test_tap_failure_preserves_delivery_state_without_retry_or_masking_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = NotificationRun.__new__(NotificationRun)
+            runner.root = Path(directory)
+            runner.summary = {}
+            failure = InvariantFailure('native card absent')
+            runner.act = Mock(side_effect=failure)
+            state = {'requestCount': '1', 'responseCount': '0', 'deliveredRequests': '[]'}
+            runner.server = SimpleNamespace(broker=Mock())
+            runner.server.broker.command.return_value = state
+            with self.assertRaises(InvariantFailure) as raised:
+                runner.tap_mobile_notification('codex', {'title': 'Fixture'})
+            self.assertIs(failure, raised.exception)
+            runner.act.assert_called_once()
+            call = runner.server.broker.command.call_args
+            self.assertIsNotNone(call, 'Missing native delivery evidence before cleanup')
+            self.assertEqual('notificationsState', call.args[0].operation)
+            self.assertEqual('mobile', call.args[0].client)
+            self.assertEqual(5, call.kwargs['timeout'])
+            saved = runner.root / 'notifications-codex-tap-failure.json'
+            self.assertEqual(state, json.loads(saved.read_text()))
+            runner.server.broker.command.side_effect = TimeoutError('suspended')
+            with self.assertRaises(InvariantFailure) as raised:
+                runner.tap_mobile_notification('codex', {'title': 'Fixture'})
+            self.assertIs(failure, raised.exception)
+            self.assertEqual(['suspended'], runner.summary['diagnosticErrors'])
+
     def test_next_stop_waits_for_rendered_input_then_submits_once(self):
         runner = NotificationRun.__new__(NotificationRun)
         runner.act = Mock()
@@ -102,6 +129,7 @@ class NotificationEvidenceTests(unittest.TestCase):
 
     def test_native_tap_requires_observed_foreground_and_root_view(self):
         runner = NotificationRun.__new__(NotificationRun)
+        runner.capture_delivery_diagnostic = Mock()
         for result in ({'performed': 'notificationsTap'},
                        {'foreground': 'false', 'rootVisible': 'true'},
                        {'foreground': 'true', 'rootVisible': 'false'}):
