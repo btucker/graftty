@@ -108,7 +108,12 @@ final class AgentIntegrationMobileController: UIViewController {
             let transport = AgentIntegrationTransport(endpoint: endpoint, client: "mobile")
             do {
                 registration = try JSONDecoder().decode([String: String].self, from: await transport.request("registration/mac"))
-                try await transport.register(["native": "UIKit", "transport": "SSH-over-WebRTC"])
+                guard let executable = Bundle.main.executableURL else { throw AgentIntegrationError("missing native host executable") }
+                let executableHash = SHA256.hash(data: try Data(contentsOf: executable)).map { String(format: "%02x", $0) }.joined()
+                try await transport.register(["native": "UIKit", "transport": "SSH-over-WebRTC",
+                    "nativeExecutable": executable.path, "nativeExecutableSHA256": executableHash,
+                    "systemVersion": UIDevice.current.systemVersion,
+                    "simulator": ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? ""])
                 try await transport.run { [self] in try await handle($0) }
             } catch {
                 status.text = String(describing: error)
@@ -364,6 +369,7 @@ final class AgentIntegrationMobileController: UIViewController {
         let keyboardFrame = view.convert(view.keyboardLayoutGuide.layoutFrame, to: view.window)
         var values: [String: String] = ["text": text, "anchor": AgentIntegrationAnchor.first(in: text),
             "pagedGridMismatches": pane.client.diagnosticPagedGridMismatches.joined(separator: "\n"),
+            "ownerResizeRequests": String(pane.client.diagnosticOwnerResizeRequests),
             "parserGridMatches": metrics.map { parserGridMatches(pane.client.session, columns: $0.columns, rows: $0.rows) } ?? "",
             "parserGridAtScrollbarHeight": metrics.map { parserGridMatches(pane.client.session, columns: $0.columns, rows: UInt16(clamping: bar?.len ?? 0)) } ?? "",
             "physicalRows": pane.client.session.readViewportRowsText() ?? "",

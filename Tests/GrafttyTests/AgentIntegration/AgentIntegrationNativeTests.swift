@@ -13,9 +13,48 @@ import WebRTC
 @testable import GrafttyKit
 
 @MainActor
-@Suite("Native scripted agent integration", .serialized,
+@Suite("@spec TEST-1.10: When the native integration harness creates a worktree through the production background creation flow, the harness shall require backend and initial-command readiness without mounting a terminal view or changing the selected worktree, and preserve startup diagnostics on failure.", .serialized,
     .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_AGENT_INTEGRATION_MANIFEST"] != nil))
 struct AgentIntegrationNativeTests {
+    @Test("Roster JSON distinguishes native provider bindings from wrapper registration")
+    func rosterPreservesNativeIdentity() throws {
+        let records = [
+            TeamPresenceRecord(teamID: "fixture", worktree: "/fixture/claude", runtime: .claude,
+                paneSessionName: "graftty-claude", pid: 1, registeredAt: Date(timeIntervalSince1970: 1),
+                runtimeSessionID: "claude-native-session", agentID: "claude-111111111111",
+                transport: .claude(socketPath: "/fixture/claude.sock", protocolVersion: 1)),
+            TeamPresenceRecord(teamID: "fixture", worktree: "/fixture/codex", runtime: .codex,
+                paneSessionName: "graftty-codex", pid: 2, registeredAt: Date(timeIntervalSince1970: 2),
+                runtimeSessionID: "codex-native-thread", agentID: "codex-222222222222",
+                transport: .codex(binaryPath: "/fixture/codex", socketPath: "/fixture/codex.sock",
+                    threadID: "codex-native-thread", activeTurnID: nil)),
+            TeamPresenceRecord(teamID: "fixture", worktree: "/fixture/wrapper", runtime: .codex,
+                paneSessionName: "graftty-wrapper", pid: 3, registeredAt: Date(timeIntervalSince1970: 3),
+                agentID: "codex-333333333333"),
+        ]
+        let json = try AgentIntegrationRoster.encode(records: records, isReachable: { _ in true })
+        let rows = try JSONDecoder().decode([[String: String]].self, from: Data(json.utf8))
+        #expect(rows.count == records.count)
+        for record in records {
+            let row = try #require(rows.first { $0["path"] == record.worktree })
+            #expect(row["id"] == record.agentID)
+            #expect(row["runtime"] == record.runtime.rawValue)
+            #expect(row["reachable"] == "true")
+            #expect(row["paneSessionName"] == record.paneSessionName)
+            #expect(row["runtimeSessionID"] == (record.runtimeSessionID ?? ""))
+        }
+        let claude = try #require(rows.first { $0["runtime"] == "claude" })
+        #expect(claude["transport"] == "claude")
+        #expect(claude["transportThreadID"] == "")
+        let codex = try #require(rows.first { $0["path"] == "/fixture/codex" })
+        #expect(codex["transport"] == "codex")
+        #expect(codex["transportThreadID"] == "codex-native-thread")
+        let wrapper = try #require(rows.first { $0["path"] == "/fixture/wrapper" })
+        #expect(wrapper["runtimeSessionID"] == "")
+        #expect(wrapper["transport"] == "")
+        #expect(wrapper["transportThreadID"] == "")
+    }
+
     @Test("@spec TEST-1.4: When real scripted agents move between native Mac and mobile displays, the integration harness shall exercise production terminal ownership and messaging paths and fail if a commanded native action fails.", .timeLimit(.minutes(15)))
     func nativeClients() async throws {
         let path = try #require(ProcessInfo.processInfo.environment["GRAFTTY_AGENT_INTEGRATION_MANIFEST"])
@@ -28,6 +67,39 @@ struct AgentIntegrationNativeTests {
             throw error
         }
         await host.close()
+    }
+}
+
+private enum AgentIntegrationRoster {
+    static func encode(
+        records: [TeamPresenceRecord],
+        isReachable: (TeamPresenceRecord) -> Bool = TeamAgentReachability.isReachable
+    ) throws -> String {
+        let directory = TeamAgentDirectory(records: records, isReachable: isReachable)
+        let agents = directory.agents.map { agent -> [String: String] in
+            let record = records.first {
+                TeamAgentDirectory.identity(for: $0) == agent.id
+                    && $0.teamID == agent.teamID && $0.worktree == agent.worktreePath
+                    && $0.paneSessionName == agent.paneSessionName
+                    && $0.registeredAt == agent.registeredAt && $0.transport == agent.transport
+            }
+            var row = ["id": agent.id.rawValue, "path": agent.worktreePath,
+                "runtime": agent.runtime.rawValue, "reachable": String(agent.isReachable),
+                "runtimeSessionID": record?.runtimeSessionID ?? "",
+                "paneSessionName": agent.paneSessionName ?? "",
+                "transport": "", "transportThreadID": ""]
+            switch agent.transport {
+            case .claude:
+                row["transport"] = "claude"
+            case .codex(_, _, let threadID, _):
+                row["transport"] = "codex"
+                row["transportThreadID"] = threadID
+            case nil:
+                break
+            }
+            return row
+        }
+        return String(decoding: try JSONEncoder().encode(agents), as: UTF8.self)
     }
 }
 
@@ -55,6 +127,7 @@ private final class AgentIntegrationMacHost {
     var tickObserver: NSObjectProtocol?
     var notificationProbe: AgentIntegrationNotificationProbe?
     var finishedSuccessfully = false
+    var productionCreation: ProductionWorktreeCreationFixture?
     var repo: String { root.appendingPathComponent("repository").path }
 
     init(manifest: AgentIntegrationManifest) async throws {
@@ -84,7 +157,8 @@ private final class AgentIntegrationMacHost {
         app = GhosttyApp(config: GhosttyConfig()) { _, _ in true }
         driver = AgentIntegrationMacDriver(app: app, configuration: configuration,
             ownership: ownership, attachments: attachments)
-        runtime = try HeadlessHostRuntime(configuration: configuration, terminals: driver)
+        runtime = try HeadlessHostRuntime(configuration: configuration, terminals: driver,
+            agentSetup: HostAgentSetup(configuration: configuration, installer: installer))
         tickObserver = GhosttyWakeupBridge.observe { [app, driver] in
             app.tick()
             driver.updateScrollbars()
@@ -142,7 +216,10 @@ private final class AgentIntegrationMacHost {
     func run() async throws {
         let transport = AgentIntegrationTransport(endpoint: manifest.endpoint, client: "mac")
         let fingerprint = RemoteIdentityFingerprint(of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation))
+        let executable = try #require(Bundle(for: AgentIntegrationMacHost.self).executableURL)
+        let executableHash = SHA256.hash(data: try Data(contentsOf: executable)).map { String(format: "%02x", $0) }.joined()
         try await transport.register(["fingerprint": String(decoding: JSONEncoder().encode(fingerprint), as: UTF8.self),
+            "nativeExecutable": executable.path, "nativeExecutableSHA256": executableHash,
             "clientKey": phoneKey.rawRepresentation.base64EncodedString()])
         try await transport.run { [self] in try await handle($0) }
         #expect(finishedSuccessfully, "The integration controller must finish with a passing result")
@@ -169,40 +246,74 @@ private final class AgentIntegrationMacHost {
         if command.operation == "start" {
             let provider = command.provider.hasPrefix("claude") ? TeamHookRuntime.claude : .codex
             let prompt = "GRAFTTY_TEST_BEGIN \(command.provider)"
-            let exactCommand = provider == .claude
-                ? "claude --permission-mode manual -- " + WorktreeAgentLaunchCommand.shellLiteral(prompt) : nil
-            let launch = try WorktreeAgentLaunchCommand.prepare(agent: provider, prompt: prompt, exactCommand: exactCommand,
-                promptDirectory: root.appendingPathComponent("prompts"))
-            // Per-agent model URL is inherited by both Codex processes. The
-            // generated wrapper and provider plugins remain installed and active.
-            let base = manifest.endpoint.appendingPathComponent("model/\(command.provider)").absoluteString
-            let environment = provider == .claude ? "ANTHROPIC_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base))"
-                : "OPENAI_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base + "/v1"))"
-            let attention = manifest.scenario == "notifications"
-                ? " GRAFTTY_ATTENTION_DIR=\(WorktreeAgentLaunchCommand.shellLiteral(AttentionFileHandoff.defaultRootDirectory.path))" : ""
-            // Fullscreen provider virtualization has no terminal scrollback. The
-            // history scenario explicitly selects Claude's supported classic mode.
-            let historyEnvironment = command.parameters["history"] == "true" && provider == .claude
-                ? "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 " : ""
-            let initial = "export \(historyEnvironment)GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(command.provider)) \(environment)\(attention)\n" + (launch.command ?? "")
-            let created = try await runtime.createWorktree(repository: repo, name: command.provider,
-                branch: command.provider, command: initial)
-            let native = try #require(driver.panes[created.session])
-            panes[command.provider] = Pane(path: created.path, session: created.session,
-                handle: native.handle, window: native.window)
+            let background = command.parameters["background"] == "true"
+            driver.mountNewPanes = !background
+            defer { driver.mountNewPanes = true }
+            let created: (path: String, session: String)
+            if background, command.parameters["backgroundFlow"] == "app-flow" {
+                if productionCreation == nil {
+                    productionCreation = ProductionWorktreeCreationFixture(runtime: runtime,
+                        ownership: ownership, attachments: attachments, root: root)
+                }
+                let launched = try await productionCreation!.create(repository: repo, name: command.provider,
+                    initialCommand: initialCommand(provider: provider, name: command.provider))
+                created = (launched.path, launched.session)
+                // A window is retained only for later explicit visibility actions.
+                // No view is attached during provider launch or mobile ownership.
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                    styleMask: [.titled, .resizable], backing: .buffered, defer: true)
+                panes[command.provider] = Pane(path: created.path, session: created.session,
+                    handle: launched.handle, window: window)
+            } else if background {
+                // The CLI uses the isolated control socket. No selection, layout,
+                // or visible native window is allowed to kick off this launch.
+                let result = try await CLIRunner().capture(command: "/usr/bin/env", args: [
+                    "GRAFTTY_SOCK=" + runtime.configuration.socketPath, manifest.cli,
+                    "worktree", "add", command.provider, "--base", "HEAD", "--agent", provider.rawValue,
+                    "--prompt", prompt, "--wait", "--timeout", "90"
+                ], at: repo, timeout: .seconds(100))
+                try ("exit=\(result.exitCode)\n" + result.stdout + "\nstderr:\n" + result.stderr)
+                    .write(to: root.appendingPathComponent(command.provider + "-creation-cli.txt"),
+                        atomically: true, encoding: .utf8)
+                guard result.exitCode == 0 else {
+                    throw AgentIntegrationError("Background CLI creation failed: " + result.stderr)
+                }
+                let path = repo + "/.worktrees/" + command.provider
+                let session = try #require(runtime.sessions().first { $0.worktreePath == path })
+                created = (path, session.name)
+            } else {
+                let initial = try initialCommand(provider: provider, name: command.provider,
+                    history: command.parameters["history"] == "true")
+                created = try await runtime.createWorktree(repository: repo, name: command.provider,
+                    branch: command.provider, command: initial)
+            }
+            if panes[command.provider] == nil {
+                let native = try #require(driver.panes[created.session])
+                panes[command.provider] = Pane(path: created.path, session: created.session,
+                    handle: native.handle, window: native.window)
+            }
+            let native = try #require(panes[command.provider])
             let keys = ["NO_COLOR", "TERM", "COLORTERM", "TERM_PROGRAM", "FORCE_COLOR"]
             let hostEnv = ProcessInfo.processInfo.environment.filter { keys.contains($0.key) }
             let terminalEnv = driver.configurations[created.session]?.env.filter { keys.contains($0.key) } ?? [:]
+            let hooksURL = runtime.configuration.stateDirectory.appendingPathComponent(
+                "agent-plugins/\(provider.rawValue)/plugins/graftty/hooks/hooks.json")
+            let launchEvidence = ["provider": command.provider, "cli": manifest.cli, "requestedPrompt": prompt,
+                "claudeDisableAlternateScreen": ProcessInfo.processInfo.environment["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] ?? "",
+                "initialCommand": driver.configurations[created.session]?.env["GRAFTTY_INITIAL_COMMAND"] ?? "",
+                "installedHooks": try String(contentsOf: hooksURL, encoding: .utf8)]
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(launchEvidence).write(to: root.appendingPathComponent(
+                command.provider + "-creation-launch.txt"), options: .atomic)
             return ["session": created.session, "path": created.path,
+                "viewMounted": String(native.handle.view.window != nil),
                 "hostColorEnvironment": String(decoding: try JSONEncoder().encode(hostEnv), as: UTF8.self),
                 "terminalColorEnvironment": String(decoding: try JSONEncoder().encode(terminalEnv), as: UTF8.self)]
         }
         if command.operation == "roster" {
             let records = try TeamPresenceStorage(rootDirectory: runtime.configuration.stateDirectory.appendingPathComponent("teams")).listAll()
-            let directory = TeamAgentDirectory(records: records, isReachable: TeamAgentReachability.isReachable)
-            let agents = directory.agents.map { ["id": $0.id.rawValue, "path": $0.worktreePath,
-                "runtime": $0.runtime.rawValue, "reachable": String($0.isReachable)] }
-            return ["agents": String(decoding: try JSONEncoder().encode(agents), as: UTF8.self)]
+            return ["agents": try AgentIntegrationRoster.encode(records: records)]
         }
         if command.operation == "recreate" {
             let old = try #require(panes[command.provider])
@@ -370,7 +481,7 @@ private final class AgentIntegrationMacHost {
         let selectedText = hasSelection && selected.text != nil ? String(cString: selected.text) : ""
         if hasSelection { ghostty_surface_free_text(pane.handle.surface, &selected) }
         let terminal = pane.handle.view
-        var values = ["text": text, "nativeText": nativeText, "buffer": bufferText, "anchor": AgentIntegrationAnchor.first(in: text),
+        var values = ["text": text, "viewMounted": String(pane.handle.view.window != nil), "nativeText": nativeText, "buffer": bufferText, "anchor": AgentIntegrationAnchor.first(in: text),
             "physicalRows": try physicalRows(pane.handle.surface),
             "surfaceFrame": NSStringFromRect(terminal.frame), "surfaceBounds": NSStringFromRect(terminal.bounds),
             "visibleRect": NSStringFromRect(terminal.visibleRect),
@@ -417,11 +528,33 @@ private final class AgentIntegrationMacHost {
         guard let value = Double(try required(command, key)), (100...2000).contains(value) else { throw AgentIntegrationError("invalid dimension") }
         return value
     }
+    private func initialCommand(provider: TeamHookRuntime, name: String, history: Bool = false) throws -> String {
+        let prompt = "GRAFTTY_TEST_BEGIN \(name)"
+        let exactCommand = provider == .claude
+            ? "claude --permission-mode manual -- " + WorktreeAgentLaunchCommand.shellLiteral(prompt) : nil
+        let launch = try WorktreeAgentLaunchCommand.prepare(agent: provider, prompt: prompt, exactCommand: exactCommand,
+            promptDirectory: root.appendingPathComponent("prompts"))
+        // Per-agent model URL is inherited by both Codex processes. The
+        // generated wrapper and provider plugins remain installed and active.
+        let base = manifest.endpoint.appendingPathComponent("model/\(name)").absoluteString
+        let environment = provider == .claude ? "ANTHROPIC_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base))"
+            : "OPENAI_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base + "/v1"))"
+        let attention = manifest.scenario == "notifications"
+            ? " GRAFTTY_ATTENTION_DIR=\(WorktreeAgentLaunchCommand.shellLiteral(AttentionFileHandoff.defaultRootDirectory.path))" : ""
+        // Fullscreen provider virtualization has no terminal scrollback. The
+        // history scenario explicitly selects Claude's supported classic mode.
+        let historyEnvironment = history && provider == .claude
+            ? "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 " : ""
+        return "export \(historyEnvironment)GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(name)) \(environment)\(attention)\n" + (launch.command ?? "")
+    }
+
     func close() async {
         await agent?.close(); agent = nil
         if let tickObserver { NotificationCenter.default.removeObserver(tickObserver) }
         for pane in panes.values { pane.window.orderOut(nil); pane.window.contentView = nil }
         panes.removeAll()
+        productionCreation?.close()
+        productionCreation = nil
         let sessions = runtime.sessions()
         for session in sessions { try? await runtime.closePane(target: session.name) }
         try? runtime.shutdown()
@@ -444,6 +577,7 @@ private final class AgentIntegrationMacDriver: HostTerminalDriver {
     let commands: ZmxHostTerminalDriver
     var panes: [String: Pane] = [:]
     var configurations: [String: ZmxSpawnConfiguration] = [:]
+    var mountNewPanes = true
 
     init(app: GhosttyApp, configuration: HostConfiguration,
          ownership: SessionDisplayOwnershipStore, attachments: RemoteAttachmentRegistry) {
@@ -467,13 +601,21 @@ private final class AgentIntegrationMacDriver: HostTerminalDriver {
         let window = NSWindow(contentRect: NSRect(x: 20, y: 20, width: 1000, height: 700),
             styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.title = "Graftty integration: " + spawn.sessionName
-        window.contentView = NSHostingView(rootView: SurfaceViewWrapper(handle: handle,
-            theme: app.theme, onFocusTerminal: {}))
-        window.orderFront(nil)
-        window.contentView?.layoutSubtreeIfNeeded()
-        handle.setVisible(true)
+        if mountNewPanes {
+            window.contentView = NSHostingView(rootView: SurfaceViewWrapper(handle: handle,
+                theme: app.theme, onFocusTerminal: {}))
+            window.orderFront(nil)
+            window.contentView?.layoutSubtreeIfNeeded()
+            handle.setVisible(true)
+        } else {
+            window.contentView = nil
+            handle.setVisible(false)
+        }
         guard handle.startForBackgroundLaunch() else { throw AgentIntegrationError("Mac surface failed to start") }
-        handle.resyncVisibleGrid()
+        if !mountNewPanes {
+            guard await handle.waitForBackendStartup() else { throw AgentIntegrationError("Mac shell startup was not acknowledged") }
+        }
+        if mountNewPanes { handle.resyncVisibleGrid() }
         panes[spawn.sessionName] = Pane(handle: handle, window: window)
         let deadline = Date().addingTimeInterval(5)
         while !(try await sessions()).contains(spawn.sessionName) {

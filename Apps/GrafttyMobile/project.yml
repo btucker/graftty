@@ -100,6 +100,7 @@ targets:
           - UI/HostBrowserProxyTests.swift
           - UI/ChromeTabViewerTests.swift
           - UI/RemoteBrowserButtonTests.swift
+          - UI/WorktreeRowAlignmentTests.swift
     settings:
       base:
         SWIFT_VERSION: "5.10"
@@ -119,6 +120,8 @@ targets:
       - path: ../../Tests/GrafttyMobileKitTests/UI/ChromeTabViewerTests.swift
         group: GrafttyMobileBrowserTests
       - path: ../../Tests/GrafttyMobileKitTests/UI/RemoteBrowserButtonTests.swift
+        group: GrafttyMobileBrowserTests
+      - path: ../../Tests/GrafttyMobileKitTests/UI/WorktreeRowAlignmentTests.swift
         group: GrafttyMobileBrowserTests
     settings:
       base:

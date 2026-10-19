@@ -1204,7 +1204,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONFIG-2.1** Before calling `ghostty_init`, the application shall set the `GHOSTTY_RESOURCES_DIR` environment variable so libghostty can locate its per-shell integration scripts.
 
-**CONFIG-2.2** If `GHOSTTY_RESOURCES_DIR` is already set and non-empty in the process environment, the application shall not override it; the user's explicit setting wins.
+**CONFIG-2.2** If `GHOSTTY_RESOURCES_DIR` names an existing directory containing a `shell-integration` directory, then the application shall preserve that explicit override; otherwise it shall use the bundled resources or report them unavailable.
 
 **CONFIG-2.3** Otherwise, the application shall set `GHOSTTY_RESOURCES_DIR` to the `ghostty` directory vendored in GrafttyKit's resource bundle (per CONFIG-2.5), so shell integration does not depend on a separately installed Ghostty.app.
 
@@ -2020,6 +2020,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.48** When a paged source grid arrives before the mobile terminal surface mounts, the application shall wait for native readiness before completing the ordered grid operation.
 
+**IOS-4.49** When an owning mobile pane receives an in-band source grid, the application shall update the parser without fitting the physical viewport to that grid, while continuing to report keyboard, rotation, and font size changes.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -2177,6 +2179,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-9.14** While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and Git divergence.
 
 **IOS-9.15** When mobile worktree creation fails, the application shall remove its temporary row and show the error outside the dismissed form.
+
+**IOS-9.16** While a mobile worktree row is creating, deleting, or opening, the application shall center its progress indicator beside the primary title without moving the title baseline or enlarging the row.
 
 ### IOS-10.x
 
@@ -3258,6 +3262,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.37** When a caller cancels while sharing another caller's connection attempt, the application shall reject the cancelled caller without cancelling the shared connection.
 
+**REMOTE-22.38** When a headless runtime receives an explicit agent installer, automatic provider setup shall retain its CLI hook path.
+
+**REMOTE-22.39** When a headless host advertises agent prompt staging, the application shall replace bare agent fallback commands with a staged structured or bootstrap prompt, preserve legacy explicit commands without structured prompts, and deliver the selected prompt unchanged to the provider.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.
@@ -3852,6 +3860,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-9** When a worktree has a pending request without a saved brief, the application shall display its message in the context report until that request is dismissed.
 
+### CONTEXT-10.x
+
+**CONTEXT-10** While mobile terminal controls are visible, the application shall display an icon-only Context action immediately left of Browser in the same floating control group, retain separate accessible actions, and preserve the mounted terminal and pending request when opening or closing context.
+
+### CONTEXT-11.x
+
+**CONTEXT-11** When the selected iPad worktree has no focused terminal pane, the application shall retain an accessible icon-only Context action that opens its worktree context without starting or focusing a pane.
+
 ## MEM — MEM
 
 ### MEM-1.x
@@ -4273,6 +4289,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.8** When a scripted terminal is hidden and shown to reproduce worktree switching, the integration harness shall remount its retained surface or mobile route and observe its viewport and physical rows.
 
 **TEST-1.9** When a native integration color probe runs, the test harness shall require chromatic rendered pixels on the current stream stage's inline-code, link, syntax, deletion, and addition rows, and shall reject missing or monochrome samples.
+
+**TEST-1.10** When the native integration harness creates a worktree through the production background creation flow, the harness shall require backend and initial-command readiness without mounting a terminal view or changing the selected worktree, and preserve startup diagnostics on failure.
 
 **TEST-1.11** When the native notification integration replays a captured provider stop, the harness shall preserve its original payload and route explicit notification actions to native clients.
 
