@@ -750,12 +750,12 @@ struct RemoteBrowserButtonTests {
         try await waitUntil { fixture.host.presentedViewController == nil }
         try await Task.sleep(for: .milliseconds(50))
     }
-    private func waitUntil(sourceLocation: SourceLocation = #_sourceLocation, _ condition: () -> Bool) async throws {
+    private func waitUntil(_ stage: String = "hosted browser condition", sourceLocation: SourceLocation = #_sourceLocation, _ condition: () -> Bool) async throws {
         // Offer polling can consume three seconds before UIKit starts its
         // presentation. Quick Look's simulator extension also starts lazily.
         let deadline = ContinuousClock.now + .seconds(10)
         while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        try #require(condition(), "Hosted browser condition did not become true", sourceLocation: sourceLocation)
+        try #require(condition(), "Timed out waiting for \(stage)", sourceLocation: sourceLocation)
     }
     private func waitForBadge(_ fixture: ButtonFixture) async throws {
         do {
@@ -895,6 +895,8 @@ struct RemoteBrowserButtonTests {
         #expect(socket.closeCount == 0)
         #expect(client.isOwner)
         #expect(client.session === session)
+        #expect(container.agentCompletion != nil)
+        #expect(container.committedSoftwareInput != nil)
         preview.dismiss(animated: false)
         try await waitUntil("native Quick Look dismissal") { host.presentedViewController == nil }
         let returnedContainer = try await terminalContainer(in: host.view)
@@ -938,13 +940,6 @@ struct RemoteBrowserButtonTests {
         return try #require(container)
     }
 
-    private func waitUntil(_ stage: String, condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(5)
-        while !condition(), ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        try #require(condition(), "Timed out waiting for \(stage)")
-    }
 }
 
 private final class PreviewLifecycleSocket: WebSocketClient, @unchecked Sendable {

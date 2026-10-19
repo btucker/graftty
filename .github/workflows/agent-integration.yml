@@ -22,6 +22,10 @@ on:
         options: [all, active-retry]
         default: all
         required: false
+      preview:
+        description: Prove Mobile Quick Look retention with both real providers and Simulator
+        type: boolean
+        default: false
       history:
         description: Run the focused dense history paging regression on both providers
         type: boolean
@@ -51,9 +55,9 @@ jobs:
     timeout-minutes: 75
     steps:
       - name: Validate standalone scenario selection
-        if: (inputs.history && inputs.worktree_creation) || (inputs.notifications && (inputs.history || inputs.worktree_creation))
+        if: (inputs.history && inputs.worktree_creation) || (inputs.notifications && (inputs.history || inputs.worktree_creation)) || (inputs.preview && (inputs.notifications || inputs.history || inputs.worktree_creation))
         run: |
-          echo 'Select notifications, history or worktree_creation in separate workflow runs.'
+          echo 'Select notifications, history, preview or worktree_creation in separate workflow runs.'
           exit 1
       - uses: actions/checkout@v4
         with:
@@ -116,15 +120,24 @@ jobs:
           path: |
             ${{ runner.temp }}/worktree-ui
             ${{ runner.temp }}/worktree-startup
+      - name: Prove Quick Look retention RED and GREEN
+        id: preview-ui
+        if: inputs.preview
+        run: |
+          python3 -B scripts/agent-integration/preview_ui.py \
+            --output "$RUNNER_TEMP/preview-ui" \
+            --derived-data "$RUNNER_TEMP/preview-ui-derived" \
+            --baseline 5951480c
       - name: Run real agents on Mac and mobile
         # Preserve independent provider evidence after a UI or upload failure;
         # the source-restoration gate below still fails closed before building.
-        if: success() || (inputs.worktree_creation && (steps.worktree-ui.outcome == 'success' || steps.worktree-ui.outcome == 'failure'))
+        if: success() || (inputs.worktree_creation && (steps.worktree-ui.outcome == 'success' || steps.worktree-ui.outcome == 'failure')) || (inputs.preview && (steps.preview-ui.outcome == 'success' || steps.preview-ui.outcome == 'failure'))
         env:
           TEST_SEED: ${{ inputs.seed || github.run_number }}
           TEST_ACTIONS: ${{ inputs.actions || '60' }}
           TEST_NOTIFICATIONS: ${{ inputs.notifications || 'false' }}
           TEST_NOTIFICATION_CASE: ${{ inputs.notification_case || 'all' }}
+          TEST_PREVIEW: ${{ inputs.preview || 'false' }}
           TEST_HISTORY: ${{ inputs.history || 'false' }}
           TEST_WORKTREE_CREATION: ${{ inputs.worktree_creation || 'false' }}
           TEST_CREATION_SOURCE: ${{ inputs.creation_source || 'cli' }}
@@ -147,6 +160,19 @@ jobs:
                   raise SystemExit('Source changed after restoration: ' + name)
           PY
             scenario+=(--worktree-creation --worktree-creation-source "$TEST_CREATION_SOURCE")
+          fi
+          if [[ "$TEST_PREVIEW" == true ]]; then
+            python3 - <<'PY_PREVIEW'
+          import hashlib, json, os
+          from pathlib import Path
+          evidence = json.loads((Path(os.environ['RUNNER_TEMP']) / 'preview-ui/result.json').read_text())
+          if not evidence.get('sourceRestored'):
+              raise SystemExit('Quick Look baseline source restoration missing; refusing native run')
+          for name, expected in evidence['currentSourceHashes'].items():
+              if hashlib.sha256(Path(name).read_bytes()).hexdigest() != expected:
+                  raise SystemExit('Source changed after restoration: ' + name)
+          PY_PREVIEW
+            scenario=(--preview --rows 150)
           fi
           git rev-parse HEAD > "$RUNNER_TEMP/native-tested-commit.txt"
           shasum -a 256 "$cli" Resources/zmx-binary/zmx > "$RUNNER_TEMP/native-binaries.txt"
@@ -181,6 +207,20 @@ jobs:
               if not images or any(not (root / name / image).is_file() for image in images):
                   raise SystemExit('Missing native render evidence: ' + name)
           PY_EVIDENCE
+      - name: Require Quick Look RED and GREEN evidence
+        if: always() && inputs.preview
+        run: |
+          python3 - <<'PY_PREVIEW'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'preview-ui'
+          evidence = json.loads((root / 'result.json').read_text())
+          if evidence.get('result') != 'passed' or not evidence.get('sourceRestored'):
+              raise SystemExit('Quick Look hosted RED/GREEN failed or source restoration missing')
+          for phase in ('red', 'green'):
+              if not evidence[phase].get('passed') or not (root / phase / 'tests.xcresult').is_dir():
+                  raise SystemExit('Missing executed Quick Look phase: ' + phase)
+          PY_PREVIEW
       - name: Require complete history scenario results
         if: inputs.history
         run: python3 -B scripts/agent-integration/verify_history_results.py --results /private/tmp/graftty-ai-*/result.json
@@ -192,6 +232,7 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
           path: |
+            ${{ runner.temp }}/preview-ui
             ${{ runner.temp }}/worktree-ui
             ${{ runner.temp }}/worktree-startup
             ${{ runner.temp }}/native-*.txt
@@ -219,4 +260,6 @@ jobs:
             /private/tmp/graftty-ai-*/tested.patch
             /private/tmp/graftty-ai-*/mobile.xcresult
             /private/tmp/graftty-ai-*/history-*.json
+            /private/tmp/graftty-ai-*/preview-*.json
+            /private/tmp/graftty-ai-*/preview-native-results/**
             /private/tmp/graftty-history-validation/*.log

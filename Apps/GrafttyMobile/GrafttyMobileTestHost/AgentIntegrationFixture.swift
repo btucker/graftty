@@ -3,6 +3,8 @@ import CryptoKit
 import CoreImage
 import Foundation
 import IOSurface
+import Observation
+import QuickLook
 import GhosttyTerminal
 import GrafttyProtocol
 import GrafttyRemoteClient
@@ -76,6 +78,7 @@ final class AgentIntegrationMobileController: UIViewController {
     let retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
     var route: UIHostingController<AnyView>?
     var notificationFixture: NotificationActivationFixture?
+    var previewFixture: AgentPreviewFixture?
     let focusKeyboardButton = UIButton(type: .system)
 
     init(endpoint: URL) { self.endpoint = endpoint; super.init(nibName: nil, bundle: nil) }
@@ -126,7 +129,7 @@ final class AgentIntegrationMobileController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let frame = view.safeAreaLayoutGuide.layoutFrame
-        if notificationFixture != nil { route?.view.frame = view.bounds }
+        if notificationFixture != nil || previewFixture != nil { route?.view.frame = view.bounds }
         status.frame = CGRect(x: frame.minX, y: frame.minY, width: max(1, frame.width - 260), height: 35)
         focusKeyboardButton.frame = CGRect(x: frame.maxX - 260, y: frame.minY, width: 130, height: 35)
         dismissKeyboard.frame = CGRect(x: frame.maxX - 130, y: frame.minY, width: 130, height: 35)
@@ -157,6 +160,24 @@ final class AgentIntegrationMobileController: UIViewController {
     }
 
     func handle(_ command: AgentIntegrationCommand) async throws -> [String: String] {
+        if command.operation == "previewPrepare" {
+            previewFixture?.client.stop()
+            unmount()
+            focused = nil
+            let fixture = try await AgentPreviewFixture.prepare(command, host: fixtureHost,
+                connection: connect())
+            previewFixture = fixture
+            let host = UIHostingController(rootView: AnyView(AgentPreviewFixtureView(fixture: fixture)))
+            addChild(host)
+            view.addSubview(host.view)
+            host.didMove(toParent: self)
+            route = host
+            host.view.frame = view.bounds
+            return try await fixture.snapshot(controller: self)
+        }
+        if command.operation.hasPrefix("preview"), let previewFixture {
+            return try await previewFixture.snapshot(controller: self)
+        }
         if command.operation == "notificationsPrepare" {
             notificationFixture?.finish()
             let fixture = try await NotificationActivationFixture.prepare(command, endpoint: endpoint,
@@ -169,6 +190,7 @@ final class AgentIntegrationMobileController: UIViewController {
         }
         if command.operation == "finish" {
             notificationFixture?.finish()
+            previewFixture?.client.stop()
             for pane in panes.values { pane.client.stop() }
             await connection?.close()
             connection = nil
@@ -411,5 +433,206 @@ final class AgentIntegrationMobileController: UIViewController {
     }
 
     deinit { task?.cancel(); timer?.invalidate() }
+}
+// This fixture changes only host resource I/O and authentication. The route,
+// terminal representable, resource button, download and Quick Look are production.
+actor PreviewChannelProbe {
+    private var opens = 0
+    private var channelID = ""
+    private var closes = 0
+    func opened(_ identity: String) {
+        opens += 1
+        channelID = identity
+    }
+    func closed() { closes += 1 }
+    func snapshot() -> [String: String] { ["channelOpens": String(opens), "channelID": channelID, "channelCloses": String(closes)] }
+}
+
+/// Forward every protocol operation to the actual SSH channel. This records
+/// close invocations without substituting a mock transport or parser.
+private final class PreviewObservedChannel: WebSocketClient {
+    let channel: any WebSocketClient
+    let probe: PreviewChannelProbe
+    init(channel: any WebSocketClient, probe: PreviewChannelProbe) { self.channel = channel; self.probe = probe }
+    var supportsWebControlTextFrames: Bool { channel.supportsWebControlTextFrames }
+    var supportsPagedHistory: Bool { channel.supportsPagedHistory }
+    func send(_ frame: WebSocketFrame) async throws { try await channel.send(frame) }
+    func receive() async throws -> WebSocketFrame { try await channel.receive() }
+    func close() { channel.close(); Task { await probe.closed() } }
+    func resize(cols: Int, rows: Int) async { await channel.resize(cols: cols, rows: rows) }
+    func sendHello(clientID: DisplayClientID, kind: DisplayClientKind, role: DisplayClientRole,
+                   visible: Bool, cols: Int, rows: Int) async {
+        await channel.sendHello(clientID: clientID, kind: kind, role: role, visible: visible, cols: cols, rows: rows)
+    }
+    func takeControl(clientID: DisplayClientID, kind: DisplayClientKind, cols: Int, rows: Int) async {
+        await channel.takeControl(clientID: clientID, kind: kind, cols: cols, rows: rows)
+    }
+    func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {
+        await channel.ownerResize(clientID: clientID, epoch: epoch, cols: cols, rows: rows)
+    }
+    func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int, pixels: TerminalPixelSize) async {
+        await channel.ownerResize(clientID: clientID, epoch: epoch, cols: cols, rows: rows, pixels: pixels)
+    }
+}
+
+@MainActor @Observable
+final class AgentPreviewFixture {
+    let client: SessionClient
+    let host: Host
+    let worktree: String
+    let embedded: Bool
+    let pool: RetainedPaneClientPool<RetainedMobilePane>?
+    let controller = MobileTerminalControllerFactory.make(configText: "font-size = 12\nscrollback-limit = 10000000")
+    let gate = BiometricGate(authenticator: NotificationActivationFixture.FixtureAuthenticator())
+    let coordinator: RemoteConnectionCoordinator
+    let channel: PreviewChannelProbe
+    let navigationID = UUID()
+    var path: [UUID] = []
+    var reads = 0
+    var container: TerminalInputContainerView?
+    let offer: RemoteOpenOffer
+    let image: Data
+
+    init(client: SessionClient, host: Host, worktree: String, retained: Bool, embedded: Bool,
+         channel: PreviewChannelProbe) {
+        self.client = client
+        self.host = host
+        self.worktree = worktree
+        self.embedded = embedded
+        self.channel = channel
+        pool = retained ? RetainedPaneClientPool<RetainedMobilePane>() : nil
+        let deviceID = RemoteDeviceID(value: "integration-phone")
+        coordinator = RemoteConnectionCoordinator(authenticatedDeviceID: deviceID, directory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("preview-coordinator-\(UUID())"))
+        image = UIGraphicsImageRenderer(size: CGSize(width: 480, height: 360)).pngData { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 480, height: 360))
+            ("Quick Look terminal continuity" as NSString).draw(at: CGPoint(x: 24, y: 140),
+                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 24), .foregroundColor: UIColor.white])
+        }
+        offer = RemoteOpenOffer(id: UUID(), filename: "terminal-continuity.png", byteCount: image.count,
+            paneSessionName: client.sessionName, previewKind: "image", previewOwnerDeviceID: deviceID)
+        path = [navigationID]
+        coordinator.completePreviewAutoOpen(offer.id)
+        if let pool {
+            _ = pool.acquire(.init(hostID: host.id, sessionName: client.sessionName)) { RetainedMobilePane(client: client) }
+        }
+    }
+
+    static func prepare(_ command: AgentIntegrationCommand, host: Host,
+                        connection: RemoteHostConnection) async throws -> AgentPreviewFixture {
+        guard let session = command.parameters["session"], let worktree = command.parameters["worktree"] else {
+            throw AgentIntegrationError("missing preview session/worktree")
+        }
+        let probe = PreviewChannelProbe()
+        let client = SessionClient(sessionName: session, webSocketFactory: {
+            let channel = try await connection.openTerminalSession(sessionName: session, preferPaged: true)
+            await probe.opened(String(describing: ObjectIdentifier(channel)))
+            return PreviewObservedChannel(channel: channel, probe: probe)
+        })
+        let fixture = AgentPreviewFixture(client: client, host: host, worktree: worktree,
+            retained: command.parameters["retained"] == "true", embedded: command.parameters["embedded"] == "true",
+            channel: probe)
+        fixture.gate.applicationWillEnterForeground()
+        await fixture.gate.authenticate()
+        client.start()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while client.ownershipSnapshot == nil {
+            guard ContinuousClock.now < deadline else { throw AgentIntegrationError("preview pane handshake timed out") }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        client.takeControl()
+        while !client.isOwner {
+            guard ContinuousClock.now < deadline else { throw AgentIntegrationError("preview pane ownership timed out") }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard client.ownershipSnapshot?.ownerIdentity == "ssh-device:integration-phone" else {
+            throw AgentIntegrationError("preview offer identity differs from authenticated SSH owner")
+        }
+        return fixture
+    }
+
+    func management(_ request: WorktreeManagementRequest, host: Host) async throws -> WorktreeManagementResponse {
+        if case .openResource(_, .read(let id, let offset)) = request {
+            guard id == offer.id, offset >= 0, offset <= image.count else {
+                throw AgentIntegrationError("preview request has wrong resource identity or offset")
+            }
+            reads += 1
+            return .openResource(.chunk(image.subdata(in: offset..<image.count)))
+        }
+        return .openResource(.offers([offer]))
+    }
+
+    private func terminal(in view: UIView) -> TerminalInputContainerView? {
+        if let terminal = view as? TerminalInputContainerView { return terminal }
+        return view.subviews.lazy.compactMap { self.terminal(in: $0) }.first
+    }
+
+    private func quickLook(in controller: UIViewController) -> QLPreviewController? {
+        if let preview = controller as? QLPreviewController { return preview }
+        if let presented = controller.presentedViewController, let preview = quickLook(in: presented) { return preview }
+        return controller.children.lazy.compactMap { self.quickLook(in: $0) }.first
+    }
+
+    func snapshot(controller host: AgentIntegrationMobileController) async throws -> [String: String] {
+        // Snapshot commands may arrive before SwiftUI finishes the route push.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while !path.isEmpty, terminal(in: host.view) == nil {
+            guard ContinuousClock.now < deadline else { throw AgentIntegrationError("production preview terminal did not mount") }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        if let current = terminal(in: host.view) { container = current }
+        guard let container else { throw AgentIntegrationError("preview terminal container unavailable") }
+        container.accessibilityIdentifier = "Agent integration terminal"
+        if !path.isEmpty {
+            try await MobilePagedTerminalRenderer(session: client.session, prepareGrid: { _, _ in }).flushOutput()
+        } else {
+            // The production attachment observer defers teardown one actor turn.
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        var values = host.snapshot(.init(client: client, container: container, usesRoute: true))
+        values.merge(await channel.snapshot()) { _, new in new }
+        values["clientID"] = String(describing: ObjectIdentifier(client))
+        values["containerID"] = String(describing: ObjectIdentifier(container))
+        values["surfaceID"] = container.terminalView.surface.map { String(describing: ObjectIdentifier($0)) } ?? ""
+        values["attachmentID"] = container.controlAttachmentID?.uuidString ?? ""
+        values["navigationID"] = path.last?.uuidString ?? ""
+        values["navigationRemoved"] = String(path.isEmpty)
+        values["terminalMounted"] = String(container.window != nil)
+        values["terminalContained"] = String(host.route.map { container.isDescendant(of: $0.view) } ?? false)
+        values["sourceControllerAttached"] = String(host.route?.parent === host)
+        values["connection"] = String(describing: client.connectionState)
+        values["quickLook"] = String(quickLook(in: host) != nil)
+        values["previewReads"] = String(reads)
+        values["previewOwnerIdentity"] = offer.previewOwnerDeviceID.map { "ssh-device:\($0.value)" } ?? ""
+        values["controlsDetached"] = String(container.controlAttachmentID == nil && container.committedSoftwareInput == nil)
+        values["browserDetached"] = String(container.linkContext == nil && container.onBackRequested == nil)
+        values["ownershipCleared"] = String(client.ownershipSnapshot == nil)
+        if let surface = container.terminalView.surface, surface.performAction("select_all") {
+            values["loadedHistory"] = surface.readSelection() ?? ""
+            _ = surface.performAction("clear_selection")
+        }
+        return values
+    }
+}
+
+private struct AgentPreviewFixtureView: View {
+    @Bindable var fixture: AgentPreviewFixture
+    var body: some View {
+        NavigationStack(path: $fixture.path) {
+            Text("Preview worktrees").accessibilityIdentifier("Preview worktrees")
+                .navigationTitle("Preview worktrees")
+                .navigationDestination(for: UUID.self) { _ in
+                    SingleSessionView(step: SessionStep(host: fixture.host, worktreePath: fixture.worktree,
+                        sessionName: fixture.client.sessionName, title: "Preview terminal"), navigationPath: .constant(NavigationPath()),
+                        isFullScreen: !fixture.embedded, showsProjectRail: false, coordinator: fixture.coordinator,
+                        isEmbeddedPane: fixture.embedded, onBackToWorktrees: { fixture.path.removeAll() },
+                        retainedPanes: fixture.pool, initialClient: fixture.client, initialController: fixture.controller,
+                        previewManagementTransport: fixture.management)
+                }
+        }
+        .environment(\.biometricGate, fixture.gate)
+        .environment(\.scenePhase, .active)
+    }
 }
 #endif

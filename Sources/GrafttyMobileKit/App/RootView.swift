@@ -633,6 +633,7 @@ struct SingleSessionView: View {
     private let sidebarNavigation: SidebarNavigationState?
     private let retainedPanes: RetainedPaneClientPool<RetainedMobilePane>?
     private let remoteConnectionProvider: RemoteConnectionProvider?
+    private let previewManagementTransport: ((WorktreeManagementRequest, Host) async throws -> WorktreeManagementResponse)?
     @State private var attentionWorktrees: [WorktreePanes] = []
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
@@ -825,7 +826,8 @@ struct SingleSessionView: View {
         initialClient: SessionClient? = nil,
         initialController: TerminalController? = nil,
         initialKeyboardBottomInset: CGFloat = 0,
-        remoteConnectionProvider: RemoteConnectionProvider? = nil
+        remoteConnectionProvider: RemoteConnectionProvider? = nil,
+        previewManagementTransport: ((WorktreeManagementRequest, Host) async throws -> WorktreeManagementResponse)? = nil
     ) {
         self.step = step
         self._navigationPath = navigationPath
@@ -843,6 +845,7 @@ struct SingleSessionView: View {
         self.sidebarNavigation = sidebarNavigation
         self.retainedPanes = retainedPanes
         self.remoteConnectionProvider = remoteConnectionProvider
+        self.previewManagementTransport = previewManagementTransport
         self._attentionWorktrees = State(initialValue: attentionWorktrees)
         self._client = State(initialValue: initialClient)
         self._controller = State(initialValue: initialController)
@@ -1007,6 +1010,7 @@ struct SingleSessionView: View {
                                      sessionName: step.sessionName,
                                      ownerDeviceID: client?.isOwner == true ? coordinator.localDeviceID : nil,
                                      isActive: isPaneFocused && scenePhase == .active && gate?.state == .unlocked && connection == .live,
+                                     managementTransport: previewManagementTransport,
                                      browserConnectionReady: connection == .live,
                                      isPaneFocused: isPaneFocused,
                                      hasOwnershipSnapshot: client?.ownershipSnapshot != nil,

@@ -272,3 +272,23 @@ dispatch on a Mac runner, pins provider versions, and uploads native evidence.
 The endpoint compatibility spike remains in `../agent-endpoint-spike`.
 [VALIDATION.json](VALIDATION.json) records the initial native results, including
 rendering failures that still need product fixes.
+
+## Quick Look retention
+
+Add `--preview` to run eight cases: Codex and Claude, each with retained and
+transient panes in embedded and fullscreen Mobile layouts. The fixture mounts
+production `SingleSessionView`, types unique prompts through XCUITest, opens the
+production Preview button, and holds real provider output behind named endpoint
+barriers while Quick Look is visible. It checks channel, renderer, ownership and
+grid continuity, native visible output and history, a second input after dismissal,
+and cleanup after Back navigation.
+
+This scenario uses Codex inline mode and Claude classic mode with manual tool
+approvals. New source files must be staged before running so `source.diff`
+includes every input. A passing result requires all eight cases, actual XCTest
+execution, native screenshots, and provider request and recap receipts. Failures
+retain the same artifacts under the printed `/private/tmp/graftty-ai-*` directory.
+
+The workflow's `preview` input also runs `preview_ui.py` against the baseline and
+current source. Its hosted cases test the covering fullscreen Quick Look lifecycle
+and stale replacement guards before the genuine provider scenario runs.

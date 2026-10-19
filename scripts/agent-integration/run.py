@@ -37,7 +37,7 @@ def execute(command, *, env=None, timeout=180, log=None, strip=True):
     return output.strip() if strip else output
 
 
-def prepare_home(root, endpoint, codex, claude):
+def prepare_home(root, endpoint, codex, claude, *, manual_claude=False, inline_codex=False):
     home = root / 'home'
     for folder in (home / '.codex', home / '.claude', root / 'bin', root / 'run'):
         folder.mkdir(parents=True, exist_ok=True)
@@ -54,10 +54,16 @@ def prepare_home(root, endpoint, codex, claude):
         path = str(root / 'repository' / '.worktrees' / agent)
         config += '[projects.' + json.dumps(path) + ']\ntrust_level="trusted"\n'
         projects[path] = {'hasTrustDialogAccepted': True}
+    if inline_codex:
+        config += '[tui]\nalternate_screen="never"\n'
     (home / '.codex' / 'config.toml').write_text(config)
     (home / '.claude' / '.claude.json').write_text(json.dumps({'hasCompletedOnboarding': True,
         'theme': 'dark', 'customApiKeyResponses': {'approved': ['fixture-only'], 'rejected': []}, 'projects': projects}))
-    (home / '.claude' / 'settings.json').write_text(json.dumps({'autoUpdatesChannel': 'stable'}))
+    settings = {'autoUpdatesChannel': 'stable'}
+    if manual_claude:
+        # Keep real one-time tool approvals; the fake endpoint is not an auto-mode classifier.
+        settings['permissions'] = {'defaultMode': 'default'}
+    (home / '.claude' / 'settings.json').write_text(json.dumps(settings))
     # Keep build tools on PATH, excluding the running agent's managed wrappers.
     paths = [str(root / 'bin')]
     paths.extend(path for path in os.environ.get('PATH', '').split(':') if 'agent-hooks' not in path)
@@ -200,6 +206,7 @@ class Run:
             '-resultBundlePath', str(self.root / 'mobile.xcresult'), '-parallel-testing-enabled', 'NO',
             '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests/'
                 + ('testNativeNotificationActivation' if getattr(options, 'notifications', False)
+                   else 'testNativeQuickLookRetention' if getattr(options, 'preview', False)
                    else 'testScriptedAgentInteractions'), 'test-without-building']
         self.mobile_environment = build_env
 
@@ -255,6 +262,10 @@ class Run:
         self.summary.setdefault('generatedContentChecks', []).append({'agent': agent, 'status': status})
 
     def scenarios(self):
+        if getattr(self.options, 'preview', False):
+            from preview_scenario import run_preview
+            run_preview(self)
+            return
         if getattr(self.options, 'history', False):
             from history_scenario import run_history
             run_history(self)
@@ -499,14 +510,21 @@ class Run:
             source_diff = execute(['git', 'diff', '--binary', 'HEAD'], strip=False)
             (self.root / 'source.diff').write_text(source_diff)
             self.summary['sourceDiffSHA256'] = hashlib.sha256(source_diff.encode()).hexdigest()
-            for name in ('cli', 'zmx'):
+            if getattr(self.options, 'preview', False):
+                from preview_scenario import require_tracked_preview_sources
+                require_tracked_preview_sources()
+            for name in ('cli', 'zmx', 'codex', 'claude'):
                 path = getattr(self.options, name)
                 self.summary[name] = {'path': str(path)}
                 self.summary[name]['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
             # Persist provenance before home setup, version commands, or native
             # builds can fail. Unobserved metadata stays absent, never guessed.
             (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
-            self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude)
+            if getattr(self.options, 'preview', False):
+                self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude,
+                                        manual_claude=True, inline_codex=True)
+            else:
+                self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude)
             if getattr(self.options, 'worktree_creation', False):
                 # CLI-created Codex uses its configured model header without the
                 # direct-launch export. Claude has its own endpoint and ignores it.
@@ -574,6 +592,14 @@ class Run:
                         child.wait()
                     if failure is None:
                         failure = InvariantFailure(f'{name} native test process did not finish')
+            if getattr(self.options, 'preview', False):
+                try:
+                    from preview_scenario import validate_native_results
+                    validate_native_results(self)
+                except Exception as error:
+                    self.summary['nativeEvidenceError'] = str(error)
+                    if failure is None:
+                        failure = error
             # All commands are scoped to this run's private daemon directory.
             try:
                 if self.env.get('GRAFTTY_STATE_DIR'):
@@ -621,6 +647,7 @@ def main():
     parser.add_argument('--worktree-creation-source', choices=('cli', 'app-flow'), default='cli',
                         help='Startup boundary for --worktree-creation; app-flow exercises AddWorktreeFlow and TerminalManager')
     parser.add_argument('--worktree-reentry', action='store_true', help='Test retained mobile routes with keyboard changes and hidden ownership transitions')
+    parser.add_argument('--preview', action='store_true', help='Test production Quick Look with both real provider TUIs')
     parser.add_argument('--history', action='store_true', help='Test dense wide provider output through bounded mobile history paging')
 
     parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
@@ -641,12 +668,14 @@ def main():
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
-    if sum((options.worktree_reentry, options.colors, options.notifications, options.history, options.worktree_creation)) > 1:
+    if sum((options.worktree_reentry, options.colors, options.notifications, options.history, options.worktree_creation, options.preview)) > 1:
         parser.error('--worktree-reentry, --colors, --notifications, --history and --worktree-creation are separate scenarios')
     if options.notification_case != 'all' and (not options.notifications or options.mac_only):
         parser.error('--notification-case requires --notifications with mobile coverage')
     if options.notifications and (options.replay or options.shrink):
         parser.error('--notifications records its own bounded event replays')
+    if options.preview and (options.mac_only or options.replay or options.shrink):
+        parser.error('--preview requires standalone native mobile coverage')
     if options.history and (options.mac_only or options.replay or options.shrink):
         parser.error('--history requires mobile and runs separately from generated actions')
     if options.worktree_creation_viewport_only and not options.worktree_creation:

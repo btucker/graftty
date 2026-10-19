@@ -26,6 +26,10 @@ class ModelState:
         self.barriers = {}
         self.arrived = set()
         self.completed = set()
+        self.completed_streams = set()
+        self.recap_completions = {}
+        self.recap_contexts = {}
+        self.completed_preview_recaps = set()
         self.receipts = {}
         self.reply_tools = {}
         self.tool_results = set()
@@ -98,6 +102,9 @@ class ModelState:
             for result in tool_result_text:
                 for match in re.finditer(r'GRAFTTY_RECAP_OK ([a-z0-9-]+) ([a-f0-9]{64})', result):
                     self.recaps_done.add(match[1])
+                    self.recap_completions.setdefault(match[1], set()).add(match[2])
+                    if match[2] in self.recap_contexts:
+                        self.completed_preview_recaps.add((match[1], self.recap_contexts[match[2]]))
                     if self.pending_tools.get(agent) == 'recap:' + match[2]:
                         self.pending_tools.pop(agent)
             for match in re.finditer(r'GRAFTTY_TEST_REPLY ([A-Za-z0-9-]+)', joined):
@@ -108,6 +115,11 @@ class ModelState:
                 key = hashlib.sha256((agent + str(len(items)) + last).encode()).hexdigest()
                 if key not in self.recaps_issued:
                     self.recaps_issued.add(key)
+                    ack = next((re.fullmatch(r'GRAFTTY_TEST_PREVIEW_ACK ([a-f0-9]{32})', value.strip())
+                                for value in reversed(texts)
+                                if re.fullmatch(r'GRAFTTY_TEST_PREVIEW_ACK ([a-f0-9]{32})', value.strip())), None)
+                    if ack:
+                        self.recap_contexts[key] = ack[1]
                     self.pending_tools[agent] = 'recap:' + key
                     recap = {'title': 'Agent fixture ' + agent, 'context': 'Automated native terminal integration',
                              'completed': 'Scripted fixture turn completed', 'next': 'Wait for the next test action',
@@ -123,6 +135,30 @@ class ModelState:
                         tool['arguments']['description'] = 'Report isolated fixture completion'
                     self.condition.notify_all()
                     return agent, None, tool, False
+            ack = next((re.fullmatch(r'GRAFTTY_TEST_PREVIEW_ACK ([a-f0-9]{32})', value.strip())
+                        for value in reversed(texts)
+                        if re.fullmatch(r'GRAFTTY_TEST_PREVIEW_ACK ([a-f0-9]{32})', value.strip())), None)
+            if ack and (agent, ack[1], 'preview-ack') not in self.receipts:
+                nonce = ack[1]
+                self.receipts[(agent, nonce, 'preview-ack')] = {'agent': agent, 'nonce': nonce,
+                    'prompt': 'GRAFTTY_TEST_PREVIEW_ACK ' + nonce, 'protocol': protocol}
+                self.condition.notify_all()
+                return agent, 'PREVIEW-INPUT-RECEIVED ' + nonce, None, 'preview-ack:' + nonce
+            # Each native Quick Look case types a fresh prompt into the real
+            # provider. Exact matching prevents quoted history or recap prompts
+            # from fabricating a second input receipt.
+            preview = next((re.fullmatch(r'GRAFTTY_TEST_PREVIEW ([a-f0-9]{32})', text.strip())
+                            for text in reversed(texts)
+                            if re.fullmatch(r'GRAFTTY_TEST_PREVIEW ([a-f0-9]{32})', text.strip())), None)
+            if preview and (agent, preview[1], 'preview') not in self.receipts:
+                nonce = preview[1]
+                self.receipts[(agent, nonce, 'preview')] = {'agent': agent, 'nonce': nonce,
+                    'prompt': 'GRAFTTY_TEST_PREVIEW ' + nonce, 'protocol': protocol}
+                self.condition.notify_all()
+                # Paragraph boundaries let Claude classic render text while
+                # its response stream is still held at the named barrier.
+                output = '\n\n'.join(f'PREVIEW-OUTPUT-{nonce} row {row:03d}' for row in range(40))
+                return agent, output, None, 'preview:' + nonce
             incoming = list(re.finditer(r'GRAFTTY_TEST_MESSAGE ([A-Za-z0-9-]+)', joined))
             if incoming:
                 nonce = incoming[-1][1]
@@ -254,25 +290,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 # only the opt-in output gate preserves the pre-hook viewport.
                 self.server.models.gate(agent, 'recap')
             for event in events:
-                if initial and event['type'] in ('content_block_delta', 'response.output_text.delta'):
+                if (initial is True or isinstance(initial, str) and initial.startswith('preview:')) and event['type'] in ('content_block_delta', 'response.output_text.delta'):
                     if ordinal == 0:
-                        self.server.models.gate(agent, 'begin')
+                        self.server.models.gate(agent, (initial + ':begin') if isinstance(initial, str) else 'begin')
                     elif ordinal == deltas // 2:
-                        self.server.models.gate(agent, 'middle')
+                        self.server.models.gate(agent, (initial + ':middle') if isinstance(initial, str) else 'middle')
                     elif ordinal == deltas - 1:
-                        self.server.models.gate(agent, 'end')
+                        self.server.models.gate(agent, (initial + ':end') if isinstance(initial, str) else 'end')
                     ordinal += 1
                 self.wfile.write(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n'.encode())
                 self.wfile.flush()
-                if (initial and self.server.models.pause_after_output and ordinal == deltas
+                if (initial is True and self.server.models.pause_after_output and ordinal == deltas
                         and event['type'] in ('content_block_delta', 'response.output_text.delta')):
                     # Creation checks need all text, including its final sentinel,
                     # before terminal response events let provider Stop hooks
                     # replace the viewport. Other scenarios retain their gates.
                     self.server.models.gate(agent, 'output')
-            if initial:
+            if initial is True:
                 with self.server.models.condition:
                     self.server.models.completed.add(agent)
+                    self.server.models.condition.notify_all()
+            if isinstance(initial, str):
+                with self.server.models.condition:
+                    self.server.models.completed_streams.add((agent, initial))
                     self.server.models.condition.notify_all()
             self.server.broker.record({'kind': 'model-completed', 'agent': agent, 'requestID': identifier})
         except (BrokenPipeError, ConnectionResetError, InvariantFailure) as error:
