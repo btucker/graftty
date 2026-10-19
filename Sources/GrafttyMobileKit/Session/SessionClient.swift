@@ -156,6 +156,19 @@ public final class SessionClient {
         stateLock.withLock { _wsReadyTask = value }
     }
     private var receiveTask: Task<Void, Never>?
+    private enum TerminalWrite {
+        case frames([Data])
+        case ownerResize(cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64)
+        case legacyResize(cols: UInt16, rows: UInt16)
+    }
+    @ObservationIgnored
+    private var terminalWrites: [TerminalWrite] = []
+    @ObservationIgnored
+    private var terminalWriteTask: Task<Void, Never>?
+    // Automatic reconnects reuse transportGeneration. Invalidate their pending
+    // writes separately so a late old send cannot drain a replacement's queue.
+    @ObservationIgnored
+    private var terminalWriteGeneration: UInt64 = 0
     private var stopped = false
     /// Invalidates async work from an earlier transport lifetime. A WebSocket
     /// factory or receive operation is allowed to ignore task cancellation;
@@ -471,6 +484,7 @@ public final class SessionClient {
     private func startTransport() {
         stopHistoryPaging()
         resetImagePaste()
+        resetTerminalWrites()
         transportGeneration &+= 1
         let generation = transportGeneration
         lastActivityAt = clock.now
@@ -568,6 +582,7 @@ public final class SessionClient {
                     // stale process EOF must not end the resumed client.
                     guard self.isCurrentTransport(generation) else { return }
                     self.resetImagePaste()
+                    self.resetTerminalWrites()
                     NSLog("Graftty terminal channel failed: %@", String(describing: error))
                     self.stopHistoryPaging()
                     // Replay failures can leave the SSH channel itself open.
@@ -919,13 +934,24 @@ public final class SessionClient {
             }
             do {
                 // Wait for ownership and its physical viewport before uploading.
-                for _ in 0..<100 where !self.isOwner || self.awaitingOwnerViewport {
+                for _ in 0..<100 where !self.isOwner || self.awaitingOwnerViewport || self.ownerTransitionResizePending {
                     try Task.checkCancellation()
                     try await Task.sleep(for: .milliseconds(20))
                 }
-                guard self.isOwner, !self.awaitingOwnerViewport else { throw URLError(.noPermissionsToReadFile) }
+                guard self.isOwner, !self.awaitingOwnerViewport, !self.ownerTransitionResizePending else {
+                    throw URLError(.noPermissionsToReadFile)
+                }
+                // The paste barrier already holds subsequent typing. Finish
+                // input accepted before that barrier before starting the upload.
+                // This also includes the promotion resize and its queued input.
                 let epoch = self.ownershipSnapshot?.epoch
                 self.imagePasteEpoch = epoch
+                if let precedingWrites = self.terminalWriteTask { await precedingWrites.value }
+                try Task.checkCancellation()
+                guard self.imagePasteID == id, self.isCurrentTransport(generation), self.isOwner,
+                      self.ownershipSnapshot?.epoch == epoch else {
+                    throw CancellationError()
+                }
                 @MainActor func send(_ message: ImagePasteMessage) async throws {
                     try Task.checkCancellation()
                     guard self.imagePasteID == id, self.isCurrentTransport(generation),
@@ -1068,6 +1094,7 @@ public final class SessionClient {
         stopped = true
         stopHistoryPaging()
         resetImagePaste()
+        resetTerminalWrites()
         transportGeneration &+= 1
         receiveTask?.cancel()
         receiveTask = nil
@@ -1227,20 +1254,7 @@ public final class SessionClient {
     }
 
     private func sendOwnerResizeToServer(cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64) {
-        let generation = transportGeneration
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let clientID = await MainActor.run { self.displayClientID }
-            guard let ws = await self.awaitWS(for: generation), ws.supportsWebControlTextFrames else { return }
-            self.diagnosticOwnerResizeRequests &+= 1
-            await ws.ownerResize(
-                clientID: clientID,
-                epoch: epoch,
-                cols: Int(cols),
-                rows: Int(rows),
-                pixels: pixels
-            )
-        }
+        enqueueTerminalWrites([.ownerResize(cols: cols, rows: rows, pixels: pixels, epoch: epoch)])
     }
 
     /// IOS-4.24 + ordered flush: on owner promotion, send the owner-transition
@@ -1264,24 +1278,16 @@ public final class SessionClient {
     private func sendOwnerResizeThenFrames(
         cols: UInt16, rows: UInt16, pixels: TerminalPixelSize, epoch: UInt64, frames: [Data]
     ) {
-        let clientID = displayClientID
-        let generation = transportGeneration
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            guard let ws = await self.awaitWS(for: generation), ws.supportsWebControlTextFrames else { return }
-            self.diagnosticOwnerResizeRequests &+= 1
-            await ws.ownerResize(clientID: clientID, epoch: epoch, cols: Int(cols), rows: Int(rows), pixels: pixels)
-            await self.sendBinaryFrames(frames, on: ws, generation: generation)
-        }
+        // Publish the resize and old input together, before new typing can
+        // enqueue behind them. Awaiting only within a separate task lets live
+        // keystrokes overtake both when ownerResize suspends.
+        enqueueTerminalWrites([
+            .ownerResize(cols: cols, rows: rows, pixels: pixels, epoch: epoch), .frames(frames),
+        ])
     }
 
     private func sendLegacyResizeToServer(cols: UInt16, rows: UInt16) {
-        let generation = transportGeneration
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            guard let ws = await self.awaitWS(for: generation), !ws.supportsWebControlTextFrames else { return }
-            await ws.resize(cols: Int(cols), rows: Int(rows))
-        }
+        enqueueTerminalWrites([.legacyResize(cols: cols, rows: rows)])
     }
 
     private func sendBinary(_ data: Data) {
@@ -1290,28 +1296,61 @@ public final class SessionClient {
 
     private func sendBinaryFrames(_ frames: [Data]) {
         guard !frames.isEmpty else { return }
-        let generation = transportGeneration
-        // Await the in-flight WS open so writes emitted before the
-        // factory resolves still land. On the synchronous URL path
-        // (`URLSessionWebSocketClient`) the open Task completes
-        // without suspending and this is effectively a no-op; on the
-        // SSH-over-WebRTC path the SSH child-channel open is genuinely
-        // async and this delay is what prevents the first keystroke
-        // from being silently dropped.
-        Task { @MainActor [weak self] in
-            guard let self, let ws = await self.awaitWS(for: generation) else { return }
-            await self.sendBinaryFrames(frames, on: ws, generation: generation)
-        }
+        enqueueTerminalWrites([.frames(frames)])
     }
 
-    private func sendBinaryFrames(
-        _ frames: [Data],
-        on ws: WebSocketClient,
-        generation: UInt64
-    ) async {
-        for data in frames {
-            guard isCurrentTransport(generation) else { return }
-            try? await ws.send(.binary(data))
+    private func resetTerminalWrites() {
+        terminalWriteGeneration &+= 1
+        terminalWriteTask?.cancel()
+        terminalWriteTask = nil
+        terminalWrites.removeAll()
+    }
+
+    private func enqueueTerminalWrites(_ writes: [TerminalWrite]) {
+        guard !stopped else { return }
+        terminalWrites.append(contentsOf: writes)
+        guard terminalWriteTask == nil else { return }
+        let generation = transportGeneration
+        let writeGeneration = terminalWriteGeneration
+        // A MainActor task per keystroke does not preserve wire order: each
+        // async socket send can hop to another executor and suspend. One
+        // drain owns all ordinary input until its transport write completes.
+        terminalWriteTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.terminalWriteGeneration == writeGeneration {
+                    self.terminalWriteTask = nil
+                    self.terminalWrites.removeAll()
+                }
+            }
+            @MainActor func isCurrent() -> Bool {
+                !Task.isCancelled && self.isCurrentTransport(generation)
+                    && self.terminalWriteGeneration == writeGeneration
+            }
+            guard let ws = await self.awaitWS(for: generation), isCurrent() else { return }
+            while !self.terminalWrites.isEmpty {
+                guard isCurrent() else { return }
+                let batch = self.terminalWrites
+                self.terminalWrites.removeAll()
+                for write in batch {
+                    guard isCurrent() else { return }
+                    switch write {
+                    case .frames(let frames):
+                        for data in frames {
+                            guard isCurrent() else { return }
+                            try? await ws.send(.binary(data))
+                        }
+                    case let .ownerResize(cols, rows, pixels, epoch):
+                        guard ws.supportsWebControlTextFrames else { continue }
+                        self.diagnosticOwnerResizeRequests &+= 1
+                        await ws.ownerResize(clientID: self.displayClientID, epoch: epoch,
+                            cols: Int(cols), rows: Int(rows), pixels: pixels)
+                    case let .legacyResize(cols, rows):
+                        guard !ws.supportsWebControlTextFrames else { continue }
+                        await ws.resize(cols: Int(cols), rows: Int(rows))
+                    }
+                }
+            }
         }
     }
 
@@ -1368,21 +1407,31 @@ public final class SessionClient {
                 if snapshot.epoch == last.epoch, snapshot.revision < last.revision { break }
             }
             let wasOwner = isOwner
+            let previousEpoch = ownershipSnapshot?.epoch
             let wasUsingSnapshotCanvas = snapshotCanvasGrid != nil
             ownershipSnapshot = snapshot
+            let retainedOwnership = wasOwner && isOwner && previousEpoch == snapshot.epoch
+            if wasOwner, !retainedOwnership {
+                // Input has no epoch on the wire. After loss/reacquisition the
+                // host would accept old queued bytes as current-owner input.
+                // An already submitted write cannot be recalled; discard every
+                // unsent write, even if the intermediate loss snapshot was missed.
+                resetTerminalWrites()
+                clearPendingInput()
+            }
             Self.trace.notice("ownership owner=\(snapshot.ownerClientID?.rawValue ?? "none", privacy: .public) grid=\(snapshot.grid.cols)x\(snapshot.grid.rows) epoch=\(snapshot.epoch) rev=\(snapshot.revision) isOwner=\(self.isOwner) wasOwner=\(wasOwner) canvas=\(self.gridTraceLabel(self.snapshotCanvasGrid), privacy: .public) native=\(self.gridTraceLabel(self.nativeGrid), privacy: .public)")
             if let id = imagePasteID, let epoch = imagePasteEpoch,
                !isOwner || snapshot.epoch != epoch {
                 finishImagePaste(id: id, error: "Image paste was interrupted because pane control changed.")
             }
             if isOwner {
-                if !wasOwner, wasUsingSnapshotCanvas {
+                if !retainedOwnership, wasUsingSnapshotCanvas {
                     // The canvas retains the host's native grid through rotations.
                     // Wait for its release before using a physical owner viewport.
                     awaitingOwnerViewport = true
                 }
                 guard !awaitingOwnerViewport else { break }
-                if !wasOwner,
+                if !retainedOwnership,
                    ownershipTransportMode == .webControl,
                    let viewport = lastIOSViewport {
                     flushPendingInputAfterOwnerResize(
@@ -1392,9 +1441,7 @@ public final class SessionClient {
                     flushPendingInput()
                 }
             } else {
-                if wasOwner {
-                    clearPendingInput()
-                } else if let baseEpoch = pendingInput.takeoverBaseEpoch, snapshot.epoch > baseEpoch {
+                if let baseEpoch = pendingInput.takeoverBaseEpoch, snapshot.epoch > baseEpoch {
                     clearPendingInput()
                 }
             }

@@ -521,7 +521,21 @@ struct SessionClientTests {
 
     final class FakeWS: WebSocketClient, @unchecked Sendable {
         private let lock = NSLock()
+        private let receiver: DelayedReceiveWS?
+        init(receiver: DelayedReceiveWS? = nil) { self.receiver = receiver }
         private var _sent: [WebSocketFrame] = []
+        private var pauseNextFrame = false
+        private var pausedSend: CheckedContinuation<Void, Never>?
+        var hasPausedSend: Bool { lock.withLock { pausedSend != nil } }
+        func pauseNextSend() { lock.withLock { pauseNextFrame = true } }
+        func releaseSend() {
+            let continuation = lock.withLock {
+                let result = pausedSend
+                pausedSend = nil
+                return result
+            }
+            continuation?.resume()
+        }
         var sent: [WebSocketFrame] {
             lock.withLock { _sent }
         }
@@ -531,13 +545,26 @@ struct SessionClientTests {
         var supportsWebControlTextFrames: Bool { true }
         var closed = false
         func send(_ frame: WebSocketFrame) async throws {
+            let shouldPause = lock.withLock {
+                let result = pauseNextFrame
+                pauseNextFrame = false
+                return result
+            }
+            if shouldPause {
+                // Deliberately ignore cancellation: an in-flight transport write
+                // may complete after suspend. Later queued bytes must still stop.
+                await withCheckedContinuation { continuation in
+                    lock.withLock { pausedSend = continuation }
+                }
+            }
             lock.withLock { _sent.append(frame) }
         }
         func receive() async throws -> WebSocketFrame {
+            if let receiver { return try await receiver.receive() }
             try await Task.sleep(nanoseconds: 10_000_000_000)
             throw CancellationError()
         }
-        func close() { closed = true }
+        func close() { closed = true; receiver?.fail(CancellationError()) }
         func sendHello(
             clientID: DisplayClientID,
             kind: DisplayClientKind,
@@ -574,6 +601,229 @@ struct SessionClientTests {
             ).encoded()
             try? await send(.text(payload))
         }
+    }
+
+    @Test("@spec IOS-6.39: When mobile terminal writes suspend, the application shall preserve input order through subsequent typing, control keys, owner-transition resizes, and image paste, and discard unsent input when its transport is replaced or its ownership tenure changes.")
+    func suspendedTerminalWritePreservesTypingAndControlOrder() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop(); ws.releaseSend() }
+        try await confirmOwner(client, ws: ws)
+        ws.clearSent()
+        ws.pauseNextSend()
+        client.sendSoftwareKeyboardText("V")
+        try await waitUntil("first character suspended") { ws.hasPausedSend }
+        client.sendSoftwareKeyboardText("I")
+        client.submitReturn()
+        client.deleteBackward()
+        try await expectNever("later input overtook suspended character") { !binaryFrames(ws).isEmpty }
+        ws.releaseSend()
+        try await waitUntil("ordered input delivered") { binaryFrames(ws).count == 4 }
+        #expect(binaryFrames(ws) == [Data("V".utf8), Data("I".utf8), Data([0x0D]), Data([0x7F])])
+    }
+
+    @Test(arguments: ["suspend", "explicit", "automatic"])
+    func suspendedTerminalWriteDropsUnsentInputAfterReplacement(reconnect: String) async throws {
+        let receiver = DelayedReceiveWS()
+        let first = FakeWS(receiver: receiver)
+        let second = FakeWS()
+        let sequence = WebSocketSequence([first, second])
+        let client = SessionClient(sessionName: "s", webSocketFactory: { try sequence.next() }, backoffSchedule: [0])
+        client.start()
+        defer { client.stop(); first.releaseSend(); second.releaseSend() }
+        try await confirmOwner(client, ws: first)
+        try await waitUntil("original receive waiting") { receiver.receiveCalls == 1 }
+        first.clearSent()
+        first.pauseNextSend()
+        client.sendSoftwareKeyboardText("old")
+        try await waitUntil("old transport write suspended") { first.hasPausedSend }
+        client.sendSoftwareKeyboardText("discard")
+        client.submitReturn()
+        switch reconnect {
+        case "automatic": receiver.fail(URLError(.networkConnectionLost))
+        case "explicit": client.forceReconnectNow()
+        default: client.suspend(); client.resume()
+        }
+        try await confirmOwner(client, ws: second)
+        second.pauseNextSend()
+        client.sendSoftwareKeyboardText("new")
+        try await waitUntil("replacement write started independently of old writer") { second.hasPausedSend }
+        client.submitReturn()
+        first.releaseSend()
+        try await waitUntil("old in-flight write finished") { binaryFrames(first).contains(Data("old".utf8)) }
+        try await expectNever("unsent old input survived transport replacement") {
+            binaryFrames(first).count != 1 || !binaryFrames(second).isEmpty
+        }
+        second.releaseSend()
+        try await waitUntil("replacement queue survived late old completion") { binaryFrames(second).count == 2 }
+        #expect(binaryFrames(second) == [Data("new".utf8), Data([0x0D])])
+    }
+
+    @Test
+    func liveInputCannotOvertakeSuspendedOwnerPromotionResize() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop(); ws.releaseSend() }
+        let clientID = try await waitForHelloClientID(ws)
+        primeViewport(client, columns: 47, rows: 45)
+        try confirmFollower(client, cols: 94, rows: 44)
+        client.sendSoftwareKeyboardText("old")
+        try await waitUntil("takeover request") { envelopes(ws).contains { if case .takeControl = $0 { return true }; return false } }
+        ws.clearSent()
+        ws.pauseNextSend()
+        let owned = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, cols: 94, rows: 44, epoch: 2)
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(
+            columns: 47, rows: 45, widthPixels: 564, heightPixels: 1080,
+            cellWidthPixels: 12, cellHeightPixels: 24))
+        try await waitUntil("promotion resize suspended") { ws.hasPausedSend }
+        client.sendSoftwareKeyboardText("new")
+        client.submitReturn()
+        try await expectNever("live input overtook promotion resize") { !binaryFrames(ws).isEmpty }
+        ws.releaseSend()
+        try await waitUntil("promotion input delivered") { binaryFrames(ws).count == 3 }
+        #expect(binaryFrames(ws) == [Data("old".utf8), Data("new".utf8), Data([0x0D])])
+        #expect(ws.sent.first == .text(WebControlEnvelope.ownerResize(clientID: clientID, epoch: 2, cols: 47, rows: 45).encoded()))
+    }
+
+    @Test
+    func imagePasteWaitsForEarlierInputAndDrainsBeforeLaterTyping() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop(); ws.releaseSend() }
+        try await confirmOwner(client, ws: ws)
+        client.handleTextFrame(WebControlEnvelope.imagePaste(.available).encoded())
+        ws.clearSent()
+        ws.pauseNextSend()
+        client.sendSoftwareKeyboardText("before")
+        try await waitUntil("input preceding paste suspended") { ws.hasPausedSend }
+        client.sendImagePaste(Data([1, 2, 3]))
+        client.sendSoftwareKeyboardText("after")
+        try await expectNever("image upload overtook preceding input") { !ws.sent.isEmpty }
+        ws.releaseSend()
+        try await waitUntil("image upload committed") { imageCommitID(ws) != nil }
+        #expect(ws.sent.first == .binary(Data("before".utf8)))
+        let id = try #require(imageCommitID(ws))
+        ws.pauseNextSend()
+        client.handleTextFrame(WebControlEnvelope.imagePaste(.result(id: id, error: nil)).encoded())
+        try await waitUntil("paste input drain suspended") { ws.hasPausedSend }
+        client.sendSoftwareKeyboardText("later")
+        client.submitReturn()
+        try await expectNever("new input overtook paste drain") { binaryFrames(ws).count != 1 }
+        ws.releaseSend()
+        try await waitUntil("paste input and later typing delivered") { binaryFrames(ws).count == 4 }
+        #expect(binaryFrames(ws) == [Data("before".utf8), Data("after".utf8), Data("later".utf8), Data([0x0D])])
+    }
+
+    @Test(arguments: [false, true])
+    func imagePasteWaitsForPromotionAndRechecksOwnership(losesOwnership: Bool) async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop(); ws.releaseSend() }
+        let clientID = try await waitForHelloClientID(ws)
+        primeViewport(client, columns: 47, rows: 45)
+        try confirmFollower(client, cols: 94, rows: 44)
+        client.handleTextFrame(WebControlEnvelope.imagePaste(.available).encoded())
+        client.sendSoftwareKeyboardText("before")
+        try await waitUntil("takeover requested") { envelopes(ws).contains { if case .takeControl = $0 { return true }; return false } }
+        ws.clearSent()
+        ws.pauseNextSend()
+        client.sendImagePaste(Data([1, 2, 3]))
+        let owned = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, cols: 94, rows: 44, epoch: 2)
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(
+            columns: 47, rows: 45, widthPixels: 564, heightPixels: 1080,
+            cellWidthPixels: 12, cellHeightPixels: 24))
+        try await waitUntil("promotion resize suspended before paste") { ws.hasPausedSend }
+        try await expectNever("image upload bypassed promotion resize") { !ws.sent.isEmpty }
+        if losesOwnership { try confirmFollower(client, epoch: 3) }
+        ws.releaseSend()
+        if losesOwnership {
+            try await waitUntil("paste rejected after control changed") { client.imagePasteError != nil }
+            #expect(!envelopes(ws).contains { if case .imagePaste(.begin) = $0 { return true }; return false })
+        } else {
+            try await waitUntil("image upload progressed after promotion") { imageCommitID(ws) != nil }
+            #expect(ws.sent.prefix(2) == [
+                .text(WebControlEnvelope.ownerResize(clientID: clientID, epoch: 2, cols: 47, rows: 45).encoded()),
+                .binary(Data("before".utf8)),
+            ])
+            let id = try #require(imageCommitID(ws))
+            client.handleTextFrame(WebControlEnvelope.imagePaste(.result(id: id, error: nil)).encoded())
+            #expect(client.imagePasteError == nil)
+            #expect(client.imagePasteProgress == nil)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func queuedInputDoesNotSurviveOwnershipTenureChange(observesLoss: Bool) async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop(); ws.releaseSend() }
+        let clientID = try await confirmOwner(client, ws: ws)
+        primeViewport(client, columns: 47, rows: 45)
+        try await waitUntil("original owner resize delivered") { envelopes(ws).contains { if case .ownerResize = $0 { return true }; return false } }
+        ws.clearSent()
+        ws.pauseNextSend()
+        client.sendSoftwareKeyboardText("in-flight")
+        try await waitUntil("original tenure write suspended") { ws.hasPausedSend }
+        client.sendSoftwareKeyboardText("discard")
+        client.submitReturn()
+        if observesLoss { try confirmFollower(client, epoch: 2) }
+        let reacquired = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, epoch: 3)
+        client.handleTextFrame(WebControlEnvelope.ownership(reacquired).encoded())
+        if observesLoss {
+            client.physicalViewportDidBecomeReady(InMemoryTerminalViewport(
+                columns: 47, rows: 45, widthPixels: 564, heightPixels: 1080,
+                cellWidthPixels: 12, cellHeightPixels: 24))
+        }
+        client.sendSoftwareKeyboardText("fresh")
+        client.submitReturn()
+        ws.releaseSend()
+        try await waitUntil("previously submitted write completed") { binaryFrames(ws).contains(Data("in-flight".utf8)) }
+        try await waitUntil("fresh ownership input delivered") { binaryFrames(ws).contains(Data("fresh".utf8)) }
+        try await waitUntil("fresh submit delivered") {
+            binaryFrames(ws).filter { $0 != Data("in-flight".utf8) }.last == Data([0x0D])
+        }
+        // The already submitted frame can finish independently; only the
+        // unsent tail is discardable, and all fresh input follows the new resize.
+        #expect(binaryFrames(ws).filter { $0 != Data("in-flight".utf8) } == [Data("fresh".utf8), Data([0x0D])])
+        #expect(ws.sent.filter { $0 != .binary(Data("in-flight".utf8)) } == [
+            .text(WebControlEnvelope.ownerResize(clientID: clientID, epoch: 3, cols: 47, rows: 45).encoded()),
+            .binary(Data("fresh".utf8)), .binary(Data([0x0D])),
+        ])
+    }
+
+    @Test
+    func imagePasteCannotAdoptReacquiredOwnershipWhileWaitingForEarlierWrite() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop(); ws.releaseSend() }
+        let clientID = try await confirmOwner(client, ws: ws)
+        client.handleTextFrame(WebControlEnvelope.imagePaste(.available).encoded())
+        ws.clearSent()
+        ws.pauseNextSend()
+        client.sendSoftwareKeyboardText("before")
+        try await waitUntil("write preceding paste suspended") { ws.hasPausedSend }
+        client.sendImagePaste(Data([1, 2, 3]))
+        try await expectNever("paste started before preceding input completed") { !ws.sent.isEmpty }
+        try confirmFollower(client, epoch: 2)
+        let reacquired = try ownershipSnapshot(ownerClientID: clientID, ownerKind: .ios, epoch: 3)
+        client.handleTextFrame(WebControlEnvelope.ownership(reacquired).encoded())
+        // The new tenure has not released its follower canvas or measured a
+        // physical viewport. An old paste must not adopt this new epoch.
+        ws.releaseSend()
+        try await waitUntil("old input finished") { binaryFrames(ws).contains(Data("before".utf8)) }
+        try await expectNever("old paste uploaded in a new ownership tenure") {
+            envelopes(ws).contains { if case .imagePaste(.begin) = $0 { return true }; return false }
+        }
+        #expect(client.imagePasteError != nil)
+        #expect(client.imagePasteProgress == nil)
     }
 
     @Test("""

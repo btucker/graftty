@@ -2120,6 +2120,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.38** When the user toggles Auto-correct in the iOS keyboard accessory tray, the application shall enable or disable native terminal autocorrection without changing existing text or sending terminal input, default to off, and remember the preference across panes and app launches.
 
+**IOS-6.39** When mobile terminal writes suspend, the application shall preserve input order through subsequent typing, control keys, owner-transition resizes, and image paste, and discard unsent input when its transport is replaced or its ownership tenure changes.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.
