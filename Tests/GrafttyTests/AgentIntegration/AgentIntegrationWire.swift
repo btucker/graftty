@@ -64,7 +64,7 @@ struct AgentIntegrationCommand: Codable, Equatable, Sendable {
     var parameters: [String: String] = [:]
 
     var isSupported: Bool {
-        ["idle", "start", "snapshot", "resize", "takeControl", "scroll", "select", "reconnect",
+        ["idle", "start", "snapshot", "resize", "takeControl", "scroll", "select", "loadedHistory", "reconnect",
          "connect", "acceptOffer", "roster", "message", "input", "keyboard", "visibility", "recreate", "verify", "finish"].contains(operation)
     }
 }

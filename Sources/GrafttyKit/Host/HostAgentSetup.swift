@@ -4,17 +4,27 @@ import Foundation
 /// explicitly requested. Plain terminal hosting never depends on providers.
 public actor HostAgentSetup {
     private let configuration: HostConfiguration
+    private let executor: (any CLIExecutor)?
+    private let installer: AgentPluginInstaller?
     private var configured: Set<TeamHookRuntime> = []
     private var tail: Task<Void, Error>?
-    public init(configuration: HostConfiguration) { self.configuration = configuration }
+    public init(configuration: HostConfiguration, executor: (any CLIExecutor)? = nil,
+                installer: AgentPluginInstaller? = nil) {
+        self.configuration = configuration
+        self.executor = executor
+        self.installer = installer
+    }
 
     public func ensure(_ runtime: TeamHookRuntime) async throws {
         if configured.contains(runtime) { return }
         let previous = tail
         let configuration = configuration
+        let executor = executor
+        let installer = installer
         let task = Task {
             _ = try? await previous?.value
-            try await Self.install(configuration: configuration, provider: runtime)
+            try await Self.install(configuration: configuration, provider: runtime,
+                                   executor: executor, installer: installer)
         }
         tail = task
         try await task.value

@@ -25,7 +25,7 @@ REPO = Path(__file__).resolve().parents[2]
 AGENTS = ('claude', 'codex', 'claude-peer', 'codex-peer')
 
 
-def execute(command, *, env=None, timeout=180, log=None):
+def execute(command, *, env=None, timeout=180, log=None, strip=True):
     if log:
         with Path(log).open('wb') as output:
             result = subprocess.run(command, cwd=REPO, env=env, stdout=output, stderr=subprocess.STDOUT, timeout=timeout)
@@ -33,7 +33,8 @@ def execute(command, *, env=None, timeout=180, log=None):
         result = subprocess.run(command, cwd=REPO, env=env, capture_output=True, timeout=timeout)
     if result.returncode:
         raise InvariantFailure(f'command failed ({result.returncode}): {command}; log={log or result.stderr.decode(errors="replace")}')
-    return result.stdout.decode().strip() if not log else ''
+    output = result.stdout.decode() if not log else ''
+    return output.strip() if strip else output
 
 
 def prepare_home(root, endpoint, codex, claude):
@@ -166,6 +167,7 @@ class Run:
             raise InvariantFailure('selected simulator is unavailable')
         runtime = next(key for key, values in devices['devices'].items() if selected in values)
         self.summary['simulator'] = {'udid': self.simulator, 'name': selected['name'], 'runtime': runtime}
+        (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
         if selected['state'] != 'Booted':
             execute(['xcrun', 'simctl', 'boot', self.simulator])
         execute(['xcrun', 'simctl', 'bootstatus', self.simulator, '-b'], timeout=300, log=self.root / 'simulator-boot.log')
@@ -382,14 +384,17 @@ class Run:
                     and value['nativeGrid'] == value['grid'])
         return self.wait_snapshot(agent, settled, 'mobile')
 
-    def check_mobile_reentry(self, agent, stage):
+    def check_mobile_reentry(self, agent, stage, *, authoritative_viewport=None):
         deadline = time.monotonic() + 5
         status = 'passed'
         while True:
             value = self.snapshot(agent, 'mobile')
             authoritative = self.act(Action('verify', agent))
             try:
-                assert_reentry_viewport(value, agent, authoritative['authoritativeText'])
+                expected = authoritative['authoritativeText']
+                if authoritative_viewport is not None:
+                    expected = authoritative_viewport(value['physicalRows'], expected)
+                assert_reentry_viewport(value, agent, expected)
             except InvariantFailure as error:
                 if time.monotonic() < deadline:
                     time.sleep(.1)
@@ -472,26 +477,52 @@ class Run:
     def run(self):
         self.thread.start()
         print(f'Native integration artifacts: {self.root}', flush=True)
-        self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude)
-        self.summary['providerVersions'] = {name: execute([str(getattr(self.options, name)), '--version'], env=self.env)
-                                            for name in ('claude', 'codex')}
-        self.summary['commit'] = execute(['git', 'rev-parse', 'HEAD'])
-        self.summary['dirty'] = bool(execute(['git', 'status', '--porcelain']))
-        self.summary['zmx'] = {'path': str(self.options.zmx),
-                               'sha256': hashlib.sha256(self.options.zmx.read_bytes()).hexdigest()}
-        self.env['GRAFTTY_SWIFTPM_SHARED_DIR'] = str(self.options.cache)
-        if self.options.ghostty_package:
-            self.env['GRAFTTY_GHOSTTY_PACKAGE_PATH'] = str(self.options.ghostty_package)
-        manifest = {'endpoint': self.server.endpoint, 'root': str(self.root), 'cli': str(self.options.cli),
-                    'zmx': str(self.options.zmx), 'codex': str(self.options.codex), 'claude': str(self.options.claude),
-                    'seed': self.options.seed}
-        self.server.manifest = manifest
-        manifest_file = self.root / 'manifest.json'
-        manifest_file.write_text(json.dumps(manifest))
-        self.env['GRAFTTY_AGENT_INTEGRATION_MANIFEST'] = str(manifest_file)
-        (self.root / 'bin' / 'graftty').symlink_to(self.options.cli)
+        self.env = {}
         failure = None
         try:
+            self.summary['invocation'] = {'executable': sys.executable, 'argv': list(sys.argv),
+                'interpreterArgv': list(sys.orig_argv) if hasattr(sys, 'orig_argv') else None, 'cwd': os.getcwd()}
+            self.summary['inputs'] = {key: str(value) if isinstance(value, Path) else value
+                                     for key, value in vars(self.options).items()}
+            self.summary['providerVersions'] = {}
+            self.summary['commit'] = execute(['git', 'rev-parse', 'HEAD'])
+            self.summary['sourceStatus'] = execute(['git', 'status', '--porcelain'], strip=False)
+            self.summary['dirty'] = bool(self.summary['sourceStatus'])
+            source_diff = execute(['git', 'diff', '--binary', 'HEAD'], strip=False)
+            (self.root / 'source.diff').write_text(source_diff)
+            self.summary['sourceDiffSHA256'] = hashlib.sha256(source_diff.encode()).hexdigest()
+            for name in ('cli', 'zmx'):
+                path = getattr(self.options, name)
+                self.summary[name] = {'path': str(path)}
+                self.summary[name]['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+            # Persist provenance before home setup, version commands, or native
+            # builds can fail. Unobserved metadata stays absent, never guessed.
+            (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
+            self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude)
+            if getattr(self.options, 'worktree_creation', False):
+                # CLI-created Codex uses its configured model header without the
+                # direct-launch export. Claude has its own endpoint and ignores it.
+                self.env['GRAFTTY_TEST_AGENT'] = 'codex'
+            if getattr(self.options, 'worktree_creation', False) and not getattr(self.options, 'worktree_creation_viewport_only', False):
+                # This scenario verifies real terminal history. Claude's fullscreen
+                # renderer virtualizes old rows inside the provider instead.
+                self.env['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN'] = '1'
+                self.summary['providerModes'] = {'claude': 'classic (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)',
+                                                 'codex': 'default'}
+            for name in ('claude', 'codex'):
+                self.summary['providerVersions'][name] = execute([str(getattr(self.options, name)), '--version'], env=self.env)
+            self.env['GRAFTTY_SWIFTPM_SHARED_DIR'] = str(self.options.cache)
+            if self.options.ghostty_package:
+                self.env['GRAFTTY_GHOSTTY_PACKAGE_PATH'] = str(self.options.ghostty_package)
+            manifest = {'endpoint': self.server.endpoint, 'root': str(self.root), 'cli': str(self.options.cli),
+                        'zmx': str(self.options.zmx), 'codex': str(self.options.codex), 'claude': str(self.options.claude),
+                        'seed': self.options.seed}
+            self.server.manifest = manifest
+            manifest_file = self.root / 'manifest.json'
+            manifest_file.write_text(json.dumps(manifest))
+            self.env['GRAFTTY_AGENT_INTEGRATION_MANIFEST'] = str(manifest_file)
+            (self.root / 'bin' / 'graftty').symlink_to(self.options.cli)
+            (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
             if not self.options.mac_only:
                 self.prepare_mobile()
             self.spawn([str(REPO / 'scripts/swiftpm'), 'test', '--build-system', 'native', '--filter', 'AgentIntegrationNativeTests'], self.env, 'mac')
@@ -535,13 +566,14 @@ class Run:
                     if failure is None:
                         failure = InvariantFailure(f'{name} native test process did not finish')
             # All commands are scoped to this run's private daemon directory.
-            zmx_env = dict(self.env, ZMX_DIR=str(Path(self.env['GRAFTTY_STATE_DIR']) / 'zmx'))
             try:
-                result = subprocess.run([str(self.options.zmx), 'list'], env=zmx_env, capture_output=True, timeout=5)
-                for line in result.stdout.decode().splitlines():
-                    session = line.split()[0] if line.split() else ''
-                    if session.startswith('graftty-'):
-                        subprocess.run([str(self.options.zmx), 'kill', '--force', session], env=zmx_env, capture_output=True, timeout=5)
+                if self.env.get('GRAFTTY_STATE_DIR'):
+                    zmx_env = dict(self.env, ZMX_DIR=str(Path(self.env['GRAFTTY_STATE_DIR']) / 'zmx'))
+                    result = subprocess.run([str(self.options.zmx), 'list'], env=zmx_env, capture_output=True, timeout=5)
+                    for line in result.stdout.decode().splitlines():
+                        session = line.split()[0] if line.split() else ''
+                        if session.startswith('graftty-'):
+                            subprocess.run([str(self.options.zmx), 'kill', '--force', session], env=zmx_env, capture_output=True, timeout=5)
             except (OSError, subprocess.TimeoutExpired) as error:
                 self.summary.setdefault('cleanupErrors', []).append(str(error))
             if self.owns_simulator:
@@ -574,6 +606,11 @@ def main():
     parser.add_argument('--ghostty-package', type=Path, required=True, help='Snapshot-enabled local Ghostty package')
     parser.add_argument('--simulator', help='Use this test device without deleting it; default creates a private device')
     parser.add_argument('--mac-only', action='store_true', help='Debug the native Mac and messaging paths without claiming mobile coverage')
+    parser.add_argument('--worktree-creation', action='store_true', help='Create provider worktrees through the CLI without mounting Mac panes, then verify mobile viewport stability')
+    parser.add_argument('--worktree-creation-viewport-only', action='store_true',
+                        help='Run bounded default-mode Claude lifecycle checks without a terminal-history oracle')
+    parser.add_argument('--worktree-creation-source', choices=('cli', 'app-flow'), default='cli',
+                        help='Startup boundary for --worktree-creation; app-flow exercises AddWorktreeFlow and TerminalManager')
     parser.add_argument('--worktree-reentry', action='store_true', help='Test retained mobile routes with keyboard changes and hidden ownership transitions')
     parser.add_argument('--history', action='store_true', help='Test dense wide provider output through bounded mobile history paging')
 
@@ -592,6 +629,10 @@ def main():
         setattr(options, name, getattr(options, name).resolve(strict=True))
     if options.seed < 0 or options.actions < 0 or options.rows < 100:
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
+    if options.worktree_creation_viewport_only and not options.worktree_creation:
+        parser.error('--worktree-creation-viewport-only requires --worktree-creation')
+    if options.worktree_creation and (options.history or options.worktree_reentry or options.colors or options.mac_only or options.replay or options.shrink):
+        parser.error('--worktree-creation requires the standalone native mobile scenario')
     if options.history and (options.worktree_reentry or options.colors or options.mac_only or options.replay or options.shrink):
         parser.error('--history requires mobile and runs separately from other scenarios and generated actions')
     if options.worktree_reentry and options.colors:
@@ -601,7 +642,10 @@ def main():
     if options.worktree_reentry and (options.replay or options.shrink):
         parser.error('--worktree-reentry does not use generated action replay or shrinking')
     actions = [Action(**value) for value in json.loads(options.replay.read_text())] if options.replay else None
-    if options.colors:
+    if options.worktree_creation:
+        from worktree_creation import WorktreeCreationRun
+        run = WorktreeCreationRun(options)
+    elif options.colors:
         if options.replay or options.shrink:
             parser.error('--colors does not support generated-action replay or shrinking')
         from colors import ColorRun

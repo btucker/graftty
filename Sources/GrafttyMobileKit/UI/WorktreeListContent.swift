@@ -1803,7 +1803,7 @@ private func themedOrSecondary(_ themed: Color?) -> AnyShapeStyle {
 /// Type icon + optional PR badge + display name (italic for main
 /// checkout, strikethrough when stale), optional secondary branch
 /// label stacked beneath the display name when present (IPAD-1.15).
-private struct WorktreeRowContent: View {
+struct WorktreeRowContent: View {
     let worktree: WorktreePanes
     var project: SidebarProject? = nil
     var projectIconData: Data? = nil
@@ -1859,9 +1859,13 @@ private struct WorktreeRowContent: View {
     @ViewBuilder
     private var typeIcon: some View {
         if worktree.state.isInFlight || isOpening {
-            ProgressView()
-                .controlSize(.mini)
+            // Supply the title's text baseline; ProgressView's UIKit baseline
+            // does not identify the center of the worktree's icon slot.
+            Text(" ")
+                .font(.callout)
+                .hidden()
                 .frame(width: 14)
+                .overlay { ProgressView().controlSize(.mini) }
         } else if worktree.iconIdentity != .none {
             WorktreeIdentityView(identity: worktree.iconIdentity,
                 project: project ?? SidebarProjection.projects([worktree])[0],
