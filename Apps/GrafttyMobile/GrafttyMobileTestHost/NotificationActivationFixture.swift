@@ -311,7 +311,7 @@ final class NotificationActivationFixture {
             "live": String(selectedPane?.client.connectionState == .live),
             "mounted": String(visibleFrame != nil && matchesSelectedClient),
             "matchesSelectedClient": String(matchesSelectedClient),
-            "visibleFrame": visibleFrame.map(NSStringFromCGRect) ?? "",
+            "visibleFrame": visibleFrame.map { NSCoder.string(for: $0) } ?? "",
             "surfaceReady": String(container?.terminalView.surface != nil),
             "physicalRows": selectedPane?.client.session.readViewportRowsText() ?? "",
             "nativeGrid": metrics.map { "\($0.columns)x\($0.rows)" } ?? "",
