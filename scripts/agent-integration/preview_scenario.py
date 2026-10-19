@@ -80,6 +80,22 @@ def wait_preview_owner_grid(run, agent, timeout=15):
         time.sleep(.1)
 
 
+def send_post_preview_input(run, agent, phase, nonce):
+    models = run.server.models
+    def complete_preview():
+        models.release(agent, phase + ':end')
+        run.wait_model(lambda: (agent, phase) in models.completed_streams)
+    # Codex steers a running response when Return submits new native input.
+    # Finish the held response after all preview assertions, before that input,
+    # so cancellation cannot replace the required stream completion evidence.
+    if agent == 'codex':
+        complete_preview()
+    run.act(Action('previewInput', agent, {'text': 'GRAFTTY_TEST_PREVIEW_ACK ' + nonce}, client='gestures'))
+    run.act(Action('previewHideKeyboard', agent, client='gestures'))
+    if agent != 'codex':
+        complete_preview()
+
+
 def finish_claude_preview_turn(run, queued_nonce, recaps_before):
     """Finish a new native turn after Claude consumes input inside its Stop hook."""
     models = run.server.models
@@ -192,10 +208,7 @@ def run_preview(run):
                 if not prior_markers or not prior_markers.issubset(set(after['loadedHistory'].splitlines())):
                     raise InvariantFailure('Quick Look lost previously loaded native history rows')
                 post_nonce = uuid.uuid4().hex
-                run.act(Action('previewInput', agent, {'text': 'GRAFTTY_TEST_PREVIEW_ACK ' + post_nonce}, client='gestures'))
-                run.act(Action('previewHideKeyboard', agent, client='gestures'))
-                models.release(agent, phase + ':end')
-                run.wait_model(lambda: (agent, phase) in models.completed_streams)
+                send_post_preview_input(run, agent, phase, post_nonce)
                 if (agent, nonce, 'preview') not in models.receipts:
                     raise InvariantFailure('Native prompt receipt missing')
                 # All Quick Look continuity assertions are complete. Return

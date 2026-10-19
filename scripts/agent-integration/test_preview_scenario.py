@@ -6,6 +6,45 @@ from preview_scenario import require_continuity, require_matrix
 
 
 class PreviewEvidenceTests(unittest.TestCase):
+    def test_codex_completes_held_stream_before_native_return_input(self):
+        self.check_return_input_order('codex', ['release', 'complete', 'previewInput', 'previewHideKeyboard'])
+
+    def test_claude_preserves_queued_native_return_input(self):
+        self.check_return_input_order('claude', ['previewInput', 'previewHideKeyboard', 'release', 'complete'])
+
+    def test_codex_does_not_type_if_original_stream_never_completes(self):
+        self.check_return_input_order('codex', ['release'], complete=False)
+
+    def check_return_input_order(self, provider, expected, complete=True):
+        from types import SimpleNamespace
+        from preview_scenario import send_post_preview_input
+        phase, nonce = 'preview:' + 'a' * 32, 'b' * 32
+        events = []
+        models = SimpleNamespace(completed_streams={(provider, 'preview:unrelated')})
+        def release(agent, barrier):
+            self.assertEqual((provider, phase + ':end'), (agent, barrier))
+            events.append('release')
+        models.release = release
+        def wait_model(predicate):
+            self.assertFalse(predicate())
+            if not complete:
+                raise InvariantFailure('original stream did not complete')
+            models.completed_streams.add((provider, phase))
+            self.assertTrue(predicate())
+            events.append('complete')
+        def act(action):
+            self.assertEqual('gestures', action.client)
+            if action.operation == 'previewInput':
+                self.assertEqual({'text': 'GRAFTTY_TEST_PREVIEW_ACK ' + nonce}, action.parameters)
+            events.append(action.operation)
+        run = SimpleNamespace(server=SimpleNamespace(models=models), wait_model=wait_model, act=act)
+        if complete:
+            send_post_preview_input(run, provider, phase, nonce)
+        else:
+            with self.assertRaises(InvariantFailure):
+                send_post_preview_input(run, provider, phase, nonce)
+        self.assertEqual(expected, events)
+
     def test_claude_idle_ack_requires_native_receipt_and_a_new_real_recap(self):
         self.check_claude_idle_ack(final_recap=True)
 
