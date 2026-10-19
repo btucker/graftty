@@ -2,10 +2,26 @@
 import json
 import re
 import time
+from urllib.parse import urlsplit
 
 from harness import Action, InvariantFailure, assert_buffer_matches
 from model import reentry_scenario_text
 from run import Run
+
+
+def claude_auto_mode_notice_ready(text, endpoint):
+    # Claude 2.1.296 pauses its first tool on this gateway billing notice.
+    # Match the complete active footer and this fixture's exact endpoint;
+    # this must never acknowledge an unrelated tool approval or old transcript.
+    host = urlsplit(endpoint).netloc
+    notice = f"""We're changing auto mode to no longer charge for classifier requests in Claude Code.
+        However, this session isn't eligible because your requests go through {host}, which isn't compatible with this
+        update.
+        Nothing breaks: auto mode keeps working, and its classifier requests are billed as before.
+        To fix it and access the new version of auto mode, ask your gateway to implement:
+        https://code.claude.com/docs/en/auto-mode-classifier-billing
+        Enter to continue · Esc to cancel"""
+    return bool(host) and ' '.join(text.split()).endswith(' '.join(notice.split()))
 
 
 def provider_hooks_registered(roster, agent, path, session):
@@ -98,6 +114,53 @@ def assert_stable_grid(samples):
 
 
 class WorktreeCreationRun(Run):
+    def complete_provider_recap(self, agent):
+        models = self.server.models
+        self.act(Action('visibility', agent, {'visible': 'true'}))
+        self.act(Action('takeControl', agent))
+        models.release(agent, 'recap')
+        notice_candidate = None
+        notice_dismissed = False
+        notice_evidence = None
+        provider_version = self.summary.get('providerVersions', {}).get(agent)
+        notice_path = self.root / f'{agent}-creation-completion-notice.json'
+
+        def tick():
+            nonlocal notice_candidate, notice_dismissed, notice_evidence
+            token = models.pending_tools.get(agent, '')
+            if (agent == 'claude' and provider_version == '2.1.296 (Claude Code)'
+                    and token.startswith('recap:') and not notice_dismissed):
+                value = self.snapshot(agent)
+                text = value.get('nativeText', value.get('text', ''))
+                if claude_auto_mode_notice_ready(text, self.server.endpoint):
+                    if notice_candidate != token:
+                        notice_candidate = token
+                        return
+                    notice_evidence = {'pendingTool': token, 'endpoint': self.server.endpoint,
+                                       'providerVersion': provider_version, 'observation': value}
+                    notice_path.write_text(json.dumps(notice_evidence, indent=2))
+                    self.act(Action('input', agent, {'text': ''}))
+                    notice_dismissed = True
+                    self.summary['assertions'].append({'agent': agent,
+                        'nativeInformationalNoticeDismissed': 'claude-auto-mode-gateway-billing'})
+                    return
+                notice_candidate = None
+            self.approve_known_tools()
+
+        # Only a successful real recap tool result can satisfy this wait.
+        try:
+            models.wait(lambda: agent in models.recaps_done, timeout=60, tick=tick)
+        finally:
+            if notice_evidence is not None:
+                notice_evidence['authenticRecapReceived'] = agent in models.recaps_done
+                try:
+                    notice_evidence['afterObservation'] = self.snapshot(agent)
+                except Exception as error:
+                    # A failed observation must not replace the original missing
+                    # tool receipt or transport failure from the completion wait.
+                    notice_evidence['afterObservationError'] = f'{type(error).__name__}: {error}'
+                notice_path.write_text(json.dumps(notice_evidence, indent=2))
+
     def wait_provider_hooks(self, agent, timeout=5):
         deadline = time.monotonic() + timeout
         while True:
@@ -210,17 +273,15 @@ class WorktreeCreationRun(Run):
             self.record_stability(agent, 'portrait')
             models.release(agent, 'middle')
             self.wait_model(lambda: (agent, 'end') in models.arrived)
+            models.release(agent, 'end')
+            self.wait_model(lambda: agent in models.completed)
+            self.wait_model(lambda: (agent, 'recap') in models.arrived)
             self.check_mobile_reentry(agent, 'created-pane-output')
             if not viewport_only:
                 self.check_history(agent)
             self.act(Action('reconnect', agent, client='mobile'))
             self.record_stability(agent, 'reconnected')
             self.check_mobile_reentry(agent, 'created-pane-reconnected-output')
-            models.release(agent, 'end')
-            self.wait_model(lambda: (agent, 'recap') in models.arrived)
-            models.release(agent, 'recap')
-            self.act(Action('visibility', agent, {'visible': 'true'}))
-            self.act(Action('takeControl', agent))
-            self.wait_model(lambda: agent in models.recaps_done)
+            self.complete_provider_recap(agent)
         if self.invariant_failures:
             raise InvariantFailure('created mobile pane failed output checks')
