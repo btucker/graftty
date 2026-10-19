@@ -654,6 +654,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.42** While a native Mac terminal consumes a paged source stream, the application shall preserve its parser grid and synchronized output across local viewport and font resizes, report source dimensions, and release the source grid before legacy fallback.
 
+**TERM-12.43** When retained history contains dense wide-character rows, the application shall transfer contiguous bounded pages on Mac and mobile without reporting a memory limit solely because a native page exceeds the transport budget, preserve identical retries, and continue scrolling and live output across checkpoint recovery.
+
+**TERM-12.44** If the host cannot fit a history row within its page transport budget, then the application shall distinguish that refusal from local memory exhaustion, stop automatic retries, and preserve loaded content until explicit checkpoint recovery.
+
+**TERM-12.45** When an older daemon refuses an oversized history page, the application shall report the host page limit without automatic retries and continue live terminal input and output.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery

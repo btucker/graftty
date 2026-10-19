@@ -267,7 +267,8 @@ private final class AgentIntegrationMacHost {
                 let session = try #require(runtime.sessions().first { $0.worktreePath == path })
                 created = (path, session.name)
             } else {
-                let initial = try initialCommand(provider: provider, name: command.provider)
+                let initial = try initialCommand(provider: provider, name: command.provider,
+                    history: command.parameters["history"] == "true")
                 created = try await runtime.createWorktree(repository: repo, name: command.provider,
                     branch: command.provider, command: initial)
             }
@@ -512,7 +513,7 @@ private final class AgentIntegrationMacHost {
         guard let value = Double(try required(command, key)), (100...2000).contains(value) else { throw AgentIntegrationError("invalid dimension") }
         return value
     }
-    private func initialCommand(provider: TeamHookRuntime, name: String) throws -> String {
+    private func initialCommand(provider: TeamHookRuntime, name: String, history: Bool = false) throws -> String {
         let prompt = "GRAFTTY_TEST_BEGIN \(name)"
         let exactCommand = provider == .claude
             ? "claude --permission-mode manual -- " + WorktreeAgentLaunchCommand.shellLiteral(prompt) : nil
@@ -523,7 +524,11 @@ private final class AgentIntegrationMacHost {
         let base = manifest.endpoint.appendingPathComponent("model/\(name)").absoluteString
         let environment = provider == .claude ? "ANTHROPIC_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base))"
             : "OPENAI_BASE_URL=\(WorktreeAgentLaunchCommand.shellLiteral(base + "/v1"))"
-        return "export GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(name)) \(environment)\n" + (launch.command ?? "")
+        // Fullscreen provider virtualization has no terminal scrollback. The
+        // history scenario explicitly selects Claude's supported classic mode.
+        let historyEnvironment = history && provider == .claude
+            ? "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 " : ""
+        return "export \(historyEnvironment)GRAFTTY_TEST_AGENT=\(WorktreeAgentLaunchCommand.shellLiteral(name)) \(environment)\n" + (launch.command ?? "")
     }
 
     func close() async {

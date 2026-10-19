@@ -11,6 +11,10 @@ on:
         description: Generated actions after the fixed regressions
         default: '60'
         required: true
+      history:
+        description: Run the focused dense history paging regression on both providers
+        type: boolean
+        default: false
       worktree_creation:
         description: Test background creation, Mobile layout, and resize stability
         type: boolean
@@ -35,6 +39,11 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 75
     steps:
+      - name: Validate standalone scenario selection
+        if: inputs.history && inputs.worktree_creation
+        run: |
+          echo 'Select history or worktree_creation in separate workflow runs.'
+          exit 1
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -53,6 +62,26 @@ jobs:
           "$RUNNER_TEMP/agent-clients/node_modules/.bin/claude" --version
       - name: Build Graftty CLI
         run: scripts/swiftpm build --build-system native --product graftty-cli
+      - name: Verify history regression RED and GREEN
+        if: inputs.history
+        shell: bash
+        run: |
+          mkdir -p /private/tmp/graftty-history-validation
+          candidate="$RUNNER_TEMP/history-candidate-zmx"
+          cp Resources/zmx-binary/zmx "$candidate"
+          trap 'cp "$candidate" Resources/zmx-binary/zmx' EXIT
+          git fetch --depth=1 origin 16287dce6ae591201092efa52c8f98bf6628cf8e
+          git show 16287dce6ae591201092efa52c8f98bf6628cf8e:Resources/zmx-binary/zmx > Resources/zmx-binary/zmx
+          if scripts/swiftpm test --build-system native --filter denseWideHistoryPagesStayBoundedAndRecover > /private/tmp/graftty-history-validation/red.log 2>&1; then
+            echo 'History regression unexpectedly passed against graftty6'
+            exit 1
+          fi
+          grep -q 'Dense history must arrive as a bounded page, not a host limit refusal' /private/tmp/graftty-history-validation/red.log
+          export GRAFTTY_HISTORY_LEGACY_ZMX="$RUNNER_TEMP/history-legacy-zmx"
+          cp Resources/zmx-binary/zmx "$GRAFTTY_HISTORY_LEGACY_ZMX"
+          cp "$candidate" Resources/zmx-binary/zmx
+          scripts/swiftpm test --build-system native --filter 'MacPagedTerminalTests|PagedTerminalCoordinatorTests' 2>&1 | tee /private/tmp/graftty-history-validation/green.log
+          python3 -B scripts/agent-integration/verify_history_results.py --swift /private/tmp/graftty-history-validation
       - name: Prove headless worktree prompt staging RED and GREEN
         if: inputs.worktree_creation
         run: |
@@ -83,11 +112,13 @@ jobs:
         env:
           TEST_SEED: ${{ inputs.seed || github.run_number }}
           TEST_ACTIONS: ${{ inputs.actions || '60' }}
+          TEST_HISTORY: ${{ inputs.history || 'false' }}
           TEST_WORKTREE_CREATION: ${{ inputs.worktree_creation || 'false' }}
           TEST_CREATION_SOURCE: ${{ inputs.creation_source || 'cli' }}
         run: |
           cli="$HOME/Library/Caches/Graftty/SwiftPM/build/$(uname -m)-apple-macosx/debug/graftty-cli"
           scenario=()
+          if [[ "$TEST_HISTORY" == true ]]; then scenario=(--history --rows 600); fi
           if [[ "$TEST_WORKTREE_CREATION" == true ]]; then
             python3 - <<'PY'
           import hashlib, json, os
@@ -134,6 +165,9 @@ jobs:
               if not images or any(not (root / name / image).is_file() for image in images):
                   raise SystemExit('Missing native render evidence: ' + name)
           PY_EVIDENCE
+      - name: Require complete history scenario results
+        if: inputs.history
+        run: python3 -B scripts/agent-integration/verify_history_results.py --results /private/tmp/graftty-ai-*/result.json
       - name: Preserve native failure evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -163,3 +197,5 @@ jobs:
             /private/tmp/graftty-ai-*/simulator-boot.log
             /private/tmp/graftty-ai-*/ios-build.log
             /private/tmp/graftty-ai-*/mobile.xcresult
+            /private/tmp/graftty-ai-*/history-*.json
+            /private/tmp/graftty-history-validation/*.log

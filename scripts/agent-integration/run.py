@@ -250,6 +250,10 @@ class Run:
         self.summary.setdefault('generatedContentChecks', []).append({'agent': agent, 'status': status})
 
     def scenarios(self):
+        if getattr(self.options, 'history', False):
+            from history_scenario import run_history
+            run_history(self)
+            return
         if getattr(self.options, 'worktree_reentry', False):
             self.worktree_reentry()
             return
@@ -608,6 +612,7 @@ def main():
     parser.add_argument('--worktree-creation-source', choices=('cli', 'app-flow'), default='cli',
                         help='Startup boundary for --worktree-creation; app-flow exercises AddWorktreeFlow and TerminalManager')
     parser.add_argument('--worktree-reentry', action='store_true', help='Test retained mobile routes with keyboard changes and hidden ownership transitions')
+    parser.add_argument('--history', action='store_true', help='Test dense wide provider output through bounded mobile history paging')
 
     parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
     parser.add_argument('--device', default='iPhone 17 Pro')
@@ -626,8 +631,10 @@ def main():
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
     if options.worktree_creation_viewport_only and not options.worktree_creation:
         parser.error('--worktree-creation-viewport-only requires --worktree-creation')
-    if options.worktree_creation and (options.worktree_reentry or options.colors or options.mac_only or options.replay or options.shrink):
+    if options.worktree_creation and (options.history or options.worktree_reentry or options.colors or options.mac_only or options.replay or options.shrink):
         parser.error('--worktree-creation requires the standalone native mobile scenario')
+    if options.history and (options.worktree_reentry or options.colors or options.mac_only or options.replay or options.shrink):
+        parser.error('--history requires mobile and runs separately from other scenarios and generated actions')
     if options.worktree_reentry and options.colors:
         parser.error('--worktree-reentry and --colors are separate scenarios')
     if options.worktree_reentry and options.mac_only:

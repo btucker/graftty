@@ -162,7 +162,7 @@ final class MacPagedAttachment {
 
     private func finishGridIfNeeded() {
         switch coordinator.status {
-        case .complete, .limit, .requiresRecovery, .unavailable:
+        case .complete, .limit, .pageTooLarge, .requiresRecovery, .unavailable:
             poll?.cancel()
             poll = nil
             if restoringGrid { restoringGrid = false; finishGrid() }

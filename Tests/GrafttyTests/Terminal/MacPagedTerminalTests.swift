@@ -95,6 +95,108 @@ struct MacPagedTerminalTests {
     }
 
     #if GRAFTTY_PAGED_HISTORY
+    @Test("@spec TERM-12.43: When retained history contains dense wide-character rows, the application shall transfer contiguous bounded pages on Mac and mobile without reporting a memory limit solely because a native page exceeds the transport budget, preserve identical retries, and continue scrolling and live output across checkpoint recovery.", .timeLimit(.minutes(1)))
+    func denseWideHistoryPagesStayBoundedAndRecover() async throws {
+        let lineCount = 2000
+        let fixture = try await HistoryDaemon.make(lineCount: lineCount, wide: true)
+        defer { fixture.close() }
+        let stream = PagedZmxAttachEngine(config: .init(zmxExecutable: fixture.launcher.executable,
+            zmxDir: fixture.launcher.zmxDir, sessionName: "history"))
+        try await stream.start()
+        defer { stream.close() }
+        var events = stream.events.makeAsyncIterator()
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
+        for generation in UInt64(1)...2 {
+            if generation > 1 { try await stream.requestCheckpoint() }
+            var freshCheckpoint: PagedTerminalCheckpoint?
+            while let event = await events.next() {
+                if case .checkpoint(let checkpoint) = event { freshCheckpoint = checkpoint; break }
+                if case .output(let data) = event { terminal.access.write(data) }
+            }
+            let checkpoint = try #require(freshCheckpoint)
+            try await renderer.install(checkpoint, generation: generation)
+            var ordinal: UInt64 = 0
+            while true {
+                let request = PagedTerminalHistoryRequest(incarnation: checkpoint.incarnation,
+                    checkpointID: checkpoint.id, requestID: ordinal + 1, ordinal: ordinal, screen: 0)
+                try await stream.requestHistory(request)
+                guard case .page(let page) = try #require(await events.next()) else {
+                    Issue.record("Dense history must arrive as a bounded page, not a host limit refusal"); return
+                }
+                #expect(page.data.count <= PagedTerminalLimits.pageBytes)
+                try await stream.requestHistory(request)
+                #expect(await events.next() == .page(page))
+                try #require(await renderer.appendHistory(page.data, screen: 0, generation: generation) == .applied)
+                if page.complete { break }
+                ordinal += 1
+                try #require(ordinal < 200)
+            }
+            #expect(terminal.firstHistoryRow().contains("history-row-000000"))
+            #expect(terminal.text().contains("history-row-001999"))
+            let marker = "after-history-\(generation)"
+            var receivedLiveResponse = false
+            try await stream.send(Data("\(marker)\n".utf8))
+            while let event = await events.next() {
+                guard case .output(let data) = event else { continue }
+                terminal.access.write(data)
+                if terminal.text().contains("live-\(marker)") { receivedLiveResponse = true; break }
+            }
+            #expect(receivedLiveResponse)
+        }
+    }
+
+    @Test("@spec TERM-12.45: When an older daemon refuses an oversized history page, the application shall report the host page limit without automatic retries and continue live terminal input and output.",
+          .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_HISTORY_LEGACY_ZMX"] != nil,
+                   "The history CI scenario supplies the immutable graftty6 daemon"), .timeLimit(.minutes(1)))
+    func oldDaemonPageRefusalPreservesLiveTerminal() async throws {
+        let oldDaemon = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["GRAFTTY_HISTORY_LEGACY_ZMX"]))
+        let fixture = try await HistoryDaemon.make(lineCount: 2000, wide: true, executable: oldDaemon)
+        defer { fixture.close() }
+        let stream = PagedZmxAttachEngine(config: .init(zmxExecutable: fixture.launcher.executable,
+            zmxDir: fixture.launcher.zmxDir, sessionName: "history"))
+        try await stream.start()
+        defer { stream.close() }
+        var events = stream.events.makeAsyncIterator()
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
+        var requests: [PagedTerminalRequest] = []
+        let coordinator = PagedTerminalCoordinator(renderer: renderer) { request in
+            requests.append(request)
+            switch request {
+            case .history(let page): try await stream.requestHistory(page)
+            case .checkpoint: try await stream.requestCheckpoint()
+            }
+        }
+        guard case .checkpoint(let checkpoint) = try #require(await events.next()) else {
+            Issue.record("Expected old daemon checkpoint"); return
+        }
+        try await coordinator.handle(.checkpoint(checkpoint))
+        await coordinator.loadIfNeeded(prefetch: true)
+        guard case .unavailable(let refusal) = try #require(await events.next()) else {
+            Issue.record("Expected graftty6 oversized-page refusal"); return
+        }
+        #expect(refusal.reason == .limit)
+        try await coordinator.handle(.unavailable(refusal))
+        #expect(coordinator.status == .pageTooLarge)
+        await coordinator.loadIfNeeded(prefetch: true)
+        await coordinator.retry()
+        #expect(requests.count == 1)
+        try await stream.send(Data("old-daemon-still-live\n".utf8))
+        var receivedLiveResponse = false
+        while let event = await events.next() {
+            try await coordinator.handle(event)
+            if case .output(let data) = event { terminal.access.write(data) }
+            if terminal.text().contains("live-old-daemon-still-live") { receivedLiveResponse = true; break }
+        }
+        #expect(receivedLiveResponse)
+        #expect(coordinator.status == .pageTooLarge)
+        #expect(requests.count == 1)
+        coordinator.disconnect()
+    }
+
     @Test("@spec TERM-12.42: While a native Mac terminal consumes a paged source stream, the application shall preserve its parser grid and synchronized output across local viewport and font resizes, report source dimensions, and release the source grid before legacy fallback.", .timeLimit(.minutes(1)))
     func nativeParserGridFollowsOrderedSourceRatherThanPhysicalSize() async throws {
         let terminal = try NativeCanvas()
@@ -447,26 +549,29 @@ struct MacPagedTerminalTests {
         let seed: NativePtySession
         private let output: HistoryOutput
 
-        private init(lineCount: Int, redrawPrompt: Bool) throws {
+        private init(lineCount: Int, redrawPrompt: Bool, wide: Bool, executable: URL?) throws {
             output = HistoryOutput(marker: redrawPrompt ? "history-prompt> " : String(format: "history-row-%06d", lineCount - 1))
             let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             let dir = URL(fileURLWithPath: "/private/tmp/mac-paging-\(UUID().uuidString.prefix(8))")
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            launcher = ZmxLauncher(executable: root.appendingPathComponent("Resources/zmx-binary/zmx"), zmxDir: dir)
+            launcher = ZmxLauncher(executable: executable ?? root.appendingPathComponent("Resources/zmx-binary/zmx"), zmxDir: dir)
             // Keep the shell alive after producing the fixture; the client reader
             // drains the PTY so this setup cannot block on its output buffer.
             let output = output
             let prompt = redrawPrompt ? "printf '\\033]133;A;redraw=1\\007history-prompt> \\033]133;B\\007'; " : ""
+            let historyLine = wide
+                ? "🧪 history-row-%06d /workspace/project/src/components/HistoryPanel.swift:100"
+                : "history-row-%06d"
             seed = NativePtySession(argv: [launcher.executable.path, "attach", "history", "/bin/sh", "-c",
-                "i=0; while [ $i -lt \(lineCount) ]; do printf 'history-row-%06d\\n' $i; i=$((i+1)); done; \(prompt)while read value; do printf 'live-%s\\n' \"$value\"; done"],
+                "i=0; while [ $i -lt \(lineCount) ]; do printf '\(historyLine)\\n' $i; i=$((i+1)); done; \(prompt)while read value; do printf 'live-%s\\n' \"$value\"; done"],
                 env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment),
                 workingDirectory: dir, initialSize: .init(cols: 80, rows: 24),
                 writeToSurface: { output.append($0) }, processExited: { _, _ in }, spawnFailed: { _ in })
         }
 
-        static func make(lineCount: Int = 10000, redrawPrompt: Bool = false, reflowed: Bool = false) async throws -> HistoryDaemon {
-            let fixture = try HistoryDaemon(lineCount: lineCount, redrawPrompt: redrawPrompt)
+        static func make(lineCount: Int = 10000, redrawPrompt: Bool = false, reflowed: Bool = false, wide: Bool = false, executable: URL? = nil) async throws -> HistoryDaemon {
+            let fixture = try HistoryDaemon(lineCount: lineCount, redrawPrompt: redrawPrompt, wide: wide, executable: executable)
             do {
                 try fixture.seed.start()
                 let deadline = ContinuousClock.now.advanced(by: .seconds(10))

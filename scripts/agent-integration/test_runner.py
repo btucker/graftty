@@ -8,10 +8,30 @@ import unittest
 from unittest.mock import Mock, patch
 
 from harness import Broker, InvariantFailure
-from run import Run, execute, prepare_home
+from run import Run, execute, main, prepare_home
 
 
 class RunnerLifecycleTests(unittest.TestCase):
+    def test_history_and_creation_cannot_silently_select_one_scenario(self):
+        arguments = ['run.py']
+        for option in ('--codex', '--claude', '--cli', '--zmx', '--ghostty-package'):
+            arguments.extend((option, '/bin/echo'))
+        with patch('run.sys.argv', arguments + ['--history', '--worktree-creation']), \
+             patch('run.sys.stderr'), patch('run.Run') as runner, \
+             patch('worktree_creation.WorktreeCreationRun') as creation:
+            with self.assertRaises(SystemExit) as error:
+                main()
+            self.assertEqual(2, error.exception.code)
+            runner.assert_not_called()
+            creation.assert_not_called()
+
+    def test_history_dispatch_preserves_its_dedicated_scenario(self):
+        runner = Run.__new__(Run)
+        runner.options = SimpleNamespace(history=True)
+        with patch('history_scenario.run_history') as history:
+            runner.scenarios()
+        history.assert_called_once_with(runner)
+
     def test_source_provenance_keeps_git_status_columns_and_patch_newlines(self):
         raw = b' M fixture.py\n\n'
         with patch('run.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=raw)):
