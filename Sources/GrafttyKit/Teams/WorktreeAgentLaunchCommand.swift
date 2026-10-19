@@ -17,6 +17,14 @@ public struct PreparedWorktreeAgentLaunch {
 }
 
 public enum WorktreeAgentLaunchCommand {
+    /// Structured wire prompts and bare runtime fallbacks use host-owned
+    /// staging. Preserve older clients' explicit launch commands when they do
+    /// not supply a structured prompt.
+    public static func shouldStagePrompt(agent: TeamHookRuntime?, command: String?, prompt: String?) -> Bool {
+        guard let agent else { return false }
+        return prompt != nil || command == nil || command == agent.rawValue
+    }
+
     /// Leave ample room below macOS's process-wide argv + environment limit.
     /// Both supported interactive runtimes require their initial prompt as one
     /// argv element, so larger tasks must be sent after the session starts.

@@ -102,7 +102,7 @@ struct SidebarAttentionIdentityTests {
         #expect(retained.isBusy)
     }
     @MainActor
-    @Test func cardsAndBannerRenderProjectUpdatesForHomeCheckout() throws {
+    @Test func cardsRenderProjectUpdatesForHomeCheckout() throws {
         var item = try #require(SidebarProjection.activity([worktree()]).first)
         item.isMainCheckout = true
         item.worktreeEmoji = "🐸"
@@ -121,22 +121,13 @@ struct SidebarAttentionIdentityTests {
         func card(_ item: SidebarActivityItem, project: SidebarProject) throws -> Data {
             try render(WorktreeIdentityView(identity: item.iconIdentity, project: project, size: 28))
         }
-        func banner(_ item: SidebarActivityItem, project: SidebarProject) throws -> Data {
-            try render(SidebarAttentionBanner(item: item, project: project, onOpen: {}, onDismiss: {}).identityView)
-        }
         let oldCard = try card(item, project: project)
-        let oldBanner = try banner(item, project: project)
         item.worktreeEmoji = "🚀"
         #expect(try card(item, project: project) == oldCard)
-        let unchangedBanner = SidebarAttentionBanner(item: item, project: project, onOpen: {}, onDismiss: {})
-        #expect(unchangedBanner.identityView.identity == .project)
-        #expect(unchangedBanner.identityView.project == project)
         project.initials = "NEW"
         #expect(try card(item, project: project) != oldCard)
-        #expect(try banner(item, project: project) != oldBanner)
         item.isMainCheckout = false
         #expect(try card(item, project: project) != oldCard)
-        #expect(try banner(item, project: project) != oldBanner)
     }
 
 }

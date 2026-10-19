@@ -6,8 +6,17 @@ import GrafttyProtocol
 struct Attention: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Report what a stopped agent needs attention for",
-        subcommands: [AttentionReport.self]
+        subcommands: [AttentionReport.self, AttentionDirectory.self]
     )
+}
+
+struct AttentionDirectory: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "directory",
+        abstract: "Print the effective Attention handoff directory"
+    )
+
+    func run() { print(AttentionFileHandoff.defaultRootDirectory.path) }
 }
 
 struct AttentionReport: ParsableCommand {
@@ -16,7 +25,7 @@ struct AttentionReport: ParsableCommand {
         abstract: "Stage an agent recap for its next stopped turn"
     )
 
-    @Flag(name: .long, help: "Read recap JSON with title, completed, next, emoji, and optional context, need, and emojiAlternatives")
+    @Flag(name: .long, help: "Read recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, purposeChanged, checkpoint, and decisions")
     var stdin = false
 
     func run() throws {
@@ -47,7 +56,7 @@ struct AttentionReport: ParsableCommand {
         do {
             recap = try JSONDecoder().decode(AttentionRecap.self, from: data)
         } catch {
-            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, and emojiAlternatives")
+            throw ValidationError("expected recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, purposeChanged, checkpoint, and decisions")
         }
         guard recap.isValid else {
             throw ValidationError("recap fields must be brief text, and emoji choices must be single glyphs")

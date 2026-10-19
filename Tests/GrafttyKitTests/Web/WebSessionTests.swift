@@ -163,6 +163,7 @@ struct WebSessionTests {
         session.processEnvForTesting = [
             "SHELL": "/bin/zsh",
             "PATH": "/usr/bin",
+            "NO_COLOR": "1",
             "GHOSTTY_RESOURCES_DIR": fakeResources.path,
         ]
         try session.start()
@@ -186,6 +187,7 @@ struct WebSessionTests {
         #expect(envPairs["TERM"] == "xterm-256color")
         #expect(envPairs["COLORTERM"] == "truecolor")
         #expect(envPairs["TERM_PROGRAM"] == "ghostty")
+        #expect(envPairs["NO_COLOR"] == nil)
 
         // Default-command: ZDOTDIR points at ghostty's zsh shell-integration so
         // the shell's first-prompt hook fires OSC 7 / OSC 133, the host

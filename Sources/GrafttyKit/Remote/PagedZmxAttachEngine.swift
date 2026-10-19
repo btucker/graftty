@@ -272,7 +272,22 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
 
     private func emit(_ event: PagedTerminalEvent) {
         if case .checkpoint(let checkpoint) = event { updateSize(cols: checkpoint.cols, rows: checkpoint.rows) }
-        if case .dropped = continuation.yield(event) { closeSync() }
+        // A takeover redraw can outpace the renderer while it applies the
+        // new grid. bufferingOldest rejects the submitted event when full;
+        // retry that same event on this dedicated reader thread so the
+        // socket supplies backpressure without losing bytes or ordering.
+        while !lock.withLock({ closed }) {
+            switch continuation.yield(event) {
+            case .enqueued: return
+            case .dropped: Thread.sleep(forTimeInterval: 0.001)
+            case .terminated:
+                closeSync()
+                return
+            @unknown default:
+                closeSync()
+                return
+            }
+        }
     }
     private func updateSize(cols: UInt16, rows: UInt16) {
         let callback = lock.withLock { () -> ((UInt16, UInt16) -> Void)? in

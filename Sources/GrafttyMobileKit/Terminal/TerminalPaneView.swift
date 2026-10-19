@@ -314,7 +314,11 @@ public final class TerminalInputContainerView: UIView,
 
     let terminalView = MobileTerminalInputView(frame: .zero)
     private(set) lazy var snapshotScrollView = TerminalSnapshotScrollView(terminalView: terminalView)
-    var onPhysicalViewportReady: ((InMemoryTerminalViewport) -> Void)?
+    var onPhysicalViewportReady: ((InMemoryTerminalViewport) -> Void)? {
+        didSet {
+            if onPhysicalViewportReady != nil { setNeedsLayout() }
+        }
+    }
     private var awaitingPhysicalViewport = false
     public var authoritativeGrid: SessionClient.GridSize? {
         didSet {
@@ -412,7 +416,10 @@ public final class TerminalInputContainerView: UIView,
         let scale = terminalView.contentScaleFactor
         let widthPixels = (bounds.width * scale).rounded(.down)
         let heightPixels = ((bounds.height - topChromeInset(canvas: nil)) * scale).rounded(.down)
+        // Retained routes remove this callback while hidden. Keep their
+        // confirmation pending until the route has somewhere to deliver it.
         guard awaitingPhysicalViewport, authoritativeGrid == nil,
+              let onPhysicalViewportReady,
               widthPixels > 0, heightPixels > 0,
               let metrics = terminalGridMetrics,
               widthPixels == CGFloat(metrics.widthPixels),
@@ -420,7 +427,7 @@ public final class TerminalInputContainerView: UIView,
               (terminalView.bounds.width * scale).rounded(.down) == widthPixels,
               (terminalView.bounds.height * scale).rounded(.down) == heightPixels else { return }
         awaitingPhysicalViewport = false
-        onPhysicalViewportReady?(InMemoryTerminalViewport(
+        onPhysicalViewportReady(InMemoryTerminalViewport(
             columns: metrics.columns, rows: metrics.rows,
             widthPixels: metrics.widthPixels, heightPixels: metrics.heightPixels,
             cellWidthPixels: metrics.cellWidthPixels, cellHeightPixels: metrics.cellHeightPixels

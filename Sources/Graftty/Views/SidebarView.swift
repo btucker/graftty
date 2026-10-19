@@ -106,7 +106,7 @@ struct SidebarView: View {
     @State private var remoteSectionExpansion = RemoteSidebarExpansion()
 
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
-    @State private var navigation = SidebarNavigationState(prefix: "sidebar.mac")
+    @State var navigation = SidebarNavigationState(prefix: "sidebar.mac")
     @StateObject private var reportController = SidebarReportController()
     @State private var frozenWorktreeOrder: [UUID: [UUID]] = [:]
     @State private var frozenPins: [UUID: Bool] = [:]
@@ -452,26 +452,7 @@ struct SidebarView: View {
                             }
                         }
                     }
-                    // LAYOUT-2.90: the banner slides over the top of the list
-                    // below the persistent search row.
-                    .overlay(alignment: .top) {
-                        if let item = navigation.attentionBanner {
-                            SidebarAttentionBanner(item: item, project: projects.first { $0.id == item.projectID },
-                                projectIconData: projectIcons[item.projectID], onOpen: {
-                                onNavigationIntent()
-                                let visit = navigation.beginOpeningAttentionBanner(item, projects: projects, items: activity)
-                                Task {
-                                    let opened = await onOpenAttention(item)
-                                    navigation.finishOpening(visit, succeeded: opened)
-                                    if !opened { navigationError = "This target is unavailable or its request has changed." }
-                                }
-                            }, onDismiss: { navigation.dismissAttentionBanner(item) })
-                            .padding(.horizontal, 6).padding(.top, 4)
-                            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
-                        }
-                    }
                     .clipped()
-                    .animation(.easeInOut(duration: reduceMotion ? 0 : 0.25), value: navigation.attentionBanner)
                 if !showsProjectRail {
                     Divider()
                     voiceDictationButton(collapsed: false)

@@ -55,10 +55,17 @@ public enum AttentionFileHandoffError: Error {
 /// sandboxed agent. Team and worktree commands keep using the control socket.
 public struct AttentionFileHandoff: Sendable {
     public static var defaultRootDirectory: URL {
+        rootDirectory(environment: ProcessInfo.processInfo.environment)
+    }
+
+    public static func rootDirectory(environment: [String: String]) -> URL {
+        if let path = environment["GRAFTTY_ATTENTION_DIR"], path.hasPrefix("/") {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
         #if os(Linux)
-        URL(fileURLWithPath: "/tmp/graftty-attention-\(geteuid())", isDirectory: true)
+        return URL(fileURLWithPath: "/tmp/graftty-attention-\(geteuid())", isDirectory: true)
         #else
-        URL(fileURLWithPath: "/private/tmp/graftty-attention-\(geteuid())", isDirectory: true)
+        return URL(fileURLWithPath: "/private/tmp/graftty-attention-\(geteuid())", isDirectory: true)
         #endif
     }
 

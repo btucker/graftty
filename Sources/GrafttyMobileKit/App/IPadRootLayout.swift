@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import Foundation
 import GrafttyProtocol
+import GrafttyCommandUI
 import GrafttyRemoteClient
 import SwiftUI
 
@@ -1336,9 +1337,9 @@ struct IPadTerminalDetailChrome: ViewModifier {
     }
 }
 
-// MARK: - IPadDetailColumn (private)
+// MARK: - IPadDetailColumn
 
-private struct IPadDetailColumn: View {
+struct IPadDetailColumn: View {
     let host: Host?
     @Bindable var appState: IPadAppState
     let coordinator: RemoteConnectionCoordinator
@@ -1352,6 +1353,9 @@ private struct IPadDetailColumn: View {
 
     var body: some View {
         content
+            .modifier(MobileWorktreeContextDrawer(context: selectedWorktree.map {
+                appState.sidebarNavigation.worktreeContext($0)
+            }, showsStandaloneControl: !hasFocusedTerminal))
             .modifier(IPadTerminalDetailChrome())
             .toolbar {
                 // IPAD-1.11: the conditional wraps the whole
@@ -1454,6 +1458,12 @@ private struct IPadDetailColumn: View {
             from: appState.latestWorktrees,
             selectedPath: appState.selectedWorktreePath
         )
+    }
+
+    private var hasFocusedTerminal: Bool {
+        host != nil && selectedWorktree?.layout?.leaves.contains {
+            $0.sessionName == appState.focusedPaneId
+        } == true
     }
 
     private var shouldShowAttentionDot: Bool {

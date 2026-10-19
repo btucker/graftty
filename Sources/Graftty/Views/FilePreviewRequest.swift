@@ -54,7 +54,11 @@ enum FilePreviewRequest {
                           macIsFollower: terminalManager.handle(for: scope.pane) == nil || terminalManager.canTakeDisplayControl(for: scope.pane)) == .mac else {
                     return .error("The preview request or its display leader changed before delivery. Retry graftty preview.")
                 }
-                previews.present(files: files, for: scope.pane)
+                let entry = FilePreviewHistory.shared.record(files: files, pane: scope.pane, worktreePath: scope.worktreePath)
+                previews.dismiss(scope.pane)
+                FilePreviewWindows.shared.show(entry, activate: false, resolveInlineWorktree: { [weak terminalManager] pane in
+                    terminalManager?.worktreePath(for: pane)
+                })
             case .unavailable:
                 return .error("The pane's display leader cannot receive a native preview. Take Control on this Mac or use graftty open.")
             }

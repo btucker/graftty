@@ -7,6 +7,36 @@ import Testing
 
 @Suite("HostManagedZmxBackend — Ghostty host-managed adapter", .serialized)
 struct HostManagedZmxBackendTests {
+    @Test("@spec OWN-1.8: When a local Mac pane reattaches after its leader detached, the application shall accept its viewport and input without manual takeover unless another attached client has become leader.", arguments: [false, true])
+    func reattachedMacAcquiresLeadershipUnlessAnotherLeaderIsActive(otherLeader: Bool) throws {
+        let store = SessionDisplayOwnershipStore()
+        let old = Self.makeBackend(session: FakeHostManagedSession(),
+                                   ownership: Self.ownership(store: store, clientID: "old-mac"))
+        defer { old.releaseReceiveUserdataAfterSurfaceFree() }
+        old.bindSurfaceSync(currentGridSize: { (cols: 100, rows: 30) }, requestRefresh: {})
+        try old.start(surface: Self.fakeSurface())
+        old.markLayoutSettled()
+        old.close()
+        if otherLeader {
+            _ = store.attachClient(sessionName: "graftty-test", clientID: .init("phone"), kind: .ios,
+                                   role: .interactive, visible: true, grid: .daemonFallback)
+            _ = store.claimOwner(sessionName: "graftty-test", clientID: .init("phone"), kind: .ios,
+                                 grid: .daemonFallback)
+        }
+        let session = FakeHostManagedSession()
+        let new = Self.makeBackend(session: session,
+                                   ownership: Self.ownership(store: store, clientID: "new-mac"))
+        defer { new.releaseReceiveUserdataAfterSurfaceFree() }
+        new.bindSurfaceSync(currentGridSize: { (cols: 140, rows: 50) }, requestRefresh: {})
+        try new.start(surface: Self.fakeSurface())
+        new.markLayoutSettled()
+        let accepted = try new.writeWithDeliveryResult(Data("input".utf8), claimEngagement: false)
+        #expect(accepted == !otherLeader)
+        #expect(store.snapshot(sessionName: "graftty-test").ownerClientID == .init(otherLeader ? "phone" : "new-mac"))
+        #expect(session.writes() == (otherLeader ? [] : [Data("input".utf8)]))
+        #expect(otherLeader ? session.resizes().isEmpty : session.resizes().contains(Resize(cols: 140, rows: 50)))
+    }
+
     @Test("Mac owner forwards viewport resizes and PTY-bound input through the ownership gate.")
     func macOwnerForwardsResizeAndInput() throws {
         let store = SessionDisplayOwnershipStore()
@@ -638,6 +668,36 @@ struct HostManagedZmxBackendTests {
         #expect(session.startCount() == 1)
     }
 
+    @Test("@spec OWN-1.11: If a Mac terminal backend closes while measuring its initial viewport, then the application shall not register that closed backend as an attached leader.")
+    func closeDuringInitialViewportDoesNotRegisterLeader() {
+        let store = SessionDisplayOwnershipStore()
+        let session = FakeHostManagedSession()
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let queries = LockedCounter()
+        let backend = Self.makeBackend(session: session,
+                                       ownership: Self.ownership(store: store, clientID: "closed"))
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(currentGridSize: {
+            if queries.increment() == 1 {
+                entered.signal()
+                _ = release.wait(timeout: .now() + 2)
+            }
+            return (cols: 100, rows: 30)
+        }, requestRefresh: {})
+        Self.runOnDedicatedThread {
+            try? backend.start(surface: Self.fakeSurface())
+            finished.signal()
+        }
+        #expect(entered.wait(timeout: .now() + 2) == .success)
+        backend.close()
+        release.signal()
+        #expect(finished.wait(timeout: .now() + 2) == .success)
+        #expect(!store.isAttachedOwner(sessionName: "graftty-test", clientID: .init("closed")))
+        #expect(session.startCount() == 0)
+    }
+
     @Test func closeWhileSessionFactoryIsRunningClosesCreatedSessionWithoutStartingIt() {
         let session = FakeHostManagedSession()
         let factoryEntered = DispatchSemaphore(value: 0)
@@ -670,11 +730,14 @@ struct HostManagedZmxBackendTests {
         #expect(session.closeCount() == 1)
     }
 
-    @Test func startFailureClosesCreatedSessionAndRethrows() {
+    @Test("@spec OWN-1.9: If a Mac terminal attachment fails to start after acquiring leadership, then the application shall close its session and detach its ownership registration so a later attachment can become leader.")
+    func startFailureClosesCreatedSessionAndRethrows() throws {
         struct ForcedStartFailure: Error {}
 
+        let store = SessionDisplayOwnershipStore()
         let session = FakeHostManagedSession(startError: ForcedStartFailure())
-        let backend = Self.makeBackend(session: session)
+        let backend = Self.makeBackend(session: session,
+                                       ownership: Self.ownership(store: store, clientID: "failed"))
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
 
         #expect(throws: Error.self) {
@@ -683,6 +746,12 @@ struct HostManagedZmxBackendTests {
 
         #expect(session.startCount() == 1)
         #expect(session.closeCount() == 1)
+        #expect(!store.isAttachedOwner(sessionName: "graftty-test", clientID: .init("failed")))
+        let replacement = Self.makeBackend(session: FakeHostManagedSession(),
+                                           ownership: Self.ownership(store: store, clientID: "replacement"))
+        defer { replacement.releaseReceiveUserdataAfterSurfaceFree() }
+        try replacement.start(surface: Self.fakeSurface())
+        #expect(store.snapshot(sessionName: "graftty-test").ownerClientID == .init("replacement"))
     }
 
     @Test func closeRacingWithStartClosesCreatedSessionOnce() {

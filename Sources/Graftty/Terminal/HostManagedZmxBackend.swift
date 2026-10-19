@@ -8,6 +8,7 @@ protocol HostManagedZmxSession: AnyObject {
     func waitForStartup() async -> Bool
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void)
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void)
+    func bindSourceGrid(_ handler: @escaping (DisplayGrid?) -> Void)
     func start() throws
     func write(_ data: Data) throws
     func resize(cols: UInt16, rows: UInt16) throws
@@ -19,6 +20,7 @@ extension HostManagedZmxSession {
     func waitForStartup() async -> Bool { true }
     func bindAttachmentFailure(_ handler: @escaping (String) -> Void) {}
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {}
+    func bindSourceGrid(_ handler: @escaping (DisplayGrid?) -> Void) {}
     func resize(windowSize: PtyProcess.WindowSize) throws {
         try resize(cols: windowSize.cols, rows: windowSize.rows)
     }
@@ -331,9 +333,14 @@ final class HostManagedZmxBackend {
     private var requestRefresh: () -> Void = {}
     private var attachmentGrid: DisplayGrid?
     private var prepareAttachmentGrid: (DisplayGrid?) -> Void = { _ in }
+    private var sourceGridHandler: (DisplayGrid?) -> Void = { _ in }
 
     func bindAttachmentGrid(_ prepareGrid: @escaping (DisplayGrid?) -> Void) {
         lock.withLock { prepareAttachmentGrid = prepareGrid }
+    }
+
+    func bindSourceGrid(_ handler: @escaping (DisplayGrid?) -> Void) {
+        lock.withLock { sourceGridHandler = handler }
     }
 
     /// Flips true (once) when the owning NSView first receives a nonzero
@@ -427,6 +434,11 @@ final class HostManagedZmxBackend {
             let handler = self.lock.withLock { self.attachmentFailure }
             handler(message)
         }
+        newSession.bindSourceGrid { [weak self] grid in
+            guard let self else { return }
+            let handler = self.lock.withLock { self.sourceGridHandler }
+            handler(grid)
+        }
         newSession.bindAttachmentGrid { [weak self] grid in
             guard let self else { return }
             let prepare = self.lock.withLock {
@@ -447,11 +459,7 @@ final class HostManagedZmxBackend {
         do {
             try newSession.start()
         } catch {
-            lock.lock()
-            if case .starting = lifecycle {
-                lifecycle = .closed
-            }
-            lock.unlock()
+            close()
             newSession.close()
             throw error
         }
@@ -1100,6 +1108,10 @@ final class HostManagedZmxBackend {
     private func attachToOwnershipIfNeeded(grid: DisplayGrid) {
         guard let ownership else { return }
         lock.lock()
+        if case .closed = lifecycle {
+            lock.unlock()
+            return
+        }
         guard !attachedToOwnership else {
             lock.unlock()
             return

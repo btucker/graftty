@@ -4,6 +4,57 @@ import Testing
 
 @Suite
 struct ShellStartupCommandTests {
+    @Test("A stale flat resource override falls back to the installed nested bundle and starts a real shell command without input")
+    func staleBundleOverrideStillStartsCommand() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bundleRoot = root.appendingPathComponent("Graftty.app/Contents/Resources/Graftty_GrafttyKit.bundle")
+        let installedResources = bundleRoot.appendingPathComponent("Contents/Resources/ghostty")
+        try FileManager.default.createDirectory(at: installedResources.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: #require(GhosttyRuntimeResources.bundledResourcesDir()), to: installedResources)
+        let info: [String: String] = ["CFBundleIdentifier": "test.graftty.resources", "CFBundlePackageType": "BNDL"]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: bundleRoot.appendingPathComponent("Contents/Info.plist"))
+        let bundle = try #require(Bundle(url: bundleRoot))
+        let stale = bundleRoot.appendingPathComponent("ghostty").path
+        let resolved = GhosttyRuntimeResources.resolve(
+            processEnv: ["GHOSTTY_RESOURCES_DIR": stale],
+            bundledDir: GhosttyRuntimeResources.bundledResourcesDir(bundle: bundle)
+        )
+        let resources: String
+        switch resolved {
+        case .bundled(let path), .environmentOverride(let path): resources = path
+        case .unavailable: Issue.record("Installed resource bundle must resolve"); return
+        }
+        #expect(resources == installedResources.path, "Stale resource overrides must use the installed bundle")
+
+        let hooks = root.appendingPathComponent("hooks")
+        _ = try AgentHookInstaller(rootDirectory: hooks, grafttyCLIPath: "/usr/bin/false").install()
+        try "trap 'exit' TERM\n".write(to: root.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+        let zmx = root.appendingPathComponent("zmx")
+        try "#!/bin/sh\nexec \"$SHELL\" -il\n".write(to: zmx, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: zmx.path)
+        let marker = root.appendingPathComponent("started")
+        let receipt = root.appendingPathComponent("accepted")
+        let config = ZmxSpawnConfiguration.make(
+            launcher: ZmxLauncher(executable: zmx, zmxDir: root), paneSessionID: PaneSessionID(),
+            worktreePath: root.path, socketPath: "/tmp/unused.sock",
+            processEnv: ["SHELL": "/bin/zsh", "PATH": "/usr/bin:/bin", "HOME": root.path],
+            bundleURL: root, ghosttyResourcesDir: resources, agentHooksDisabled: true, agentHooksRoot: hooks,
+            initialCommand: "printf started > " + WorktreeAgentLaunchCommand.shellLiteral(marker.path),
+            startupReceipt: receipt
+        )
+        let engine = ZmxAttachEngine(config: .init(zmxExecutable: zmx, zmxDir: root,
+            sessionName: config.sessionName, workingDirectory: root, spawnConfiguration: config))
+        engine.onPTYData = { _ in }
+        try engine.start()
+        defer { engine.close() }
+        try await waitForContents("started", at: marker)
+        #expect((try? String(contentsOf: marker, encoding: .utf8)) == "started", "Shell command must run without renderer input")
+        #expect(FileManager.default.fileExists(atPath: receipt.path), "Shell must acknowledge the initial command")
+    }
+
     @Test("A real daemon starts the command once and reattachment does not repeat it",
           .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_TEST_ZMX"] != nil))
     func realDaemonStartsOnce() async throws {

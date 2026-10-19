@@ -69,7 +69,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     }
 
     private var rowHeight: CGFloat = 0
-    private var scrollbar: TerminalScrollbar?
+    private(set) var scrollbar: TerminalScrollbar?
     private var nativeRow: UInt64 = 0
     private var adjusting = false
     private var viewportHeight: CGFloat = 0
@@ -304,10 +304,12 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     }
 
     var additionalHistoryTextForTesting: String? { historySession.readViewportText() }
+    var additionalHistoryRowsForTesting: String? { historySession.readViewportRowsText() }
     var additionalHistoryFrameForTesting: CGRect? { historyView?.frame }
     #else
     func refreshAdditionalHistory() {}
     var additionalHistoryTextForTesting: String? { nil }
+    var additionalHistoryRowsForTesting: String? { nil }
     var additionalHistoryFrameForTesting: CGRect? { nil }
     #endif
 

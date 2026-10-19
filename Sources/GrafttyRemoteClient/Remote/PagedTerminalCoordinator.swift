@@ -11,6 +11,8 @@ public protocol PagedTerminalRenderer: AnyObject {
     func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws
     func flushOutput() async throws
     func resize(cols: UInt16, rows: UInt16) async throws
+    func setSourceGrid(cols: UInt16, rows: UInt16) async throws
+    func releaseSourceGrid() async throws
     func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult
     func isNearHistoryTop(screen: UInt16, generation: UInt64) -> Bool
 }
@@ -18,6 +20,8 @@ public protocol PagedTerminalRenderer: AnyObject {
 public extension PagedTerminalRenderer {
     func flushOutput() async throws { }
     func resize(cols: UInt16, rows: UInt16) async throws { }
+    func setSourceGrid(cols: UInt16, rows: UInt16) async throws { try await resize(cols: cols, rows: rows) }
+    func releaseSourceGrid() async throws { }
 }
 
 /// Shares paging order and lifecycle across native clients. The renderer owns
@@ -26,7 +30,7 @@ public extension PagedTerminalRenderer {
 @MainActor
 public final class PagedTerminalCoordinator {
     public enum Status: Equatable, Sendable {
-        case inactive, installing, available, loading, complete, requiresRecovery, unavailable, limit
+        case inactive, installing, available, loading, complete, requiresRecovery, unavailable, limit, pageTooLarge
     }
     public private(set) var status: Status = .inactive
     private let renderer: any PagedTerminalRenderer
@@ -42,6 +46,11 @@ public final class PagedTerminalCoordinator {
     private var timeout: Task<Void, Never>?
 
 #if DEBUG
+    /// Read-only evidence for gesture-driven request/import correlation.
+    public var historyDiagnosticsForTesting: (generation: UInt64, requests: UInt64, imports: UInt64) {
+        (generation, nextRequestID, nextOrdinal.reduce(0, &+))
+    }
+
     /// Lets tests await timeout completion or cancellation without fixed sleeps.
     var timeoutTaskForTesting: Task<Void, Never>? { timeout }
 #endif
@@ -53,23 +62,29 @@ public final class PagedTerminalCoordinator {
         self.send = send
     }
 
-    public func handle(_ event: PagedTerminalEvent) async throws {
+    /// Returns a grid only when this event committed source dimensions.
+    /// Duplicate checkpoints and stale work do not publish another grid.
+    @discardableResult
+    public func handle(_ event: PagedTerminalEvent) async throws -> DisplayGrid? {
         switch event {
         case .grid(let cols, let rows):
-            try await renderer.resize(cols: cols, rows: rows)
+            let resizingGeneration = generation
+            try await renderer.setSourceGrid(cols: cols, rows: rows)
+            guard resizingGeneration == generation else { return nil }
+            return try DisplayGrid(cols: cols, rows: rows)
         case .checkpoint(let value):
             guard value.codec == PagedTerminalLimits.codec,
                   !value.ready.isEmpty, value.ready.count <= PagedTerminalLimits.readyBytes else {
                 throw PagedTerminalEnvelope.Error.invalid
             }
-            if checkpoint?.incarnation == value.incarnation, checkpoint?.id == value.id { return }
+            if checkpoint?.incarnation == value.incarnation, checkpoint?.id == value.id { return nil }
             cancelPending()
             retryRequest = nil
             generation &+= 1
             let installingGeneration = generation
             status = .installing
             try await renderer.install(value, generation: installingGeneration)
-            guard generation == installingGeneration else { return }
+            guard generation == installingGeneration else { return nil }
             // Do not retain the READY bytes after the renderer has imported them.
             checkpoint = .init(incarnation: value.incarnation, id: value.id, codec: value.codec,
                                cols: value.cols, rows: value.rows, ready: Data(),
@@ -78,9 +93,10 @@ public final class PagedTerminalCoordinator {
             nextOrdinal = [0, 0]
             remaining = [value.hasPrimaryHistory, value.hasAlternateHistory]
             status = remaining.contains(true) ? .available : .complete
+            return try DisplayGrid(cols: value.cols, rows: value.rows)
 
         case .page(let page):
-            guard pending == page.request, page.data.count <= PagedTerminalLimits.pageBytes else { return }
+            guard pending == page.request, page.data.count <= PagedTerminalLimits.pageBytes else { return nil }
             // The network request has completed. Import can wait behind live
             // output; timing it out now would lose the committed page ordinal.
             timeout?.cancel()
@@ -92,7 +108,7 @@ public final class PagedTerminalCoordinator {
             } else {
                 result = await renderer.appendHistory(page.data, screen: page.screen, generation: generation)
             }
-            guard generation == applyingGeneration, pending == page.request else { return }
+            guard generation == applyingGeneration, pending == page.request else { return nil }
             cancelPending()
             switch result {
             case .applied:
@@ -109,11 +125,13 @@ public final class PagedTerminalCoordinator {
             }
 
         case .unavailable(let failure):
-            guard pending == failure.request else { return }
+            guard pending == failure.request else { return nil }
             cancelPending()
             switch failure.reason {
             case .expired, .incompatible: status = .requiresRecovery
-            case .limit: status = .limit
+            // The host's limit is an encoded PAGE budget. Native retention
+            // refusals arrive separately from renderer.appendHistory above.
+            case .limit: status = .pageTooLarge
             case .unavailable:
                 retryRequest = failure.request
                 status = .unavailable
@@ -122,6 +140,7 @@ public final class PagedTerminalCoordinator {
         case .output, .ended:
             break
         }
+        return nil
     }
 
     /// Called from scroll demand or a modest viewport poll. There is at most

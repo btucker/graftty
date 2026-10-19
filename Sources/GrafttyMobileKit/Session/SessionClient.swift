@@ -88,6 +88,14 @@ public final class SessionClient {
     @ObservationIgnored
     private var lastTracedLegacyCanvas: GridSize?
 
+    /// Bounded native integration evidence of parsing at the wrong source grid.
+    public private(set) var diagnosticPagedGridMismatches: [String] = []
+
+    /// Counts actual owner-resize sends, including requests whose grid is unchanged.
+    /// Keep diagnostics outside observation so measuring traffic cannot trigger layout.
+    @ObservationIgnored
+    public private(set) var diagnosticOwnerResizeRequests: UInt64 = 0
+
     /// A follower renders the daemon's logical grid on a fitted canvas.
     /// VT-only streams need the same exact grid as paged checkpoints:
     /// fitting a font alone changes wrapping and cursor-relative redraws.
@@ -522,21 +530,25 @@ public final class SessionClient {
                                 }
                                 guard try await self.receiveNonPagedOutput(data, generation: generation) else { return }
                             } else {
+                                #if DEBUG && GRAFTTY_PAGED_HISTORY
+                                if let grid = self.snapshotGrid, !self.session.gridMatches(columns: grid.cols, rows: grid.rows), self.diagnosticPagedGridMismatches.count < 32 {
+                                    self.diagnosticPagedGridMismatches.append("source=\(grid.cols)x\(grid.rows) native=\(self.gridTraceLabel(self.nativeGrid)) owner=\(self.isOwner) bytes=\(data.count)")
+                                }
+                                #endif
                                 self.session.receive(data)
                             }
                         case .text(let text):
                             if self.usesPagedHistory,
                                let envelope = try? PagedTerminalEnvelope.parse(text), let event = envelope.event {
-                                try await self.paging?.handle(event)
+                                let appliedGrid = try await self.paging?.handle(event)
                                 self.tracePagedEvent(event)
                                 guard self.isCurrentTransport(generation) else { return }
-                                if case .checkpoint(let checkpoint) = event {
+                                if case .checkpoint = event, appliedGrid != nil {
                                     self.hasPagedCheckpoint = true
                                     self.terminalReplay.snapshotDidInstall()
-                                    self.snapshotGrid = GridSize(cols: checkpoint.cols, rows: checkpoint.rows)
                                 }
-                                if case .grid(let cols, let rows) = event {
-                                    self.snapshotGrid = GridSize(cols: cols, rows: rows)
+                                if let appliedGrid {
+                                    self.snapshotGrid = GridSize(cols: appliedGrid.cols, rows: appliedGrid.rows)
                                 }
                                 self.installingCheckpointGrid = nil
                             } else {
@@ -609,6 +621,8 @@ public final class SessionClient {
     }
 
     private func receiveNonPagedOutput(_ data: Data, generation: UInt64) async throws -> Bool {
+        try await terminalRenderer?.releaseSourceGrid()
+        guard isCurrentTransport(generation) else { return false }
         snapshotGrid = nil
         if let grid = snapshotCanvasGrid {
             // Once per canvas grid, not per output frame: a follower or preview
@@ -1218,6 +1232,7 @@ public final class SessionClient {
             guard let self else { return }
             let clientID = await MainActor.run { self.displayClientID }
             guard let ws = await self.awaitWS(for: generation), ws.supportsWebControlTextFrames else { return }
+            self.diagnosticOwnerResizeRequests &+= 1
             await ws.ownerResize(
                 clientID: clientID,
                 epoch: epoch,
@@ -1254,6 +1269,7 @@ public final class SessionClient {
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard let ws = await self.awaitWS(for: generation), ws.supportsWebControlTextFrames else { return }
+            self.diagnosticOwnerResizeRequests &+= 1
             await ws.ownerResize(clientID: clientID, epoch: epoch, cols: Int(cols), rows: Int(rows), pixels: pixels)
             await self.sendBinaryFrames(frames, on: ws, generation: generation)
         }

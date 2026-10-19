@@ -90,9 +90,16 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
     public var need: String?
     public var emoji: String?
     public var emojiAlternatives: [String]?
+    /// Rename the worktree's purpose only when the task itself changes.
+    public var purposeChanged: Bool?
+    /// A meaningful milestone for the expandable worktree history.
+    public var checkpoint: String?
+    /// The current accumulated decisions; nil preserves previously reported decisions.
+    public var decisions: [String]?
 
     public init(title: String, context: String? = nil, completed: String, next: String, need: String? = nil,
-                emoji: String? = nil, emojiAlternatives: [String]? = nil) {
+                emoji: String? = nil, emojiAlternatives: [String]? = nil,
+                purposeChanged: Bool? = nil, checkpoint: String? = nil, decisions: [String]? = nil) {
         self.title = title
         self.context = context
         self.completed = completed
@@ -100,6 +107,9 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
         self.need = need
         self.emoji = emoji
         self.emojiAlternatives = emojiAlternatives
+        self.purposeChanged = purposeChanged
+        self.checkpoint = checkpoint
+        self.decisions = decisions
     }
 
     public static func isSingleEmoji(_ value: String) -> Bool {
@@ -111,28 +121,22 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
     public var proposedEmojis: [String] { [emoji].compactMap { $0 } + (emojiAlternatives ?? []) }
 
     public var isValid: Bool {
-        let fields = [(title, 100), (completed, 300), (next, 300)]
-        let requiredValid = fields.allSatisfy { value, limit in
-            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && value.count <= limit
-                && !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+        func validText(_ text: String, limit: Int) -> Bool {
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && text.count <= limit
+                && !text.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
         }
-        let contextValid = context.map {
-            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && $0.count <= 200
-                && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
-        } ?? true
-        let needValid = need.map {
-            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && $0.count <= 300
-                && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
-        } ?? true
+        let requiredValid = [(title, 100), (completed, 300), (next, 300)].allSatisfy { text, limit in validText(text, limit: limit) }
+        let contextValid = context.map { validText($0, limit: 200) } ?? true
+        let needValid = need.map { validText($0, limit: 300) } ?? true
         let candidates = proposedEmojis
         let emojiValid = (emojiAlternatives == nil || emoji != nil)
             && candidates.count <= 4
             && Set(candidates).count == candidates.count
             && candidates.allSatisfy(Self.isSingleEmoji)
-        return requiredValid && contextValid && needValid && emojiValid
+        let checkpointValid = checkpoint.map { validText($0, limit: 100) } ?? true
+        let decisionsValid = decisions.map { $0.count <= 8 && $0.allSatisfy { validText($0, limit: 200) } } ?? true
+        return requiredValid && contextValid && needValid && emojiValid && checkpointValid && decisionsValid
     }
 }
 
@@ -182,14 +186,15 @@ public struct SidebarWorktreeMetadata: Codable, Sendable, Hashable {
     public var unseenAgentStop: SidebarAgentStop?
     /// Latest recap remains available to clients after acknowledgement.
     public var lastAgentStop: SidebarAgentStop?
+    public var brief: WorktreeBrief?
     /// Latest progress from each provider session, used to retire viewed
     /// stopped cards after their agent resumes.
     public var agentProgressTimes: [String: Double]?
     public var emoji: String?
     /// Nil for hosts that predate the temporary / pinned distinction.
     public var isPinned: Bool?
-    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, lastAgentStop: SidebarAgentStop? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isPinned: Bool? = nil) {
-        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.lastAgentStop = lastAgentStop; self.agentProgressTimes = agentProgressTimes; self.emoji = emoji
+    public init(id: String, projectID: String, folders: [String] = [], folderIDs: [String]? = nil, paneIDs: [String: String]? = nil, paneSlotIDs: [String]? = nil, attentionTimestamps: [String: Double]? = nil, unseenAgentStop: SidebarAgentStop? = nil, lastAgentStop: SidebarAgentStop? = nil, brief: WorktreeBrief? = nil, agentProgressTimes: [String: Double]? = nil, emoji: String? = nil, isPinned: Bool? = nil) {
+        self.id = id; self.projectID = projectID; self.folders = folders; self.folderIDs = folderIDs; self.paneIDs = paneIDs; self.paneSlotIDs = paneSlotIDs; self.attentionTimestamps = attentionTimestamps; self.unseenAgentStop = unseenAgentStop; self.lastAgentStop = lastAgentStop; self.brief = brief; self.agentProgressTimes = agentProgressTimes; self.emoji = emoji
         self.isPinned = isPinned
     }
 

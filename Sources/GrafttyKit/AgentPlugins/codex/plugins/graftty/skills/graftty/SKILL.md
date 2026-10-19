@@ -5,22 +5,29 @@ description: Report a brief Graftty Attention recap before ending a tracked agen
 
 # Graftty
 
+Keep the problem being solved and why it matters front and center. The recap
+helps the user recover their context when returning to this worktree. Lead with
+that purpose, then explain progress, decisions, and what happens next.
+
 Before ending a top-level turn in a tracked worktree, run:
 
 ```sh
 graftty attention report --stdin <<'GRAFTTY_ATTENTION_7F3A91C2'
-{"title":"Posting detail model evals","context":"Model costs limit how many postings we can process accurately.","completed":"v3 scored 0.910 against a700's 0.935.","next":"Evaluate v3 on the new holdout.","emoji":"🧪","emojiAlternatives":["🔬","📊"]}
+{"title":"Posting detail model evals","context":"Model costs limit how many postings we can process accurately.","completed":"v3 scored 0.910 against a700's 0.935.","next":"Evaluate v3 on the new holdout.","decisions":["Compare models on the same holdout before changing the production model."],"checkpoint":"Baseline comparison complete","emoji":"🧪","emojiAlternatives":["🔬","📊"]}
 GRAFTTY_ATTENTION_7F3A91C2
 ```
 
 Keep each field brief:
 
-- `title`: recognizable task, not a generic status or worktree name.
-- `context`: one sentence explaining the problem and why solving it matters, ideally under 120 characters.
-- `completed`: verified recent progress; state unknown results honestly.
+- `title`: recognizable worktree purpose. Keep it stable across stops, milestones, and implementation steps.
+- `context`: include one sentence stating the problem and why solving it matters, ideally under 120 characters. Preserve that motivation as work progresses; refine it when understanding improves. Put status updates in `completed`.
+- `completed`: verified recent progress toward that purpose; state unknown results honestly.
 - `next`: remaining concrete work.
 - `emoji`: task-specific subject. Include up to three distinct task-related `emojiAlternatives`. The first report assigns the worktree's enduring emoji.
-- Optional `need`: a brief question or action only when the user must decide or supply something.
+- Optional `need`: a brief question or action only when the user must decide or supply something before work can continue. Omit it when no input is needed; still report completed turns.
+- Optional `decisions`: the complete current list of decisions worth retaining, up to eight short strings of at most 200 characters each. Omission preserves the prior list; `[]` clears it. Include the reason when it helps explain a choice.
+- Optional `checkpoint`: a meaningful milestone or decision, at most 100 characters. Reuse the same label while refining that checkpoint. Omit it for routine updates so history follows the work's evolution instead of recording every stop.
+- Optional `purposeChanged`: set to `true` only when the problem or goal actually changes. Then provide the new title and problem context, and the decisions that still apply. Finishing a step or changing implementation approach does not by itself change the worktree's purpose.
 
 The report uses a private file handoff, so it needs no control-socket permission. Do not mention the report in your response unless the command fails; then mention the failure in your final response.
 

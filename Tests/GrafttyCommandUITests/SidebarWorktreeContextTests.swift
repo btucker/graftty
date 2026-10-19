@@ -12,11 +12,12 @@ struct SidebarWorktreeContextTests {
     }
 
     private func worktree(unseen: SidebarAgentStop? = nil, last: SidebarAgentStop? = nil,
-                          progress: [String: Double] = [:], path: String = "/wt", stableID: String? = nil, state: WorktreeWireState = .running, attention: String? = nil) -> WorktreePanes {
+                          progress: [String: Double] = [:], path: String = "/wt", stableID: String? = nil, state: WorktreeWireState = .running, attention: String? = nil,
+                          brief: WorktreeBrief? = nil) -> WorktreePanes {
         .init(path: path, displayName: "Task", repoDisplayName: "Project", displayBranch: "task",
               state: state, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: attention,
               layout: nil, sidebar: .init(id: stableID ?? path, projectID: "p", unseenAgentStop: unseen,
-                                         lastAgentStop: last, agentProgressTimes: progress))
+                                         lastAgentStop: last, brief: brief, agentProgressTimes: progress))
     }
 
     @Test("@spec LAYOUT-2.125: When a worktree has a pending agent question, the application shall keep the full question inline after opening the worktree until it is explicitly dismissed, superseded, or its agent resumes, while retaining the recap for preview.")
@@ -54,7 +55,7 @@ struct SidebarWorktreeContextTests {
         #expect(old.lastAgentStop == nil)
     }
 
-    @Test("@spec LAYOUT-2.127: When worktree search matches a retained report field, the application shall include that worktree without acknowledging its pending request.")
+    @Test("@spec LAYOUT-2.127: When worktree search matches a retained report or current brief field, the application shall include that worktree without acknowledging its pending request.")
     func searchReportFields() {
         let context = SidebarWorktreeContext(worktree: worktree(unseen: stop(), last: stop()))
         for query in ["Reconnect", "Sleeping", "Reproduced", "Implement", "silently", "Task"] {
@@ -62,6 +63,24 @@ struct SidebarWorktreeContextTests {
         }
         #expect(!context.matches(query: "unrelated"))
         #expect(context.pending.count == 1)
+    }
+
+    @Test func searchRetainsPurposeAndDecisionsAcrossLaterStops() {
+        let initial = stop()
+        var brief = WorktreeBrief(recap: initial.recap!, at: initial.stoppedAt)
+        let routine = AttentionRecap(title: "Tests passed", completed: "Implemented recovery", next: "Verify devices",
+                                    decisions: ["Keep the terminal mounted"])
+        brief.update(routine, at: initial.stoppedAt.addingTimeInterval(1))
+        for recap in [routine, nil] {
+            let latest = SidebarAgentStop(agentName: "Codex", stoppedAt: initial.stoppedAt.addingTimeInterval(2), recap: recap)
+            let row = worktree(unseen: latest, last: latest, brief: brief)
+            let context = SidebarWorktreeContext(worktree: row)
+            for query in ["Reconnect", "Sleeping", "recovery", "devices", "mounted"] {
+                #expect(context.matches(query: query))
+            }
+            #expect(context.pending.count == 1)
+            #expect(!context.matches(query: "unrelated"))
+        }
     }
 
     @Test("@spec LAYOUT-2.128: When pending-worktree navigation is invoked, the application shall select the next pending worktree in displayed order within the requested project and wrap at the end.")

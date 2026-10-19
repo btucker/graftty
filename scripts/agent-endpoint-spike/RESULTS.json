@@ -1,0 +1,59 @@
+{
+  "scope": "exact print/exec and TUI transcript text; no Graftty renderer or messaging",
+  "providers": {
+    "codex": {
+      "version": "codex-cli 0.162.1",
+      "exitCode": 0,
+      "exactText": true,
+      "expectedCharacters": 2907,
+      "actualCharacters": 2907,
+      "tui": {
+        "nativeTranscriptExact": true,
+        "ptyBytes": 106220,
+        "sizes": [
+          {
+            "rows": 24,
+            "columns": 40
+          },
+          {
+            "rows": 30,
+            "columns": 90
+          },
+          {
+            "rows": 40,
+            "columns": 120
+          }
+        ],
+        "remoteAppServer": true
+      }
+    },
+    "claude": {
+      "version": "2.1.296 (Claude Code)",
+      "exitCode": 0,
+      "exactText": true,
+      "expectedCharacters": 2907,
+      "actualCharacters": 2907,
+      "tui": {
+        "nativeTranscriptExact": true,
+        "ptyBytes": 36171,
+        "sizes": [
+          {
+            "rows": 24,
+            "columns": 40
+          },
+          {
+            "rows": 30,
+            "columns": 90
+          },
+          {
+            "rows": 40,
+            "columns": 120
+          }
+        ],
+        "remoteAppServer": false
+      }
+    }
+  },
+  "verifiedDate": "2026-10-16",
+  "fixtureUnitTestsPassed": 5
+}

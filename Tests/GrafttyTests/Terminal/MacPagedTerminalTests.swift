@@ -95,6 +95,168 @@ struct MacPagedTerminalTests {
     }
 
     #if GRAFTTY_PAGED_HISTORY
+    @Test("@spec TERM-12.43: When retained history contains dense wide-character rows, the application shall transfer contiguous bounded pages on Mac and mobile without reporting a memory limit solely because a native page exceeds the transport budget, preserve identical retries, and continue scrolling and live output across checkpoint recovery.", .timeLimit(.minutes(1)))
+    func denseWideHistoryPagesStayBoundedAndRecover() async throws {
+        let lineCount = 2000
+        let fixture = try await HistoryDaemon.make(lineCount: lineCount, wide: true)
+        defer { fixture.close() }
+        let stream = PagedZmxAttachEngine(config: .init(zmxExecutable: fixture.launcher.executable,
+            zmxDir: fixture.launcher.zmxDir, sessionName: "history"))
+        try await stream.start()
+        defer { stream.close() }
+        var events = stream.events.makeAsyncIterator()
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
+        for generation in UInt64(1)...2 {
+            if generation > 1 { try await stream.requestCheckpoint() }
+            var freshCheckpoint: PagedTerminalCheckpoint?
+            while let event = await events.next() {
+                if case .checkpoint(let checkpoint) = event { freshCheckpoint = checkpoint; break }
+                if case .output(let data) = event { terminal.access.write(data) }
+            }
+            let checkpoint = try #require(freshCheckpoint)
+            try await renderer.install(checkpoint, generation: generation)
+            var ordinal: UInt64 = 0
+            while true {
+                let request = PagedTerminalHistoryRequest(incarnation: checkpoint.incarnation,
+                    checkpointID: checkpoint.id, requestID: ordinal + 1, ordinal: ordinal, screen: 0)
+                try await stream.requestHistory(request)
+                guard case .page(let page) = try #require(await events.next()) else {
+                    Issue.record("Dense history must arrive as a bounded page, not a host limit refusal"); return
+                }
+                #expect(page.data.count <= PagedTerminalLimits.pageBytes)
+                try await stream.requestHistory(request)
+                #expect(await events.next() == .page(page))
+                try #require(await renderer.appendHistory(page.data, screen: 0, generation: generation) == .applied)
+                if page.complete { break }
+                ordinal += 1
+                try #require(ordinal < 200)
+            }
+            #expect(terminal.firstHistoryRow().contains("history-row-000000"))
+            #expect(terminal.text().contains("history-row-001999"))
+            let marker = "after-history-\(generation)"
+            var receivedLiveResponse = false
+            try await stream.send(Data("\(marker)\n".utf8))
+            while let event = await events.next() {
+                guard case .output(let data) = event else { continue }
+                terminal.access.write(data)
+                if terminal.text().contains("live-\(marker)") { receivedLiveResponse = true; break }
+            }
+            #expect(receivedLiveResponse)
+        }
+    }
+
+    @Test("@spec TERM-12.45: When an older daemon refuses an oversized history page, the application shall report the host page limit without automatic retries and continue live terminal input and output.",
+          .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_HISTORY_LEGACY_ZMX"] != nil,
+                   "The history CI scenario supplies the immutable graftty6 daemon"), .timeLimit(.minutes(1)))
+    func oldDaemonPageRefusalPreservesLiveTerminal() async throws {
+        let oldDaemon = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["GRAFTTY_HISTORY_LEGACY_ZMX"]))
+        let fixture = try await HistoryDaemon.make(lineCount: 2000, wide: true, executable: oldDaemon)
+        defer { fixture.close() }
+        let stream = PagedZmxAttachEngine(config: .init(zmxExecutable: fixture.launcher.executable,
+            zmxDir: fixture.launcher.zmxDir, sessionName: "history"))
+        try await stream.start()
+        defer { stream.close() }
+        var events = stream.events.makeAsyncIterator()
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
+        var requests: [PagedTerminalRequest] = []
+        let coordinator = PagedTerminalCoordinator(renderer: renderer) { request in
+            requests.append(request)
+            switch request {
+            case .history(let page): try await stream.requestHistory(page)
+            case .checkpoint: try await stream.requestCheckpoint()
+            }
+        }
+        guard case .checkpoint(let checkpoint) = try #require(await events.next()) else {
+            Issue.record("Expected old daemon checkpoint"); return
+        }
+        try await coordinator.handle(.checkpoint(checkpoint))
+        await coordinator.loadIfNeeded(prefetch: true)
+        guard case .unavailable(let refusal) = try #require(await events.next()) else {
+            Issue.record("Expected graftty6 oversized-page refusal"); return
+        }
+        #expect(refusal.reason == .limit)
+        try await coordinator.handle(.unavailable(refusal))
+        #expect(coordinator.status == .pageTooLarge)
+        await coordinator.loadIfNeeded(prefetch: true)
+        await coordinator.retry()
+        #expect(requests.count == 1)
+        try await stream.send(Data("old-daemon-still-live\n".utf8))
+        var receivedLiveResponse = false
+        while let event = await events.next() {
+            try await coordinator.handle(event)
+            if case .output(let data) = event { terminal.access.write(data) }
+            if terminal.text().contains("live-old-daemon-still-live") { receivedLiveResponse = true; break }
+        }
+        #expect(receivedLiveResponse)
+        #expect(coordinator.status == .pageTooLarge)
+        #expect(requests.count == 1)
+        coordinator.disconnect()
+    }
+
+    @Test("@spec TERM-12.42: While a native Mac terminal consumes a paged source stream, the application shall preserve its parser grid and synchronized output across local viewport and font resizes, report source dimensions, and release the source grid before legacy fallback.", .timeLimit(.minutes(1)))
+    func nativeParserGridFollowsOrderedSourceRatherThanPhysicalSize() async throws {
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: terminal.prepareGrid)
+        try await renderer.resize(cols: 80, rows: 24)
+        terminal.access.write(Data("\u{1b}[?2026h\u{1b}[?2048h".utf8))
+        ghostty_surface_set_size(terminal.raw, 330, 400)
+        let fontAction = "increase_font_size:1"
+        _ = fontAction.withCString { ghostty_surface_binding_action(terminal.raw, $0, UInt(fontAction.utf8.count)) }
+        // Drain Ghostty's 25ms native resize coalescer, including the font
+        // event. Parser state must remain fixed while physical size changes.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(ghostty_surface_grid_matches(terminal.raw, 80, 24))
+        terminal.access.write(Data("\u{1b}[?2026$p\u{1b}[18t".utf8))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !terminal.responses.contains("\u{1b}[8;24;80t"), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(terminal.responses.contains("\u{1b}[?2026;1$y"))
+        #expect(terminal.responses.contains("\u{1b}[8;24;80t"))
+        let physical = ghostty_surface_size(terminal.raw)
+        // The source acknowledges geometry already applied locally, so
+        // presentation produces no second resize to mask a missing report.
+        try await renderer.resize(cols: physical.columns, rows: physical.rows)
+        let report = "\u{1b}[48;\(physical.rows);\(physical.columns);"
+        while !terminal.responses.contains(report), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(terminal.responses.contains(report), "Mode 2048 must announce the acknowledged logical size")
+        #expect(ghostty_surface_grid_matches(terminal.raw, physical.columns, physical.rows))
+        let parserOnly = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: { _ in })
+        try await parserOnly.resize(cols: physical.columns + 2, rows: physical.rows + 3)
+        #expect(ghostty_surface_grid_matches(terminal.raw, physical.columns + 2, physical.rows + 3))
+        terminal.access.write(Data("\u{1b}[18t".utf8))
+        let pinnedReply = "\u{1b}[8;\(physical.rows + 3);\(physical.columns + 2)t"
+        let pinnedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !terminal.responses.contains(pinnedReply), ContinuousClock.now < pinnedDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(terminal.responses.contains(pinnedReply))
+        let reportStart = terminal.responses.snapshot().count
+        // Clear immediately after queuing a physical resize, before its
+        // coalescer updates io.size. The first report must use parser state.
+        ghostty_surface_set_size(terminal.raw, 310, 390)
+        let fallback = ghostty_surface_size(terminal.raw)
+        try await renderer.releaseSourceGrid()
+        terminal.access.write(Data("\u{1b}[18t".utf8))
+        let fallbackReply = "\u{1b}[8;\(fallback.rows);\(fallback.columns)t"
+        let fallbackDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !String(decoding: terminal.responses.snapshot().dropFirst(reportStart), as: UTF8.self).contains(fallbackReply),
+              ContinuousClock.now < fallbackDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let reports = String(decoding: terminal.responses.snapshot().dropFirst(reportStart), as: UTF8.self)
+        let firstReport = reports.range(of: "\u{1b}\\[48;[0-9]+;[0-9]+;", options: .regularExpression).map { String(reports[$0]) }
+        #expect(firstReport == "\u{1b}[48;\(fallback.rows);\(fallback.columns);")
+        #expect(ghostty_surface_grid_matches(terminal.raw, fallback.columns, fallback.rows))
+    }
+
     @Test("@spec TERM-12.37: While a Mac terminal backfills history, the application shall preserve access to older pages when live output edits the active screen or reallocates its page storage.", .timeLimit(.minutes(1)), arguments: [false, true])
     func historySurvivesLiveScreenEdits(editRows: Bool) async throws {
         let fixture = try await HistoryDaemon.make()
@@ -258,6 +420,54 @@ struct MacPagedTerminalTests {
         #expect(terminal.firstHistoryRow().contains("history-row-000000"))
     }
 
+    @Test("@spec TERM-12.39: When the Mac takes control of a restored paged terminal from mobile, the application shall resize to the Mac viewport and keep the terminal attachment available for input and live output.", .timeLimit(.minutes(1)))
+    func takeControlKeepsRestoredAttachmentLive() async throws {
+        let fixture = try await HistoryDaemon.make()
+        defer { fixture.close() }
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        let store = SessionDisplayOwnershipStore()
+        let phone = DisplayClientID("phone")
+        _ = store.attachClient(sessionName: "history", clientID: phone, kind: .ios,
+                               role: .interactive, visible: true, grid: try DisplayGrid(cols: 80, rows: 24))
+        _ = store.claimOwner(sessionName: "history", clientID: phone, kind: .ios,
+                             grid: try DisplayGrid(cols: 80, rows: 24))
+        let backend = HostManagedZmxBackend(spawnConfiguration: .init(
+            sessionName: "history", argv: ["/nonexistent-graftty-legacy-attach"],
+            env: fixture.launcher.subprocessEnv(from: ProcessInfo.processInfo.environment),
+            workingDirectory: fixture.launcher.zmxDir, shellReadySignalAvailable: false
+        ), initialSize: .init(cols: 80, rows: 24),
+            ownership: HostManagedZmxOwnership(store: store, sessionName: "history", clientID: DisplayClientID("mac")))
+        defer { backend.close(); backend.releaseReceiveUserdataAfterSurfaceFree() }
+        var completed = false
+        var failure: String?
+        backend.bindAttachmentFailure { failure = $0 }
+        backend.bindAttachmentGrid { grid in
+            if let grid { terminal.prepareGrid(grid) }
+            else { completed = true }
+        }
+        backend.bindSurfaceSync(currentWindowSize: { .init(cols: 165, rows: 79, xpixel: 2661, ypixel: 2714) }, requestRefresh: {})
+        backend.markLayoutSettled()
+        try backend.start(surface: terminal.raw)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !completed, failure == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(completed)
+        #expect(failure == nil)
+        #expect(store.snapshot(sessionName: "history").ownerClientID == phone)
+        terminal.prepareGrid(try DisplayGrid(cols: 165, rows: 79))
+        #expect(backend.takeControl())
+        #expect(store.snapshot(sessionName: "history").ownerClientID == DisplayClientID("mac"))
+        #expect(store.snapshot(sessionName: "history").grid == (try DisplayGrid(cols: 165, rows: 79)))
+        try backend.write(Data("takeover-probe\r".utf8))
+        while !terminal.text().contains("live-takeover-probe"), failure == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(failure == nil)
+        #expect(terminal.text().contains("live-takeover-probe"))
+    }
+
     @MainActor
     private final class NativeCanvas {
         let app: GhosttyApp
@@ -265,6 +475,7 @@ struct MacPagedTerminalTests {
         let view: NSView
         let raw: ghostty_surface_t
         let access: MacPagedSurface
+        let responses = HistoryOutput(marker: "unused-response-marker")
         private var ticker: Task<Void, Never>?
 
         init() throws {
@@ -280,7 +491,11 @@ struct MacPagedTerminalTests {
             config.platform.macos.nsview = Unmanaged.passUnretained(view).toOpaque()
             config.scale_factor = Double(window.backingScaleFactor)
             config.backend = GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED
-            config.receive_buffer = { _, _, _ in }
+            config.receive_userdata = Unmanaged.passUnretained(responses).toOpaque()
+            config.receive_buffer = { userdata, bytes, count in
+                guard let userdata, let bytes, count > 0 else { return }
+                Unmanaged<HistoryOutput>.fromOpaque(userdata).takeUnretainedValue().append(Data(bytes: bytes, count: Int(count)))
+            }
             config.receive_resize = { _, _, _, _, _ in }
             raw = try #require(ghostty_surface_new(app.app, &config))
             access = MacPagedSurface(raw)
@@ -334,26 +549,29 @@ struct MacPagedTerminalTests {
         let seed: NativePtySession
         private let output: HistoryOutput
 
-        private init(lineCount: Int, redrawPrompt: Bool) throws {
+        private init(lineCount: Int, redrawPrompt: Bool, wide: Bool, executable: URL?) throws {
             output = HistoryOutput(marker: redrawPrompt ? "history-prompt> " : String(format: "history-row-%06d", lineCount - 1))
             let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             let dir = URL(fileURLWithPath: "/private/tmp/mac-paging-\(UUID().uuidString.prefix(8))")
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            launcher = ZmxLauncher(executable: root.appendingPathComponent("Resources/zmx-binary/zmx"), zmxDir: dir)
+            launcher = ZmxLauncher(executable: executable ?? root.appendingPathComponent("Resources/zmx-binary/zmx"), zmxDir: dir)
             // Keep the shell alive after producing the fixture; the client reader
             // drains the PTY so this setup cannot block on its output buffer.
             let output = output
             let prompt = redrawPrompt ? "printf '\\033]133;A;redraw=1\\007history-prompt> \\033]133;B\\007'; " : ""
+            let historyLine = wide
+                ? "🧪 history-row-%06d /workspace/project/src/components/HistoryPanel.swift:100"
+                : "history-row-%06d"
             seed = NativePtySession(argv: [launcher.executable.path, "attach", "history", "/bin/sh", "-c",
-                "i=0; while [ $i -lt \(lineCount) ]; do printf 'history-row-%06d\\n' $i; i=$((i+1)); done; \(prompt)while read value; do printf 'live-%s\\n' \"$value\"; done"],
+                "i=0; while [ $i -lt \(lineCount) ]; do printf '\(historyLine)\\n' $i; i=$((i+1)); done; \(prompt)while read value; do printf 'live-%s\\n' \"$value\"; done"],
                 env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment),
                 workingDirectory: dir, initialSize: .init(cols: 80, rows: 24),
                 writeToSurface: { output.append($0) }, processExited: { _, _ in }, spawnFailed: { _ in })
         }
 
-        static func make(lineCount: Int = 10000, redrawPrompt: Bool = false, reflowed: Bool = false) async throws -> HistoryDaemon {
-            let fixture = try HistoryDaemon(lineCount: lineCount, redrawPrompt: redrawPrompt)
+        static func make(lineCount: Int = 10000, redrawPrompt: Bool = false, reflowed: Bool = false, wide: Bool = false, executable: URL? = nil) async throws -> HistoryDaemon {
+            let fixture = try HistoryDaemon(lineCount: lineCount, redrawPrompt: redrawPrompt, wide: wide, executable: executable)
             do {
                 try fixture.seed.start()
                 let deadline = ContinuousClock.now.advanced(by: .seconds(10))
@@ -390,6 +608,7 @@ struct MacPagedTerminalTests {
         func contains(_ text: String) -> Bool {
             lock.withLock { String(decoding: bytes, as: UTF8.self).contains(text) }
         }
+        func snapshot() -> Data { lock.withLock { bytes } }
         var finished: Bool { contains(marker) }
     }
 }

@@ -1672,7 +1672,7 @@ struct RemoteMacsModelTests {
     }
 
     @Test("""
-    @spec NOTIF-1.8: When a connected Remote Mac records a new stopped recap, the application shall send one macOS notification with the recap and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
+    @spec NOTIF-1.8: When a connected Remote Mac records any new stopped turn, the application shall send one macOS notification with its stable purpose title and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
     """)
     func remoteRecapsUseTaskContent() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
@@ -1690,9 +1690,9 @@ struct RemoteMacsModelTests {
         let recap = AttentionRecap(title: "Attention queue", completed: "Tests passed.", next: "Review.",
                                    need: "Does this look right?")
         func snapshot(time: Double?, userNotification: Bool = false,
-                      promptTime: Double? = nil, separatePane: Bool = false, worktreePrompt: Bool = false, home: Bool = false) -> [WorktreePanes] {
+                      promptTime: Double? = nil, separatePane: Bool = false, worktreePrompt: Bool = false, home: Bool = false, bare: Bool = false) -> [WorktreePanes] {
             let stop = time.map { SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: $0),
-                                                  recap: recap, paneSlotID: "slot") }
+                                                  recap: bare ? nil : recap, paneSlotID: "slot") }
             let prompt = PaneLayoutNode.leaf(sessionName: separatePane ? "other-pane" : "agent-pane", title: "Agent",
                 attentionText: userNotification ? "Check the preview" : time == nil ? nil : "Codex has a question", isBusy: false,
                 attentionSource: userNotification ? .userNotify : .agentStop,
@@ -1743,6 +1743,11 @@ struct RemoteMacsModelTests {
         #expect(decoded.identityProject?.name == "Repo")
         let fallback = await model.notificationProjectIdentity(for: decoded)
         #expect(fallback?.0.id == "project")
+        let count = events.count
+        registry.onPaneSnapshot(identity, snapshot(time: 600, bare: true))
+        #expect(events.count == count + 1)
+        #expect(events.last?.kind == .agentStop)
+        #expect(events.last?.body.contains("stopped") == true)
     }
 
     @Test("""

@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyCommandUI
 import GrafttyRemoteClient
 
 private extension WorktreeManagementResponse {
@@ -43,10 +44,14 @@ struct MainWindow: View {
     let teamEventDispatcher: TeamEventDispatcher
     @ObservedObject var hostPairingCoordinator: RemoteMacHostPairingCoordinator
     @ObservedObject private var iconStore = SidebarHostController.shared
+    @ObservedObject private var previewWindows = FilePreviewWindows.shared
     @ObservedObject var remoteMacsModel: RemoteMacsModel
     let makeRemoteMacPairingDriver: () -> AddRemoteMacPairingDriving
 
     @EnvironmentObject private var updaterController: UpdaterController
+
+    @State private var showsWorktreeContext = false
+    @State private var sidebarNavigation = SidebarNavigationState(prefix: "sidebar.mac")
 
     /// Column visibility state — must be a real `@State` rather than a
     /// `.constant(...)` so the toolbar toggle button actually toggles.
@@ -144,7 +149,8 @@ struct MainWindow: View {
                 onDeleteWorktree: deleteWorktreeWithConfirmation,
                 onMovePane: movePane,
                 onAddWorktree: addWorktree,
-                pendingAddWorktree: $pendingAddWorktree
+                pendingAddWorktree: $pendingAddWorktree,
+                navigation: sidebarNavigation
             )
             .navigationSplitViewColumnWidth(
                 min: minimumSidebarWidth,
@@ -187,7 +193,13 @@ struct MainWindow: View {
                     onGoForward: { navigateWorktreeHistory(forward: true) },
                     onSelectHistory: selectHistoryTarget,
                     onRefreshPR: refreshPR,
-                    project: selectedIdentityProject, projectIconData: selectedProjectIconData
+                    project: selectedIdentityProject, projectIconData: selectedProjectIconData,
+                    previewWorktreePath: selectedRemoteIdentity == nil ? selectedWorktree?.path : nil,
+                    previewInlinePane: selectedWorktree.flatMap {
+                        ImagePreviewLayout.visiblePane(tree: $0.splitTree, focused: $0.focusedPaneSlotID)
+                    },
+                    previewWorktreeForPane: { [weak terminalManager] pane in terminalManager?.worktreePath(for: pane) },
+                    onToggleContext: selectedWorktree != nil || selectedRemoteWorktreeSnapshot != nil ? { showsWorktreeContext.toggle() } : nil
                 )
 
                 if let selectedRemoteMac {
@@ -272,7 +284,8 @@ struct MainWindow: View {
                                 appState.viewPaneAttention(terminalID, forWorktreePath: wtPath)
                             }
                             terminalManager.setFocus(terminalID)
-                        }
+                        },
+                        previewWorktreePath: selectedWorktree?.path
                     )
                     // A hair of breathing room so terminal text doesn't
                     // slam into the sidebar divider.
@@ -283,6 +296,19 @@ struct MainWindow: View {
                         systemImage: "terminal",
                         description: Text("Select a worktree from the sidebar or add a repository.")
                     )
+                }
+            }
+            .safeAreaInset(edge: .trailing, spacing: 0) {
+                if showsWorktreeContext, let context = selectedContext {
+                    HStack(spacing: 0) {
+                        Divider()
+                        WorktreeContextPanel(context: context, foreground: terminalManager.theme.foreground,
+                            secondary: terminalManager.theme.foreground.opacity(0.6),
+                            onClose: { showsWorktreeContext = false })
+                            .frame(width: 360)
+                            .background(terminalManager.theme.background)
+                            .padding(.top, 30)
+                    }
                 }
             }
             .ignoresSafeArea(.container, edges: .top)
@@ -417,6 +443,22 @@ struct MainWindow: View {
         ), when: true)
         .onChange(of: selectedVoicePaneID) { _, _ in
             voiceDictation.cancel()
+        }
+        .onChange(of: previewWindows.inlineTarget) { _, target in
+            guard let target,
+                  let indices = appState.indicesOfWorktreeContaining(terminalID: target.pane),
+                  appState.repos[indices.repo].worktrees[indices.worktree].path == target.worktreePath else { return }
+            let tree = appState.repos[indices.repo].worktrees[indices.worktree].splitTree
+            if let zoomed = tree.zoomed, zoomed != target.pane {
+                appState.repos[indices.repo].worktrees[indices.worktree].splitTree = tree.withZoom(nil)
+            }
+            selectPane(target.worktreePath, target.pane)
+            makePaneFirstResponder(target.pane, when: {
+                selectedRemoteIdentity == nil && appState.selectedWorktreePath == target.worktreePath
+                    && appState.worktree(forPath: target.worktreePath)?.focusedPaneSlotID == target.pane
+            }, onFocused: {
+                terminalManager.view(for: target.pane)?.window?.makeKeyAndOrderFront(nil)
+            })
         }
         .onChange(of: currentNavigationTarget, initial: true) { _, target in
             worktreeHistory.record(target)
@@ -596,6 +638,15 @@ struct MainWindow: View {
         return remoteMacsModel.worktreePanesByRemote[identity]?.first {
             $0.path == path && ($0.origin?.relayDepth ?? 0) == 0
         }
+    }
+
+    private var selectedContext: SidebarWorktreeContext? {
+        if let remote = selectedRemoteWorktreeSnapshot { return sidebarNavigation.worktreeContext(remote) }
+        guard selectedRemoteIdentity == nil, let path = selectedWorktree?.path else { return nil }
+        let rows = sidebarLocalWorktrees(state: appState, owner: iconStore.owner, titles: terminalManager.displayTitles,
+            liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) },
+            defaultBranch: { remoteBranchStore.resolvedDefaultBranch(forRepoAt: $0.path, hint: $0.defaultBranchHint) })
+        return rows.first(where: { $0.path == path }).map { sidebarNavigation.worktreeContext($0) }
     }
 
     /// Computed command handler surfaced to `GrafttyApp.commands` via

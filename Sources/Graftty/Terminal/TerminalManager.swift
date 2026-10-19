@@ -996,6 +996,12 @@ final class TerminalManager: ObservableObject {
         return paneWorktreePaths[slot]
     }
 
+    /// Current pane membership remains available after renderer eviction or reassignment.
+    func worktreePath(for terminalID: PaneSlotID) -> String? {
+        guard paneSessionIDs[terminalID] != nil else { return nil }
+        return paneWorktreePaths[terminalID]
+    }
+
     /// Test seam: read the captured grid size for a pane.
     func evictedGridSize(for terminalID: PaneSlotID) -> GridSize? {
         evictedGridSizes[terminalID]
@@ -1547,7 +1553,7 @@ final class TerminalManager: ObservableObject {
     }
 
     /// Resolve `GHOSTTY_RESOURCES_DIR` before `ghostty_init` (CONFIG-2.x).
-    /// An explicit env setting wins (CONFIG-2.2); otherwise point at the
+    /// A valid explicit env setting wins (CONFIG-2.2); otherwise point at the
     /// copy vendored in GrafttyKit's resource bundle (CONFIG-2.3/2.5) so
     /// shell integration never depends on a separately installed
     /// Ghostty.app. libghostty reads the variable to locate its
@@ -1563,6 +1569,9 @@ final class TerminalManager: ObservableObject {
         case .bundled(let dir):
             setenv("GHOSTTY_RESOURCES_DIR", dir, 1)
         case .unavailable:
+            // A stale inherited path must not send zsh to a missing .zshenv.
+            // With no Ghostty payload, spawn uses Graftty's own init shim.
+            unsetenv("GHOSTTY_RESOURCES_DIR")
             // CONFIG-2.4: warn visibly (not today's silent skip) and
             // degrade gracefully — shells still work, OSC 7/133-driven
             // features go quiet, TERM falls back per ZMX-6.5.

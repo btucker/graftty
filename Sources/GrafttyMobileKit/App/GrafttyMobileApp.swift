@@ -2,7 +2,7 @@
 import SwiftUI
 
 public struct GrafttyMobileApp: App {
-    public init() {}
+    public init() { MobileAgentNotifications.shared.install() }
 
     public var body: some Scene {
         WindowGroup {

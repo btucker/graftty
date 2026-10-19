@@ -1,0 +1,157 @@
+diff --git a/src/termio/Termio.zig b/src/termio/Termio.zig
+--- a/src/termio/Termio.zig
++++ b/src/termio/Termio.zig
+@@ -57,6 +57,10 @@
+ 
+ /// The cached size info
+ size: renderer.Size,
++
++/// Ordered host stream grid. Protected by renderer_state.mutex. UI size
++/// and font changes still report physical intent but cannot resize parsing.
++host_managed_grid: ?renderer.GridSize = null,
+ 
+ /// The mailbox implementation to use.
+ mailbox: termio.Mailbox,
+@@ -497,12 +501,19 @@
+         self.renderer_state.mutex.lockUncancelable(global.io());
+         defer self.renderer_state.mutex.unlock(global.io());
+ 
+-        // Update the size of our terminal state
+-        try self.terminal.resize(
++        const parser_grid = self.host_managed_grid orelse grid_size;
++        // A local pixel/font change must not end a source synchronized-output
++        // batch. Terminal.resize clears that mode even for an unchanged grid.
++        if (self.host_managed_grid != null and
++            self.terminal.cols == parser_grid.columns and self.terminal.rows == parser_grid.rows)
++        {
++            self.terminal.width_px = std.math.mul(u32, parser_grid.columns, size.cell.width) catch std.math.maxInt(u32);
++            self.terminal.height_px = std.math.mul(u32, parser_grid.rows, size.cell.height) catch std.math.maxInt(u32);
++        } else try self.terminal.resize(
+             self.alloc,
+             .{
+-                .cols = grid_size.columns,
+-                .rows = grid_size.rows,
++                .cols = parser_grid.columns,
++                .rows = parser_grid.rows,
+                 .cell_size_px = .{
+                     .width = self.size.cell.width,
+                     .height = self.size.cell.height,
+@@ -529,12 +540,19 @@
+ }
+ 
+ fn sizeReportLocked(self: *Termio, td: *ThreadData, style: termio.Message.SizeReport) !void {
+-    const grid_size = self.size.grid();
++    const host_managed = switch (self.backend) {
++        .host_managed => true,
++        else => false,
++    };
++    const grid_size: renderer.GridSize = if (host_managed)
++        .{ .columns = self.terminal.cols, .rows = self.terminal.rows }
++    else
++        self.size.grid();
+     const report_size: terminalpkg.size_report.Size = .{
+         .rows = grid_size.rows,
+         .columns = grid_size.columns,
+-        .cell_width = self.size.cell.width,
+-        .cell_height = self.size.cell.height,
++        .cell_width = if (host_managed) self.terminal.width_px / self.terminal.cols else self.size.cell.width,
++        .cell_height = if (host_managed) self.terminal.height_px / self.terminal.rows else self.size.cell.height,
+     };
+ 
+     // 1024 bytes should be enough for size report since report
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -2002,8 +2002,10 @@
+         io.terminal_stream.deinit();
+         io.terminal.deinit(io.alloc);
+         io.terminal = decoded.toOwned();
+-        io.terminal.width_px = io.terminal.cols * io.size.cell.width;
+-        io.terminal.height_px = io.terminal.rows * io.size.cell.height;
++        if (io.host_managed_grid != null)
++            io.host_managed_grid = .{ .columns = io.terminal.cols, .rows = io.terminal.rows };
++        io.terminal.width_px = io.terminal.cols * core.size.cell.width;
++        io.terminal.height_px = io.terminal.rows * core.size.cell.height;
+         io.terminal_stream = .init(.{ .allocator = io.alloc, .handler = handler });
+         io.mailbox.send(.{ .linefeed_mode = io.terminal.modes.get(.linefeed) }, core.renderer_state.mutex);
+         if (io.terminal.modes.get(.synchronized_output))
+@@ -2030,6 +2032,64 @@
+         io.terminal.flags.dirty.palette = true;
+         io.mailbox.notify();
+         io.terminal_stream.handler.queueRender() catch {};
++        return true;
++    }
++
++    /// A source grid is consumed in VT stream order on the main thread.
++    /// Keep queued physical/font resizes from moving the parser across that
++    /// boundary; backend resize callbacks continue reporting physical intent.
++    export fn ghostty_surface_set_source_grid(surface: *Surface, cols: u16, rows: u16) bool {
++        if (surface.termio_backend != .host_managed or cols == 0 or rows == 0 or
++            cols > 1000 or rows > 1000 or @as(usize, cols) * rows > 262144) return false;
++        const core = &surface.core_surface;
++        core.renderer_state.mutex.lockUncancelable(global.io());
++        defer core.renderer_state.mutex.unlock(global.io());
++        const io = &core.io;
++        const changed = io.terminal.cols != cols or io.terminal.rows != rows;
++        if (changed) {
++            io.terminal.resize(io.alloc, .{
++                .cols = cols,
++                .rows = rows,
++                .cell_size_px = .{ .width = core.size.cell.width, .height = core.size.cell.height },
++            }) catch return false;
++        }
++        io.terminal.width_px = std.math.mul(u32, cols, core.size.cell.width) catch std.math.maxInt(u32);
++        io.terminal.height_px = std.math.mul(u32, rows, core.size.cell.height) catch std.math.maxInt(u32);
++        io.host_managed_grid = .{ .columns = cols, .rows = rows };
++        if (changed and io.terminal.modes.get(.in_band_size_reports))
++            io.mailbox.send(.{ .size_report = .mode_2048 }, core.renderer_state.mutex);
++        io.terminal.flags.dirty.clear = true;
++        io.mailbox.notify();
++        io.renderer_wakeup.notify() catch {};
++        return true;
++    }
++
++    /// Leave source-controlled parsing when the host falls back to a legacy
++    /// transport. The host orders this call after prior queued output.
++    export fn ghostty_surface_clear_source_grid(surface: *Surface) bool {
++        if (surface.termio_backend != .host_managed) return false;
++        const core = &surface.core_surface;
++        core.renderer_state.mutex.lockUncancelable(global.io());
++        defer core.renderer_state.mutex.unlock(global.io());
++        const io = &core.io;
++        if (io.host_managed_grid == null) return true;
++        const grid = core.size.grid();
++        const changed = io.terminal.cols != grid.columns or io.terminal.rows != grid.rows;
++        if (changed) {
++            io.terminal.resize(io.alloc, .{
++                .cols = grid.columns,
++                .rows = grid.rows,
++                .cell_size_px = .{ .width = core.size.cell.width, .height = core.size.cell.height },
++            }) catch return false;
++        }
++        io.terminal.width_px = std.math.mul(u32, grid.columns, core.size.cell.width) catch std.math.maxInt(u32);
++        io.terminal.height_px = std.math.mul(u32, grid.rows, core.size.cell.height) catch std.math.maxInt(u32);
++        io.host_managed_grid = null;
++        if (changed and io.terminal.modes.get(.in_band_size_reports))
++            io.mailbox.send(.{ .size_report = .mode_2048 }, core.renderer_state.mutex);
++        io.terminal.flags.dirty.clear = true;
++        io.mailbox.notify();
++        io.renderer_wakeup.notify() catch {};
+         return true;
+     }
+ 
+diff --git a/include/ghostty.h b/include/ghostty.h
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1207,6 +1207,11 @@
+ GHOSTTY_API int ghostty_surface_snapshot_page(ghostty_surface_t, uint64_t generation, uint16_t screen_key, const uint8_t*, size_t, size_t* applied_rows);
+ // screen_key is 0 primary, 1 alternate. Demand is false for an inactive screen.
+ GHOSTTY_API bool ghostty_surface_snapshot_near_top(ghostty_surface_t, uint64_t generation, uint16_t screen_key, uint32_t threshold_rows);
++// Apply the ordered source grid and pin parsing against later UI/font resizes.
++// Main thread only; serialize with live writes and snapshot operations.
++GHOSTTY_API bool ghostty_surface_set_source_grid(ghostty_surface_t, uint16_t columns, uint16_t rows);
++// Release the pin before a legacy stream resumes; applies current physical grid.
++GHOSTTY_API bool ghostty_surface_clear_source_grid(ghostty_surface_t);
+ GHOSTTY_API bool ghostty_surface_grid_matches(ghostty_surface_t, uint16_t columns, uint16_t rows);
+ 
+ GHOSTTY_API void ghostty_surface_refresh(ghostty_surface_t);

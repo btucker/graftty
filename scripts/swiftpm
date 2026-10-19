@@ -95,7 +95,15 @@ if [[ "$(uname -s)" == Linux && "$SUBCOMMAND" == test ]]; then
   INDEX_ARGUMENT=--enable-index-store
 fi
 
+# Read the manifest once without its evaluation cache, then pass the renderer
+# context globally: dependency targets such as GhosttyTerminal need it too.
+RENDERER_ARGUMENTS=(--manifest-cache none)
+if [[ "$(uname -s)" == Darwin && -f "$REPO_ROOT/scripts/ghostty-paging/compiler-context.py" ]]; then
+  RENDERER_CONTEXT="$(python3 "$REPO_ROOT/scripts/ghostty-paging/compiler-context.py" "$REPO_ROOT" "$BUILD_DIR")"
+  RENDERER_ARGUMENTS+=(-Xcc "$RENDERER_CONTEXT")
+fi
 exec swift "$SUBCOMMAND" \
+  "${RENDERER_ARGUMENTS[@]}" \
   --package-path "$REPO_ROOT" \
   --scratch-path "$BUILD_DIR" \
   "$INDEX_ARGUMENT" \

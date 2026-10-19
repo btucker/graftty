@@ -1,0 +1,26 @@
+diff --git a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSnapshot.swift b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSnapshot.swift
+--- a/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSnapshot.swift
++++ b/Sources/GhosttyTerminal/InMemory/InMemoryTerminalSnapshot.swift
+@@ -69,6 +69,22 @@
+         } ?? false
+     }
+ 
++    /// Apply an in-band source grid after prior output, on the main thread.
++    /// Later physical/font resizes report intent without changing parsing.
++    func setSourceGrid(columns: UInt16, rows: UInt16) async -> Bool {
++        guard columns > 0, rows > 0 else { return false }
++        return await performSnapshotOperation(onMainThread: true, canceledResult: false) { surface in
++            ghostty_surface_set_source_grid(surface, columns, rows)
++        }
++    }
++
++    /// Release source-controlled parsing before a legacy stream resumes.
++    func clearSourceGrid() async -> Bool {
++        await performSnapshotOperation(onMainThread: true, canceledResult: false) { surface in
++            ghostty_surface_clear_source_grid(surface)
++        }
++    }
++
+     private func performSnapshotOperation<Result: Sendable>(
+         onMainThread: Bool = false,
+         canceledResult: Result,

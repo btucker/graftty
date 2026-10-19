@@ -194,13 +194,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.89** While the ordinary worktree list scrolls, the application shall keep Pinned Agents and the Sort order and Add Worktree line fixed above its viewport in both macOS sidebar modes.
 
-**LAYOUT-2.90** When a new pending Attention request arrives while the worktree view is open, the application shall temporarily slide a banner over the top of the worktree list, show each worktree once in arrival order, and suppress existing requests, repeated snapshots.
-
-**LAYOUT-2.91** When an Attention banner is clicked, the application shall open its worktree directly in the project worktree list and acknowledge only a successful visit.
+**LAYOUT-2.91** When a worktree request is opened, the application shall open its worktree directly in the project worktree list and acknowledge only a successful visit.
 
 **LAYOUT-2.92** When an available project's worktree is deleted, the application shall remove all of its retained Attention cards and queued banners while preserving cards for offline projects.
-
-**LAYOUT-2.93** When a queued Attention request resumes, is viewed, or is dismissed, the application shall remove its banner while preserving requests absent from incomplete or offline snapshots.
 
 **LAYOUT-2.95** While a repository's worktree order is set to recent activity, the application shall continuously order its temporary worktrees by their latest creation, attention, agent progress, or stop time with the newest first, keep stale temporary worktrees last, place the default-branch checkout first among Pinned Agents above them, preserve manual pinned order, and decode older state without the setting as manual order.
 
@@ -266,7 +262,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.126** When a remote client receives a retained agent recap, the application shall expose its context without counting it as a pending request and decode snapshots from older hosts without a retained recap.
 
-**LAYOUT-2.127** When worktree search matches a retained report field, the application shall include that worktree without acknowledging its pending request.
+**LAYOUT-2.127** When worktree search matches a retained report or current brief field, the application shall include that worktree without acknowledging its pending request.
 
 **LAYOUT-2.128** When pending-worktree navigation is invoked, the application shall select the next pending worktree in displayed order within the requested project and wrap at the end.
 
@@ -282,7 +278,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.134** When a worktree question's pane is not displayed, the application shall show its question beneath the worktree instead of hiding it.
 
-**LAYOUT-2.135** While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background, label completed work, and inset pending and viewed questions with an orange accent while distinguishing them by label.
+**LAYOUT-2.135** While a worktree report is previewed, the application shall group compact identity metadata on a contrasting background and display the retained current brief, live waiting question, and expandable checkpoint history.
 
 **LAYOUT-2.140** While a mobile worktree report is displayed, the application shall freeze host-published project and worktree positions and folder and pin membership while keeping report and row content live.
 
@@ -624,7 +620,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.25** When a native paged attachment negotiates pixel-size support, the application shall send current pixel metadata before each changed window size and daemon-requested size reply, including changes that preserve the cell grid.
 
-**TERM-12.26** When a remote Mac finishes restoring a terminal as a follower, the application shall retain the authoritative grid until display ownership changes.
+**TERM-12.26** While a remote Mac follows a paged terminal, the application shall retain the last in-band source grid through ownership updates and restore-pin release until it becomes the display owner.
 
 **TERM-12.27** While a remote Mac awaits or imports its initial terminal checkpoint, the application shall defer owner grid synchronization until the retained history import finishes.
 
@@ -649,6 +645,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-12.37** While a Mac terminal backfills history, the application shall preserve access to older pages when live output edits the active screen or reallocates its page storage.
 
 **TERM-12.38** If live output resets a restored Mac terminal or explicitly erases its history, then the application shall reject pending older pages without restoring the discarded history.
+
+**TERM-12.39** When the Mac takes control of a restored paged terminal from mobile, the application shall resize to the Mac viewport and keep the terminal attachment available for input and live output.
+
+**TERM-12.40** While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering without disconnecting, and shall release a waiting reader when the attachment closes.
+
+**TERM-12.41** While a local Mac follows a paged terminal, the application shall preserve the last in-band source grid when a temporary restore pin is released, independently of ownership metadata.
+
+**TERM-12.42** While a native Mac terminal consumes a paged source stream, the application shall preserve its parser grid and synchronized output across local viewport and font resizes, report source dimensions, and release the source grid before legacy fallback.
+
+**TERM-12.43** When retained history contains dense wide-character rows, the application shall transfer contiguous bounded pages on Mac and mobile without reporting a memory limit solely because a native page exceeds the transport budget, preserve identical retries, and continue scrolling and live output across checkpoint recovery.
+
+**TERM-12.44** If the host cannot fit a history row within its page transport budget, then the application shall distinguish that refusal from local memory exhaustion, stop automatic retries, and preserve loaded content until explicit checkpoint recovery.
+
+**TERM-12.45** When an older daemon refuses an oversized history page, the application shall report the host page limit without automatic retries and continue live terminal input and output.
 
 ## GIT — Worktree Discovery & Monitoring
 
@@ -1126,21 +1136,51 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.3** If the user has denied notification authorization, the application shall silently skip the notification rather than surfacing an error.
 
-**NOTIF-1.4** When a stopped agent turn has a recap, the application shall send a macOS notification with its task title, worktree identity, and user question or completed result; a bare Stop shall remain silent.
+**NOTIF-1.4** When any agent turn stops, the application shall send a native notification using its stable purpose title, worktree identity, and question or completed result, with a fallback for stops without a report.
 
 **NOTIF-1.5** When another agent Attention notification is sent for the same worktree, the application shall replace its existing macOS notification while keeping other worktrees' notifications distinct.
 
 **NOTIF-1.6** While Graftty is active, agent Attention notifications shall display native banners and sounds using the user's macOS notification settings.
 
-**NOTIF-1.7** When a stopped recap reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate deliveries or stops older than a recorded stop or that provider's progress.
+**NOTIF-1.7** When a stopped turn reaches Graftty through the hook or file handoff, the application shall post its desktop notification once and ignore duplicate deliveries or stops older than a recorded stop or that provider's progress.
 
-**NOTIF-1.8** When a connected Remote Mac records a new stopped recap, the application shall send one macOS notification with the recap and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
+**NOTIF-1.8** When a connected Remote Mac records any new stopped turn, the application shall send one macOS notification with its stable purpose title and worktree identity, suppress repeated and initial snapshots, and avoid a second superseded agent alert at the recap's target.
 
 **NOTIF-1.9** When a native Attention notification represents the home checkout, the application shall use the current project icon and fallback instead of its stored worktree emoji while preserving linked worktree identities and notification activation routes.
 
 **NOTIF-1.10** When identity lookup or notification authorization overlaps a newer Attention notification for the same worktree, the application shall deliver only the latest pending notification while preserving independent worktree deliveries and cleaning its original attachment source file.
 
 **NOTIF-1.11** When the user activates a local agent notification, the application shall retain the request until a window can open its worktree through the normal selection path, restoring terminal surfaces and the originating pane without changing selection or acknowledging attention if the worktree cannot wake.
+
+**NOTIF-1.12** When a mobile client receives a new stopped turn, the application shall create a native notification for stops with or without reports, deduplicate repeated and older snapshots across reconnects and relaunches, and keep hosts distinct.
+
+**NOTIF-1.13** When an agent stops while GrafttyMobile is suspended or terminated, the application shall receive a native push notification through Graftty-server and APNs and route activation to its authenticated host and worktree.
+
+**NOTIF-1.14** When an agent requests permission or input on mobile, the application shall deliver a native notification once per new request, suppress command-finished markers, and suppress an older prompt superseded by a stop at the same pane.
+
+**NOTIF-1.15** When preparing a Graftty-server push, the application shall encrypt notification content and routing identity for each phone using HPKE, and reject tampered or oversized ciphertext.
+
+**NOTIF-1.16** When encoding a Graftty-server push request, the application shall use the relay's protojson field names, enum names, base64 bytes, and a stable event identifier for retries.
+
+**NOTIF-1.17** When enrolling a phone with Graftty-server, the application shall send its APNs token and encryption public key over authenticated HTTPS using the server's registration contract.
+
+**NOTIF-1.18** When Graftty-server batches or rejects a push, the application shall preserve that delivery result instead of reporting that APNs delivered it.
+
+**NOTIF-1.19** When preparing a Graftty-server push request, the application shall reject targets whose projected APNs JSON exceeds 4096 bytes including base64 content and relay metadata.
+
+**NOTIF-1.20** When a mobile notification opens a closed worktree, the application shall reopen it and wait for a running pane, restore the stable pane target, and cancel activation if newer navigation supersedes it.
+
+**NOTIF-1.21** While the mobile application has not installed its notification delegate, creating notification state and receiving snapshots shall not access the system notification service.
+
+**NOTIF-1.22** When the mobile application initializes, the application shall install its notification delegate before constructing the root view so launch notification responses can be received.
+
+**NOTIF-1.23** When mobile receives the same originating stop through direct and relayed connections, the application shall notify once across reconnects and relaunches while preserving distinct origins and later occurrences.
+
+**NOTIF-1.24** If a mobile notification lacks a pane identity and its worktree has multiple panes, then the application shall report that the pane cannot be identified instead of opening an unrelated pane.
+
+**NOTIF-1.25** When mobile receives the same input request through direct and relayed connections, the application shall notify once across ledger reloads while preserving later requests and distinct pane slots.
+
+**NOTIF-1.26** While the mobile notification view remains active after a reported reconnect failure, a later same-target notification response shall trigger a fresh activation attempt and display its live session without requiring a scene transition or view remount.
 
 ### NOTIF-2.x — Attention Badge Auto-Population
 
@@ -1164,7 +1204,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONFIG-2.1** Before calling `ghostty_init`, the application shall set the `GHOSTTY_RESOURCES_DIR` environment variable so libghostty can locate its per-shell integration scripts.
 
-**CONFIG-2.2** If `GHOSTTY_RESOURCES_DIR` is already set and non-empty in the process environment, the application shall not override it; the user's explicit setting wins.
+**CONFIG-2.2** If `GHOSTTY_RESOURCES_DIR` names an existing directory containing a `shell-integration` directory, then the application shall preserve that explicit override; otherwise it shall use the bundled resources or report them unavailable.
 
 **CONFIG-2.3** Otherwise, the application shall set `GHOSTTY_RESOURCES_DIR` to the `ghostty` directory vendored in GrafttyKit's resource bundle (per CONFIG-2.5), so shell integration does not depend on a separately installed Ghostty.app.
 
@@ -1334,6 +1374,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-6.9** If agent hooks are enabled for a zsh shell and `GHOSTTY_RESOURCES_DIR` is unavailable, the host-managed `zmx attach` environment shall set `ZDOTDIR` directly to Graftty's agent-hook zsh init directory (with `GHOSTTY_ZSH_ZDOTDIR` omitted) so the ZMX-6.8 wrapper-bin PATH shim still runs without Ghostty's shell integration. Without this fallback, the spawn-time PATH prepend is the only defense and `/etc/zprofile`'s `path_helper` demotes the wrapper bin to the PATH tail in the login shell zmx spawns, so `claude` / `codex` resolve to the user's unwrapped installs.
 
+**ZMX-6.10** When Graftty spawns an interactive terminal for Mac or GrafttyMobile, the application shall remove NO_COLOR inherited from the host process before starting the user's shell, while allowing the shell's startup files to set their own color preference.
+
 ### ZMX-7.x — Session-Loss Recovery
 
 **ZMX-7.1** When the application restores a worktree's split tree on launch (per `PERSIST-3.x` and `ZMX-4.2`), it shall, before creating each pane's surface, query the live zmx session set and clear the pane's rehydration label if the expected session name is absent. This ensures a freshly-created daemon (the result of `zmx attach`'s create-on-miss semantics) is not mistaken for a surviving session by `defaultCommandDecision`.
@@ -1381,6 +1423,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **DIST-1.4** The build script shall codesign every Mach-O in the bundle in inner-to-outer order: `Contents/Helpers/zmx`, `Contents/Helpers/graftty`, `Contents/MacOS/Graftty`, then the bundle itself, and shall verify the resulting signature with `codesign --verify --strict`. The signing identity is chosen by the `CODESIGN_IDENTITY` environment variable (defaulting to `-` for ad-hoc); when set to a Developer ID Application identity, the script shall additionally enable hardened runtime (`--options runtime`), secure timestamping (`--timestamp`), and apply `scripts/entitlements/Graftty.entitlements` to the main executable.
 
 **DIST-1.5** When a terminal child requests microphone access, the packaged macOS application shall declare why it uses the microphone and carry the audio-input entitlement so macOS can authorize the request for Graftty.
+
+**DIST-1.6** When a development build has no explicit renderer override, the build shall use the committed published dependency and diagnose ignored local packages; an explicitly selected stale renderer or a release requiring paging shall fail before compilation.
+
+**DIST-1.7** When the shared wrapper, bundle script, or CI builds with a changed renderer or headers, the build shall apply a distinct Clang module signature to application and dependency targets.
 
 ### DIST-2.x — Release Automation
 
@@ -1468,7 +1514,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-3.4** WebSocket binary frames shall carry raw PTY bytes in both directions.
 
-**WEB-3.5** WebSocket text frames shall carry JSON control envelopes. Legacy `{"type":"resize","cols":<uint16>,"rows":<uint16>}` frames may update the PTY only for a socket that is already the confirmed display owner; ownership-aware clients shall use `hello`, `ownership`, `grid`, `takeControl`, and `ownerResize` envelopes from `WebControlEnvelope`, and only a `takeControl` frame may change web display ownership. Clients may send `takeControl` from an explicit Take Control button or from an intentional terminal-input event, but passive attach, focus, and resize events shall not claim ownership.
+**WEB-3.5** WebSocket text frames shall carry JSON control envelopes. Legacy `{"type":"resize","cols":<uint16>,"rows":<uint16>}` frames may update the PTY only for a socket that is already the confirmed display owner; ownership-aware clients shall use `hello`, `ownership`, `grid`, `takeControl`, and `ownerResize` envelopes from `WebControlEnvelope`, and a visible interactive `hello` shall acquire leadership when no active leader exists. Clients may send `takeControl` from an explicit Take Control button or from an intentional terminal-input event, but preview attachments, focus, and resize events shall not claim ownership.
 
 **WEB-3.6** When the application responds to an HTTP request with `Connection: close`, it shall transmit exactly the number of body bytes declared in its `Content-Length` header to the client before closing the TCP connection, so clients never observe a truncated response (`ERR_CONTENT_LENGTH_MISMATCH`). This requirement applies even on links (e.g., Tailscale `utun`, MTU ~1280) whose kernel TCP send buffer cannot absorb the full response in a single non-blocking write.
 
@@ -1592,13 +1638,23 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **OWN-1.2** When the current display owner reports a resize whose grid equals the authoritative grid, the application shall validate the owner and epoch without advancing the ownership revision or notifying observers.
 
-**OWN-1.3** When the leader disconnects, the application shall retain its leadership and last grid until another client takes control.
+**OWN-1.3** When the leader disconnects, the application shall retain its identity and last grid until a visible interactive client attaches or explicitly takes control.
 
 **OWN-1.4** When the authenticated leading device reconnects interactively, the application shall restore its leadership on the new connection without changing the retained grid or accepting traffic from the old connection.
 
-**OWN-1.5** While leadership is retained for a disconnected device, the application shall reject passive takeover by other devices, previews, hidden clients, or clients without authenticated identity.
+**OWN-1.5** While leadership is retained for a disconnected device, the application shall reject takeover by preview or hidden attachments until an eligible interactive client attaches.
 
 **OWN-1.6** When another device takes control during a leader's disconnection, the application shall reconnect the former leader as a follower.
+
+**OWN-1.7** When a visible interactive client attaches and no eligible attached leader exists, the application shall make that client the leader, preserve the retained grid until its viewport is confirmed, and notify ownership observers.
+
+**OWN-1.8** When a local Mac pane reattaches after its leader detached, the application shall accept its viewport and input without manual takeover unless another attached client has become leader.
+
+**OWN-1.9** If a Mac terminal attachment fails to start after acquiring leadership, then the application shall close its session and detach its ownership registration so a later attachment can become leader.
+
+**OWN-1.10** When an authenticated visible interactive SSH client sends hello without an active leader, the host shall acknowledge its automatic leadership and accept terminal input without a Take Control request.
+
+**OWN-1.11** If a Mac terminal backend closes while measuring its initial viewport, then the application shall not register that closed backend as an attached leader.
 
 ### OWN-2.x — Mac Take-Control Affordance and Reclaim
 
@@ -1918,9 +1974,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.24** When an ownership snapshot promotes this client from non-owner to display owner, the application shall send an `ownerResize` carrying its current iOS viewport before queued input, waiting for the physical viewport after releasing a follower canvas.
 
-**IOS-4.25** Attaching an interactive iOS client to an ownerless session shall not implicitly make the phone the display owner. Mobile ownership changes require a `takeControl` frame, sent either by the Take Control button or by intentional terminal input; passive attach alone shall leave the session ownerless.
+**IOS-4.25** When a visible interactive iOS client attaches without an active leader, the application shall make it the display owner without requiring a Take Control action.
 
-**IOS-4.26** On an ownerless session, an iOS WebSocket `hello` shall attach the client and return an ownerless ownership snapshot rather than implicitly claiming ownership. This is the transport-level state that lets GrafttyMobile show Take Control before sending the explicit `takeControl` frame.
+**IOS-4.26** When a visible interactive iOS WebSocket client sends a hello without an active leader, the application shall return an ownership snapshot naming that client as leader without requiring a Take Control frame.
 
 **IOS-4.27** When an ownership snapshot arrives with the same epoch as the last applied snapshot but a lower revision, the application shall ignore it, so a reordered same-epoch owner resize cannot roll the grid back to a stale size. A same-epoch snapshot with an equal or higher revision is still applied.
 
@@ -1957,6 +2013,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-4.44** When the user swipes right across a fullscreen mobile terminal without active text selection or presentation zoom, the application shall return to its originating worktree list using the Back action, while retaining leftward and vertical scrolling and leaving pending requests unchanged.
 
 **IOS-4.45** When a Mac supplies terminal presentation to GrafttyMobile, the application shall send its resolved background, foreground, and ANSI palette without host theme or config-file references, preserve non-color settings from root and included config files including fonts and keybindings, and retain explicit overrides over the selected host theme branch.
+
+**IOS-4.46** When a retained mobile pane releases its follower canvas while its route callbacks are detached, the application shall preserve the pending physical viewport confirmation and deliver it once after the route restores its callback.
+
+**IOS-4.47** While a mobile terminal consumes a paged source stream, the application shall preserve the source parser grid across local viewport and font changes until the next in-band source grid is applied.
+
+**IOS-4.48** When a paged source grid arrives before the mobile terminal surface mounts, the application shall wait for native readiness before completing the ordered grid operation.
+
+**IOS-4.49** When an owning mobile pane receives an in-band source grid, the application shall update the parser without fitting the physical viewport to that grid, while continuing to report keyboard, rotation, and font size changes.
 
 ### IOS-5.x — Multi-pane layout
 
@@ -2084,19 +2148,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-8.4** The v1 iOS app shall not persist terminal scrollback on the device. On reconnect, it renders whatever the zmx daemon's buffer still contains.
 
-**IOS-8.5** The v1 iOS app shall not use push notifications for PR status, build completions, or session events.
-
 ### IOS-9.x — Creating worktrees from the iOS client
 
 **IOS-9.1** The worktree-picker screen (`IOS-4.1`) shall display an "Add Worktree" action as a primary toolbar item. Tapping it shall present a modal sheet collecting the fields required by the authenticated `.createWorktree` request: a repository picker populated by `.listRepositories` (hidden when only one repo is tracked), a worktree-name field, and a branch-name field.
 
 **IOS-9.2** Both the worktree-name and branch-name fields shall sanitize input live with `WorktreeNameSanitizer` (same allowed set as the Mac sheet and the web client: `A-Z a-z 0-9 . _ - /`, consecutive disallowed chars collapsing to a single `-`). The branch field shall auto-mirror the worktree-name field until the user types a branch that differs, at which point the mirror breaks and further edits to the worktree field stop overwriting the branch. On submit, both fields shall be trimmed of leading/trailing whitespace plus `-` and `.` (matching the macOS sheet's `submitTrimSet` and the web client's `trimForSubmit`). The sheet's Create button shall be disabled while either field is empty after trim.
 
-**IOS-9.3** On submit, the application shall send `.createWorktree(repositoryID, worktreeName, branchName)` over the authenticated worktree-management channel and handle structured success or failure responses:
+**IOS-9.3** When mobile worktree creation succeeds, the application shall auto-select the created worktree only after a running pane appears and only if no newer navigation intent has superseded creation.
 
 **IOS-9.4** When `.listRepositories` returns an empty list, the sheet shall render an empty-state "No repositories tracked — open a repository in Graftty on the Mac first." and shall not show the input fields. The iOS app shall not implement repository-adding (the Mac-side file-picker + security-scoped bookmark mint has no iOS equivalent).
 
-**IOS-9.5** While an authenticated `.createWorktree` request is in flight, the Create button shall be replaced by an in-flight indicator, the Cancel button and both input fields shall be disabled, and the repository picker shall be disabled. Once the request resolves (success or failure) all controls shall re-enable.
+**IOS-9.5** When a valid mobile Add Worktree form is submitted, the application shall dismiss the form immediately and display a non-selectable creating row in the target repository while creation runs.
 
 **IOS-9.6** When the user swipes a worktree row in `WorktreePickerView` that is neither the repo's main checkout nor in an in-flight state (`.creating` / `.deleting`), the application shall reveal a trailing destructive action labeled "Delete" for non-stale rows and "Dismiss" for `.stale` rows. Rows for the main checkout or for in-flight worktrees shall expose no swipe action.
 
@@ -2115,6 +2177,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-9.13** When the user taps a mobile worktree's information button, the application shall show its report without selecting the worktree or acknowledging its request; the button shall provide a 44-point touch target.
 
 **IOS-9.14** While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and Git divergence.
+
+**IOS-9.15** When mobile worktree creation fails, the application shall remove its temporary row and show the error outside the dismissed form.
+
+**IOS-9.16** While a mobile worktree row is creating, deleting, or opening, the application shall center its progress indicator beside the primary title without moving the title baseline or enlarging the row.
 
 ### IOS-10.x
 
@@ -2842,7 +2908,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-9.x
 
-**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with a display kind derived from the authenticated peer type and with the authenticated device identity.
+**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with a display kind derived from the authenticated peer type and with the authenticated device identity. @spec OWN-1.10: When an authenticated visible interactive SSH client sends hello without an active leader, the host shall acknowledge its automatic leadership and accept terminal input without a Take Control request.
 
 **REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
 
@@ -3196,6 +3262,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.37** When a caller cancels while sharing another caller's connection attempt, the application shall reject the cancelled caller without cancelling the shared connection.
 
+**REMOTE-22.38** When a headless runtime receives an explicit agent installer, automatic provider setup shall retain its CLI hook path.
+
+**REMOTE-22.39** When a headless host advertises agent prompt staging, the application shall replace bare agent fallback commands with a staged structured or bootstrap prompt, preserve legacy explicit commands without structured prompts, and deliver the selected prompt unchanged to the provider.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.
@@ -3456,6 +3526,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-1.5** When a native macOS preview is dismantled before attachment, after window closure, or more than once, the application shall close Quick Look safely, reject subsequent preview updates, and retain its snapshots until native teardown completes.
 
+**PREVIEW-1.6** When a Mac preview arrives, the application shall retain the latest 32 requests as immutable session history grouped by worktree, including replaced and closed previews.
+
+**PREVIEW-1.7** When a Mac preview arrives, the application shall reuse one resizable standard window per worktree without taking terminal focus, and closing that window shall retain its history for reopening.
+
+**PREVIEW-1.8** While the selected local worktree has a preview or preview history, the application shall expose a top-right Preview control that reopens its latest request and lists earlier requests from that worktree only.
+
+**PREVIEW-1.9** When a user shows a preview inside its terminal or pops it into a window, the application shall transfer the same snapshot collection without adding history entries and select its worktree and pane when returning to the terminal.
+
+**PREVIEW-1.10** When returning a preview to a registered pane whose renderer has been evicted, the application shall allow terminal navigation to wake that pane rather than require an existing renderer.
+
+**PREVIEW-1.11** When a pane with a preview moves to another worktree, the application shall resolve active preview controls and return navigation against its current worktree while retaining the original request's history grouping.
+
 ### PREVIEW-2.x
 
 **PREVIEW-2.1** When file preview offers arrive on mobile, the application shall select the latest preview for its owning pane and device, recognize legacy image intent, and exclude both from Browser resources.
@@ -3472,9 +3554,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PREVIEW-2.7** When the host evicts or withdraws a preview collection, the application shall remove the whole collection so mobile cannot receive a partial set of files.
 
-**PREVIEW-2.8** When a multi-file preview arrives for the focused owning mobile pane, the application shall automatically download and present the complete collection in order and remove every local snapshot after dismissal.
+**PREVIEW-2.8** When a multi-file preview arrives for the focused owning mobile pane, the application shall automatically download and present the complete collection in order and retain the downloaded snapshots after dismissal for reopening during the session.
 
-**PREVIEW-2.9** While a native preview covers a mobile terminal, the application shall preserve its live terminal channel and mounted session through presentation and dismissal, and perform normal pane cleanup only when the pane is actually removed.
+**PREVIEW-2.9** When a downloaded mobile preview is dismissed, the application shall retain session-scoped access to its snapshots after host offers expire and pane views are recreated, without downloading again or automatically reopening it.
+
+**PREVIEW-2.10** While a native preview covers a mobile terminal, the application shall preserve its live terminal channel and mounted session through presentation and dismissal, and perform normal pane cleanup only when the pane is actually removed.
 
 ### PREVIEW-3.x
 
@@ -3555,6 +3639,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-3.23** When a staged recap lacks an emoji, the Stop hook shall request one correction, preserve the recap if no correction arrives, and accept a corrected report without another continuation.
 
 **AGENT-3.24** When the Stop hook requests an Attention recap, the application shall instruct the agent not to mention the report in its response unless the report command fails.
+
+**AGENT-3.25** When an absolute GRAFTTY_ATTENTION_DIR is configured, the application shall use that directory for Attention handoff so isolated provider tests cannot publish into the user's notification queue.
 
 ### AGENT-4.x
 
@@ -3698,7 +3784,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
 
-**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents for concise context explaining the problem and why solving it matters, verified completed work, remaining work, and task-related emoji choices, and shall make a user question optional.
+**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents to lead with the stable problem being solved and why it matters, followed by verified progress, next steps, retained decisions, meaningful checkpoints, and task-related emoji choices, with a user question only when input is needed.
 
 **AGENT-6.39** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
 
@@ -3741,6 +3827,48 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CLI-1.1** When a subprocess pipe's read fd is closed out from under the in-flight readability handler (process/pipe teardown after a timeout SIGTERM, where the per-stream EOF wait lapsed under load), the application shall treat the read as EOF rather than crash. The legacy `NSFileHandle.availableData` raises an *uncatchable* `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd, SIGABRT-ing the whole process; the crash-safe drain returns `nil`.
 
 **CLI-1.2** When a timeout-enabled subprocess exits before its deadline, the application shall allow its Process and pipe descriptors to be released immediately rather than retain them in the delayed timeout work item until the original deadline.
+
+## CONTEXT — CONTEXT
+
+### CONTEXT-1.x
+
+**CONTEXT-1** When an agent updates a worktree report, the application shall retain its purpose title until a report explicitly declares a purpose change, while updating its current context, progress, decisions, and next step.
+
+### CONTEXT-2.x
+
+**CONTEXT-2** When an agent reports a meaningful checkpoint or purpose change, the application shall retain it in the worktree history, merge consecutive updates to the same checkpoint, ignore repeated reports and older updates, and retain at most 32 checkpoints.
+
+### CONTEXT-3.x
+
+**CONTEXT-3** When a report includes purpose-change, checkpoint, or decision fields, the application shall validate their text bounds and preserve legacy reports that omit those fields.
+
+### CONTEXT-4.x
+
+**CONTEXT-4** When a worktree report is viewed, dismissed, resumed, serialized, or sent to a paired device, the application shall retain its current brief and checkpoint history independently of unread attention.
+
+### CONTEXT-5.x
+
+**CONTEXT-5** When the user drags inward from the right edge on mobile, the application shall open the worktree context drawer only for a deliberate horizontal drag and shall preserve ordinary vertical scrolling.
+
+### CONTEXT-6.x
+
+**CONTEXT-6** When mobile worktree context is opened, the application shall show the current brief, expand its history in place, and close back to the mounted terminal without acknowledging pending attention.
+
+### CONTEXT-8.x
+
+**CONTEXT-8** While a local or remote Mac worktree has a retained brief, the application shall display its context or completed result beneath its sidebar name even after the request is acknowledged.
+
+### CONTEXT-9.x
+
+**CONTEXT-9** When a worktree has a pending request without a saved brief, the application shall display its message in the context report until that request is dismissed.
+
+### CONTEXT-10.x
+
+**CONTEXT-10** While mobile terminal controls are visible, the application shall display an icon-only Context action immediately left of Browser in the same floating control group, retain separate accessible actions, and preserve the mounted terminal and pending request when opening or closing context.
+
+### CONTEXT-11.x
+
+**CONTEXT-11** When the selected iPad worktree has no focused terminal pane, the application shall retain an accessible icon-only Context action that opens its worktree context without starting or focusing a pane.
 
 ## MEM — MEM
 
@@ -4139,3 +4267,33 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.4** If queued SSH output exceeds its byte limit, then the transport shall close and fail writes without dropping bytes from a live SSH stream.
 
 **SSH-1.5** While bulk terminal output is active, the application shall deliver interactive terminal bytes and the complete bulk stream over shared or isolated SSH connections.
+
+**SSH-1.6** While forwarding terminal output over SSH, the host shall await each write of at most 16 KiB before sending the next, preserving byte and control-event order so other terminal channels can run between writes.
+
+## TEST — TEST
+
+### TEST-1.x
+
+**TEST-1.1** When an integration client receives a resize or loaded-history read action, the test harness shall preserve its sequence ID, provider, operation, and parameters through JSON encoding and admit it for dispatch.
+
+**TEST-1.2** If a scripted integration action names an unsupported operation, then the test harness shall reject it rather than report a successful observation.
+
+**TEST-1.3** When an integration action completes, the test harness shall correlate its renderer and ownership observation with the originating sequence ID.
+
+**TEST-1.4** When real scripted agents move between native Mac and mobile displays, the integration harness shall exercise production terminal ownership and messaging paths and fail if a commanded native action fails.
+
+**TEST-1.5** When a scripted native integration run requests mobile gestures or notification taps, the test harness shall drive XCUITest, preserve screenshots with the action sequence ID, require foreground activation-view evidence for notification taps and selected live renderer evidence before completion, and fail the test unless the controller finishes successfully.
+
+**TEST-1.6** When a native integration viewport contains wrapped fixture output, the test harness shall identify its reading anchor by the first logical row label rather than by physical row count.
+
+**TEST-1.7** When a native follower displays history and a clipped terminal canvas, the integration harness shall derive its text and reading anchor from intersecting physical rows in display order.
+
+**TEST-1.8** When a scripted terminal is hidden and shown to reproduce worktree switching, the integration harness shall remount its retained surface or mobile route and observe its viewport and physical rows.
+
+**TEST-1.9** When a native integration color probe runs, the test harness shall require chromatic rendered pixels on the current stream stage's inline-code, link, syntax, deletion, and addition rows, and shall reject missing or monochrome samples.
+
+**TEST-1.10** When the native integration harness creates a worktree through the production background creation flow, the harness shall require backend and initial-command readiness without mounting a terminal view or changing the selected worktree, and preserve startup diagnostics on failure.
+
+**TEST-1.11** When the native notification integration replays a captured provider stop, the harness shall preserve its original payload and route explicit notification actions to native clients.
+
+**TEST-1.12** When the native notification fixture validates its private queue, the harness shall compare canonical directory paths independently of URL directory metadata and reject other directories.

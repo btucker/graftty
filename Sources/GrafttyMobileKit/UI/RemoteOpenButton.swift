@@ -6,6 +6,7 @@ import UIKit
 
 /// One browser resource opens directly; multiple resources retain a selection menu.
 struct RemoteOpenButton: View {
+    @Environment(\.openWorktreeContext) private var openWorktreeContext
     let host: Host
     let worktree: String
     let coordinator: RemoteConnectionCoordinator
@@ -22,7 +23,9 @@ struct RemoteOpenButton: View {
     }
     private var allOffers: [RemoteOpenOffer] { offerSnapshot.offers(in: browserScope) }
     private var offers: [RemoteOpenOffer] { RemoteImageOffers.browserResources(in: allOffers) }
-    private var imageOffer: RemoteOpenOffer? { RemoteImageOffers.latest(in: allOffers, scope: browserScope) }
+    private var remoteImageOffer: RemoteOpenOffer? { RemoteImageOffers.latest(in: allOffers, scope: browserScope) }
+    private var retainedPreview: RemotePreviewHistory.Entry? { coordinator.previewHistory.latest(in: browserScope) }
+    private var imageOffer: RemoteOpenOffer? { remoteImageOffer ?? retainedPreview?.offer }
     private var imageScopeReady: Bool {
         isPaneFocused && hasOwnershipSnapshot && isPaneOwner() && ownerDeviceID != nil
     }
@@ -56,6 +59,7 @@ struct RemoteOpenButton: View {
         var originHost: Host? = nil
         var imageRequest: RemoteImageOffers.Request? = nil
         var files: [URL] = []
+        var retainedFiles: RemotePreviewHistory.Entry? = nil
     }
 
     private struct PollScope: Equatable {
@@ -205,7 +209,8 @@ struct RemoteOpenButton: View {
 
     @ViewBuilder
     private func floatingControls(actionID: UUID) -> some View {
-        let visible = (imageReady && imageOffer != nil) || (isActive && (isPaneOwner() || !offers.isEmpty))
+        let visible = (isPaneFocused && openWorktreeContext != nil)
+            || (imageReady && imageOffer != nil) || (isActive && (isPaneOwner() || !offers.isEmpty))
         // Keep the presentation anchor mounted while scene activity hides the controls.
         ViewThatFits {
             TerminalFloatingControlGroup(isVisible: visible) {
@@ -238,6 +243,11 @@ struct RemoteOpenButton: View {
                     .accessibilityHidden(true).allowsHitTesting(false)
             }
             .disabled(isDownloading)
+        }
+        if isPaneFocused, let openWorktreeContext {
+            TerminalFloatingGlyphButton(systemName: "text.alignleft", accessibilityLabel: "Worktree context",
+                action: openWorktreeContext)
+                .accessibilityIdentifier("worktree.context.open")
         }
         ZStack {
             Color.clear.frame(width: 44, height: 44)
@@ -385,7 +395,9 @@ struct RemoteOpenButton: View {
     private func autoOpenPreviewIfReady() {
         let canPresent = preview == nil && chromePresentation.canPresent && !isDownloading
             && error == nil && canPresentAuthentication()
-        guard coordinator.reservePreviewAutoOpen(imageOffer, isReady: imageReady, canPresent: canPresent), let offer = imageOffer else { return }
+        // A retained snapshot is for manual reopening, never a new arrival.
+        guard let offer = remoteImageOffer,
+              coordinator.reservePreviewAutoOpen(offer, isReady: imageReady, canPresent: canPresent) else { return }
         open(offer, automatically: true)
     }
 
@@ -431,6 +443,12 @@ struct RemoteOpenButton: View {
         if let imageRequest, !imageRequest.isCurrent(latest: imageOffer, scope: browserScope, isReady: imageReady) {
             coordinator.deferPreviewAutoOpen(offer.id)
             error = "Take control of the originating pane and tap Preview again. If the preview expired, run graftty preview again."
+            return
+        }
+        if let imageRequest, let retained = retainedPreview, retained.offer == offer {
+            cancelOperation()
+            present(Preview(url: retained.files.first, imageRequest: imageRequest,
+                            files: retained.files, retainedFiles: retained), offerID: nil)
             return
         }
         guard allOffers.contains(offer) else {
@@ -508,8 +526,13 @@ struct RemoteOpenButton: View {
                     return
                 }
                 removeCachedFile()
-                cachedFiles = files
-                present(Preview(url: files.first, imageRequest: imageRequest, files: files), offerID: nil)
+                let retained = imageRequest.map { request in
+                    coordinator.previewHistory.record(offer: request.offer, scope: request.scope,
+                        files: files, byteCount: collection.reduce(0) { $0 + $1.byteCount })
+                }
+                cachedFiles = retained == nil ? files : []
+                present(Preview(url: files.first, imageRequest: imageRequest,
+                                files: files, retainedFiles: retained), offerID: nil)
             } catch {
                 if !Task.isCancelled, operationID == currentOperation {
                     if imageRequest != nil { coordinator.completePreviewAutoOpen(offer.id) }

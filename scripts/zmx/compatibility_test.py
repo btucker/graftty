@@ -1234,6 +1234,59 @@ def replay_grid_precedes_vt(
         cleanup_case(directory, env, session, daemon_binary, candidate, daemon_binary, leader, follower)
 
 
+def dense_history_pages_stay_bounded(candidate: Path) -> None:
+    directory, env = make_scope()
+    session = "compat-dense-history"
+    first: Attach | None = None
+    try:
+        first = Attach(candidate, env, session, rows=24, cols=80, xpixel=800, ypixel=480)
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+        first.write(
+            "i=0; while [ $i -lt 2000 ]; do "
+            "printf '🧪 history-row-%06d /workspace/project/src/components/HistoryPanel.swift:100\\n' $i; "
+            "i=$((i+1)); done; printf '__DENSE_%s__\\n' READY\n"
+        )
+        first.wait_for("__DENSE_READY__", timeout=15)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(str(directory / session))
+            send_ipc(client, 23, struct.pack("<Q", 9))
+            send_ipc(client, 26, b"ghostty-8af6897c-paging-1")
+            frames = read_ipc_frames_until(client, lambda values: any(tag == 27 for tag, _ in values), "READY")
+            ready = next(data for tag, data in frames if tag == 27)
+            incarnation, checkpoint = struct.unpack_from("<QQ", ready)
+            if not ready[20] & 1:
+                raise AssertionError("dense fixture did not create unloaded history")
+            imported_rows = 0
+            for ordinal in range(100):
+                request = struct.pack("<QQQQH6x", incarnation, checkpoint, ordinal + 1, ordinal, 0)
+                send_ipc(client, 28, request)
+                frames = read_ipc_frames_until(client, lambda values: any(tag in (29, 30) for tag, _ in values), "history page")
+                tag, payload = next((tag, data) for tag, data in frames if tag in (29, 30))
+                if tag != 29:
+                    raise AssertionError(f"dense history refused at ordinal {ordinal}: reason={payload[40]}")
+                if payload[:40] != request or len(payload) > 48 + 256 * 1024:
+                    raise AssertionError("history response exceeded its budget or changed request identity")
+                # The PAGE codec header/checksum occupies ten bytes. Its
+                # payload begins with column and row counts, both little endian.
+                page = payload[48:]
+                if not page or struct.unpack_from("<H", page)[0] != 3:
+                    raise AssertionError("expected an independent PAGE record")
+                imported_rows += struct.unpack_from("<H", page, 12)[0]
+                send_ipc(client, 28, request)
+                retry = read_ipc_frames_until(client, lambda values: any(tag in (29, 30) for tag, _ in values), "history retry")
+                if next((tag, data) for tag, data in retry if tag in (29, 30)) != (29, payload):
+                    raise AssertionError("history retry changed bytes or completion metadata")
+                if payload[40]:
+                    break
+            else:
+                raise AssertionError("dense history never completed")
+            if imported_rows < 1000 or ordinal < 3:
+                raise AssertionError("dense fixture did not exercise split native pages")
+    finally:
+        cleanup_case(directory, env, session, candidate, candidate, candidate, first)
+
+
 def main() -> None:
     # Convert cancellation into a Python exception so each compatibility
     # case unwinds through its `finally` cleanup instead of abandoning a
@@ -1295,6 +1348,8 @@ def main() -> None:
     print("  ✓ upstream 8-byte resize remains compatible")
     new_daemon_preserves_large_scrollback(legacy, candidate)
     print("  ✓ complete, non-duplicated large-history replay")
+    dense_history_pages_stay_bounded(candidate)
+    print("  ✓ dense wide history stays bounded with stable page retries")
 
 
 if __name__ == "__main__":

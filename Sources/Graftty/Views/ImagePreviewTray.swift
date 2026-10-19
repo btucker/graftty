@@ -6,12 +6,13 @@ struct ImagePreviewOverlay: View {
     let pane: PaneSlotID?
     let preview: ImagePreviewStore.Preview?
     let onDismiss: () -> Void
+    var onPopOut: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geometry in
             if let pane, let preview {
-                PositionedImagePreview(preview: preview, viewport: geometry.size, onDismiss: onDismiss)
+                PositionedImagePreview(preview: preview, viewport: geometry.size, onDismiss: onDismiss, onPopOut: onPopOut)
                     .id(pane)
                     .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
@@ -23,6 +24,7 @@ private struct PositionedImagePreview: View {
     let preview: ImagePreviewStore.Preview
     let viewport: CGSize
     let onDismiss: () -> Void
+    let onPopOut: (() -> Void)?
     @State private var requestedFrame: CGRect?
     @State private var interactionStart: CGRect?
 
@@ -32,7 +34,7 @@ private struct PositionedImagePreview: View {
     }
 
     var body: some View {
-        FilePreviewTray(preview: preview, onDismiss: onDismiss, onInteraction: interact)
+        FilePreviewTray(preview: preview, onDismiss: onDismiss, onInteraction: interact, onPopOut: onPopOut)
             .frame(width: frame.width, height: frame.height)
             .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
             .position(x: frame.midX, y: frame.midY)
@@ -57,6 +59,7 @@ private struct PositionedImagePreview: View {
 @MainActor
 final class ImagePreviewGestureHandle: NSView {
     let kind: ImagePreviewInteraction.Kind
+    var isEnabled = true
     var onInteraction: (ImagePreviewInteraction) -> Void = { _ in }
     private var startLocation: NSPoint?
 
@@ -64,6 +67,7 @@ final class ImagePreviewGestureHandle: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func resetCursorRects() {
+        guard isEnabled else { return }
         let cursor: NSCursor
         if kind == .move { cursor = .openHand }
         else if kind == .resizeHeight { cursor = .resizeUpDown }
@@ -73,6 +77,7 @@ final class ImagePreviewGestureHandle: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
         startLocation = event.locationInWindow
         onInteraction(.began(kind))
     }

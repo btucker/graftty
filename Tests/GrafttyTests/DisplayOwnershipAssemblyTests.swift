@@ -26,8 +26,7 @@ struct DisplayOwnershipAssemblyTests {
         firstManager.displayOwnershipStore = firstStore
         secondManager.displayOwnershipStore = secondStore
 
-        // Attach no longer implicitly claims ownership; claim explicitly so each
-        // store holds an independent owner for the isolation assertions below.
+        // Each independent store accepts its first interactive attachment.
         _ = firstManager.displayOwnershipStore?.attachClient(
             sessionName: "shared-session-name",
             clientID: DisplayClientID("mac-client"),

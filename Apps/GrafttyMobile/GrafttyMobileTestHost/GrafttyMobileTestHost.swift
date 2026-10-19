@@ -1,6 +1,7 @@
 import SwiftUI
 #if GRAFTTY_BROWSER_CONTROL_FIXTURE
 import GrafttyProtocol
+import GrafttyCommandUI
 import UIKit
 import GhosttyTerminal
 @testable import GrafttyMobileKit
@@ -10,10 +11,19 @@ import GhosttyTerminal
 // events, without starting production pairing, session, or biometric state.
 @main
 struct GrafttyMobileTestHost: App {
+    init() {
+        #if GRAFTTY_BROWSER_CONTROL_FIXTURE
+        if Self.agentIntegrationEndpoint != nil { NotificationActivationFixture.installRestoredIfNeeded() }
+        #endif
+    }
     var body: some Scene {
         WindowGroup {
             #if GRAFTTY_BROWSER_CONTROL_FIXTURE
-            if ProcessInfo.processInfo.arguments.contains("--scrollback-fixture") {
+            if let endpoint = Self.agentIntegrationEndpoint {
+                AgentIntegrationFixture(endpoint: endpoint).ignoresSafeArea()
+            } else if ProcessInfo.processInfo.arguments.contains("--context-fixture") {
+                WorktreeContextFixture()
+            } else if ProcessInfo.processInfo.arguments.contains("--scrollback-fixture") {
                 ScrollbackFixture().ignoresSafeArea(.keyboard)
             } else if ProcessInfo.processInfo.arguments.contains("--image-controls-fixture") {
                 ImageControlsFixture()
@@ -25,9 +35,58 @@ struct GrafttyMobileTestHost: App {
             #endif
         }
     }
+
+    #if GRAFTTY_BROWSER_CONTROL_FIXTURE
+    private static var agentIntegrationEndpoint: URL? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "--agent-integration-url"),
+              arguments.indices.contains(index + 1) else {
+            if arguments.contains(where: ["--context-fixture", "--scrollback-fixture",
+                "--image-controls-fixture", "--browser-control-fixture"].contains) { return nil }
+            // A notification launches the executable through Springboard,
+            // which does not retain XCUIApplication's launch arguments.
+            return NotificationActivationFixture.restoredEndpoint
+        }
+        return URL(string: arguments[index + 1])
+    }
+    #endif
 }
 
 #if GRAFTTY_BROWSER_CONTROL_FIXTURE
+private struct WorktreeContextFixture: View {
+    @State private var mounts = 0
+    @State private var coordinator = RemoteConnectionCoordinator()
+    private let row: WorktreePanes = {
+        let recap = AttentionRecap(title: "Worktree context", context: "Help me reload my context when returning to a worktree.",
+            completed: "Built a current brief with expandable history.", next: "Try it on a phone.",
+            checkpoint: "Chose the brief with expandable history", decisions: ["Keep the purpose title stable."])
+        let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: .now, recap: recap)
+        return .init(path: "/task", displayName: "rethink-notifications", repoDisplayName: "graftty", displayBranch: "task",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil,
+            sidebar: .init(id: "task", projectID: "p", unseenAgentStop: stop, lastAgentStop: stop,
+                brief: WorktreeBrief(recap: recap, at: .now)))
+    }()
+    var body: some View {
+        ScrollbackFixture()
+            .onAppear { mounts += 1 }
+            .overlay(alignment: .topTrailing) {
+                RemoteOpenButton(host: Host(label: "Fixture", baseURL: URL(string: "https://fixture.invalid")!),
+                    worktree: row.path, coordinator: coordinator, sessionName: "fixture",
+                    ownerDeviceID: .init(value: "fixture-phone"), isActive: true,
+                    managementTransport: { _, _ in .openResource(.offers([])) },
+                    browserConnectionReady: true, isPaneFocused: true, hasOwnershipSnapshot: true,
+                    isPaneOwner: { true }, canPresentAuthentication: { true }, terminalRequest: .constant(nil))
+                    .padding(12)
+            }
+            .overlay(alignment: .bottom) {
+                Text("Terminal mounts: \(mounts)")
+                    .accessibilityIdentifier("Context terminal mounts")
+            }
+            .modifier(MobileWorktreeContextDrawer(context: SidebarWorktreeContext(worktree: row)))
+            .environment(\.colorScheme, .dark)
+    }
+}
+
 /// Uses the production terminal container and recognizers with deterministic
 /// output. No pairing or network timing is involved in these gesture probes.
 private struct ScrollbackFixture: UIViewControllerRepresentable {
@@ -80,7 +139,7 @@ private final class ScrollbackFixtureController: UIViewController {
                 self.container.snapshotScrollView.showsAdditionalHistory = true
             }
             self.appendRows(500)
-            _ = await self.session.flushOutput()
+            try await MobilePagedTerminalRenderer(session: self.session, prepareGrid: { _, _ in }).flushOutput()
             self.timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.updateStatus() }
             }
@@ -118,7 +177,7 @@ private final class ScrollbackFixtureController: UIViewController {
         container.layoutIfNeeded()
     }
     func updateStatus() {
-        guard let bar = container.terminalView.surface?.currentScrollbar else { return }
+        guard let bar = container.snapshotScrollView.scrollbar else { return }
         let first = session.readViewportText()?.split(separator: "\n").first.map(String.init) ?? ""
         let scroll = container.snapshotScrollView
         let firstFrame = scroll.additionalHistoryFrameForTesting ?? container.terminalView.frame

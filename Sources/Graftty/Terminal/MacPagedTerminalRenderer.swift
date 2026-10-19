@@ -66,16 +66,23 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
     func resize(cols: UInt16, rows: UInt16) async throws {
         #if GRAFTTY_PAGED_HISTORY
         try Task.checkCancellation()
-        prepareGrid(try DisplayGrid(cols: cols, rows: rows))
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while surface.withSurface({ ghostty_surface_grid_matches($0, cols, rows) }) != true {
-            guard ContinuousClock.now < deadline else { throw Error.gridUnavailable }
-            try await Task.sleep(for: .milliseconds(10))
+        guard surface.withSurface({ ghostty_surface_set_source_grid($0, cols, rows) }) == true else {
+            throw Error.gridUnavailable
         }
+        prepareGrid(try DisplayGrid(cols: cols, rows: rows))
         try Task.checkCancellation()
         #else
         throw Error.invalidSnapshot
         #endif
+    }
+
+    func releaseSourceGrid() async throws {
+        #if GRAFTTY_PAGED_HISTORY
+        guard surface.withSurface({ ghostty_surface_clear_source_grid($0) }) == true else {
+            throw Error.gridUnavailable
+        }
+        #endif
+        try Task.checkCancellation()
     }
 
     func appendHistory(_ data: Data, screen: UInt16, generation: UInt64) async -> PagedTerminalPageResult {
@@ -116,19 +123,23 @@ final class MacPagedAttachment {
     let coordinator: PagedTerminalCoordinator
     private var poll: Task<Void, Never>?
     private let finishGrid: () -> Void
+    private let sourceGrid: (DisplayGrid?) -> Void
     private var restoringGrid = false
 
-    init(renderer: any PagedTerminalRenderer, finishGrid: @escaping () -> Void,
+    init(renderer: any PagedTerminalRenderer, sourceGrid: @escaping (DisplayGrid?) -> Void = { _ in }, finishGrid: @escaping () -> Void,
          send: @escaping @MainActor (PagedTerminalRequest) async throws -> Void) {
         coordinator = PagedTerminalCoordinator(renderer: renderer, send: send)
         self.finishGrid = finishGrid
+        self.sourceGrid = sourceGrid
     }
 
     private static let trace = Logger(subsystem: "com.graftty.app", category: "paged-trace")
 
     func handle(_ event: PagedTerminalEvent) async throws {
-        if case .checkpoint = event { restoringGrid = true }
-        try await coordinator.handle(event)
+        if let appliedGrid = try await coordinator.handle(event) {
+            if case .checkpoint = event { restoringGrid = true }
+            sourceGrid(appliedGrid)
+        }
         if let summary = event.traceSummary {
             Self.trace.notice("mac \(summary, privacy: .public) restoring=\(self.restoringGrid) status=\(String(describing: self.coordinator.status), privacy: .public)")
         }
@@ -151,7 +162,7 @@ final class MacPagedAttachment {
 
     private func finishGridIfNeeded() {
         switch coordinator.status {
-        case .complete, .limit, .requiresRecovery, .unavailable:
+        case .complete, .limit, .pageTooLarge, .requiresRecovery, .unavailable:
             poll?.cancel()
             poll = nil
             if restoringGrid { restoringGrid = false; finishGrid() }

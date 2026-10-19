@@ -11,7 +11,7 @@ public enum GhosttyRuntimeResources {
     /// so the precedence rules are unit-testable without process-global
     /// `setenv` state.
     public enum Resolution: Equatable {
-        /// CONFIG-2.2: the user's explicit env setting wins.
+        /// CONFIG-2.2: a usable explicit resource directory wins.
         case environmentOverride(String)
         /// CONFIG-2.3: point at the vendored copy in our bundle.
         case bundled(String)
@@ -30,19 +30,27 @@ public enum GhosttyRuntimeResources {
     /// Test seam: resolve against an explicit bundle rather than .module.
     static func bundledResourcesDir(bundle: Bundle) -> URL? {
         guard let url = bundle.url(forResource: "ghostty", withExtension: nil),
-              FileManager.default.fileExists(
-                  atPath: url.appendingPathComponent("shell-integration").path
-              )
+              containsShellIntegration(url)
         else { return nil }
         return url
     }
 
-    /// Pure precedence decision (CONFIG-2.2 → CONFIG-2.3 → CONFIG-2.4).
+    private static func containsShellIntegration(_ directory: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("shell-integration").path,
+            isDirectory: &isDirectory
+        ) && isDirectory.boolValue
+    }
+
+    /// Validate inherited paths before applying resource precedence. A prior
+    /// app's bundle layout can remain in the launching shell's environment.
     public static func resolve(
         processEnv: [String: String],
         bundledDir: URL?
     ) -> Resolution {
-        if let existing = processEnv["GHOSTTY_RESOURCES_DIR"], !existing.isEmpty {
+        if let existing = processEnv["GHOSTTY_RESOURCES_DIR"], !existing.isEmpty,
+           containsShellIntegration(URL(fileURLWithPath: existing, isDirectory: true)) {
             return .environmentOverride(existing)
         }
         guard let bundledDir else { return .unavailable }

@@ -515,12 +515,13 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         }
         guard let stream = stream as? any TerminalByteStream else { channel.close(promise: nil); return }
         let task = Task { [weak self] in
-            for await chunk in stream.inboundBytes {
-                let buffer = channel.allocator.buffer(bytes: chunk)
-                let data = SSHChannelData(type: .channel, data: .byteBuffer(buffer))
-                loop.execute {
-                    channel.writeAndFlush(data, promise: nil)
+            do {
+                for await chunk in stream.inboundBytes {
+                    try await Self.writeOutput(chunk, to: channel)
                 }
+            } catch {
+                channel.close(promise: nil)
+                return
             }
             // `inboundBytes` finished — either because `channelInactive`
             // already called `stream.close()` (in which case
@@ -550,6 +551,19 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         inboundForwardingTask = task
     }
 
+    private static func writeOutput(_ bytes: Data, to channel: Channel) async throws {
+        // Limit how much one terminal hands to SSH at once. Awaiting each
+        // slice lets sibling channels send keystroke echoes between writes
+        // instead of queuing behind a complete redraw or replay.
+        var buffer = channel.allocator.buffer(bytes: bytes)
+        while buffer.readableBytes > 0 {
+            try Task.checkCancellation()
+            let slice = buffer.readSlice(length: min(buffer.readableBytes, 16 * 1024))!
+            let data = SSHChannelData(type: .channel, data: .byteBuffer(slice))
+            try await channel.writeAndFlush(data).get()
+        }
+    }
+
     private func startHistoryForwarding(to bulk: Channel, terminal: Channel) {
         let pair = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(2))
         historyForwardingContinuation = pair.continuation
@@ -571,8 +585,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                     guard !Task.isCancelled else { return }
                     switch event {
                     case .output(let bytes):
-                        let data = SSHChannelData(type: .channel, data: .byteBuffer(channel.allocator.buffer(bytes: bytes)))
-                        try await channel.writeAndFlush(data).get()
+                        try await Self.writeOutput(bytes, to: channel)
                     case .checkpoint, .page, .unavailable, .grid:
                         let text = try PagedTerminalEnvelope(event: event).encoded()
                         guard let framed = StdErrControlFraming.encode(text) else { throw PagedTerminalEnvelope.Error.tooLarge }
