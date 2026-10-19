@@ -76,7 +76,7 @@ class ModelState:
             self.condition.notify_all()
 
     def plan(self, body, agent, protocol):
-        texts = user_text(body, markers_only=True)
+        texts = user_text(body, markers_only=True, protocol=protocol)
         # Request identity is selected from exact test prompts, never a title
         # prompt that happens to quote a conversation containing the nonce.
         for text in reversed(texts):

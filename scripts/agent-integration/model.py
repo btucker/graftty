@@ -38,14 +38,30 @@ def reentry_scenario_text(rows=300):
     return f'BEGIN-GRAFTTY-FIXTURE\n\n{body}\n\nEND-GRAFTTY-FIXTURE'
 
 
-def user_text(body, markers_only=False):
+CLAUDE_MIDTURN_PREVIEW_ACK = re.compile(
+    r'The user sent a new message while you were working:\n(GRAFTTY_TEST_PREVIEW_ACK [a-f0-9]{32})\n\n'
+    + re.escape('This is how Claude Code surfaces messages the user sends mid-turn — within the running turn, '
+                'often alongside the next tool result, rather than as a separate conversation turn. '
+                'Address the message above as you continue this turn.'))
+
+
+def user_text(body, markers_only=False, protocol=None):
     result = []
     for message in body.get('messages', body.get('input', [])):
         if not isinstance(message, dict) or message.get('role') != 'user':
             continue
         content = message.get('content', [])
-        parts = [content] if isinstance(content, str) else [p.get('text', '') for p in content if isinstance(p, dict)]
-        for text in parts:
+        parts = [{'type': 'text', 'text': content}] if isinstance(content, str) else content
+        for part in parts:
+            if not isinstance(part, dict) or markers_only and part.get('type') == 'tool_result':
+                continue
+            text = part.get('text', '')
+            # The pinned Claude TUI embeds mid-turn input beside a tool result.
+            # Only its complete native user-text wrapper may supply this ACK;
+            # quoted/title content and tool results never prove native input.
+            if markers_only and protocol == 'claude' and part.get('type') == 'text':
+                if match := CLAUDE_MIDTURN_PREVIEW_ACK.fullmatch(text):
+                    text = match[1]
             if not markers_only or text.startswith(('GRAFTTY_TEST_', '<graftty-peer-message', '<cross-session-message',
                     'Another Claude session sent a message:\n<cross-session-message')):
                 result.append(text)
