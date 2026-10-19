@@ -1196,7 +1196,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONFIG-2.1** Before calling `ghostty_init`, the application shall set the `GHOSTTY_RESOURCES_DIR` environment variable so libghostty can locate its per-shell integration scripts.
 
-**CONFIG-2.2** If `GHOSTTY_RESOURCES_DIR` is already set and non-empty in the process environment, the application shall not override it; the user's explicit setting wins.
+**CONFIG-2.2** If `GHOSTTY_RESOURCES_DIR` names an existing directory containing a `shell-integration` directory, then the application shall preserve that explicit override; otherwise it shall use the bundled resources or report them unavailable.
 
 **CONFIG-2.3** Otherwise, the application shall set `GHOSTTY_RESOURCES_DIR` to the `ghostty` directory vendored in GrafttyKit's resource bundle (per CONFIG-2.5), so shell integration does not depend on a separately installed Ghostty.app.
 
