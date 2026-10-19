@@ -68,12 +68,22 @@ def assert_stable_grid(samples):
     first_requests = None
     for sample in samples:
         phone, mac = sample['mobile'], sample['mac']
-        required = ('grid', 'revision', 'owner')
-        if any(not phone.get(key) or not mac.get(key) for key in required):
+        shared = ('grid', 'revision', 'epoch', 'ownerIdentity')
+        if any(not phone.get(key) or not mac.get(key) for key in (*shared, 'owner')):
             raise InvariantFailure('missing native owner/grid observations')
-        state = tuple(phone[key] for key in required)
-        if state != tuple(mac[key] for key in required) or phone.get('nativeGrid') != phone['grid']:
-            raise InvariantFailure('host and physical mobile grids disagree')
+        if phone.get('isOwner') != 'true':
+            raise InvariantFailure('mobile lost display ownership after settling')
+        # The native host pairs and authenticates this fixture's phone under
+        # this device ID; matching some other owner on both ends is insufficient.
+        if phone['ownerIdentity'] != 'ssh-device:integration-phone':
+            raise InvariantFailure('display owner is not the authenticated fixture phone')
+        canonical = tuple(phone[key] for key in shared)
+        if canonical != tuple(mac[key] for key in shared) or phone.get('nativeGrid') != phone['grid']:
+            raise InvariantFailure('host and physical mobile grid or ownership observations disagree')
+        # TerminalAttachCoordinator localizes ownerClientID to the protocol ID
+        # on Mobile. Compare authenticated identity across endpoints, while
+        # requiring each endpoint's raw owner to stay unchanged in this window.
+        state = (canonical, phone['owner'], mac['owner'])
         if phone.get('pagedGridMismatches'):
             raise InvariantFailure('output parsed at the wrong source grid')
         requests = phone.get('ownerResizeRequests', '')
@@ -83,7 +93,7 @@ def assert_stable_grid(samples):
             raise InvariantFailure('owner resize requests continued after settling')
         first_requests = requests
         if first is not None and state != first:
-            raise InvariantFailure('viewport or ownership revision changed after settling')
+            raise InvariantFailure('viewport, ownership identity, epoch, revision, or endpoint owner changed after settling')
         first = state
 
 

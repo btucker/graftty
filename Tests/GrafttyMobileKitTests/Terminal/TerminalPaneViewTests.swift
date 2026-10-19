@@ -1878,7 +1878,14 @@ struct PagedSourceGridTests {
         let viewports = PhysicalViewportRecorder()
         let session = InMemoryTerminalSession(write: { responses.append($0) }, resize: { viewports.append($0) })
         container.terminalView.configuration = .init(backend: .inMemory(session))
-        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        // Resize callbacks report content pixels; view metrics include padding.
+        // Remove fixture padding so their pixel dimensions must match exactly.
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: """
+        font-size = 14
+        window-padding-x = 0
+        window-padding-y = 0
+        window-padding-balance = false
+        """)
         host.view.addSubview(container)
         container.layoutIfNeeded()
         defer { container.removeFromSuperview(); window.isHidden = true }

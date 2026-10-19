@@ -66,10 +66,20 @@ jobs:
             --output "$RUNNER_TEMP/worktree-ui" \
             --derived-data "$RUNNER_TEMP/worktree-ui-derived" \
             --baseline 16287dce
+      - name: Preserve creation regression evidence before provider scenarios
+        if: always() && inputs.worktree_creation
+        uses: actions/upload-artifact@v4
+        with:
+          name: worktree-regressions-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/worktree-ui
+            ${{ runner.temp }}/worktree-startup
       - name: Run real agents on Mac and mobile
-        # Preserve independent provider evidence after a UI assertion failure;
+        # Preserve independent provider evidence after a UI or upload failure;
         # the source-restoration gate below still fails closed before building.
-        if: success() || (inputs.worktree_creation && steps.worktree-ui.outcome == 'failure')
+        if: success() || (inputs.worktree_creation && (steps.worktree-ui.outcome == 'success' || steps.worktree-ui.outcome == 'failure'))
         env:
           TEST_SEED: ${{ inputs.seed || github.run_number }}
           TEST_ACTIONS: ${{ inputs.actions || '60' }}
