@@ -195,7 +195,9 @@ class Run:
         run_file.write_bytes(plistlib.dumps(data))
         self.mobile_command = ['xcodebuild', '-xctestrun', str(run_file), '-destination', 'platform=iOS Simulator,id=' + self.simulator,
             '-resultBundlePath', str(self.root / 'mobile.xcresult'), '-parallel-testing-enabled', 'NO',
-            '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests', 'test-without-building']
+            '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests/'
+                + ('testNativeNotificationActivation' if getattr(options, 'notifications', False)
+                   else 'testScriptedAgentInteractions'), 'test-without-building']
         self.mobile_environment = build_env
 
     def start_mobile(self):
@@ -577,6 +579,8 @@ def main():
 
     parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
     parser.add_argument('--notifications', action='store_true', help='Capture real provider Stop hooks and exercise native notification replay and activation')
+    parser.add_argument('--notification-case', choices=('all', 'active-retry'), default='all',
+                        help='Select bounded notification cases; active-retry holds the production view scene active')
     parser.add_argument('--device', default='iPhone 17 Pro')
     parser.add_argument('--runtime', help='CoreSimulator runtime identifier; default uses its newest compatible runtime')
     parser.add_argument('--seed', type=int, default=1)
@@ -593,6 +597,8 @@ def main():
         parser.error('seed/actions must be nonnegative and rows must be at least 100')
     if sum((options.worktree_reentry, options.colors, options.notifications)) > 1:
         parser.error('--worktree-reentry, --colors and --notifications are separate scenarios')
+    if options.notification_case != 'all' and (not options.notifications or options.mac_only):
+        parser.error('--notification-case requires --notifications with mobile coverage')
     if options.notifications and (options.replay or options.shrink):
         parser.error('--notifications records its own bounded event replays')
     if options.worktree_reentry and options.mac_only:

@@ -62,6 +62,7 @@ class NotificationRun(Run):
         self.summary['scope'] = ('Real Claude and Codex Stop hooks and isolated Mac delivery attempts'
             if options.mac_only else 'Real Claude and Codex Stop hooks, Mac delivery attempts, and native iOS notification activation')
         self.notification_actions = []
+        self.summary['notificationCase'] = options.notification_case
         self.server.models.fixture_text = notification_scenario_text
         nonce = uuid.uuid4().hex[:8]
         self.markers = {provider: f'NOTIFY_{provider.upper()}_{nonce}' for provider in ('claude', 'codex')}
@@ -184,7 +185,9 @@ class NotificationRun(Run):
         # mobile failure retains useful evidence from each provider.
         if not self.options.mac_only:
             for provider, events in provider_events.items():
-                self.mobile_scenarios(provider, events)
+                if self.options.notification_case == 'all':
+                    self.mobile_scenarios(provider, events)
+                self.active_retry_scenario(provider, events)
         # Catch delayed files that arrived while the native mobile scenarios
         # were running, including files from the earlier provider.
         for provider in ('claude', 'codex'):
@@ -262,6 +265,49 @@ class NotificationRun(Run):
                 state = self.wait_mobile_route(provider, prepared)
             self.summary['assertions'].append({'provider': provider, 'mobileFailureMode': mode,
                 'nativeError': error, 'state': state})
+
+    def active_retry_scenario(self, provider, events):
+        prepared = self.prepare_mobile_notifications(provider, events, 'active-retry')
+        self.deliver_mobile_stop(provider, 0, 1)
+        self.tap_mobile_notification(provider, prepared)
+        error = self.act(Action('notificationsDismissError', provider, client='gestures'))
+        if error.get('errorTitle') != 'Could not open notification' or not error.get('errorMessage'):
+            raise InvariantFailure(f'active retry did not report its first fetch failure: {error}')
+        first = self.act(Action('notificationsState', provider, client='mobile'))
+        (self.root / f'notifications-{provider}-active-retry-first.json').write_text(json.dumps(first, indent=2))
+        self.assert_active_retry(first, responses=1, fetches=1)
+        if first['pane']:
+            raise InvariantFailure('failed fetch opened an unrelated pane')
+        self.act(Action('notificationsRelease', provider, client='mobile'))
+        prepared = self.deliver_mobile_stop(provider, 1, 2)
+        self.tap_mobile_notification(provider, prepared)
+        second = self.wait_mobile_notification(provider, lambda value: int(value['responseCount']) >= 2)
+        (self.root / f'notifications-{provider}-active-retry-response.json').write_text(json.dumps(second, indent=2))
+        self.assert_active_retry(second, responses=2)
+        if first['sceneProbeIDs'] != second['sceneProbeIDs']:
+            raise InvariantFailure('active retry remounted its production RootView')
+        # A second real OS response, without any production scene transition,
+        # must cause a fresh fetch. A foreground retry cannot satisfy this gate.
+        attempted = self.wait_mobile_notification(provider, lambda value: int(value['fetchCount']) >= 2)
+        self.assert_active_retry(attempted, responses=2, fetches=2)
+        selected = self.wait_mobile_route(provider, prepared)
+        self.assert_active_retry(selected, responses=2, fetches=2)
+        self.summary['assertions'].append({'provider': provider, 'mobileContinuouslyActiveRetry': selected,
+            'firstFailure': first, 'secondResponse': second})
+
+    @staticmethod
+    def assert_active_retry(value, responses, fetches=None):
+        routes = json.loads(value.get('responseRoutes', '[]'))
+        identifiers = json.loads(value.get('responseIDs', '[]'))
+        probes = json.loads(value.get('sceneProbeIDs', '[]'))
+        if (value.get('mode') != 'active-retry'
+                or value.get('observedScenePhase') != 'active' or value.get('sceneTransitions') != '0'
+                or int(value.get('responseCount', 0)) != responses
+                or int(value.get('requestCount', 0)) != responses
+                or len(routes) != responses or any(route != routes[0] for route in routes)
+                or len(identifiers) != responses or not all(identifiers) or len(probes) != 1
+                or (fetches is not None and int(value.get('fetchCount', 0)) != fetches)):
+            raise InvariantFailure(f'active retry lacks response-caused attempts without lifecycle rescue: {value}')
 
     def prepare_mobile_notifications(self, provider, events, mode, hold=False):
         prepared = self.act(Action('notificationsPrepare', provider,

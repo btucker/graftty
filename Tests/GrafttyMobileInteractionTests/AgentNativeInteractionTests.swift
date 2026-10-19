@@ -6,6 +6,15 @@ import XCTest
 final class AgentNativeInteractionTests: XCTestCase {
     /// @spec TEST-1.5: When a scripted native integration run requests mobile gestures or notification taps, the test harness shall drive XCUITest, preserve screenshots with the action sequence ID, require foreground activation-view evidence for notification taps and selected live renderer evidence before completion, and fail the test unless the controller finishes successfully.
     func testScriptedAgentInteractions() async throws {
+        try await runScriptedInteractions()
+    }
+
+    /// @spec NOTIF-1.26: While the mobile notification view remains active after a reported reconnect failure, a later same-target notification response shall trigger a fresh activation attempt and display its live session without requiring a scene transition or view remount.
+    func testNativeNotificationActivation() async throws {
+        try await runScriptedInteractions()
+    }
+
+    private func runScriptedInteractions() async throws {
         guard let endpoint = ProcessInfo.processInfo.environment["GRAFTTY_AGENT_INTEGRATION_URL"].flatMap(URL.init(string:)) else {
             throw XCTSkip("Run scripts/agent-integration/run.py to supply the isolated controller")
         }

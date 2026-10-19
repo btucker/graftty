@@ -16,6 +16,12 @@ on:
         type: boolean
         default: false
         required: false
+      notification_case:
+        description: Notification case selection
+        type: choice
+        options: [all, active-retry]
+        default: all
+        required: false
   schedule:
     - cron: '23 7 * * *'
 
@@ -52,11 +58,12 @@ jobs:
           TEST_SEED: ${{ inputs.seed || github.run_number }}
           TEST_ACTIONS: ${{ inputs.actions || '60' }}
           TEST_NOTIFICATIONS: ${{ inputs.notifications || 'false' }}
+          TEST_NOTIFICATION_CASE: ${{ inputs.notification_case || 'all' }}
         run: |
           cli="$HOME/Library/Caches/Graftty/SwiftPM/build/$(uname -m)-apple-macosx/debug/graftty-cli"
           scenario_args=()
           if [[ "$TEST_NOTIFICATIONS" == "true" ]]; then
-            scenario_args+=(--notifications)
+            scenario_args+=(--notifications --notification-case "$TEST_NOTIFICATION_CASE")
           fi
           python3 -B scripts/agent-integration/run.py \
             --codex "$RUNNER_TEMP/agent-clients/node_modules/.bin/codex" \

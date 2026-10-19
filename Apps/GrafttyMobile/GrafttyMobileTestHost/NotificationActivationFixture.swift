@@ -54,6 +54,10 @@ final class NotificationActivationFixture {
     private var finished = false
     private var transportError = ""
     private var observationSequence = 0
+    private var responseIDs: [String] = []
+    private var responseRoutes: [MobileStopNotificationRoute] = []
+    private var observedScenePhases: [String] = []
+    private var sceneProbeIDs: [UUID] = []
 
     struct FixtureAuthenticator: BiometricAuthenticator {
         func authenticate() async -> Result<Void, Error> { .success(()) }
@@ -77,13 +81,17 @@ final class NotificationActivationFixture {
                 trigger: UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false))
         })
         fetchHeld = !restoring && configuration.holdFetch
-        disconnected = !restoring && configuration.mode == "disconnected"
+        disconnected = !restoring && ["disconnected", "active-retry"].contains(configuration.mode)
         submitted = defaults.stringArray(forKey: "submittedRequests") ?? []
         eventIndex = defaults.integer(forKey: "eventIndex")
         notifications.didSubmitRequest = { [weak self] request in
             guard let self else { return }
             submitted.append(request.identifier)
             defaults.set(submitted, forKey: "submittedRequests")
+        }
+        notifications.didReceiveResponse = { [weak self] identifier, route in
+            self?.responseIDs.append(identifier)
+            self?.responseRoutes.append(route)
         }
         notifications.install()
     }
@@ -148,6 +156,23 @@ final class NotificationActivationFixture {
                     }.accessibilityIdentifier("Notification choose unrelated pane")
                 }.background(.regularMaterial)
             }
+            .background(NotificationFixtureScenePhaseProbe(fixture: self))
+    }
+
+    func observeScenePhase(_ phase: ScenePhase) {
+        let value: String
+        switch phase {
+        case .active: value = "active"
+        case .inactive: value = "inactive"
+        case .background: value = "background"
+        @unknown default: value = "unknown"
+        }
+        if observedScenePhases.last != value { observedScenePhases.append(value) }
+    }
+
+    func sceneProbeAppeared(_ id: UUID, phase: ScenePhase) {
+        if !sceneProbeIDs.contains(id) { sceneProbeIDs.append(id) }
+        observeScenePhase(phase)
     }
 
     private func remoteConnection() async -> RemoteHostConnection? {
@@ -263,6 +288,14 @@ final class NotificationActivationFixture {
             "selectedHost": state.selectedHostId?.uuidString ?? "", "worktree": state.selectedWorktreePath ?? "",
             "pane": state.focusedPaneId ?? "", "pending": String(notifications.pendingRoute != nil),
             "fetchCount": String(fetchCount), "requestCount": String(submitted.count),
+            "mode": configuration.mode,
+            "responseCount": String(responseIDs.count),
+            "responseIDs": String(decoding: try JSONEncoder().encode(responseIDs), as: UTF8.self),
+            "responseRoutes": String(decoding: try JSONEncoder().encode(responseRoutes), as: UTF8.self),
+            "observedScenePhase": observedScenePhases.last ?? "unobserved",
+            "sceneTransitions": String(max(0, observedScenePhases.count - 1)),
+            "scenePhases": String(decoding: try JSONEncoder().encode(observedScenePhases), as: UTF8.self),
+            "sceneProbeIDs": String(decoding: try JSONEncoder().encode(sceneProbeIDs), as: UTF8.self),
             "session": selectedPane?.sessionName ?? "",
             "live": String(selectedPane?.client.connectionState == .live),
             "mounted": String(visibleFrame != nil && matchesSelectedClient),
@@ -318,6 +351,26 @@ final class NotificationActivationFixture {
 /// selection changes and the native accessibility overlay stays current.
 struct NotificationActivationFixtureView: View {
     let fixture: NotificationActivationFixture
-    var body: some View { fixture.root }
+    var body: some View {
+        if fixture.configuration.mode == "active-retry" {
+            // Keep RootView and its probe continuously active so an OS scene
+            // transition cannot retry the failed route on the second tap.
+            fixture.root.environment(\.scenePhase, .active)
+        } else {
+            fixture.root
+        }
+    }
+}
+
+private struct NotificationFixtureScenePhaseProbe: View {
+    let fixture: NotificationActivationFixture
+    @Environment(\.scenePhase) private var phase
+    @State private var instanceID = UUID()
+    var body: some View {
+        Color.clear
+            .allowsHitTesting(false)
+            .onAppear { fixture.sceneProbeAppeared(instanceID, phase: phase) }
+            .onChange(of: phase) { _, value in fixture.observeScenePhase(value) }
+    }
 }
 #endif

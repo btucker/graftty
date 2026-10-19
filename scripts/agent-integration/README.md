@@ -113,6 +113,15 @@ versions, Simulator UDID, device type, runtime version/build, executed native
 commands, CLI/zmx SHA256 hashes, tested commit, tracked diff hash, hashes of
 untracked source files, and per-stage stop/request counts. `tested.patch`
 preserves the tracked changes.
+The continuously-active retry case fixes the production view's scene environment
+to active. It records actual decoded OS response IDs/routes, effective scene
+transitions, and stable probe identity. After a reported fetch failure, a second
+same-target response must cause a second fetch and render the exact live target.
+No scene transition or view remount may supply the retry. Use
+`--notifications --notification-case active-retry` for that focused case, or the
+workflow's `notification_case` input. The default `all` includes it after the
+other lifecycle and error cases. A response observer records real delegate
+callbacks and does not inject routes.
 The notification scenario does not use generated-action replay or shrinking.
 On the Native agent integration workflow, select the independent `notifications`
 boolean input to run this scenario. Scheduled runs retain the general scenario.

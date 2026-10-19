@@ -16,6 +16,8 @@ final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate
     private var authorizationRequested = false
     // Observes submission without replacing the native notification service.
     var didSubmitRequest: ((UNNotificationRequest) -> Void)?
+    // Observes only decoded, native default-action responses; never supplies a route.
+    var didReceiveResponse: ((String, MobileStopNotificationRoute) -> Void)?
     private static let storageKey = "GrafttyMobile.stopNotifications"
     private static let logger = Logger(subsystem: "dev.graftty.mobile", category: "Notifications")
 
@@ -90,7 +92,11 @@ final class MobileAgentNotifications: NSObject, UNUserNotificationCenterDelegate
            let encoded = response.notification.request.content.userInfo["route"] as? String,
            let data = Data(base64Encoded: encoded),
            let route = try? JSONDecoder().decode(MobileStopNotificationRoute.self, from: data) {
-            Task { @MainActor in self.pendingRoute = route }
+            let identifier = response.notification.request.identifier
+            Task { @MainActor in
+                self.pendingRoute = route
+                self.didReceiveResponse?(identifier, route)
+            }
         }
         completionHandler()
     }

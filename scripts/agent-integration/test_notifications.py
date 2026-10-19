@@ -46,6 +46,19 @@ class NotificationEvidenceTests(unittest.TestCase):
             self.assertEqual((provider, 'NOTIFY_' + provider.upper(), None, False),
                              state.plan({}, provider, provider))
 
+    def test_active_retry_rejects_lifecycle_rescue_remount_and_different_routes(self):
+        valid = {'mode': 'active-retry', 'observedScenePhase': 'active', 'sceneTransitions': '0',
+                 'responseCount': '2', 'fetchCount': '2', 'requestCount': '2',
+                 'responseIDs': '["same", "same"]', 'responseRoutes': '[{"pane": "target"}, {"pane": "target"}]',
+                 'sceneProbeIDs': '["original"]'}
+        NotificationRun.assert_active_retry(valid, responses=2, fetches=2)
+        for field, bad in [('observedScenePhase', 'inactive'), ('sceneTransitions', '2'),
+                           ('responseCount', '1'), ('fetchCount', '1'), ('requestCount', '1'),
+                           ('sceneProbeIDs', '["original", "replacement"]'),
+                           ('responseRoutes', '[{"pane": "target"}, {"pane": "different"}]')]:
+            with self.subTest(field=field), self.assertRaises(InvariantFailure):
+                NotificationRun.assert_active_retry({**valid, field: bad}, responses=2, fetches=2)
+
     def test_native_tap_requires_observed_foreground_and_root_view(self):
         runner = NotificationRun.__new__(NotificationRun)
         for result in ({'performed': 'notificationsTap'},
