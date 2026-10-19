@@ -48,3 +48,58 @@ struct WorktreeHistoryPersistenceTests {
         #expect(old.history?.origin?.source == .unknown)
     }
 }
+
+struct WorktreeHistoryReviewTests {
+    @Test("@spec CONTEXT-16: When a provider submits a generated startup or Graftty message prompt, the application shall exclude it from human involvement while retaining later genuine user messages and keeping suppressed event replays idempotent.")
+    func generatedPromptsAreNotHumanInput() throws {
+        for prompt in [WorktreeAgentLaunchCommand.bootstrapPrompt,
+                       "<graftty-peer-message agent=\"/parent\">Task</graftty-peer-message>",
+                       "<graftty-system-message>Ready</graftty-system-message>",
+                       "<graftty-forge-message provider=\"github\">CI passed</graftty-forge-message>", "", "  "] {
+            #expect(WorktreeUserPrompt.text(from: ["prompt": prompt]) == nil)
+        }
+        #expect(WorktreeUserPrompt.text(from: [:]) == nil)
+        #expect(WorktreeUserPrompt.text(from: ["prompt": "Keep <graftty-peer-message> out of my history."]) != nil)
+        var worktree = WorktreeEntry(path: "/task", branch: "task")
+        let task = String(repeating: "a", count: 2000) + " delegated task"
+        worktree.expectLaunchPrompt(task, runtime: .codex)
+        let launched = WorktreeHistory.UserInput(text: task, at: .now, runtime: "codex")
+        worktree.recordUserInput(launched)
+        worktree = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(worktree))
+        worktree.recordUserInput(launched)
+        #expect(worktree.history?.inputs.isEmpty == true)
+        // The same words typed later by a human must remain visible.
+        worktree.recordUserInput(.init(text: task, at: .now, runtime: "codex"))
+        #expect(worktree.history?.inputs.count == 1)
+    }
+
+    @Test func failedLaunchDoesNotHideAManuallyEnteredTask() {
+        var worktree = WorktreeEntry(path: "/task", branch: "task")
+        worktree.expectLaunchPrompt("fix this", runtime: .codex)
+        worktree.cancelExpectedLaunch()
+        worktree.recordUserInput(.init(text: "fix this", at: .now, runtime: "codex"))
+        #expect(worktree.history?.inputs.count == 1)
+    }
+
+    @Test func launchMatchingUsesTheFullPromptAndSurvivesRelaunch() throws {
+        var worktree = WorktreeEntry(path: "/task", branch: "task")
+        let prefix = String(repeating: "a", count: 2000)
+        worktree.expectLaunchPrompt(prefix + " automatic", runtime: .codex)
+        worktree = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(worktree))
+        worktree.recordUserInput(.init(text: prefix + " human", at: .now, runtime: "codex"))
+        #expect(worktree.history?.inputs.count == 1)
+        worktree.recordUserInput(.init(text: prefix + " automatic", at: .now, runtime: "codex"))
+        #expect(worktree.history?.inputs.count == 2)
+    }
+
+    @Test("@spec CONTEXT-17: When a worktree is created on another device, the application shall retain the remote source worktree name separately from the destination repository used for dispatch and shall not treat the remote source path as a local navigation target.")
+    func remoteCreationKeepsItsSourceName() {
+        let request = RemoteWorktreeCreation(callerWorktree: "/source/.worktrees/actual-parent", project: "destination",
+            worktreeName: "child", branchName: "child", existing: false, base: nil, command: nil,
+            agentRuntime: nil, agentPrompt: nil, operationID: "id")
+        let origin = request.historyOrigin(at: Date(timeIntervalSince1970: 100))
+        #expect(origin.source == .worktree)
+        #expect(origin.worktreeName == "actual-parent")
+        #expect(origin.worktreePath == nil)
+    }
+}

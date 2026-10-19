@@ -3884,6 +3884,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-15** When Context is opened on Mac or mobile, the application shall show its history section without a disclosure, label human input separately from agent progress, and show a local date and time for each visible event while fitting the available width.
 
+### CONTEXT-16.x
+
+**CONTEXT-16** When a provider submits a generated startup or Graftty message prompt, the application shall exclude it from human involvement while retaining later genuine user messages and keeping suppressed event replays idempotent.
+
+### CONTEXT-17.x
+
+**CONTEXT-17** When a worktree is created on another device, the application shall retain the remote source worktree name separately from the destination repository used for dispatch and shall not treat the remote source path as a local navigation target.
+
 ## MEM — MEM
 
 ### MEM-1.x

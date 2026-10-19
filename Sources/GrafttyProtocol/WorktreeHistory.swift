@@ -1,3 +1,8 @@
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 
 /// Creation and actual human input are retained independently of agent reports.
@@ -22,10 +27,18 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
         public let timestamp: Double
         public let text: String
         public let wasTruncated: Bool
+        public let runtime: String?
+        public let promptDigest: String?
 
-        public init(id: UUID = UUID(), text: String, at date: Date) {
+        fileprivate static func digest(_ prompt: String) -> String {
+            SHA256.hash(data: Data(prompt.utf8)).map { String(format: "%02x", $0) }.joined()
+        }
+
+        public init(id: UUID = UUID(), text: String, at date: Date, runtime: String? = nil) {
             self.id = id
             timestamp = date.timeIntervalSinceReferenceDate
+            self.runtime = runtime
+            promptDigest = Self.digest(text)
             let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
             var bytes = 0
             let prefix = text.prefix(2000).prefix { character in
@@ -39,14 +52,38 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
 
     public var origin: Origin?
     public private(set) var inputs: [UserInput]
+    private var launchPromptDigest: String?
+    private var launchRuntime: String?
+    private var consumedLaunchInputID: UUID?
 
     public init(origin: Origin? = nil) {
         self.origin = origin
         inputs = []
     }
 
+    public mutating func expectLaunchPrompt(_ prompt: String, runtime: String) {
+        launchPromptDigest = UserInput.digest(prompt)
+        launchRuntime = runtime
+        consumedLaunchInputID = nil
+    }
+
+    public mutating func cancelExpectedLaunch() {
+        launchPromptDigest = nil
+        launchRuntime = nil
+    }
+
     public mutating func record(_ input: UserInput) {
-        guard !inputs.contains(where: { $0.id == input.id }) else { return }
+        guard input.id != consumedLaunchInputID, !inputs.contains(where: { $0.id == input.id }) else { return }
+        if let expected = launchPromptDigest, input.runtime == launchRuntime {
+            // Consume only the first prompt for the launched runtime. Later
+            // human repetitions of the same task are genuine involvement.
+            launchPromptDigest = nil
+            launchRuntime = nil
+            if input.promptDigest == expected {
+                consumedLaunchInputID = input.id
+                return
+            }
+        }
         inputs.append(input)
         inputs.sort { $0.timestamp < $1.timestamp }
         // Match the bounded checkpoint model without letting prompt text grow

@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 public enum RemoteWorktreeRequest: Codable, Sendable, Equatable {
     case create(RemoteWorktreeCreation)
@@ -39,6 +40,12 @@ public struct RemoteWorktreeCreation: Codable, Sendable, Equatable {
         self.agentRuntime = agentRuntime
         self.agentPrompt = agentPrompt
         self.operationID = operationID
+    }
+
+    public func historyOrigin(at date: Date = Date()) -> WorktreeHistory.Origin {
+        // The source path belongs to another device. Retain its name without
+        // turning that absolute path into a destination-local navigation route.
+        .init(date: date, source: .worktree, worktreeName: URL(fileURLWithPath: callerWorktree).lastPathComponent)
     }
 
     public func resolvingSourceProject(

@@ -43,6 +43,10 @@ public enum WorktreeAgentLaunchCommand {
     This Graftty agent session was launched without a user task. During this initial turn, review any Graftty team messages included in the session context and respond when relevant to the scoped repository work. If there are none, briefly report that the session is ready, then wait for a task.
     """
 
+    public static func initialPrompt(_ prompt: String?) -> String {
+        prompt.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? bootstrapPrompt
+    }
+
     public static func validationError(prompt: String?) -> String? {
         guard let prompt else { return nil }
         if prompt.utf8.contains(0) {
@@ -120,9 +124,7 @@ public enum WorktreeAgentLaunchCommand {
         let promptFile = promptDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("prompt")
-        let initialTask = prompt.flatMap { value in
-            value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
-        } ?? bootstrapPrompt
+        let initialTask = initialPrompt(prompt)
         guard fileManager.createFile(
             atPath: promptFile.path,
             contents: Data(initialTask.utf8),

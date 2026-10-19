@@ -184,7 +184,7 @@ public struct AttentionFileHandoff: Sendable {
         let event = AttentionFileProgressEvent(
             worktree: worktree, agentID: agentID, runtime: runtime,
             sessionID: sessionID, progressedAt: progressedAt,
-            userInput: userPrompt.map { .init(text: $0, at: progressedAt) }
+            userInput: userPrompt.map { .init(text: $0, at: progressedAt, runtime: runtime.rawValue) }
         )
         let micros = Int64(progressedAt.timeIntervalSince1970 * 1_000_000)
         let name = "progress-\(micros)-\(UUID().uuidString).json"

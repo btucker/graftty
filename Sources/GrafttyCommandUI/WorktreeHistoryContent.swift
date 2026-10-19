@@ -42,7 +42,8 @@ struct WorktreeHistoryContent: View {
     }
 
     private func group(_ row: WorktreeTimeline.Row) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let range = groupDateRange(row)
+        return VStack(alignment: .leading, spacing: 0) {
             Button {
                 if !expandedGroups.insert(row.id).inserted { expandedGroups.remove(row.id) }
             } label: {
@@ -51,11 +52,8 @@ struct WorktreeHistoryContent: View {
                         .font(.caption2).frame(width: 8)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(row.events.count) agent steps").font(.caption)
-                        if let first = row.events.first?.timestamp, let last = row.events.last?.timestamp {
-                            Text("\(date(first)) to \(date(last))")
-                                .font(.caption2).foregroundStyle(secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        Text(range).font(.caption2).foregroundStyle(secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
                 }
@@ -65,6 +63,7 @@ struct WorktreeHistoryContent: View {
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
             .accessibilityLabel("\(expandedGroups.contains(row.id) ? "Collapse" : "Expand") \(row.events.count) agent steps")
+            .accessibilityValue(range)
             .accessibilityIdentifier("worktree.context.history.group.\(row.id)")
             .padding(.bottom, 12)
             if expandedGroups.contains(row.id) {
@@ -122,6 +121,11 @@ struct WorktreeHistoryContent: View {
         case .user: .orange
         case .checkpoint: secondary
         }
+    }
+
+    private func groupDateRange(_ row: WorktreeTimeline.Row) -> String {
+        guard let first = row.events.first?.timestamp, let last = row.events.last?.timestamp else { return "" }
+        return "\(date(first)) to \(date(last))"
     }
 
     private func date(_ timestamp: Double) -> String {

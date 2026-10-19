@@ -254,6 +254,15 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         lastAgentStop = stop
     }
 
+    public mutating func expectLaunchPrompt(_ prompt: String, runtime: TeamHookRuntime) {
+        if history == nil { history = WorktreeHistory() }
+        history?.expectLaunchPrompt(prompt, runtime: runtime.rawValue)
+    }
+
+    public mutating func cancelExpectedLaunch() {
+        history?.cancelExpectedLaunch()
+    }
+
     public mutating func recordUserInput(_ input: WorktreeHistory.UserInput) {
         if history == nil { history = WorktreeHistory() }
         history?.record(input)

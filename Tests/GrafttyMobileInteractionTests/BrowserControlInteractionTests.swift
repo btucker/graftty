@@ -28,6 +28,7 @@ final class WorktreeContextInteractionTests: XCTestCase {
         let group = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "worktree.context.history.group.")).firstMatch
         for _ in 0..<4 where !group.isHittable { app.swipeUp() }
         XCTAssertTrue(group.waitForExistence(timeout: 5))
+        XCTAssertTrue((group.value as? String)?.contains(" to ") == true)
         group.tap()
         XCTAssertTrue(checkpoint.waitForExistence(timeout: 5))
         try app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "/private/tmp/graftty-context-mobile.png"))

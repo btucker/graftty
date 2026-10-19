@@ -95,7 +95,7 @@ public extension HeadlessHostRuntime {
         } catch { return .error(code: "host_operation_failed", message: String(describing: error), forceAllowed: false, shortStatus: nil) }
     }
 
-    func handle(_ message: NotificationMessage) async -> ResponseMessage {
+    func handle(_ message: NotificationMessage, creationOrigin: WorktreeHistory.Origin? = nil) async -> ResponseMessage {
         do {
             switch message {
             case .listPanes(let path):
@@ -220,7 +220,8 @@ public extension HeadlessHostRuntime {
                         let exactCommand = WorktreeAgentLaunchCommand.shouldStagePrompt(
                             agent: runtime, command: command, prompt: prompt) ? nil : command
                         let result = try await createWorktree(repository: repo.path, name: name, branch: branch,
-                            existing: existing, base: base, command: exactCommand, agent: runtime, prompt: prompt, callerPath: caller)
+                            existing: existing, base: base, command: exactCommand, agent: runtime, prompt: prompt, callerPath: caller,
+                            creationOrigin: creationOrigin)
                         creations[id] = WorktreeCreateStatus(operationID: id, state: .ready, worktreePath: result.path, messageAddress: result.path)
                     } catch {
                         creations[id] = WorktreeCreateStatus(operationID: id, state: .failed, worktreePath: path, messageAddress: path, error: String(describing: error))
@@ -271,7 +272,7 @@ public extension HeadlessHostRuntime {
                     let response = await handle(.createWorktree(callerWorktree: repo.path, worktreeName: creation.worktreeName,
                         branchName: creation.branchName, existing: creation.existing, base: creation.base,
                         command: creation.command, agentRuntime: creation.agentRuntime, agentPrompt: creation.agentPrompt,
-                        operationID: creation.operationID))
+                        operationID: creation.operationID), creationOrigin: creation.historyOrigin())
                     if case .worktreeCreate(let status) = response { return .worktreeCreate(status) }
                     if case .error(let error) = response { return .error(error) }
                     return .error("unexpected creation response")

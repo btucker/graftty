@@ -184,7 +184,8 @@ public final class HeadlessHostRuntime {
 
     public func createWorktree(repository: String, name: String, branch: String,
         existing: Bool = false, remoteOnly: Bool = false, base: String? = nil, command: String? = nil,
-        agent: TeamHookRuntime? = nil, prompt: String? = nil, callerPath: String? = nil) async throws -> (path: String, session: String) {
+        agent: TeamHookRuntime? = nil, prompt: String? = nil, callerPath: String? = nil,
+        creationOrigin: WorktreeHistory.Origin? = nil) async throws -> (path: String, session: String) {
         guard let repo = state.repos.first(where: { $0.path == repository }) else { throw HostRuntimeError.notFound("repository is not registered") }
         if let error = WorktreeCreationInput.validationError(worktreeName: name, branchName: branch, existing: existing, base: base) {
             throw HostRuntimeError.invalid(error)
@@ -218,19 +219,31 @@ public final class HeadlessHostRuntime {
         } catch { launch.discardPromptFile(); throw error }
         guard let ri = state.repos.firstIndex(where: { $0.path == repo.path }) else { throw HostRuntimeError.notFound("repository removed during creation") }
         let createdAt = Date()
-        let origin = WorktreeHistory.Origin(date: createdAt, source: callerPath == nil ? .user : .worktree,
+        let origin = creationOrigin ?? WorktreeHistory.Origin(date: createdAt, source: callerPath == nil ? .user : .worktree,
             worktreePath: callerPath, worktreeName: repo.worktrees.first(where: { $0.path == callerPath }).map {
                 SidebarWorktreeLabel.text(for: $0, inRepoAtPath: repo.path,
                     siblingPaths: repo.worktrees.map(\.path), defaultBranch: repo.defaultBranchHint)
             })
-        state.repos[ri].worktrees.append(WorktreeEntry(path: path, branch: branch, createdAt: createdAt, creationOrigin: origin))
-        try save() // Retain successful Git creation even if shell startup fails.
-        if let agent {
-            try WorktreeAgentLaunchCommand.saveInitialPrompt(prompt, runtime: agent, repo: repo,
-                worktreePath: path, branchName: branch, inbox: inbox)
+        var entry = WorktreeEntry(path: path, branch: branch, createdAt: createdAt, creationOrigin: origin)
+        if let agent, launch.promptFile != nil {
+            entry.expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(prompt), runtime: agent)
         }
-        do { return (path, try await openUnlocked(path, command: launch.command)) }
-        catch { launch.discardPromptFile(); throw error }
+        state.repos[ri].worktrees.append(entry)
+        do {
+            try save() // Retain successful Git creation even if shell startup fails.
+            if let agent {
+                try WorktreeAgentLaunchCommand.saveInitialPrompt(prompt, runtime: agent, repo: repo,
+                    worktreePath: path, branchName: branch, inbox: inbox)
+            }
+            return (path, try await openUnlocked(path, command: launch.command))
+        } catch {
+            launch.discardPromptFile()
+            if let index = state.indices(forWorktreePath: path) {
+                state.repos[index.repo].worktrees[index.worktree].cancelExpectedLaunch()
+                try? save()
+            }
+            throw error
+        }
     }
 
     public func deleteWorktree(_ path: String, force: Bool = false, allowPinned: Bool = false) async throws {
