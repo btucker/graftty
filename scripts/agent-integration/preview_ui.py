@@ -5,6 +5,8 @@ The baseline replaces RootView only, keeping current tests and representable
 attachment tokens so baseline compilation cannot masquerade as regression RED.
 """
 import argparse
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
@@ -12,6 +14,7 @@ from pathlib import Path
 import re
 import signal
 import sys
+import tempfile
 import uuid
 
 from worktree_ui import REPO, capture, execute, read_result
@@ -26,6 +29,81 @@ EXPECTED_CASES = {LIFECYCLE_ID + '[' + embedded + ', ' + retained + ']'
 FOCUS_ID = TESTS[1] + '()'
 RETENTION_ASSERTION = re.compile(
     r'^Expectation failed:.*\b(?:socket\.closeCount|returnedContainer|client\.isOwner|container\.agentCompletion|container\.committedSoftwareInput)\b')
+
+
+@contextmanager
+def derived_data_lock(derived):
+    """Use the same lock as the real-provider runner for this build cache."""
+    derived.mkdir(parents=True, exist_ok=True)
+    with (derived.parent / (derived.name + '.lock')).open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def require_clean_baseline_source(expected=None):
+    """Never overlay an untracked, staged, or locally modified RootView."""
+    source = REPO / SOURCE
+    if source.is_symlink() or not source.is_file():
+        raise RuntimeError('Baseline overlay requires a regular tracked source file: ' + SOURCE)
+    capture(['git', 'ls-files', '--error-unmatch', '--', SOURCE])
+    if capture(['git', 'status', '--porcelain=v1', '--untracked-files=all', '--', SOURCE]):
+        raise RuntimeError('Commit or restore local changes before baseline overlay: ' + SOURCE)
+    # status can hide changes under assume-unchanged/skip-worktree. Compare
+    # the real file bytes as a Git blob as well, without updating the index.
+    if capture(['git', 'hash-object', '--', SOURCE]) != capture(['git', 'rev-parse', 'HEAD:' + SOURCE]):
+        raise RuntimeError('Baseline overlay source differs from HEAD: ' + SOURCE)
+    original = source.read_bytes()
+    if expected is not None and original != expected:
+        raise RuntimeError('Source changed while preparing baseline validation: ' + SOURCE)
+    return original
+
+
+def replace_source(source, data):
+    """Replace complete bytes atomically and preserve the source file mode."""
+    mode = source.stat().st_mode & 0o777
+    descriptor, temporary = tempfile.mkstemp(prefix='.' + source.name + '.', suffix='.tmp', dir=source.parent)
+    try:
+        with os.fdopen(descriptor, 'wb') as stream:
+            os.fchmod(stream.fileno(), mode)
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, source)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+@contextmanager
+def baseline_overlay(options, summary, original):
+    """Restore exact bytes even when RED exits through cancellation or error."""
+    require_clean_baseline_source(expected=original)
+    summary['baselineCommit'] = capture(['git', 'rev-parse', options.baseline + '^{commit}'])
+    source = execute(['git', 'show', summary['baselineCommit'] + ':' + SOURCE])[1]
+    summary['baselineOriginalSourceHash'] = hashlib.sha256(source.encode()).hexdigest()
+    source, summary['baselineAdjustments'] = adapt_baseline_source(source)
+    baseline = source.encode()
+    # Keep the backup outside the source tree for recovery after SIGKILL or a
+    # machine restart, which no Python finally block can intercept.
+    with (options.output / 'RootView.backup.swift').open('wb') as backup:
+        backup.write(original)
+        backup.flush()
+        os.fsync(backup.fileno())
+    (options.output / 'RootView.baseline.swift').write_bytes(baseline)
+    summary['baselineSourceHash'] = hashlib.sha256(baseline).hexdigest()
+    summary['sourceRestored'] = False
+    try:
+        replace_source(REPO / SOURCE, baseline)
+        yield
+    finally:
+        try:
+            replace_source(REPO / SOURCE, original)
+            summary['sourceRestored'] = (REPO / SOURCE).read_bytes() == original
+            if not summary['sourceRestored']:
+                raise RuntimeError('Restored bytes differ from source backup')
+        except Exception as error:
+            summary['sourceRestoreError'] = str(error)
+            raise RuntimeError('Source restoration failed; GREEN will not run; recover RootView.backup.swift') from error
 
 
 def adapt_baseline_source(source):
@@ -161,14 +239,22 @@ def main():
     parser.add_argument('--runtime')
     parser.add_argument('--timeout', type=int, default=1800)
     options = parser.parse_args()
-    if options.baseline and os.environ.get('CI', '').lower() not in ('true', '1'):
-        parser.error('Baseline source overlay requires an isolated CI checkout (CI=true)')
     for name in ('GRAFTTY_RENDERER_CONTEXT', 'GRAFTTY_GHOSTTY_PACKAGE_PATH'):
         if not os.environ.get(name):
             parser.error(name + ' is required')
     options.output = options.output.resolve()
-    options.derived_data = options.derived_data.resolve()
+    # run.py locks the supplied cache path, which can be a symlink into a
+    # removable volume. Resolving only here would create a different lock.
+    options.derived_data = options.derived_data.absolute()
+    if options.source_packages:
+        options.source_packages = options.source_packages.resolve()
     options.output.mkdir(parents=True, exist_ok=False)
+    print('Waiting for shared iOS build lock: ' + str(options.derived_data), flush=True)
+    with derived_data_lock(options.derived_data):
+        return run_validation(options)
+
+
+def run_validation(options):
     summary = {'result': 'failed', 'currentCommit': capture(['git', 'rev-parse', 'HEAD']),
                'workingTree': capture(['git', 'status', '--short']), 'baseline': options.baseline,
                'xcode': capture(['xcodebuild', '-version']),
@@ -176,9 +262,9 @@ def main():
                'rendererContext': os.environ['GRAFTTY_RENDERER_CONTEXT']}
     (options.output / 'source.diff').write_text(capture(['git', 'diff', 'HEAD']))
     simulator = None
-    original = (REPO / SOURCE).read_bytes()
-    summary['currentSourceHashes'] = {SOURCE: hashlib.sha256(original).hexdigest()}
     try:
+        original = require_clean_baseline_source() if options.baseline else (REPO / SOURCE).read_bytes()
+        summary['currentSourceHashes'] = {SOURCE: hashlib.sha256(original).hexdigest()}
         runtimes = json.loads(capture(['xcrun', 'simctl', 'list', 'runtimes', '--json']))['runtimes']
         available = [r for r in runtimes if r.get('isAvailable') and '.iOS-' in r['identifier']
                      and (not options.runtime or options.runtime == r['identifier'])]
@@ -193,18 +279,8 @@ def main():
         if code:
             raise RuntimeError('Simulator boot failed')
         if options.baseline:
-            (options.output / 'RootView.backup.swift').write_bytes(original)
-            try:
-                summary['baselineCommit'] = capture(['git', 'rev-parse', options.baseline + '^{commit}'])
-                source = execute(['git', 'show', summary['baselineCommit'] + ':' + SOURCE])[1]
-                summary['baselineOriginalSourceHash'] = hashlib.sha256(source.encode()).hexdigest()
-                source, summary['baselineAdjustments'] = adapt_baseline_source(source)
-                (REPO / SOURCE).write_text(source)
-                (options.output / 'RootView.baseline.swift').write_text(source)
-                summary['baselineSourceHash'] = hashlib.sha256((REPO / SOURCE).read_bytes()).hexdigest()
+            with baseline_overlay(options, summary, original):
                 summary['red'] = run_phase('red', options, simulator)
-            finally:
-                (REPO / SOURCE).write_bytes(original)
         summary['sourceRestored'] = (REPO / SOURCE).read_bytes() == original
         if not summary['sourceRestored']:
             raise RuntimeError('Source restoration failed')

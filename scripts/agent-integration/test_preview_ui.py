@@ -1,12 +1,16 @@
 import copy
+import fcntl
 import json
 from pathlib import Path
 import tempfile
+import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from preview_ui import adapt_baseline_source, evaluate, run_phase, test_report_records
+from preview_ui import (SOURCE, adapt_baseline_source, baseline_overlay, derived_data_lock,
+                        evaluate, main, replace_source, require_clean_baseline_source,
+                        run_phase, test_report_records)
 
 
 LIFECYCLE = 'GrafttyMobileBrowserTests/RemoteBrowserButtonTests/nativePreviewPreservesTerminalConnection(embedded:retained:)'
@@ -217,6 +221,155 @@ class PreviewBaselineTests(unittest.TestCase):
                                                      'private let renamedConnectionProvider'))
         with self.assertRaises(ValueError):
             adapt_baseline_source(self.SOURCE + self.SOURCE)
+
+    def test_explicit_local_baseline_is_allowed_under_shared_build_lock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            arguments = ['preview_ui.py', '--output', str(directory / 'evidence'),
+                         '--derived-data', str(directory / 'derived'), '--baseline', 'origin/main']
+            with patch('sys.argv', arguments), \
+                 patch.dict('os.environ', {'CI': 'false', 'GRAFTTY_RENDERER_CONTEXT': 'fixture',
+                                           'GRAFTTY_GHOSTTY_PACKAGE_PATH': '/fixture'}), \
+                 patch('preview_ui.run_validation', return_value=0, create=True) as validation:
+                self.assertEqual(main(), 0)
+            self.assertEqual(validation.call_args.args[0].baseline, 'origin/main')
+
+
+class PreviewOverlaySafetyTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo = Path(temporary.name)
+        self.source = self.repo / SOURCE
+        self.source.parent.mkdir(parents=True)
+        self.original = (PreviewBaselineTests.SOURCE + '// Preserve exact bytes: café\n').encode()
+        self.source.write_bytes(self.original)
+        self.git('init', '-q')
+        self.git('add', '--', SOURCE)
+        self.git('-c', 'user.name=Preview test', '-c', 'user.email=preview@example.invalid',
+                 '-c', 'core.hooksPath=/dev/null', 'commit', '--no-gpg-sign', '-qm', 'Fixture')
+        self.options = SimpleNamespace(output=self.repo / 'evidence', baseline='HEAD')
+        self.options.output.mkdir()
+        for replacement in (patch('preview_ui.REPO', self.repo),
+                            patch('preview_ui.capture', side_effect=lambda command: self.git(*command[1:]).strip()),
+                            patch('preview_ui.execute', side_effect=lambda command: (0, self.git(*command[1:])))):
+            replacement.start()
+            self.addCleanup(replacement.stop)
+
+    def git(self, *arguments):
+        result = subprocess.run(['git', *arguments], cwd=self.repo, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode:
+            raise RuntimeError(result.stderr)
+        return result.stdout
+
+    def test_requires_tracked_source_clean_in_both_index_and_worktree(self):
+        self.assertEqual(require_clean_baseline_source(), self.original)
+        self.source.write_bytes(self.original + b'// local edit\n')
+        with self.assertRaisesRegex(RuntimeError, 'local changes'):
+            require_clean_baseline_source()
+        self.git('add', '--', SOURCE)
+        with self.assertRaisesRegex(RuntimeError, 'local changes'):
+            require_clean_baseline_source()
+        self.git('rm', '--cached', '--', SOURCE)
+        with self.assertRaises(RuntimeError):
+            require_clean_baseline_source()
+        self.assertTrue(self.source.read_bytes().endswith(b'// local edit\n'))
+
+    def test_hidden_worktree_edits_and_changed_snapshot_are_rejected(self):
+        self.git('update-index', '--assume-unchanged', '--', SOURCE)
+        self.source.write_bytes(self.original + b'// hidden edit\n')
+        self.assertEqual(self.git('status', '--porcelain=v1', '--', SOURCE), '')
+        with self.assertRaisesRegex(RuntimeError, 'differs from HEAD'):
+            require_clean_baseline_source()
+        self.source.write_bytes(self.original)
+        with self.assertRaisesRegex(RuntimeError, 'Source changed'):
+            require_clean_baseline_source(expected=b'stale snapshot')
+
+    def test_overlay_restores_bytes_and_mode_on_success_and_all_catchable_exits(self):
+        self.source.chmod(0o640)
+        for error in (None, RuntimeError('RED failed'), SystemExit('SIGTERM'), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__):
+                summary = {}
+                try:
+                    with baseline_overlay(self.options, summary, self.original):
+                        self.assertNotEqual(self.source.read_bytes(), self.original)
+                        self.assertIn(b'.onDisappear', self.source.read_bytes())
+                        if error is not None:
+                            raise error
+                except BaseException as caught:
+                    self.assertIs(caught, error)
+                self.assertEqual(self.source.read_bytes(), self.original)
+                self.assertEqual(self.source.stat().st_mode & 0o777, 0o640)
+                self.assertEqual((self.options.output / 'RootView.backup.swift').read_bytes(), self.original)
+                self.assertTrue(summary['sourceRestored'])
+                self.assertEqual(len(summary['baselineAdjustments']), 4)
+                self.assertNotEqual(summary['baselineSourceHash'], summary['baselineOriginalSourceHash'])
+
+    def test_overlay_guard_rejects_edit_since_initial_validation_without_overwriting_it(self):
+        require_clean_baseline_source()
+        edited = self.original + b'// edit during simulator boot\n'
+        self.source.write_bytes(edited)
+        with self.assertRaises(RuntimeError):
+            with baseline_overlay(self.options, {}, self.original):
+                self.fail('Dirty source must never enter RED')
+        self.assertEqual(self.source.read_bytes(), edited)
+        self.assertFalse((self.options.output / 'RootView.backup.swift').exists())
+
+    def test_restoration_mismatch_prevents_continuing_to_green_and_keeps_backup(self):
+        summary = {}
+        writes = 0
+
+        def fail_restore(source, data):
+            nonlocal writes
+            writes += 1
+            if writes == 1:
+                replace_source(source, data)
+
+        with patch('preview_ui.replace_source', side_effect=fail_restore):
+            with self.assertRaisesRegex(RuntimeError, 'GREEN will not run'):
+                with baseline_overlay(self.options, summary, self.original):
+                    pass
+                self.fail('GREEN must not follow failed restoration')
+        self.assertFalse(summary['sourceRestored'])
+        self.assertIn('sourceRestoreError', summary)
+        self.assertEqual((self.options.output / 'RootView.backup.swift').read_bytes(), self.original)
+
+    def test_derived_data_lock_matches_provider_runner_and_releases_after_error(self):
+        derived = self.repo / 'cache' / 'ios-derived'
+        lock_path = derived.parent / (derived.name + '.lock')
+        with self.assertRaisesRegex(RuntimeError, 'interrupted'):
+            with derived_data_lock(derived):
+                self.assertTrue(derived.is_dir())
+                with lock_path.open('a') as competitor:
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(competitor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                raise RuntimeError('interrupted')
+        with lock_path.open('a') as competitor:
+            fcntl.flock(competitor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_main_preserves_cache_symlink_for_provider_lock_identity(self):
+        actual = self.repo / 'volume' / 'ios-build'
+        actual.mkdir(parents=True)
+        alias = self.repo / 'ios-cache-link'
+        alias.symlink_to(actual, target_is_directory=True)
+        lock_path = alias.parent / (alias.name + '.lock')
+
+        def validate(options):
+            self.assertEqual(options.derived_data, alias)
+            self.assertFalse((actual.parent / (actual.name + '.lock')).exists())
+            with lock_path.open('a') as provider:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(provider, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return 0
+
+        arguments = ['preview_ui.py', '--output', str(self.repo / 'local-evidence'),
+                     '--derived-data', str(alias), '--baseline', 'HEAD']
+        with patch('sys.argv', arguments), \
+             patch.dict('os.environ', {'CI': 'false', 'GRAFTTY_RENDERER_CONTEXT': 'fixture',
+                                       'GRAFTTY_GHOSTTY_PACKAGE_PATH': '/fixture'}), \
+             patch('preview_ui.run_validation', side_effect=validate):
+            self.assertEqual(main(), 0)
 
 
 if __name__ == '__main__':

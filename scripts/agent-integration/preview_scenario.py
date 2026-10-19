@@ -80,6 +80,8 @@ def run_preview(run):
         run.wait_model(lambda: agent in models.completed)
         models.release(agent, 'recap')
         run.wait_model(lambda: agent in models.recaps_done)
+        if agent == 'claude':
+            keep_claude_manual(run)
         for retained in (False, True):
             for embedded in (False, True):
                 nonce = uuid.uuid4().hex
@@ -287,3 +289,25 @@ def verify_preview_executables(run):
         observed[name] = {'path': original['path'], 'sha256': actual}
         if actual != original['sha256']:
             raise InvariantFailure('Executable changed during preview validation: ' + name)
+
+
+def keep_claude_manual(run):
+    """Decline the pinned provider's opt-in prompt through its real terminal."""
+    question = 'Make auto mode your default permission mode?'
+    def native(value):
+        return value.get('nativeText', value.get('text', ''))
+    before = run.wait_snapshot('claude', lambda value: question in native(value)
+                              and 'No, keep manual mode' in native(value), timeout=30)
+    selected_no = lambda value: bool(re.search(r'^\s*❯\s+No, keep manual mode\s*$', native(value), re.MULTILINE))
+    selected = before
+    if not selected_no(before):
+        if not re.search(r'^\s*❯\s+Yes, set auto mode as my default permission mode\s*$', native(before), re.MULTILINE):
+            raise InvariantFailure('Claude permission prompt has no recognized native selection')
+        run.act(Action('input', 'claude', {'text': '\x1b[B', 'submit': 'false'}))
+        selected = run.wait_snapshot('claude', selected_no, timeout=10)
+    # Do not submit until native output proves the No choice is selected.
+    run.act(Action('input', 'claude', {'text': ''}))
+    after = run.wait_snapshot('claude', lambda value: question not in native(value), timeout=10)
+    (run.root / 'preview-claude-manual-permissions.json').write_text(json.dumps(
+        {'before': native(before), 'selected': native(selected), 'after': native(after)}, indent=2))
+    run.summary['assertions'].append({'provider': 'claude', 'declinedAutoPermissionsInNativeUI': True})

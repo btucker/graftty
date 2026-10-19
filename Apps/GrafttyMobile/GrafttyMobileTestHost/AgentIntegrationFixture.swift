@@ -173,6 +173,9 @@ final class AgentIntegrationMobileController: UIViewController {
             host.didMove(toParent: self)
             route = host
             host.view.frame = view.bounds
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            try await fixture.startMounted(in: host)
             return try await fixture.snapshot(controller: self)
         }
         if command.operation.hasPrefix("preview"), let previewFixture {
@@ -535,6 +538,18 @@ final class AgentPreviewFixture {
             channel: probe)
         fixture.gate.applicationWillEnterForeground()
         await fixture.gate.authenticate()
+        return fixture
+    }
+
+    func startMounted(in host: UIViewController) async throws {
+        let mountDeadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while terminal(in: host.view)?.terminalView.surface == nil || terminal(in: host.view)?.terminalGridMetrics == nil {
+            guard ContinuousClock.now < mountDeadline else { throw AgentIntegrationError("preview source renderer did not mount") }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        // The production TerminalPaneView supplies onPhysicalViewportReady.
+        // Mount before starting the real SSH attachment so its first hello and
+        // source grid use that viewport; never inject or bypass the callback.
         client.start()
         let deadline = ContinuousClock.now.advanced(by: .seconds(15))
         while client.ownershipSnapshot == nil {
@@ -549,7 +564,6 @@ final class AgentPreviewFixture {
         guard client.ownershipSnapshot?.ownerIdentity == "ssh-device:integration-phone" else {
             throw AgentIntegrationError("preview offer identity differs from authenticated SSH owner")
         }
-        return fixture
     }
 
     func management(_ request: WorktreeManagementRequest, host: Host) async throws -> WorktreeManagementResponse {

@@ -216,3 +216,27 @@ class PreviewExecutableStabilityTests(unittest.TestCase):
             (root / 'cli').write_bytes(b'other worktree rebuilt this executable')
             with self.assertRaisesRegex(InvariantFailure, 'Executable changed.*cli'):
                 verify_preview_executables(runner)
+
+
+class PreviewManualPermissionTests(unittest.TestCase):
+    def test_declines_real_auto_mode_prompt_only_after_native_selection_is_no(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from preview_scenario import keep_claude_manual
+        prompt = ('Make auto mode your default permission mode?\n'
+                  '❯ Yes, set auto mode as my default permission mode\n'
+                  '  No, keep manual mode')
+        selected = prompt.replace('❯ Yes', '  Yes').replace('  No', '❯ No')
+        with tempfile.TemporaryDirectory() as directory:
+            run = SimpleNamespace(root=Path(directory), summary={'assertions': []}, act=Mock(),
+                wait_snapshot=Mock(side_effect=[{'nativeText': prompt}, {'nativeText': selected}, {'nativeText': '❯ '}]))
+            keep_claude_manual(run)
+            actions = [call.args[0] for call in run.act.call_args_list]
+            self.assertEqual([{'text': '\x1b[B', 'submit': 'false'}, {'text': ''}], [a.parameters for a in actions])
+            self.assertTrue(run.summary['assertions'][0]['declinedAutoPermissionsInNativeUI'])
+            # The confirmation predicate must reject the still-selected Yes row.
+            selected_predicate = run.wait_snapshot.call_args_list[1].args[1]
+            self.assertFalse(selected_predicate({'nativeText': prompt}))
+            self.assertTrue(selected_predicate({'nativeText': selected}))
