@@ -53,7 +53,7 @@ class OutputBarrierTests(unittest.TestCase):
         return [json.loads(line[6:]) for line in handler.wfile.getvalue().decode().splitlines()
                 if line.startswith('data: ')]
 
-    def test_creation_output_barrier_flushes_last_delta_before_any_completion_event(self):
+    def test_creation_output_barrier_finalizes_text_without_finishing_the_turn(self):
         for protocol in ('claude', 'codex'):
             with self.subTest(protocol=protocol):
                 models, handler, thread = self.stream(protocol, pause=True)
@@ -65,7 +65,11 @@ class OutputBarrierTests(unittest.TestCase):
                     if protocol == 'claude':
                         text = ''.join(event['delta']['text'] for event in events
                                        if event['type'] == 'content_block_delta')
-                        terminal_types = {'content_block_stop', 'message_delta', 'message_stop'}
+                        event_types = [event['type'] for event in events]
+                        self.assertEqual(event_types.count('content_block_stop'), 1,
+                                         'Claude text block must finalize before the output barrier')
+                        self.assertEqual(event_types[-1], 'content_block_stop')
+                        terminal_types = {'message_delta', 'message_stop'}
                     else:
                         text = ''.join(event['delta'] for event in events
                                        if event['type'] == 'response.output_text.delta')
@@ -80,8 +84,8 @@ class OutputBarrierTests(unittest.TestCase):
                     thread.join(2)
                     self.assertFalse(thread.is_alive())
                     self.assertIn(protocol, models.completed)
-                    self.assertIn('message_stop' if protocol == 'claude' else 'response.completed',
-                                  [event['type'] for event in self.events(handler)])
+                    self.assertEqual([event['type'] for event in self.events(handler)].count(
+                        'message_stop' if protocol == 'claude' else 'response.completed'), 1)
                 finally:
                     models.close()
                     thread.join(2)

@@ -48,6 +48,14 @@ def assert_history_rows(visible, authoritative):
     assert_buffer_matches(visible[first.start():last.start()], authoritative[start:end])
 
 
+def authoritative_completed_viewport(visible, authoritative):
+    # Fullscreen providers can buffer their final paragraph while still streaming.
+    # Matching two incomplete screens does not establish complete output.
+    if any('END-GRAFTTY-FIXTURE' not in text for text in (visible, authoritative)):
+        raise InvariantFailure('viewport and daemon must contain the complete fixture end sentinel')
+    return authoritative
+
+
 def authoritative_history_viewport(visible, authoritative):
     """Select a complete ASCII fixture suffix, never an arbitrary history subset.
 
@@ -174,7 +182,8 @@ class WorktreeCreationRun(Run):
             time.sleep(.1)
 
     def check_mobile_reentry(self, agent, stage):
-        oracle = None if self.options.worktree_creation_viewport_only else authoritative_history_viewport
+        oracle = (authoritative_completed_viewport if self.options.worktree_creation_viewport_only
+                  else authoritative_history_viewport)
         super().check_mobile_reentry(agent, stage, authoritative_viewport=oracle)
 
     def converge(self, agent, timeout=20):

@@ -37,7 +37,7 @@ def execute(command, *, env=None, timeout=180, log=None, strip=True):
     return output.strip() if strip else output
 
 
-def prepare_home(root, endpoint, codex, claude):
+def prepare_home(root, endpoint, codex, claude, *, manual_claude=False, inline_codex=False):
     home = root / 'home'
     for folder in (home / '.codex', home / '.claude', root / 'bin', root / 'run'):
         folder.mkdir(parents=True, exist_ok=True)
@@ -54,10 +54,16 @@ def prepare_home(root, endpoint, codex, claude):
         path = str(root / 'repository' / '.worktrees' / agent)
         config += '[projects.' + json.dumps(path) + ']\ntrust_level="trusted"\n'
         projects[path] = {'hasTrustDialogAccepted': True}
+    if inline_codex:
+        config += '[tui]\nalternate_screen="never"\n'
     (home / '.codex' / 'config.toml').write_text(config)
     (home / '.claude' / '.claude.json').write_text(json.dumps({'hasCompletedOnboarding': True,
         'theme': 'dark', 'customApiKeyResponses': {'approved': ['fixture-only'], 'rejected': []}, 'projects': projects}))
-    (home / '.claude' / 'settings.json').write_text(json.dumps({'autoUpdatesChannel': 'stable'}))
+    settings = {'autoUpdatesChannel': 'stable'}
+    if manual_claude:
+        # Keep real one-time tool approvals; the fake endpoint is not an auto-mode classifier.
+        settings['permissions'] = {'defaultMode': 'default'}
+    (home / '.claude' / 'settings.json').write_text(json.dumps(settings))
     # Keep build tools on PATH, excluding the running agent's managed wrappers.
     paths = [str(root / 'bin')]
     paths.extend(path for path in os.environ.get('PATH', '').split(':') if 'agent-hooks' not in path)
@@ -506,17 +512,22 @@ class Run:
             # Persist provenance before home setup, version commands, or native
             # builds can fail. Unobserved metadata stays absent, never guessed.
             (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
-            self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude)
-            if getattr(self.options, 'worktree_creation', False):
+            creation = getattr(self.options, 'worktree_creation', False)
+            creation_history = creation and not getattr(self.options, 'worktree_creation_viewport_only', False)
+            self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude,
+                                    manual_claude=creation, inline_codex=creation_history)
+            if creation:
+                self.summary['providerPermissions'] = {'claude': 'manual (permissions.defaultMode=default)',
+                                                       'codex': 'on-request'}
                 # CLI-created Codex uses its configured model header without the
                 # direct-launch export. Claude has its own endpoint and ignores it.
                 self.env['GRAFTTY_TEST_AGENT'] = 'codex'
-            if getattr(self.options, 'worktree_creation', False) and not getattr(self.options, 'worktree_creation_viewport_only', False):
+            if creation_history:
                 # This scenario verifies real terminal history. Claude's fullscreen
                 # renderer virtualizes old rows inside the provider instead.
                 self.env['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN'] = '1'
                 self.summary['providerModes'] = {'claude': 'classic (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)',
-                                                 'codex': 'default'}
+                                                 'codex': 'inline (tui.alternate_screen=never)'}
             for name in ('claude', 'codex'):
                 self.summary['providerVersions'][name] = execute([str(getattr(self.options, name)), '--version'], env=self.env)
             self.env['GRAFTTY_SWIFTPM_SHARED_DIR'] = str(self.options.cache)
