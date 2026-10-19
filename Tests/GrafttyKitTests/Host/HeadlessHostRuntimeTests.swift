@@ -383,6 +383,112 @@ struct HeadlessHostRuntimeTests {
         }
     }
 
+    @Test("@spec REMOTE-22.38: When a headless runtime receives an explicit agent installer, automatic provider setup shall retain its CLI hook path.", arguments: [TeamHookRuntime.claude, .codex])
+    func automaticProviderSetupRetainsInstaller(provider: TeamHookRuntime) async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid",
+            "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let cli = root.appendingPathComponent("CLI tools/graftty")
+        let installer = AgentPluginInstaller(grafttyCLIPath: cli.path,
+            codexConfigurationURL: root.appendingPathComponent("codex-config.toml"),
+            claudeSettingsURL: root.appendingPathComponent("claude-settings.json"))
+        let executor = HostPluginExecutor()
+        let setup = HostAgentSetup(configuration: config, executor: executor, installer: installer)
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals,
+            initialState: state, agentSetup: setup)
+        _ = try await runtime.createWorktree(repository: root.path, name: provider.rawValue,
+            branch: provider.rawValue, base: "HEAD", agent: provider, prompt: "Setup regression")
+        let hooksURL = config.stateDirectory.appendingPathComponent(
+            "agent-plugins/\(provider.rawValue)/plugins/graftty/hooks/hooks.json")
+        let document = try JSONSerialization.jsonObject(with: Data(contentsOf: hooksURL))
+        func commands(in value: Any) -> [String] {
+            if let object = value as? [String: Any] {
+                if let command = object["command"] as? String { return [command] }
+                return object.values.flatMap { commands(in: $0) }
+            }
+            return (value as? [Any] ?? []).flatMap { commands(in: $0) }
+        }
+        let hooks = commands(in: document)
+        #expect(!hooks.isEmpty)
+        #expect(hooks.allSatisfy { $0.contains(AgentPluginInstallStep.shellToken(cli.path) + " team hook") })
+        #expect(Set(await executor.commands) == [provider.rawValue])
+
+    }
+
+    @Test("@spec REMOTE-22.39: When a headless host advertises agent prompt staging, the application shall replace bare agent fallback commands with a staged structured or bootstrap prompt, preserve legacy explicit commands without structured prompts, and deliver the selected prompt unchanged to the provider.", arguments: [TeamHookRuntime.claude, .codex])
+    func headlessWireStagesStructuredAgentPrompt(provider: TeamHookRuntime) async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid",
+            "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let installer = AgentPluginInstaller(grafttyCLIPath: root.appendingPathComponent("graftty").path,
+            codexConfigurationURL: root.appendingPathComponent("codex-config.toml"),
+            claudeSettingsURL: root.appendingPathComponent("claude-settings.json"))
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, initialState: state,
+            agentSetup: HostAgentSetup(configuration: config, executor: HostPluginExecutor(), installer: installer))
+        #expect(await runtime.handle(.agentPromptStagingCapability) == .ok)
+
+        // Record the argv received by an executable through the actual /bin/sh
+        // loader, including quotes and trailing newlines in the staged prompt.
+        let binaryDirectory = root.appendingPathComponent("bin")
+        try FileManager.default.createDirectory(at: binaryDirectory, withIntermediateDirectories: true)
+        let recordedPrompt = root.appendingPathComponent("provider-prompt")
+        let recordedArguments = root.appendingPathComponent("provider-arguments")
+        let recorder = binaryDirectory.appendingPathComponent(provider.rawValue)
+        try ("#!/bin/sh\n/usr/bin/printf '%s\\n' \"$#\" \"$1\" > "
+            + WorktreeAgentLaunchCommand.shellLiteral(recordedArguments.path)
+            + "\n/usr/bin/printf '%s' \"$2\" > " + WorktreeAgentLaunchCommand.shellLiteral(recordedPrompt.path) + "\n")
+            .write(to: recorder, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: recorder.path)
+        let prompt = "GRAFTTY_TEST_BEGIN \(provider.rawValue)\nA 'quoted' task with $HOME and $(false)\n"
+        let legacyCommand = provider.rawValue + " -- " + WorktreeAgentLaunchCommand.shellLiteral("legacy task")
+        let cases: [(name: String, command: String?, agent: TeamHookRuntime?, prompt: String?, expected: String)] = [
+            ("structured", provider.rawValue, provider, prompt, prompt),
+            ("no-command", nil, provider, prompt, prompt),
+            ("bootstrap", provider.rawValue, provider, nil, WorktreeAgentLaunchCommand.bootstrapPrompt),
+            ("empty", provider.rawValue, provider, "", WorktreeAgentLaunchCommand.bootstrapPrompt),
+            ("legacy", legacyCommand, provider, nil, "legacy task"),
+            ("structured-wins", legacyCommand, provider, prompt, prompt),
+            ("command-only", legacyCommand, nil, nil, "legacy task"),
+        ]
+        for item in cases {
+            let name = provider.rawValue + "-" + item.name
+            let response = await runtime.handle(.createWorktree(callerWorktree: root.path,
+                worktreeName: name, branchName: name, existing: false, base: "HEAD", command: item.command,
+                agentRuntime: item.agent, agentPrompt: item.prompt, operationID: UUID().uuidString))
+            guard case .worktreeCreate(var status) = response else {
+                Issue.record("worktree creation was rejected for \(item.name): \(response)")
+                return
+            }
+            let deadline = ContinuousClock.now + .seconds(10)
+            while status.state == .pending, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+                guard case .worktreeCreate(let updated) = await runtime.handle(.worktreeCreateStatus(operationID: status.operationID)) else {
+                    Issue.record("worktree creation status was lost for \(item.name)")
+                    return
+                }
+                status = updated
+            }
+            try #require(status.state == .ready, "\(item.name): \(status.error ?? "creation did not finish")")
+            let command = try #require(terminals.starts.last?.env["GRAFTTY_INITIAL_COMMAND"])
+            if item.name == "legacy" || item.name == "command-only" {
+                #expect(command == legacyCommand, "Explicit command compatibility must be preserved")
+            }
+            _ = try await CLIRunner().run(command: "/bin/sh", args: ["-c",
+                "export PATH=" + WorktreeAgentLaunchCommand.shellLiteral(binaryDirectory.path + ":/usr/bin:/bin")
+                    + "\n" + command], at: status.worktreePath, timeout: .seconds(5))
+            #expect(try String(contentsOf: recordedArguments, encoding: .utf8) == "2\n--\n",
+                    "Structured agent prompt must reach the provider argv")
+            #expect(try String(contentsOf: recordedPrompt, encoding: .utf8) == item.expected,
+                    "Structured agent prompt must reach the provider argv")
+        }
+    }
+
     @Test("@spec REMOTE-22.14: While the headless host owns its process lease, explicit agent-plugin setup shall remain available without changing host configuration or identity, and plain setup shall remain exclusive.")
     func pluginSetupWhileHostIsRunning() async throws {
         let (root, config, state) = try fixture()

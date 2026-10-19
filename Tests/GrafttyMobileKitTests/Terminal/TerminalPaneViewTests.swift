@@ -1857,9 +1857,91 @@ private final class ScrollInputRecorder: @unchecked Sendable {
     var description: String { lock.withLock { String(decoding: bytes, as: UTF8.self).debugDescription } }
 }
 
+private final class PhysicalViewportRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var viewports: [InMemoryTerminalViewport] = []
+    func append(_ viewport: InMemoryTerminalViewport) { lock.withLock { viewports.append(viewport) } }
+    func snapshot() -> [InMemoryTerminalViewport] { lock.withLock { viewports } }
+}
+
 @Suite(.serialized)
 @MainActor
 struct PagedSourceGridTests {
+    @Test("@spec IOS-4.49: When an owning mobile pane receives an in-band source grid, the application shall update the parser without fitting the physical viewport to that grid, while continuing to report keyboard, rotation, and font size changes.", .enabled(if: MobilePagedTerminalRenderer.isSupported))
+    func sourceGridAcknowledgementKeepsOwnerViewportStable() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        let responses = TerminalResponseRecorder()
+        let viewports = PhysicalViewportRecorder()
+        let session = InMemoryTerminalSession(write: { responses.append($0) }, resize: { viewports.append($0) })
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        // Resize callbacks report content pixels; view metrics include padding.
+        // Remove fixture padding so their pixel dimensions must match exactly.
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: """
+        font-size = 14
+        window-padding-x = 0
+        window-padding-y = 0
+        window-padding-balance = false
+        """)
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        var previousViewport = try await waitForPhysicalViewport(container, recordedBy: viewports, after: 0, stage: "initial mount")
+        // Let the initial mounting callbacks settle before measuring whether
+        // source acknowledgements themselves generate another physical resize.
+        try await Task.sleep(for: .milliseconds(100))
+        let initialResizeCount = viewports.snapshot().count
+        let original = container.terminalView.bounds
+        var preparedGrids = 0
+        let renderer = MobilePagedTerminalRenderer(session: session) { cols, rows in
+            preparedGrids += 1
+            container.authoritativeGrid = .init(cols: cols, rows: rows)
+            container.layoutIfNeeded()
+        }
+        // An acknowledgement can describe an earlier viewport while the keyboard
+        // or rotation has already changed the physical one. It must not refit it.
+        for _ in 0..<4 {
+            try await renderer.setSourceGrid(cols: 80, rows: 24)
+            #expect(container.authoritativeGrid == nil)
+            #expect(container.terminalView.bounds == original)
+        }
+        #expect(preparedGrids == 0)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(viewports.snapshot().count == initialResizeCount,
+                "Source-grid acknowledgements must not generate physical resize callbacks")
+        await expectParserGrid(session, responses: responses, cols: 80, rows: 24)
+        for size in [CGSize(width: 390, height: 350), CGSize(width: 700, height: 390)] {
+            let beforeResize = viewports.snapshot().count
+            container.frame.size = size
+            container.layoutIfNeeded()
+            let viewport = try await waitForPhysicalViewport(container, recordedBy: viewports,
+                after: beforeResize, differingFrom: previousViewport, stage: "physical bounds \(size)")
+            #expect(viewport.columns != previousViewport.columns || viewport.rows != previousViewport.rows,
+                    "Keyboard and rotation geometry must report a changed physical grid")
+            previousViewport = viewport
+            #expect(container.terminalView.bounds.size == size)
+            await expectParserGrid(session, responses: responses, cols: 80, rows: 24)
+        }
+        let beforeFontResize = viewports.snapshot().count
+        #expect(container.terminalView.surface?.performBindingAction("increase_font_size:1") == true)
+        let fontViewport = try await waitForPhysicalViewport(container, recordedBy: viewports,
+            after: beforeFontResize, differingFrom: previousViewport, stage: "font change")
+        #expect(fontViewport.columns != previousViewport.columns || fontViewport.rows != previousViewport.rows,
+                "Font changes must report a changed physical grid while the parser is pinned")
+        await expectParserGrid(session, responses: responses, cols: 80, rows: 24)
+        let physical = try #require(container.terminalGridMetrics)
+        let beforeAcknowledgement = viewports.snapshot().count
+        try await renderer.setSourceGrid(cols: physical.columns, rows: physical.rows)
+        await expectParserGrid(session, responses: responses, cols: physical.columns, rows: physical.rows)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(viewports.snapshot().count == beforeAcknowledgement,
+                "Acknowledging the changed physical grid must not trigger another resize")
+        try await renderer.releaseSourceGrid()
+    }
+
     @Test("@spec IOS-4.47: While a mobile terminal consumes a paged source stream, the application shall preserve the source parser grid across local viewport and font changes until the next in-band source grid is applied.", .enabled(if: MobilePagedTerminalRenderer.isSupported))
     func sourceParserGridSurvivesPhysicalResizeAndFontChanges() async throws {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 700))
@@ -1882,6 +1964,11 @@ struct PagedSourceGridTests {
             container.layoutIfNeeded()
         }
         try await renderer.setSourceGrid(cols: grid.columns, rows: grid.rows)
+        // Source-grid pinning no longer fits the view. Model the follower
+        // presentation explicitly before exercising its release on takeover.
+        container.authoritativeGrid = .init(cols: grid.columns, rows: grid.rows)
+        container.layoutIfNeeded()
+        #expect(container.authoritativeGrid != nil)
         // Ownership releases the fitted canvas; this also leaves a native
         // coalesced resize pending when a keyboard changes physical bounds.
         container.authoritativeGrid = nil
@@ -1918,6 +2005,7 @@ struct PagedSourceGridTests {
         let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
         var container: TerminalInputContainerView?
         var prepared: SessionClient.GridSize?
+        var started = false
         var completed = false
         let renderer = MobilePagedTerminalRenderer(session: session) { cols, rows in
             prepared = .init(cols: cols, rows: rows)
@@ -1925,12 +2013,14 @@ struct PagedSourceGridTests {
             container?.layoutIfNeeded()
         }
         let pending = Task { @MainActor in
+            started = true
             try await renderer.setSourceGrid(cols: 80, rows: 24)
             completed = true
         }
         defer { pending.cancel() }
-        for _ in 0..<100 where prepared == nil { try await Task.sleep(for: .milliseconds(10)) }
-        #expect(prepared == .init(cols: 80, rows: 24))
+        for _ in 0..<100 where !started { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(started)
+        #expect(prepared == nil, "A source-grid pin must not ask layout to fit the physical viewport")
         #expect(!completed)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
         let host = UIViewController()
@@ -1946,6 +2036,30 @@ struct PagedSourceGridTests {
         defer { mounted.removeFromSuperview(); window.isHidden = true }
         try await pending.value
         #expect(completed)
+    }
+
+    private func waitForPhysicalViewport(_ container: TerminalInputContainerView,
+                                         recordedBy recorder: PhysicalViewportRecorder,
+                                         after count: Int,
+                                         differingFrom previous: InMemoryTerminalViewport? = nil,
+                                         stage: String) async throws -> InMemoryTerminalViewport {
+        var reported: InMemoryTerminalViewport?
+        for _ in 0..<100 {
+            let viewports = recorder.snapshot()
+            if viewports.count > count, let viewport = viewports.last,
+               previous == nil || viewport.columns != previous?.columns || viewport.rows != previous?.rows,
+               let metrics = container.terminalGridMetrics,
+               viewport.columns == metrics.columns, viewport.rows == metrics.rows,
+               // The native resize callback carries grid and pixel dimensions.
+               // Cell dimensions are optional and can remain zero; the view
+               // obtains its cell metrics through a separate native callback.
+               viewport.widthPixels == metrics.widthPixels, viewport.heightPixels == metrics.heightPixels {
+                reported = viewport
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return try #require(reported, "No matching physical resize at \(stage); callbacks after \(count): \(recorder.snapshot().dropFirst(count)); metrics: \(String(describing: container.terminalGridMetrics)); bounds: \(container.terminalView.bounds)")
     }
 
     private func expectParserGrid(_ session: InMemoryTerminalSession, responses: TerminalResponseRecorder,

@@ -35,10 +35,11 @@ public final class HeadlessHostRuntime {
     public var origin: WorktreeOrigin?
 
     public init(configuration: HostConfiguration, terminals: (any HostTerminalDriver)? = nil,
-                initialState: AppState? = nil, portScanner: PortScanner? = nil) throws {
+                initialState: AppState? = nil, portScanner: PortScanner? = nil,
+                agentSetup: HostAgentSetup? = nil) throws {
         self.configuration = configuration
         self.portScanner = portScanner ?? PortScanner()
-        agentSetup = HostAgentSetup(configuration: configuration)
+        self.agentSetup = agentSetup ?? HostAgentSetup(configuration: configuration)
         launcher = ZmxLauncher(executable: configuration.zmxExecutable, zmxDir: configuration.zmxDirectory)
         self.terminals = terminals ?? ZmxHostTerminalDriver(launcher: launcher)
         state = try initialState ?? AppState.load(from: configuration.stateDirectory)

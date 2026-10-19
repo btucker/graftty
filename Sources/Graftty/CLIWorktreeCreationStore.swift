@@ -36,8 +36,7 @@ enum CLIWorktreeCreationPolicy {
         command: String?,
         agentPrompt: String?
     ) -> Bool {
-        guard let agentRuntime else { return false }
-        return agentPrompt != nil || command == nil || command == agentRuntime.rawValue
+        WorktreeAgentLaunchCommand.shouldStagePrompt(agent: agentRuntime, command: command, prompt: agentPrompt)
     }
 }
 

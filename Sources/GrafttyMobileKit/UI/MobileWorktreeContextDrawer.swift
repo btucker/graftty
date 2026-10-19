@@ -3,17 +3,33 @@ import GrafttyCommandUI
 import GrafttyProtocol
 import SwiftUI
 
+private struct OpenWorktreeContextKey: EnvironmentKey {
+    static let defaultValue: (() -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var openWorktreeContext: (() -> Void)? {
+        get { self[OpenWorktreeContextKey.self] }
+        set { self[OpenWorktreeContextKey.self] = newValue }
+    }
+}
+
 /// An edge gesture and an explicit button share a drawer without remounting the terminal.
 struct MobileWorktreeContextDrawer: ViewModifier {
     let context: SidebarWorktreeContext?
+    var showsStandaloneControl = false
     @Environment(\.biometricGate) private var gate
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openWorktreeContext) private var inheritedOpen
     @State private var isPresented = false
     @State private var width: CGFloat = 0
 
     func body(content: Content) -> some View {
         content
+            // iPad owns one drawer around its panes. A pane's empty local
+            // modifier must preserve that enclosing drawer's action.
+            .environment(\.openWorktreeContext, context == nil ? inheritedOpen : open)
             .accessibilityHidden(isPresented)
             .background {
                 GeometryReader { geometry in
@@ -27,18 +43,12 @@ struct MobileWorktreeContextDrawer: ViewModifier {
                 if MobileContextDrawerGesture.shouldOpen(startX: value.startLocation.x, width: width,
                     x: value.translation.width, y: value.translation.height) { open() }
             })
-            .overlay(alignment: .top) {
-                if context != nil, !isPresented {
-                    Button(action: open) {
-                        Label("Context", systemImage: "text.alignleft")
-                            .font(.callout).fontWeight(.medium)
-                            .padding(.horizontal, 12).frame(minHeight: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.top, 8)
-                    .accessibilityLabel("Worktree context")
-                    .accessibilityIdentifier("worktree.context.open")
+            .overlay(alignment: .topTrailing) {
+                if showsStandaloneControl, context != nil, !isPresented {
+                    TerminalFloatingGlyphButton(systemName: "text.alignleft", accessibilityLabel: "Worktree context",
+                        action: open)
+                        .accessibilityIdentifier("worktree.context.open")
+                        .padding(12)
                 }
             }
             .overlay {

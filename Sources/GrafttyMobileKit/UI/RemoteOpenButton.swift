@@ -6,6 +6,7 @@ import UIKit
 
 /// One browser resource opens directly; multiple resources retain a selection menu.
 struct RemoteOpenButton: View {
+    @Environment(\.openWorktreeContext) private var openWorktreeContext
     let host: Host
     let worktree: String
     let coordinator: RemoteConnectionCoordinator
@@ -208,7 +209,8 @@ struct RemoteOpenButton: View {
 
     @ViewBuilder
     private func floatingControls(actionID: UUID) -> some View {
-        let visible = (imageReady && imageOffer != nil) || (isActive && (isPaneOwner() || !offers.isEmpty))
+        let visible = (isPaneFocused && openWorktreeContext != nil)
+            || (imageReady && imageOffer != nil) || (isActive && (isPaneOwner() || !offers.isEmpty))
         // Keep the presentation anchor mounted while scene activity hides the controls.
         ViewThatFits {
             TerminalFloatingControlGroup(isVisible: visible) {
@@ -241,6 +243,11 @@ struct RemoteOpenButton: View {
                     .accessibilityHidden(true).allowsHitTesting(false)
             }
             .disabled(isDownloading)
+        }
+        if isPaneFocused, let openWorktreeContext {
+            TerminalFloatingGlyphButton(systemName: "text.alignleft", accessibilityLabel: "Worktree context",
+                action: openWorktreeContext)
+                .accessibilityIdentifier("worktree.context.open")
         }
         ZStack {
             Color.clear.frame(width: 44, height: 44)

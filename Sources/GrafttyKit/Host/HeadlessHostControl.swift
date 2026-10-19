@@ -217,8 +217,10 @@ public extension HeadlessHostRuntime {
                 creations[id] = pending
                 Task {
                     do {
+                        let exactCommand = WorktreeAgentLaunchCommand.shouldStagePrompt(
+                            agent: runtime, command: command, prompt: prompt) ? nil : command
                         let result = try await createWorktree(repository: repo.path, name: name, branch: branch,
-                            existing: existing, base: base, command: command, agent: runtime, prompt: prompt, callerPath: caller)
+                            existing: existing, base: base, command: exactCommand, agent: runtime, prompt: prompt, callerPath: caller)
                         creations[id] = WorktreeCreateStatus(operationID: id, state: .ready, worktreePath: result.path, messageAddress: result.path)
                     } catch {
                         creations[id] = WorktreeCreateStatus(operationID: id, state: .failed, worktreePath: path, messageAddress: path, error: String(describing: error))

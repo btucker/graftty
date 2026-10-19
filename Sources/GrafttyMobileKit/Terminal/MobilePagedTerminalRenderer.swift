@@ -29,6 +29,7 @@ final class MobilePagedTerminalRenderer: PagedTerminalRenderer {
     func install(_ checkpoint: PagedTerminalCheckpoint, generation: UInt64) async throws {
         #if GRAFTTY_PAGED_HISTORY
         try await setSourceGrid(cols: checkpoint.cols, rows: checkpoint.rows)
+        prepareGrid(checkpoint.cols, checkpoint.rows)
         guard await session.installSnapshot(checkpoint.ready, generation: generation) else {
             throw Error.invalidSnapshot
         }
@@ -49,9 +50,10 @@ final class MobilePagedTerminalRenderer: PagedTerminalRenderer {
     func setSourceGrid(cols: UInt16, rows: UInt16) async throws {
         #if GRAFTTY_PAGED_HISTORY
         try Task.checkCancellation()
-        // Drain old-grid VT before layout can queue a physical resize.
+        // Pin the parser in stream order without refitting the owner's view.
+        // Acknowledging a resize must not create another physical resize.
+        // SessionClient publishes the committed grid to followers afterward.
         try await flushOutput()
-        prepareGrid(cols, rows)
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         // Record intent before awaiting native work: a canceled transport may
         // have applied the pin before its Swift continuation resumes.
