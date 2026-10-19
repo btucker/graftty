@@ -80,6 +80,37 @@ def wait_preview_owner_grid(run, agent, timeout=15):
         time.sleep(.1)
 
 
+def finish_claude_preview_turn(run, queued_nonce, recaps_before):
+    """Finish a new native turn after Claude consumes input inside its Stop hook."""
+    models = run.server.models
+    run.wait_model(lambda: bool(models.recap_completions.get('claude', set()) - recaps_before))
+    preceding = models.recap_completions['claude'] - recaps_before
+    def idle(value):
+        text = value.get('nativeText', '')
+        return (contains_terminal_marker(text, 'PREVIEW-INPUT-RECEIVED' + queued_nonce)
+                and bool(re.search(r'^❯\s*$', text, re.MULTILINE))
+                and 'manual mode on · ? for shortcuts' in text and 'esc to interrupt' not in text)
+    idle_snapshot = run.wait_snapshot('claude', idle)
+    recaps_before_final = set(models.recap_completions['claude'])
+    # Claude consumed the queued ACK inside the previous Stop-hook turn, so it
+    # does not run that hook twice. Start a distinct native turn from idle and
+    # require its own real recap, without relabelling the preceding one.
+    nonce = uuid.uuid4().hex
+    run.act(Action('previewInput', 'claude', {'text': 'GRAFTTY_TEST_PREVIEW_ACK ' + nonce,
+                                            'takeControl': 'true'}, client='gestures'))
+    run.act(Action('previewHideKeyboard', 'claude', client='gestures'))
+    run.act(Action('takeControl', 'claude'))
+    run.wait_model(lambda: ('claude', 'preview-ack:' + nonce) in models.completed_streams)
+    run.wait_model(lambda: ('claude', nonce) in models.completed_preview_recaps)
+    final_hashes = sorted(key for key in models.recap_completions['claude'] - recaps_before_final
+                          if models.recap_contexts.get(key) == nonce)
+    if not final_hashes:
+        raise InvariantFailure('Fresh native Claude turn has no corresponding genuine recap hash')
+    return {'precedingRecapHashes': sorted(preceding), 'queuedInputIdle': idle_snapshot,
+            'finalInputReceipt': models.receipts[('claude', nonce, 'preview-ack')],
+            'finalRecapHashes': final_hashes}
+
+
 def run_preview(run):
     from run import execute
     run.start_mobile()
@@ -117,6 +148,7 @@ def run_preview(run):
                 case = {'provider': agent, 'retained': retained, 'embedded': embedded,
                         'nonce': nonce, 'passed': False}
                 cases.append(case)
+                recaps_before = set(models.recap_completions.get(agent, set()))
                 args = {'session': run.paths[agent]['session'], 'worktree': run.paths[agent]['path'],
                         'retained': str(retained).lower(), 'embedded': str(embedded).lower()}
                 run.act(Action('previewPrepare', agent, args, client='mobile'))
@@ -171,7 +203,10 @@ def run_preview(run):
                 # provider Stop hook asks it to run the recap tool.
                 run.act(Action('takeControl', agent))
                 run.wait_model(lambda: (agent, 'preview-ack:' + post_nonce) in models.completed_streams)
-                run.wait_model(lambda: (agent, post_nonce) in models.completed_preview_recaps)
+                if agent == 'claude':
+                    case['finalNativeTurn'] = finish_claude_preview_turn(run, post_nonce, recaps_before)
+                else:
+                    run.wait_model(lambda: (agent, post_nonce) in models.completed_preview_recaps)
                 case.update(before=before, during=during, output=output, after=after,
                             inputReceiptBefore=models.receipts[(agent, nonce, 'preview')],
                             inputReceiptAfter=models.receipts[(agent, post_nonce, 'preview-ack')])

@@ -82,6 +82,12 @@ final class AgentNativeInteractionTests: XCTestCase {
         switch command.operation {
         case "previewInput":
             try require(terminal.waitForExistence(timeout: 15), "preview terminal missing")
+            if command.parameters["takeControl"] == "true" {
+                let control = app.buttons["Take Control"]
+                try require(control.waitForExistence(timeout: 10), "production Take Control action missing")
+                control.tap()
+                try require(control.waitForNonExistence(timeout: 10), "production Take Control did not acquire ownership")
+            }
             if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
                 let keyboard = app.buttons.matching(NSPredicate(format: "label == %@", "Show keyboard")).firstMatch
                 if keyboard.waitForExistence(timeout: 5), keyboard.isHittable { keyboard.tap() }

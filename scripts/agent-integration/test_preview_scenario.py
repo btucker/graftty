@@ -6,6 +6,55 @@ from preview_scenario import require_continuity, require_matrix
 
 
 class PreviewEvidenceTests(unittest.TestCase):
+    def test_claude_idle_ack_requires_native_receipt_and_a_new_real_recap(self):
+        self.check_claude_idle_ack(final_recap=True)
+
+    def test_prior_recap_cannot_satisfy_fresh_claude_ack(self):
+        with self.assertRaises(InvariantFailure):
+            self.check_claude_idle_ack(final_recap=False)
+
+    def check_claude_idle_ack(self, *, final_recap):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from preview_scenario import finish_claude_preview_turn
+        queued, final = 'a' * 32, 'b' * 32
+        old_hash, preceding_hash, final_hash = '1' * 64, '2' * 64, '3' * 64
+        models = SimpleNamespace(recap_completions={'claude': {old_hash, preceding_hash}},
+            completed_streams=set(), completed_preview_recaps=set(), receipts={}, recap_contexts={})
+        events = []
+        def wait_model(predicate):
+            if not predicate():
+                raise InvariantFailure('required genuine provider evidence missing')
+        def wait_snapshot(agent, predicate):
+            idle = {'nativeText': 'PREVIEW-INPUT-RECEIVED ' + queued + '\n❯\n  ⏸ manual mode on · ? for shortcuts · ← for agents'}
+            self.assertFalse(predicate({'nativeText': idle['nativeText'].replace(queued, 'c' * 32)}))
+            self.assertFalse(predicate({'nativeText': idle['nativeText'] + '\nesc to interrupt'}))
+            self.assertFalse(predicate({'text': idle['nativeText']}))
+            self.assertTrue(predicate(idle))
+            events.append('native-idle')
+            return idle
+        def act(action):
+            events.append(action.operation)
+            if action.operation == 'previewInput':
+                self.assertEqual('native-idle', events[-2])
+                self.assertEqual({'text': 'GRAFTTY_TEST_PREVIEW_ACK ' + final, 'takeControl': 'true'}, action.parameters)
+                self.assertEqual('gestures', action.client)
+                models.receipts[('claude', final, 'preview-ack')] = {'nonce': final}
+                models.completed_streams.add(('claude', 'preview-ack:' + final))
+            if action.operation == 'takeControl' and final_recap:
+                self.assertEqual('previewHideKeyboard', events[-2])
+                models.completed_preview_recaps.add(('claude', final))
+                models.recap_completions['claude'].add(final_hash)
+                models.recap_contexts[final_hash] = final
+        run = SimpleNamespace(server=SimpleNamespace(models=models), wait_model=wait_model,
+                              wait_snapshot=wait_snapshot, act=act)
+        with patch('preview_scenario.uuid.uuid4', return_value=SimpleNamespace(hex=final)):
+            evidence = finish_claude_preview_turn(run, queued, {old_hash})
+        self.assertEqual([preceding_hash], evidence['precedingRecapHashes'])
+        self.assertEqual([final_hash], evidence['finalRecapHashes'])
+        self.assertEqual(final, evidence['finalInputReceipt']['nonce'])
+        self.assertEqual(['native-idle', 'previewInput', 'previewHideKeyboard', 'takeControl'], events)
+
     def test_complete_marker_survives_native_row_wrapping(self):
         from preview_scenario import contains_terminal_marker
         marker = 'PREVIEW-OUTPUT-0123456789abcdef0123456789abcdef'
