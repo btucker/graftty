@@ -46,6 +46,11 @@ public final class PagedTerminalCoordinator {
     private var timeout: Task<Void, Never>?
 
 #if DEBUG
+    /// Read-only evidence for gesture-driven request/import correlation.
+    public var historyDiagnosticsForTesting: (generation: UInt64, requests: UInt64, imports: UInt64) {
+        (generation, nextRequestID, nextOrdinal.reduce(0, &+))
+    }
+
     /// Lets tests await timeout completion or cancellation without fixed sleeps.
     var timeoutTaskForTesting: Task<Void, Never>? { timeout }
 #endif

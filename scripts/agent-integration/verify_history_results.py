@@ -29,10 +29,14 @@ def verify_provider_result(path):
         values = [value for value in assertions if value.get('agent') == agent]
         if not any(value.get('sourceHistoryRows') == 600 for value in values):
             raise ValueError(f'{agent}: missing authoritative source history')
-        if not any(value.get('gestureLoadedOlderHistory') is True for value in values):
+        if not any(value.get('gestureLoadedOlderHistory') is True
+                   and value.get('firstRowAfter', 600) < value.get('oldestLoadedRowBefore', 0)
+                   and value.get('requestsAfter', 0) > value.get('requestsBefore', 0)
+                   and value.get('importsAfter', 0) > value.get('importsBefore', 0) for value in values):
             raise ValueError(f'{agent}: missing real gesture backfill')
         for stage in ('attach', 'reconnect', 'resized'):
-            if not any(value.get('stage') == stage and value.get('contiguousHistoryRows') == 600
+            if not any(value.get('stage') == stage and value.get('contiguousHistoryRows', 0) >= 600
+                       and value.get('preservedFixtureRows') == 600 and value.get('sourceSequenceMatches') is True
                        and value.get('paging') == 'complete' for value in values):
                 raise ValueError(f'{agent}: missing contiguous history at {stage}')
 

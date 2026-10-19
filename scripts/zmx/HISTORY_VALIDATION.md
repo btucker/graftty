@@ -107,3 +107,33 @@ attaches, the daemon must contain all 600 numbered rows exactly once in order;
 the actual touch gesture must cross an initially unloaded older-row boundary.
 Missing structured results, missing provider assertions, zero selected Swift
 tests, and missing required regression cases fail the workflow.
+
+### Classic-mode rerun and oracle corrections
+
+At `599ef568c78d348e8da2154c4c3af44e4fc5c2fd`, all 13 normal CI checks passed.
+Focused [run 39176059263](https://github.com/btucker/graftty/actions/runs/39176059263)
+passed gated Swift RED/GREEN but **failed overall** during Claude's resized
+history comparison; Codex was not reached. Its Simulator was
+`7B011A6A-8D25-451D-ACEF-72DECB9CF320`, iOS 26.5; providers were Claude 2.1.296
+and Codex 0.162.1. The unchanged daemon hash is recorded above.
+
+Artifact audit confirms exact 600-row daemon source, initial Mobile import, and
+reconnect import. After resize, Mobile's 900 numbered occurrences exactly match
+the daemon's 900 occurrences, including a partial redraw occurrence. Every
+original row's full payload remains present. This is source redraw, not imported
+duplication. The corrected oracle compares the full ordered occurrence records
+against daemon observations before and after loading at the held `end` barrier,
+and separately requires all original rows and payloads to survive.
+
+The prior gesture assertion is **not accepted as proof of backfill**: live
+spinner growth from 283 to 285 rows could satisfy it while scrolling within the
+loaded history. The corrected fixture reads the initial loaded row set without
+moving the viewport, then requires a real touch gesture to reveal an older row,
+a new page request, and a successful import in the same checkpoint generation.
+Read-only DEBUG coordinator diagnostics provide request/import correlation.
+Mutation tests reproduce spinner-only, cached-movement, and payload-corruption
+false passes in the old oracle; the updated tests also reject dropped, extra,
+and reordered rows. Review found and fixed a length-clipping hole using an
+extra-wrap RED regression: comparisons now extend to the next row or explicit
+model-output end marker, excluding provider footer UI without truncating payload.
+Original artifacts remain unchanged.
