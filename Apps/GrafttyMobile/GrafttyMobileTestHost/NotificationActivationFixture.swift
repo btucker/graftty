@@ -1,7 +1,10 @@
 #if GRAFTTY_BROWSER_CONTROL_FIXTURE
 import Foundation
+import GhosttyTerminal
 import GrafttyProtocol
+import GrafttyRemoteClient
 import SwiftUI
+import UIKit
 import UserNotifications
 @testable import GrafttyMobileKit
 
@@ -23,7 +26,9 @@ final class NotificationActivationFixture {
         let id: UUID
         let endpoint: URL
         let host: Host
+        let fingerprint: RemoteIdentityFingerprint
         let relayHostID: UUID
+        let unrelatedPane: String
         let stops: [Stop]
         let mode: String
         let holdFetch: Bool
@@ -43,6 +48,12 @@ final class NotificationActivationFixture {
     var waiters: [CheckedContinuation<Void, Never>] = []
     var submitted: [String]
     var eventIndex = 0
+    let retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
+    private var connection: RemoteHostConnection?
+    private var connectionTask: Task<RemoteHostConnection, Error>?
+    private var finished = false
+    private var transportError = ""
+    private var observationSequence = 0
 
     struct FixtureAuthenticator: BiometricAuthenticator {
         func authenticate() async -> Result<Void, Error> { .success(()) }
@@ -89,7 +100,8 @@ final class NotificationActivationFixture {
         return (try? JSONDecoder().decode(Configuration.self, from: data))?.endpoint
     }
 
-    static func prepare(_ command: AgentIntegrationCommand, endpoint: URL) async throws -> NotificationActivationFixture {
+    static func prepare(_ command: AgentIntegrationCommand, endpoint: URL,
+        fingerprint: RemoteIdentityFingerprint) async throws -> NotificationActivationFixture {
         guard let encoded = command.parameters["events"] else { throw AgentIntegrationError("missing provider stop events") }
         let stops = try JSONDecoder().decode([Stop].self, from: Data(encoded.utf8))
         guard !stops.isEmpty else { throw AgentIntegrationError("provider produced no stopped turns") }
@@ -97,11 +109,15 @@ final class NotificationActivationFixture {
         guard mode == "ambiguous" || stops.allSatisfy({ $0.paneSessionName?.isEmpty == false }) else {
             throw AgentIntegrationError("provider stop is missing its actual pane session")
         }
+        guard let unrelatedPane = command.parameters["unrelatedPane"], !unrelatedPane.isEmpty,
+              stops.allSatisfy({ $0.paneSessionName != unrelatedPane }) else {
+            throw AgentIntegrationError("missing distinct real sibling pane session")
+        }
         let id = UUID()
         let configuration = Configuration(id: id, endpoint: endpoint,
             host: Host(label: "Notification fixture Mac", baseURL: URL(string: "https://notification-fixture.invalid")!,
-                remoteDeviceID: .init(value: "notification-fixture-owner-\(id)")), relayHostID: UUID(),
-            stops: stops, mode: mode, holdFetch: command.parameters["holdFetch"] == "true")
+                remoteDeviceID: .init(value: "notification-fixture-owner-\(id)")), fingerprint: fingerprint, relayHostID: UUID(),
+            unrelatedPane: unrelatedPane, stops: stops, mode: mode, holdFetch: command.parameters["holdFetch"] == "true")
         let fixture = try NotificationActivationFixture(configuration: configuration, restoring: false)
         UserDefaults.standard.set(try JSONEncoder().encode(configuration), forKey: configurationKey)
         restored = fixture
@@ -118,7 +134,8 @@ final class NotificationActivationFixture {
                 if fetchHeld { await withCheckedContinuation { waiters.append($0) } }
                 if disconnected { throw AgentIntegrationError("fixture host disconnected") }
                 return [try row(eventIndex)]
-            }, reopen: { _, _ in throw AgentIntegrationError("running fixture worktree must not reopen") }))
+            }, reopen: { _, _ in throw AgentIntegrationError("running fixture worktree must not reopen") }),
+            connectionProvider: { [weak self] in await self?.remoteConnection() }, retainedPanes: retainedPanes)
             .overlay(alignment: .top) {
                 VStack {
                     Text("Host=\(state.selectedHostId?.uuidString ?? "") Worktree=\(state.selectedWorktreePath ?? "") Pane=\(state.focusedPaneId ?? "")")
@@ -127,10 +144,45 @@ final class NotificationActivationFixture {
                     Button("Choose unrelated pane") { [self] in
                         RootView.applyCompactSession(.init(host: configuration.host,
                             worktreePath: configuration.stops[eventIndex].worktree,
-                            sessionName: "notification-unrelated-pane", title: "Unrelated"), to: state)
+                            sessionName: configuration.unrelatedPane, title: "Other provider"), to: state)
                     }.accessibilityIdentifier("Notification choose unrelated pane")
                 }.background(.regularMaterial)
             }
+    }
+
+    private func remoteConnection() async -> RemoteHostConnection? {
+        guard !finished else { return nil }
+        if let connection, await connection.state == .connected { return finished ? nil : connection }
+        if let connectionTask {
+            let next = try? await connectionTask.value
+            return finished ? nil : next
+        }
+        guard !finished else { return nil }
+        let endpoint = configuration.endpoint
+        let fingerprint = configuration.fingerprint
+        let previous = connection
+        connection = nil
+        let task = Task {
+            await previous?.close()
+            let transport = AgentIntegrationTransport(endpoint: endpoint, client: "mobile")
+            let registration = try JSONDecoder().decode([String: String].self,
+                from: await transport.request("registration/mac"))
+            try Task.checkCancellation()
+            return try await AgentIntegrationConnection.open(endpoint: endpoint, registration: registration,
+                expectedFingerprint: fingerprint)
+        }
+        connectionTask = task
+        defer { connectionTask = nil }
+        do {
+            let next = try await task.value
+            guard !finished else { await next.close(); return nil }
+            connection = next
+            transportError = ""
+            return next
+        } catch {
+            transportError = String(describing: error)
+            return nil
+        }
     }
 
     func row(_ index: Int, relayed: Bool = false) throws -> WorktreePanes {
@@ -145,7 +197,7 @@ final class NotificationActivationFixture {
         return .init(path: relayed ? "relay:\(event.worktree)" : event.worktree, displayName: "Notification task", repoDisplayName: "Provider integration",
             displayBranch: "notification-task", state: .running, isMainCheckout: false, prBadge: nil,
             stats: nil, attentionText: nil, layout: .split(direction: .horizontal, ratio: 0.5,
-                left: .leaf(sessionName: "notification-unrelated-pane", title: "Unrelated", attentionText: nil,
+                left: .leaf(sessionName: configuration.unrelatedPane, title: "Other provider", attentionText: nil,
                     isBusy: false, attentionSource: nil),
                 right: .leaf(sessionName: session, title: "Provider",
                     attentionText: inputRequest ? "\(event.runtime) needs input" : nil,
@@ -154,7 +206,7 @@ final class NotificationActivationFixture {
             origin: .init(deviceID: configuration.host.remoteDeviceID!, deviceLabel: configuration.host.label,
                 relayDepth: relayed ? 1 : 0),
             sidebar: .init(id: "fixture:\(event.worktree)", projectID: "notification-project",
-                paneIDs: ["notification-unrelated-pane": "unrelated-slot", session: "target-slot"],
+                paneIDs: [configuration.unrelatedPane: "unrelated-slot", session: "target-slot"],
                 unseenAgentStop: inputRequest ? nil : stop, lastAgentStop: inputRequest ? nil : stop))
     }
 
@@ -191,15 +243,65 @@ final class NotificationActivationFixture {
         let event = configuration.stops[eventIndex]
         var ledger = MobileStopNotificationLedger()
         let title = ledger.receive([try row(eventIndex)], hostID: configuration.host.id).first?.title ?? ""
+        let selectedPane = state.selectedHostId.flatMap { hostID in
+            state.focusedPaneId.flatMap { retainedPanes.cached(.init(hostID: hostID, sessionName: $0)) }
+        }
+        let container = selectedPane?.container
+        let metrics = container?.terminalGridMetrics
+        let visibleFrame = container.flatMap { Self.visibleFrame(of: $0.terminalView) }
+        let matchesSelectedClient: Bool
+        if let selectedPane, let container,
+           case .inMemory(let renderedSession) = container.terminalView.configuration.backend {
+            matchesSelectedClient = renderedSession === selectedPane.client.session
+        } else {
+            matchesSelectedClient = false
+        }
+        observationSequence += 1
         return ["expectedHost": configuration.host.id.uuidString, "expectedWorktree": event.worktree,
             "expectedPane": event.paneSessionName ?? "", "title": title,
+            "unrelatedPane": configuration.unrelatedPane,
             "selectedHost": state.selectedHostId?.uuidString ?? "", "worktree": state.selectedWorktreePath ?? "",
             "pane": state.focusedPaneId ?? "", "pending": String(notifications.pendingRoute != nil),
             "fetchCount": String(fetchCount), "requestCount": String(submitted.count),
+            "session": selectedPane?.sessionName ?? "",
+            "live": String(selectedPane?.client.connectionState == .live),
+            "mounted": String(visibleFrame != nil && matchesSelectedClient),
+            "matchesSelectedClient": String(matchesSelectedClient),
+            "visibleFrame": visibleFrame.map(NSStringFromCGRect) ?? "",
+            "surfaceReady": String(container?.terminalView.surface != nil),
+            "physicalRows": selectedPane?.client.session.readViewportRowsText() ?? "",
+            "nativeGrid": metrics.map { "\($0.columns)x\($0.rows)" } ?? "",
+            "transportError": transportError,
+            "observationSequence": String(observationSequence),
+            "observedAt": String(Date().timeIntervalSince1970),
             "requestIDs": String(decoding: try JSONEncoder().encode(submitted), as: UTF8.self)]
     }
 
+    /// A cached renderer can still receive output after navigation detaches it.
+    /// Count only the selected backend's visible, unclipped native viewport.
+    private static func visibleFrame(of view: UIView) -> CGRect? {
+        guard let window = view.window, !window.isHidden, window.alpha > 0.01,
+              view.bounds.width > 0, view.bounds.height > 0 else { return nil }
+        var frame = view.convert(view.bounds, to: window).intersection(window.bounds)
+        var ancestor: UIView? = view
+        while let current = ancestor {
+            guard !current.isHidden, current.alpha > 0.01 else { return nil }
+            if current.clipsToBounds {
+                frame = frame.intersection(current.convert(current.bounds, to: window))
+            }
+            ancestor = current.superview
+        }
+        guard !frame.isNull, !frame.isInfinite, frame.width > 0, frame.height > 0 else { return nil }
+        return frame
+    }
+
     func finish() {
+        finished = true
+        connectionTask?.cancel()
+        retainedPanes.stopAll()
+        let previous = connection
+        connection = nil
+        Task { await previous?.close() }
         if let route = notifications.pendingRoute { notifications.consume(route) }
         fetchHeld = false
         let pending = waiters

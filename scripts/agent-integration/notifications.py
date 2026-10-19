@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import time
+import uuid
 
 from harness import Action, InvariantFailure
 from run import REPO, Run, execute
@@ -62,6 +63,10 @@ class NotificationRun(Run):
             if options.mac_only else 'Real Claude and Codex Stop hooks, Mac delivery attempts, and native iOS notification activation')
         self.notification_actions = []
         self.server.models.fixture_text = notification_scenario_text
+        nonce = uuid.uuid4().hex[:8]
+        self.markers = {provider: f'NOTIFY_{provider.upper()}_{nonce}' for provider in ('claude', 'codex')}
+        self.server.models.completion_text = lambda provider: self.markers[provider]
+        self.summary['sessionMarkers'] = self.markers
 
     def spawn(self, command, env, name):
         self.summary.setdefault('effectiveNativeCommands', []).append({'name': name, 'arguments': list(map(str, command))})
@@ -148,7 +153,7 @@ class NotificationRun(Run):
         if not self.options.mac_only:
             self.start_mobile()
         models = self.server.models
-        provider_events = {}
+        provider_events = self.provider_events = {}
         for provider in ('claude', 'codex'):
             self.paths[provider] = self.act(Action('start', provider))
             deadline = time.monotonic() + 60
@@ -228,14 +233,15 @@ class NotificationRun(Run):
         self.act(Action('notificationsNavigate', provider, client='gestures'))
         self.act(Action('notificationsRelease', provider, client='mobile'))
         selected = self.wait_mobile_notification(provider, lambda value: value['pending'] == 'false'
-            and value['pane'] == 'notification-unrelated-pane')
+            and value['pane'] == prepared['unrelatedPane'])
         # Recheck after another native command-loop turn so an already queued
         # activation completion cannot hide behind the first selection sample.
         time.sleep(.5)
         selected = self.act(Action('notificationsState', provider, client='mobile'))
-        if selected['pane'] != 'notification-unrelated-pane' or selected['pending'] != 'false':
+        if selected['pane'] != prepared['unrelatedPane'] or selected['pending'] != 'false':
             raise InvariantFailure('delayed notification navigation overwrote a later user selection')
-        self.summary['assertions'].append({'provider': provider, 'mobileUserSelectionPreserved': selected})
+        self.summary['assertions'].append({'provider': provider, 'mobileUserSelectionPreserved': selected,
+            'scope': 'route-state cancellation only; sibling navigation is not mounted by this control'})
 
         for mode in ('ambiguous', 'disconnected'):
             prepared = self.prepare_mobile_notifications(provider, events, mode)
@@ -259,7 +265,9 @@ class NotificationRun(Run):
 
     def prepare_mobile_notifications(self, provider, events, mode, hold=False):
         prepared = self.act(Action('notificationsPrepare', provider,
-            {'events': json.dumps(events), 'mode': mode, 'holdFetch': str(hold).lower()}, client='mobile'))
+            {'events': json.dumps(events), 'mode': mode, 'holdFetch': str(hold).lower(),
+             'unrelatedPane': self.provider_events['codex' if provider == 'claude' else 'claude'][0]['paneSessionName']},
+            client='mobile'))
         self.act(Action('notificationsAuthorize', provider, client='gestures'))
         return prepared
 
@@ -278,10 +286,22 @@ class NotificationRun(Run):
         return value
 
     def wait_mobile_route(self, provider, prepared):
-        return self.wait_mobile_notification(provider, lambda value: value['pending'] == 'false'
+        wrong_marker = self.markers['codex' if provider == 'claude' else 'claude']
+        selected = self.wait_mobile_notification(provider, lambda value: value['pending'] == 'false'
             and value['selectedHost'] == prepared['expectedHost']
             and value['worktree'] == prepared['expectedWorktree'] and value['pane'] == prepared['expectedPane']
-            and int(value['fetchCount']) > 0)
+            and int(value['fetchCount']) > 0
+            and value.get('session') == prepared['expectedPane']
+            and all(value.get(key) == 'true' for key in ('live', 'mounted', 'surfaceReady'))
+            and bool(value.get('nativeGrid'))
+            and int(value.get('observationSequence', 0)) > 0
+            and float(value.get('observedAt', 0)) > float(prepared['observedAt'])
+            and self.markers[provider] in value.get('physicalRows', '')
+            and wrong_marker not in value.get('physicalRows', ''))
+        # Capture after the selected native container has fresh target rows,
+        # rather than the earlier tap screenshot while it may be reconnecting.
+        self.act(Action('notificationsCapture', provider, client='gestures'))
+        return selected
 
     def wait_mobile_notification(self, provider, predicate, timeout=30):
         deadline = time.monotonic() + timeout

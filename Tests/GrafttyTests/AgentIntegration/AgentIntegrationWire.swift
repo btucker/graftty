@@ -68,7 +68,7 @@ struct AgentIntegrationCommand: Codable, Equatable, Sendable {
          "connect", "acceptOffer", "roster", "message", "input", "keyboard", "visibility", "recreate", "verify", "finish",
          "notificationsSnapshot", "notificationsReplay", "notificationsPrepare", "notificationsDeliver",
          "notificationsState", "notificationsRelease", "notificationsNavigate", "notificationsTap",
-         "notificationsAuthorize", "notificationsDismissError"].contains(operation)
+         "notificationsAuthorize", "notificationsDismissError", "notificationsCapture"].contains(operation)
     }
 }
 

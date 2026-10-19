@@ -26,7 +26,7 @@ struct AgentIntegrationProtocolTests {
     func notificationActionRoundTrip() throws {
         for operation in ["notificationsSnapshot", "notificationsReplay", "notificationsPrepare",
                           "notificationsDeliver", "notificationsState", "notificationsRelease",
-                          "notificationsNavigate", "notificationsTap", "notificationsAuthorize", "notificationsDismissError"] {
+                          "notificationsNavigate", "notificationsTap", "notificationsAuthorize", "notificationsDismissError", "notificationsCapture"] {
             let command = AgentIntegrationCommand(id: 21, operation: operation, provider: "codex",
                 parameters: ["events": "[{\"runtime\":\"codex\",\"stoppedAt\":123.456}]", "copies": "3"])
             #expect(command.isSupported)

@@ -82,6 +82,19 @@ an ambiguous target, and a disconnected host retry. Alternating direct/relay
 snapshot representations of one source stop must create one request, while the
 next distinct stop creates another. This checks canonical notification identity;
 it does not establish authenticated relay transport or APNs delivery.
+Successful activation must also mount the selected retained client through
+production `SingleSessionView` and `SessionClient.live`, using the fixture's
+existing authenticated SSH-over-WebRTC transport. The selected visible native
+renderer must share that client's exact session, report a live connection, and
+contain its unique provider completion marker in a fresh viewport observation.
+The other real provider is the split sibling and emits a different marker;
+seeing its marker fails the target check. A screenshot is captured after these
+conditions hold. Cold launch retrieves fresh ephemeral credentials and verifies
+the original host fingerprint. Controlled host lists remain separate from this
+real terminal transport; full pairing UI and coordinator negotiation are outside
+this probe. The delayed-user-selection control changes production selection
+state to test cancellation, but does not mount the sibling route, so that case
+is explicitly reported as route-state-only coverage.
 Controlled input-request snapshots reuse captured pane identities and timestamps
 to check request deduplication and tap routing. Those snapshots do not establish
 provider permission-hook delivery.

@@ -32,18 +32,23 @@ public struct RootView: View {
         let reopen: @MainActor (Host, String) async throws -> Void
     }
     private var notificationIO: NotificationIO?
+    private var notificationConnectionProvider: RemoteConnectionProvider?
 
     public init() {}
 
     // The isolated native interaction host supplies controlled remote I/O while
     // retaining this view's real lifecycle, notification delegate and navigation.
     init(hostStore: HostStore, gate: BiometricGate, notifications: MobileAgentNotifications,
-        appState: IPadAppState, notificationIO: NotificationIO) {
+        appState: IPadAppState, notificationIO: NotificationIO,
+        connectionProvider: RemoteConnectionProvider? = nil,
+        retainedPanes: RetainedPaneClientPool<RetainedMobilePane>? = nil) {
         _hostStore = State(initialValue: hostStore)
         _gate = State(initialValue: gate)
         _notifications = State(initialValue: notifications)
         _iPadAppState = State(initialValue: appState)
         self.notificationIO = notificationIO
+        self.notificationConnectionProvider = connectionProvider
+        if let retainedPanes { _retainedPanes = State(initialValue: retainedPanes) }
     }
 
     public var body: some View {
@@ -232,7 +237,8 @@ public struct RootView: View {
                                                                 navigationPath: &navigationPath,
                                                                 showsProjectRail: showsProjectRail)
                                       },
-                                      sidebarNavigation: iPadAppState.sidebarNavigation, retainedPanes: retainedPanes)
+                                      sidebarNavigation: iPadAppState.sidebarNavigation, retainedPanes: retainedPanes,
+                                      remoteConnectionProvider: notificationConnectionProvider)
                         .onAppear {
                             guard horizontalSizeClass != .regular else { return }
                             Self.applyCompactSession(step, to: iPadAppState)
@@ -622,6 +628,7 @@ struct SingleSessionView: View {
     private let fontSizeStore: TerminalFontSizeStore
     private let sidebarNavigation: SidebarNavigationState?
     private let retainedPanes: RetainedPaneClientPool<RetainedMobilePane>?
+    private let remoteConnectionProvider: RemoteConnectionProvider?
     @State private var attentionWorktrees: [WorktreePanes] = []
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
@@ -813,7 +820,8 @@ struct SingleSessionView: View {
         attentionWorktrees: [WorktreePanes] = [],
         initialClient: SessionClient? = nil,
         initialController: TerminalController? = nil,
-        initialKeyboardBottomInset: CGFloat = 0
+        initialKeyboardBottomInset: CGFloat = 0,
+        remoteConnectionProvider: RemoteConnectionProvider? = nil
     ) {
         self.step = step
         self._navigationPath = navigationPath
@@ -830,6 +838,7 @@ struct SingleSessionView: View {
         self.fontSizeStore = fontSizeStore
         self.sidebarNavigation = sidebarNavigation
         self.retainedPanes = retainedPanes
+        self.remoteConnectionProvider = remoteConnectionProvider
         self._attentionWorktrees = State(initialValue: attentionWorktrees)
         self._client = State(initialValue: initialClient)
         self._controller = State(initialValue: initialController)
@@ -1217,7 +1226,7 @@ struct SingleSessionView: View {
             // degraded/evicted connection heals via a real
             // re-negotiation (fresh WebRTC + fresh SSH userauth)
             // instead of redialing the same dead actor forever.
-            remoteConnectionProvider: makeRemoteConnectionProvider(
+            remoteConnectionProvider: remoteConnectionProvider ?? makeRemoteConnectionProvider(
                 coordinator: coordinator,
                 host: step.host,
                 sessionName: step.sessionName

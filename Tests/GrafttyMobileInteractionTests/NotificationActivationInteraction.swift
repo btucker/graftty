@@ -14,7 +14,13 @@ extension AgentNativeInteractionTests {
             add(attachment)
         }
         var result = ["performed": command.operation]
-        if command.operation == "notificationsDismissError" {
+        if command.operation == "notificationsCapture" {
+            guard app.state == .runningForeground,
+                  app.staticTexts["Notification activation selection"].exists else {
+                throw AgentIntegrationError("Cannot capture notification terminal without foreground production RootView")
+            }
+            return ["performed": command.operation, "foreground": "true", "rootVisible": "true"]
+        } else if command.operation == "notificationsDismissError" {
             let alert = app.alerts["Could not open notification"]
             guard alert.waitForExistence(timeout: 10) else {
                 throw AgentIntegrationError("Production RootView did not show the expected notification activation error")

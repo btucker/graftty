@@ -7,11 +7,45 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from harness import InvariantFailure
+from server import ModelState
 from model import model_events
 from notifications import NotificationRun, assert_notification_evidence, verify_attention_isolation, notification_scenario_text
 
 
 class NotificationEvidenceTests(unittest.TestCase):
+    def test_notification_route_requires_fresh_visible_target_session_content(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        runner.markers = {'claude': 'NOTIFY_CLAUDE_123', 'codex': 'NOTIFY_CODEX_123'}
+        runner.act = Mock(return_value={'foreground': 'true', 'rootVisible': 'true'})
+        prepared = {'expectedHost': 'host', 'expectedWorktree': 'worktree', 'expectedPane': 'target',
+                    'observationSequence': '5', 'observedAt': '100.0'}
+        valid = {'pending': 'false', 'selectedHost': 'host', 'worktree': 'worktree', 'pane': 'target',
+                 'fetchCount': '1', 'session': 'target', 'live': 'true', 'mounted': 'true',
+                 'surfaceReady': 'true', 'physicalRows': 'NOTIFY_CLAUDE_123', 'nativeGrid': '30x80',
+                 'observationSequence': '1', 'observedAt': '101.0'}
+        candidates = [valid]
+        for field, bad in [('session', 'other'), ('live', 'false'), ('mounted', 'false'),
+                           ('surfaceReady', 'false'), ('physicalRows', 'NOTIFY_CODEX_123'),
+                           ('physicalRows', 'NOTIFY_CLAUDE_123 NOTIFY_CODEX_123'),
+                           ('nativeGrid', ''), ('observationSequence', '0'), ('observedAt', '100.0')]:
+            candidates.append({**valid, field: bad})
+        decisions = []
+        def observe(provider, predicate, **kwargs):
+            decisions.extend(predicate(candidate) for candidate in candidates)
+            return valid
+        runner.wait_mobile_notification = observe
+        self.assertEqual(valid, runner.wait_mobile_route('claude', prepared))
+        self.assertEqual([True] + [False] * (len(candidates) - 1), decisions)
+        self.assertEqual('notificationsCapture', runner.act.call_args.args[0].operation)
+
+    def test_model_completion_marker_is_emitted_by_both_provider_responses(self):
+        state = ModelState(Mock(), '/fixture/cli')
+        self.assertEqual('Graftty integration', state.plan({}, 'claude', 'claude')[1])
+        state.completion_text = lambda provider: 'NOTIFY_' + provider.upper()
+        for provider in ('claude', 'codex'):
+            self.assertEqual((provider, 'NOTIFY_' + provider.upper(), None, False),
+                             state.plan({}, provider, provider))
+
     def test_native_tap_requires_observed_foreground_and_root_view(self):
         runner = NotificationRun.__new__(NotificationRun)
         for result in ({'performed': 'notificationsTap'},
