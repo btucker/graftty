@@ -137,3 +137,59 @@ and reordered rows. Review found and fixed a length-clipping hole using an
 extra-wrap RED regression: comparisons now extend to the next row or explicit
 model-output end marker, excluding provider footer UI without truncating payload.
 Original artifacts remain unchanged.
+
+### Follow-up protocol validation and Codex rendering mode
+
+Follow-up PR #462 admits `loadedHistory` through the shared transport guard.
+An actual isolated SwiftPM RED failed only that parameterized TEST-1.1 case;
+all six protocol tests passed after the allowlist correction. The hosted gate
+now requires that argument case, alongside 24 tests in three focused suites.
+
+At `e05799dca297c31ae916ddbf8a3cf378c520ee6e`,
+[run 39186009589](https://github.com/btucker/graftty/actions/runs/39186009589)
+passed that Swift gate and completed the Mobile fixture build. The prior
+`b927c5df` build timed out at 900 seconds compiling the fixture; adding an
+explicit dictionary type restored its former return-type context. No setup or
+behavioral deadline was increased.
+
+Claude passed authoritative 600-row source, actual gesture backfill from an
+initial loaded boundary of row 508 to visible row 485, with page requests and
+imports both increasing from zero to one. Attach and reconnect preserved all
+600 rows. Resize matched all 900 source redraw occurrences and preserved every
+original payload. The genuine recap tool also completed. Simulator
+`B7F9ADB7-1DD7-482F-A2D0-9D69ACA2A896` ran iOS 26.5 with the pinned versions
+and daemon hash above. Logs, exact source/selection comparisons, screenshots,
+and `mobile.xcresult` are retained in the run artifact.
+
+The run **failed overall** at Codex's authoritative-source preflight, before
+Mobile attached to Codex: only 37 native rows and numbered targets 591–599
+existed. Codex 0.162.1's installed `--help` documents `--no-alt-screen` as its
+inline mode preserving terminal scrollback, also listed in the
+[official CLI reference](https://developers.openai.com/codex/cli/reference/).
+The focused history fixture now passes that option, records it in result
+metadata, and retains the same exact source/content and gesture assertions.
+This coverage is Codex inline and Claude classic native scrollback, not either
+provider's fullscreen transcript. Production provider settings are unchanged;
+the original failed Codex-default evidence is preserved.
+
+At `8b4824597e2d5504c4d669d9ae8ae3d025e74ea0`,
+[run 39188040049](https://github.com/btucker/graftty/actions/runs/39188040049)
+again passed Claude's full scenario and additionally passed Codex source of 600 rows,
+genuine gesture backfill from loaded boundary 507 to visible row 383 with two new
+requests/imports, and exact 600-row attach/reconnect. It **failed overall** after
+Codex resize because the authoritative daemon contained only rows 401–599.
+The source snapshot is preserved in the trace, before any Mobile resized-row
+comparison. Simulator 75A86244-DB7E-4C95-BBD3-F75DF2BDC7B5 ran iOS 26.5.
+
+Pinned Codex 0.162.1 explains this separate provider behavior:
+[`resize_reflow.rs`](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/app/resize_reflow.rs)
+clears native scrollback before replaying a bounded source tail;
+[`resize_reflow_cap.rs`](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/resize_reflow_cap.rs)
+uses the 1,000-row fallback for Ghostty/unknown terminals. Its
+[configuration schema](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/core/config.schema.json)
+exposes `tui.terminal_resize_reflow_max_rows`. The isolated history launch now
+sets that provider replay cap to 10,000, sufficient for the 600 dense logical rows
+at the tested portrait/landscape widths. It remains bounded; no Graftty host or
+client memory budget, production provider configuration, or assertion changes.
+The next run must still preserve every original row and match the complete
+ordered source sequence after resize.
