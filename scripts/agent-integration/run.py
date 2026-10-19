@@ -527,21 +527,23 @@ class Run:
             # Persist provenance before home setup, version commands, or native
             # builds can fail. Unobserved metadata stays absent, never guessed.
             (self.root / 'result.json').write_text(json.dumps(self.summary, indent=2))
-            if getattr(self.options, 'preview', False):
-                self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude,
-                                        manual_claude=True, inline_codex=True)
-            else:
-                self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude)
-            if getattr(self.options, 'worktree_creation', False):
+            creation = getattr(self.options, 'worktree_creation', False)
+            creation_history = creation and not getattr(self.options, 'worktree_creation_viewport_only', False)
+            preview = getattr(self.options, 'preview', False)
+            self.env = prepare_home(self.root, self.server.endpoint, self.options.codex, self.options.claude,
+                                    manual_claude=creation or preview, inline_codex=creation_history or preview)
+            if creation:
+                self.summary['providerPermissions'] = {'claude': 'manual (permissions.defaultMode=default)',
+                                                       'codex': 'on-request'}
                 # CLI-created Codex uses its configured model header without the
                 # direct-launch export. Claude has its own endpoint and ignores it.
                 self.env['GRAFTTY_TEST_AGENT'] = 'codex'
-            if getattr(self.options, 'worktree_creation', False) and not getattr(self.options, 'worktree_creation_viewport_only', False):
+            if creation_history:
                 # This scenario verifies real terminal history. Claude's fullscreen
                 # renderer virtualizes old rows inside the provider instead.
                 self.env['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN'] = '1'
                 self.summary['providerModes'] = {'claude': 'classic (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)',
-                                                 'codex': 'default'}
+                                                 'codex': 'inline (tui.alternate_screen=never)'}
             for name in ('claude', 'codex'):
                 self.summary['providerVersions'][name] = execute([str(getattr(self.options, name)), '--version'], env=self.env)
             self.env['GRAFTTY_SWIFTPM_SHARED_DIR'] = str(self.options.cache)

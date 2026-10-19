@@ -3,6 +3,7 @@ import json
 import plistlib
 from pathlib import Path
 import tempfile
+import tomllib
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -73,14 +74,14 @@ class RunnerLifecycleTests(unittest.TestCase):
                         raise InvariantFailure('mobile-build failure')
                     return ''
 
-                def home_fixture(*args):
+                def home_fixture(*args, **kwargs):
                     # Provenance must already be durable before setup can fail.
                     early = json.loads((root / 'result.json').read_text())
                     self.assertEqual('fixture-head', early['commit'])
                     self.assertEqual(hashlib.sha256(b'cli-fixture').hexdigest(), early['cli']['sha256'])
                     if failure_stage == 'home':
                         raise InvariantFailure('home failure')
-                    return prepare_home(*args)
+                    return prepare_home(*args, **kwargs)
 
                 def scenario_fixture():
                     if failure_stage == 'scenario':
@@ -118,6 +119,12 @@ class RunnerLifecycleTests(unittest.TestCase):
                     self.assertEqual('claude-version', result['providerVersions']['claude'])
                     self.assertEqual('codex', runner.env['GRAFTTY_TEST_AGENT'])
                     self.assertEqual('1', runner.env['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN'])
+                    self.assertEqual('manual (permissions.defaultMode=default)', result['providerPermissions']['claude'])
+                    self.assertEqual('inline (tui.alternate_screen=never)', result['providerModes']['codex'])
+                    settings = json.loads((root / 'home/.claude/settings.json').read_text())
+                    self.assertEqual({'defaultMode': 'default'}, settings.get('permissions'))
+                    config = tomllib.loads((root / 'home/.codex/config.toml').read_text())
+                    self.assertEqual('never', config.get('tui', {}).get('alternate_screen'))
                 else:
                     self.assertEqual({}, result['providerVersions'])
                     self.assertNotIn('simulator', result)
@@ -167,6 +174,20 @@ class RunnerLifecycleTests(unittest.TestCase):
         self.assertEqual(1, len(runner.invariant_failures))
         self.assertIn('logical row content', runner.invariant_failures[0]['error'])
         self.assertEqual('failed', runner.summary['assertions'][0]['status'])
+
+    def test_creation_provider_modes_are_private_and_opt_in(self):
+        for manual, inline in ((False, False), (True, False), (True, True)):
+            with self.subTest(manual=manual, inline=inline), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                prepare_home(root, 'http://127.0.0.1:1234', Path('/bin/echo'), Path('/bin/echo'),
+                             manual_claude=manual, inline_codex=inline)
+                settings = json.loads((root / 'home/.claude/settings.json').read_text())
+                self.assertEqual({'autoUpdatesChannel': 'stable', **(
+                    {'permissions': {'defaultMode': 'default'}} if manual else {})}, settings)
+                config = tomllib.loads((root / 'home/.codex/config.toml').read_text())
+                self.assertEqual({'alternate_screen': 'never'} if inline else None, config.get('tui'))
+                self.assertEqual('on-request', config['approval_policy'])
+                self.assertEqual('fixture', config['model_provider'])
 
     def test_provider_home_does_not_supply_terminal_capabilities(self):
         with tempfile.TemporaryDirectory() as directory:
