@@ -1,11 +1,19 @@
 ---
 name: graftty-team
-description: Coordinate Graftty agents through rosters, messages, delegated worktrees, durable roles, and GRAFTTY.md instructions.
+description: Delegate Graftty work when asked, route necessary peer messages, and manage established agent roles and GRAFTTY.md instructions.
 ---
 
 # Graftty team
 
 Run commands from your tracked worktree. Use `graftty team` across providers and worktrees; provider-native messaging uses a different roster. Consult subcommand `--help` for version mismatches. Wrappers and hooks own registration.
+
+## Decide whether coordination is needed
+
+Do your assigned work directly. Delegate only when the user asks for delegation, another agent, or parallel agent work. A request to fix a bug or open a PR does not by itself request delegation.
+
+Reuse an agent for a continuation of its active assignment or work covered by its established role. For unrelated new work, launch a fresh agent when delegation is requested. A merged PR ends that task assignment. Do not give its agent a new task merely because it is still reachable or knows the code. An established ongoing role or an explicit user request to reuse that agent can justify reuse after a merge. Pinning or idle availability alone cannot.
+
+Send a peer message only when it is needed to complete the active task, such as resolving a blocker, avoiding overlapping edits, or delivering a requested handoff. Skip routine acknowledgements, status nudges, and unsolicited assignments. After delegation, let the child own implementation, validation, and its PR. Follow up for a concrete dependency, a user scope change, or the final result.
 
 ## Choose socket permissions first
 
@@ -25,9 +33,35 @@ Run `graftty team list --json`. In `members[]`, identify `name` and `worktree_pa
 | `<canonical-worktree-path>#<runtime>` | Provider, with messages queued between sessions |
 | `<canonical-worktree-path>#<runtime>-<12hex>` | Exact agent; fails closed when gone |
 
-Never route by provider display labels, which may be truncated. Native subagents have no independent Graftty address. Prefer a suitable existing agent, including a pinned agent whose shared role covers the task.
+Never route by provider display labels, which may be truncated. Native subagents have no independent Graftty address. Reachability tells you where a message can go; it does not authorize reuse for a new task.
 
 For another repository, Mac, legacy message envelope, or native reply socket, read [routing details](references/routing.md).
+
+## Write clear messages
+
+Use STE-inspired controlled English for agent messages and delegation prompts. Follow the practical principles of [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/STE_faq.html); full dictionary compliance is not required.
+
+- Identify the task or PR and the message purpose: request, blocker, question, or result.
+- Write requests as direct commands. Write one instruction per sentence. Keep sentences short.
+- Put conditions before the actions they control. Name the target and limit the requested scope.
+- Use the same term for the same thing. Preserve exact paths, commands, addresses, and identifiers.
+- Write results as facts. Distinguish passed, failed, pending, and not-run checks. Give the tested commit and relevant evidence.
+- State uncertainty explicitly. Ask a direct question when a decision is necessary. Omit conversational padding and routine acknowledgements.
+
+Example delegation prompt:
+
+```text
+Request. Task T42.
+Fix the sidebar spinner alignment.
+Change only the sidebar layout.
+Run the Codex simulator test.
+Run the Claude simulator test.
+Open a pull request.
+Report the PR, tested commit, and test results.
+If a dependency blocks this task, report the dependency.
+```
+
+Clear wording does not authorize a new task or expand an existing assignment. Apply the coordination rules above before sending a message.
 
 ## Send and receive
 
@@ -65,7 +99,7 @@ Replies arrive through hooks; do not poll for completion. For deliberate inspect
 
 Each worktree has exactly one agent. Never create worktrees yourself with `git worktree add`, provider worktree tools, worktree-isolated subagents, or other skills. Subagents sharing your current worktree are allowed.
 
-Delegate bounded independent work while continuing separate work. Avoid tiny or overlapping tasks. Creating a worktree alone does not delegate; launch its agent with the task:
+When the user requests delegation, give the child bounded independent work. Avoid tiny or overlapping tasks. Creating a worktree alone does not delegate; launch its agent with the task:
 
 ```sh
 graftty worktree add <name> --agent <codex|claude> --prompt-stdin <<'GRAFTTY_DELEGATE_7F3A91C2'
@@ -79,7 +113,7 @@ Use the exact address while reachable; after restart or /clear, use the fallback
 GRAFTTY_DELEGATE_7F3A91C2
 ```
 
-Save the operation ID, path, and returned stable reply address. Pause the delegated scope until `graftty team list --json` confirms the child is reachable. Then relinquish that scope until reviewing its result. If launch fails without a reachable child, retain ownership and report the failed handoff. Delegation within the user's repository task needs no separate confirmation and grants no additional authority.
+Save the operation ID, path, and returned stable reply address. Pause the delegated scope until `graftty team list --json` confirms the child is reachable. Then relinquish that scope until reviewing its result. If launch fails without a reachable child, retain ownership and report the failed handoff. Requested delegation needs no separate confirmation and grants no additional authority.
 
 Read only the reference relevant to the operation:
 

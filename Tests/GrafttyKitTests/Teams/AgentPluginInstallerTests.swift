@@ -693,12 +693,38 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.26: When Graftty materializes a provider team skill, the skill shall direct an agent to proactively delegate suitable independent work by launching a new top-level agent with `graftty worktree add --agent --prompt-stdin`, distinguish delegation from creating a worktree alone, require the parent to confirm child reachability before relinquishing the delegated scope, and preserve the user's authorization boundaries.
+    @spec AGENT-6.26: When Graftty materializes a provider team skill, the skill shall limit delegation to user requests, permit reuse for an active assignment or established role, direct unrelated new tasks to fresh agents after a PR merges unless the user requests reuse, limit peer messages to necessary active-task coordination, distinguish delegation from creating a worktree alone, and require child reachability before the parent relinquishes the delegated scope.
     """)
     func materializedSkillsExplainRealWorktreeDelegation() throws {
         for skill in try preparedSkillTexts(named: "graftty-team") {
             for token in ["graftty worktree add <name> --agent <codex|claude> --prompt-stdin", "Parent exact address:", "Parent fallback address:", "graftty team list --json", "references/worktrees.md"] {
                 #expect(skill.contains(token))
+            }
+            for policy in [
+                "Delegate only when the user asks",
+                "Reuse an agent for a continuation of its active assignment or work covered by its established role",
+                "For unrelated new work, launch a fresh agent",
+                "A merged PR ends that task assignment",
+                "Send a peer message only when it is needed to complete the active task",
+            ] {
+                #expect(skill.contains(policy))
+            }
+        }
+    }
+
+    @Test("""
+    @spec AGENT-6.56: When Graftty materializes a provider team skill, the skill shall direct agents to use STE-inspired controlled English with direct requests, one instruction per sentence, consistent technical terms, conditions before actions, and factual results that distinguish passed, failed, pending, and not-run checks.
+    """)
+    func materializedTeamSkillExplainsControlledEnglish() throws {
+        for skill in try preparedSkillTexts(named: "graftty-team") {
+            for rule in [
+                "Use STE-inspired controlled English",
+                "Write one instruction per sentence",
+                "Put conditions before the actions",
+                "Use the same term for the same thing",
+                "Distinguish passed, failed, pending, and not-run checks",
+            ] {
+                #expect(skill.contains(rule))
             }
         }
     }
