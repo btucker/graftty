@@ -108,10 +108,10 @@ jobs:
 
       - name: Test package targets in isolated processes
         # The complete serial suite, test discovery, and process startup can
-        # exceed five minutes on hosted runners even when every test passes.
+        # exceed ten minutes on hosted runners even when tests keep passing.
         # Keep a finite limit with room for runner variance; the ownership
         # corpus below retains its separate five-minute performance gate.
-        timeout-minutes: 10
+        timeout-minutes: 15
         # `script` gives swift test a PTY-like stdout so output streams
         # in real time instead of being block-buffered by the CI log pipe.
         # A package-wide invocation intermittently stalls while the many async,
