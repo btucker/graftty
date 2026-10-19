@@ -161,7 +161,8 @@ def gesture_backfill(run, agent):
 def run_history(run):
     run.start_mobile()
     run.phase = 'history'
-    run.summary['providerModes'] = {'claude': 'classic (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)', 'codex': 'inline (--no-alt-screen)'}
+    run.summary['providerModes'] = {'claude': 'classic (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)',
+        'codex': 'inline (--no-alt-screen; tui.terminal_resize_reflow_max_rows=10000)'}
     run.summary['scope'] = 'Codex inline and Claude classic native scrollback; mobile backfill, touch scrolling, reconnect and resize'
     models = run.server.models
     models.fixture_text = history_text

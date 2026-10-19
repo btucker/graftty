@@ -171,3 +171,25 @@ metadata, and retains the same exact source/content and gesture assertions.
 This coverage is Codex inline and Claude classic native scrollback, not either
 provider's fullscreen transcript. Production provider settings are unchanged;
 the original failed Codex-default evidence is preserved.
+
+At `8b4824597e2d5504c4d669d9ae8ae3d025e74ea0`,
+[run 39188040049](https://github.com/btucker/graftty/actions/runs/39188040049)
+again passed Claude's full scenario and additionally passed Codex source of 600 rows,
+genuine gesture backfill from loaded boundary 507 to visible row 383 with two new
+requests/imports, and exact 600-row attach/reconnect. It **failed overall** after
+Codex resize because the authoritative daemon contained only rows 401–599.
+The source snapshot is preserved in the trace, before any Mobile resized-row
+comparison. Simulator 75A86244-DB7E-4C95-BBD3-F75DF2BDC7B5 ran iOS 26.5.
+
+Pinned Codex 0.162.1 explains this separate provider behavior:
+[`resize_reflow.rs`](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/app/resize_reflow.rs)
+clears native scrollback before replaying a bounded source tail;
+[`resize_reflow_cap.rs`](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/resize_reflow_cap.rs)
+uses the 1,000-row fallback for Ghostty/unknown terminals. Its
+[configuration schema](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/core/config.schema.json)
+exposes `tui.terminal_resize_reflow_max_rows`. The isolated history launch now
+sets that provider replay cap to 10,000, sufficient for the 600 dense logical rows
+at the tested portrait/landscape widths. It remains bounded; no Graftty host or
+client memory budget, production provider configuration, or assertion changes.
+The next run must still preserve every original row and match the complete
+ordered source sequence after resize.
