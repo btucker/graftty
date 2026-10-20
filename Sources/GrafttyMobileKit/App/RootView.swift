@@ -16,6 +16,7 @@ public struct RootView: View {
     @State private var iPadAppState = IPadAppState()
     @State private var retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
     @State private var notificationPaneActivation = MobileNotificationPaneActivation()
+    @State private var notificationActivationPath: NavigationPath?
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     /// Owned here (not per-screen) so a negotiated SSH connection survives
     /// navigation-stack pushes/pops on the compact path and layout
@@ -74,6 +75,13 @@ public struct RootView: View {
         .onChange(of: notificationSelection) { _, _ in
             notificationPaneActivation.discard(unlessHostID: iPadAppState.selectedHostId,
                                                sessionName: iPadAppState.focusedPaneId)
+        }
+        .onChange(of: navigationPath) { _, path in
+            // System Back can pop the stack without changing sidebar selection.
+            if let expected = notificationActivationPath, path != expected {
+                notificationPaneActivation.cancel()
+                notificationActivationPath = nil
+            }
         }
         .onChange(of: iPadAppState.selectedHostId) { _, _ in retainedPanes.stopAll() }
         .onChange(of: horizontalSizeClass) { previous, current in
@@ -179,6 +187,7 @@ public struct RootView: View {
                 navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
                     showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
             }
+            notificationActivationPath = horizontalSizeClass == .regular ? nil : navigationPath
             notificationPaneActivation.activate(hostID: host.id, sessionName: target.pane.sessionName)
             notifications.consume(route)
         } catch is CancellationError {
