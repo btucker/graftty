@@ -2920,7 +2920,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with a display kind derived from the authenticated peer type and with the authenticated device identity. @spec OWN-1.10: When an authenticated visible interactive SSH client sends hello without an active leader, the host shall acknowledge its automatic leadership and accept terminal input without a Take Control request.
 
-**REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
+**REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot. @spec SSH-1.7: When SSH terminal input passes the display-owner gate, the host shall preserve its authorization through the ordered PTY writer while keeping legacy input and rejected follower input outside that authorized path.
 
 **REMOTE-9.3** When an SSH terminal client issues a take-control request, the host shall apply the same owner-eligibility rules as the web transport.
 
@@ -4303,6 +4303,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.5** While bulk terminal output is active, the application shall deliver interactive terminal bytes and the complete bulk stream over shared or isolated SSH connections.
 
 **SSH-1.6** While forwarding terminal output over SSH, the host shall await each write of at most 16 KiB before sending the next, preserving byte and control-event order so other terminal channels can run between writes.
+
+**SSH-1.7** When SSH terminal input passes the display-owner gate, the host shall preserve its authorization through the ordered PTY writer while keeping legacy input and rejected follower input outside that authorized path.
 
 ## TEST — TEST
 
