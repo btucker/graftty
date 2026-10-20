@@ -3890,11 +3890,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-16.x
 
-**CONTEXT-16** When a provider submits a generated startup or Graftty message prompt, the application shall exclude it from human involvement while retaining later genuine user messages and keeping suppressed event replays idempotent.
+**CONTEXT-16** When a provider submits generated startup or Graftty context, the application shall exclude it from human involvement, retain peer messages with agent provenance and later genuine user messages, and keep suppressed event replays idempotent.
 
 ### CONTEXT-17.x
 
 **CONTEXT-17** When a worktree is created on another device, the application shall retain the remote source worktree name separately from the destination repository used for dispatch and shall not treat the remote source path as a local navigation target.
+
+### CONTEXT-18.x
+
+**CONTEXT-18** When provider prompt history contains human text, peer envelopes, or generated system, forge, and hook context, the application shall highlight only human text as user input, retain peer content with its available sender provenance, and exclude generated context, including in restored history and mixed Codex and Claude turns.
 
 ## MEM — MEM
 
