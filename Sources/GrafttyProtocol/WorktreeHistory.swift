@@ -45,7 +45,8 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
             // Capture provenance before bounding text, so truncating a long
             // provider envelope cannot turn it into apparent human input.
             source = parts.count == 1 ? parts[0].source : (parts.isEmpty ? .generated : nil)
-            let text = (parts.count == 1 ? parts[0].text : text).trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = (parts.count == 1 ? parts[0].text : WorktreePromptContent.retainedText(from: parts))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             var bytes = 0
             let prefix = text.prefix(2000).prefix { character in
                 bytes += String(character).utf8.count

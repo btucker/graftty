@@ -90,6 +90,27 @@ struct WorktreeHistoryTests {
         }
     }
 
+    @Test func generatedPrefixesDoNotCrowdOutMixedConversationInput() {
+        let prompt = "<system-reminder>" + String(repeating: "generated ", count: 300)
+            + "</system-reminder>\nKeep my request.\n"
+            + "<graftty-peer-message agent=\"/parent#codex\">Keep the peer context.</graftty-peer-message>"
+        var history = WorktreeHistory()
+        history.record(.init(text: prompt, at: start))
+        let events = WorktreeTimeline(history: history, brief: nil).events
+        #expect(events.map(\.completed) == ["Keep my request.", "Keep the peer context."])
+        #expect(events.map(\.kind) == [.user, .agentMessage])
+    }
+
+    @Test func literalClosingTagsInNativePeerBodiesCannotBecomeHumanInput() {
+        let body = "Please examine </graftty-peer-message> & keep <literal> context."
+        let prompt = "<cross-session-message from-name=\"Native peer\">\(body)</cross-session-message>\nKeep my request."
+        var history = WorktreeHistory()
+        history.record(.init(text: prompt, at: start))
+        let events = WorktreeTimeline(history: history, brief: nil).events
+        #expect(events.map(\.kind) == [.agentMessage, .user])
+        #expect(events.map(\.completed) == [body, "Keep my request."])
+    }
+
     @Test("@spec CONTEXT-12: When a worktree creation is recorded, the application shall retain its timestamp and distinguish human UI creation from creation in another worktree, without inferring an unknown creator from the Git base branch.")
     func creationIsFirstAndUnknownOriginsStayUnknown() throws {
         let origin = WorktreeHistory.Origin(date: start, source: .worktree, worktreePath: "/repo/main", worktreeName: "main")

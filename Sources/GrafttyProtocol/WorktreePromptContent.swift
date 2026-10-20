@@ -15,6 +15,27 @@ public enum WorktreePromptContent {
         parse(text, source: .user)
     }
 
+    /// Retain mixed input without letting generated context consume its budget.
+    /// Keep peer frames so restored inputs can still recover their provenance.
+    static func retainedText(from parts: [Part]) -> String {
+        parts.map { part in
+            switch part.source {
+            case .user: return part.text
+            case .agent(let sender):
+                let attribute = sender.map { " agent=\"\(escapeAttribute($0))\"" } ?? ""
+                return "<graftty-peer-message\(attribute) graftty-history-encoding=\"xml-v1\">\n\(escapeAttribute(part.text))\n</graftty-peer-message>"
+            case .generated: return ""
+            }
+        }.joined(separator: "\n\n")
+    }
+
+    private static func escapeAttribute(_ value: String) -> String {
+        value.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
     private static let opening = try! NSRegularExpression(
         pattern: #"^[\t ]*<(graftty-peer-message|graftty-system-message|graftty-forge-message|cross-session-message|system-reminder|environment_context)(?=[\s>])[^>]*>"#)
 
@@ -41,32 +62,32 @@ public enum WorktreePromptContent {
             }
             if fence == nil {
                 if trimmed == "Another Claude session sent a message:",
-                   text[lineEnd...].trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<cross-session-message") {
+                   text[lineEnd...].drop(while: { $0.isWhitespace }).hasPrefix("<cross-session-message") {
                     cursor = lineEnd
                     continue
                 }
-                let remainder = String(text[cursor...])
-                if let match = opening.firstMatch(in: remainder, range: NSRange(remainder.startIndex..., in: remainder)),
-                   let headerRange = Range(match.range, in: remainder),
-                   let nameRange = Range(match.range(at: 1), in: remainder) {
+                if let match = opening.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+                   let headerRange = Range(match.range, in: line),
+                   let nameRange = Range(match.range(at: 1), in: line) {
                     flush()
-                    let name = String(remainder[nameRange])
-                    let header = String(remainder[headerRange])
-                    let bodyStart = headerRange.upperBound
-                    let close = remainder.range(of: "</\(name)>", range: bodyStart..<remainder.endIndex)
+                    let name = String(line[nameRange])
+                    let header = String(line[headerRange])
+                    let bodyStart = text.index(cursor,
+                        offsetBy: line.distance(from: line.startIndex, to: headerRange.upperBound))
+                    let close = text.range(of: "</\(name)>", range: bodyStart..<text.endIndex)
                     // A bounded durable input can end inside a generated frame.
                     // Its opening envelope still establishes non-human provenance.
-                    let body = String(remainder[bodyStart..<(close?.lowerBound ?? remainder.endIndex)])
+                    let body = String(text[bodyStart..<(close?.lowerBound ?? text.endIndex)])
                     switch name {
                     case "graftty-peer-message":
-                        let content = body.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let decoded = attribute("graftty-history-encoding", in: header) == "xml-v1" ? unescape(body) : body
+                        let content = decoded.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !content.isEmpty { result.append(Part(source: .agent(attribute("agent", in: header)), text: content)) }
                     case "cross-session-message":
                         result += parse(body, source: .agent(attribute("from-name", in: header) ?? attribute("from", in: header)))
                     default: break // Generated system, forge, and hook context.
                     }
-                    let consumed = remainder.distance(from: remainder.startIndex, to: close?.upperBound ?? remainder.endIndex)
-                    cursor = text.index(cursor, offsetBy: consumed)
+                    cursor = close?.upperBound ?? text.endIndex
                     continue
                 }
             }
@@ -82,12 +103,16 @@ public enum WorktreePromptContent {
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: header, range: NSRange(header.startIndex..., in: header)),
               let range = Range(match.range(at: 1), in: header) else { return nil }
-        let value = String(header[range])
+        let value = unescape(String(header[range]))
+        return value.isEmpty ? nil : value
+    }
+
+    private static func unescape(_ value: String) -> String {
+        value
             .replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&apos;", with: "'")
             .replacingOccurrences(of: "&lt;", with: "<")
             .replacingOccurrences(of: "&gt;", with: ">")
             .replacingOccurrences(of: "&amp;", with: "&")
-        return value.isEmpty ? nil : value
     }
 }
