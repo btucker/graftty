@@ -235,7 +235,7 @@ class NotificationRun(Run):
         # Catch delayed files that arrived while the native mobile scenarios
         # were running, including files from the earlier provider.
         for provider in ('claude', 'codex'):
-            count = 3 if self.options.notification_case == 'scrollback-classic' else 2
+            count = 3 if self.options.notification_case.startswith('scrollback') else 2
             self.assert_stops(provider, self.evidence(provider, 'final'), count, 'final-provider-count')
             self.model_prompt_receipt(provider, next_stop_prompts[provider])
 
@@ -279,16 +279,6 @@ class NotificationRun(Run):
                 and value['historyGeneration'] != selected['historyGeneration']
                 and value['paging'] not in ('inactive', 'installing'))
             load_history(self, provider, 'notification-reconnect', contemporaneous=True)
-            live_marker = f'RECOVERED_{provider.upper()}_{uuid.uuid4().hex}'
-            self.server.models.completion_text = lambda current: live_marker if current == provider else self.markers[current]
-            prompt = f'GRAFTTY_TEST_NEXT_STOP {provider} {uuid.uuid4().hex}'
-            self.act(Action('previewInput', provider, {'text': prompt, 'takeControl': 'true'}, client='gestures'))
-            self.wait_model(lambda: self.model_prompt_receipt(provider, prompt) is not None)
-            live = self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
-                and live_marker in value['physicalRows'] and value['isOwner'] == 'true')
-            self.assert_stops(provider, self.wait_stops(provider, 3), 3, 'live-input-after-recovery')
-            self.summary['assertions'].append({'provider': provider, 'liveInputAfterRecovery':
-                self.model_prompt_receipt(provider, prompt), 'liveOutputAfterRecovery': live})
         else:
             before = self.snapshot(provider, 'mobile')
             self.act(Action('scroll', provider, {'position': 'top'}, client='gestures'))
@@ -327,6 +317,21 @@ class NotificationRun(Run):
                         'sourceAfter': source_after, 'before': before, 'after': after}
             (self.root / f'notifications-{provider}-application-scroll.json').write_text(json.dumps(evidence, indent=2))
             self.summary['assertions'].append({'provider': provider, 'applicationScroll': evidence})
+            generation = after['historyGeneration']
+            self.act(Action('reconnect', provider, client='mobile'))
+            self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
+                and value['historyGeneration'] != generation
+                and value['paging'] not in ('inactive', 'installing'))
+        live_marker = f'RECOVERED_{provider.upper()}_{uuid.uuid4().hex}'
+        self.server.models.completion_text = lambda current: live_marker if current == provider else self.markers[current]
+        prompt = f'GRAFTTY_TEST_NEXT_STOP {provider} {uuid.uuid4().hex}'
+        self.act(Action('previewInput', provider, {'text': prompt, 'takeControl': 'true'}, client='gestures'))
+        self.wait_model(lambda: self.model_prompt_receipt(provider, prompt) is not None)
+        live = self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
+            and live_marker in value['physicalRows'] and value['isOwner'] == 'true')
+        self.assert_stops(provider, self.wait_stops(provider, 3), 3, 'live-input-after-recovery')
+        self.summary['assertions'].append({'provider': provider, 'liveInputAfterRecovery':
+            self.model_prompt_receipt(provider, prompt), 'liveOutputAfterRecovery': live})
         self.summary['assertions'].append({'provider': provider, 'notificationEntry': True,
             'historyCoverage': 'classic history verified' if classic else 'default provider UI scroll verified', 'selection': selected})
 

@@ -1114,7 +1114,10 @@ struct SingleSessionView: View {
             }
             .task(id: dialKey) { await observeAttention() }
             .onChange(of: client?.connectionState) { _, state in
-                if state != .live { agentCompletion.cancel(preserveLiteral: false) }
+                if state != .live {
+                    paneContainerBox.view?.cancelPendingApplicationScroll()
+                    agentCompletion.cancel(preserveLiteral: false)
+                }
                 guard state == .ended else { return }
                 retainedPanes?.remove(retainedPaneKey)
                 client?.stop()
@@ -1127,11 +1130,13 @@ struct SingleSessionView: View {
                         focusRequestCount &+= 1
                     }
                 } else {
+                    paneContainerBox.view?.cancelPendingApplicationScroll()
                     paneContainerBox.view?.resetStickyModifiers()
                     paneContainerBox.view?.terminalView.resignFirstResponder()
                 }
             }
             .onChange(of: scenePhase) { _, phase in
+                if phase != .active { paneContainerBox.view?.cancelPendingApplicationScroll() }
                 Self.handleAgentCompletionSceneChange(
                     phase, model: agentCompletion,
                     transportIsAvailable: client?.isOwner == true && client?.connectionState == .live
@@ -1736,6 +1741,7 @@ struct SingleSessionView: View {
         completionKey: AgentCompletionKey? = nil
     ) -> () -> Void {
         { [paneContainerBox] in
+            paneContainerBox.view?.cancelPendingApplicationScroll()
             paneContainerBox.cancelActiveSelectionIfAny()
             if let completionKey, paneContainerBox.view?.handleAgentCompletionControl(completionKey) == true { return }
             if resetsInputContext { paneContainerBox.view?.terminalView.commitAndResetTextContext() }

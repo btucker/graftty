@@ -475,7 +475,22 @@ public final class TerminalInputContainerView: UIView,
         set {
             let wasEligible = isCommittedSoftwareInputEligible
             if let newValue {
-                storedCommittedSoftwareInput = newValue
+                storedCommittedSoftwareInput = .init(
+                    insertText: { [weak self] text in
+                        self?.cancelPendingApplicationScroll()
+                        newValue.insertText(text)
+                    },
+                    insertControlByte: newValue.insertControlByte.map { insert in
+                        { [weak self] byte in
+                            self?.cancelPendingApplicationScroll()
+                            insert(byte)
+                        }
+                    },
+                    deleteBackward: { [weak self] in
+                        self?.cancelPendingApplicationScroll()
+                        newValue.deleteBackward()
+                    }
+                )
                 isCommittedSoftwareInputEligible = true
                 if !terminalView.isKeyboardInputEnabled { terminalView.isKeyboardInputEnabled = true }
             } else {
@@ -610,7 +625,9 @@ public final class TerminalInputContainerView: UIView,
         #endif
     }
 
-    private func cancelPendingApplicationScroll() {
+    /// A later explicit input supersedes an undelivered drag; never replay its
+    /// wheel reports after a key or paste that may have changed application mode.
+    func cancelPendingApplicationScroll() {
         applicationScrollTask?.cancel()
         applicationScrollTask = nil
         applicationScrollAttachmentID = nil
@@ -1142,6 +1159,7 @@ public final class TerminalInputContainerView: UIView,
     }
 
     fileprivate func performPaste(for menuGeneration: UInt) {
+        cancelPendingApplicationScroll()
         terminalView.commitAndResetTextContext()
         onPasteRequested?()
         guard menuGeneration == longPressMenuGeneration else { return }
@@ -1302,12 +1320,14 @@ public final class TerminalInputContainerView: UIView,
             $0.modifierFlags.appCommandModifiers == normalizedModifiers
                 && inputs.contains(canonicalHardwareCommandInput($0.input))
         }) {
+            cancelPendingApplicationScroll()
             agentCompletion?.invalidateBoundary()
             command.perform()
             return true
         }
         let isShiftModifierPress = event.usage == UInt16(UIKeyboardHIDUsage.keyboardLeftShift.rawValue)
             || event.usage == UInt16(UIKeyboardHIDUsage.keyboardRightShift.rawValue)
+        if !isShiftModifierPress { cancelPendingApplicationScroll() }
         if isCommittedSoftwareInputEligible, terminalView.markedTextRange == nil, !isShiftModifierPress {
             if normalizedModifiers.isEmpty {
                 let completionKey: AgentCompletionKey?
@@ -1437,6 +1457,7 @@ public final class TerminalInputContainerView: UIView,
 
     @objc private func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {
         guard let match = matchingHardwareKeyboardCommand(for: command) else { return }
+        cancelPendingApplicationScroll()
         if hardwareKeyboardCommands.contains(where: { $0.id == match.id }) {
             agentCompletion?.invalidateBoundary()
         }
@@ -1462,6 +1483,7 @@ public final class TerminalInputContainerView: UIView,
             let velocity = applicationScrollRecognizer.velocity(in: self)
             return onApplicationScrollRequested != nil && controlAttachmentID != nil
                 && authoritativeGrid != nil && !selectionController.isActive
+                && snapshotScrollView.followerZoomScale == 1
                 && terminalView.surface?.isMouseCaptured == true
                 && abs(velocity.y) >= abs(velocity.x)
         }

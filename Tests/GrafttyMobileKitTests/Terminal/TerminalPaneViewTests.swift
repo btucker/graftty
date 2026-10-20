@@ -2087,8 +2087,8 @@ struct PagedSourceGridTests {
 @Suite(.serialized)
 @MainActor
 struct TerminalTouchScrollTests {
-    @Test("Follower application drag waits for the physical owner viewport and is discarded on route replacement", arguments: [false, true])
-    func followerApplicationScrollWaitsForOwner(replaceRoute: Bool) async throws {
+    @Test("Follower application drag waits for its owner viewport and is discarded by replacement or newer input", arguments: ["ready", "replacement", "input"])
+    func followerApplicationScrollWaitsForOwner(outcome: String) async throws {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
         let host = UIViewController()
         window.rootViewController = host
@@ -2127,7 +2127,13 @@ struct TerminalTouchScrollTests {
         container.handleApplicationScroll(pan)
         #expect(claims == 1)
         #expect(!input.contains("\u{1b}[<64;"), "Follower drag must wait for ownership")
-        if replaceRoute { container.controlAttachmentID = UUID() }
+        if outcome == "replacement" { container.controlAttachmentID = UUID() }
+        if outcome == "input" {
+            container.committedSoftwareInput = .init(
+                insertText: { input.append(Data($0.utf8)) }, deleteBackward: {})
+            _ = container.terminalView(container.terminalView, insertText: "k")
+            #expect(input.contains("k"))
+        }
         container.authoritativeGrid = nil
         container.layoutIfNeeded()
         try await Task.sleep(for: .milliseconds(60))
@@ -2138,7 +2144,7 @@ struct TerminalTouchScrollTests {
             if input.contains("\u{1b}[<64;") { break }
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(input.contains("\u{1b}[<64;") == !replaceRoute,
+        #expect(input.contains("\u{1b}[<64;") == (outcome == "ready"),
                 "An ended drag must replay only into its original, ready attachment: \(input.description)")
     }
 
