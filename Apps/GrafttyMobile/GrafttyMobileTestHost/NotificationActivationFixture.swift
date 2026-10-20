@@ -341,13 +341,14 @@ final class NotificationActivationFixture {
         var diagnostics = selectedPane.flatMap { pane in
             container.map { controller.snapshot(.init(client: pane.client, container: $0, usesRoute: true)) }
         } ?? [:]
-        diagnostics.merge([
+        let pagingDiagnostics: [String: String] = [
             "paging": selectedPane?.client.paging.map { String(describing: $0.status) } ?? "inactive",
             "offset": String(bar?.offset ?? 0), "total": String(bar?.total ?? 0), "len": String(bar?.len ?? 0),
             "isOwner": String(selectedPane?.client.isOwner ?? false),
             "isMouseCaptured": String(container?.terminalView.surface?.isMouseCaptured ?? false),
             "clientID": selectedPane.map { String(describing: ObjectIdentifier($0.client)) } ?? "",
-            "canvasGrid": selectedPane?.client.snapshotCanvasGrid.map { "\($0.cols)x\($0.rows)" } ?? "physical"]) { _, new in new }
+            "canvasGrid": selectedPane?.client.snapshotCanvasGrid.map { "\($0.cols)x\($0.rows)" } ?? "physical"]
+        diagnostics.merge(pagingDiagnostics) { _, new in new }
         #if DEBUG
         if let value = selectedPane?.client.paging?.historyDiagnosticsForTesting {
             diagnostics["historyGeneration"] = String(value.generation)
@@ -355,7 +356,7 @@ final class NotificationActivationFixture {
             diagnostics["importedHistoryPages"] = String(value.imports)
         }
         #endif
-        diagnostics.merge(["expectedHost": configuration.host.id.uuidString, "expectedWorktree": event.worktree,
+        let routeDiagnostics: [String: String] = ["expectedHost": configuration.host.id.uuidString, "expectedWorktree": event.worktree,
             "expectedPane": event.paneSessionName ?? "", "title": title,
             "unrelatedPane": configuration.unrelatedPane,
             "selectedHost": state.selectedHostId?.uuidString ?? "", "worktree": state.selectedWorktreePath ?? "",
@@ -382,7 +383,8 @@ final class NotificationActivationFixture {
             "transportError": transportError,
             "observationSequence": String(observationSequence),
             "observedAt": String(Date().timeIntervalSince1970),
-            "requestIDs": String(decoding: try JSONEncoder().encode(submitted), as: UTF8.self)]) { _, new in new }
+            "requestIDs": String(decoding: try JSONEncoder().encode(submitted), as: UTF8.self)]
+        diagnostics.merge(routeDiagnostics) { _, new in new }
         return diagnostics
     }
 
