@@ -5,7 +5,8 @@
   "rendererPatches": [
     "preserve-top-anchor", "resize-history-guard", "renderer-experiment",
     "ios-renderer-experiment", "production-snapshot", "history-viewport",
-    "presentation-order", "scrollbar-state", "history-boundary", "source-grid"
+    "presentation-order", "scrollbar-state", "history-boundary", "source-grid",
+    "snapshot-pwd"
   ],
   "wrapperPatches": ["production-wrapper", "history-wrapper", "source-grid-wrapper"]
 }

@@ -2780,6 +2780,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **EDITOR-1.9** When the user cmd-clicks a binary file path in a terminal pane, the application shall open the file with its system default app, equivalent to `open <file>`, without creating an editor pane.
 
+**EDITOR-1.10** When a native terminal restores a snapshot containing an OSC 7 working-directory URI, the application shall resolve local relative file links without aborting, preserve absolute and OSC8 link activation, and remain usable after repeated restoration.
+
 ## REMOTE — Secure Remote Access
 
 ### REMOTE-1.x — Identity and Pairing

@@ -115,3 +115,30 @@ The test verifies that an invalid click preserves the current selection without
 crashing. The script copies the source before applying
 `production-selection-probe.patch`; this test-only helper is never included by
 `build-package.sh` or in the production package.
+
+## Native link-click regression
+
+Run the isolated AppKit regression against source with all recipe patches applied:
+
+```bash
+scripts/ghostty-paging/test-link-clicks.sh /path/to/patched/ghostty /path/to/zig-0.16.0
+```
+
+The runner copies the source, builds ReleaseSafe libraries in a new temporary
+folder, and captures link-open callbacks in standalone subprocesses. It does
+not launch or replace Graftty. Each case checks actual Cmd press and release,
+repeated snapshot attachment, URL bytes, terminal input and output, and teardown.
+The matrix includes plain and OSC8 links, URI and filesystem working directories,
+percent decoding, rejected URI values, prompt state, history, and drag selection.
+
+To test the packaged macOS archive, pass its path as the third argument. To run
+the `EDITOR-1.10` Swift Testing entry, set `GRAFTTY_LINK_CLICK_TEST_DIR` to the
+printed artifact directory when running `scripts/swiftpm test --filter NativeLinkClickTests`.
+The entry is opt-in because these subprocesses require AppKit and Metal access.
+
+The unchanged alpha.18 archive aborts on `snapshot-file-uri`: the VT producer
+stores raw OSC 7 `file://localhost/...`, and the native consumer previously passed
+a URI-derived relative result to `accessAbsolute`. `snapshot-pwd.patch` normalizes
+restored working directories with the live native OSC 7 parser before attachment
+and rejects non-absolute resolver bases. The snapshot codec and OSC8 URL handling
+retain their existing formats.

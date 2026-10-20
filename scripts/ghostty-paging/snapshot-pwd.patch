@@ -1,0 +1,160 @@
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -2112,6 +2112,10 @@
+             return null;
+         };
+ 
++        // Path resolution does not make a relative base absolute. Never pass
++        // an unparsed URI or relative terminal PWD to accessAbsolute.
++        if (!std.fs.path.isAbsolute(terminal_pwd)) return null;
++
+         const resolved = try std.fs.path.resolve(self.alloc, &.{ terminal_pwd, path });
+ 
+         std.Io.Dir.accessAbsolute(global.io(), resolved, .{}) catch {
+--- a/src/termio/stream_handler.zig
++++ b/src/termio/stream_handler.zig
+@@ -1459,6 +1459,61 @@
+         try self.terminal.semanticPrompt(cmd);
+     }
+ 
++    /// Decode an OSC 7 value using the native surface's scheme and local-host rules.
++    /// Returned bytes borrow from url or alloc; the caller owns their lifetime.
++    pub fn pwdPath(alloc: Allocator, url: []const u8) !?[]const u8 {
++        if (builtin.os.tag == .windows) {
++            log.warn("reportPwd unimplemented on windows", .{});
++            return null;
++        }
++
++        // Attempt to parse this file-style URI using options appropriate
++        // for this OSC 7 context (e.g. kitty-shell-cwd expects the full,
++        // unencoded path).
++        const uri: std.Uri = internal_os.uri.parse(url, .{
++            .mac_address = comptime builtin.os.tag != .macos,
++            .raw_path = std.mem.startsWith(u8, url, "kitty-shell-cwd://"),
++        }) catch |e| {
++            log.warn("invalid url in OSC 7: {}", .{e});
++            return null;
++        };
++
++        if (!std.mem.eql(u8, "file", uri.scheme) and
++            !std.mem.eql(u8, "kitty-shell-cwd", uri.scheme))
++        {
++            log.warn("OSC 7 scheme must be file or kitty-shell-cwd, got: {s}", .{uri.scheme});
++            return null;
++        }
++
++        var host_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
++        const host = uri.getHost(&host_buffer) catch |err| switch (err) {
++            error.UriMissingHost => {
++                log.warn("OSC 7 uri must contain a hostname: {}", .{err});
++                return null;
++            },
++        };
++
++        // OSC 7 is a little sketchy because anyone can send any value from
++        // any host (such an SSH session). The best practice terminals follow
++        // is to valid the hostname to be local.
++        const host_valid = internal_os.hostname.isLocal(host.bytes) catch |err| switch (err) {
++            error.PermissionDenied,
++            error.Unexpected,
++            => {
++                log.warn("failed to get hostname for OSC 7 validation: {}", .{err});
++                return null;
++            },
++        };
++        if (!host_valid) {
++            log.warn("OSC 7 host ({s}) must be local", .{host.bytes});
++            return null;
++        }
++
++        // We need the raw path, which might require unescaping. We try to
++        // avoid making any heap allocations by using the stack first.
++        return try uri.path.toRawMaybeAlloc(alloc);
++    }
++
+     fn reportPwd(self: *StreamHandler, url: []const u8) !void {
+         // Special handling for the empty URL. We treat the empty URL
+         // as resetting the pwd as if we never saw a pwd. I can't find any
+@@ -1482,59 +1537,10 @@
+             return;
+         }
+ 
+-        if (builtin.os.tag == .windows) {
+-            log.warn("reportPwd unimplemented on windows", .{});
+-            return;
+-        }
+-
+-        // Attempt to parse this file-style URI using options appropriate
+-        // for this OSC 7 context (e.g. kitty-shell-cwd expects the full,
+-        // unencoded path).
+-        const uri: std.Uri = internal_os.uri.parse(url, .{
+-            .mac_address = comptime builtin.os.tag != .macos,
+-            .raw_path = std.mem.startsWith(u8, url, "kitty-shell-cwd://"),
+-        }) catch |e| {
+-            log.warn("invalid url in OSC 7: {}", .{e});
+-            return;
+-        };
+-
+-        if (!std.mem.eql(u8, "file", uri.scheme) and
+-            !std.mem.eql(u8, "kitty-shell-cwd", uri.scheme))
+-        {
+-            log.warn("OSC 7 scheme must be file or kitty-shell-cwd, got: {s}", .{uri.scheme});
+-            return;
+-        }
+-
+-        var host_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
+-        const host = uri.getHost(&host_buffer) catch |err| switch (err) {
+-            error.UriMissingHost => {
+-                log.warn("OSC 7 uri must contain a hostname: {}", .{err});
+-                return;
+-            },
+-        };
+-
+-        // OSC 7 is a little sketchy because anyone can send any value from
+-        // any host (such an SSH session). The best practice terminals follow
+-        // is to valid the hostname to be local.
+-        const host_valid = internal_os.hostname.isLocal(host.bytes) catch |err| switch (err) {
+-            error.PermissionDenied,
+-            error.Unexpected,
+-            => {
+-                log.warn("failed to get hostname for OSC 7 validation: {}", .{err});
+-                return;
+-            },
+-        };
+-        if (!host_valid) {
+-            log.warn("OSC 7 host ({s}) must be local", .{host.bytes});
+-            return;
+-        }
+-
+-        // We need the raw path, which might require unescaping. We try to
+-        // avoid making any heap allocations by using the stack first.
+         var arena_alloc: std.heap.ArenaAllocator = .init(self.alloc);
+         var stack_alloc = std.heap.stackFallback(1024, arena_alloc.allocator());
+         defer arena_alloc.deinit();
+-        const path = try uri.path.toRawMaybeAlloc(stack_alloc.get());
++        const path = try pwdPath(stack_alloc.get(), url) orelse return;
+ 
+         log.debug("terminal pwd: {s}", .{path});
+         try self.terminal.setPwd(path);
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -1952,6 +1952,19 @@
+         }) catch return false;
+         defer decoded.deinit(alloc);
+         if (source.seek != len) return false;
++
++        // VT snapshots retain raw OSC 7 URIs, whereas native surfaces store
++        // decoded filesystem paths. Normalize while the decoded terminal is
++        // still detached, using the same acceptance rules as live OSC 7.
++        if (decoded.terminal.?.getPwd()) |pwd| {
++            if (!std.fs.path.isAbsolute(pwd)) {
++                var arena: std.heap.ArenaAllocator = .init(alloc);
++                defer arena.deinit();
++                const StreamHandler = @import("../termio/stream_handler.zig").StreamHandler;
++                const path = StreamHandler.pwdPath(arena.allocator(), pwd) catch return false;
++                decoded.terminal.?.setPwd(path orelse "") catch return false;
++            }
++        }
+ 
+         // A search worker can hold pins to the old terminal. Join without the
+         // renderer mutex, which that worker also acquires. No old pins survive.
