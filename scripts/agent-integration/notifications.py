@@ -65,6 +65,8 @@ def require_application_scroll(before, after):
         raise InvariantFailure('application scroll did not request and acquire control')
     if after.get('clientID') != before.get('clientID'):
         raise InvariantFailure('application scroll replaced the selected SessionClient')
+    if after.get('keyboard') != 'false':
+        raise InvariantFailure('application scroll opened keyboard input before Show keyboard was chosen')
     if int(after.get('applicationScrollDeliveries', 0)) <= int(before.get('applicationScrollDeliveries', 0)):
         raise InvariantFailure('application scroll did not forward its buffered drag')
 

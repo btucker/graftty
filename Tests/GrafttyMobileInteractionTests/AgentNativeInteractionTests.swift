@@ -14,7 +14,7 @@ final class AgentNativeInteractionTests: XCTestCase {
         try await runScriptedInteractions()
     }
 
-    /// @spec IOS-6.40: When the user drags to scroll a mouse-capturing application in a mobile follower pane, the application shall request control and forward the drag after the owner viewport is ready, while passive attachment and local scrolling in other panes retain their current ownership.
+    /// @spec IOS-6.40: When the user drags to scroll a mouse-capturing application in a mobile follower pane, the application shall request control and forward the drag after the owner viewport is ready, keep keyboard input disabled until Show keyboard is chosen, and preserve ownership during passive attachment and local scrolling in other panes.
     func testNativeNotificationApplicationScroll() async throws {
         try await runScriptedInteractions()
     }

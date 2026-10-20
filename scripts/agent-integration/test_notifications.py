@@ -9,10 +9,16 @@ from unittest.mock import Mock, patch
 from harness import Action, InvariantFailure, Broker
 from server import ModelState
 from model import model_events
-from notifications import NotificationRun, assert_notification_evidence, verify_attention_isolation, notification_scenario_text
+from notifications import NotificationRun, assert_notification_evidence, verify_attention_isolation, notification_scenario_text, require_application_scroll
 
 
 class NotificationEvidenceTests(unittest.TestCase):
+    def test_application_scroll_rejects_keyboard_opening_during_takeover(self):
+        before = {'isOwner': 'false', 'isMouseCaptured': 'true', 'clientID': 'retained'}
+        after = {'isOwner': 'true', 'clientID': 'retained', 'applicationScrollDeliveries': '1', 'keyboard': 'true'}
+        with self.assertRaisesRegex(InvariantFailure, 'opened keyboard input'):
+            require_application_scroll(before, after)
+
     def test_native_drag_targets_current_visible_terminal_instead_of_container_blank_space(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = NotificationRun.__new__(NotificationRun)

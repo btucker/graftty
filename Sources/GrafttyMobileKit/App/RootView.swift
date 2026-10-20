@@ -1633,7 +1633,11 @@ struct SingleSessionView: View {
                 client?.wakeRenderer()
                 onPaneInteraction?()
             },
-            onApplicationScrollRequested: { [weak client] in client?.takeControl() },
+            onApplicationScrollRequested: { [weak client] in
+                guard let client, client.canTakeControl else { return }
+                keyboardAllowed = false
+                client.takeControl()
+            },
             configuredFontSize: effectiveBaseConfigText.flatMap {
                 GhosttyConfigFetcher.lastFontSize(in: $0).map(Float.init)
             },

@@ -2124,7 +2124,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.39** When mobile terminal writes suspend, the application shall preserve input order through subsequent typing, control keys, owner-transition resizes, and image paste, and discard unsent input when its transport is replaced or its ownership tenure changes.
 
-**IOS-6.40** When the user drags to scroll a mouse-capturing application in a mobile follower pane, the application shall request control and forward the drag after the owner viewport is ready, while passive attachment and local scrolling in other panes retain their current ownership.
+**IOS-6.40** When the user drags to scroll a mouse-capturing application in a mobile follower pane, the application shall request control and forward the drag after the owner viewport is ready, keep keyboard input disabled until Show keyboard is chosen, and preserve ownership during passive attachment and local scrolling in other panes.
 
 ### IOS-7.x — Lifecycle
 
