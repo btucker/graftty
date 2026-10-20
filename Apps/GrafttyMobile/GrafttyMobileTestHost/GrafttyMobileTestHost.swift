@@ -386,7 +386,7 @@ private final class RecentPaneFixtureModel {
             let target = try await MobileRecentPanes.resolve(entry, fetch: { self.rows }, reopen: { _ in },
                 isCurrent: { self.generation == captured && self.path == oldPath })
             select(target)
-        } catch { state.recentPanes.forget(entry); error = "This pane is no longer available." }
+        } catch { state.recentPanes.forget(entry); self.error = "This pane is no longer available." }
     }
 }
 
