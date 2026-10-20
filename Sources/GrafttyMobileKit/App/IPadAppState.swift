@@ -42,6 +42,7 @@ public final class IPadAppState {
     }
 
     public var sidebarNavigation = SidebarNavigationState(prefix: "sidebar.mobile", collapsed: true)
+    let recentPanes: MobileRecentPanes
     public var navigationWindowWidth: Double = 1100
     public var selectedWorktreePath: String?
     public var focusedPaneId: String?
@@ -92,6 +93,7 @@ public final class IPadAppState {
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        recentPanes = MobileRecentPanes(defaults: defaults)
 
         if let idString = defaults.string(forKey: Keys.selectedHostId),
            let id = UUID(uuidString: idString) {

@@ -12,6 +12,10 @@ public struct RootView: View {
     @State private var notifications = MobileAgentNotifications.shared
     @State private var notificationError: String?
     @State private var activatingNotificationRoute: MobileStopNotificationRoute?
+    @State private var activatingNotificationIntent: UInt64?
+    @State private var navigationIntent = MobileNavigationIntent()
+    @State private var recentPaneOpeningID: UUID?
+    @State private var recentPaneError: String?
     @Environment(\.scenePhase) private var scenePhase
     @State private var iPadAppState = IPadAppState()
     @State private var retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
@@ -69,6 +73,19 @@ public struct RootView: View {
             }
         }
         .environment(\.biometricGate, gate)
+        .environment(\.recentPaneActions, MobileRecentPaneActions(history: iPadAppState.recentPanes, open: { entry in
+            let id = UUID()
+            navigationIntent.begin()
+            if let pending = notifications.pendingRoute { notifications.consume(pending) }
+            recentPaneOpeningID = id
+            Task { await openRecentPane(entry, openingID: id) }
+        }))
+        .onChange(of: navigationPath) { _, _ in recentPaneOpeningID = nil }
+        .onChange(of: notificationSelection) { _, _ in
+            recentPaneOpeningID = nil
+            recordSelectedPane()
+        }
+        .onChange(of: iPadAppState.latestWorktrees) { _, _ in recordSelectedPane() }
         .onChange(of: iPadAppState.selectedHostId) { _, _ in retainedPanes.stopAll() }
         .onChange(of: horizontalSizeClass) { previous, current in
             retainedPanes.stopAll()
@@ -83,11 +100,17 @@ public struct RootView: View {
                 await activateNotification()
             }
         }
-        .onChange(of: notifications.pendingRoute) { _, _ in Task { await activateNotification() } }
+        .onChange(of: notifications.pendingRoute) { _, route in
+            if route != nil { navigationIntent.begin(); recentPaneOpeningID = nil }
+            Task { await activateNotification() }
+        }
         .task { await activateNotification() }
         .alert("Could not open notification", isPresented: Binding(
             get: { notificationError != nil }, set: { if !$0 { notificationError = nil } }
         )) { Button("OK") { notificationError = nil } } message: { Text(notificationError ?? "") }
+        .alert("Could not open pane", isPresented: Binding(
+            get: { recentPaneError != nil }, set: { if !$0 { recentPaneError = nil } }
+        )) { Button("OK") { recentPaneError = nil } } message: { Text(recentPaneError ?? "") }
         .onAppear { if notificationIO == nil { nearbyMacBrowser.start() } }
         .onChange(of: nearbyMacBrowser.candidates) { _, candidates in
             coordinator.updateDiscoveryCandidates(candidates)
@@ -128,20 +151,95 @@ public struct RootView: View {
         }
     }
 
+    private func recordSelectedPane() {
+        // Compact worktree selection can display pane previews. Its terminal
+        // records the visit only after SingleSessionView actually opens.
+        guard horizontalSizeClass == .regular,
+              let host = hostStore.hosts.first(where: { $0.id == iPadAppState.selectedHostId }),
+              let worktree = iPadAppState.latestWorktrees.first(where: { $0.path == iPadAppState.selectedWorktreePath }),
+              let pane = iPadAppState.focusedPaneId else { return }
+        iPadAppState.recentPanes.record(hostID: host.id, hostLabel: host.label, worktree: worktree, sessionName: pane)
+    }
+
+    private func openRecentPane(_ entry: MobileRecentPanes.Entry, openingID: UUID) async {
+        let requestIntent = navigationIntent.current
+        let initialPath = navigationPath
+        let initialSelection = notificationSelection
+        let initialNotification = notifications.pendingRoute
+        func isCurrent() -> Bool {
+            navigationIntent.isCurrent(requestIntent) && recentPaneOpeningID == openingID
+                && scenePhase == .active && gate.state == .unlocked
+                && navigationPath == initialPath && notificationSelection == initialSelection
+                && notifications.pendingRoute == initialNotification
+        }
+        defer { if recentPaneOpeningID == openingID { recentPaneOpeningID = nil } }
+        guard isCurrent() else { return }
+        guard let host = hostStore.hosts.first(where: { $0.id == entry.hostID }) else {
+            iPadAppState.recentPanes.forget(entry)
+            recentPaneError = "The host for this pane is no longer paired."
+            return
+        }
+        do {
+            let target = try await MobileRecentPanes.resolve(entry, fetch: {
+                if let notificationIO { return try await notificationIO.fetch(host) }
+                return try await coordinator.worktreePanes(for: host)
+            }, reopen: { path in
+                if let notificationIO { return try await notificationIO.reopen(host, path) }
+                guard try await coordinator.sendWorktreeManagement(.open(worktreeID: path), to: host) == .ok
+                else { throw MobileNotificationActivation.Failure.notReady }
+            }, isCurrent: isCurrent)
+            guard isCurrent() else { return }
+            Self.applyRecentPaneTarget(target, host: host, to: iPadAppState)
+            if horizontalSizeClass != .regular {
+                navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
+                    showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
+            }
+            recordSelectedPane()
+        } catch is CancellationError {
+        } catch let error as MobileNotificationActivation.Failure {
+            guard isCurrent() else { return }
+            switch error {
+            case .worktreeUnavailable, .paneUnavailable:
+                iPadAppState.recentPanes.forget(entry)
+                recentPaneError = "This pane is no longer available on \(host.label)."
+            case .notReady: recentPaneError = "The worktree hasn't started yet. Try again from the worktree list."
+            }
+        } catch {
+            guard isCurrent() else { return }
+            recentPaneError = "Couldn't reconnect to \(host.label). Try again when the host is online."
+        }
+    }
+
+    static func applyRecentPaneTarget(_ target: MobileNotificationActivation.Target, host: Host, to appState: IPadAppState) {
+        appState.latestWorktrees = target.rows
+        let project = SidebarProjection.projects([target.worktree]).first
+        applyCompactSession(.init(host: host, worktreePath: target.worktree.path,
+            sessionName: target.pane.sessionName, title: target.pane.displayTitle, worktreeProject: project), to: appState)
+        if let project { appState.sidebarNavigation.showProject(project.id) }
+    }
+
     private func activateNotification() async {
         guard scenePhase == .active, gate.state == .unlocked,
-              let route = notifications.pendingRoute, activatingNotificationRoute != route else { return }
+              let route = notifications.pendingRoute else { return }
+        let requestIntent = navigationIntent.current
+        guard activatingNotificationRoute != route || activatingNotificationIntent != requestIntent else { return }
         activatingNotificationRoute = route
+        activatingNotificationIntent = requestIntent
         let initialPath = navigationPath
         let initialSelection = notificationSelection
         func isCurrent() -> Bool {
-            scenePhase == .active && gate.state == .unlocked && notifications.pendingRoute == route
+            navigationIntent.isCurrent(requestIntent) && scenePhase == .active
+                && gate.state == .unlocked && notifications.pendingRoute == route
                 && navigationPath == initialPath && notificationSelection == initialSelection
         }
         defer {
-            if activatingNotificationRoute == route { activatingNotificationRoute = nil }
+            if activatingNotificationIntent == requestIntent {
+                activatingNotificationRoute = nil
+                activatingNotificationIntent = nil
+            }
             // Newer navigation supersedes the tap even if reconnecting throws.
-            if navigationPath != initialPath || notificationSelection != initialSelection { notifications.consume(route) }
+            if navigationIntent.isCurrent(requestIntent),
+               navigationPath != initialPath || notificationSelection != initialSelection { notifications.consume(route) }
         }
         await hostStore.loadIfNeeded()
         guard !Task.isCancelled, isCurrent() else { return }
@@ -242,6 +340,7 @@ public struct RootView: View {
                                       },
                                       sidebarNavigation: iPadAppState.sidebarNavigation, retainedPanes: retainedPanes,
                                       remoteConnectionProvider: notificationConnectionProvider)
+                        .id(step.paneIdentity)
                         .onAppear {
                             guard horizontalSizeClass != .regular else { return }
                             Self.applyCompactSession(step, to: iPadAppState)
@@ -422,6 +521,10 @@ struct SessionStep: Hashable {
     let title: String
     /// Retain the originating picker even when a search opens another project.
     let worktreeProject: SidebarProject?
+
+    // Replacing a NavigationPath destination can reuse its SwiftUI state.
+    // Keep the mounted client scoped to the same identity as retained panes.
+    var paneIdentity: String { host.id.uuidString + ":" + sessionName }
 
     init(
         host: Host,
@@ -631,6 +734,8 @@ struct SingleSessionView: View {
     let onBackToWorktrees: (() -> Void)?
     private let fontSizeStore: TerminalFontSizeStore
     private let sidebarNavigation: SidebarNavigationState?
+    @Environment(\.recentPaneActions) private var recentPaneActions
+    @State private var recordedRecentVisit = false
     private let retainedPanes: RetainedPaneClientPool<RetainedMobilePane>?
     private let remoteConnectionProvider: RemoteConnectionProvider?
     private let previewManagementTransport: ((WorktreeManagementRequest, Host) async throws -> WorktreeManagementResponse)?
@@ -957,7 +1062,7 @@ struct SingleSessionView: View {
         // the column's bounds so the sidebar doesn't visually overlap.
         .modifier(FullScreenChrome(enabled: isFullScreen))
             .overlay(alignment: .topLeading) {
-                if isFullScreen {
+                if isFullScreen || (isEmbeddedPane && isPaneFocused && onBackToWorktrees != nil) {
                     backButton
                         .modifier(TerminalFloatingControlPlacement())
                 }
@@ -1111,7 +1216,7 @@ struct SingleSessionView: View {
                         .map(Float.init)
                 }
             }
-            .task(id: dialKey) { await observeAttention() }
+            .task(id: AttentionObservationKey(dial: dialKey, focused: isPaneFocused)) { await observeAttention() }
             .onChange(of: client?.connectionState) { _, state in
                 if state != .live { agentCompletion.cancel(preserveLiteral: false) }
                 guard state == .ended else { return }
@@ -1120,7 +1225,10 @@ struct SingleSessionView: View {
                 client = nil
                 connection = .ended
             }
+            .onChange(of: connection) { _, _ in recordRecentVisit() }
             .onChange(of: isPaneFocused) { _, isFocused in
+                recordedRecentVisit = false
+                recordRecentVisit()
                 if isFocused {
                     if client?.isOwner == true, keyboardAllowed {
                         focusRequestCount &+= 1
@@ -1145,6 +1253,11 @@ struct SingleSessionView: View {
     private struct DialKey: Hashable {
         let scene: ScenePhase
         let gateUnlocked: Bool
+    }
+
+    private struct AttentionObservationKey: Hashable {
+        let dial: DialKey
+        let focused: Bool
     }
 
     private func driveConnection() async {
@@ -1293,25 +1406,16 @@ struct SingleSessionView: View {
     /// in-app affordance for going back (edge-swipe is still available
     /// but undiscoverable).
     private var backButton: some View {
-        TerminalFloatingGlyphButton(
-            systemName: "chevron.left",
+        MobileTerminalBackButton(
             accessibilityLabel: backAccessibilityLabel,
-            action: popToParent
+            pendingCount: pendingAttentionCount,
+            entries: recentPaneActions?.history.entries.filter {
+                $0.hostID != step.host.id || $0.visit.item.paneID != step.sessionName
+                    || $0.visit.item.worktreeID != step.worktreePath
+            } ?? [],
+            back: popToParent,
+            open: { recentPaneActions?.open($0) }
         )
-        .overlay(alignment: .topTrailing) {
-            if pendingAttentionCount > 0 {
-                Text(pendingAttentionCount > 99 ? "99+" : "\(pendingAttentionCount)")
-                    .font(.caption2.bold())
-                    .monospacedDigit()
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5)
-                    .frame(minWidth: 20, minHeight: 20)
-                    .background(.orange, in: Capsule())
-                    .offset(x: 5, y: -5)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-        }
     }
 
     var backAccessibilityLabel: String {
@@ -1334,7 +1438,7 @@ struct SingleSessionView: View {
     }
 
     private func observeAttention() async {
-        guard isFullScreen, let sidebarNavigation, let coordinator,
+        guard isFullScreen, isPaneFocused, let coordinator,
               LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
         while !Task.isCancelled {
             do {
@@ -1345,14 +1449,26 @@ struct SingleSessionView: View {
                 if case let .snapshot(snapshotRows, metadata)? = snapshot, snapshotRows == rows {
                     projects = metadata?.projects ?? SidebarProjection.projects(rows)
                 } else { projects = SidebarProjection.projects(rows) }
-                sidebarNavigation.reconcile(worktrees: rows, projects: projects)
+                sidebarNavigation?.reconcile(worktrees: rows, projects: projects)
+                recentPaneActions?.history.reconcile(hostID: step.host.id, worktrees: rows, projects: projects)
                 attentionWorktrees = rows
+                recordRecentVisit()
             } catch {
                 // Do not present a stale count while the host is unreachable.
                 attentionWorktrees = []
             }
             do { try await Task.sleep(for: .seconds(1)) } catch { return }
         }
+    }
+
+    private func recordRecentVisit() {
+        guard !recordedRecentVisit, isPaneFocused, connection == .live,
+              let history = recentPaneActions?.history,
+              let row = attentionWorktrees.first(where: {
+                  $0.path == step.worktreePath && $0.layout?.leaves.contains(where: { $0.sessionName == step.sessionName }) == true
+              }) else { return }
+        history.record(hostID: step.host.id, hostLabel: step.host.label, worktree: row, sessionName: step.sessionName)
+        recordedRecentVisit = true
     }
 
     func popToParent() {

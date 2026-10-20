@@ -3,6 +3,8 @@ import SwiftUI
 import GrafttyProtocol
 import GrafttyCommandUI
 import UIKit
+import GrafttyRemoteClient
+import Observation
 import GhosttyTerminal
 @testable import GrafttyMobileKit
 #endif
@@ -21,6 +23,8 @@ struct GrafttyMobileTestHost: App {
             #if GRAFTTY_BROWSER_CONTROL_FIXTURE
             if let endpoint = Self.agentIntegrationEndpoint {
                 AgentIntegrationFixture(endpoint: endpoint).ignoresSafeArea()
+            } else if ProcessInfo.processInfo.arguments.contains("--recent-panes-fixture") {
+                RecentPaneFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--context-fixture") {
                 WorktreeContextFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--scrollback-fixture") {
@@ -41,7 +45,7 @@ struct GrafttyMobileTestHost: App {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--agent-integration-url"),
               arguments.indices.contains(index + 1) else {
-            if arguments.contains(where: ["--context-fixture", "--scrollback-fixture",
+            if arguments.contains(where: ["--recent-panes-fixture", "--context-fixture", "--scrollback-fixture",
                 "--image-controls-fixture", "--browser-control-fixture"].contains) { return nil }
             // A notification launches the executable through Springboard,
             // which does not retain XCUIApplication's launch arguments.
@@ -273,6 +277,143 @@ private struct ImageControlsFixture: View {
                     paneSessionName: "pane", previewKind: "image", previewOwnerDeviceID: device)
             }
     }
+}
+
+
+/// Uses real mobile Back chrome, target resolution, SessionStep routing, and
+/// terminal views. Only the remote snapshot and byte stream are deterministic.
+@MainActor
+private struct RecentPaneFixture: View {
+    @State private var model = RecentPaneFixtureModel()
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    var body: some View {
+        NavigationStack(path: $model.path) {
+            picker
+                .navigationDestination(for: Host.self) { _ in picker }
+                .navigationDestination(for: ProjectStep.self) { _ in picker }
+                .navigationDestination(for: SessionStep.self) { step in
+                    let key = step.host.id.uuidString + step.sessionName
+                    SingleSessionView(step: step, navigationPath: $model.path,
+                        isFullScreen: sizeClass != .regular, showsProjectRail: false,
+                        isEmbeddedPane: sizeClass == .regular,
+                        onBackToWorktrees: {
+                            RootView.applyCompactBack(step: step, appState: model.state,
+                                navigationPath: &model.path, showsProjectRail: false)
+                        }, retainedPanes: model.pool, attentionWorktrees: model.rows,
+                        initialClient: model.clients[key], initialController: model.controllers[key])
+                        .id(step.paneIdentity)
+                        .task(id: key) { await model.feedAttachedPane(step) }
+                        .overlay(alignment: .bottom) {
+                            TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+                                Text("\(step.host.label) | \(step.worktreePath ?? "") | \(step.sessionName) | "
+                                    + (model.clients[key]?.session.readViewportText() ?? ""))
+                                    .font(.caption2).accessibilityIdentifier("Recent pane rendered target")
+                            }.allowsHitTesting(false)
+                        }
+                }
+        }
+        .environment(\.recentPaneActions, .init(history: model.state.recentPanes, open: { entry in
+            Task { await model.open(entry) }
+        }))
+        // Prevent unrelated live dialing in this deterministic fixture.
+        .environment(\.scenePhase, .inactive)
+        .alert("Could not open pane", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
+            Button("OK") { model.error = nil }
+        } message: { Text(model.error ?? "") }
+    }
+
+    private var picker: some View {
+        List {
+            ForEach(model.rows, id: \.path) { row in
+                Button("Open \(row.displayName)") { model.select(row) }
+            }
+        }.navigationTitle("Recent pane worktrees")
+    }
+}
+
+@MainActor @Observable
+private final class RecentPaneFixtureModel {
+    let host = Host(label: "Studio", baseURL: URL(string: "https://fixture.invalid")!)
+    let state = IPadAppState(defaults: UserDefaults(suiteName: "recent-pane-fixture-\(UUID())")!)
+    var path = NavigationPath()
+    var error: String?
+    var clients: [String: SessionClient] = [:]
+    var controllers: [String: TerminalController] = [:]
+    var rows: [WorktreePanes] = []
+    let pool = RetainedPaneClientPool<RetainedMobilePane>()
+    private var fedPanes: Set<String> = []
+    var generation = 0
+
+    init() {
+        for name in ["alpha", "beta", "removed"] {
+            let route = "pane-\(name)"
+            let leaf = PaneLayoutNode.leaf(sessionName: route, title: "Terminal \(name)", attentionText: nil, isBusy: false, attentionSource: nil)
+            let layout: PaneLayoutNode = name == "beta" ? .split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "pane-decoy", title: "Decoy", attentionText: nil, isBusy: false, attentionSource: nil), right: leaf) : leaf
+            let paneIDs = Dictionary(uniqueKeysWithValues: layout.leaves.map { ($0.sessionName, "slot-" + $0.sessionName) })
+            let row = WorktreePanes(path: "/repo/\(name)", displayName: name, repoDisplayName: "Project", displayBranch: name,
+                state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+                layout: layout, sidebar: .init(id: name, projectID: "project", paneIDs: paneIDs, paneSlotIDs: Array(paneIDs.values)))
+            state.recentPanes.record(hostID: host.id, hostLabel: host.label, worktree: row, sessionName: route)
+            guard name != "removed" else { continue }
+            rows.append(row)
+            for pane in layout.leaves {
+                let client = SessionClient(sessionName: pane.sessionName, webSocketFactory: { RecentPaneFixtureSocket() })
+                _ = pool.acquire(.init(hostID: host.id, sessionName: pane.sessionName)) { RetainedMobilePane(client: client) }
+                client.start()
+                clients[host.id.uuidString + pane.sessionName] = client
+                controllers[host.id.uuidString + pane.sessionName] = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+            }
+        }
+    }
+
+    func feedAttachedPane(_ step: SessionStep) async {
+        let key = step.host.id.uuidString + step.sessionName
+        guard !fedPanes.contains(key) else { return }
+        for _ in 0..<100 {
+            guard !Task.isCancelled else { return }
+            if pool.cached(.init(hostID: step.host.id, sessionName: step.sessionName))?.container?.terminalView.surface != nil {
+                let marker = step.sessionName.replacingOccurrences(of: "pane-", with: "").uppercased()
+                clients[key]?.session.receive(Data("VISIBLE_\(marker)\r\n".utf8))
+                fedPanes.insert(key)
+                return
+            }
+            do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+        }
+    }
+
+    func select(_ row: WorktreePanes) {
+        generation += 1
+        guard let pane = row.layout?.leaves.first else { return }
+        select(.init(rows: rows, worktree: row, pane: pane))
+    }
+
+    private func select(_ target: MobileNotificationActivation.Target) {
+        RootView.applyRecentPaneTarget(target, host: host, to: state)
+        state.recentPanes.record(hostID: host.id, hostLabel: host.label, worktree: target.worktree, sessionName: target.pane.sessionName)
+        path = RootView.compactSelection(appState: state, hosts: [host], showsProjectRail: false)!.path
+    }
+
+    func open(_ entry: MobileRecentPanes.Entry) async {
+        generation += 1
+        let captured = generation
+        let oldPath = path
+        do {
+            let target = try await MobileRecentPanes.resolve(entry, fetch: { self.rows }, reopen: { _ in },
+                isCurrent: { self.generation == captured && self.path == oldPath })
+            select(target)
+        } catch { state.recentPanes.forget(entry); self.error = "This pane is no longer available." }
+    }
+}
+
+private final class RecentPaneFixtureSocket: WebSocketClient, @unchecked Sendable {
+    func send(_ frame: WebSocketFrame) async throws {}
+    func receive() async throws -> WebSocketFrame {
+        try await Task.sleep(for: .seconds(30))
+        throw CancellationError()
+    }
+    func close() {}
 }
 
 #endif

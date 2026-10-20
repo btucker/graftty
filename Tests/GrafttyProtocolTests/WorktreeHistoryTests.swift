@@ -5,6 +5,112 @@ import Testing
 struct WorktreeHistoryTests {
     private let start = Date(timeIntervalSince1970: 100)
 
+    @Test("@spec CONTEXT-18: When provider prompt history contains human text, peer envelopes, or generated system, forge, and hook context, the application shall highlight only human text as user input, retain peer content with its available sender provenance, and exclude generated context, including in restored history and mixed Codex and Claude turns.")
+    func providerUserRolesDoNotEstablishHumanAuthorship() throws {
+        // Codex turn/start and Claude's native peer transport both use user
+        // roles. These text shapes come from the delivery formatter and the
+        // fake-backend provider fixtures, not an authorship guarantee.
+        let peer = """
+        <graftty-peer-message agent="/repo/R&amp;D#codex-abcdef012345" id="42">
+        Please verify the fix.
+        </graftty-peer-message>
+        """
+        let claude = """
+        Another Claude session sent a message:
+        <cross-session-message from="uds:/tmp/peer.sock" from-name="Graftty bridge">
+        \(peer)
+        </cross-session-message>
+        """
+        var history = WorktreeHistory()
+        let prompts = ["Fix the bug.", peer, claude, """
+            Keep the regression test.
+
+            \(peer)
+
+            <graftty-system-message>Startup context</graftty-system-message>
+            <graftty-forge-message provider="github">CI passed</graftty-forge-message>
+            <system-reminder>Hook context</system-reminder>
+
+            Also check iPad.
+            """]
+        for (offset, text) in prompts.enumerated() {
+            history.record(.init(text: text, at: start.addingTimeInterval(Double(offset))))
+        }
+        let restored = try JSONDecoder().decode(WorktreeHistory.self, from: JSONEncoder().encode(history))
+        let events = WorktreeTimeline(history: restored, brief: nil).events
+        #expect(events.filter { $0.kind == .user }.map(\.completed) == ["Fix the bug.", "Keep the regression test.", "Also check iPad."])
+        let peers = events.filter { $0.title.contains("/repo/R&D#codex-abcdef012345") }
+        #expect(peers.count == 3)
+        #expect(peers.allSatisfy { $0.kind != .user && $0.completed == "Please verify the fix." })
+        #expect(!events.contains { $0.completed.contains("Startup context") || $0.completed.contains("CI passed") || $0.completed.contains("Hook context") })
+        #expect(Set(events.map(\.id)).count == events.count)
+        // Old saved history has no source field and stores the provider frame.
+        var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(history)) as? [String: Any])
+        var inputs = try #require(legacy["inputs"] as? [[String: Any]])
+        for index in inputs.indices {
+            inputs[index].removeValue(forKey: "source")
+            inputs[index]["text"] = prompts[index]
+        }
+        legacy["inputs"] = inputs
+        let old = try JSONDecoder().decode(WorktreeHistory.self, from: JSONSerialization.data(withJSONObject: legacy))
+        #expect(WorktreeTimeline(history: old, brief: nil).events == events)
+    }
+
+    @Test func provenanceSurvivesTruncationAndProviderContextStaysGenerated() throws {
+        let body = String(repeating: "Peer task. ", count: 500)
+        let prompt = "<cross-session-message from-name=\"Graftty bridge\">\n"
+            + "<graftty-peer-message agent=\"/parent#claude\">" + body
+            + "</graftty-peer-message>\n</cross-session-message>"
+        var history = WorktreeHistory()
+        history.record(.init(text: prompt, at: start))
+        history.record(.init(text: "<environment_context>Generated Codex environment</environment_context>", at: start))
+        let restored = try JSONDecoder().decode(WorktreeHistory.self, from: JSONEncoder().encode(history))
+        let events = WorktreeTimeline(history: restored, brief: nil).events
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .agentMessage)
+        #expect(events.first?.title == "Message from /parent#claude")
+        #expect(events.first?.completed == String(body.prefix(2000)) + "…")
+        #expect(restored.inputs[0].wasTruncated)
+    }
+
+    @Test func literalEnvelopeMentionsRemainHumanText() {
+        let texts = ["Keep <graftty-peer-message> out of my history.", """
+            Explain this example:
+            ```xml
+            <graftty-peer-message agent="example">quoted content</graftty-peer-message>
+            ```
+            """, "Please mention Another Claude session sent a message: in the docs."]
+        for text in texts {
+            var history = WorktreeHistory()
+            history.record(.init(text: text, at: start))
+            let events = WorktreeTimeline(history: history, brief: nil).events
+            #expect(events.count == 1)
+            #expect(events.first?.kind == .user)
+            #expect(events.first?.completed == text)
+        }
+    }
+
+    @Test func generatedPrefixesDoNotCrowdOutMixedConversationInput() {
+        let prompt = "<system-reminder>" + String(repeating: "generated ", count: 300)
+            + "</system-reminder>\nKeep my request.\n"
+            + "<graftty-peer-message agent=\"/parent#codex\">Keep the peer context.</graftty-peer-message>"
+        var history = WorktreeHistory()
+        history.record(.init(text: prompt, at: start))
+        let events = WorktreeTimeline(history: history, brief: nil).events
+        #expect(events.map(\.completed) == ["Keep my request.", "Keep the peer context."])
+        #expect(events.map(\.kind) == [.user, .agentMessage])
+    }
+
+    @Test func literalClosingTagsInNativePeerBodiesCannotBecomeHumanInput() {
+        let body = "Please examine </graftty-peer-message> & keep <literal> context."
+        let prompt = "<cross-session-message from-name=\"Native peer\">\(body)</cross-session-message>\nKeep my request."
+        var history = WorktreeHistory()
+        history.record(.init(text: prompt, at: start))
+        let events = WorktreeTimeline(history: history, brief: nil).events
+        #expect(events.map(\.kind) == [.agentMessage, .user])
+        #expect(events.map(\.completed) == [body, "Keep my request."])
+    }
+
     @Test("@spec CONTEXT-12: When a worktree creation is recorded, the application shall retain its timestamp and distinguish human UI creation from creation in another worktree, without inferring an unknown creator from the Git base branch.")
     func creationIsFirstAndUnknownOriginsStayUnknown() throws {
         let origin = WorktreeHistory.Origin(date: start, source: .worktree, worktreePath: "/repo/main", worktreeName: "main")
