@@ -108,7 +108,11 @@ final class AgentNativeInteractionTests: XCTestCase {
                 try require(control.waitForNonExistence(timeout: 10), "production Take Control did not acquire ownership")
             }
             if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
-                let keyboard = app.buttons.matching(NSPredicate(format: "label == %@", "Show keyboard")).firstMatch
+                // The underlying fixture also has a hidden Show keyboard
+                // button. Only the production affordance grants input after
+                // application scrolling deliberately leaves it disabled.
+                let keyboard = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@",
+                    "Show keyboard", "Agent integration show keyboard")).firstMatch
                 if keyboard.waitForExistence(timeout: 5), keyboard.isHittable { keyboard.tap() }
                 else { terminal.tap() }
             }
