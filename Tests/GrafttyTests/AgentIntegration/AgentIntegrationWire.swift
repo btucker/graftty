@@ -70,7 +70,7 @@ struct AgentIntegrationCommand: Codable, Equatable, Sendable {
          "notificationsState", "notificationsRelease", "notificationsNavigate", "notificationsTap",
          "previewPrepare", "previewSnapshot", "previewRemoved", "previewInput", "previewHideKeyboard",
          "previewOpen", "previewCapture", "previewDismiss", "previewBack",
-         "notificationsAuthorize", "notificationsDismissError", "notificationsCapture"].contains(operation)
+         "notificationsAuthorize", "notificationsDismissError", "notificationsCapture", "notificationsBack"].contains(operation)
     }
 }
 
