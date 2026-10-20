@@ -13,6 +13,17 @@ from notifications import NotificationRun, assert_notification_evidence, verify_
 
 
 class NotificationEvidenceTests(unittest.TestCase):
+    def test_viewport_comparison_refreshes_source_after_delayed_redraw(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        source_a = {'grid': '80x24', 'physicalRows': 'old viewport'}
+        source_b = {'grid': '40x40', 'physicalRows': 'older transcript'}
+        mobile_b = {'nativeGrid': '40x40', 'physicalRows': 'older transcript'}
+        runner.act = Mock(side_effect=[source_a, mobile_b, source_b, mobile_b])
+        with patch('notifications.time.sleep'):
+            source, mobile = runner.wait_matching_mobile_viewport('claude')
+        self.assertEqual(source_b, source)
+        self.assertEqual(mobile_b, mobile)
+
     def test_tap_failure_preserves_delivery_state_without_retry_or_masking_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = NotificationRun.__new__(NotificationRun)

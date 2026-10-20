@@ -289,10 +289,7 @@ class NotificationRun(Run):
             # Ownership changes the PTY grid and may reveal transcript merely
             # through reflow. Require a further drag against the settled owner
             # viewport so a resize alone cannot satisfy the scrolling oracle.
-            owned_source = self.act(Action('verify', provider))
-            self.wait_mobile_notification(provider, lambda value:
-                value['nativeGrid'] == owned_source['grid']
-                and value['physicalRows'] == owned_source['physicalRows'])
+            owned_source, _ = self.wait_matching_mobile_viewport(provider)
             source_rows = row_ids(owned_source['authoritativeText'])
             def revealed_older(value):
                 rows = row_ids(value['physicalRows'])
@@ -306,12 +303,9 @@ class NotificationRun(Run):
                     break
             else:
                 raise InvariantFailure(f'{provider}: app scrolling did not reveal older virtualized output')
-            source_after = self.act(Action('verify', provider))
             # Current provider viewport is the oracle here. The daemon has no
             # full transcript prefix to import in fullscreen mode.
-            after = self.wait_mobile_notification(provider, lambda value:
-                value['nativeGrid'] == source_after['grid']
-                and value['physicalRows'] == source_after['physicalRows'])
+            source_after, after = self.wait_matching_mobile_viewport(provider)
             self.act(Action('notificationsCapture', provider, client='gestures'))
             evidence = {'sourceBefore': source, 'sourceOwnedBeforeFurtherDrag': owned_source,
                         'sourceAfter': source_after, 'before': before, 'after': after}
@@ -504,6 +498,16 @@ class NotificationRun(Run):
         # rather than the earlier tap screenshot while it may be reconnecting.
         self.act(Action('notificationsCapture', provider, client='gestures'))
         return selected
+
+    def wait_matching_mobile_viewport(self, provider, timeout=30):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            source = self.act(Action('verify', provider))
+            mobile = self.act(Action('notificationsState', provider, client='mobile'))
+            if mobile['nativeGrid'] == source['grid'] and mobile['physicalRows'] == source['physicalRows']:
+                return source, mobile
+            time.sleep(.1)
+        raise InvariantFailure(f'provider/mobile viewports did not converge: {source}, {mobile}')
 
     def wait_mobile_notification(self, provider, predicate, timeout=30):
         deadline = time.monotonic() + timeout
