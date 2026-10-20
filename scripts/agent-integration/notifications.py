@@ -185,7 +185,8 @@ class NotificationRun(Run):
         provider_events = self.provider_events = {}
         next_stop_prompts = {}
         for provider in ('claude', 'codex'):
-            self.paths[provider] = self.act(Action('start', provider))
+            self.paths[provider] = self.act(Action('start', provider,
+                {'history': 'true'} if self.options.notification_case == 'scrollback-classic' else {}))
             deadline = time.monotonic() + 60
             reviewed = False
             while (provider, 'begin') not in models.arrived:
@@ -214,14 +215,46 @@ class NotificationRun(Run):
         # mobile failure retains useful evidence from each provider.
         if not self.options.mac_only:
             for provider, events in provider_events.items():
-                if self.options.notification_case == 'all':
-                    self.mobile_scenarios(provider, events)
-                self.active_retry_scenario(provider, events)
+                if self.options.notification_case.startswith('scrollback'):
+                    self.scrollback_scenarios(provider, events)
+                else:
+                    if self.options.notification_case == 'all':
+                        self.mobile_scenarios(provider, events)
+                    self.active_retry_scenario(provider, events)
         # Catch delayed files that arrived while the native mobile scenarios
         # were running, including files from the earlier provider.
         for provider in ('claude', 'codex'):
             self.assert_stops(provider, self.evidence(provider, 'final'), 2, 'final-provider-count')
             self.model_prompt_receipt(provider, next_stop_prompts[provider])
+
+    def scrollback_scenarios(self, provider, events):
+        from history_scenario import gesture_backfill, load_history, row_ids
+        classic = self.options.notification_case == 'scrollback-classic'
+        self.summary['providerModes'] = ({'claude': 'classic (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)',
+            'codex': 'inline (--no-alt-screen)'} if classic else {'claude': 'default', 'codex': 'default'})
+        prepared = self.prepare_mobile_notifications(provider, events, 'warm')
+        self.deliver_mobile_stop(provider, 0, 1)
+        self.tap_mobile_notification(provider, prepared)
+        selected = self.wait_mobile_route(provider, prepared)
+        source = self.act(Action('verify', provider))
+        (self.root / f'notifications-{provider}-source-history.json').write_text(json.dumps(source, indent=2))
+        if classic:
+            gesture_backfill(self, provider)
+            load_history(self, provider, 'notification-attach', contemporaneous=True)
+            self.act(Action('reconnect', provider, client='mobile'))
+            self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
+                and value['historyGeneration'] != selected['historyGeneration']
+                and value['paging'] not in ('inactive', 'installing'))
+            load_history(self, provider, 'notification-reconnect', contemporaneous=True)
+        else:
+            before = self.snapshot(provider, 'mobile')
+            for _ in range(3):
+                self.act(Action('scroll', provider, {'position': 'top'}, client='gestures'))
+            after = self.snapshot(provider, 'mobile')
+            self.summary['assertions'].append({'provider': provider, 'defaultModeScroll': {
+                'sourceRows': row_ids(source['authoritativeText']), 'before': before, 'after': after}})
+        self.summary['assertions'].append({'provider': provider, 'notificationEntry': True,
+            'historyCoverage': 'classic history verified' if classic else 'default diagnostic only', 'selection': selected})
 
     def record_provider_screen(self, provider, stop):
         value = self.act(Action('verify', provider))

@@ -192,10 +192,11 @@ final class AgentIntegrationMobileController: UIViewController {
             let fixture = try await NotificationActivationFixture.prepare(command, endpoint: endpoint,
                 fingerprint: AgentIntegrationConnection.fingerprint(registration))
             mountNotificationFixture(fixture)
-            return try fixture.snapshot()
+            return try fixture.snapshot(controller: self)
         }
-        if command.operation.hasPrefix("notifications"), let notificationFixture {
-            return try await notificationFixture.handle(command)
+        if let notificationFixture,
+           command.operation.hasPrefix("notifications") || ["snapshot", "scroll", "loadedHistory", "select", "reconnect", "takeControl", "input"].contains(command.operation) {
+            return try await notificationFixture.handle(command, controller: self)
         }
         if command.operation == "finish" {
             notificationFixture?.finish()

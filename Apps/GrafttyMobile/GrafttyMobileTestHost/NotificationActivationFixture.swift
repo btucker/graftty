@@ -249,8 +249,12 @@ final class NotificationActivationFixture {
                 unseenAgentStop: inputRequest ? nil : stop, lastAgentStop: inputRequest ? nil : stop))
     }
 
-    func handle(_ command: AgentIntegrationCommand) async throws -> [String: String] {
-        switch command.operation {
+    func handle(_ command: AgentIntegrationCommand, controller: AgentIntegrationMobileController) async throws -> [String: String] {
+        let aliases = ["snapshot": "notificationsState", "scroll": "notificationsScroll",
+            "loadedHistory": "notificationsLoadedHistory", "select": "notificationsLoadedHistory",
+            "reconnect": "notificationsReconnect", "takeControl": "notificationsTakeControl", "input": "notificationsInput"]
+        let operation = aliases[command.operation] ?? command.operation
+        switch operation {
         case "notificationsDeliver":
             guard let index = Int(command.parameters["eventIndex"] ?? "0"),
                   configuration.stops.indices.contains(index),
@@ -269,25 +273,29 @@ final class NotificationActivationFixture {
             let pending = waiters
             waiters.removeAll()
             for waiter in pending { waiter.resume() }
-        case "notificationsScroll", "notificationsLoadedHistory", "notificationsReconnect":
+        case "notificationsScroll", "notificationsLoadedHistory", "notificationsReconnect", "notificationsTakeControl", "notificationsInput":
             guard let hostID = state.selectedHostId, let session = state.focusedPaneId,
                   let pane = retainedPanes.cached(.init(hostID: hostID, sessionName: session)),
                   let surface = pane.container?.terminalView.surface else {
                 throw AgentIntegrationError("selected notification terminal missing")
             }
-            if command.operation == "notificationsReconnect" { pane.client.forceReconnectNow() }
-            else if command.operation == "notificationsScroll" {
+            if operation == "notificationsReconnect" { pane.client.forceReconnectNow() }
+            else if operation == "notificationsTakeControl" { pane.client.takeControl() }
+            else if operation == "notificationsInput" {
+                pane.client.sendSoftwareKeyboardText(command.parameters["text"] ?? "")
+                pane.client.submitReturn()
+            } else if operation == "notificationsScroll" {
                 let action = command.parameters["position"] == "bottom" ? "scroll_to_bottom" : "scroll_to_top"
                 guard surface.performAction(action) else { throw AgentIntegrationError("notification scroll rejected") }
             } else {
                 guard surface.performAction("select_all") else { throw AgentIntegrationError("notification history read rejected") }
                 defer { _ = surface.performAction("clear_selection") }
-                return ["loadedHistory": surface.readSelection() ?? ""]
+                return ["loadedHistory": surface.readSelection() ?? "", "selected": surface.readSelection() ?? ""]
             }
         case "notificationsState": break
         default: throw AgentIntegrationError("unsupported notification fixture command \(command.operation)")
         }
-        var result = try snapshot()
+        var result = try snapshot(controller: controller)
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         result["authorization"] = String(describing: settings.authorizationStatus)
@@ -309,7 +317,7 @@ final class NotificationActivationFixture {
         return result
     }
 
-    func snapshot() throws -> [String: String] {
+    func snapshot(controller: AgentIntegrationMobileController) throws -> [String: String] {
         guard configuration.stops.indices.contains(eventIndex) else { throw AgentIntegrationError("invalid saved stop index") }
         let event = configuration.stops[eventIndex]
         var ledger = MobileStopNotificationLedger()
@@ -330,12 +338,16 @@ final class NotificationActivationFixture {
         observationSequence += 1
         container?.accessibilityIdentifier = "Agent integration terminal"
         let bar = container?.snapshotScrollView.scrollbar
-        var diagnostics: [String: String] = [
+        var diagnostics = selectedPane.flatMap { pane in
+            container.map { controller.snapshot(.init(client: pane.client, container: $0, usesRoute: true)) }
+        } ?? [:]
+        diagnostics.merge([
             "paging": selectedPane?.client.paging.map { String(describing: $0.status) } ?? "inactive",
             "offset": String(bar?.offset ?? 0), "total": String(bar?.total ?? 0), "len": String(bar?.len ?? 0),
             "isOwner": String(selectedPane?.client.isOwner ?? false),
+            "isMouseCaptured": String(container?.terminalView.surface?.isMouseCaptured ?? false),
             "clientID": selectedPane.map { String(describing: ObjectIdentifier($0.client)) } ?? "",
-            "canvasGrid": selectedPane?.client.snapshotCanvasGrid.map { "\($0.cols)x\($0.rows)" } ?? "physical"]
+            "canvasGrid": selectedPane?.client.snapshotCanvasGrid.map { "\($0.cols)x\($0.rows)" } ?? "physical"]) { _, new in new }
         #if DEBUG
         if let value = selectedPane?.client.paging?.historyDiagnosticsForTesting {
             diagnostics["historyGeneration"] = String(value.generation)

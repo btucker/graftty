@@ -661,7 +661,7 @@ def main():
 
     parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
     parser.add_argument('--notifications', action='store_true', help='Capture real provider Stop hooks and exercise native notification replay and activation')
-    parser.add_argument('--notification-case', choices=('all', 'active-retry'), default='all',
+    parser.add_argument('--notification-case', choices=('all', 'active-retry', 'scrollback', 'scrollback-classic'), default='all',
                         help='Select bounded notification cases; active-retry holds the production view scene active')
     parser.add_argument('--device', default='iPhone 17 Pro')
     parser.add_argument('--runtime', help='CoreSimulator runtime identifier; default uses its newest compatible runtime')

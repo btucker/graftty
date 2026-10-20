@@ -40,11 +40,11 @@ def require_original_content(text, rows):
         raise InvariantFailure('source lost original fixture row content')
 
 
-def load_history(run, agent, stage):
+def load_history(run, agent, stage, *, contemporaneous=False):
     expected = list(range(run.options.rows))
     expected_records = row_records(history_text(run.options.rows))
     source = None
-    if stage == 'resized':
+    if stage == 'resized' or contemporaneous:
         # A classic TUI can redraw transcript rows after a real PTY resize.
         # Preserve that exact source sequence; never deduplicate imported rows.
         source = run.act(Action('verify', agent))
