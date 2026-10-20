@@ -6,15 +6,16 @@ from pathlib import Path
 import time
 import uuid
 
-from harness import Action, InvariantFailure
+from harness import Action, InvariantFailure, contains_terminal_marker
 from model import user_text
 from run import REPO, Run, execute
 
 
 def notification_scenario_text(rows=100):
-    # Four deltas are required for distinct begin/middle/end stream barriers.
-    return ('BEGIN-GRAFTTY-FIXTURE\nNotification fixture started.\n'
-            'Notification fixture completed.\nEND-GRAFTTY-FIXTURE\n')
+    # Keep enough transcript to distinguish provider virtualization from
+    # terminal history. No classic-mode override is used by this scenario.
+    from history_scenario import history_text
+    return history_text(rows)
 
 
 def verify_attention_isolation(root, cli, env, command=execute):
@@ -55,6 +56,19 @@ def assert_notification_evidence(observation, provider, worktree, expected):
         return events
     except (KeyError, ValueError, TypeError) as error:
         raise InvariantFailure('native notification evidence is missing or malformed') from error
+
+
+def require_application_scroll(before, after):
+    if before.get('isOwner') != 'false' or before.get('isMouseCaptured') != 'true':
+        raise InvariantFailure('application scroll setup was not a mouse-captured follower')
+    if after.get('isOwner') != 'true':
+        raise InvariantFailure('application scroll did not request and acquire control')
+    if after.get('clientID') != before.get('clientID'):
+        raise InvariantFailure('application scroll replaced the selected SessionClient')
+    if after.get('keyboard') != 'false':
+        raise InvariantFailure('application scroll opened keyboard input before Show keyboard was chosen')
+    if int(after.get('applicationScrollDeliveries', 0)) <= int(before.get('applicationScrollDeliveries', 0)):
+        raise InvariantFailure('application scroll did not forward its buffered drag')
 
 
 class NotificationRun(Run):
@@ -112,6 +126,12 @@ class NotificationRun(Run):
         self.summary['attentionDirectory'] = self.env['GRAFTTY_ATTENTION_DIR']
 
     def act(self, action):
+        if action.client == 'gestures' and action.operation == 'scroll':
+            visible = self.act(Action('notificationsState', action.provider, client='mobile'))['visibleFrame']
+            if not visible:
+                raise InvariantFailure('notification scroll target has no visible terminal frame')
+            action = Action(action.operation, action.provider,
+                            {**action.parameters, 'visibleFrame': visible}, client=action.client)
         self.notification_actions.append(asdict(action))
         (self.root / 'actions.json').write_text(json.dumps(self.notification_actions, indent=2))
         return super().act(action)
@@ -121,11 +141,14 @@ class NotificationRun(Run):
         (self.root / f'notifications-{provider}-{stage}.json').write_text(json.dumps(value, indent=2))
         return value
 
-    def wait_stops(self, provider, count, timeout=60):
+    def wait_stops(self, provider, count, timeout=60, *, approval_client='mac'):
         deadline = time.monotonic() + timeout
         settle_at = None
         while time.monotonic() < deadline:
-            self.approve_known_tools()
+            if approval_client == 'mobile':
+                self.approve_known_tools(client='mobile', agent=provider)
+            else:
+                self.approve_known_tools()
             value = self.evidence(provider, f'stop-{count}')
             if len(json.loads(value['events'])) >= count:
                 now = time.monotonic()
@@ -184,7 +207,8 @@ class NotificationRun(Run):
         provider_events = self.provider_events = {}
         next_stop_prompts = {}
         for provider in ('claude', 'codex'):
-            self.paths[provider] = self.act(Action('start', provider))
+            self.paths[provider] = self.act(Action('start', provider,
+                {'history': 'true'} if self.options.notification_case == 'scrollback-classic' else {}))
             deadline = time.monotonic() + 60
             reviewed = False
             while (provider, 'begin') not in models.arrived:
@@ -213,14 +237,126 @@ class NotificationRun(Run):
         # mobile failure retains useful evidence from each provider.
         if not self.options.mac_only:
             for provider, events in provider_events.items():
-                if self.options.notification_case == 'all':
-                    self.mobile_scenarios(provider, events)
-                self.active_retry_scenario(provider, events)
+                if self.options.notification_case.startswith('scrollback'):
+                    self.scrollback_scenarios(provider, events)
+                else:
+                    if self.options.notification_case == 'all':
+                        self.mobile_scenarios(provider, events)
+                    self.active_retry_scenario(provider, events)
         # Catch delayed files that arrived while the native mobile scenarios
         # were running, including files from the earlier provider.
         for provider in ('claude', 'codex'):
-            self.assert_stops(provider, self.evidence(provider, 'final'), 2, 'final-provider-count')
+            count = 3 if self.options.notification_case.startswith('scrollback') else 2
+            self.assert_stops(provider, self.evidence(provider, 'final'), count, 'final-provider-count')
             self.model_prompt_receipt(provider, next_stop_prompts[provider])
+
+    def scrollback_scenarios(self, provider, events):
+        from history_scenario import gesture_backfill, load_history, row_ids
+        classic = self.options.notification_case == 'scrollback-classic'
+        self.summary['providerModes'] = ({'claude': 'classic (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)',
+            'codex': 'inline (--no-alt-screen)'} if classic else {'claude': 'default', 'codex': 'default'})
+        prepared = self.prepare_mobile_notifications(provider, events, 'warm')
+        self.deliver_mobile_stop(provider, 0, 1)
+        self.tap_mobile_notification(provider, prepared)
+        selected = self.wait_mobile_route(provider, prepared)
+        source = self.act(Action('verify', provider))
+        (self.root / f'notifications-{provider}-source-history.json').write_text(json.dumps(source, indent=2))
+        if classic:
+            gesture_backfill(self, provider, 'notification-initial')
+            # Expire the still-unloaded prefix through a real source resize.
+            # Scrolling then makes the stale native checkpoint observable.
+            self.act(Action('resize', provider, {'width': '900', 'height': '640'}))
+            resized = self.wait_snapshot(provider, lambda value: value['grid'] != source['grid']
+                and value['grid'] == value['nativeGrid'] and value['owner'] == source['owner'])
+            self.wait_mobile_notification(provider, lambda value: value['grid'] == resized['grid']
+                and value['nativeGrid'] == resized['grid'] and value['isOwner'] == 'false')
+            self.server.broker.command(Action('scroll', provider, {'position': 'top'}, client='mobile'))
+            expired = self.wait_mobile_notification(provider, lambda value: value['paging'] == 'requiresRecovery')
+            (self.root / f'notifications-{provider}-expired.json').write_text(json.dumps(expired, indent=2))
+            self.act(Action('notificationsBack', provider, client='gestures'))
+            prepared = self.deliver_mobile_stop(provider, 1, 2)
+            self.tap_mobile_notification(provider, prepared)
+            reopened = self.wait_mobile_route(provider, prepared, require_completion_marker=False)
+            if reopened['clientID'] != selected['clientID']:
+                raise InvariantFailure('notification recovery replaced the retained SessionClient')
+            refreshed = self.wait_mobile_notification(provider, lambda value:
+                int(value['historyGeneration']) > int(expired['historyGeneration'])
+                and value['paging'] in ('available', 'complete'))
+            (self.root / f'notifications-{provider}-recovered.json').write_text(json.dumps(
+                {'expired': expired, 'reopened': reopened, 'refreshed': refreshed}, indent=2))
+            gesture_backfill(self, provider, 'notification-retained-reentry')
+            load_history(self, provider, 'notification-retained-reentry', contemporaneous=True)
+            self.act(Action('reconnect', provider, client='mobile'))
+            self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
+                and value['historyGeneration'] != selected['historyGeneration']
+                and value['paging'] not in ('inactive', 'installing'))
+            gesture_backfill(self, provider, 'notification-reconnect')
+            load_history(self, provider, 'notification-reconnect', contemporaneous=True)
+        else:
+            before = self.snapshot(provider, 'mobile')
+            self.act(Action('scroll', provider, {'position': 'top'}, client='gestures'))
+            after = self.wait_mobile_notification(provider, lambda value:
+                value['clientID'] == before['clientID'] and value['isOwner'] == 'true'
+                and int(value.get('applicationScrollDeliveries', 0)) > int(before.get('applicationScrollDeliveries', 0)))
+            require_application_scroll(before, after)
+            # Ownership changes the PTY grid and may reveal transcript merely
+            # through reflow. Require a further drag against the settled owner
+            # viewport so a resize alone cannot satisfy the scrolling oracle.
+            owned_source, _ = self.wait_matching_mobile_viewport(provider)
+            source_rows = row_ids(owned_source['authoritativeText'])
+            def revealed_older(value):
+                rows = row_ids(value['physicalRows'])
+                return bool(rows and (not source_rows or min(rows) < min(source_rows))) or (
+                    f'GRAFTTY_TEST_BEGIN {provider}' in value['physicalRows']
+                    and f'GRAFTTY_TEST_BEGIN {provider}' not in owned_source['authoritativeText'])
+            for _ in range(30):
+                self.act(Action('scroll', provider, {'position': 'top'}, client='gestures'))
+                after = self.snapshot(provider, 'mobile')
+                if revealed_older(after):
+                    break
+            else:
+                # Diagnostic only: retain the failed real-gesture result even
+                # if direct surface wheel input can move the provider.
+                probe_before = self.snapshot(provider, 'mobile')
+                self.server.broker.command(Action('scroll', provider, {'wheelY': '480'}, client='mobile'))
+                time.sleep(.5)
+                probe_after = self.snapshot(provider, 'mobile')
+                (self.root / f'notifications-{provider}-wheel-probe.json').write_text(json.dumps(
+                    {'before': probe_before, 'after': probe_after, 'source': self.act(Action('verify', provider))}, indent=2))
+                raise InvariantFailure(f'{provider}: app scrolling did not reveal older virtualized output')
+            # Current provider viewport is the oracle here. The daemon has no
+            # full transcript prefix to import in fullscreen mode.
+            source_after, after = self.wait_matching_mobile_viewport(provider)
+            if not revealed_older(after):
+                raise InvariantFailure(f'{provider}: older output did not persist in the matching provider viewport')
+            self.act(Action('notificationsCapture', provider, client='gestures'))
+            evidence = {'sourceBefore': source, 'sourceOwnedBeforeFurtherDrag': owned_source,
+                        'sourceAfter': source_after, 'before': before, 'after': after}
+            (self.root / f'notifications-{provider}-application-scroll.json').write_text(json.dumps(evidence, indent=2))
+            self.summary['assertions'].append({'provider': provider, 'applicationScroll': evidence})
+            generation = after['historyGeneration']
+            self.act(Action('reconnect', provider, client='mobile'))
+            self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
+                and value['historyGeneration'] != generation
+                and value['paging'] not in ('inactive', 'installing'))
+        live_marker = f'RECOVERED_{provider.upper()}_{uuid.uuid4().hex}'
+        self.server.models.completion_text = lambda current: live_marker if current == provider else self.markers[current]
+        prompt = f'GRAFTTY_TEST_NEXT_STOP {provider} {uuid.uuid4().hex}'
+        input_state = self.snapshot(provider, 'mobile')
+        self.act(Action('previewInput', provider,
+            {'text': prompt, 'takeControl': str(input_state['isOwner'] != 'true').lower()}, client='gestures'))
+        self.wait_model(lambda: self.model_prompt_receipt(provider, prompt) is not None)
+        live = self.wait_recovery_output(provider, live_marker)
+        self.assert_stops(provider, self.wait_stops(provider, 3, approval_client='mobile'), 3, 'live-input-after-recovery')
+        self.summary['assertions'].append({'provider': provider, 'liveInputAfterRecovery':
+            self.model_prompt_receipt(provider, prompt), 'liveOutputAfterRecovery': live})
+        self.summary['assertions'].append({'provider': provider, 'notificationEntry': True,
+            'historyCoverage': 'classic history verified' if classic else 'default provider UI scroll verified', 'selection': selected})
+
+    def wait_recovery_output(self, provider, marker):
+        return self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
+            and contains_terminal_marker(value['physicalRows'], marker)
+            and value['isOwner'] == 'true', approve_tools=True)
 
     def record_provider_screen(self, provider, stop):
         value = self.act(Action('verify', provider))
@@ -344,6 +480,9 @@ class NotificationRun(Run):
              'unrelatedPane': self.provider_events['codex' if provider == 'claude' else 'claude'][0]['paneSessionName']},
             client='mobile'))
         self.act(Action('notificationsAuthorize', provider, client='gestures'))
+        authorized = self.wait_mobile_notification(provider,
+            lambda value: value.get('authorization') == 'UNAuthorizationStatus(rawValue: 2)')
+        (self.root / f'notifications-{provider}-authorization.json').write_text(json.dumps(authorized, indent=2))
         return prepared
 
     def deliver_mobile_stop(self, provider, index, count):
@@ -373,27 +512,40 @@ class NotificationRun(Run):
         except Exception as error:
             self.summary.setdefault('diagnosticErrors', []).append(str(error))
 
-    def wait_mobile_route(self, provider, prepared):
+    def wait_mobile_route(self, provider, prepared, *, require_completion_marker=True):
         wrong_marker = self.markers['codex' if provider == 'claude' else 'claude']
         selected = self.wait_mobile_notification(provider, lambda value: value['pending'] == 'false'
             and value['selectedHost'] == prepared['expectedHost']
             and value['worktree'] == prepared['expectedWorktree'] and value['pane'] == prepared['expectedPane']
-            and int(value['fetchCount']) > 0
+            and int(value['fetchCount']) > int(prepared.get('fetchCount', 0))
+            and int(value.get('responseCount', 0)) > int(prepared.get('responseCount', 0))
             and value.get('session') == prepared['expectedPane']
             and all(value.get(key) == 'true' for key in ('live', 'mounted', 'surfaceReady'))
             and bool(value.get('nativeGrid'))
             and int(value.get('observationSequence', 0)) > 0
             and float(value.get('observedAt', 0)) > float(prepared['observedAt'])
-            and self.markers[provider] in value.get('physicalRows', '')
+            and (not require_completion_marker or self.markers[provider] in value.get('physicalRows', ''))
             and wrong_marker not in value.get('physicalRows', ''))
         # Capture after the selected native container has fresh target rows,
         # rather than the earlier tap screenshot while it may be reconnecting.
         self.act(Action('notificationsCapture', provider, client='gestures'))
         return selected
 
-    def wait_mobile_notification(self, provider, predicate, timeout=30):
+    def wait_matching_mobile_viewport(self, provider, timeout=30):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            source = self.act(Action('verify', provider))
+            mobile = self.act(Action('notificationsState', provider, client='mobile'))
+            if mobile['nativeGrid'] == source['grid'] and mobile['physicalRows'] == source['physicalRows']:
+                return source, mobile
+            time.sleep(.1)
+        raise InvariantFailure(f'provider/mobile viewports did not converge: {source}, {mobile}')
+
+    def wait_mobile_notification(self, provider, predicate, timeout=30, *, approve_tools=False):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if approve_tools:
+                self.approve_known_tools(client='mobile', agent=provider)
             value = self.act(Action('notificationsState', provider, client='mobile'))
             if predicate(value):
                 return value

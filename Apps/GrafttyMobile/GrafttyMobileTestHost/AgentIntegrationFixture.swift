@@ -192,10 +192,11 @@ final class AgentIntegrationMobileController: UIViewController {
             let fixture = try await NotificationActivationFixture.prepare(command, endpoint: endpoint,
                 fingerprint: AgentIntegrationConnection.fingerprint(registration))
             mountNotificationFixture(fixture)
-            return try fixture.snapshot()
+            return try fixture.snapshot(controller: self)
         }
-        if command.operation.hasPrefix("notifications"), let notificationFixture {
-            return try await notificationFixture.handle(command)
+        if let notificationFixture,
+           command.operation.hasPrefix("notifications") || ["snapshot", "scroll", "loadedHistory", "select", "reconnect", "takeControl", "input"].contains(command.operation) {
+            return try await notificationFixture.handle(command, controller: self)
         }
         if command.operation == "finish" {
             notificationFixture?.finish()
@@ -424,6 +425,12 @@ final class AgentIntegrationMobileController: UIViewController {
             "width": String(Int(pane.container.bounds.width)), "height": String(Int(pane.container.bounds.height)),
             "session": pane.client.sessionName, "paging": pane.client.paging.map { String(describing: $0.status) } ?? "inactive"]
         #if DEBUG
+        values["nativeInputFrames"] = String(pane.client.diagnosticNativeInputFrames)
+        values["nativeMouseReports"] = String(pane.client.diagnosticNativeMouseReports)
+        values["sentInputFrames"] = String(pane.client.diagnosticSentInputFrames)
+        values["sentMouseReports"] = String(pane.client.diagnosticSentMouseReports)
+        values["applicationScrollRequests"] = String(pane.container.diagnosticApplicationScrollRequests)
+        values["applicationScrollDeliveries"] = String(pane.container.diagnosticApplicationScrollDeliveries)
         if let diagnostic = pane.client.paging?.historyDiagnosticsForTesting {
             values["historyGeneration"] = String(diagnostic.generation)
             values["issuedHistoryRequests"] = String(diagnostic.requests)

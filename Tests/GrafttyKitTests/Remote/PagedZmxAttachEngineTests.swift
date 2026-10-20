@@ -5,6 +5,53 @@ import GrafttyProtocol
 @testable import GrafttyKit
 
 struct PagedZmxAttachEngineTests {
+    @Test func mouseRoutingRequiresCompleteReportsOnly() {
+        let press = Data("\u{1b}[<64;24;23M".utf8)
+        let release = Data("\u{1b}[<0;24;23m".utf8)
+        let legacy = Data([0x1b, 0x5b, 0x4d, 96, 0xff, 0x80])
+        for valid in [press, release, legacy, press + release + legacy] {
+            #expect(PagedZmxWire.isMouseReports(valid))
+        }
+        for report in [press, release, legacy] {
+            for length in 0..<report.count {
+                #expect(!PagedZmxWire.isMouseReports(report.prefix(length)))
+            }
+        }
+        for invalid in ["", "x", "\u{1b}[I", "\u{1b}[O", "\u{1b}[A", "\u{1b}[<;1;2M",
+                        "\u{1b}[<64;;2M", "\u{1b}[<64;1;M", "\u{1b}[<64;1;2;3M", "\u{1b}[<a;1;2M"] {
+            #expect(!PagedZmxWire.isMouseReports(Data(invalid.utf8)))
+        }
+        #expect(!PagedZmxWire.isMouseReports(press + Data("x".utf8)))
+    }
+
+    @Test("@spec TERM-12.46: When a display owner sends complete terminal mouse reports through an owner-authorized SSH paged attachment, the application shall deliver those bytes without requiring daemon keyboard leadership, preserve ordinary keyboard leadership and passive input behavior, and keep input in order.")
+    func ownerMouseInputBypassesDaemonKeyboardLeadership() async throws {
+        let mouse = Data("\u{1b}[<64;24;23M\u{1b}[<0;24;23m".utf8)
+        let legacy = Data([0x1b, 0x5b, 0x4d, 96, 56, 55])
+        let keyboard = Data("\u{1b}[A".utf8)
+        let incomplete = Data("\u{1b}[<64;24;".utf8)
+        let mixed = mouse + Data("x".utf8)
+        let frames: [(UInt8, Data)] = [(0, mouse), (18, mouse), (18, legacy),
+            (0, keyboard), (0, incomplete), (0, mixed)]
+        let daemon = try FakePagedDaemon { fd in
+            try FakePagedDaemon.negotiate(fd)
+            for expected in frames {
+                let actual = try FakePagedDaemon.receive(fd)
+                #expect(actual.0 == expected.0)
+                #expect(actual.1 == expected.1)
+            }
+        }
+        defer { daemon.finish() }
+        let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"),
+            zmxDir: daemon.directory, sessionName: "session"))
+        defer { engine.close() }
+        try await engine.start()
+        try await engine.send(mouse)
+        for (_, bytes) in frames.dropFirst() { try await engine.sendOwnerInput(bytes) }
+        #expect(await daemon.waitUntilDone())
+        #expect(daemon.error == nil)
+    }
+
     @Test("@spec TERM-12.11: When a mobile client requests paged attachment, the application shall negotiate support before accepting a bounded current-screen checkpoint and keep live output separate from requested history.")
     func wireSeparatesCheckpointLiveAndHistory() throws {
         var ready = Data()

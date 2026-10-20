@@ -34,6 +34,11 @@ class Action:
     client: str = 'mac'
 
 
+def contains_terminal_marker(text, marker):
+    """Match the complete unique marker across native terminal row wraps."""
+    return marker in re.sub(r'\s+', '', text)
+
+
 def approval_ready(token, text):
     marker = token.split(':', 1)[1]
     if '\n Bash command\n' in text:

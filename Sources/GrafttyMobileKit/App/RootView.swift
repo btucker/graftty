@@ -19,6 +19,8 @@ public struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var iPadAppState = IPadAppState()
     @State private var retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
+    @State private var notificationPaneActivation = MobileNotificationPaneActivation()
+    @State private var notificationActivationPath: NavigationPath?
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     /// Owned here (not per-screen) so a negotiated SSH connection survives
     /// navigation-stack pushes/pops on the compact path and layout
@@ -73,16 +75,27 @@ public struct RootView: View {
             }
         }
         .environment(\.biometricGate, gate)
+        .environment(\.mobileNotificationPaneActivation, notificationPaneActivation)
         .environment(\.recentPaneActions, MobileRecentPaneActions(history: iPadAppState.recentPanes, open: { entry in
             let id = UUID()
             navigationIntent.begin()
+            notificationPaneActivation.cancel()
             if let pending = notifications.pendingRoute { notifications.consume(pending) }
             recentPaneOpeningID = id
             Task { await openRecentPane(entry, openingID: id) }
         }))
-        .onChange(of: navigationPath) { _, _ in recentPaneOpeningID = nil }
+        .onChange(of: navigationPath) { _, path in
+            recentPaneOpeningID = nil
+            // System Back can pop the stack without changing sidebar selection.
+            if let expected = notificationActivationPath, path != expected {
+                notificationPaneActivation.cancel()
+                notificationActivationPath = nil
+            }
+        }
         .onChange(of: notificationSelection) { _, _ in
             recentPaneOpeningID = nil
+            notificationPaneActivation.discard(unlessHostID: iPadAppState.selectedHostId,
+                                               sessionName: iPadAppState.focusedPaneId)
             recordSelectedPane()
         }
         .onChange(of: iPadAppState.latestWorktrees) { _, _ in recordSelectedPane() }
@@ -101,7 +114,11 @@ public struct RootView: View {
             }
         }
         .onChange(of: notifications.pendingRoute) { _, route in
-            if route != nil { navigationIntent.begin(); recentPaneOpeningID = nil }
+            if route != nil {
+                notificationPaneActivation.cancel()
+                navigationIntent.begin()
+                recentPaneOpeningID = nil
+            }
             Task { await activateNotification() }
         }
         .task { await activateNotification() }
@@ -268,6 +285,8 @@ public struct RootView: View {
                 navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
                     showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
             }
+            notificationActivationPath = horizontalSizeClass == .regular ? nil : navigationPath
+            notificationPaneActivation.activate(hostID: host.id, sessionName: target.pane.sessionName)
             notifications.consume(route)
         } catch is CancellationError {
             // Lifecycle cancellation retains the tap for the next activation.
@@ -742,6 +761,7 @@ struct SingleSessionView: View {
     @State private var attentionWorktrees: [WorktreePanes] = []
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
+    @Environment(\.mobileNotificationPaneActivation) private var notificationPaneActivation
 
     @State private var client: SessionClient?
     @State private var connection: ConnectionState = .connecting
@@ -986,6 +1006,7 @@ struct SingleSessionView: View {
            container.controlAttachmentID == paneContainerBox.controlAttachmentID {
             container.detachBrowserControls()
             container.onBackRequested = nil
+            container.onApplicationScrollRequested = nil
             container.resetStickyModifiers()
             container.onTrayShiftSelectionChange = nil
             container.terminalView.resignFirstResponder()
@@ -1217,8 +1238,18 @@ struct SingleSessionView: View {
                 }
             }
             .task(id: AttentionObservationKey(dial: dialKey, focused: isPaneFocused)) { await observeAttention() }
+            .task(id: notificationRecoveryKey) {
+                guard !Task.isCancelled, notificationRecoveryKey.isReady, let client,
+                      client.sessionName == step.sessionName,
+                      notificationPaneActivation?.consume(hostID: step.host.id,
+                                                          sessionName: step.sessionName) == true else { return }
+                if client.paging?.status == .requiresRecovery { await client.paging?.recover() }
+            }
             .onChange(of: client?.connectionState) { _, state in
-                if state != .live { agentCompletion.cancel(preserveLiteral: false) }
+                if state != .live {
+                    paneContainerBox.view?.cancelPendingApplicationScroll()
+                    agentCompletion.cancel(preserveLiteral: false)
+                }
                 guard state == .ended else { return }
                 retainedPanes?.remove(retainedPaneKey)
                 client?.stop()
@@ -1234,16 +1265,34 @@ struct SingleSessionView: View {
                         focusRequestCount &+= 1
                     }
                 } else {
+                    paneContainerBox.view?.cancelPendingApplicationScroll()
                     paneContainerBox.view?.resetStickyModifiers()
                     paneContainerBox.view?.terminalView.resignFirstResponder()
                 }
             }
             .onChange(of: scenePhase) { _, phase in
+                if phase != .active { paneContainerBox.view?.cancelPendingApplicationScroll() }
                 Self.handleAgentCompletionSceneChange(
                     phase, model: agentCompletion,
                     transportIsAvailable: client?.isOwner == true && client?.connectionState == .live
                 )
             }
+    }
+
+    private struct NotificationRecoveryKey: Equatable {
+        let occurrenceID: UUID?
+        let clientID: ObjectIdentifier?
+        let isReady: Bool
+    }
+
+    private var notificationRecoveryKey: NotificationRecoveryKey {
+        // Let a pending page declare expiry before consuming the notification.
+        // Recovery enters .installing itself; that must not cancel this task.
+        .init(occurrenceID: notificationPaneActivation?.request?.id,
+              clientID: client.map(ObjectIdentifier.init),
+              isReady: connection == .live && client?.connectionState == .live && isPaneFocused
+                  && client?.paging?.status != .loading
+                  && scenePhase == .active && gate.isUnlocked)
     }
 
     private var dialKey: DialKey {
@@ -1743,6 +1792,11 @@ struct SingleSessionView: View {
                 client?.wakeRenderer()
                 onPaneInteraction?()
             },
+            onApplicationScrollRequested: { [weak client] in
+                guard let client, client.canTakeControl else { return }
+                keyboardAllowed = false
+                client.takeControl()
+            },
             configuredFontSize: effectiveBaseConfigText.flatMap {
                 GhosttyConfigFetcher.lastFontSize(in: $0).map(Float.init)
             },
@@ -1850,6 +1904,7 @@ struct SingleSessionView: View {
         completionKey: AgentCompletionKey? = nil
     ) -> () -> Void {
         { [paneContainerBox] in
+            paneContainerBox.view?.cancelPendingApplicationScroll()
             paneContainerBox.cancelActiveSelectionIfAny()
             if let completionKey, paneContainerBox.view?.handleAgentCompletionControl(completionKey) == true { return }
             if resetsInputContext { paneContainerBox.view?.terminalView.commitAndResetTextContext() }

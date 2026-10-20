@@ -205,10 +205,12 @@ class Run:
         data = patch_xctestrun(data, str(run_files[0].parent), self.server.endpoint)
         run_file = self.root / 'agent-integration.xctestrun'
         run_file.write_bytes(plistlib.dumps(data))
-        self.mobile_command = ['xcodebuild', '-xctestrun', str(run_file), '-destination', 'platform=iOS Simulator,id=' + self.simulator,
+        self.mobile_command = ['xcodebuild', '-xctestrun', str(run_file), '-derivedDataPath', str(derived), '-destination', 'platform=iOS Simulator,id=' + self.simulator,
             '-resultBundlePath', str(self.root / 'mobile.xcresult'), '-parallel-testing-enabled', 'NO',
             '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests/'
-                + ('testNativeNotificationActivation' if getattr(options, 'notifications', False)
+                + ('testNativeNotificationHistory' if getattr(options, 'notifications', False) and options.notification_case == 'scrollback-classic'
+                   else 'testNativeNotificationApplicationScroll' if getattr(options, 'notifications', False) and options.notification_case == 'scrollback'
+                   else 'testNativeNotificationActivation' if getattr(options, 'notifications', False)
                    else 'testNativeQuickLookRetention' if getattr(options, 'preview', False)
                    else 'testScriptedAgentInteractions'), 'test-without-building']
         self.mobile_environment = build_env
@@ -218,23 +220,28 @@ class Run:
         self.wait_registered('mobile')
         self.wait_registered('gestures')
 
-    def approve_known_tools(self):
+    def approve_known_tools(self, *, client='mac', agent=None):
         with self.server.models.condition:
             pending = dict(self.server.models.pending_tools)
-        for agent, token in pending.items():
-            if (agent, token) in self.approved_tokens or agent not in self.paths:
+        for current, token in pending.items():
+            if agent is not None and current != agent:
                 continue
-            value = self.snapshot(agent)
+            if (current, token) in self.approved_tokens or current not in self.paths:
+                continue
+            value = self.snapshot(current, client)
             text = value.get('nativeText', value['text'])
             # A new model tool can arrive before the old approval UI repaints.
             # Match its unique argument before pressing Enter.
             if approval_ready(token, text):
-                if (agent, token) not in self.approval_candidates:
-                    self.approval_candidates.add((agent, token))
+                if (current, token) not in self.approval_candidates:
+                    self.approval_candidates.add((current, token))
                     continue
-                self.act(Action('input', agent, {'text': ''}))
-                self.approved_tokens.add((agent, token))
-                self.summary['assertions'].append({'agent': agent, 'nativeOneTimeToolApproval': token})
+                if client == 'mobile':
+                    self.act(Action('previewInput', current, {'text': '', 'takeControl': 'false'}, client='gestures'))
+                else:
+                    self.act(Action('input', current, {'text': ''}))
+                self.approved_tokens.add((current, token))
+                self.summary['assertions'].append({'agent': current, 'nativeOneTimeToolApproval': token})
 
     def wait_model(self, predicate, timeout=60):
         self.server.models.wait(predicate, timeout=timeout, tick=self.approve_known_tools)
@@ -661,7 +668,7 @@ def main():
 
     parser.add_argument('--colors', action='store_true', help='Check real Codex syntax, diff, inline-code and link colors in native pixels')
     parser.add_argument('--notifications', action='store_true', help='Capture real provider Stop hooks and exercise native notification replay and activation')
-    parser.add_argument('--notification-case', choices=('all', 'active-retry'), default='all',
+    parser.add_argument('--notification-case', choices=('all', 'active-retry', 'scrollback', 'scrollback-classic'), default='all',
                         help='Select bounded notification cases; active-retry holds the production view scene active')
     parser.add_argument('--device', default='iPhone 17 Pro')
     parser.add_argument('--runtime', help='CoreSimulator runtime identifier; default uses its newest compatible runtime')

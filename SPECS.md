@@ -660,6 +660,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.45** When an older daemon refuses an oversized history page, the application shall report the host page limit without automatic retries and continue live terminal input and output.
 
+**TERM-12.46** When a display owner sends complete terminal mouse reports through an owner-authorized SSH paged attachment, the application shall deliver those bytes without requiring daemon keyboard leadership, preserve ordinary keyboard leadership and passive input behavior, and keep input in order.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -1181,6 +1183,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **NOTIF-1.25** When mobile receives the same input request through direct and relayed connections, the application shall notify once across ledger reloads while preserving later requests and distinct pane slots.
 
 **NOTIF-1.26** While the mobile notification view remains active after a reported reconnect failure, a later same-target notification response shall trigger a fresh activation attempt and display its live session without requiring a scene transition or view remount.
+
+**NOTIF-1.27** When a notification reopens a retained mobile pane whose pending history has expired, the application shall refresh its checkpoint and load older history on scroll demand while preserving the retained client and usable live output and input.
+
+**NOTIF-1.28** When a resolved notification attaches its mobile pane, the application shall consume recovery intent once within that window for the matching host and pane, preserve its in-flight recovery task identity, and discard intent superseded by newer navigation.
 
 ### NOTIF-2.x — Attention Badge Auto-Population
 
@@ -2124,6 +2130,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.39** When mobile terminal writes suspend, the application shall preserve input order through subsequent typing, control keys, owner-transition resizes, and image paste, and discard unsent input when its transport is replaced or its ownership tenure changes.
 
+**IOS-6.40** When the user drags to scroll a mouse-capturing application in a mobile follower pane, the application shall request control and forward the drag after the owner viewport is ready, keep keyboard input disabled until Show keyboard is chosen, and preserve ownership during passive attachment and local scrolling in other panes.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.
@@ -2914,7 +2922,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with a display kind derived from the authenticated peer type and with the authenticated device identity. @spec OWN-1.10: When an authenticated visible interactive SSH client sends hello without an active leader, the host shall acknowledge its automatic leadership and accept terminal input without a Take Control request.
 
-**REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
+**REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot. @spec SSH-1.7: When SSH terminal input passes the display-owner gate, the host shall preserve its authorization through the ordered PTY writer while keeping legacy input and rejected follower input outside that authorized path.
 
 **REMOTE-9.3** When an SSH terminal client issues a take-control request, the host shall apply the same owner-eligibility rules as the web transport.
 
@@ -4301,6 +4309,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.5** While bulk terminal output is active, the application shall deliver interactive terminal bytes and the complete bulk stream over shared or isolated SSH connections.
 
 **SSH-1.6** While forwarding terminal output over SSH, the host shall await each write of at most 16 KiB before sending the next, preserving byte and control-event order so other terminal channels can run between writes.
+
+**SSH-1.7** When SSH terminal input passes the display-owner gate, the host shall preserve its authorization through the ordered PTY writer while keeping legacy input and rejected follower input outside that authorized path.
 
 ## TEST — TEST
 

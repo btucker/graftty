@@ -19,7 +19,7 @@ on:
       notification_case:
         description: Notification case selection
         type: choice
-        options: [all, active-retry]
+        options: [all, active-retry, scrollback, scrollback-classic]
         default: all
         required: false
       preview:
@@ -146,6 +146,7 @@ jobs:
           scenario=()
           if [[ "$TEST_NOTIFICATIONS" == true ]]; then
             scenario+=(--notifications --notification-case "$TEST_NOTIFICATION_CASE")
+            if [[ "$TEST_NOTIFICATION_CASE" == scrollback* ]]; then scenario+=(--rows 600); fi
           fi
           if [[ "$TEST_HISTORY" == true ]]; then scenario=(--history --rows 600); fi
           if [[ "$TEST_WORKTREE_CREATION" == true ]]; then

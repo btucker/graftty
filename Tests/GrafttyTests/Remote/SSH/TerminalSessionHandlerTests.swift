@@ -445,7 +445,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
     /// @spec OWN-1.10: When an authenticated visible interactive SSH client sends hello without an active leader, the host shall acknowledge its automatic leadership and accept terminal input without a Take Control request.
     func testAttachRegistersMacClientWithAuthenticatedKindAndDeviceIdentity() async throws {
         let received = NIOLockedValueBox<[Data]>([])
-        let stream = EchoStream { data in received.withLockedValue { $0.append(data) } }
+        let stream = EchoStream(onInput: { data in received.withLockedValue { $0.append(data) } })
         let factory = RecordingStreamFactory(returning: .success(stream))
         let store = SessionDisplayOwnershipStore()
         let broadcaster = DisplayOwnershipBroadcaster()
@@ -496,8 +496,10 @@ final class TerminalSessionHandlerTests: XCTestCase {
     }
 
     /// @spec REMOTE-9.2: While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
+    /// @spec SSH-1.7: When SSH terminal input passes the display-owner gate, the host shall preserve its authorization through the ordered PTY writer while keeping legacy input and rejected follower input outside that authorized path.
     func testNonOwnerBytesAreDiscardedAndSnapshotIsRebroadcast() async throws {
-        let stream = EchoStream()
+        let authorized = NIOLockedValueBox<[Data]>([])
+        let stream = EchoStream(onOwnerInput: { bytes in authorized.withLockedValue { $0.append(bytes) } })
         let factory = RecordingStreamFactory(returning: .success(stream))
         let store = SessionDisplayOwnershipStore()
         let activeLeader = DisplayClientID("active-mac")
@@ -517,6 +519,11 @@ final class TerminalSessionHandlerTests: XCTestCase {
         try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
         try await sendShellRequest(channel)
         try await waitUntil { capture.successCount >= 3 }
+
+        let legacy = Data("legacy".utf8)
+        try await channel.writeInbound(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(bytes: legacy))))
+        _ = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+        XCTAssertTrue(authorized.withLockedValue { $0.isEmpty })
 
         try await sendControlEnvelope(channel, .hello(
             clientID: DisplayClientID("ipad-1"),
@@ -546,6 +553,18 @@ final class TerminalSessionHandlerTests: XCTestCase {
         // discarded before reaching `EchoStream`/the PTY.
         let leftover = try await channel.readOutbound(as: SSHChannelData.self)
         XCTAssertNil(leftover, "non-owner bytes must not reach the PTY")
+        XCTAssertTrue(authorized.withLockedValue { $0.isEmpty })
+
+        try await sendControlEnvelope(channel, .takeControl(clientID: DisplayClientID("ipad-1"),
+            kind: .ios, cols: 80, rows: 24))
+        _ = try await nextOutboundEnvelope(channel)
+        let mouse = Data("\u{1b}[<64;24;23M".utf8)
+        let key = Data("x".utf8)
+        for input in [mouse, key] {
+            try await channel.writeInbound(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(bytes: input))))
+        }
+        try await waitUntil { authorized.withLockedValue { $0.count == 2 } }
+        XCTAssertEqual(authorized.withLockedValue { $0 }, [mouse, key])
 
         _ = try? await channel.finish()
     }
@@ -1501,9 +1520,12 @@ private final class EchoStream: TerminalByteStream, @unchecked Sendable {
     private let continuation: AsyncStream<Data>.Continuation
     let inboundBytes: AsyncStream<Data>
     private let onInput: @Sendable (Data) -> Void
+    private let onOwnerInput: @Sendable (Data) -> Void
 
-    init(onInput: @escaping @Sendable (Data) -> Void = { _ in }) {
+    init(onOwnerInput: @escaping @Sendable (Data) -> Void = { _ in },
+         onInput: @escaping @Sendable (Data) -> Void = { _ in }) {
         self.onInput = onInput
+        self.onOwnerInput = onOwnerInput
         var cont: AsyncStream<Data>.Continuation!
         self.inboundBytes = AsyncStream { c in cont = c }
         self.continuation = cont
@@ -1512,6 +1534,11 @@ private final class EchoStream: TerminalByteStream, @unchecked Sendable {
     func send(_ bytes: Data) async throws {
         onInput(bytes)
         continuation.yield(bytes)
+    }
+
+    func sendOwnerInput(_ bytes: Data) async throws {
+        onOwnerInput(bytes)
+        try await send(bytes)
     }
 
     func close() async {

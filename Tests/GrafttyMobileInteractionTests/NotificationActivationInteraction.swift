@@ -14,7 +14,15 @@ extension AgentNativeInteractionTests {
             add(attachment)
         }
         var result = ["performed": command.operation]
-        if command.operation == "notificationsCapture" {
+        if command.operation == "notificationsBack" {
+            let back = app.buttons["Back to worktrees"]
+            guard back.waitForExistence(timeout: 5) else { throw AgentIntegrationError("notification terminal Back missing") }
+            back.tap()
+            guard app.otherElements["Agent integration terminal"].waitForNonExistence(timeout: 5) else {
+                throw AgentIntegrationError("notification terminal stayed mounted after Back")
+            }
+            return ["performed": command.operation, "terminalDetached": "true"]
+        } else if command.operation == "notificationsCapture" {
             guard app.state == .runningForeground,
                   app.staticTexts["Notification activation selection"].exists else {
                 throw AgentIntegrationError("Cannot capture notification terminal without foreground production RootView")
@@ -34,8 +42,19 @@ extension AgentNativeInteractionTests {
             return ["performed": command.operation, "errorTitle": "Could not open notification", "errorMessage": message]
         } else if command.operation == "notificationsAuthorize" {
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-            let allow = springboard.buttons["Allow"].firstMatch
-            if allow.waitForExistence(timeout: 5) { allow.tap() }
+            let permission = springboard.alerts.containing(.staticText,
+                identifier: "Notifications may include alerts, sounds, and icon badges. These can be configured in Settings.").firstMatch
+            if permission.waitForExistence(timeout: 5) {
+                let allow = permission.buttons["Allow"]
+                for _ in 0..<2 {
+                    guard allow.waitForExistence(timeout: 2), allow.isHittable else { break }
+                    allow.tap()
+                    if permission.waitForNonExistence(timeout: 5) { break }
+                }
+                guard permission.waitForNonExistence(timeout: 2) else {
+                    throw AgentIntegrationError("Notification authorization prompt stayed visible after Allow")
+                }
+            }
             return ["performed": command.operation]
         } else if command.operation == "notificationsNavigate" {
             let button = app.buttons["Notification choose unrelated pane"]
@@ -51,7 +70,10 @@ extension AgentNativeInteractionTests {
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             let banner = springboard.staticTexts[title].firstMatch
             var usedNotificationCenter = false
-            if !banner.waitForExistence(timeout: 2) {
+            // Warm fixtures schedule the original request after this native
+            // worker is ready. A foreground banner need not persist in the
+            // Notification Center list; catch it while it is actually visible.
+            if !banner.waitForExistence(timeout: lifecycle == "warm" ? 10 : 2) {
                 // Open Notification Center for a delivered alert whose banner
                 // expired. The same gesture works from the app and Home screen.
                 let screen = springboard.frame
@@ -61,7 +83,27 @@ extension AgentNativeInteractionTests {
                 start.press(forDuration: 0.05, thenDragTo: end)
                 usedNotificationCenter = true
             }
+            if usedNotificationCenter {
+                // Foreground alerts can already be in notification history,
+                // below the cover sheet's incoming page. Drag within the lower
+                // notification list; its empty background can leave it collapsed.
+                for attempt in 1...3 {
+                    if banner.waitForExistence(timeout: 2) { break }
+                    let start = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+                    let end = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+                    start.press(forDuration: 0.05, thenDragTo: end)
+                    result["notificationHistorySwipes"] = String(attempt)
+                    let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                    attachment.name = "notification-history-\(command.id)-\(attempt)"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                }
+            }
             guard banner.waitForExistence(timeout: 10) else {
+                let hierarchy = XCTAttachment(string: springboard.debugDescription)
+                hierarchy.name = "notification-center-hierarchy-\(command.id)"
+                hierarchy.lifetime = .keepAlways
+                add(hierarchy)
                 throw AgentIntegrationError("Native notification '\(title)' did not appear in Simulator Notification Center")
             }
             banner.tap()

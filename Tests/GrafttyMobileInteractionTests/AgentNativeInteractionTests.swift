@@ -14,6 +14,16 @@ final class AgentNativeInteractionTests: XCTestCase {
         try await runScriptedInteractions()
     }
 
+    /// @spec IOS-6.40: When the user drags to scroll a mouse-capturing application in a mobile follower pane, the application shall request control and forward the drag after the owner viewport is ready, keep keyboard input disabled until Show keyboard is chosen, and preserve ownership during passive attachment and local scrolling in other panes.
+    func testNativeNotificationApplicationScroll() async throws {
+        try await runScriptedInteractions()
+    }
+
+    /// @spec NOTIF-1.27: When a notification reopens a retained mobile pane whose pending history has expired, the application shall refresh its checkpoint and load older history on scroll demand while preserving the retained client and usable live output and input.
+    func testNativeNotificationHistory() async throws {
+        try await runScriptedInteractions()
+    }
+
     /// @spec TEST-1.13: When a Quick Look integration run drives both provider TUIs, the test harness shall type unique prompts through the native keyboard, open and dismiss the production preview, capture every action, and fail unless all required retained and transient pane cases finish successfully.
     func testNativeQuickLookRetention() async throws {
         try await runScriptedInteractions()
@@ -36,7 +46,7 @@ final class AgentNativeInteractionTests: XCTestCase {
                 finishedSuccessfully = command.parameters["result"] == "passed"
                 return [:]
             }
-            if ["notificationsTap", "notificationsNavigate", "notificationsAuthorize", "notificationsDismissError", "notificationsCapture"].contains(command.operation) {
+            if ["notificationsTap", "notificationsNavigate", "notificationsAuthorize", "notificationsDismissError", "notificationsCapture", "notificationsBack"].contains(command.operation) {
                 return try self.performNotificationGesture(command, app: app)
             }
             if command.operation.hasPrefix("preview") {
@@ -48,7 +58,16 @@ final class AgentNativeInteractionTests: XCTestCase {
                 let wide = (Double(command.parameters["width"] ?? "0") ?? 0) > (Double(command.parameters["height"] ?? "0") ?? 0)
                 XCUIDevice.shared.orientation = wide ? .landscapeLeft : .portrait
             case "scroll":
-                if command.parameters["position"] == "bottom" { terminal.swipeUp(velocity: .fast) }
+                if let encodedFrame = command.parameters["visibleFrame"] {
+                    let frame = NSCoder.cgRect(for: encodedFrame)
+                    XCTAssertFalse(frame.isEmpty, "Scroll must target the visibly mounted terminal")
+                    let origin = app.coordinate(withNormalizedOffset: .zero)
+                    let down = command.parameters["position"] != "bottom"
+                    let start = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (down ? 0.3 : 0.7)))
+                    let end = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (down ? 0.7 : 0.3)))
+                    start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
+                }
+                else if command.parameters["position"] == "bottom" { terminal.swipeUp(velocity: .fast) }
                 else {
                     let start = terminal.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
                     let end = terminal.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
@@ -89,7 +108,11 @@ final class AgentNativeInteractionTests: XCTestCase {
                 try require(control.waitForNonExistence(timeout: 10), "production Take Control did not acquire ownership")
             }
             if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
-                let keyboard = app.buttons.matching(NSPredicate(format: "label == %@", "Show keyboard")).firstMatch
+                // The underlying fixture also has a hidden Show keyboard
+                // button. Only the production affordance grants input after
+                // application scrolling deliberately leaves it disabled.
+                let keyboard = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@",
+                    "Show keyboard", "Agent integration show keyboard")).firstMatch
                 if keyboard.waitForExistence(timeout: 5), keyboard.isHittable { keyboard.tap() }
                 else { terminal.tap() }
             }

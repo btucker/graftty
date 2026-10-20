@@ -6,13 +6,81 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from harness import InvariantFailure, Broker
+from harness import Action, InvariantFailure, Broker
 from server import ModelState
 from model import model_events
-from notifications import NotificationRun, assert_notification_evidence, verify_attention_isolation, notification_scenario_text
+from notifications import NotificationRun, assert_notification_evidence, verify_attention_isolation, notification_scenario_text, require_application_scroll
 
 
 class NotificationEvidenceTests(unittest.TestCase):
+    def test_recovery_output_accepts_physical_wrap_without_relaxing_live_owner_checks(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        marker = 'RECOVERED_CLAUDE_6eaf5f2e315f4010a5eab4ad5a570d44'
+        visible = {'live': 'true', 'isOwner': 'true',
+                   'physicalRows': '⏺ RECOVERED_CLAUDE_6eaf5f2e315f4010a5eab4ad5a57\n  0d44\n'}
+        decisions = []
+        def observe(provider, predicate, **kwargs):
+            self.assertEqual('claude', provider)
+            self.assertTrue(kwargs['approve_tools'])
+            decisions.extend(predicate(value) for value in (
+                visible, {**visible, 'live': 'false'}, {**visible, 'isOwner': 'false'},
+                {**visible, 'physicalRows': 'RECOVERED_CLAUDE_other'},
+                {**visible, 'physicalRows': marker.replace('5a57', '5a58')}))
+            return visible
+        runner.wait_mobile_notification = observe
+        self.assertEqual(visible, runner.wait_recovery_output('claude', marker))
+        self.assertEqual([True, False, False, False, False], decisions)
+
+    def test_notification_delivery_setup_waits_for_authorized_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = NotificationRun.__new__(NotificationRun)
+            runner.root = Path(directory)
+            runner.provider_events = {'codex': [{'paneSessionName': 'other-pane'}]}
+            prepared = {'title': 'Agent fixture claude'}
+            runner.act = Mock(return_value=prepared)
+            authorized = {'authorization': 'UNAuthorizationStatus(rawValue: 2)'}
+            runner.wait_mobile_notification = Mock(return_value=authorized)
+            self.assertEqual(prepared, runner.prepare_mobile_notifications('claude', [], 'warm'))
+            predicate = runner.wait_mobile_notification.call_args.args[1]
+            self.assertFalse(predicate({'authorization': 'UNAuthorizationStatus(rawValue: 0)'}))
+            self.assertTrue(predicate(authorized))
+            self.assertEqual(authorized, json.loads((runner.root / 'notifications-claude-authorization.json').read_text()))
+
+    def test_live_output_wait_handles_known_mobile_tool_approval(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        runner.act = Mock(return_value={'live': 'true'})
+        runner.approve_known_tools = Mock()
+        runner.wait_mobile_notification('claude', lambda value: value['live'] == 'true', approve_tools=True)
+        runner.approve_known_tools.assert_called_once_with(client='mobile', agent='claude')
+
+    def test_application_scroll_rejects_keyboard_opening_during_takeover(self):
+        before = {'isOwner': 'false', 'isMouseCaptured': 'true', 'clientID': 'retained'}
+        after = {'isOwner': 'true', 'clientID': 'retained', 'applicationScrollDeliveries': '1', 'keyboard': 'true'}
+        with self.assertRaisesRegex(InvariantFailure, 'opened keyboard input'):
+            require_application_scroll(before, after)
+
+    def test_native_drag_targets_current_visible_terminal_instead_of_container_blank_space(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = NotificationRun.__new__(NotificationRun)
+            runner.root = Path(directory)
+            runner.notification_actions = []
+            frame = '{{0, 608}, {402, 265}}'
+            with patch('run.Run.act', side_effect=[{'visibleFrame': frame}, {'performed': 'scroll'}]) as act:
+                runner.act(Action('scroll', 'claude', {'position': 'top'}, client='gestures'))
+            self.assertEqual('notificationsState', act.call_args_list[0].args[0].operation)
+            self.assertEqual(frame, act.call_args_list[1].args[0].parameters['visibleFrame'])
+
+    def test_viewport_comparison_refreshes_source_after_delayed_redraw(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        source_a = {'grid': '80x24', 'physicalRows': 'old viewport'}
+        source_b = {'grid': '40x40', 'physicalRows': 'older transcript'}
+        mobile_b = {'nativeGrid': '40x40', 'physicalRows': 'older transcript'}
+        runner.act = Mock(side_effect=[source_a, mobile_b, source_b, mobile_b])
+        with patch('notifications.time.sleep'):
+            source, mobile = runner.wait_matching_mobile_viewport('claude')
+        self.assertEqual(source_b, source)
+        self.assertEqual(mobile_b, mobile)
+
     def test_tap_failure_preserves_delivery_state_without_retry_or_masking_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = NotificationRun.__new__(NotificationRun)
@@ -88,7 +156,7 @@ class NotificationEvidenceTests(unittest.TestCase):
         prepared = {'expectedHost': 'host', 'expectedWorktree': 'worktree', 'expectedPane': 'target',
                     'observationSequence': '5', 'observedAt': '100.0'}
         valid = {'pending': 'false', 'selectedHost': 'host', 'worktree': 'worktree', 'pane': 'target',
-                 'fetchCount': '1', 'session': 'target', 'live': 'true', 'mounted': 'true',
+                 'fetchCount': '1', 'responseCount': '1', 'session': 'target', 'live': 'true', 'mounted': 'true',
                  'surfaceReady': 'true', 'physicalRows': 'NOTIFY_CLAUDE_123', 'nativeGrid': '30x80',
                  'observationSequence': '1', 'observedAt': '101.0'}
         candidates = [valid]
@@ -223,6 +291,16 @@ class NotificationEvidenceTests(unittest.TestCase):
             observed = runner.wait_stops('codex', 1)
         with self.assertRaises(InvariantFailure):
             assert_notification_evidence(observed, 'codex', '/fixture/worktree', 1)
+
+    def test_recovery_stop_wait_keeps_late_tool_approval_on_mobile(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        runner.approve_known_tools = Mock()
+        runner.evidence = Mock(return_value=self.observation([self.event()]))
+        with patch('notifications.time.monotonic', side_effect=[0, 0, 0, 1.1, 1.1]), \
+             patch('notifications.time.sleep'):
+            runner.wait_stops('claude', 1, approval_client='mobile')
+        for call in runner.approve_known_tools.call_args_list:
+            self.assertEqual({'client': 'mobile', 'agent': 'claude'}, call.kwargs)
 
     def test_isolation_fails_closed_for_old_cli_or_different_directory(self):
         with tempfile.TemporaryDirectory() as directory:

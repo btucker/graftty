@@ -122,7 +122,11 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// reach the PTY out of order. The stream is bounded: if a stalled PTY
     /// cannot keep up, the channel closes instead of retaining attacker-
     /// controlled input without limit.
-    private var ptyWriteContinuation: AsyncStream<Data>.Continuation?
+    private struct PTYWrite: Sendable {
+        let data: Data
+        let ownerAuthorized: Bool
+    }
+    private var ptyWriteContinuation: AsyncStream<PTYWrite>.Continuation?
     private var ptyWriterTask: Task<Void, Never>?
     private static let maxPendingPTYWriteChunks = 256
 
@@ -368,22 +372,23 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// only path by which inbound bytes reach `stream.send`, preserving
     /// wire order end-to-end (see `ptyWriteContinuation`).
     private func startPTYWriter(stream: any TerminalIO) {
-        var continuation: AsyncStream<Data>.Continuation!
-        let pipe = AsyncStream<Data>(
+        var continuation: AsyncStream<PTYWrite>.Continuation!
+        let pipe = AsyncStream<PTYWrite>(
             bufferingPolicy: .bufferingOldest(Self.maxPendingPTYWriteChunks)
         ) { continuation = $0 }
         ptyWriteContinuation = continuation
         ptyWriterTask = Task {
             for await chunk in pipe {
                 guard !Task.isCancelled else { return }
-                try? await stream.send(chunk)
+                if chunk.ownerAuthorized { try? await stream.sendOwnerInput(chunk.data) }
+                else { try? await stream.send(chunk.data) }
             }
         }
     }
 
-    private func enqueuePTYWrite(_ data: Data, channel: Channel) {
+    private func enqueuePTYWrite(_ data: Data, channel: Channel, ownerAuthorized: Bool = false) {
         guard let continuation = ptyWriteContinuation else { return }
-        switch continuation.yield(data) {
+        switch continuation.yield(PTYWrite(data: data, ownerAuthorized: ownerAuthorized)) {
         case .enqueued:
             return
         case .dropped:
@@ -469,7 +474,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             write: { [weak self] data in
                 // Ordinary input and the image commit continuation both
                 // run on this event loop, preserving the FIFO enqueue.
-                self?.enqueuePTYWrite(data, channel: channel)
+                self?.enqueuePTYWrite(data, channel: channel, ownerAuthorized: true)
             },
             followDisplayGrid: { [weak self, ownershipStore] snapshot in
                 loop.execute {

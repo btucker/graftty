@@ -151,9 +151,22 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
     }
 
     public func send(_ bytes: Data) async throws {
+        try send(bytes, ownerAuthorized: false)
+    }
+
+    public func sendOwnerInput(_ bytes: Data) async throws {
+        try send(bytes, ownerAuthorized: true)
+    }
+
+    private func send(_ bytes: Data, ownerAuthorized: Bool) throws {
         guard !bytes.isEmpty else { return }
         guard attachmentRegistry?.prepareForInput(sessionName: config.sessionName) != false else { throw Error.closed }
-        try sendFrame(tag: 0, payload: bytes)
+        // zmx's Input command discards nonleader mouse reports. Graftty has
+        // already authorized this display owner, so use the existing Send
+        // command for complete reports. Keyboard input retains zmx's normal
+        // leadership transfer and resize handshake, including on old daemons.
+        let tag: UInt8 = ownerAuthorized && PagedZmxWire.isMouseReports(bytes) ? 18 : 0
+        try sendFrame(tag: tag, payload: bytes)
         inputState?.recordInput(bytes, forSession: config.sessionName)
     }
     public func resize(cols: UInt16, rows: UInt16) {
@@ -327,6 +340,35 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
 
 /// zmx's packed IPC header occupies eight bytes; its u32 length starts at byte one.
 enum PagedZmxWire {
+    static func isMouseReports(_ data: Data) -> Bool {
+        data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            var index = 0
+            while index < bytes.count {
+                guard bytes.count - index >= 3, bytes[index] == 0x1b, bytes[index + 1] == 0x5b else { return false }
+                switch bytes[index + 2] {
+                case 0x4d: // X10: CSI M followed by three opaque coordinate bytes.
+                    guard bytes.count - index >= 6 else { return false }
+                    index += 6
+                case 0x3c: // SGR: CSI < button ; column ; row M/m.
+                    index += 3
+                    for field in 0..<3 {
+                        let start = index
+                        while index < bytes.count, (48...57).contains(bytes[index]) { index += 1 }
+                        guard index > start, index < bytes.count else { return false }
+                        if field < 2 {
+                            guard bytes[index] == 0x3b else { return false }
+                        } else {
+                            guard bytes[index] == 0x4d || bytes[index] == 0x6d else { return false }
+                        }
+                        index += 1
+                    }
+                default: return false
+                }
+            }
+            return !bytes.isEmpty
+        }
+    }
+
     static func frame(tag: UInt8, payload: Data) -> Data {
         var result = Data([tag]); result.appendLE(UInt32(payload.count))
         result.append(contentsOf: [0, 0, 0]); result.append(payload)

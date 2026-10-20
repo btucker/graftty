@@ -5,17 +5,12 @@ import re
 import time
 import uuid
 
-from harness import Action, InvariantFailure
+from harness import Action, InvariantFailure, contains_terminal_marker
 from model import reentry_scenario_text
 
 IDENTITIES = ('session', 'clientID', 'containerID', 'surfaceID', 'channelID', 'channelOpens',
               'ownerIdentity', 'owner', 'epoch', 'revision', 'grid', 'nativeGrid',
               'attachmentID', 'navigationID', 'channelCloses')
-
-
-def contains_terminal_marker(text, marker):
-    """Match the complete unique marker across native terminal row wraps."""
-    return marker in re.sub(r'\s+', '', text)
 
 
 def require_continuity(before, after, *, covered=False):
