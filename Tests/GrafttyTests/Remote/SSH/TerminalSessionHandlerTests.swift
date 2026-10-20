@@ -445,7 +445,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
     /// @spec OWN-1.10: When an authenticated visible interactive SSH client sends hello without an active leader, the host shall acknowledge its automatic leadership and accept terminal input without a Take Control request.
     func testAttachRegistersMacClientWithAuthenticatedKindAndDeviceIdentity() async throws {
         let received = NIOLockedValueBox<[Data]>([])
-        let stream = EchoStream { data in received.withLockedValue { $0.append(data) } }
+        let stream = EchoStream(onInput: { data in received.withLockedValue { $0.append(data) } })
         let factory = RecordingStreamFactory(returning: .success(stream))
         let store = SessionDisplayOwnershipStore()
         let broadcaster = DisplayOwnershipBroadcaster()
