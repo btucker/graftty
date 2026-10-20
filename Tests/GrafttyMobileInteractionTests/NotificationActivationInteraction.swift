@@ -69,15 +69,27 @@ extension AgentNativeInteractionTests {
                 start.press(forDuration: 0.05, thenDragTo: end)
                 usedNotificationCenter = true
             }
-            if usedNotificationCenter, !banner.waitForExistence(timeout: 2) {
+            if usedNotificationCenter {
                 // Foreground alerts can already be in notification history,
-                // below the cover sheet's incoming-notification page.
-                let start = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
-                let end = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
-                start.press(forDuration: 0.05, thenDragTo: end)
-                result["revealedNotificationHistory"] = "true"
+                // below the cover sheet's incoming page. Drag within the lower
+                // notification list; its empty background can leave it collapsed.
+                for attempt in 1...3 {
+                    if banner.waitForExistence(timeout: 2) { break }
+                    let start = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+                    let end = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+                    start.press(forDuration: 0.05, thenDragTo: end)
+                    result["notificationHistorySwipes"] = String(attempt)
+                    let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                    attachment.name = "notification-history-\(command.id)-\(attempt)"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                }
             }
             guard banner.waitForExistence(timeout: 10) else {
+                let hierarchy = XCTAttachment(string: springboard.debugDescription)
+                hierarchy.name = "notification-center-hierarchy-\(command.id)"
+                hierarchy.lifetime = .keepAlways
+                add(hierarchy)
                 throw AgentIntegrationError("Native notification '\(title)' did not appear in Simulator Notification Center")
             }
             banner.tap()
