@@ -276,7 +276,7 @@ final class NotificationActivationFixture {
         case "notificationsScroll", "notificationsLoadedHistory", "notificationsReconnect", "notificationsTakeControl", "notificationsInput":
             guard let hostID = state.selectedHostId, let session = state.focusedPaneId,
                   let pane = retainedPanes.cached(.init(hostID: hostID, sessionName: session)),
-                  let surface = pane.container?.terminalView.surface else {
+                  let container = pane.container, let surface = container.terminalView.surface else {
                 throw AgentIntegrationError("selected notification terminal missing")
             }
             if operation == "notificationsReconnect" { pane.client.forceReconnectNow() }
@@ -285,8 +285,13 @@ final class NotificationActivationFixture {
                 pane.client.sendSoftwareKeyboardText(command.parameters["text"] ?? "")
                 pane.client.submitReturn()
             } else if operation == "notificationsScroll" {
-                let action = command.parameters["position"] == "bottom" ? "scroll_to_bottom" : "scroll_to_top"
-                guard surface.performAction(action) else { throw AgentIntegrationError("notification scroll rejected") }
+                if let encoded = command.parameters["wheelY"], let delta = Double(encoded) {
+                    surface.sendMousePos(x: container.terminalView.bounds.midX, y: container.terminalView.bounds.midY)
+                    surface.sendMouseScroll(x: 0, y: delta)
+                } else {
+                    let action = command.parameters["position"] == "bottom" ? "scroll_to_bottom" : "scroll_to_top"
+                    guard surface.performAction(action) else { throw AgentIntegrationError("notification scroll rejected") }
+                }
             } else {
                 guard surface.performAction("select_all") else { throw AgentIntegrationError("notification history read rejected") }
                 defer { _ = surface.performAction("clear_selection") }

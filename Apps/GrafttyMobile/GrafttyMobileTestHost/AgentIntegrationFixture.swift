@@ -259,13 +259,6 @@ final class AgentIntegrationMobileController: UIViewController {
                 pane.client.forceReconnectNow()
                 try await waitForOwnership(pane.client)
             case "scroll":
-                if let encoded = command.parameters["wheelY"], let delta = Double(encoded),
-                   let surface = pane.container.terminalView.surface {
-                    surface.sendMousePos(x: pane.container.terminalView.bounds.midX,
-                                         y: pane.container.terminalView.bounds.midY)
-                    surface.sendMouseScroll(x: 0, y: delta)
-                    break
-                }
                 var action = command.parameters["position"] == "bottom" ? "scroll_to_bottom" : "scroll_to_top"
                 if command.parameters["position"] == "middle", let bar = pane.container.snapshotScrollView.scrollbar {
                     action = "scroll_to_row:\((bar.total - min(bar.total, bar.len)) / 2)"

@@ -322,6 +322,8 @@ class NotificationRun(Run):
             # Current provider viewport is the oracle here. The daemon has no
             # full transcript prefix to import in fullscreen mode.
             source_after, after = self.wait_matching_mobile_viewport(provider)
+            if not revealed_older(after):
+                raise InvariantFailure(f'{provider}: older output did not persist in the matching provider viewport')
             self.act(Action('notificationsCapture', provider, client='gestures'))
             evidence = {'sourceBefore': source, 'sourceOwnedBeforeFurtherDrag': owned_source,
                         'sourceAfter': source_after, 'before': before, 'after': after}
