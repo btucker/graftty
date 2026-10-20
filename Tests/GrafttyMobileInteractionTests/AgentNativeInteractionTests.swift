@@ -14,6 +14,12 @@ final class AgentNativeInteractionTests: XCTestCase {
         try await runScriptedInteractions()
     }
 
+    /// Captures default provider virtualization separately from the classic-mode
+    /// history regression. A pass here establishes navigation and diagnostics only.
+    func testNativeNotificationScrollDiagnostic() async throws {
+        try await runScriptedInteractions()
+    }
+
     /// @spec NOTIF-1.27: When a notification reopens a retained mobile pane whose pending history has expired, the application shall refresh its checkpoint and load older history on scroll demand while preserving the retained client and usable live output and input.
     func testNativeNotificationHistory() async throws {
         try await runScriptedInteractions()

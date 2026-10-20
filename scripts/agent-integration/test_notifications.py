@@ -88,7 +88,7 @@ class NotificationEvidenceTests(unittest.TestCase):
         prepared = {'expectedHost': 'host', 'expectedWorktree': 'worktree', 'expectedPane': 'target',
                     'observationSequence': '5', 'observedAt': '100.0'}
         valid = {'pending': 'false', 'selectedHost': 'host', 'worktree': 'worktree', 'pane': 'target',
-                 'fetchCount': '1', 'session': 'target', 'live': 'true', 'mounted': 'true',
+                 'fetchCount': '1', 'responseCount': '1', 'session': 'target', 'live': 'true', 'mounted': 'true',
                  'surfaceReady': 'true', 'physicalRows': 'NOTIFY_CLAUDE_123', 'nativeGrid': '30x80',
                  'observationSequence': '1', 'observedAt': '101.0'}
         candidates = [valid]

@@ -224,7 +224,8 @@ class NotificationRun(Run):
         # Catch delayed files that arrived while the native mobile scenarios
         # were running, including files from the earlier provider.
         for provider in ('claude', 'codex'):
-            self.assert_stops(provider, self.evidence(provider, 'final'), 2, 'final-provider-count')
+            count = 3 if self.options.notification_case == 'scrollback-classic' else 2
+            self.assert_stops(provider, self.evidence(provider, 'final'), count, 'final-provider-count')
             self.model_prompt_receipt(provider, next_stop_prompts[provider])
 
     def scrollback_scenarios(self, provider, events):
@@ -243,23 +244,40 @@ class NotificationRun(Run):
             # Expire the still-unloaded prefix through a real source resize.
             # Scrolling then makes the stale native checkpoint observable.
             self.act(Action('resize', provider, {'width': '900', 'height': '640'}))
+            resized = self.wait_snapshot(provider, lambda value: value['grid'] != source['grid']
+                and value['grid'] == value['nativeGrid'] and value['isOwner'] == 'true')
+            self.wait_mobile_notification(provider, lambda value: value['grid'] == resized['grid']
+                and value['nativeGrid'] == resized['grid'] and value['isOwner'] == 'false')
             self.server.broker.command(Action('scroll', provider, {'position': 'top'}, client='mobile'))
             expired = self.wait_mobile_notification(provider, lambda value: value['paging'] == 'requiresRecovery')
             (self.root / f'notifications-{provider}-expired.json').write_text(json.dumps(expired, indent=2))
             self.act(Action('notificationsBack', provider, client='gestures'))
             prepared = self.deliver_mobile_stop(provider, 1, 2)
             self.tap_mobile_notification(provider, prepared)
-            reopened = self.wait_mobile_route(provider, prepared)
+            reopened = self.wait_mobile_route(provider, prepared, require_completion_marker=False)
             if reopened['clientID'] != selected['clientID']:
                 raise InvariantFailure('notification recovery replaced the retained SessionClient')
-            if reopened['paging'] == 'requiresRecovery':
-                raise InvariantFailure(f'{provider}: notification reopened stale history without recovery')
+            refreshed = self.wait_mobile_notification(provider, lambda value:
+                int(value['historyGeneration']) > int(expired['historyGeneration'])
+                and value['paging'] in ('available', 'complete'))
+            (self.root / f'notifications-{provider}-recovered.json').write_text(json.dumps(
+                {'expired': expired, 'reopened': reopened, 'refreshed': refreshed}, indent=2))
             load_history(self, provider, 'notification-retained-reentry', contemporaneous=True)
             self.act(Action('reconnect', provider, client='mobile'))
             self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
                 and value['historyGeneration'] != selected['historyGeneration']
                 and value['paging'] not in ('inactive', 'installing'))
             load_history(self, provider, 'notification-reconnect', contemporaneous=True)
+            live_marker = f'RECOVERED_{provider.upper()}_{uuid.uuid4().hex}'
+            self.server.models.completion_text = lambda current: live_marker if current == provider else self.markers[current]
+            prompt = f'GRAFTTY_TEST_NEXT_STOP {provider} {uuid.uuid4().hex}'
+            self.act(Action('previewInput', provider, {'text': prompt, 'takeControl': 'true'}, client='gestures'))
+            self.wait_model(lambda: self.model_prompt_receipt(provider, prompt) is not None)
+            live = self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
+                and live_marker in value['physicalRows'] and value['isOwner'] == 'true')
+            self.assert_stops(provider, self.wait_stops(provider, 3), 3, 'live-input-after-recovery')
+            self.summary['assertions'].append({'provider': provider, 'liveInputAfterRecovery':
+                self.model_prompt_receipt(provider, prompt), 'liveOutputAfterRecovery': live})
         else:
             before = self.snapshot(provider, 'mobile')
             for _ in range(3):
@@ -428,18 +446,19 @@ class NotificationRun(Run):
         except Exception as error:
             self.summary.setdefault('diagnosticErrors', []).append(str(error))
 
-    def wait_mobile_route(self, provider, prepared):
+    def wait_mobile_route(self, provider, prepared, *, require_completion_marker=True):
         wrong_marker = self.markers['codex' if provider == 'claude' else 'claude']
         selected = self.wait_mobile_notification(provider, lambda value: value['pending'] == 'false'
             and value['selectedHost'] == prepared['expectedHost']
             and value['worktree'] == prepared['expectedWorktree'] and value['pane'] == prepared['expectedPane']
-            and int(value['fetchCount']) > 0
+            and int(value['fetchCount']) > int(prepared.get('fetchCount', 0))
+            and int(value.get('responseCount', 0)) > int(prepared.get('responseCount', 0))
             and value.get('session') == prepared['expectedPane']
             and all(value.get(key) == 'true' for key in ('live', 'mounted', 'surfaceReady'))
             and bool(value.get('nativeGrid'))
             and int(value.get('observationSequence', 0)) > 0
             and float(value.get('observedAt', 0)) > float(prepared['observedAt'])
-            and self.markers[provider] in value.get('physicalRows', '')
+            and (not require_completion_marker or self.markers[provider] in value.get('physicalRows', ''))
             and wrong_marker not in value.get('physicalRows', ''))
         # Capture after the selected native container has fresh target rows,
         # rather than the earlier tap screenshot while it may be reconnecting.
