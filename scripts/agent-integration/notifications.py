@@ -325,7 +325,9 @@ class NotificationRun(Run):
         live_marker = f'RECOVERED_{provider.upper()}_{uuid.uuid4().hex}'
         self.server.models.completion_text = lambda current: live_marker if current == provider else self.markers[current]
         prompt = f'GRAFTTY_TEST_NEXT_STOP {provider} {uuid.uuid4().hex}'
-        self.act(Action('previewInput', provider, {'text': prompt, 'takeControl': 'true'}, client='gestures'))
+        input_state = self.snapshot(provider, 'mobile')
+        self.act(Action('previewInput', provider,
+            {'text': prompt, 'takeControl': str(input_state['isOwner'] != 'true').lower()}, client='gestures'))
         self.wait_model(lambda: self.model_prompt_receipt(provider, prompt) is not None)
         live = self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
             and live_marker in value['physicalRows'] and value['isOwner'] == 'true')
