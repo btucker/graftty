@@ -15,7 +15,7 @@ def notification_scenario_text(rows=100):
     # Keep enough transcript to distinguish provider virtualization from
     # terminal history. No classic-mode override is used by this scenario.
     from history_scenario import history_text
-    return history_text(max(rows, 600))
+    return history_text(rows)
 
 
 def verify_attention_isolation(root, cli, env, command=execute):

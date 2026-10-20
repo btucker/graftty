@@ -205,7 +205,7 @@ class Run:
         data = patch_xctestrun(data, str(run_files[0].parent), self.server.endpoint)
         run_file = self.root / 'agent-integration.xctestrun'
         run_file.write_bytes(plistlib.dumps(data))
-        self.mobile_command = ['xcodebuild', '-xctestrun', str(run_file), '-destination', 'platform=iOS Simulator,id=' + self.simulator,
+        self.mobile_command = ['xcodebuild', '-xctestrun', str(run_file), '-derivedDataPath', str(derived), '-destination', 'platform=iOS Simulator,id=' + self.simulator,
             '-resultBundlePath', str(self.root / 'mobile.xcresult'), '-parallel-testing-enabled', 'NO',
             '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests/'
                 + ('testNativeNotificationHistory' if getattr(options, 'notifications', False) and options.notification_case.startswith('scrollback')

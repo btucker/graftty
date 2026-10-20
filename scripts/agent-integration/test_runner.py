@@ -227,6 +227,7 @@ class RunnerLifecycleTests(unittest.TestCase):
                 expected_flags = 'OTHER_SWIFT_FLAGS=$(inherited) -Xcc -DGRAFTTY_RENDERER_fixture'
                 if preview:
                     expected_flags += ' -D GRAFTTY_PAGED_HISTORY'
+                self.assertEqual(str(derived), runner.mobile_command[runner.mobile_command.index('-derivedDataPath') + 1])
                 self.assertIn(expected_flags, build.args[0])
                 self.assertEqual(str(renderer), build.kwargs['env']['GRAFTTY_GHOSTTY_PACKAGE_PATH'])
                 self.assertEqual({'udid': 'fixture-device', 'name': 'Fixture phone', 'runtime': 'fixture'},
