@@ -340,6 +340,7 @@ public struct RootView: View {
                                       },
                                       sidebarNavigation: iPadAppState.sidebarNavigation, retainedPanes: retainedPanes,
                                       remoteConnectionProvider: notificationConnectionProvider)
+                        .id(step.paneIdentity)
                         .onAppear {
                             guard horizontalSizeClass != .regular else { return }
                             Self.applyCompactSession(step, to: iPadAppState)
@@ -520,6 +521,10 @@ struct SessionStep: Hashable {
     let title: String
     /// Retain the originating picker even when a search opens another project.
     let worktreeProject: SidebarProject?
+
+    // Replacing a NavigationPath destination can reuse its SwiftUI state.
+    // Keep the mounted client scoped to the same identity as retained panes.
+    var paneIdentity: String { host.id.uuidString + ":" + sessionName }
 
     init(
         host: Host,

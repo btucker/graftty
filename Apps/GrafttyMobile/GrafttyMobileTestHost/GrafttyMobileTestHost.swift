@@ -302,6 +302,7 @@ private struct RecentPaneFixture: View {
                                 navigationPath: &model.path, showsProjectRail: false)
                         }, retainedPanes: model.pool, attentionWorktrees: model.rows,
                         initialClient: model.clients[key], initialController: model.controllers[key])
+                        .id(step.paneIdentity)
                         .task(id: key) { await model.feedAttachedPane(step) }
                         .overlay(alignment: .bottom) {
                             TimelineView(.periodic(from: .now, by: 0.1)) { _ in
