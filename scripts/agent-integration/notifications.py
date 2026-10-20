@@ -141,11 +141,14 @@ class NotificationRun(Run):
         (self.root / f'notifications-{provider}-{stage}.json').write_text(json.dumps(value, indent=2))
         return value
 
-    def wait_stops(self, provider, count, timeout=60):
+    def wait_stops(self, provider, count, timeout=60, *, approval_client='mac'):
         deadline = time.monotonic() + timeout
         settle_at = None
         while time.monotonic() < deadline:
-            self.approve_known_tools()
+            if approval_client == 'mobile':
+                self.approve_known_tools(client='mobile', agent=provider)
+            else:
+                self.approve_known_tools()
             value = self.evidence(provider, f'stop-{count}')
             if len(json.loads(value['events'])) >= count:
                 now = time.monotonic()
@@ -345,7 +348,7 @@ class NotificationRun(Run):
         self.wait_model(lambda: self.model_prompt_receipt(provider, prompt) is not None)
         live = self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
             and live_marker in value['physicalRows'] and value['isOwner'] == 'true', approve_tools=True)
-        self.assert_stops(provider, self.wait_stops(provider, 3), 3, 'live-input-after-recovery')
+        self.assert_stops(provider, self.wait_stops(provider, 3, approval_client='mobile'), 3, 'live-input-after-recovery')
         self.summary['assertions'].append({'provider': provider, 'liveInputAfterRecovery':
             self.model_prompt_receipt(provider, prompt), 'liveOutputAfterRecovery': live})
         self.summary['assertions'].append({'provider': provider, 'notificationEntry': True,

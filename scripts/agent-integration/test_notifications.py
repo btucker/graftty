@@ -259,6 +259,16 @@ class NotificationEvidenceTests(unittest.TestCase):
         with self.assertRaises(InvariantFailure):
             assert_notification_evidence(observed, 'codex', '/fixture/worktree', 1)
 
+    def test_recovery_stop_wait_keeps_late_tool_approval_on_mobile(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        runner.approve_known_tools = Mock()
+        runner.evidence = Mock(return_value=self.observation([self.event()]))
+        with patch('notifications.time.monotonic', side_effect=[0, 0, 0, 1.1, 1.1]), \
+             patch('notifications.time.sleep'):
+            runner.wait_stops('claude', 1, approval_client='mobile')
+        for call in runner.approve_known_tools.call_args_list:
+            self.assertEqual({'client': 'mobile', 'agent': 'claude'}, call.kwargs)
+
     def test_isolation_fails_closed_for_old_cli_or_different_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
