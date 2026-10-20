@@ -24,7 +24,7 @@ struct PagedZmxAttachEngineTests {
         #expect(!PagedZmxWire.isMouseReports(press + Data("x".utf8)))
     }
 
-    @Test("@spec TERM-12.46: When a display owner sends complete terminal mouse reports through a paged attachment, the application shall deliver those bytes without requiring daemon keyboard leadership, preserve ordinary keyboard leadership and passive input behavior, and keep input in order.")
+    @Test("@spec TERM-12.46: When a display owner sends complete terminal mouse reports through an owner-authorized SSH paged attachment, the application shall deliver those bytes without requiring daemon keyboard leadership, preserve ordinary keyboard leadership and passive input behavior, and keep input in order.")
     func ownerMouseInputBypassesDaemonKeyboardLeadership() async throws {
         let mouse = Data("\u{1b}[<64;24;23M\u{1b}[<0;24;23m".utf8)
         let legacy = Data([0x1b, 0x5b, 0x4d, 96, 56, 55])

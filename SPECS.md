@@ -660,7 +660,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.45** When an older daemon refuses an oversized history page, the application shall report the host page limit without automatic retries and continue live terminal input and output.
 
-**TERM-12.46** When a display owner sends complete terminal mouse reports through a paged attachment, the application shall deliver those bytes without requiring daemon keyboard leadership, preserve ordinary keyboard leadership and passive input behavior, and keep input in order.
+**TERM-12.46** When a display owner sends complete terminal mouse reports through an owner-authorized SSH paged attachment, the application shall deliver those bytes without requiring daemon keyboard leadership, preserve ordinary keyboard leadership and passive input behavior, and keep input in order.
 
 ## GIT — Worktree Discovery & Monitoring
 
