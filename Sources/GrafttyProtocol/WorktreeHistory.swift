@@ -29,6 +29,8 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
         public let wasTruncated: Bool
         public let runtime: String?
         public let promptDigest: String?
+        /// Absent in older history or mixed prompts. Those are classified at projection.
+        public let source: WorktreePromptContent.Part.Source?
 
         fileprivate static func digest(_ prompt: String) -> String {
             SHA256.hash(data: Data(prompt.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -39,7 +41,12 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
             timestamp = date.timeIntervalSinceReferenceDate
             self.runtime = runtime
             promptDigest = Self.digest(text)
-            let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = WorktreePromptContent.parts(in: text)
+            // Capture provenance before bounding text, so truncating a long
+            // provider envelope cannot turn it into apparent human input.
+            source = parts.count == 1 ? parts[0].source : (parts.isEmpty ? .generated : nil)
+            let text = (parts.count == 1 ? parts[0].text : WorktreePromptContent.retainedText(from: parts))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             var bytes = 0
             let prefix = text.prefix(2000).prefix { character in
                 bytes += String(character).utf8.count
@@ -95,7 +102,7 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
 /// One chronological projection drives both native clients and all expansion modes.
 public struct WorktreeTimeline: Sendable {
     public struct Event: Identifiable, Equatable, Sendable {
-        public enum Kind: Sendable { case creation, user, checkpoint }
+        public enum Kind: Sendable { case creation, user, agentMessage, checkpoint }
         public let id: String
         public let kind: Kind
         public let timestamp: Double?
@@ -118,9 +125,23 @@ public struct WorktreeTimeline: Sendable {
             Event(id: $0.id.uuidString, kind: .checkpoint, timestamp: $0.timestamp,
                   title: $0.title, completed: $0.completed, decisions: $0.decisions)
         }
-        result += (history?.inputs ?? []).map {
-            Event(id: $0.id.uuidString, kind: .user, timestamp: $0.timestamp,
-                  title: "You sent a message", completed: $0.text + ($0.wasTruncated ? "…" : ""), decisions: [])
+        result += (history?.inputs ?? []).flatMap { input -> [Event] in
+            let parts = input.source.map { [WorktreePromptContent.Part(source: $0, text: input.text)] }
+                ?? WorktreePromptContent.parts(in: input.text)
+            return parts.enumerated().compactMap { index, part in
+                let kind: Event.Kind
+                let title: String
+                switch part.source {
+                case .user: kind = .user; title = "You sent a message"
+                case .agent(let sender):
+                    kind = .agentMessage
+                    title = sender.map { "Message from \($0)" } ?? "Agent sent a message"
+                case .generated: return nil
+                }
+                return Event(id: input.id.uuidString + (parts.count > 1 ? ":\(index)" : ""),
+                    kind: kind, timestamp: input.timestamp, title: title,
+                    completed: part.text + (input.wasTruncated && index == parts.count - 1 ? "…" : ""), decisions: [])
+            }
         }
         result = result.enumerated().sorted {
             let left = $0.element.timestamp ?? 0, right = $1.element.timestamp ?? 0

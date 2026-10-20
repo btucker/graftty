@@ -2028,6 +2028,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.49** When an owning mobile pane receives an in-band source grid, the application shall update the parser without fitting the physical viewport to that grid, while continuing to report keyboard, rotation, and font size changes.
 
+**IOS-4.50** While a mobile terminal is displayed, long-pressing Back shall offer the most recently opened distinct panes with host, project, worktree, and pane labels, retain visits across relaunches, and open the selected stable pane identity without changing ordinary Back taps or allowing stale targets or superseded navigation to redirect the user.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
@@ -3898,11 +3900,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-16.x
 
-**CONTEXT-16** When a provider submits a generated startup or Graftty message prompt, the application shall exclude it from human involvement while retaining later genuine user messages and keeping suppressed event replays idempotent.
+**CONTEXT-16** When a provider submits generated startup or Graftty context, the application shall exclude it from human involvement, retain peer messages with agent provenance and later genuine user messages, and keep suppressed event replays idempotent.
 
 ### CONTEXT-17.x
 
 **CONTEXT-17** When a worktree is created on another device, the application shall retain the remote source worktree name separately from the destination repository used for dispatch and shall not treat the remote source path as a local navigation target.
+
+### CONTEXT-18.x
+
+**CONTEXT-18** When provider prompt history contains human text, peer envelopes, or generated system, forge, and hook context, the application shall highlight only human text as user input, retain peer content with its available sender provenance, and exclude generated context, including in restored history and mixed Codex and Claude turns.
 
 ## MEM — MEM
 

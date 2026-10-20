@@ -1,6 +1,66 @@
 import UIKit
 import XCTest
 
+@MainActor
+final class RecentPaneInteractionTests: XCTestCase {
+    func testBackLongPressJumpsToTheRenderedPaneAndRejectsStaleTargets() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--recent-panes-fixture"]
+        app.launch()
+        defer { app.terminate() }
+        let alpha = app.buttons["Open alpha"]
+        XCTAssertTrue(alpha.waitForExistence(timeout: 10))
+        alpha.tap()
+        let status = app.staticTexts["Recent pane rendered target"]
+        func rendered(_ name: String) {
+            let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                status.exists && status.label.contains("/repo/" + name)
+                    && status.label.contains("pane-" + name)
+                    && status.label.contains("VISIBLE_" + name.uppercased())
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 15), .completed,
+                "Expected the actual target terminal's visible bytes: \(status.label)")
+        }
+        func screenshot(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        rendered("alpha")
+        let back = app.buttons["terminal.back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        back.press(forDuration: 1)
+        let beta = app.buttons["Terminal beta · Project · beta · Studio"]
+        XCTAssertTrue(beta.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Terminal beta · Project · beta · Studio")).count, 1)
+        screenshot("Recent panes long-press menu")
+        beta.tap()
+        rendered("beta")
+        screenshot("Recent pane beta rendered")
+
+        back.press(forDuration: 1)
+        let returnAlpha = app.buttons["Terminal alpha · Project · alpha · Studio"]
+        XCTAssertTrue(returnAlpha.waitForExistence(timeout: 5))
+        returnAlpha.tap()
+        rendered("alpha")
+        back.press(forDuration: 1)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Terminal beta · Project · beta · Studio")).count, 1)
+        let removed = app.buttons["Terminal removed · Project · removed · Studio"]
+        XCTAssertTrue(removed.waitForExistence(timeout: 5))
+        removed.tap()
+        XCTAssertTrue(app.alerts["Could not open pane"].waitForExistence(timeout: 5))
+        app.alerts.buttons["OK"].tap()
+        rendered("alpha")
+        screenshot("Stale recent pane leaves alpha rendered")
+
+        back.tap()
+        XCTAssertTrue(alpha.waitForExistence(timeout: 5), "An ordinary Back tap must return to the picker")
+        XCTAssertTrue(status.waitForNonExistence(timeout: 5))
+        screenshot("Ordinary Back returns to worktrees")
+    }
+}
+
 final class WorktreeContextInteractionTests: XCTestCase {
     /// @spec CONTEXT-6: When mobile worktree context is opened, the application shall show the current brief and chronological history without collapsing the section, and close back to the mounted terminal without acknowledging pending attention.
     func testBriefExpandsIntoHistoryAndEdgeGestureReopensIt() throws {

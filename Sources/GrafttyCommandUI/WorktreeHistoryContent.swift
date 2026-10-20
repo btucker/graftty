@@ -119,7 +119,7 @@ struct WorktreeHistoryContent: View {
         switch event.kind {
         case .creation: .accentColor
         case .user: .orange
-        case .checkpoint: secondary
+        case .checkpoint, .agentMessage: secondary
         }
     }
 

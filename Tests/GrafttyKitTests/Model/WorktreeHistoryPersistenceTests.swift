@@ -50,15 +50,47 @@ struct WorktreeHistoryPersistenceTests {
 }
 
 struct WorktreeHistoryReviewTests {
-    @Test("@spec CONTEXT-16: When a provider submits a generated startup or Graftty message prompt, the application shall exclude it from human involvement while retaining later genuine user messages and keeping suppressed event replays idempotent.")
+    @Test func providerHookHandoffsPreserveMixedHumanAndPeerProvenance() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let handoff = AttentionFileHandoff(rootDirectory: directory)
+        var worktree = WorktreeEntry(path: "/repo/task", branch: "task")
+        for runtime in [TeamHookRuntime.codex, .claude] {
+            let peer = "<graftty-peer-message agent=\"/parent#\(runtime.rawValue)\" id=\"42\">Review completed.</graftty-peer-message>"
+            let delivered = runtime == .claude
+                ? "Another Claude session sent a message:\n<cross-session-message from-name=\"Graftty bridge\">\n\(peer)\n</cross-session-message>" : peer
+            // These providers deliver peer content using a user role. The hook
+            // payload's prompt, not that role, supplies the delivery provenance.
+            let payload: [String: Any] = ["session_id": "fixture", "hook_event_name": "UserPromptSubmit",
+                "prompt": "Keep my request.\n\n\(delivered)\n\n<system-reminder>Hook context</system-reminder>"]
+            try handoff.progress(worktree: worktree.path, agentID: "fixture", runtime: runtime,
+                sessionID: "fixture", userPrompt: WorktreeUserPrompt.text(from: payload))
+        }
+        try handoff.consumeActivities { event in
+            if case .progress(let progress) = event, let input = progress.userInput {
+                worktree.recordUserInput(input)
+                worktree.recordUserInput(input)
+            }
+        }
+        let restored = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(worktree))
+        let events = WorktreeTimeline(history: restored.history, brief: nil).events
+        #expect(events.filter { $0.kind == .user }.map(\.completed) == ["Keep my request.", "Keep my request."])
+        #expect(events.filter { $0.kind == .agentMessage }.map(\.completed) == ["Review completed.", "Review completed."])
+        #expect(events.contains { $0.title == "Message from /parent#codex" })
+        #expect(events.contains { $0.title == "Message from /parent#claude" })
+    }
+
+    @Test("@spec CONTEXT-16: When a provider submits generated startup or Graftty context, the application shall exclude it from human involvement, retain peer messages with agent provenance and later genuine user messages, and keep suppressed event replays idempotent.")
     func generatedPromptsAreNotHumanInput() throws {
         for prompt in [WorktreeAgentLaunchCommand.bootstrapPrompt,
-                       "<graftty-peer-message agent=\"/parent\">Task</graftty-peer-message>",
                        "<graftty-system-message>Ready</graftty-system-message>",
-                       "<graftty-forge-message provider=\"github\">CI passed</graftty-forge-message>", "", "  "] {
+                       "<graftty-forge-message provider=\"github\">CI passed</graftty-forge-message>",
+                       "<system-reminder>Hook context</system-reminder>", "", "  "] {
             #expect(WorktreeUserPrompt.text(from: ["prompt": prompt]) == nil)
         }
         #expect(WorktreeUserPrompt.text(from: [:]) == nil)
+        let peer = "<graftty-peer-message agent=\"/parent#claude\">Task</graftty-peer-message>"
+        #expect(WorktreeUserPrompt.text(from: ["prompt": peer]) == peer)
         #expect(WorktreeUserPrompt.text(from: ["prompt": "Keep <graftty-peer-message> out of my history."]) != nil)
         var worktree = WorktreeEntry(path: "/task", branch: "task")
         let task = String(repeating: "a", count: 2000) + " delegated task"
