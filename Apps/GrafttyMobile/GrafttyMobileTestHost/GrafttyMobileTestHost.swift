@@ -302,6 +302,7 @@ private struct RecentPaneFixture: View {
                                 navigationPath: &model.path, showsProjectRail: false)
                         }, retainedPanes: model.pool, attentionWorktrees: model.rows,
                         initialClient: model.clients[key], initialController: model.controllers[key])
+                        .task(id: key) { await model.feedAttachedPane(step) }
                         .overlay(alignment: .bottom) {
                             TimelineView(.periodic(from: .now, by: 0.1)) { _ in
                                 Text("\(step.host.label) | \(step.worktreePath ?? "") | \(step.sessionName) | "
@@ -340,6 +341,7 @@ private final class RecentPaneFixtureModel {
     var controllers: [String: TerminalController] = [:]
     var rows: [WorktreePanes] = []
     let pool = RetainedPaneClientPool<RetainedMobilePane>()
+    private var fedPanes: Set<String> = []
     var generation = 0
 
     init() {
@@ -359,10 +361,24 @@ private final class RecentPaneFixtureModel {
                 let client = SessionClient(sessionName: pane.sessionName, webSocketFactory: { RecentPaneFixtureSocket() })
                 _ = pool.acquire(.init(hostID: host.id, sessionName: pane.sessionName)) { RetainedMobilePane(client: client) }
                 client.start()
-                client.session.receive(Data("VISIBLE_\(pane.sessionName.replacingOccurrences(of: "pane-", with: "").uppercased())\r\n".utf8))
                 clients[host.id.uuidString + pane.sessionName] = client
                 controllers[host.id.uuidString + pane.sessionName] = MobileTerminalControllerFactory.make(configText: "font-size = 14")
             }
+        }
+    }
+
+    func feedAttachedPane(_ step: SessionStep) async {
+        let key = step.host.id.uuidString + step.sessionName
+        guard !fedPanes.contains(key) else { return }
+        for _ in 0..<100 {
+            guard !Task.isCancelled else { return }
+            if pool.cached(.init(hostID: step.host.id, sessionName: step.sessionName))?.container?.terminalView.surface != nil {
+                let marker = step.sessionName.replacingOccurrences(of: "pane-", with: "").uppercased()
+                clients[key]?.session.receive(Data("VISIBLE_\(marker)\r\n".utf8))
+                fedPanes.insert(key)
+                return
+            }
+            do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
         }
     }
 
