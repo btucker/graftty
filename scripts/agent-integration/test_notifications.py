@@ -13,6 +13,24 @@ from notifications import NotificationRun, assert_notification_evidence, verify_
 
 
 class NotificationEvidenceTests(unittest.TestCase):
+    def test_recovery_output_accepts_physical_wrap_without_relaxing_live_owner_checks(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        marker = 'RECOVERED_CLAUDE_6eaf5f2e315f4010a5eab4ad5a570d44'
+        visible = {'live': 'true', 'isOwner': 'true',
+                   'physicalRows': '⏺ RECOVERED_CLAUDE_6eaf5f2e315f4010a5eab4ad5a57\n  0d44\n'}
+        decisions = []
+        def observe(provider, predicate, **kwargs):
+            self.assertEqual('claude', provider)
+            self.assertTrue(kwargs['approve_tools'])
+            decisions.extend(predicate(value) for value in (
+                visible, {**visible, 'live': 'false'}, {**visible, 'isOwner': 'false'},
+                {**visible, 'physicalRows': 'RECOVERED_CLAUDE_other'},
+                {**visible, 'physicalRows': marker.replace('5a57', '5a58')}))
+            return visible
+        runner.wait_mobile_notification = observe
+        self.assertEqual(visible, runner.wait_recovery_output('claude', marker))
+        self.assertEqual([True, False, False, False, False], decisions)
+
     def test_notification_delivery_setup_waits_for_authorized_settings(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = NotificationRun.__new__(NotificationRun)

@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 import uuid
 
-from harness import Action, InvariantFailure
+from harness import Action, InvariantFailure, contains_terminal_marker
 from model import user_text
 from run import REPO, Run, execute
 
@@ -346,13 +346,17 @@ class NotificationRun(Run):
         self.act(Action('previewInput', provider,
             {'text': prompt, 'takeControl': str(input_state['isOwner'] != 'true').lower()}, client='gestures'))
         self.wait_model(lambda: self.model_prompt_receipt(provider, prompt) is not None)
-        live = self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
-            and live_marker in value['physicalRows'] and value['isOwner'] == 'true', approve_tools=True)
+        live = self.wait_recovery_output(provider, live_marker)
         self.assert_stops(provider, self.wait_stops(provider, 3, approval_client='mobile'), 3, 'live-input-after-recovery')
         self.summary['assertions'].append({'provider': provider, 'liveInputAfterRecovery':
             self.model_prompt_receipt(provider, prompt), 'liveOutputAfterRecovery': live})
         self.summary['assertions'].append({'provider': provider, 'notificationEntry': True,
             'historyCoverage': 'classic history verified' if classic else 'default provider UI scroll verified', 'selection': selected})
+
+    def wait_recovery_output(self, provider, marker):
+        return self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
+            and contains_terminal_marker(value['physicalRows'], marker)
+            and value['isOwner'] == 'true', approve_tools=True)
 
     def record_provider_screen(self, provider, stop):
         value = self.act(Action('verify', provider))
