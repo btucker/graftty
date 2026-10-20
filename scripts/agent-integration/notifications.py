@@ -476,6 +476,9 @@ class NotificationRun(Run):
              'unrelatedPane': self.provider_events['codex' if provider == 'claude' else 'claude'][0]['paneSessionName']},
             client='mobile'))
         self.act(Action('notificationsAuthorize', provider, client='gestures'))
+        authorized = self.wait_mobile_notification(provider,
+            lambda value: value.get('authorization') == 'UNAuthorizationStatus(rawValue: 2)')
+        (self.root / f'notifications-{provider}-authorization.json').write_text(json.dumps(authorized, indent=2))
         return prepared
 
     def deliver_mobile_stop(self, provider, index, count):

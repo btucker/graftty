@@ -75,10 +75,11 @@ final class NotificationActivationFixture {
         try store.add(configuration.host)
         self.store = store
         notifications = MobileAgentNotifications(defaults: defaults, prepareRequest: { request in
-            guard ["background", "cold"].contains(configuration.mode) else { return request }
-            // Give XCUITest time to leave or terminate the app before the OS
-            // delivers the original production content. This controls timing
-            // only; decoding, delegate receipt and RootView remain production.
+            guard ["warm", "background", "cold"].contains(configuration.mode) else { return request }
+            // Let XCUITest wait for the real foreground banner, or leave the
+            // app for a background/cold tap, before the original request fires.
+            // Warm entry keeps the retained transport live. Only delivery
+            // timing changes; content, delegate receipt and RootView stay real.
             return UNNotificationRequest(identifier: request.identifier, content: request.content,
                 trigger: UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false))
         })

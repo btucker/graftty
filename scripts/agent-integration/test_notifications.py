@@ -13,6 +13,21 @@ from notifications import NotificationRun, assert_notification_evidence, verify_
 
 
 class NotificationEvidenceTests(unittest.TestCase):
+    def test_notification_delivery_setup_waits_for_authorized_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = NotificationRun.__new__(NotificationRun)
+            runner.root = Path(directory)
+            runner.provider_events = {'codex': [{'paneSessionName': 'other-pane'}]}
+            prepared = {'title': 'Agent fixture claude'}
+            runner.act = Mock(return_value=prepared)
+            authorized = {'authorization': 'UNAuthorizationStatus(rawValue: 2)'}
+            runner.wait_mobile_notification = Mock(return_value=authorized)
+            self.assertEqual(prepared, runner.prepare_mobile_notifications('claude', [], 'warm'))
+            predicate = runner.wait_mobile_notification.call_args.args[1]
+            self.assertFalse(predicate({'authorization': 'UNAuthorizationStatus(rawValue: 0)'}))
+            self.assertTrue(predicate(authorized))
+            self.assertEqual(authorized, json.loads((runner.root / 'notifications-claude-authorization.json').read_text()))
+
     def test_live_output_wait_handles_known_mobile_tool_approval(self):
         runner = NotificationRun.__new__(NotificationRun)
         runner.act = Mock(return_value={'live': 'true'})

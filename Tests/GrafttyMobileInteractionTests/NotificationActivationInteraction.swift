@@ -42,8 +42,19 @@ extension AgentNativeInteractionTests {
             return ["performed": command.operation, "errorTitle": "Could not open notification", "errorMessage": message]
         } else if command.operation == "notificationsAuthorize" {
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-            let allow = springboard.buttons["Allow"].firstMatch
-            if allow.waitForExistence(timeout: 5) { allow.tap() }
+            let permission = springboard.alerts.containing(.staticText,
+                identifier: "Notifications may include alerts, sounds, and icon badges. These can be configured in Settings.").firstMatch
+            if permission.waitForExistence(timeout: 5) {
+                let allow = permission.buttons["Allow"]
+                for _ in 0..<2 {
+                    guard allow.waitForExistence(timeout: 2), allow.isHittable else { break }
+                    allow.tap()
+                    if permission.waitForNonExistence(timeout: 5) { break }
+                }
+                guard permission.waitForNonExistence(timeout: 2) else {
+                    throw AgentIntegrationError("Notification authorization prompt stayed visible after Allow")
+                }
+            }
             return ["performed": command.operation]
         } else if command.operation == "notificationsNavigate" {
             let button = app.buttons["Notification choose unrelated pane"]
@@ -59,7 +70,10 @@ extension AgentNativeInteractionTests {
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             let banner = springboard.staticTexts[title].firstMatch
             var usedNotificationCenter = false
-            if !banner.waitForExistence(timeout: 2) {
+            // Warm fixtures schedule the original request after this native
+            // worker is ready. A foreground banner need not persist in the
+            // Notification Center list; catch it while it is actually visible.
+            if !banner.waitForExistence(timeout: lifecycle == "warm" ? 10 : 2) {
                 // Open Notification Center for a delivered alert whose banner
                 // expired. The same gesture works from the app and Home screen.
                 let screen = springboard.frame
