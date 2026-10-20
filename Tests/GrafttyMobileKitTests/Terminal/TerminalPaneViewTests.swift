@@ -1847,13 +1847,14 @@ struct TerminalPaneViewTests {
 private final class TouchScrollPan: UIPanGestureRecognizer {
     var phase: UIGestureRecognizer.State = .changed
     var point = CGPoint.zero
+    var delta = CGPoint(x: 0, y: 30)
     override var state: UIGestureRecognizer.State {
         get { phase }
         set { phase = newValue }
     }
     override func location(in view: UIView?) -> CGPoint { point }
-    override func translation(in view: UIView?) -> CGPoint { CGPoint(x: 0, y: 30) }
-    override func setTranslation(_ translation: CGPoint, in view: UIView?) {}
+    override func translation(in view: UIView?) -> CGPoint { delta }
+    override func setTranslation(_ translation: CGPoint, in view: UIView?) { delta = translation }
 }
 
 private final class ScrollInputRecorder: @unchecked Sendable {
@@ -2087,7 +2088,7 @@ struct PagedSourceGridTests {
 @Suite(.serialized)
 @MainActor
 struct TerminalTouchScrollTests {
-    @Test("Follower application drag waits for its owner viewport and is discarded by replacement or newer input", arguments: ["ready", "replacement", "input"])
+    @Test("Follower application drag waits for its owner viewport, preserves the movement that begins recognition, and is discarded by replacement or newer input", arguments: ["ready", "beganOnly", "replacement", "input"])
     func followerApplicationScrollWaitsForOwner(outcome: String) async throws {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
         let host = UIViewController()
@@ -2122,8 +2123,10 @@ struct TerminalTouchScrollTests {
         #expect(claims == 0, "Passive follower attachment must not claim control")
         let pan = TouchScrollPan()
         pan.point = CGPoint(x: 60, y: 60)
+        pan.delta = outcome == "beganOnly" ? CGPoint(x: 0, y: 30) : .zero
         pan.phase = .began
         container.handleApplicationScroll(pan)
+        pan.delta = outcome == "beganOnly" ? .zero : CGPoint(x: 0, y: 30)
         pan.phase = .ended
         container.handleApplicationScroll(pan)
         #expect(claims == 1)
@@ -2145,7 +2148,7 @@ struct TerminalTouchScrollTests {
             if input.contains("\u{1b}[<64;") { break }
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(input.contains("\u{1b}[<64;") == (outcome == "ready"),
+        #expect(input.contains("\u{1b}[<64;") == (outcome == "ready" || outcome == "beganOnly"),
                 "An ended drag must replay only into its original, ready attachment: \(input.description)")
     }
 
