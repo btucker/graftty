@@ -6,13 +6,24 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from harness import InvariantFailure, Broker
+from harness import Action, InvariantFailure, Broker
 from server import ModelState
 from model import model_events
 from notifications import NotificationRun, assert_notification_evidence, verify_attention_isolation, notification_scenario_text
 
 
 class NotificationEvidenceTests(unittest.TestCase):
+    def test_native_drag_targets_current_visible_terminal_instead_of_container_blank_space(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = NotificationRun.__new__(NotificationRun)
+            runner.root = Path(directory)
+            runner.notification_actions = []
+            frame = '{{0, 608}, {402, 265}}'
+            with patch('run.Run.act', side_effect=[{'visibleFrame': frame}, {'performed': 'scroll'}]) as act:
+                runner.act(Action('scroll', 'claude', {'position': 'top'}, client='gestures'))
+            self.assertEqual('notificationsState', act.call_args_list[0].args[0].operation)
+            self.assertEqual(frame, act.call_args_list[1].args[0].parameters['visibleFrame'])
+
     def test_viewport_comparison_refreshes_source_after_delayed_redraw(self):
         runner = NotificationRun.__new__(NotificationRun)
         source_a = {'grid': '80x24', 'physicalRows': 'old viewport'}

@@ -58,7 +58,16 @@ final class AgentNativeInteractionTests: XCTestCase {
                 let wide = (Double(command.parameters["width"] ?? "0") ?? 0) > (Double(command.parameters["height"] ?? "0") ?? 0)
                 XCUIDevice.shared.orientation = wide ? .landscapeLeft : .portrait
             case "scroll":
-                if command.parameters["position"] == "bottom" { terminal.swipeUp(velocity: .fast) }
+                if let encodedFrame = command.parameters["visibleFrame"] {
+                    let frame = NSCoder.cgRect(for: encodedFrame)
+                    XCTAssertFalse(frame.isEmpty, "Scroll must target the visibly mounted terminal")
+                    let origin = app.coordinate(withNormalizedOffset: .zero)
+                    let down = command.parameters["position"] != "bottom"
+                    let start = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (down ? 0.3 : 0.7)))
+                    let end = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (down ? 0.7 : 0.3)))
+                    start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
+                }
+                else if command.parameters["position"] == "bottom" { terminal.swipeUp(velocity: .fast) }
                 else {
                     let start = terminal.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
                     let end = terminal.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))

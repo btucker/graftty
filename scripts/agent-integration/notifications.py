@@ -124,6 +124,12 @@ class NotificationRun(Run):
         self.summary['attentionDirectory'] = self.env['GRAFTTY_ATTENTION_DIR']
 
     def act(self, action):
+        if action.client == 'gestures' and action.operation == 'scroll':
+            visible = self.act(Action('notificationsState', action.provider, client='mobile'))['visibleFrame']
+            if not visible:
+                raise InvariantFailure('notification scroll target has no visible terminal frame')
+            action = Action(action.operation, action.provider,
+                            {**action.parameters, 'visibleFrame': visible}, client=action.client)
         self.notification_actions.append(asdict(action))
         (self.root / 'actions.json').write_text(json.dumps(self.notification_actions, indent=2))
         return super().act(action)

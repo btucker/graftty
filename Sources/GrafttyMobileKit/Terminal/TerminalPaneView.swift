@@ -1484,6 +1484,7 @@ public final class TerminalInputContainerView: UIView,
             return onApplicationScrollRequested != nil && controlAttachmentID != nil
                 && authoritativeGrid != nil && !selectionController.isActive
                 && snapshotScrollView.followerZoomScale == 1
+                && acceptsTerminalInput(at: applicationScrollRecognizer.location(in: self))
                 && terminalView.surface?.isMouseCaptured == true
                 && abs(velocity.y) >= abs(velocity.x)
         }
