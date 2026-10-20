@@ -13,6 +13,13 @@ from notifications import NotificationRun, assert_notification_evidence, verify_
 
 
 class NotificationEvidenceTests(unittest.TestCase):
+    def test_live_output_wait_handles_known_mobile_tool_approval(self):
+        runner = NotificationRun.__new__(NotificationRun)
+        runner.act = Mock(return_value={'live': 'true'})
+        runner.approve_known_tools = Mock()
+        runner.wait_mobile_notification('claude', lambda value: value['live'] == 'true', approve_tools=True)
+        runner.approve_known_tools.assert_called_once_with(client='mobile', agent='claude')
+
     def test_application_scroll_rejects_keyboard_opening_during_takeover(self):
         before = {'isOwner': 'false', 'isMouseCaptured': 'true', 'clientID': 'retained'}
         after = {'isOwner': 'true', 'clientID': 'retained', 'applicationScrollDeliveries': '1', 'keyboard': 'true'}

@@ -3,16 +3,35 @@ import json
 import plistlib
 from pathlib import Path
 import tempfile
+import threading
 import tomllib
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from harness import Broker, InvariantFailure
+from harness import Action, Broker, InvariantFailure
 from run import Run, execute, main, prepare_home
 
 
 class RunnerLifecycleTests(unittest.TestCase):
+    def test_mobile_recovery_approves_only_the_visible_known_tool_on_mobile(self):
+        runner = Run.__new__(Run)
+        runner.server = SimpleNamespace(models=SimpleNamespace(condition=threading.Condition(),
+            pending_tools={'claude': 'recap:unique-token', 'codex': 'recap:other-token'}))
+        runner.paths = {'claude': {}, 'codex': {}}
+        runner.approved_tokens, runner.approval_candidates = set(), set()
+        runner.summary = {'assertions': []}
+        runner.snapshot = Mock(return_value={'text': 'unique-token\nDo you want to proceed?'})
+        runner.act = Mock()
+        runner.approve_known_tools(client='mobile', agent='claude')
+        runner.act.assert_not_called()
+        runner.approve_known_tools(client='mobile', agent='claude')
+        runner.act.assert_called_once_with(Action('previewInput', 'claude',
+            {'text': '', 'takeControl': 'false'}, client='gestures'))
+        runner.snapshot.assert_called_with('claude', 'mobile')
+        runner.approve_known_tools(client='mobile', agent='claude')
+        self.assertEqual(1, runner.act.call_count)
+
     def test_history_and_creation_cannot_silently_select_one_scenario(self):
         arguments = ['run.py']
         for option in ('--codex', '--claude', '--cli', '--zmx', '--ghostty-package'):

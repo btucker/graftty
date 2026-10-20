@@ -344,7 +344,7 @@ class NotificationRun(Run):
             {'text': prompt, 'takeControl': str(input_state['isOwner'] != 'true').lower()}, client='gestures'))
         self.wait_model(lambda: self.model_prompt_receipt(provider, prompt) is not None)
         live = self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
-            and live_marker in value['physicalRows'] and value['isOwner'] == 'true')
+            and live_marker in value['physicalRows'] and value['isOwner'] == 'true', approve_tools=True)
         self.assert_stops(provider, self.wait_stops(provider, 3), 3, 'live-input-after-recovery')
         self.summary['assertions'].append({'provider': provider, 'liveInputAfterRecovery':
             self.model_prompt_receipt(provider, prompt), 'liveOutputAfterRecovery': live})
@@ -531,9 +531,11 @@ class NotificationRun(Run):
             time.sleep(.1)
         raise InvariantFailure(f'provider/mobile viewports did not converge: {source}, {mobile}')
 
-    def wait_mobile_notification(self, provider, predicate, timeout=30):
+    def wait_mobile_notification(self, provider, predicate, timeout=30, *, approve_tools=False):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            if approve_tools:
+                self.approve_known_tools(client='mobile', agent=provider)
             value = self.act(Action('notificationsState', provider, client='mobile'))
             if predicate(value):
                 return value

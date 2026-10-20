@@ -220,23 +220,28 @@ class Run:
         self.wait_registered('mobile')
         self.wait_registered('gestures')
 
-    def approve_known_tools(self):
+    def approve_known_tools(self, *, client='mac', agent=None):
         with self.server.models.condition:
             pending = dict(self.server.models.pending_tools)
-        for agent, token in pending.items():
-            if (agent, token) in self.approved_tokens or agent not in self.paths:
+        for current, token in pending.items():
+            if agent is not None and current != agent:
                 continue
-            value = self.snapshot(agent)
+            if (current, token) in self.approved_tokens or current not in self.paths:
+                continue
+            value = self.snapshot(current, client)
             text = value.get('nativeText', value['text'])
             # A new model tool can arrive before the old approval UI repaints.
             # Match its unique argument before pressing Enter.
             if approval_ready(token, text):
-                if (agent, token) not in self.approval_candidates:
-                    self.approval_candidates.add((agent, token))
+                if (current, token) not in self.approval_candidates:
+                    self.approval_candidates.add((current, token))
                     continue
-                self.act(Action('input', agent, {'text': ''}))
-                self.approved_tokens.add((agent, token))
-                self.summary['assertions'].append({'agent': agent, 'nativeOneTimeToolApproval': token})
+                if client == 'mobile':
+                    self.act(Action('previewInput', current, {'text': '', 'takeControl': 'false'}, client='gestures'))
+                else:
+                    self.act(Action('input', current, {'text': ''}))
+                self.approved_tokens.add((current, token))
+                self.summary['assertions'].append({'agent': current, 'nativeOneTimeToolApproval': token})
 
     def wait_model(self, predicate, timeout=60):
         self.server.models.wait(predicate, timeout=timeout, tick=self.approve_known_tools)
