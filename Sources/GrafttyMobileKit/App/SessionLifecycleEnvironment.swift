@@ -8,7 +8,16 @@ private struct BiometricGateKey: EnvironmentKey {
     static let defaultValue: BiometricGate? = nil
 }
 
+private struct MobileNotificationPaneActivationKey: EnvironmentKey {
+    static let defaultValue: MobileNotificationPaneActivation? = nil
+}
+
 extension EnvironmentValues {
+    var mobileNotificationPaneActivation: MobileNotificationPaneActivation? {
+        get { self[MobileNotificationPaneActivationKey.self] }
+        set { self[MobileNotificationPaneActivationKey.self] = newValue }
+    }
+
     var biometricGate: BiometricGate? {
         get { self[BiometricGateKey.self] }
         set { self[BiometricGateKey.self] = newValue }

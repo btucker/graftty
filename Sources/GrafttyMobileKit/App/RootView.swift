@@ -15,6 +15,7 @@ public struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var iPadAppState = IPadAppState()
     @State private var retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
+    @State private var notificationPaneActivation = MobileNotificationPaneActivation()
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     /// Owned here (not per-screen) so a negotiated SSH connection survives
     /// navigation-stack pushes/pops on the compact path and layout
@@ -69,6 +70,11 @@ public struct RootView: View {
             }
         }
         .environment(\.biometricGate, gate)
+        .environment(\.mobileNotificationPaneActivation, notificationPaneActivation)
+        .onChange(of: notificationSelection) { _, _ in
+            notificationPaneActivation.discard(unlessHostID: iPadAppState.selectedHostId,
+                                               sessionName: iPadAppState.focusedPaneId)
+        }
         .onChange(of: iPadAppState.selectedHostId) { _, _ in retainedPanes.stopAll() }
         .onChange(of: horizontalSizeClass) { previous, current in
             retainedPanes.stopAll()
@@ -83,7 +89,10 @@ public struct RootView: View {
                 await activateNotification()
             }
         }
-        .onChange(of: notifications.pendingRoute) { _, _ in Task { await activateNotification() } }
+        .onChange(of: notifications.pendingRoute) { _, route in
+            if route != nil { notificationPaneActivation.cancel() }
+            Task { await activateNotification() }
+        }
         .task { await activateNotification() }
         .alert("Could not open notification", isPresented: Binding(
             get: { notificationError != nil }, set: { if !$0 { notificationError = nil } }
@@ -170,6 +179,7 @@ public struct RootView: View {
                 navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
                     showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
             }
+            notificationPaneActivation.activate(hostID: host.id, sessionName: target.pane.sessionName)
             notifications.consume(route)
         } catch is CancellationError {
             // Lifecycle cancellation retains the tap for the next activation.
@@ -637,6 +647,7 @@ struct SingleSessionView: View {
     @State private var attentionWorktrees: [WorktreePanes] = []
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
+    @Environment(\.mobileNotificationPaneActivation) private var notificationPaneActivation
 
     @State private var client: SessionClient?
     @State private var connection: ConnectionState = .connecting
@@ -1113,6 +1124,13 @@ struct SingleSessionView: View {
                 }
             }
             .task(id: dialKey) { await observeAttention() }
+            .task(id: notificationRecoveryKey) {
+                guard !Task.isCancelled, notificationRecoveryKey.isReady, let client,
+                      client.sessionName == step.sessionName,
+                      notificationPaneActivation?.consume(hostID: step.host.id,
+                                                          sessionName: step.sessionName) == true else { return }
+                if client.paging?.status == .requiresRecovery { await client.paging?.recover() }
+            }
             .onChange(of: client?.connectionState) { _, state in
                 if state != .live {
                     paneContainerBox.view?.cancelPendingApplicationScroll()
@@ -1142,6 +1160,20 @@ struct SingleSessionView: View {
                     transportIsAvailable: client?.isOwner == true && client?.connectionState == .live
                 )
             }
+    }
+
+    private struct NotificationRecoveryKey: Equatable {
+        let occurrenceID: UUID?
+        let clientID: ObjectIdentifier?
+        let isReady: Bool
+    }
+
+    private var notificationRecoveryKey: NotificationRecoveryKey {
+        .init(occurrenceID: notificationPaneActivation?.request?.id,
+              clientID: client.map(ObjectIdentifier.init),
+              isReady: connection == .live && client?.connectionState == .live && isPaneFocused
+                  && client?.paging?.status != .loading
+                  && scenePhase == .active && gate.isUnlocked)
     }
 
     private var dialKey: DialKey {
