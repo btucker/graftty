@@ -14,6 +14,11 @@ final class AgentNativeInteractionTests: XCTestCase {
         try await runScriptedInteractions()
     }
 
+    /// @spec NOTIF-1.27: When a notification reopens a retained mobile pane whose pending history has expired, the application shall refresh its checkpoint and load older history on scroll demand while preserving the retained client and usable live output and input.
+    func testNativeNotificationHistory() async throws {
+        try await runScriptedInteractions()
+    }
+
     /// @spec TEST-1.13: When a Quick Look integration run drives both provider TUIs, the test harness shall type unique prompts through the native keyboard, open and dismiss the production preview, capture every action, and fail unless all required retained and transient pane cases finish successfully.
     func testNativeQuickLookRetention() async throws {
         try await runScriptedInteractions()
@@ -36,7 +41,7 @@ final class AgentNativeInteractionTests: XCTestCase {
                 finishedSuccessfully = command.parameters["result"] == "passed"
                 return [:]
             }
-            if ["notificationsTap", "notificationsNavigate", "notificationsAuthorize", "notificationsDismissError", "notificationsCapture"].contains(command.operation) {
+            if ["notificationsTap", "notificationsNavigate", "notificationsAuthorize", "notificationsDismissError", "notificationsCapture", "notificationsBack"].contains(command.operation) {
                 return try self.performNotificationGesture(command, app: app)
             }
             if command.operation.hasPrefix("preview") {

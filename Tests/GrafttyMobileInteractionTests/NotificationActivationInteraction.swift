@@ -14,7 +14,15 @@ extension AgentNativeInteractionTests {
             add(attachment)
         }
         var result = ["performed": command.operation]
-        if command.operation == "notificationsCapture" {
+        if command.operation == "notificationsBack" {
+            let back = app.buttons["Back to worktrees"]
+            guard back.waitForExistence(timeout: 5) else { throw AgentIntegrationError("notification terminal Back missing") }
+            back.tap()
+            guard app.otherElements["Agent integration terminal"].waitForNonExistence(timeout: 5) else {
+                throw AgentIntegrationError("notification terminal stayed mounted after Back")
+            }
+            return ["performed": command.operation, "terminalDetached": "true"]
+        } else if command.operation == "notificationsCapture" {
             guard app.state == .runningForeground,
                   app.staticTexts["Notification activation selection"].exists else {
                 throw AgentIntegrationError("Cannot capture notification terminal without foreground production RootView")

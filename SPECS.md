@@ -1182,6 +1182,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **NOTIF-1.26** While the mobile notification view remains active after a reported reconnect failure, a later same-target notification response shall trigger a fresh activation attempt and display its live session without requiring a scene transition or view remount.
 
+**NOTIF-1.27** When a notification reopens a retained mobile pane whose pending history has expired, the application shall refresh its checkpoint and load older history on scroll demand while preserving the retained client and usable live output and input.
+
 ### NOTIF-2.x — Attention Badge Auto-Population
 
 **NOTIF-2.1** When libghostty fires `COMMAND_FINISHED` with a zero exit code on a pane, the application shall set *that pane's* pane-scoped attention overlay to a checkmark indicator that auto-clears after 3 seconds. Sibling panes in the same worktree are unaffected.

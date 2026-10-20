@@ -240,7 +240,21 @@ class NotificationRun(Run):
         (self.root / f'notifications-{provider}-source-history.json').write_text(json.dumps(source, indent=2))
         if classic:
             gesture_backfill(self, provider)
-            load_history(self, provider, 'notification-attach', contemporaneous=True)
+            # Expire the still-unloaded prefix through a real source resize.
+            # Scrolling then makes the stale native checkpoint observable.
+            self.act(Action('resize', provider, {'width': '900', 'height': '640'}))
+            self.server.broker.command(Action('scroll', provider, {'position': 'top'}, client='mobile'))
+            expired = self.wait_mobile_notification(provider, lambda value: value['paging'] == 'requiresRecovery')
+            (self.root / f'notifications-{provider}-expired.json').write_text(json.dumps(expired, indent=2))
+            self.act(Action('notificationsBack', provider, client='gestures'))
+            prepared = self.deliver_mobile_stop(provider, 1, 2)
+            self.tap_mobile_notification(provider, prepared)
+            reopened = self.wait_mobile_route(provider, prepared)
+            if reopened['clientID'] != selected['clientID']:
+                raise InvariantFailure('notification recovery replaced the retained SessionClient')
+            if reopened['paging'] == 'requiresRecovery':
+                raise InvariantFailure(f'{provider}: notification reopened stale history without recovery')
+            load_history(self, provider, 'notification-retained-reentry', contemporaneous=True)
             self.act(Action('reconnect', provider, client='mobile'))
             self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
                 and value['historyGeneration'] != selected['historyGeneration']

@@ -208,7 +208,8 @@ class Run:
         self.mobile_command = ['xcodebuild', '-xctestrun', str(run_file), '-destination', 'platform=iOS Simulator,id=' + self.simulator,
             '-resultBundlePath', str(self.root / 'mobile.xcresult'), '-parallel-testing-enabled', 'NO',
             '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests/'
-                + ('testNativeNotificationActivation' if getattr(options, 'notifications', False)
+                + ('testNativeNotificationHistory' if getattr(options, 'notifications', False) and options.notification_case.startswith('scrollback')
+                   else 'testNativeNotificationActivation' if getattr(options, 'notifications', False)
                    else 'testNativeQuickLookRetention' if getattr(options, 'preview', False)
                    else 'testScriptedAgentInteractions'), 'test-without-building']
         self.mobile_environment = build_env
