@@ -881,6 +881,7 @@ struct SingleSessionView: View {
            container.controlAttachmentID == paneContainerBox.controlAttachmentID {
             container.detachBrowserControls()
             container.onBackRequested = nil
+            container.onApplicationScrollRequested = nil
             container.resetStickyModifiers()
             container.onTrayShiftSelectionChange = nil
             container.terminalView.resignFirstResponder()
@@ -1627,6 +1628,7 @@ struct SingleSessionView: View {
                 client?.wakeRenderer()
                 onPaneInteraction?()
             },
+            onApplicationScrollRequested: { [weak client] in client?.takeControl() },
             configuredFontSize: effectiveBaseConfigText.flatMap {
                 GhosttyConfigFetcher.lastFontSize(in: $0).map(Float.init)
             },

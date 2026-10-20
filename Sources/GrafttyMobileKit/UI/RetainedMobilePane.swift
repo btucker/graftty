@@ -31,6 +31,7 @@ final class RetainedMobilePane: PanePreviewClienting {
         container?.agentCompletion = nil
         container?.hardwareKeyboardCommands = []
         container?.onUserInteraction = nil
+        container?.onApplicationScrollRequested = nil
         container?.onPasteRequested = nil
         container?.onBackRequested = nil
         container?.detachBrowserControls()

@@ -425,6 +425,8 @@ final class AgentIntegrationMobileController: UIViewController {
             "width": String(Int(pane.container.bounds.width)), "height": String(Int(pane.container.bounds.height)),
             "session": pane.client.sessionName, "paging": pane.client.paging.map { String(describing: $0.status) } ?? "inactive"]
         #if DEBUG
+        values["applicationScrollRequests"] = String(pane.container.diagnosticApplicationScrollRequests)
+        values["applicationScrollDeliveries"] = String(pane.container.diagnosticApplicationScrollDeliveries)
         if let diagnostic = pane.client.paging?.historyDiagnosticsForTesting {
             values["historyGeneration"] = String(diagnostic.generation)
             values["issuedHistoryRequests"] = String(diagnostic.requests)

@@ -58,6 +58,17 @@ def assert_notification_evidence(observation, provider, worktree, expected):
         raise InvariantFailure('native notification evidence is missing or malformed') from error
 
 
+def require_application_scroll(before, after):
+    if before.get('isOwner') != 'false' or before.get('isMouseCaptured') != 'true':
+        raise InvariantFailure('application scroll setup was not a mouse-captured follower')
+    if after.get('isOwner') != 'true':
+        raise InvariantFailure('application scroll did not request and acquire control')
+    if after.get('clientID') != before.get('clientID'):
+        raise InvariantFailure('application scroll replaced the selected SessionClient')
+    if int(after.get('applicationScrollDeliveries', 0)) <= int(before.get('applicationScrollDeliveries', 0)):
+        raise InvariantFailure('application scroll did not forward its buffered drag')
+
+
 class NotificationRun(Run):
     def __init__(self, options, actions=None):
         super().__init__(options, actions)
@@ -280,13 +291,44 @@ class NotificationRun(Run):
                 self.model_prompt_receipt(provider, prompt), 'liveOutputAfterRecovery': live})
         else:
             before = self.snapshot(provider, 'mobile')
-            for _ in range(3):
+            self.act(Action('scroll', provider, {'position': 'top'}, client='gestures'))
+            after = self.wait_mobile_notification(provider, lambda value:
+                value['clientID'] == before['clientID'] and value['isOwner'] == 'true'
+                and int(value.get('applicationScrollDeliveries', 0)) > int(before.get('applicationScrollDeliveries', 0)))
+            require_application_scroll(before, after)
+            # Ownership changes the PTY grid and may reveal transcript merely
+            # through reflow. Require a further drag against the settled owner
+            # viewport so a resize alone cannot satisfy the scrolling oracle.
+            owned_source = self.act(Action('verify', provider))
+            self.wait_mobile_notification(provider, lambda value:
+                value['nativeGrid'] == owned_source['grid']
+                and value['physicalRows'] == owned_source['physicalRows'])
+            source_rows = row_ids(owned_source['authoritativeText'])
+            def revealed_older(value):
+                rows = row_ids(value['physicalRows'])
+                return bool(rows and (not source_rows or min(rows) < min(source_rows))) or (
+                    f'GRAFTTY_TEST_BEGIN {provider}' in value['physicalRows']
+                    and f'GRAFTTY_TEST_BEGIN {provider}' not in owned_source['authoritativeText'])
+            for _ in range(30):
                 self.act(Action('scroll', provider, {'position': 'top'}, client='gestures'))
-            after = self.snapshot(provider, 'mobile')
-            self.summary['assertions'].append({'provider': provider, 'defaultModeScroll': {
-                'sourceRows': row_ids(source['authoritativeText']), 'before': before, 'after': after}})
+                after = self.snapshot(provider, 'mobile')
+                if revealed_older(after):
+                    break
+            else:
+                raise InvariantFailure(f'{provider}: app scrolling did not reveal older virtualized output')
+            source_after = self.act(Action('verify', provider))
+            # Current provider viewport is the oracle here. The daemon has no
+            # full transcript prefix to import in fullscreen mode.
+            after = self.wait_mobile_notification(provider, lambda value:
+                value['nativeGrid'] == source_after['grid']
+                and value['physicalRows'] == source_after['physicalRows'])
+            self.act(Action('notificationsCapture', provider, client='gestures'))
+            evidence = {'sourceBefore': source, 'sourceOwnedBeforeFurtherDrag': owned_source,
+                        'sourceAfter': source_after, 'before': before, 'after': after}
+            (self.root / f'notifications-{provider}-application-scroll.json').write_text(json.dumps(evidence, indent=2))
+            self.summary['assertions'].append({'provider': provider, 'applicationScroll': evidence})
         self.summary['assertions'].append({'provider': provider, 'notificationEntry': True,
-            'historyCoverage': 'classic history verified' if classic else 'default diagnostic only', 'selection': selected})
+            'historyCoverage': 'classic history verified' if classic else 'default provider UI scroll verified', 'selection': selected})
 
     def record_provider_screen(self, provider, stop):
         value = self.act(Action('verify', provider))
@@ -301,13 +343,6 @@ class NotificationRun(Run):
         self.deliver_mobile_stop(provider, 0, 1)
         self.tap_mobile_notification(provider, prepared)
         selected = self.wait_mobile_route(provider, prepared)
-        before = self.act(Action('notificationsState', provider, client='mobile'))
-        source = self.act(Action('verify', provider))
-        for _ in range(3):
-            self.act(Action('scroll', provider, {'position': 'top'}, client='gestures'))
-        after = self.act(Action('notificationsState', provider, client='mobile'))
-        (self.root / f'notifications-{provider}-scroll-probe.json').write_text(json.dumps(
-            {'before': before, 'after': after, 'source': source}, indent=2))
         self.deliver_mobile_stop(provider, 1, 2)
         self.summary['assertions'].append({'provider': provider, 'mobileControlledInputActivation': selected,
             'mobileControlledInputRequestCount': 2})

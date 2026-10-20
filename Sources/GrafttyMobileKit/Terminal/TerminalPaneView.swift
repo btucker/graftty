@@ -83,6 +83,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// on the surface must still promote the render pace back to `.full`.
     /// Call sites with a `SessionClient` wire this to `client.wakeRenderer()`.
     public let onUserInteraction: (() -> Void)?
+    public let onApplicationScrollRequested: (() -> Void)?
     /// Effective config font used as the starting point for libghostty's
     /// built-in one-point pinch steps.
     public let configuredFontSize: Float?
@@ -126,6 +127,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         hardwareKeyboardCommands: [HardwareKeyboardCommand] = [],
         renderPace: TerminalRenderPace = .full,
         onUserInteraction: (() -> Void)? = nil,
+        onApplicationScrollRequested: (() -> Void)? = nil,
         configuredFontSize: Float? = nil,
         onFontSizeChange: ((Float) -> Void)? = nil,
         preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
@@ -149,6 +151,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.hardwareKeyboardCommands = hardwareKeyboardCommands
         self.renderPace = renderPace
         self.onUserInteraction = onUserInteraction
+        self.onApplicationScrollRequested = onApplicationScrollRequested
         self.configuredFontSize = configuredFontSize
         self.onFontSizeChange = onFontSizeChange
         self.preferredInterfaceStyle = preferredInterfaceStyle
@@ -197,6 +200,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
         view.onUserInteraction = onUserInteraction
+        view.onApplicationScrollRequested = onApplicationScrollRequested
         view.configureFontSizeObservation(
             initialFontSize: configuredFontSize,
             onChange: onFontSizeChange
@@ -226,6 +230,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
         view.onUserInteraction = onUserInteraction
+        view.onApplicationScrollRequested = onApplicationScrollRequested
         view.configureFontSizeObservation(
             initialFontSize: configuredFontSize,
             onChange: onFontSizeChange
@@ -243,7 +248,9 @@ public final class TerminalInputContainerView: UIView,
     TerminalSoftwareInputDelegate,
     TerminalHardwareInputDelegate
 {
-    var controlAttachmentID: UUID?
+    var controlAttachmentID: UUID? {
+        didSet { if controlAttachmentID != oldValue { cancelPendingApplicationScroll() } }
+    }
     public enum StickyControlActivation: Equatable, Sendable {
         case inactive
         case armed
@@ -324,6 +331,7 @@ public final class TerminalInputContainerView: UIView,
         didSet {
             guard authoritativeGrid != oldValue else { return }
             awaitingPhysicalViewport = oldValue != nil && authoritativeGrid == nil
+            if oldValue == nil && authoritativeGrid != nil { cancelPendingApplicationScroll() }
             updateTerminalGestureEnablement()
             setNeedsLayout()
         }
@@ -503,6 +511,113 @@ public final class TerminalInputContainerView: UIView,
     /// without host output, so a finger on the surface must count as
     /// activity). Wired by the SwiftUI layer to `SessionClient.wakeRenderer()`.
     public var onUserInteraction: (() -> Void)?
+    /// A deliberate app scroll is input. Keep attachment passive until a
+    /// mouse-capturing follower receives this gesture, then wait for its owner grid.
+    public var onApplicationScrollRequested: (() -> Void)? {
+        didSet {
+            if onApplicationScrollRequested == nil { cancelPendingApplicationScroll() }
+            updateTerminalGestureEnablement()
+        }
+    }
+    private var pendingApplicationScroll = CGPoint.zero
+    private var applicationScrollLocation = CGPoint.zero
+    private var applicationScrollAttachmentID: UUID?
+    private var applicationScrollEnded = false
+    private var applicationScrollTask: Task<Void, Never>?
+    #if DEBUG
+    private(set) var diagnosticApplicationScrollRequests: UInt64 = 0
+    private(set) var diagnosticApplicationScrollDeliveries: UInt64 = 0
+    #endif
+
+    private lazy var applicationScrollRecognizer: UIPanGestureRecognizer = {
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleApplicationScroll(_:)))
+        pan.maximumNumberOfTouches = 1
+        pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        pan.delegate = self
+        pan.isEnabled = false
+        return pan
+    }()
+
+    @objc func handleApplicationScroll(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            if applicationScrollAttachmentID != controlAttachmentID {
+                cancelPendingApplicationScroll()
+                applicationScrollAttachmentID = controlAttachmentID
+            }
+            applicationScrollEnded = false
+            applicationScrollLocation = gesture.location(in: self)
+            gesture.setTranslation(.zero, in: self)
+            #if DEBUG
+            diagnosticApplicationScrollRequests &+= 1
+            #endif
+            onApplicationScrollRequested?()
+            guard applicationScrollTask == nil else { return }
+            let attachment = applicationScrollAttachmentID
+            applicationScrollTask = Task { @MainActor [weak self] in
+                // Preserve an ended drag over a slow ownership round trip, but
+                // never replay it indefinitely or into a replacement route.
+                for _ in 0..<250 {
+                    do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+                    guard let self, self.applicationScrollAttachmentID == attachment else { return }
+                    self.flushPendingApplicationScroll()
+                    if self.applicationScrollIsReady {
+                        self.applicationScrollTask = nil
+                        if self.applicationScrollEnded { self.cancelPendingApplicationScroll() }
+                        return
+                    }
+                }
+                self?.cancelPendingApplicationScroll()
+            }
+        case .changed, .ended:
+            let delta = gesture.translation(in: self)
+            gesture.setTranslation(.zero, in: self)
+            // Bound queued intent while a network claim is pending.
+            let limit = max(bounds.width, bounds.height) * 4
+            pendingApplicationScroll.x = max(-limit, min(limit, pendingApplicationScroll.x + delta.x))
+            pendingApplicationScroll.y = max(-limit, min(limit, pendingApplicationScroll.y + delta.y))
+            applicationScrollLocation = gesture.location(in: self)
+            applicationScrollEnded = gesture.state == .ended
+            flushPendingApplicationScroll()
+            if applicationScrollEnded && applicationScrollIsReady { cancelPendingApplicationScroll() }
+        case .cancelled, .failed:
+            cancelPendingApplicationScroll()
+        default: break
+        }
+    }
+
+    private var applicationScrollIsReady: Bool {
+        applicationScrollAttachmentID != nil
+            && applicationScrollAttachmentID == controlAttachmentID
+            && onApplicationScrollRequested != nil && window != nil
+            && authoritativeGrid == nil && !awaitingPhysicalViewport
+            && terminalView.surface?.isMouseCaptured == true
+    }
+
+    private func flushPendingApplicationScroll() {
+        guard applicationScrollIsReady, pendingApplicationScroll != .zero,
+              let surface = terminalView.surface else { return }
+        var point = terminalView.convert(applicationScrollLocation, from: self)
+        point.x = max(0, min(terminalView.bounds.width - 1, point.x))
+        point.y = max(0, min(terminalView.bounds.height - 1, point.y))
+        surface.sendMousePos(x: point.x, y: point.y)
+        // Match libghostty-spm's ordinary one-finger touch-scroll multiplier.
+        surface.sendMouseScroll(x: Double(pendingApplicationScroll.x * 3),
+                                y: Double(pendingApplicationScroll.y * 3))
+        pendingApplicationScroll = .zero
+        #if DEBUG
+        diagnosticApplicationScrollDeliveries &+= 1
+        #endif
+    }
+
+    private func cancelPendingApplicationScroll() {
+        applicationScrollTask?.cancel()
+        applicationScrollTask = nil
+        applicationScrollAttachmentID = nil
+        pendingApplicationScroll = .zero
+        applicationScrollEnded = false
+    }
+
     /// Only fullscreen routes install this action; retained and embedded panes
     /// release it so a later drag cannot navigate a stale SwiftUI route.
     public var onBackRequested: (() -> Void)? {
@@ -783,7 +898,12 @@ public final class TerminalInputContainerView: UIView,
         snapshotScrollView.panGestureRecognizer.require(toFail: selectionPanRecognizer)
         addGestureRecognizer(backSwipeRecognizer)
         snapshotScrollView.panGestureRecognizer.require(toFail: backSwipeRecognizer)
+        addGestureRecognizer(applicationScrollRecognizer)
+        applicationScrollRecognizer.require(toFail: selectionPanRecognizer)
+        applicationScrollRecognizer.require(toFail: backSwipeRecognizer)
+        snapshotScrollView.panGestureRecognizer.require(toFail: applicationScrollRecognizer)
         for pan in terminalView.gestureRecognizers?.compactMap({ $0 as? UIPanGestureRecognizer }) ?? [] {
+            pan.require(toFail: applicationScrollRecognizer)
             if pan.allowedTouchTypes.contains(NSNumber(value: UITouch.TouchType.direct.rawValue)) {
                 pan.require(toFail: backSwipeRecognizer)
             }
@@ -957,6 +1077,8 @@ public final class TerminalInputContainerView: UIView,
     /// each original state only after both restrictions have been released.
     private func updateTerminalGestureEnablement() {
         backSwipeRecognizer.isEnabled = onBackRequested != nil && !selectionController.isActive
+        applicationScrollRecognizer.isEnabled = onApplicationScrollRequested != nil && !selectionController.isActive
+        if selectionController.isActive { cancelPendingApplicationScroll() }
         snapshotScrollView.followerPinchGesture.isEnabled = authoritativeGrid != nil && !selectionPanRecognizer.isEnabled
         for recognizer in terminalView.gestureRecognizers ?? [] {
             let scrollPan = (recognizer as? UIPanGestureRecognizer).map {
@@ -1336,6 +1458,13 @@ public final class TerminalInputContainerView: UIView,
     }
 
     public override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === applicationScrollRecognizer {
+            let velocity = applicationScrollRecognizer.velocity(in: self)
+            return onApplicationScrollRequested != nil && controlAttachmentID != nil
+                && authoritativeGrid != nil && !selectionController.isActive
+                && terminalView.surface?.isMouseCaptured == true
+                && abs(velocity.y) >= abs(velocity.x)
+        }
         guard gestureRecognizer === backSwipeRecognizer else { return super.gestureRecognizerShouldBegin(gestureRecognizer) }
         return onBackRequested != nil && !selectionController.isActive
             && snapshotScrollView.followerZoomScale == 1

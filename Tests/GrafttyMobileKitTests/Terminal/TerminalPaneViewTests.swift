@@ -2084,9 +2084,64 @@ struct PagedSourceGridTests {
 
 }
 
-@Suite
+@Suite(.serialized)
 @MainActor
 struct TerminalTouchScrollTests {
+    @Test("Follower application drag waits for the physical owner viewport and is discarded on route replacement", arguments: [false, true])
+    func followerApplicationScrollWaitsForOwner(replaceRoute: Bool) async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        let input = ScrollInputRecorder()
+        let session = InMemoryTerminalSession(write: { input.append($0) }, resize: { _ in })
+        let renderer = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        container.terminalView.controller = renderer
+        host.view.addSubview(container)
+        container.layoutIfNeeded()
+        defer {
+            container.onApplicationScrollRequested = nil
+            container.removeFromSuperview()
+            window.isHidden = true
+        }
+        let grid = try #require(container.terminalGridMetrics)
+        let ready = "\u{1b}[\(grid.rows);\(grid.columns)R"
+        for _ in 0..<100 where !input.contains(ready) {
+            session.receive("\u{1b}[?1049h\u{1b}[?1000h\u{1b}[?1006h\u{1b}[999;999H\u{1b}[6n")
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(input.contains(ready))
+        container.controlAttachmentID = UUID()
+        container.authoritativeGrid = .init(cols: grid.columns, rows: grid.rows)
+        container.layoutIfNeeded()
+        var claims = 0
+        container.onApplicationScrollRequested = { claims += 1 }
+        #expect(claims == 0, "Passive follower attachment must not claim control")
+        let pan = TouchScrollPan()
+        pan.point = CGPoint(x: 60, y: 60)
+        pan.phase = .began
+        container.handleApplicationScroll(pan)
+        pan.phase = .ended
+        container.handleApplicationScroll(pan)
+        #expect(claims == 1)
+        #expect(!input.contains("\u{1b}[<64;"), "Follower drag must wait for ownership")
+        if replaceRoute { container.controlAttachmentID = UUID() }
+        container.authoritativeGrid = nil
+        container.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(!input.contains("\u{1b}[<64;"), "Canvas release must wait for the physical viewport callback")
+        container.onPhysicalViewportReady = { _ in }
+        for _ in 0..<100 {
+            container.layoutIfNeeded()
+            if input.contains("\u{1b}[<64;") { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(input.contains("\u{1b}[<64;") == !replaceRoute,
+                "An ended drag must replay only into its original, ready attachment: \(input.description)")
+    }
+
     @Test("@spec IOS-6.26: When a user begins a scroll drag in an interactive mobile terminal, the application shall place the terminal pointer at the gesture location before sending wheel input so fullscreen applications receive scrolling in the touched region.")
     func fullscreenWheelUsesTouchedRegion() async throws {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))

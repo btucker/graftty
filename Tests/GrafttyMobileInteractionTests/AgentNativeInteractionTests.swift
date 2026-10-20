@@ -14,9 +14,8 @@ final class AgentNativeInteractionTests: XCTestCase {
         try await runScriptedInteractions()
     }
 
-    /// Captures default provider virtualization separately from the classic-mode
-    /// history regression. A pass here establishes navigation and diagnostics only.
-    func testNativeNotificationScrollDiagnostic() async throws {
+    /// @spec IOS-6.40: When the user drags to scroll a mouse-capturing application in a mobile follower pane, the application shall request control and forward the drag after the owner viewport is ready, while passive attachment and local scrolling in other panes retain their current ownership.
+    func testNativeNotificationApplicationScroll() async throws {
         try await runScriptedInteractions()
     }
 

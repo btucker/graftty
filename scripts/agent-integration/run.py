@@ -209,7 +209,7 @@ class Run:
             '-resultBundlePath', str(self.root / 'mobile.xcresult'), '-parallel-testing-enabled', 'NO',
             '-only-testing:GrafttyMobileInteractionTests/AgentNativeInteractionTests/'
                 + ('testNativeNotificationHistory' if getattr(options, 'notifications', False) and options.notification_case == 'scrollback-classic'
-                   else 'testNativeNotificationScrollDiagnostic' if getattr(options, 'notifications', False) and options.notification_case == 'scrollback'
+                   else 'testNativeNotificationApplicationScroll' if getattr(options, 'notifications', False) and options.notification_case == 'scrollback'
                    else 'testNativeNotificationActivation' if getattr(options, 'notifications', False)
                    else 'testNativeQuickLookRetention' if getattr(options, 'preview', False)
                    else 'testScriptedAgentInteractions'), 'test-without-building']
