@@ -5,6 +5,34 @@ import GrafttyProtocol
 @testable import GrafttyKit
 
 struct PagedZmxAttachEngineTests {
+    @Test("@spec TERM-12.46: When a display owner sends complete terminal mouse reports through a paged attachment, the application shall deliver those bytes without requiring daemon keyboard leadership, preserve ordinary keyboard leadership and passive input behavior, and keep input in order.")
+    func ownerMouseInputBypassesDaemonKeyboardLeadership() async throws {
+        let mouse = Data("\u{1b}[<64;24;23M\u{1b}[<0;24;23m".utf8)
+        let legacy = Data([0x1b, 0x5b, 0x4d, 96, 56, 55])
+        let keyboard = Data("\u{1b}[A".utf8)
+        let incomplete = Data("\u{1b}[<64;24;".utf8)
+        let mixed = mouse + Data("x".utf8)
+        let frames: [(UInt8, Data)] = [(0, mouse), (18, mouse), (18, legacy),
+            (0, keyboard), (0, incomplete), (0, mixed)]
+        let daemon = try FakePagedDaemon { fd in
+            try FakePagedDaemon.negotiate(fd)
+            for expected in frames {
+                let actual = try FakePagedDaemon.receive(fd)
+                #expect(actual.0 == expected.0)
+                #expect(actual.1 == expected.1)
+            }
+        }
+        defer { daemon.finish() }
+        let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"),
+            zmxDir: daemon.directory, sessionName: "session"))
+        defer { engine.close() }
+        try await engine.start()
+        try await engine.send(mouse)
+        for (_, bytes) in frames.dropFirst() { try await engine.sendOwnerInput(bytes) }
+        #expect(await daemon.waitUntilDone())
+        #expect(daemon.error == nil)
+    }
+
     @Test("@spec TERM-12.11: When a mobile client requests paged attachment, the application shall negotiate support before accepting a bounded current-screen checkpoint and keep live output separate from requested history.")
     func wireSeparatesCheckpointLiveAndHistory() throws {
         var ready = Data()

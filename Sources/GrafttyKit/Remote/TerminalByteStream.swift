@@ -14,6 +14,10 @@ public protocol TerminalIO: Sendable {
     /// client).
     func send(_ bytes: Data) async throws
 
+    /// Input that has passed the host's display-owner gate. Implementations
+    /// may deliver mouse reports without a second daemon leadership heuristic.
+    func sendOwnerInput(_ bytes: Data) async throws
+
     /// Stop the stream and release any underlying resources (e.g.
     /// terminate the zmx attach process). Conformers **must** finish
     /// their output stream's continuation before returning —
@@ -32,6 +36,7 @@ public protocol TerminalIO: Sendable {
 
 public extension TerminalIO {
     var usesHostClipboard: Bool { false }
+    func sendOwnerInput(_ bytes: Data) async throws { try await send(bytes) }
     func resize(cols: Int, rows: Int) async {}
 }
 
