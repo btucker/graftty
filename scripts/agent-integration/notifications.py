@@ -12,9 +12,10 @@ from run import REPO, Run, execute
 
 
 def notification_scenario_text(rows=100):
-    # Four deltas are required for distinct begin/middle/end stream barriers.
-    return ('BEGIN-GRAFTTY-FIXTURE\nNotification fixture started.\n'
-            'Notification fixture completed.\nEND-GRAFTTY-FIXTURE\n')
+    # Keep enough transcript to distinguish provider virtualization from
+    # terminal history. No classic-mode override is used by this scenario.
+    from history_scenario import history_text
+    return history_text(max(rows, 600))
 
 
 def verify_attention_isolation(root, cli, env, command=execute):
@@ -235,6 +236,13 @@ class NotificationRun(Run):
         self.deliver_mobile_stop(provider, 0, 1)
         self.tap_mobile_notification(provider, prepared)
         selected = self.wait_mobile_route(provider, prepared)
+        before = self.act(Action('notificationsState', provider, client='mobile'))
+        source = self.act(Action('verify', provider))
+        for _ in range(3):
+            self.act(Action('scroll', provider, {'position': 'top'}, client='gestures'))
+        after = self.act(Action('notificationsState', provider, client='mobile'))
+        (self.root / f'notifications-{provider}-scroll-probe.json').write_text(json.dumps(
+            {'before': before, 'after': after, 'source': source}, indent=2))
         self.deliver_mobile_stop(provider, 1, 2)
         self.summary['assertions'].append({'provider': provider, 'mobileControlledInputActivation': selected,
             'mobileControlledInputRequestCount': 2})

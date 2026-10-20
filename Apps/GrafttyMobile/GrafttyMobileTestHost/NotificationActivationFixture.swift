@@ -269,6 +269,21 @@ final class NotificationActivationFixture {
             let pending = waiters
             waiters.removeAll()
             for waiter in pending { waiter.resume() }
+        case "notificationsScroll", "notificationsLoadedHistory", "notificationsReconnect":
+            guard let hostID = state.selectedHostId, let session = state.focusedPaneId,
+                  let pane = retainedPanes.cached(.init(hostID: hostID, sessionName: session)),
+                  let surface = pane.container?.terminalView.surface else {
+                throw AgentIntegrationError("selected notification terminal missing")
+            }
+            if command.operation == "notificationsReconnect" { pane.client.forceReconnectNow() }
+            else if command.operation == "notificationsScroll" {
+                let action = command.parameters["position"] == "bottom" ? "scroll_to_bottom" : "scroll_to_top"
+                guard surface.performAction(action) else { throw AgentIntegrationError("notification scroll rejected") }
+            } else {
+                guard surface.performAction("select_all") else { throw AgentIntegrationError("notification history read rejected") }
+                defer { _ = surface.performAction("clear_selection") }
+                return ["loadedHistory": surface.readSelection() ?? ""]
+            }
         case "notificationsState": break
         default: throw AgentIntegrationError("unsupported notification fixture command \(command.operation)")
         }
@@ -313,7 +328,22 @@ final class NotificationActivationFixture {
             matchesSelectedClient = false
         }
         observationSequence += 1
-        return ["expectedHost": configuration.host.id.uuidString, "expectedWorktree": event.worktree,
+        container?.accessibilityIdentifier = "Agent integration terminal"
+        let bar = container?.snapshotScrollView.scrollbar
+        var diagnostics: [String: String] = [
+            "paging": selectedPane?.client.paging.map { String(describing: $0.status) } ?? "inactive",
+            "offset": String(bar?.offset ?? 0), "total": String(bar?.total ?? 0), "len": String(bar?.len ?? 0),
+            "isOwner": String(selectedPane?.client.isOwner ?? false),
+            "clientID": selectedPane.map { String(describing: ObjectIdentifier($0.client)) } ?? "",
+            "canvasGrid": selectedPane?.client.snapshotCanvasGrid.map { "\($0.cols)x\($0.rows)" } ?? "physical"]
+        #if DEBUG
+        if let value = selectedPane?.client.paging?.historyDiagnosticsForTesting {
+            diagnostics["historyGeneration"] = String(value.generation)
+            diagnostics["issuedHistoryRequests"] = String(value.requests)
+            diagnostics["importedHistoryPages"] = String(value.imports)
+        }
+        #endif
+        diagnostics.merge(["expectedHost": configuration.host.id.uuidString, "expectedWorktree": event.worktree,
             "expectedPane": event.paneSessionName ?? "", "title": title,
             "unrelatedPane": configuration.unrelatedPane,
             "selectedHost": state.selectedHostId?.uuidString ?? "", "worktree": state.selectedWorktreePath ?? "",
@@ -340,7 +370,8 @@ final class NotificationActivationFixture {
             "transportError": transportError,
             "observationSequence": String(observationSequence),
             "observedAt": String(Date().timeIntervalSince1970),
-            "requestIDs": String(decoding: try JSONEncoder().encode(submitted), as: UTF8.self)]
+            "requestIDs": String(decoding: try JSONEncoder().encode(submitted), as: UTF8.self)]) { _, new in new }
+        return diagnostics
     }
 
     /// A cached renderer can still receive output after navigation detaches it.
