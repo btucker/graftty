@@ -259,7 +259,7 @@ class NotificationRun(Run):
         source = self.act(Action('verify', provider))
         (self.root / f'notifications-{provider}-source-history.json').write_text(json.dumps(source, indent=2))
         if classic:
-            gesture_backfill(self, provider)
+            gesture_backfill(self, provider, 'notification-initial')
             # Expire the still-unloaded prefix through a real source resize.
             # Scrolling then makes the stale native checkpoint observable.
             self.act(Action('resize', provider, {'width': '900', 'height': '640'}))
@@ -281,11 +281,13 @@ class NotificationRun(Run):
                 and value['paging'] in ('available', 'complete'))
             (self.root / f'notifications-{provider}-recovered.json').write_text(json.dumps(
                 {'expired': expired, 'reopened': reopened, 'refreshed': refreshed}, indent=2))
+            gesture_backfill(self, provider, 'notification-retained-reentry')
             load_history(self, provider, 'notification-retained-reentry', contemporaneous=True)
             self.act(Action('reconnect', provider, client='mobile'))
             self.wait_mobile_notification(provider, lambda value: value['live'] == 'true'
                 and value['historyGeneration'] != selected['historyGeneration']
                 and value['paging'] not in ('inactive', 'installing'))
+            gesture_backfill(self, provider, 'notification-reconnect')
             load_history(self, provider, 'notification-reconnect', contemporaneous=True)
         else:
             before = self.snapshot(provider, 'mobile')

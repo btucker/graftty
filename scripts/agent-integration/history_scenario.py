@@ -105,7 +105,7 @@ def verify_source_history(run, agent):
     run.summary['assertions'].append({'agent': agent, 'sourceHistoryRows': run.options.rows})
 
 
-def gesture_backfill(run, agent):
+def gesture_backfill(run, agent, stage=None):
     # Let initial prefetch settle before measuring page loading caused by a
     # touch drag. The held provider stream cannot add live rows in this phase.
     baseline = run.wait_snapshot(agent, lambda value: value['paging'] == 'available', 'mobile')
@@ -150,8 +150,10 @@ def gesture_backfill(run, agent):
             break
     else:
         raise InvariantFailure(f'{agent}: touch scrolling did not load and reveal older history')
-    (run.root / f'history-{agent}-gesture.json').write_text(json.dumps(observations, indent=2))
+    suffix = f'-{stage}' if stage else ''
+    (run.root / f'history-{agent}-gesture{suffix}.json').write_text(json.dumps(observations, indent=2))
     run.summary['assertions'].append({'agent': agent, 'gestureLoadedOlderHistory': True,
+        'stage': stage,
         'totalBefore': initial_total, 'totalAfter': int(value['total']),
         'oldestLoadedRowBefore': min(initial_rows), 'firstRowAfter': min(older_rows),
         'requestsBefore': int(baseline['issuedHistoryRequests']), 'requestsAfter': int(value['issuedHistoryRequests']),

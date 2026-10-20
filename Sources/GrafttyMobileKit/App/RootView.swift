@@ -1169,6 +1169,8 @@ struct SingleSessionView: View {
     }
 
     private var notificationRecoveryKey: NotificationRecoveryKey {
+        // Let a pending page declare expiry before consuming the notification.
+        // Recovery enters .installing itself; that must not cancel this task.
         .init(occurrenceID: notificationPaneActivation?.request?.id,
               clientID: client.map(ObjectIdentifier.init),
               isReady: connection == .live && client?.connectionState == .live && isPaneFocused
