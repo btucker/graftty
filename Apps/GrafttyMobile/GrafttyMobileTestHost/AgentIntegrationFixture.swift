@@ -259,6 +259,13 @@ final class AgentIntegrationMobileController: UIViewController {
                 pane.client.forceReconnectNow()
                 try await waitForOwnership(pane.client)
             case "scroll":
+                if let encoded = command.parameters["wheelY"], let delta = Double(encoded),
+                   let surface = pane.container.terminalView.surface {
+                    surface.sendMousePos(x: pane.container.terminalView.bounds.midX,
+                                         y: pane.container.terminalView.bounds.midY)
+                    surface.sendMouseScroll(x: 0, y: delta)
+                    break
+                }
                 var action = command.parameters["position"] == "bottom" ? "scroll_to_bottom" : "scroll_to_top"
                 if command.parameters["position"] == "middle", let bar = pane.container.snapshotScrollView.scrollbar {
                     action = "scroll_to_row:\((bar.total - min(bar.total, bar.len)) / 2)"
@@ -425,6 +432,10 @@ final class AgentIntegrationMobileController: UIViewController {
             "width": String(Int(pane.container.bounds.width)), "height": String(Int(pane.container.bounds.height)),
             "session": pane.client.sessionName, "paging": pane.client.paging.map { String(describing: $0.status) } ?? "inactive"]
         #if DEBUG
+        values["nativeInputFrames"] = String(pane.client.diagnosticNativeInputFrames)
+        values["nativeMouseReports"] = String(pane.client.diagnosticNativeMouseReports)
+        values["sentInputFrames"] = String(pane.client.diagnosticSentInputFrames)
+        values["sentMouseReports"] = String(pane.client.diagnosticSentMouseReports)
         values["applicationScrollRequests"] = String(pane.container.diagnosticApplicationScrollRequests)
         values["applicationScrollDeliveries"] = String(pane.container.diagnosticApplicationScrollDeliveries)
         if let diagnostic = pane.client.paging?.historyDiagnosticsForTesting {

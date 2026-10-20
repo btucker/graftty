@@ -2094,6 +2094,7 @@ struct TerminalTouchScrollTests {
         window.rootViewController = host
         window.makeKeyAndVisible()
         let container = TerminalInputContainerView(frame: window.bounds)
+        container.committedSoftwareInput = nil
         let input = ScrollInputRecorder()
         let session = InMemoryTerminalSession(write: { input.append($0) }, resize: { _ in })
         let renderer = MobileTerminalControllerFactory.make(configText: "font-size = 14")

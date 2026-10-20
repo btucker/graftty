@@ -95,6 +95,20 @@ public final class SessionClient {
     /// Keep diagnostics outside observation so measuring traffic cannot trigger layout.
     @ObservationIgnored
     public private(set) var diagnosticOwnerResizeRequests: UInt64 = 0
+    #if DEBUG
+    @ObservationIgnored public private(set) var diagnosticNativeInputFrames: UInt64 = 0
+    @ObservationIgnored public private(set) var diagnosticNativeMouseReports: UInt64 = 0
+    @ObservationIgnored public private(set) var diagnosticSentInputFrames: UInt64 = 0
+    @ObservationIgnored public private(set) var diagnosticSentMouseReports: UInt64 = 0
+
+    private static func mouseWheelReports(in data: Data) -> UInt64 {
+        guard data.contains(0x1b) else { return 0 }
+        let text = String(decoding: data, as: UTF8.self)
+        return ["\u{1b}[<64;", "\u{1b}[<65;", "\u{1b}[M`", "\u{1b}[Ma"].reduce(UInt64(0)) {
+            $0 + UInt64(text.components(separatedBy: $1).count - 1)
+        }
+    }
+    #endif
 
     /// A follower renders the daemon's logical grid on a fitted canvas.
     /// VT-only streams need the same exact grid as paged checkpoints:
@@ -380,6 +394,10 @@ public final class SessionClient {
             guard let self else { return }
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                #if DEBUG
+                self.diagnosticNativeInputFrames &+= 1
+                self.diagnosticNativeMouseReports &+= Self.mouseWheelReports(in: data)
+                #endif
                 // Native writes include automatic terminal replies and focus
                 // reports. Only an owner may forward them; explicit user input
                 // uses the methods below to request control before writing.
@@ -1338,7 +1356,14 @@ public final class SessionClient {
                     case .frames(let frames):
                         for data in frames {
                             guard isCurrent() else { return }
+                            #if DEBUG
+                            if (try? await ws.send(.binary(data))) != nil {
+                                self.diagnosticSentInputFrames &+= 1
+                                self.diagnosticSentMouseReports &+= Self.mouseWheelReports(in: data)
+                            }
+                            #else
                             try? await ws.send(.binary(data))
+                            #endif
                         }
                     case let .ownerResize(cols, rows, pixels, epoch):
                         guard ws.supportsWebControlTextFrames else { continue }

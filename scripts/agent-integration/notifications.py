@@ -310,6 +310,14 @@ class NotificationRun(Run):
                 if revealed_older(after):
                     break
             else:
+                # Diagnostic only: retain the failed real-gesture result even
+                # if direct surface wheel input can move the provider.
+                probe_before = self.snapshot(provider, 'mobile')
+                self.server.broker.command(Action('scroll', provider, {'wheelY': '480'}, client='mobile'))
+                time.sleep(.5)
+                probe_after = self.snapshot(provider, 'mobile')
+                (self.root / f'notifications-{provider}-wheel-probe.json').write_text(json.dumps(
+                    {'before': probe_before, 'after': probe_after, 'source': self.act(Action('verify', provider))}, indent=2))
                 raise InvariantFailure(f'{provider}: app scrolling did not reveal older virtualized output')
             # Current provider viewport is the oracle here. The daemon has no
             # full transcript prefix to import in fullscreen mode.
