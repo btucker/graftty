@@ -561,8 +561,7 @@ public final class TerminalInputContainerView: UIView,
                 applicationScrollAttachmentID = controlAttachmentID
             }
             applicationScrollEnded = false
-            applicationScrollLocation = gesture.location(in: self)
-            gesture.setTranslation(.zero, in: self)
+            accumulateApplicationScroll(gesture)
             #if DEBUG
             diagnosticApplicationScrollRequests &+= 1
             #endif
@@ -585,13 +584,7 @@ public final class TerminalInputContainerView: UIView,
                 self?.cancelPendingApplicationScroll()
             }
         case .changed, .ended:
-            let delta = gesture.translation(in: self)
-            gesture.setTranslation(.zero, in: self)
-            // Bound queued intent while a network claim is pending.
-            let limit = max(bounds.width, bounds.height) * 4
-            pendingApplicationScroll.x = max(-limit, min(limit, pendingApplicationScroll.x + delta.x))
-            pendingApplicationScroll.y = max(-limit, min(limit, pendingApplicationScroll.y + delta.y))
-            applicationScrollLocation = gesture.location(in: self)
+            accumulateApplicationScroll(gesture)
             applicationScrollEnded = gesture.state == .ended
             flushPendingApplicationScroll()
             if applicationScrollEnded && applicationScrollIsReady { cancelPendingApplicationScroll() }
@@ -599,6 +592,17 @@ public final class TerminalInputContainerView: UIView,
             cancelPendingApplicationScroll()
         default: break
         }
+    }
+
+    private func accumulateApplicationScroll(_ gesture: UIPanGestureRecognizer) {
+        let delta = gesture.translation(in: self)
+        gesture.setTranslation(.zero, in: self)
+        // Bound queued intent while a network claim is pending, including the
+        // movement that crossed the recognizer's threshold before .began.
+        let limit = max(bounds.width, bounds.height) * 4
+        pendingApplicationScroll.x = max(-limit, min(limit, pendingApplicationScroll.x + delta.x))
+        pendingApplicationScroll.y = max(-limit, min(limit, pendingApplicationScroll.y + delta.y))
+        applicationScrollLocation = gesture.location(in: self)
     }
 
     private var applicationScrollIsReady: Bool {
