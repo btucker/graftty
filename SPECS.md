@@ -2022,6 +2022,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.49** When an owning mobile pane receives an in-band source grid, the application shall update the parser without fitting the physical viewport to that grid, while continuing to report keyboard, rotation, and font size changes.
 
+**IOS-4.50** While a mobile terminal is displayed, long-pressing Back shall offer the most recently opened distinct panes with host, project, worktree, and pane labels, retain visits across relaunches, and open the selected stable pane identity without changing ordinary Back taps or allowing stale targets or superseded navigation to redirect the user.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.

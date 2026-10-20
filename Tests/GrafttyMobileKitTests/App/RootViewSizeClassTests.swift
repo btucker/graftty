@@ -2,12 +2,71 @@
 import Testing
 import Foundation
 import SwiftUI
+import UIKit
 @testable import GrafttyProtocol
 @testable import GrafttyMobileKit
 
 @MainActor
 @Suite("RootView size-class router — IPAD-1.1 + IPAD-7.1")
 struct RootViewSizeClassTests {
+    @Test(arguments: [false, true])
+    func compactPanePreviewsDoNotBecomeRecentTerminalVisits(isRegularWidth: Bool) async throws {
+        let defaults = try #require(UserDefaults(suiteName: "visible-recent-pane-\(UUID())"))
+        let state = IPadAppState(defaults: defaults)
+        let host = Host(label: "Mac", baseURL: URL(string: "https://fixture.invalid")!)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostStore(storeURL: directory.appendingPathComponent("hosts.json"))
+        try store.add(host)
+        let row = WorktreePanes(path: "/split", displayName: "Split", repoDisplayName: "Project", displayBranch: "split",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "first", title: "First", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: .leaf(sessionName: "second", title: "Second", attentionText: nil, isBusy: false, attentionSource: nil)))
+        state.selectedHostId = host.id
+        state.latestWorktrees = [row]
+        let gate = BiometricGate(authenticator: RecentPaneAuthenticator())
+        gate.applicationWillEnterForeground()
+        await gate.authenticateOnActivation()
+        let root = RootView(hostStore: store, gate: gate, notifications: MobileAgentNotifications(defaults: defaults),
+            appState: state, notificationIO: .init(fetch: { _ in [row] }, reopen: { _, _ in }))
+        let controller = UIHostingController(rootView: root
+            .environment(\.horizontalSizeClass, isRegularWidth ? .regular : .compact)
+            .environment(\.scenePhase, .inactive))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: isRegularWidth ? 834 : 390, height: 844))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        controller.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        // Compact selection opens pane previews. Regular selection mounts
+        // the terminal tree. Merely preselecting a leaf is not a compact visit.
+        state.selectedWorktreePath = row.path
+        state.focusedPaneId = "first"
+        controller.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(state.recentPanes.entries.isEmpty == !isRegularWidth)
+    }
+    @Test func recentPaneChoiceUpdatesTheActualHostWorktreeAndPaneRoute() throws {
+        let state = IPadAppState(defaults: try #require(UserDefaults(suiteName: "recent-selection-\(UUID())")))
+        let host = Host(label: "Other Mac", baseURL: URL(string: "https://other.invalid")!)
+        let row = WorktreePanes(path: "/other/target", displayName: "Target", repoDisplayName: "Project", displayBranch: "target",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "first", title: "First", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: .leaf(sessionName: "wanted", title: "Wanted", attentionText: nil, isBusy: false, attentionSource: nil)),
+            sidebar: .init(id: "stable-target", projectID: "other-project"))
+        state.selectedHostId = UUID()
+        state.selectedWorktreePath = "/old"
+        RootView.applyRecentPaneTarget(.init(rows: [row], worktree: row, pane: row.layout!.leaves[1]), host: host, to: state)
+        let selection = try #require(RootView.compactSelection(appState: state, hosts: [host]))
+        #expect(selection.host.id == host.id)
+        #expect(selection.worktree?.path == row.path)
+        #expect(selection.session?.sessionName == "wanted")
+        #expect(selection.session?.worktreeProject?.id == "other-project")
+        #expect(state.latestWorktrees == [row])
+        #expect(state.sidebarNavigation.selectedProjectID == "other-project")
+    }
 
     @Test("""
 @spec IPAD-7.2: When `horizontalSizeClass` transitions between `.regular` and `.compact`, the application shall preserve `selectedHostId`, `selectedWorktreePath`, and `focusedPaneId` so the user lands on the equivalent leaf in the new layout.
@@ -129,5 +188,9 @@ W3 Task 3: `RootView` owns a single `RemoteConnectionCoordinator` and hands the 
         #expect(ipadLayout.coordinator === coordinator)
         #expect(compactSession.coordinator === coordinator)
     }
+}
+
+private struct RecentPaneAuthenticator: BiometricAuthenticator {
+    func authenticate() async -> Result<Void, Error> { .success(()) }
 }
 #endif
