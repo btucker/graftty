@@ -264,7 +264,7 @@ class NotificationRun(Run):
             # Scrolling then makes the stale native checkpoint observable.
             self.act(Action('resize', provider, {'width': '900', 'height': '640'}))
             resized = self.wait_snapshot(provider, lambda value: value['grid'] != source['grid']
-                and value['grid'] == value['nativeGrid'] and value['isOwner'] == 'true')
+                and value['grid'] == value['nativeGrid'] and value['owner'] == source['owner'])
             self.wait_mobile_notification(provider, lambda value: value['grid'] == resized['grid']
                 and value['nativeGrid'] == resized['grid'] and value['isOwner'] == 'false')
             self.server.broker.command(Action('scroll', provider, {'position': 'top'}, client='mobile'))

@@ -69,6 +69,14 @@ extension AgentNativeInteractionTests {
                 start.press(forDuration: 0.05, thenDragTo: end)
                 usedNotificationCenter = true
             }
+            if usedNotificationCenter, !banner.waitForExistence(timeout: 2) {
+                // Foreground alerts can already be in notification history,
+                // below the cover sheet's incoming-notification page.
+                let start = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                let end = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+                start.press(forDuration: 0.05, thenDragTo: end)
+                result["revealedNotificationHistory"] = "true"
+            }
             guard banner.waitForExistence(timeout: 10) else {
                 throw AgentIntegrationError("Native notification '\(title)' did not appear in Simulator Notification Center")
             }
