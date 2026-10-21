@@ -279,6 +279,7 @@ let package = Package(
             name: "GrafttyProtocolTests",
             dependencies: ["GrafttyProtocol"] + cryptoDependencies,
             exclude: isLinux ? ["UI", "WorktreePanesTests.swift"] : [],
+            resources: [.copy("Fixtures")],
             swiftSettings: strictWarnings
         ),
         .testTarget(
