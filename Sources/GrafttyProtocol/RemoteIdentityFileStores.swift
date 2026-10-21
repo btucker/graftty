@@ -17,6 +17,16 @@ public protocol RemoteIdentityFileLocation {
     static var defaultDirectory: URL { get }
 }
 
+extension RemoteIdentityFileLocation {
+    /// `Application Support/Graftty/Remote`, shared by the remote-identity
+    /// stores that do not override it.
+    public static var defaultDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Graftty")
+            .appendingPathComponent("Remote")
+    }
+}
+
 // MARK: - RemoteIdentityKeyStore
 
 /// Persists a long-lived Ed25519 identity keypair for one role.
@@ -165,22 +175,20 @@ public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @u
     // MARK: Private (call only while holding `lock`)
 
     private func _load() -> RemoteDeviceID? {
-        let stored: StoredID?
         do {
-            stored = try file.load()
+            guard let stored = try file.load() else {
+                return nil
+            }
+            guard stored.version == Self.currentVersion, !stored.deviceID.value.isEmpty else {
+                file.moveAsideCorruptFile()
+                return nil
+            }
+            return stored.deviceID
         } catch is DecodingError {
             file.moveAsideCorruptFile()
             return nil
         } catch {
             return nil
         }
-        guard let stored else {
-            return nil
-        }
-        guard stored.version == Self.currentVersion, !stored.deviceID.value.isEmpty else {
-            file.moveAsideCorruptFile()
-            return nil
-        }
-        return stored.deviceID
     }
 }

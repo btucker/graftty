@@ -1,6 +1,10 @@
 import Foundation
 
 /// @spec PERSIST-5.4
+/// The application shall encode a JSONFileStore's dates and output
+/// formatting exactly as the store is configured, so a migrated store keeps
+/// the byte format its earlier releases wrote.
+///
 /// One `Codable` value persisted as JSON at a fixed file URL.
 ///
 /// Every policy that decides the on-disk bytes or failure behaviour — date

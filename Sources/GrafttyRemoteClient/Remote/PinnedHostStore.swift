@@ -78,7 +78,7 @@ public struct PinnedHost: Codable, Sendable, Equatable, Hashable, Identifiable {
 /// from a crash mid-write.
 ///
 /// Thread safety is achieved via an `NSLock`.
-// TODO: Extract JSONFileStore<T> helper before the network layer lands.
+// TODO(#488): Build on `JSONFileStore` (GrafttyProtocol) like the identity stores.
 public final class PinnedHostStore: @unchecked Sendable {
 
     // MARK: Errors

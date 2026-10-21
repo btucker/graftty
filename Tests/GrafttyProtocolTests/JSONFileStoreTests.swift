@@ -28,7 +28,7 @@ struct JSONFileStoreTests {
         #expect(!FileManager.default.fileExists(atPath: nested.path))
     }
 
-    @Test("@spec PERSIST-5.2: When a JSONFileStore saves a value, the application shall create missing parent directories only if the store opts in, replace the file atomically, and apply the store's configured POSIX permissions.")
+    @Test("@spec PERSIST-5.2: When a JSONFileStore saves a value, the application shall create missing parent directories unless the store opts out, replace the file atomically, and apply the store's configured POSIX permissions.")
     func saveHonoursDirectoryAndPermissionOptions() throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }

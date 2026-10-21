@@ -1020,7 +1020,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-5.1** When a JSONFileStore loads a file that does not exist, the application shall return nil without creating the file, its directory, or a corrupt-file backup.
 
-**PERSIST-5.2** When a JSONFileStore saves a value, the application shall create missing parent directories only if the store opts in, replace the file atomically, and apply the store's configured POSIX permissions.
+**PERSIST-5.2** When a JSONFileStore saves a value, the application shall create missing parent directories unless the store opts out, replace the file atomically, and apply the store's configured POSIX permissions.
 
 **PERSIST-5.3** When a JSONFileStore moves a corrupt file aside, the application shall rename it beside the original as either `<name>.corrupt.<milliseconds>` or `<name>.corrupt-<seconds>`, per the store's configured backup naming, leaving no file at the original path.
 
