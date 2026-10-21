@@ -379,12 +379,18 @@ struct HostBrowserProxyTests {
             try await BrowserProxy.send(Data("alive".utf8), to: socket)
             socket.cancel()
         })
-        for local in [first, second] {
+        for (index, local) in [first, second].enumerated() {
             local.open(url: url, hostID: hostID, makeTunnel: { tunnel },
                        authenticate: { .init(url: $0, callbackHost: "localhost") }, isPaneOwner: { true })
-            let deadline = ContinuousClock.now + .seconds(3)
-            while local.session.url == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-            try #require(local.session.url == url)
+            // Hosted simulators can delay listener readiness. Wait for the
+            // preparation outcome, and report failures without waiting out the budget.
+            let started = ContinuousClock.now
+            let deadline = started + .seconds(15)
+            while local.session.url == nil, local.session.error == nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            try #require(local.session.url == url,
+                         "Local browser \(index + 1) did not prepare after \(started.duration(to: ContinuousClock.now)); preparing=\(local.session.preparing), error=\(local.session.error ?? "none")")
         }
         second.allowed = false
         let socket = NWConnection(host: "127.0.0.1", port: 32188, using: .tcp)
