@@ -694,7 +694,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-2.5** While a repository is in the sidebar, the application shall watch `<repoPath>/.git/logs/refs/remotes/origin/` using FSEvents so that any operation which advances a remote-tracking ref — `git push` (the common `gh pr create` path), `git fetch`, and prune — surfaces as an origin-ref change. One watch per repository covers all linked worktrees, since they share the main checkout's git directory.
 
-**GIT-2.6** While a worktree is in the sidebar and non-stale, the application shall recursively watch the worktree's directory with `FSEventStreamCreate` (coalescing latency 0.5s) so that working-tree edits, stages / unstages via `.git/index`, and untracked-file creation surface as content-change events. Events for the worktree root, the bare `.git` directory, and the `.git/objects/` subtree shall be filtered out: the root and `.git` are coarse parent-mtime bumps that fire alongside more specific descendant events and carry no additional signal, and `.git/objects/` is pure pack-churn noise from `git gc` / pack writes. The watched path shall be resolved via `realpath(3)` before use because FSEvents always reports canonical paths (e.g. `/private/var/...` rather than `/var/...`) and an unresolved root makes the filter's `hasPrefix` comparison miss every event. The membership, path, and HEAD watchers in GIT-2.1–GIT-2.4 use kqueue vnode sources (`DispatchSourceFileSystemObject`), which cannot watch a subtree recursively; the origin-ref watcher in GIT-2.5 and this working-tree watcher use FSEvents because both must observe changes below a directory.
+**GIT-2.6** While a worktree is non-stale and its monitor was created with content watching enabled (`GIT-2.12`), the application shall recursively watch the worktree's directory with `FSEventStreamCreate` (coalescing latency 0.5s) so that working-tree edits, stages / unstages via `.git/index`, and untracked-file creation surface as content-change events. Events for the worktree root, the bare `.git` directory, and the `.git/objects/` subtree shall be filtered out: the root and `.git` are coarse parent-mtime bumps that fire alongside more specific descendant events and carry no additional signal, and `.git/objects/` is pure pack-churn noise from `git gc` / pack writes. The watched path shall be resolved via `realpath(3)` before use because FSEvents always reports canonical paths (e.g. `/private/var/...` rather than `/var/...`) and an unresolved root makes the filter's `hasPrefix` comparison miss every event. The membership, path, and HEAD watchers in GIT-2.1–GIT-2.4 use kqueue vnode sources (`DispatchSourceFileSystemObject`), which cannot watch a subtree recursively; the origin-ref watcher in GIT-2.5 and this working-tree watcher use FSEvents because both must observe changes below a directory.
 
 **GIT-2.8** While repositories are in the sidebar, the application shall scan local `refs/remotes/origin/*` for at most four repositories per ten-second tick without contacting the network and advance a round-robin cursor so every repository is scanned within `ceil(repoCount / 4)` ticks. The scan shall maintain repo-scoped locally-known remote branch names and shall not replace the repo-level fetch cadence that discovers branches created from another clone.
 
@@ -704,7 +704,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-2.11** When recurring remote-branch polling scans local Git refs, the application shall time-bound every subprocess so a filesystem-blocked repository releases its in-flight slot and retained pipe descriptors without requiring an application restart.
 
-**GIT-2.12** If a repository's remote-branch scan remains in flight past the 30-second abandonment threshold, then the application shall treat that scan as abandoned, start a fresh scan for the next refresh request, and discard the abandoned scan's late result.
+**GIT-2.12** While the monitor's owner has not opted in to content-change events, the application shall not arm the working-tree content watcher from `GIT-2.6`, because only the headless host's maintenance loop consumes those events and an unconsumed recursive stream still runs its path filter on every build-output write.
 
 ### GIT-3.x — Change Handling
 
@@ -1256,7 +1256,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-3.0** Divergence shall be measured against the union of a worktree's upstream refs:
 
-**DIVERGE-3.1** The application shall compute the behind count by running `git rev-list --count <refs> ^HEAD` and the ahead count by running `git rev-list --count HEAD ^<refs>` (each `<ref>` from `DIVERGE-3.0` prefixed with `^` for the ahead command). `rev-list` natively dedupes, so a commit reachable from both upstream refs is counted once.
+**DIVERGE-3.1** The application shall compute the ahead and behind counts against the upstream refs from `DIVERGE-3.0`. When there is a single ref, the application shall run one `git rev-list --left-right --count HEAD...<ref>` and read the left count as ahead and the right count as behind. When there are two refs, the application shall run `git rev-list --count <refs> ^HEAD` for behind and `git rev-list --count HEAD ^<refs>` for ahead; `rev-list` natively dedupes, so a commit reachable from both upstream refs is counted once.
 
 **DIVERGE-3.2** When computing insertion and deletion line counts, the application shall run `git diff --shortstat <ref>...HEAD` where `<ref>` is `origin/<worktree-branch>` when that tracking ref exists, otherwise the local default branch for pinned agents with auto-tracking enabled or `origin/<defaultBranch>` for other worktrees. The diff shall use a single ref rather than the full union.
 
@@ -1286,7 +1286,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-4.9** When a compute attempt fails transiently (the default branch was resolvable but `git rev-list`/`diff-tree`/etc. threw), the application shall preserve the worktree's last-known `WorktreeStats` rather than clearing the sidebar gutter. Only when the repo has no resolvable default branch at all (origin removed, clone converted to non-origin setup) shall the stats be wiped. Without this, the ↑N ↓M badge flickers off for the polling window whenever git is briefly unhealthy — same UX concern as `PR-7.10`.
 
-**DIVERGE-4.10** When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, claiming a fetch slot before checking for running worktrees leaves the repo path latched in its in-flight fetch slot: every subsequent poll classifies it as active, skips the local-compute gate, and never re-invokes `WorktreeStatsStore.refresh`. The user-visible shape is a sidebar gutter whose ↓N count remains frozen until the app is relaunched.
+**DIVERGE-4.10** When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, claiming a fetch slot before checking for running worktrees leaves the repo path latched in `inFlightRepos`: every subsequent poll classifies it as active, skips the local-compute gate, and never re-invokes `WorktreeStatsStore.refresh`. The user-visible shape is a sidebar gutter whose ↓N count remains frozen until the app is relaunched.
 
 **DIVERGE-4.11** If a per-repo `git fetch` dispatched by the divergence-stats polling tick remains in flight past the abandonment threshold despite its subprocess deadline, then the application shall treat the repo slot as abandoned and let a later tick dispatch a fresh fetch rather than latch the repo path for the lifetime of the session.
 
@@ -2138,15 +2138,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.40** When the user drags to scroll a mouse-capturing application in a mobile follower pane, the application shall request control and forward the drag after the owner viewport is ready, keep keyboard input disabled until Show keyboard is chosen, and preserve ownership during passive attachment and local scrolling in other panes.
 
-**IOS-6.41** While a mobile terminal that reserves space for top chrome is in a window and has no scrollback, the application shall poll its viewport for first-line clearance at most four times per second; while it has scrollback, the application shall not poll its viewport for that check.
+**IOS-6.41** While a mobile terminal reserves space for top chrome, the application shall re-evaluate first-line clearance after received output has been parsed, without polling the viewport on a timer, and shall read the viewport for that check at most four times per second.
 
 **IOS-6.42** While a mobile terminal that reserves space for top chrome is outside a window, the application shall not read its viewport for first-line clearance after received output, and shall re-evaluate that clearance when the terminal returns to a window.
-
-**IOS-6.43** When a width-only resize wraps or unwraps the lone first line of a mobile terminal that reserves space for top chrome, the application shall re-evaluate first-line clearance without further output.
-
-**IOS-6.44** When a mobile terminal that reserves space for top chrome replaces its screen content without received output, the application shall re-evaluate first-line clearance.
-
-**IOS-6.45** While the window scene of a mobile terminal that reserves space for top chrome is in the background, the application shall not poll its viewport for first-line clearance, and shall resume polling when the scene returns to the foreground.
 
 ### IOS-7.x — Lifecycle
 
@@ -2566,8 +2560,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-8.4** When the application starts, if `defaultCommand` contains `--dangerously-load-development-channels server:graftty-channel`, the application shall strip the substring (with any adjacent leading whitespace), write the cleaned value back to `defaultCommand`, and present a one-shot informational `NSAlert` describing the change.
 
-**TEAM-8.5** The application shall bound the legacy `claude mcp remove graftty-channel` cleanup with a 30-second timeout so a wedged `claude` cannot block the remaining cleanup steps.
-
 ### TEAM-9.x — Stop Hook Filtering
 
 **TEAM-9.1** When a Stop-event hook command (`graftty team hook <runtime> stop`) is invoked and the JSON the runtime wrote to the hook's stdin contains an `agent_id` string — Claude Code's marker that this Stop fired inside a Task subagent context rather than for a top-level agent turn — the CLI shall short-circuit before doing any per-Stop work: no `teamHook` socket message is sent. Without this filter, every Task subagent end can start redundant lifecycle work while the top-level agent is still working.
@@ -2619,6 +2611,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-11.7** If the worktree watermark cannot be advanced during hook delivery, then the application shall leave the session cursor unadvanced so the undelivered messages are redelivered by a later hook.
 
 **TEAM-11.9** When an existing session cursor trails its worktree's shared delivery watermark, hook delivery shall use the later watermark as its effective read position so rows successfully read by another delivery surface are not redelivered.
+
+**TEAM-11.11** While a team's message log is unchanged on disk, the application shall reuse its previously decoded rows instead of re-reading and re-decoding the log, so one team hook delivery decodes the log at most once.
 
 ### TEAM-12.x
 
@@ -2809,14 +2803,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **EDITOR-1.9** When the user cmd-clicks a binary file path in a terminal pane, the application shall open the file with its system default app, equivalent to `open <file>`, without creating an editor pane.
 
 **EDITOR-1.10** When a native terminal restores a snapshot containing an OSC 7 working-directory URI, the application shall resolve local relative file links without aborting, preserve absolute and OSC8 link activation, and remain usable after repeated restoration.
-
-**EDITOR-1.11** When login-shell rc files write more output than a pipe buffer holds, the application shall still return the probed value within the probe timeout rather than stall on the full pipe.
-
-**EDITOR-1.12** When a login-shell rc file starts a background job that outlives the shell, the application shall return the probed value once the shell exits rather than wait for the background job.
-
-**EDITOR-1.13** If the login-shell probe exceeds its timeout, then the application shall kill the shell with SIGKILL, because an interactive shell ignores SIGTERM.
-
-**EDITOR-1.14** While login-shell rc files run, the application shall give them and the jobs they start /dev/null as stdout and write the probed value to a private result file only from the final command, so a profile background job can never hold or grow the result capture.
 
 ## REMOTE — Secure Remote Access
 
@@ -3882,8 +3868,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CLI-1.2** When a timeout-enabled subprocess exits before its deadline, the application shall allow its Process and pipe descriptors to be released immediately rather than retain them in the delayed timeout work item until the original deadline.
 
-**CLI-1.3** If a stopped subprocess, timed out or cancelled, is still running when its kill grace (two seconds by default) elapses after SIGTERM, then the application shall send SIGKILL so the caller is released instead of waiting for a child that ignores SIGTERM.
-
 ## CONTEXT — CONTEXT
 
 ### CONTEXT-1.x
@@ -3953,22 +3937,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-18.x
 
 **CONTEXT-18** When provider prompt history contains human text, peer envelopes, or generated system, forge, and hook context, the application shall highlight only human text as user input, retain peer content with its available sender provenance, and exclude generated context, including in restored history and mixed Codex and Claude turns.
-
-### CONTEXT-19.x
-
-**CONTEXT-19** When worktree history displays human input and peer messages on Mac or mobile, the application shall label human text only as 'Your input' and show peer messages as distinct sender-labelled disclosures collapsed by default, with their full content available on expansion.
-
-### CONTEXT-20.x
-
-**CONTEXT-20** When Context history identifies a peer by an absolute worktree address, the application shall expose its worktree path separately from its agent suffix for in-app navigation, while leaving unnamed peers and non-path sender labels unlinked.
-
-### CONTEXT-21.x
-
-**CONTEXT-21** When a Context history worktree link is opened on mobile, the application shall resolve a unique available target from fresh snapshots on the source host, reopen closed targets before selection, and abandon resolution when newer navigation supersedes it.
-
-### CONTEXT-22.x
-
-**CONTEXT-22** When Context history displays a source worktree, the application shall label it with its directory name while retaining its full path for navigation and sender details.
 
 ## MEM — MEM
 

@@ -64,11 +64,6 @@ struct DivergeTodo {
     func diverge_3_0() async throws { }
 
     @Test("""
-@spec DIVERGE-3.1: The application shall compute the behind count by running `git rev-list --count <refs> ^HEAD` and the ahead count by running `git rev-list --count HEAD ^<refs>` (each `<ref>` from `DIVERGE-3.0` prefixed with `^` for the ahead command). `rev-list` natively dedupes, so a commit reachable from both upstream refs is counted once.
-""", .disabled("not yet implemented"))
-    func diverge_3_1() async throws { }
-
-    @Test("""
 @spec DIVERGE-3.3: The application shall detect uncommitted changes in each worktree by running `git status --porcelain` and treating any non-empty output (including modified, staged, deleted, or untracked entries) as "has uncommitted changes".
 """, .disabled("not yet implemented"))
     func diverge_3_3() async throws { }

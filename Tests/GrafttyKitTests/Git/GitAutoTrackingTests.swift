@@ -138,6 +138,8 @@ struct GitAutoTrackingTests {
             for args in [["rev-list", "--count"] + refs + ["^HEAD"], ["rev-list", "--count", "HEAD"] + refs.map { "^\($0)" }] {
                 executor.stub(command: "git", args: args, output: .init(stdout: "1\n", stderr: "", exitCode: 0))
             }
+            executor.stub(command: "git", args: ["rev-list", "--left-right", "--count", "HEAD...\(defaultRef)"],
+                          output: .init(stdout: "1\t1\n", stderr: "", exitCode: 0))
             let diffRef = hasOwnRemote ? "origin/\(branch)" : defaultRef
             executor.stub(command: "git", args: ["diff", "--shortstat", "\(diffRef)...HEAD"],
                           output: .init(stdout: "1 file changed, 7 insertions(+), 3 deletions(-)\n", stderr: "", exitCode: 0))
@@ -163,9 +165,8 @@ struct GitAutoTrackingTests {
         }
         for name in ["feature", "main"] {
             let ref = "refs/heads/\(name)"
-            for args in [["rev-list", "--count", ref, "^HEAD"], ["rev-list", "--count", "HEAD", "^\(ref)"]] {
-                executor.stub(command: "git", args: args, output: .init(stdout: "1\n", stderr: "", exitCode: 0))
-            }
+            executor.stub(command: "git", args: ["rev-list", "--left-right", "--count", "HEAD...\(ref)"],
+                          output: .init(stdout: "1\t1\n", stderr: "", exitCode: 0))
             executor.stub(command: "git", args: ["diff", "--shortstat", "\(ref)...HEAD"],
                           output: .init(stdout: "", stderr: "", exitCode: 0))
         }
