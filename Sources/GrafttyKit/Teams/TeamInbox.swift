@@ -205,9 +205,9 @@ public final class TeamInbox {
 
     /// TEAM-11.11: decoded `messages.jsonl` rows keyed by log path and
     /// validated against the file's (inode, size, mtime) on every read.
-    /// The log is append-only, so any write changes the signature; readers
-    /// inside the watermark lock re-stat and therefore never act on rows
-    /// older than the file they hold the lock over.
+    /// The log is append-only, so any write changes the signature, and
+    /// every read re-stats, so a caller never acts on rows older than the
+    /// file as it stood when its read began.
     private let messageLogCacheLock = NSLock()
     private var messageLogCache: [String: CachedMessageLog] = [:]
     private var messageLogParseCount = 0
@@ -218,8 +218,9 @@ public final class TeamInbox {
 
     private struct MessageLogSignature: Equatable {
         let fileNumber: UInt64
-        let size: UInt64
-        let modificationDate: Date
+        let size: Int64
+        let modificationSeconds: Int64
+        let modificationNanoseconds: Int64
     }
 
     private struct CachedMessageLog {
@@ -332,27 +333,31 @@ public final class TeamInbox {
         messageLogCacheLock.withLock {
             messageLogParseCount += 1
             // A size mismatch means the file grew after the stat; leave the
-            // entry for the next read to fill under the newer signature.
-            if let signature, signature.size == UInt64(data.count) {
+            // cache untouched (any entry is re-validated on the next read)
+            // so a concurrent reader's newer entry is not evicted.
+            if let signature, signature.size == Int64(data.count) {
                 messageLogCache[path] = CachedMessageLog(signature: signature, messages: messages)
-            } else {
-                messageLogCache.removeValue(forKey: path)
             }
         }
         return messages
     }
 
+    /// A plain `stat(2)`: this runs on every log read, and
+    /// `FileManager.attributesOfItem` costs an order of magnitude more
+    /// (it also resolves owner and group names).
     private static func messageLogSignature(atPath path: String) -> MessageLogSignature? {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-              let fileNumber = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value,
-              let size = (attributes[.size] as? NSNumber)?.uint64Value,
-              let modificationDate = attributes[.modificationDate] as? Date else {
-            return nil
-        }
+        var info = stat()
+        guard stat(path, &info) == 0 else { return nil }
+        #if canImport(Darwin)
+        let modified = info.st_mtimespec
+        #else
+        let modified = info.st_mtim
+        #endif
         return MessageLogSignature(
-            fileNumber: fileNumber,
-            size: size,
-            modificationDate: modificationDate
+            fileNumber: UInt64(info.st_ino),
+            size: Int64(info.st_size),
+            modificationSeconds: Int64(modified.tv_sec),
+            modificationNanoseconds: Int64(modified.tv_nsec)
         )
     }
 
@@ -720,7 +725,7 @@ public final class TeamInbox {
             }
         }
 
-        let currentIndex = messageIndex(current?.lastDeliveredToAnySessionID, in: allMessages)
+        let currentIndex = current?.lastDeliveredToAnySessionID.flatMap { lastIndexByID[$0] }
         var retainedPending = Set(current?.pendingBeforeWatermarkIDs ?? [])
         retainedPending.subtract(requested)
 

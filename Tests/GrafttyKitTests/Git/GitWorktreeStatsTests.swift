@@ -533,8 +533,16 @@ struct GitWorktreeStatsRevListTests {
             worktreePath: clone.path,
             upstreamRefs: UpstreamRefs(defaultRef: "origin/main")
         )
+        // A duplicated ref takes the separate-children path; rev-list
+        // dedupes it, so both paths must agree.
+        let separate = try await GitWorktreeStats.compute(
+            worktreePath: clone.path,
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main", branchRef: "origin/main")
+        )
 
         #expect(stats.ahead == 2)
         #expect(stats.behind == 1)
+        #expect(stats.ahead == separate.ahead)
+        #expect(stats.behind == separate.behind)
     }
 }
