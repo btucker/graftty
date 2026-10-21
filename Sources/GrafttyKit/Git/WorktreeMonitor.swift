@@ -10,14 +10,15 @@ public protocol WorktreeMonitorDelegate: AnyObject {
     func worktreeMonitorDidDetectOriginRefChange(_ monitor: WorktreeMonitor, repoPath: String)
     /// Fires when any non-`.git/objects` path inside the worktree changes
     /// (working tree edit, stage/unstage via `.git/index`, untracked file
-    /// added). The stream remains armed for future production consumers;
-    /// divergence stats use the bounded polling path because sustained
-    /// build churn can otherwise launch git scans far more frequently.
+    /// added). Delivered only by monitors created with `watchContents: true`
+    /// (the headless host); divergence stats use the bounded polling path
+    /// because sustained build churn can otherwise launch git scans far
+    /// more frequently.
     func worktreeMonitorDidDetectContentChange(_ monitor: WorktreeMonitor, worktreePath: String)
 }
 
 public extension WorktreeMonitorDelegate {
-    // Default no-op: no production delegate currently consumes this signal.
+    // Default no-op: only `HostMaintenance` consumes this signal.
     func worktreeMonitorDidDetectContentChange(_ monitor: WorktreeMonitor, worktreePath: String) {}
 }
 
@@ -42,7 +43,19 @@ public final class WorktreeMonitor: @unchecked Sendable {
         return _liveFdCount
     }
 
-    public init() {}
+    /// Test-only: number of armed working-tree content streams.
+    var contentStreamCountForTesting: Int {
+        eventStreams.keys.filter { $0.hasPrefix("content:") }.count
+    }
+
+    /// `GIT-2.12`: false leaves `watchWorktreeContents` a no-op so owners
+    /// that ignore content changes don't pay for a recursive stream per
+    /// worktree.
+    private let watchContents: Bool
+
+    public init(watchContents: Bool = false) {
+        self.watchContents = watchContents
+    }
 
     deinit { stopAll() }
 
@@ -160,8 +173,10 @@ public final class WorktreeMonitor: @unchecked Sendable {
     /// filtered out — object churn from `git gc` / pack writes doesn't
     /// affect `git status` or `git diff --shortstat` output and would
     /// otherwise fire thousands of no-op refreshes. One stream per
-    /// worktree, coalesced with a 0.5s latency.
+    /// worktree, coalesced with a 0.5s latency. No-op unless the monitor
+    /// was created with `watchContents: true` (`GIT-2.12`).
     public func watchWorktreeContents(worktreePath: String) {
+        guard watchContents else { return }
         let key = "content:\(worktreePath)"
         guard eventStreams[key] == nil else { return }
         let filter = WorktreeContentFilter(worktreePath: worktreePath)

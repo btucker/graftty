@@ -9,7 +9,7 @@ import Foundation
 @Suite("""
 WorktreeMonitor content watcher
 
-@spec GIT-2.6: While a worktree is in the sidebar and non-stale, the application shall recursively watch the worktree's directory with `FSEventStreamCreate` (coalescing latency 0.5s) so that working-tree edits, stages / unstages via `.git/index`, and untracked-file creation surface as content-change events. Events for the worktree root, the bare `.git` directory, and the `.git/objects/` subtree shall be filtered out: the root and `.git` are coarse parent-mtime bumps that fire alongside more specific descendant events and carry no additional signal, and `.git/objects/` is pure pack-churn noise from `git gc` / pack writes. The watched path shall be resolved via `realpath(3)` before use because FSEvents always reports canonical paths (e.g. `/private/var/...` rather than `/var/...`) and an unresolved root makes the filter's `hasPrefix` comparison miss every event. The membership, path, and HEAD watchers in GIT-2.1–GIT-2.4 use kqueue vnode sources (`DispatchSourceFileSystemObject`), which cannot watch a subtree recursively; the origin-ref watcher in GIT-2.5 and this working-tree watcher use FSEvents because both must observe changes below a directory.
+@spec GIT-2.6: While a worktree is non-stale and its monitor was created with content watching enabled (`GIT-2.12`), the application shall recursively watch the worktree's directory with `FSEventStreamCreate` (coalescing latency 0.5s) so that working-tree edits, stages / unstages via `.git/index`, and untracked-file creation surface as content-change events. Events for the worktree root, the bare `.git` directory, and the `.git/objects/` subtree shall be filtered out: the root and `.git` are coarse parent-mtime bumps that fire alongside more specific descendant events and carry no additional signal, and `.git/objects/` is pure pack-churn noise from `git gc` / pack writes. The watched path shall be resolved via `realpath(3)` before use because FSEvents always reports canonical paths (e.g. `/private/var/...` rather than `/var/...`) and an unresolved root makes the filter's `hasPrefix` comparison miss every event. The membership, path, and HEAD watchers in GIT-2.1–GIT-2.4 use kqueue vnode sources (`DispatchSourceFileSystemObject`), which cannot watch a subtree recursively; the origin-ref watcher in GIT-2.5 and this working-tree watcher use FSEvents because both must observe changes below a directory.
 """)
 struct WorktreeMonitorContentTests {
 
@@ -20,7 +20,7 @@ struct WorktreeMonitorContentTests {
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         let recorder = ContentChangeRecorder()
-        let monitor = WorktreeMonitor()
+        let monitor = WorktreeMonitor(watchContents: true)
         monitor.delegate = recorder
         monitor.watchWorktreeContents(worktreePath: tmp.path)
         defer { monitor.stopAll() }
@@ -53,7 +53,7 @@ struct WorktreeMonitorContentTests {
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         let recorder = ContentChangeRecorder()
-        let monitor = WorktreeMonitor()
+        let monitor = WorktreeMonitor(watchContents: true)
         monitor.delegate = recorder
         monitor.watchWorktreeContents(worktreePath: tmp.path)
         defer { monitor.stopAll() }
@@ -80,7 +80,7 @@ struct WorktreeMonitorContentTests {
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         let recorder = ContentChangeRecorder()
-        let monitor = WorktreeMonitor()
+        let monitor = WorktreeMonitor(watchContents: true)
         monitor.delegate = recorder
         monitor.watchWorktreeContents(worktreePath: tmp.path)
         defer { monitor.stopAll() }
@@ -109,7 +109,7 @@ struct WorktreeMonitorContentTests {
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         let recorder = ContentChangeRecorder()
-        let monitor = WorktreeMonitor()
+        let monitor = WorktreeMonitor(watchContents: true)
         monitor.delegate = recorder
         monitor.watchWorktreeContents(worktreePath: tmp.path)
         try await Task.sleep(nanoseconds: 200_000_000)
@@ -158,5 +158,46 @@ private final class ContentChangeRecorder: WorktreeMonitorDelegate, @unchecked S
     func worktreeMonitorDidDetectContentChange(_ monitor: WorktreeMonitor, worktreePath: String) {
         lock.lock(); defer { lock.unlock() }
         _didFire = true
+    }
+}
+
+@Suite("""
+@spec GIT-2.12: While the monitor's owner has not opted in to content-change events, the application shall not arm the working-tree content watcher from `GIT-2.6`, because only the headless host's maintenance loop consumes those events and an unconsumed recursive stream still runs its path filter on every build-output write.
+""")
+struct WorktreeMonitorContentOptInTests {
+    @Test func defaultMonitorArmsNoContentStream() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-content-optout-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let monitor = WorktreeMonitor()
+        defer { monitor.stopAll() }
+        monitor.installRepoWatchers(repo: RepoEntry(
+            path: tmp.path,
+            displayName: "repo",
+            worktrees: [WorktreeEntry(path: tmp.path, branch: "main")]
+        ))
+        monitor.watchWorktreeContents(worktreePath: tmp.path)
+
+        #expect(monitor.contentStreamCountForTesting == 0)
+    }
+
+    @Test func optedInMonitorArmsOneContentStreamPerWorktree() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-content-optin-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let monitor = WorktreeMonitor(watchContents: true)
+        defer { monitor.stopAll() }
+        monitor.installRepoWatchers(repo: RepoEntry(
+            path: tmp.path,
+            displayName: "repo",
+            worktrees: [WorktreeEntry(path: tmp.path, branch: "main")]
+        ))
+        monitor.watchWorktreeContents(worktreePath: tmp.path)
+
+        #expect(monitor.contentStreamCountForTesting == 1)
     }
 }

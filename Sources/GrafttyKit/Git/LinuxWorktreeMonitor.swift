@@ -16,8 +16,11 @@ public final class WorktreeMonitor: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.graftty.worktree-monitor")
     private var watches: [String: Watch] = [:]
     private var timer: DispatchSourceTimer?
+    private let watchContents: Bool
 
-    public init() {}
+    public init(watchContents: Bool = false) {
+        self.watchContents = watchContents
+    }
     deinit { timer?.cancel() }
 
     public func installRepoWatchers(repo: RepoEntry) {
@@ -44,6 +47,7 @@ public final class WorktreeMonitor: @unchecked Sendable {
         register("packed:\(repoPath)", path: commonGitDirectory(repoPath) + "/packed-refs", owner: repoPath, kind: .origin)
     }
     public func watchWorktreeContents(worktreePath: String) {
+        guard watchContents else { return }
         register("index:\(worktreePath)", path: gitDirectory(worktreePath) + "/index", owner: worktreePath, kind: .index)
     }
     public func stopWatchingWorktree(_ worktreePath: String) { remove(owner: worktreePath) }
