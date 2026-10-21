@@ -162,7 +162,7 @@ struct MainWindow: View {
             // lights and the sidebar toggle; the detail column does the
             // same for the breadcrumb.
         } detail: {
-            VStack(spacing: 0) {
+            MainWindowDetailLayout {
                 BreadcrumbBar(
                     repoName: selectedRemoteWorktreeSnapshot?.repoDisplayName
                         ?? selectedRepo?.displayName,
@@ -201,7 +201,7 @@ struct MainWindow: View {
                     previewWorktreeForPane: { [weak terminalManager] pane in terminalManager?.worktreePath(for: pane) },
                     onToggleContext: selectedWorktree != nil || selectedRemoteWorktreeSnapshot != nil ? { showsWorktreeContext.toggle() } : nil
                 )
-
+            } content: {
                 if let selectedRemoteMac {
                     if selectedRemoteWorktreePath != nil,
                        remoteTerminalSplitTree.root != nil {

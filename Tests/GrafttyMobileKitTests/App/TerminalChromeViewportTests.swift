@@ -96,6 +96,46 @@ struct RenderedTerminalViewportTests {
         #expect(abs(textFrame.maxY - expectedBottom) < 1)
     }
 
+    @Test("@spec IPAD-2.10: While the regular-width iPad detail renders a split tree, the application shall observe keyboard frame changes once for the whole tree and derive each embedded pane's keyboard visibility from that shared observation, including a pane mounted while the keyboard is already visible.")
+    func embeddedPaneFollowsSharedKeyboardObservation() async throws {
+        func render(shared: KeyboardFrameObservation) async throws
+            -> (window: UIWindow, client: SessionClient, frame: () -> CGRect) {
+            let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
+            client.start()
+            try await waitForLayout("local owner") { client.isOwner }
+            let fixture = makeFixture(client: client, embedded: true, sharedKeyboard: shared)
+            let container = try await renderedContainer(in: fixture.host.view)
+            return (fixture.window, client, {
+                fixture.host.view.layoutIfNeeded()
+                return container.convert(container.bounds, to: fixture.window)
+            })
+        }
+
+        do {
+            let visible = try await render(shared: KeyboardFrameObservation(bottomInset: 300, sequence: 1))
+            defer { visible.window.isHidden = true; visible.client.stop() }
+            try await waitForLayout("mounted pane lays out the keyboard control bar") {
+                visible.frame().maxY < visible.window.bounds.maxY - 30
+            }
+        }
+
+        let hidden = try await render(shared: KeyboardFrameObservation())
+        defer { hidden.window.isHidden = true; hidden.client.stop() }
+        #expect(abs(hidden.frame().maxY - hidden.window.bounds.maxY) < 1)
+        let screen = UIScreen.main.bounds
+        func postKeyboardFrame(height: CGFloat) {
+            NotificationCenter.default.post(
+                name: UIResponder.keyboardWillChangeFrameNotification, object: nil,
+                userInfo: [UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: CGRect(
+                    x: 0, y: screen.maxY - height, width: screen.width, height: max(height, 300)))])
+        }
+        postKeyboardFrame(height: 300)
+        defer { postKeyboardFrame(height: 0) }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(abs(hidden.frame().maxY - hidden.window.bounds.maxY) < 1,
+                "An embedded pane must follow its parent's keyboard observation, not its own subscription")
+    }
+
     @Test("@spec IPAD-2.8: While the regular-width iPad detail is visible, the application shall extend the terminal tree to the top and bottom detail-column edges beneath transparent navigation chrome, keeping split controls over the panes and respecting the sidebar boundary.")
     func embeddedCanvasStaysInsideTheIPadDetailColumn() async throws {
         let client = SessionClient(sessionName: "viewport", webSocketFactory: { ViewportLegacySocket() })
@@ -148,8 +188,8 @@ struct RenderedTerminalViewportTests {
         #expect(fixture.window.bounds.contains(backFrame))
     }
 
-    private func makeFixture(client: SessionClient, keyboardInset: CGFloat = 0,
-                             embedded: Bool = false) -> (window: UIWindow, host: UIHostingController<AnyView>) {
+    private func makeFixture(client: SessionClient, keyboardInset: CGFloat = 0, embedded: Bool = false,
+                             sharedKeyboard: KeyboardFrameObservation? = nil) -> (window: UIWindow, host: UIHostingController<AnyView>) {
         let terminal = SingleSessionView(
             step: SessionStep(host: Host(label: "Mac", baseURL: URL(string: "https://mac.local")!),
                               sessionName: "viewport", title: "Shell"),
@@ -162,7 +202,8 @@ struct RenderedTerminalViewportTests {
             content = AnyView(HStack(spacing: 0) {
                 Color.gray.frame(width: 320)
                 terminal.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
-            }.modifier(IPadTerminalDetailChrome()))
+            }.modifier(IPadTerminalDetailChrome())
+                .environment(\.multiPaneKeyboardFrame, sharedKeyboard))
         } else {
             content = AnyView(terminal)
         }

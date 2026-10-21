@@ -2194,4 +2194,116 @@ struct TerminalTouchScrollTests {
         #expect(input.contains(wheelAtFinger), "Wheel input must target the touched cell: \(input.description)")
     }
 }
+
+@Suite(.serialized)
+@MainActor
+struct FirstLineClearanceRefreshTests {
+    @Test("@spec IOS-6.41: While a mobile terminal reserves space for top chrome, the application shall re-evaluate first-line clearance after received output has been parsed, without polling the viewport on a timer, and shall read the viewport for that check at most four times per second.")
+    func clearanceFollowsParsedOutputWithoutPolling() async throws {
+        let mounted = try await mountedContainer()
+        defer { mounted.tearDown() }
+        let (container, session) = (mounted.container, mounted.session)
+        #expect(!container.snapshotScrollView.pollsContentForTesting,
+                "First-line clearance must not keep a repeating timer alive")
+
+        session.receive(Data("prompt".utf8))
+        try await waitUntil("lone first line keeps clearance") {
+            session.readViewportText()?.contains("prompt") == true && mounted.topInset() > 0
+        }
+        session.receive(Data("\r\nsecond line".utf8))
+        try await waitUntil("parsed second line removes clearance") { mounted.topInset() == 0 }
+        session.receive(Data("\u{1b}[2J\u{1b}[Hprompt".utf8))
+        try await waitUntil("cleared screen restores clearance") { mounted.topInset() > 0 }
+
+        // Streaming output must not read the viewport more often than the
+        // timer this replaced: one leading read, one per 250 ms, and at most
+        // one refresh still pending from the previous step.
+        let readsBefore = container.firstLineClearanceReadCountForTesting
+        let start = ContinuousClock.now
+        while ContinuousClock.now - start < .milliseconds(500) {
+            session.receive(Data("x".utf8))
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let streamingReads = container.firstLineClearanceReadCountForTesting - readsBefore
+        #expect(streamingReads >= 1, "Streaming output must re-check clearance")
+        #expect(streamingReads <= 4, "Read the viewport \(streamingReads) times in 500 ms")
+    }
+
+    @Test("@spec IOS-6.42: While a mobile terminal that reserves space for top chrome is outside a window, the application shall not read its viewport for first-line clearance after received output, and shall re-evaluate that clearance when the terminal returns to a window.")
+    func offscreenTerminalDefersClearanceUntilReattached() async throws {
+        let mounted = try await mountedContainer()
+        defer { mounted.tearDown() }
+        let (container, session) = (mounted.container, mounted.session)
+        session.receive(Data("prompt".utf8))
+        try await waitUntil("lone first line keeps clearance") {
+            session.readViewportText()?.contains("prompt") == true && mounted.topInset() > 0
+        }
+        // Let any refresh scheduled by the visible output settle first.
+        try await Task.sleep(for: .milliseconds(300))
+
+        container.removeFromSuperview()
+        let readsBefore = container.firstLineClearanceReadCountForTesting
+        session.receive(Data("\r\nsecond line".utf8))
+        try await waitUntil("offscreen output parsed") {
+            session.readViewportText()?.contains("second line") == true
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(container.firstLineClearanceReadCountForTesting == readsBefore,
+                "An offscreen terminal must not read its viewport for clearance")
+
+        mounted.host.view.addSubview(container)
+        try await waitUntil("reattached terminal re-checks clearance") { mounted.topInset() == 0 }
+    }
+
+    @MainActor
+    private struct MountedContainer {
+        let window: UIWindow
+        let host: UIViewController
+        let container: TerminalInputContainerView
+        let session: InMemoryTerminalSession
+
+        func topInset() -> CGFloat {
+            container.layoutIfNeeded()
+            return container.snapshotScrollView.topContentInset
+        }
+
+        func tearDown() {
+            container.removeFromSuperview()
+            window.isHidden = true
+        }
+    }
+
+    private func mountedContainer() async throws -> MountedContainer {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        container.reservesTopChromeSpace = true
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        host.view.addSubview(container)
+        let mounted = MountedContainer(window: window, host: host, container: container, session: session)
+        do {
+            try await waitUntil("measured terminal cells") {
+                container.layoutIfNeeded()
+                return (container.terminalGridMetrics?.rows ?? 0) > 0
+            }
+        } catch {
+            mounted.tearDown()
+            throw error
+        }
+        return mounted
+    }
+
+    private func waitUntil(_ stage: String, condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(condition(), "Timed out waiting for \(stage)")
+    }
+}
+
 #endif
