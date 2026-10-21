@@ -978,7 +978,7 @@ struct GrafttyApp: App {
                             guard case let .createWorktree(caller, name, branch, existing, base, command, runtime, prompt, id) = message else {
                                 return .error("Expected local worktree creation")
                             }
-                            return await Self.beginCLIWorktreeCreation(
+                            return await SocketRequestRouter.beginCLIWorktreeCreation(
                                 callerPath: caller, worktreeName: name, branchName: branch,
                                 existing: existing, base: base, command: command,
                                 agentRuntime: runtime, agentPrompt: prompt, operationID: id,
@@ -1009,49 +1009,20 @@ struct GrafttyApp: App {
             }
         }
         do {
+            let socketRouter = SocketRequestRouter(
+                appState: binding,
+                terminalManager: tm,
+                services: services
+            )
             try SocketServerStartup.start(
                 server: services.socketServer,
                 onMessage: { message in
                     MainActor.assumeIsolated {
-                        Self.handleNotification(
-                            message,
-                            appState: binding,
-                            terminalManager: tm
-                        )
+                        socketRouter.handleMessage(message)
                     }
                 },
                 onAsyncRequest: { message in
-                    if case .remoteWorktree(let target, let request) = message {
-                        return await remoteTeamRouter.worktree(target: target, request: request, repos: binding.wrappedValue.repos)
-                    }
-                    if case .reconnectRemoteClient(let target) = message {
-                        return await remoteTeamRouter.reconnectClient(target: target)
-                    }
-                    if case .teamReply = message {
-                        return await Self.handleTeamReply(
-                            message, appState: binding, router: remoteTeamRouter,
-                            inbox: teamInbox, dispatcher: teamEventDispatcher
-                        )
-                    }
-                    if let response = await Self.handleRemoteTeamSend(
-                        message, appState: binding, router: remoteTeamRouter
-                    ) { return response }
-                    let response = await Self.handlePaneRequest(
-                        message,
-                        appState: binding,
-                        terminalManager: tm,
-                        teamInbox: teamInbox,
-                        teamEventDispatcher: teamEventDispatcher,
-                        worktreeMonitor: services.worktreeMonitor,
-                        statsStore: services.statsStore,
-                        prStatusStore: services.prStatusStore,
-                        worktreeCreations: services.cliWorktreeCreations,
-                        worktreeRemovals: services.cliWorktreeRemovals,
-                        remoteBranchStore: services.remoteBranchStore,
-                        agentRegistry: services.claudeSessionRegistry,
-                        remoteMacsModel: services.remoteMacsModel
-                    )
-                    return await remoteTeamRouter.includingRemoteMembers(in: response, for: message)
+                    await socketRouter.handleRequest(message)
                 }
             )
         } catch let error as SocketServerError {

@@ -6,9 +6,9 @@ import Testing
 
 /// Characterization tests that pin the control-socket router's current
 /// behavior so it can be moved and restructured without regressions
-/// (issue #478). They exercise `GrafttyApp.handleNotification` (the
+/// (issue #478). They exercise `SocketRequestRouter.handleNotification` (the
 /// fire-and-forget `onMessage` path) and the side-effect-free branches of
-/// `GrafttyApp.handlePaneRequest` (the request/response path).
+/// `SocketRequestRouter.handleRequest` (the request/response path).
 @MainActor
 @Suite("Socket router characterization")
 struct SocketRouterCharacterizationTests {
@@ -52,7 +52,7 @@ struct SocketRouterCharacterizationTests {
     }
 
     private static func notify(_ message: NotificationMessage, _ box: StateBox) {
-        GrafttyApp.handleNotification(
+        SocketRequestRouter.handleNotification(
             message,
             appState: box.binding,
             terminalManager: TerminalManager(socketPath: "/tmp/graftty-router-characterization.sock")
@@ -187,6 +187,7 @@ struct SocketRouterCharacterizationTests {
         let creations = CLIWorktreeCreationStore()
         let removals = CLIWorktreeRemovalStore()
         let remoteMacsModel: RemoteMacsModel
+        let remoteTeamRouter = RemoteTeamRouter()
 
         init() throws {
             directory = FileManager.default.temporaryDirectory
@@ -207,9 +208,8 @@ struct SocketRouterCharacterizationTests {
             try? FileManager.default.removeItem(at: directory)
         }
 
-        func route(_ message: NotificationMessage, _ box: StateBox) async -> ResponseMessage? {
-            await GrafttyApp.handlePaneRequest(
-                message,
+        private func router(for box: StateBox) -> SocketRequestRouter {
+            SocketRequestRouter(
                 appState: box.binding,
                 terminalManager: terminalManager,
                 teamInbox: teamInbox,
@@ -221,10 +221,26 @@ struct SocketRouterCharacterizationTests {
                 worktreeRemovals: removals,
                 remoteBranchStore: remoteBranchStore,
                 agentRegistry: ClaudeSessionRegistry(),
-                remoteMacsModel: remoteMacsModel
+                remoteMacsModel: remoteMacsModel,
+                remoteTeamRouter: remoteTeamRouter
             )
         }
+
+        /// Routes through the production entry point, including the
+        /// pre-routing that runs before `handlePaneRequest`.
+        func route(_ message: NotificationMessage, _ box: StateBox) async -> ResponseMessage? {
+            await router(for: box).handleRequest(message)
+        }
+
+        /// Calls `handlePaneRequest` directly, bypassing pre-routing.
+        func paneDispatch(_ message: NotificationMessage, _ box: StateBox) async -> ResponseMessage? {
+            await router(for: box).handlePaneRequest(message)
+        }
     }
+
+    private static let remoteWorktreeStatus = NotificationMessage.remoteWorktree(
+        target: "mac", request: .status(operationID: "op")
+    )
 
     @Test("fire-and-forget messages produce no request response")
     func fireAndForgetMessagesReturnNil() async throws {
@@ -271,13 +287,36 @@ struct SocketRouterCharacterizationTests {
         #expect(list.map(\.focused) == [false, true])
     }
 
-    @Test("routes the dispatcher does not own report unavailability")
-    func unownedRoutesReportUnavailable() async throws {
+    @Test("pane dispatch keeps stubs for messages the router pre-routes")
+    func paneDispatchStubsForPreRoutedMessages() async throws {
         let router = try RequestRouter()
         let (box, _, _) = Self.fixture()
-        #expect(await router.route(
+        #expect(await router.paneDispatch(
             .teamReply(callerWorktree: Self.worktreePath, messageID: "m", text: "t", priority: .normal), box
         ) == .error("Team reply routing is unavailable"))
+        #expect(await router.paneDispatch(.reconnectRemoteClient(target: "mac"), box)
+            == .error("Client reconnect routing is unavailable"))
+        #expect(await router.paneDispatch(Self.remoteWorktreeStatus, box)
+            == .error("Remote worktree routing is unavailable"))
+    }
+
+    @Test("the router pre-routes remote and reply messages before pane dispatch")
+    func routerPreRoutesBeforePaneDispatch() async throws {
+        let router = try RequestRouter()
+        let (box, _, _) = Self.fixture()
+        #expect(await router.route(.reconnectRemoteClient(target: "mac"), box)
+            == .error("Unknown or disconnected viewing Mac 'mac'. Connected clients: none"))
+        #expect(await router.route(Self.remoteWorktreeStatus, box)
+            == .error("Unknown or disconnected Mac 'mac'. Connected Macs: none"))
+        // The reply handler rejects an unknown message whether or not team
+        // mode is enabled; only the error text depends on that setting.
+        guard case .error(let replyError)? = await router.route(
+            .teamReply(callerWorktree: Self.worktreePath, messageID: "m", text: "t", priority: .normal), box
+        ) else {
+            Issue.record("expected the team reply handler to reject an unknown message")
+            return
+        }
+        #expect(replyError != "Team reply routing is unavailable")
     }
 
     @Test("unknown worktree operation IDs report expiry")
