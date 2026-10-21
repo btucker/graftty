@@ -90,7 +90,8 @@ final class AppServices {
     /// open SSH sessions over the resulting DataChannel → zmx attach. `nil`
     /// when the identity could not be loaded; startup then builds no host
     /// pool and paired access fails with `hostAgentUnavailable`.
-    let hostKey: Curve25519.Signing.PrivateKey?
+    var hostKey: Curve25519.Signing.PrivateKey? { hostKeyProvider.launchKey }
+    private let hostKeyProvider: HostKeyProvider
     /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
     /// its live SSH connection into (REMOTE-3.1 revocation, W4).
     /// `PairedDevicesSection`'s "Remove" action calls
@@ -160,10 +161,11 @@ final class AppServices {
         self.hostIdentityStore = hostIdentityStore
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
         self.trustedPeerStore = trustedPeerStore
+        let hostKeyProvider = HostKeyProvider(load: hostIdentityStore.loadOrGenerateAndPersist)
+        self.hostKeyProvider = hostKeyProvider
         do {
-            self.hostKey = try hostIdentityStore.loadOrGenerateAndPersist()
+            _ = try hostKeyProvider.key()
         } catch {
-            self.hostKey = nil
             NSLog("[Graftty] failed to load remote host identity: %@", String(describing: error))
         }
         self.hostPairingCoordinator = Self.makeHostPairingCoordinator(
@@ -474,7 +476,7 @@ final class AppServices {
     /// Fingerprint of the launch-loaded `hostKey`. Retries the shared store
     /// only when the launch load failed.
     private func localHostFingerprint() throws -> RemoteIdentityFingerprint {
-        let hostKey = try hostKey ?? hostIdentityStore.loadOrGenerateAndPersist()
+        let hostKey = try hostKeyProvider.key()
         let publicKey = try RemoteIdentityPublicKey(
             rawRepresentation: hostKey.publicKey.rawRepresentation
         )
