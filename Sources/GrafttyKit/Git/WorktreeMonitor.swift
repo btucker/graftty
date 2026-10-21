@@ -315,8 +315,8 @@ fileprivate final class WorktreeContentFilter {
     }
 }
 
-/// Captured by the FSEvents C callback via a retained `Unmanaged`
-/// pointer. The predicate lets worktree-content and origin-ref streams
+/// Retained by the native stream through FSEventStreamContext's ownership
+/// hooks. The predicate lets worktree-content and origin-ref streams
 /// share the same lifecycle implementation without applying worktree-
 /// specific `.git/objects` filtering to origin reflogs.
 fileprivate final class FSEventsContextBox {
@@ -329,34 +329,42 @@ fileprivate final class FSEventsContextBox {
     }
 }
 
-/// RAII holder for an `FSEventStreamRef`. Owns the stream + the
-/// `Unmanaged<FSEventsContextBox>` it captures, so `cancel()` tears
-/// down both in the correct order (stop → invalidate → release stream,
-/// then release the Unmanaged).
-fileprivate final class FSEventsSubscription {
-    private let stream: FSEventStreamRef
-    private let context: Unmanaged<FSEventsContextBox>
+/// Owns one stream reference. The stream owns its callback context until
+/// native deallocation, which can occur after cancel returns if a callback
+/// is still executing. Releasing the context in cancel would race even the
+/// callback's first Swift retain of the raw info pointer.
+final class FSEventsSubscription {
+    private let lock = NSLock()
+    private var stream: FSEventStreamRef?
 
-    private init(stream: FSEventStreamRef, context: Unmanaged<FSEventsContextBox>) {
+    private init(stream: FSEventStreamRef) {
         self.stream = stream
-        self.context = context
     }
+
+    deinit { cancel() }
 
     static func make(
         paths: [String],
         queue: DispatchQueue,
         latency: CFTimeInterval,
         shouldIgnore: @escaping (String) -> Bool,
-        onChange: @escaping () -> Void
+        onChange: @escaping () -> Void,
+        callback: FSEventStreamCallback = fileEventsCallback,
+        startStream: (FSEventStreamRef) -> Bool = FSEventStreamStart
     ) -> FSEventsSubscription? {
         let ctxObj = FSEventsContextBox(onChange: onChange, shouldIgnore: shouldIgnore)
-        let unmanaged = Unmanaged.passRetained(ctxObj)
-
         var ctx = FSEventStreamContext(
             version: 0,
-            info: unmanaged.toOpaque(),
-            retain: nil,
-            release: nil,
+            info: Unmanaged.passUnretained(ctxObj).toOpaque(),
+            retain: { info in
+                guard let info else { return nil }
+                _ = Unmanaged<FSEventsContextBox>.fromOpaque(info).retain()
+                return info
+            },
+            release: { info in
+                guard let info else { return }
+                Unmanaged<FSEventsContextBox>.fromOpaque(info).release()
+            },
             copyDescription: nil
         )
 
@@ -373,34 +381,41 @@ fileprivate final class FSEventsSubscription {
                 | kFSEventStreamCreateFlagFileEvents
                 | kFSEventStreamCreateFlagUseCFTypes
         )
-        guard let stream = FSEventStreamCreate(
-            kCFAllocatorDefault,
-            fileEventsCallback,
-            &ctx,
-            watchedPaths,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            latency,
-            flags
-        ) else {
-            unmanaged.release()
-            return nil
+        // The local reference must survive until Create has invoked retain.
+        let stream = withExtendedLifetime(ctxObj) {
+            FSEventStreamCreate(
+                kCFAllocatorDefault,
+                callback,
+                &ctx,
+                watchedPaths,
+                FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+                latency,
+                flags
+            )
         }
+        guard let stream else { return nil }
 
         FSEventStreamSetDispatchQueue(stream, queue)
-        guard FSEventStreamStart(stream) else {
+        guard startStream(stream) else {
             FSEventStreamInvalidate(stream)
             FSEventStreamRelease(stream)
-            unmanaged.release()
             return nil
         }
-        return FSEventsSubscription(stream: stream, context: unmanaged)
+        return FSEventsSubscription(stream: stream)
     }
 
     func cancel() {
+        lock.lock()
+        let stream = self.stream
+        self.stream = nil
+        lock.unlock()
+        guard let stream else { return }
+
+        // Do not hold the lock during native teardown. A callback may cancel
+        // its own subscription, including while another caller tears it down.
         FSEventStreamStop(stream)
         FSEventStreamInvalidate(stream)
         FSEventStreamRelease(stream)
-        context.release()
     }
 }
 
@@ -409,7 +424,7 @@ fileprivate final class FSEventsSubscription {
 /// per callback as long as at least one path passes the subscription's
 /// filter. Worktree streams filter `.git/objects`; origin-ref streams
 /// accept every path below their watched directory.
-fileprivate let fileEventsCallback: FSEventStreamCallback = { _, clientCallBackInfo, _, eventPaths, _, _ in
+let fileEventsCallback: FSEventStreamCallback = { _, clientCallBackInfo, _, eventPaths, _, _ in
     guard let clientCallBackInfo else { return }
     let ctx = Unmanaged<FSEventsContextBox>.fromOpaque(clientCallBackInfo).takeUnretainedValue()
 
