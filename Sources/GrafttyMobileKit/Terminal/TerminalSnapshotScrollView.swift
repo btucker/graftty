@@ -79,7 +79,12 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
             updateContentTimer()
         }
     }
-    /// Polls paged history, which has no change notification of its own.
+    /// Polled on the content timer for content that changes without a
+    /// notification. Without paged history, the timer runs only while this
+    /// view is in a window and has no scrollback.
+    var onContentUpdate: (() -> Void)? {
+        didSet { updateContentTimer() }
+    }
     private var contentTimer: Timer?
     private var includesAdditionalHistory: Bool {
         #if GRAFTTY_PAGED_HISTORY
@@ -113,6 +118,13 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         panGestureRecognizer.allowedScrollTypesMask = [.continuous, .discrete]
         isScrollEnabled = false
         addSubview(terminalView)
+        // Activation, not willEnterForeground: the scene still reports
+        // background until it activates.
+        for name in [UIScene.didEnterBackgroundNotification, UIScene.didActivateNotification] {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(sceneActivityDidChange(_:)), name: name, object: nil
+            )
+        }
     }
 
     @available(*, unavailable)
@@ -125,6 +137,10 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
 
     var hasScrollback: Bool { historyRows > 0 }
     var pollsContentForTesting: Bool { contentTimer != nil }
+    private(set) var contentPollCountForTesting = 0
+    var sceneActivationStateForTesting: UIScene.ActivationState? {
+        didSet { updateContentTimer() }
+    }
 
     /// Rows visible above the live grid, including rows not fetched yet.
     var additionalHistoryRowCapacity: UInt32 {
@@ -168,7 +184,9 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         let wasAtBottom = contentOffset.y >= contentSize.height - bounds.height - 1
         let withinCanvas = contentOffset.y - CGFloat(nativeRow) * rowHeight
         let replacedHistory = value.total < (scrollbar?.total ?? 0)
+        let hadScrollback = hasScrollback
         scrollbar = value
+        if hasScrollback != hadScrollback { updateContentTimer() }
         nativeRow = min(value.offset, historyRows)
         guard canvas != nil else { return }
         reconcile(wasAtBottom: wasAtBottom || replacedHistory, withinCanvas: withinCanvas)
@@ -215,13 +233,33 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         updateContentTimer()
     }
 
+    private var isSceneInBackground: Bool {
+        (sceneActivationStateForTesting ?? window?.windowScene?.activationState) == .background
+    }
+
+    @objc private func sceneActivityDidChange(_ notification: Notification) {
+        guard let scene = notification.object as? UIScene, scene === window?.windowScene else { return }
+        updateContentTimer()
+    }
+
     private func updateContentTimer() {
         contentTimer?.invalidate()
         contentTimer = nil
-        if window != nil && includesAdditionalHistory {
-            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshAdditionalHistory() }
+        // With scrollback, clearance is off and only a scrollbar callback
+        // can change that, so the content update needs no polling then.
+        // A backgrounded scene keeps its window but shows nothing (IOS-6.45).
+        if window != nil && (includesAdditionalHistory
+            || (onContentUpdate != nil && !hasScrollback && !isSceneInBackground)) {
+            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] timer in
+                MainActor.assumeIsolated {
+                    guard let self else { timer.invalidate(); return }
+                    self.contentPollCountForTesting += 1
+                    self.refreshAdditionalHistory()
+                    self.onContentUpdate?()
+                }
             }
+            // Lets each pane's poll coalesce with other wakeups.
+            timer.tolerance = 0.05
             RunLoop.main.add(timer, forMode: .common)
             contentTimer = timer
         }

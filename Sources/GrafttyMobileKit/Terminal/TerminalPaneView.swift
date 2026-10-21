@@ -339,70 +339,30 @@ public final class TerminalInputContainerView: UIView,
     var reservesTopChromeSpace = false {
         didSet {
             guard reservesTopChromeSpace != oldValue else { return }
-            observeOutputForFirstLineClearance()
-            refreshFirstLineClearance()
+            if reservesTopChromeSpace {
+                snapshotScrollView.onContentUpdate = { [weak self] in self?.refreshFirstLineClearance() }
+                refreshFirstLineClearance()
+            } else {
+                snapshotScrollView.onContentUpdate = nil
+            }
             setNeedsLayout()
         }
     }
     private var needsFirstLineClearance = true
     private(set) var firstLineClearanceReadCountForTesting = 0
-    /// Output can change the first line without a scrollbar or geometry
-    /// callback. The session reports when its parser has drained, so
-    /// clearance is re-checked after parsed output instead of on a timer.
-    private weak var clearanceOutputSession: InMemoryTerminalSession?
-    private var isClearanceRefreshScheduled = false
-    private var lastScheduledClearanceRefresh: TimeInterval?
-    /// Streaming output re-checks no more often than the timer it replaced.
-    private static let scheduledClearanceRefreshInterval: TimeInterval = 0.25
-
-    /// Claims the session's single backlog handler. Only a container that
-    /// reserves top chrome observes output, and each session backs one
-    /// such container at a time.
-    private func observeOutputForFirstLineClearance() {
-        var session: InMemoryTerminalSession?
-        if reservesTopChromeSpace, case .inMemory(let current) = terminalView.configuration.backend {
-            session = current
-        }
-        guard session !== clearanceOutputSession else { return }
-        clearanceOutputSession?.setOutputBacklogHandler(highWater: 1, lowWater: 0, nil)
-        clearanceOutputSession = session
-        let target = WeakTerminalInputContainer(self)
-        session?.setOutputBacklogHandler(highWater: 1, lowWater: 0) { isBacklogged in
-            guard !isBacklogged else { return }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { target.view?.scheduleClearanceRefresh() }
-            }
-        }
-    }
-
-    /// Throttled re-check after parsed output. Retained panes keep parsing
-    /// offscreen, so a container outside a window skips it and re-checks
-    /// when it returns to one, as the window-gated timer it replaced did.
-    private func scheduleClearanceRefresh() {
-        guard reservesTopChromeSpace, window != nil, !isClearanceRefreshScheduled else { return }
-        isClearanceRefreshScheduled = true
-        let now = ProcessInfo.processInfo.systemUptime
-        let delay = lastScheduledClearanceRefresh.map {
-            max(0, Self.scheduledClearanceRefreshInterval - (now - $0))
-        } ?? 0
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.isClearanceRefreshScheduled = false
-                guard self.window != nil else { return }
-                self.lastScheduledClearanceRefresh = ProcessInfo.processInfo.systemUptime
-                self.refreshFirstLineClearance()
-            }
-        }
-    }
-
+    /// Retained panes keep receiving output offscreen. Their clearance is
+    /// re-checked when they return to a window instead (IOS-6.42).
     override public func didMoveToWindow() {
         super.didMoveToWindow()
-        scheduleClearanceRefresh()
+        refreshFirstLineClearance()
     }
 
+    /// Content can change without received output or a scrollbar callback:
+    /// a width-only reflow, a terminal reset, or a paged snapshot. The
+    /// snapshot scroll view therefore polls this while there is no
+    /// scrollback (IOS-6.41); with scrollback no text is read.
     private func refreshFirstLineClearance() {
-        guard reservesTopChromeSpace else { return }
+        guard reservesTopChromeSpace, window != nil else { return }
         let needsClearance: Bool
         if snapshotScrollView.hasScrollback {
             needsClearance = false
@@ -1598,7 +1558,6 @@ extension TerminalInputContainerView: TerminalSurfaceOpenURLDelegate, TerminalSu
 
 extension TerminalInputContainerView: TerminalSurfaceLifecycleDelegate {
     public func terminalDidAttachSurface(_ surface: TerminalSurface) {
-        observeOutputForFirstLineClearance()
         refreshFirstLineClearance()
         setNeedsLayout()
     }
@@ -1629,12 +1588,6 @@ extension TerminalInputContainerView: TerminalSurfaceGridResizeDelegate {
         setNeedsLayout()
         confirmPhysicalViewportIfReady()
     }
-}
-
-/// Lets the session's background backlog handler reach the container on main.
-private final class WeakTerminalInputContainer: @unchecked Sendable {
-    weak var view: TerminalInputContainerView?
-    init(_ view: TerminalInputContainerView) { self.view = view }
 }
 
 /// Observes touch-begin without claiming the gesture: reports, then
