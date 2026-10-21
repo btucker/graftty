@@ -1,0 +1,186 @@
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
+import Foundation
+
+// MARK: - RemoteIdentityFileLocation
+
+/// Names one role's remote-identity file: host vs client, key vs device ID.
+/// Conformers are caseless enums; the stores below are specialised on them
+/// (`HostIdentityStore = RemoteIdentityKeyStore<HostIdentityFile>`), so each
+/// role keeps its own type, file name, and production directory.
+public protocol RemoteIdentityFileLocation {
+    static var fileName: String { get }
+    /// The production default storage directory.
+    static var defaultDirectory: URL { get }
+}
+
+// MARK: - RemoteIdentityKeyStore
+
+/// Persists a long-lived Ed25519 identity keypair for one role.
+///
+/// The private key is stored as its 32-byte raw representation in a JSON
+/// file (`Location.fileName`, owner-only 0600) inside the given directory,
+/// alongside a schema version. Every access is serialised through an
+/// `NSLock`. A file from another schema version, or whose bytes are not a
+/// valid key, is moved aside to `<name>.corrupt-<seconds>`; other read
+/// failures throw.
+public final class RemoteIdentityKeyStore<Location: RemoteIdentityFileLocation>: @unchecked Sendable {
+
+    /// Encodes/decodes the raw private-key bytes to/from JSON, plus a
+    /// schema version so legacy formats are detected and rejected by the
+    /// corruption-recovery path.
+    private struct StoredKey: Codable {
+        let version: Int
+        let privateKeyData: Data
+    }
+
+    private static var currentVersion: Int { 2 }
+
+    private let file: JSONFileStore<StoredKey>
+    private let lock = NSLock()
+
+    public init(directory: URL) {
+        file = JSONFileStore(
+            fileURL: directory.appendingPathComponent(Location.fileName),
+            posixPermissions: 0o600,
+            backupNaming: .dashSeconds
+        )
+    }
+
+    public static var defaultDirectory: URL { Location.defaultDirectory }
+
+    /// Loads the persisted private key, returning `nil` if no key has been
+    /// stored yet or the stored record is from a previous schema.
+    public func load() throws -> Curve25519.Signing.PrivateKey? {
+        lock.lock()
+        defer { lock.unlock() }
+        return try _load()
+    }
+
+    /// Generates a fresh Ed25519 private key, persists it, and returns it.
+    /// Any previously persisted key is overwritten.
+    public func generateAndPersist() throws -> Curve25519.Signing.PrivateKey {
+        lock.lock()
+        defer { lock.unlock() }
+        return try _generateAndPersist()
+    }
+
+    /// Returns the currently stored key, or generates and persists a new one
+    /// if no key exists yet. Suitable for app-boot time.
+    public func loadOrGenerateAndPersist() throws -> Curve25519.Signing.PrivateKey {
+        lock.lock()
+        defer { lock.unlock() }
+        return try _load() ?? _generateAndPersist()
+    }
+
+    /// Deletes the persisted key. A subsequent `load()` will return `nil`.
+    public func reset() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try file.remove()
+    }
+
+    /// Returns the public key derived from the persisted private key, or
+    /// `nil` if no key is stored.
+    public func currentPublicKey() throws -> RemoteIdentityPublicKey? {
+        guard let key = try load() else {
+            return nil
+        }
+        return try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
+    }
+
+    // MARK: Private (call only while holding `lock`)
+
+    private func _load() throws -> Curve25519.Signing.PrivateKey? {
+        do {
+            guard let stored = try file.load() else {
+                return nil
+            }
+            guard stored.version == Self.currentVersion else {
+                file.moveAsideCorruptFile()
+                return nil
+            }
+            return try Curve25519.Signing.PrivateKey(rawRepresentation: stored.privateKeyData)
+        } catch is DecodingError, is CryptoKitError {
+            // Legacy schemas (no `version` field) decode-fail here; treat as corrupt.
+            // CryptoKitError covers byte-level corruption inside a structurally valid record.
+            file.moveAsideCorruptFile()
+            return nil
+        }
+    }
+
+    private func _generateAndPersist() throws -> Curve25519.Signing.PrivateKey {
+        let key = Curve25519.Signing.PrivateKey()
+        try file.save(StoredKey(version: Self.currentVersion, privateKeyData: key.rawRepresentation))
+        return key
+    }
+}
+
+// MARK: - RemoteDeviceIDStore
+
+/// Persists one role's stable `RemoteDeviceID` so pairing payloads and
+/// peer records identify the same device across launches.
+///
+/// The ID is stored in a JSON file (`Location.fileName`) inside the given
+/// directory, alongside a schema version. Every access is serialised
+/// through an `NSLock`. An unreadable file yields a fresh ID; a corrupt or
+/// foreign-schema file is first moved aside to `<name>.corrupt-<seconds>`,
+/// so the device always has a usable identity.
+public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @unchecked Sendable {
+
+    private struct StoredID: Codable {
+        let version: Int
+        let deviceID: RemoteDeviceID
+    }
+
+    private static var currentVersion: Int { 1 }
+
+    private let file: JSONFileStore<StoredID>
+    private let lock = NSLock()
+
+    public init(directory: URL) {
+        file = JSONFileStore(
+            fileURL: directory.appendingPathComponent(Location.fileName),
+            backupNaming: .dashSeconds
+        )
+    }
+
+    public static var defaultDirectory: URL { Location.defaultDirectory }
+
+    /// Loads the persisted `RemoteDeviceID`, or generates + persists one.
+    public func loadOrGenerateAndPersist() throws -> RemoteDeviceID {
+        lock.lock()
+        defer { lock.unlock() }
+        if let existing = _load() {
+            return existing
+        }
+        let id = RemoteDeviceID.generate()
+        try file.save(StoredID(version: Self.currentVersion, deviceID: id))
+        return id
+    }
+
+    // MARK: Private (call only while holding `lock`)
+
+    private func _load() -> RemoteDeviceID? {
+        let stored: StoredID?
+        do {
+            stored = try file.load()
+        } catch is DecodingError {
+            file.moveAsideCorruptFile()
+            return nil
+        } catch {
+            return nil
+        }
+        guard let stored else {
+            return nil
+        }
+        guard stored.version == Self.currentVersion, !stored.deviceID.value.isEmpty else {
+            file.moveAsideCorruptFile()
+            return nil
+        }
+        return stored.deviceID
+    }
+}

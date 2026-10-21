@@ -1016,6 +1016,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-4.1** The application shall not persist shell scrollback, terminal screen buffer content, or the specific processes that were running.
 
+### PERSIST-5.x — JSON File Stores
+
+**PERSIST-5.1** When a JSONFileStore loads a file that does not exist, the application shall return nil without creating the file, its directory, or a corrupt-file backup.
+
+**PERSIST-5.2** When a JSONFileStore saves a value, the application shall create missing parent directories only if the store opts in, replace the file atomically, and apply the store's configured POSIX permissions.
+
+**PERSIST-5.3** When a JSONFileStore moves a corrupt file aside, the application shall rename it beside the original as either `<name>.corrupt.<milliseconds>` or `<name>.corrupt-<seconds>`, per the store's configured backup naming, leaving no file at the original path.
+
+**PERSIST-5.4** The application shall encode a JSONFileStore's dates and output formatting exactly as the store is configured, so a migrated store keeps the byte format its earlier releases wrote.
+
 ## PWD — Manual Pane Routing
 
 ### PWD-1.x — User-Initiated Move
