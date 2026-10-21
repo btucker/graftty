@@ -2194,4 +2194,63 @@ struct TerminalTouchScrollTests {
         #expect(input.contains(wheelAtFinger), "Wheel input must target the touched cell: \(input.description)")
     }
 }
+@Suite(.serialized)
+@MainActor
+struct FirstLineClearanceRefreshTests {
+    @Test("@spec IOS-6.41: While a mobile terminal reserves space for top chrome, the application shall re-evaluate first-line clearance after received output has been parsed, without polling the viewport on a timer, and shall read the viewport for that check at most four times per second.")
+    func clearanceFollowsParsedOutputWithoutPolling() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let container = TerminalInputContainerView(frame: window.bounds)
+        container.reservesTopChromeSpace = true
+        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        container.terminalView.configuration = .init(backend: .inMemory(session))
+        container.terminalView.controller = MobileTerminalControllerFactory.make(configText: "font-size = 14")
+        host.view.addSubview(container)
+        defer { container.removeFromSuperview(); window.isHidden = true }
+        try await waitUntil("measured terminal cells") {
+            container.layoutIfNeeded()
+            return (container.terminalGridMetrics?.rows ?? 0) > 0
+        }
+        #expect(!container.snapshotScrollView.pollsContentForTesting,
+                "First-line clearance must not keep a repeating timer alive")
+
+        func topInset() -> CGFloat {
+            container.layoutIfNeeded()
+            return container.snapshotScrollView.topContentInset
+        }
+        session.receive(Data("prompt".utf8))
+        try await waitUntil("lone first line keeps clearance") {
+            session.readViewportText()?.contains("prompt") == true && topInset() > 0
+        }
+        session.receive(Data("\r\nsecond line".utf8))
+        try await waitUntil("parsed second line removes clearance") { topInset() == 0 }
+        session.receive(Data("\u{1b}[2J\u{1b}[Hprompt".utf8))
+        try await waitUntil("cleared screen restores clearance") { topInset() > 0 }
+
+        // Streaming output must not read the viewport more often than the
+        // timer this replaced: one leading read, one per 250 ms, and at most
+        // one refresh still pending from the previous step.
+        let readsBefore = container.firstLineClearanceReadCountForTesting
+        let start = ContinuousClock.now
+        while ContinuousClock.now - start < .milliseconds(500) {
+            session.receive(Data("x".utf8))
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let streamingReads = container.firstLineClearanceReadCountForTesting - readsBefore
+        #expect(streamingReads >= 1, "Streaming output must re-check clearance")
+        #expect(streamingReads <= 4, "Read the viewport \(streamingReads) times in 500 ms")
+    }
+
+    private func waitUntil(_ stage: String, condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(condition(), "Timed out waiting for \(stage)")
+    }
+}
+
 #endif
