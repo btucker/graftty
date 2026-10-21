@@ -21,7 +21,9 @@ struct MultiPaneDetailView: View {
     let onBackToWorktrees: () -> Void
 
     @State private var ratioOverrides = IPadPaneRatioOverrides()
-    @State private var keyboardBottomInset: CGFloat = 0
+    /// The tree's only keyboard subscription; embedded panes read it from
+    /// the environment (IPAD-2.10).
+    @State private var keyboardFrame = KeyboardFrameObservation()
 
     var body: some View {
         Group {
@@ -34,25 +36,13 @@ struct MultiPaneDetailView: View {
                 )
             }
         }
-        .padding(.bottom, keyboardBottomInset)
+        .environment(\.multiPaneKeyboardFrame, keyboardFrame)
+        .padding(.bottom, keyboardFrame.bottomInset)
         .ignoresSafeArea(.keyboard, edges: .bottom)
-        .onReceive(NotificationCenter.default.publisher(
-            for: UIResponder.keyboardWillChangeFrameNotification
-        )) { notification in
-            guard let value = notification.userInfo?[
-                UIResponder.keyboardFrameEndUserInfoKey
-            ] as? NSValue else {
-                return
-            }
-            let inset = KeyboardFrameInset.bottomInset(
-                keyboardEndFrame: value.cgRectValue,
-                screenBounds: UIScreen.main.bounds
-            )
-            if keyboardBottomInset != inset {
-                keyboardBottomInset = inset
-            }
+        .onKeyboardBottomInsetChange { inset in
+            keyboardFrame = KeyboardFrameObservation(bottomInset: inset, sequence: keyboardFrame.sequence &+ 1)
         }
-        .animation(.easeInOut(duration: 0.25), value: keyboardBottomInset)
+        .animation(.easeInOut(duration: 0.25), value: keyboardFrame.bottomInset)
     }
 
     private func render(
