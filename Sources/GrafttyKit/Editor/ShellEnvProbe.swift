@@ -1,5 +1,10 @@
 // Sources/GrafttyKit/Editor/ShellEnvProbe.swift
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 /// Reads a single environment variable as the user's *login shell* would
 /// see it — i.e. after their shell rc files have run.
@@ -37,6 +42,20 @@ public struct LoginShellEnvProbe: ShellEnvProbe {
     }
 
     public func value(forName name: String) -> String? {
+        // Capture stdout in a private file rather than a pipe: an rc file
+        // that prints more than a pipe buffer holds cannot block on write
+        // (EDITOR-1.11), and a profile background job that inherits stdout
+        // cannot hold the capture open after the shell exits (EDITOR-1.12).
+        let stdoutURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-shell-env-\(UUID().uuidString)")
+        guard FileManager.default.createFile(
+            atPath: stdoutURL.path, contents: nil, attributes: [.posixPermissions: 0o600]
+        ), let stdout = try? FileHandle(forWritingTo: stdoutURL) else { return nil }
+        defer {
+            try? stdout.close()
+            try? FileManager.default.removeItem(at: stdoutURL)
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shellPath)
         // -i: interactive (sources rc files), -l: login (sources profile),
@@ -44,11 +63,10 @@ public struct LoginShellEnvProbe: ShellEnvProbe {
         // word-splitting on $name; we only support [A-Za-z_][A-Za-z0-9_]*
         // names so injection is impossible.
         process.arguments = ["-ilc", "echo \"$\(name)\""]
-
-        let stdout = Pipe()
-        let stderr = Pipe()
         process.standardOutput = stdout
-        process.standardError = stderr
+        process.standardError = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
 
         do {
             try process.run()
@@ -57,21 +75,15 @@ public struct LoginShellEnvProbe: ShellEnvProbe {
         }
 
         // Bound the wait so a hung rc file can't pin the calling thread.
-        let deadline = DispatchTime.now() + timeout
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            process.waitUntilExit()
-            group.leave()
-        }
-        if group.wait(timeout: deadline) == .timedOut {
-            process.terminate()
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            // `-i` makes the shell ignore SIGTERM, so `terminate()` would
+            // leave a wedged probe running (EDITOR-1.13).
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
             return nil
         }
 
-        guard process.terminationStatus == 0 else { return nil }
-
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        guard process.terminationStatus == 0,
+              let data = try? Data(contentsOf: stdoutURL) else { return nil }
         return Self.parseValueOutput(data)
     }
 

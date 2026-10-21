@@ -25,12 +25,15 @@ public enum LegacyChannelCleanup {
 
     /// Best-effort `claude mcp remove graftty-channel`. Tolerates missing
     /// `claude` CLI and non-zero exit codes (e.g. server not registered).
+    /// Bounded so a wedged `claude` cannot block the remaining cleanup
+    /// steps (TEAM-8.5).
     static func unregisterMCPServer(executor: CLIExecutor) async {
         do {
             _ = try await executor.capture(
                 command: "claude",
                 args: ["mcp", "remove", serverName],
-                at: "/"
+                at: "/",
+                timeout: .seconds(30)
             )
         } catch {
             logger.info("legacy MCP unregister skipped: \(String(describing: error), privacy: .public)")

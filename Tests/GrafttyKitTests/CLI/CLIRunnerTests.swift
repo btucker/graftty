@@ -69,6 +69,31 @@ struct CLIRunnerTests {
         #expect(elapsed < 90.0, "timed-out run must not wait out the full 120s sleep")
     }
 
+    @Test("@spec CLI-1.3: If a timed-out subprocess is still running two seconds after the application sends SIGTERM, then the application shall send SIGKILL so the caller receives the timeout instead of waiting for a child that ignores SIGTERM.")
+    func timeoutEscalatesToKillForChildIgnoringTerminate() async throws {
+        // Production waits two seconds before SIGKILL; the test shortens
+        // the grace so the bound costs milliseconds of CI time.
+        #expect(SubprocessLaunch(executable: "/bin/sh", arguments: [], timeoutLabel: "sh").killGrace == .seconds(2))
+        // `exec` keeps the ignored SIGTERM disposition on the sleeping
+        // process itself, so only SIGKILL can end it before 120s. As in
+        // the test above, the loose bound only guards against a hang.
+        let start = Date()
+        do {
+            _ = try await Subprocess.run(SubprocessLaunch(
+                executable: "/bin/sh",
+                arguments: ["-c", "trap '' TERM; exec sleep 120"],
+                directory: NSTemporaryDirectory(),
+                timeout: .milliseconds(100),
+                timeoutLabel: "sh",
+                killGrace: .milliseconds(100)
+            ))
+            Issue.record("should have thrown timedOut")
+        } catch CLIError.timedOut(let cmd, _) {
+            #expect(cmd == "sh")
+        }
+        #expect(Date().timeIntervalSince(start) < 90.0)
+    }
+
     @Test func runWithGenerousTimeoutReturnsNormally() async throws {
         // A timeout that the command finishes well within must not
         // interfere with the normal success path.
@@ -86,25 +111,21 @@ struct CLIRunnerTests {
     @spec CLI-1.2: When a timeout-enabled subprocess exits before its deadline, the application shall allow its Process and pipe descriptors to be released immediately rather than retain them in the delayed timeout work item until the original deadline.
     """)
     func delayedTimeoutWorkItemDoesNotRetainCompletedProcess() {
-        var timeoutItem: DispatchWorkItem?
         weak var weakProcess: Process?
+        weak var weakTermination: SubprocessTermination?
 
         do {
+            // A 60-second timer stays queued long after this scope ends;
+            // neither the process nor its termination state may ride on it.
             let process = Process()
+            let termination = SubprocessTermination(process: process)
+            termination.armTimeout(after: 60)
             weakProcess = process
-            timeoutItem = CLIRunner.makeWeakProcessWorkItem(process: process) { _ in }
+            weakTermination = termination
         }
 
         #expect(weakProcess == nil)
-        withExtendedLifetime(timeoutItem) {}
-
-        // A very fast child can invoke the termination handler before the
-        // launch path gets a chance to arm its timeout item. Completion must
-        // be sticky so that late arming cannot recreate the state/item retain
-        // cycle after `cancel()` already observed process termination.
-        let completedState = TimeoutState(seconds: 60)
-        completedState.cancel()
-        #expect(!completedState.arm(DispatchWorkItem {}))
+        #expect(weakTermination == nil)
     }
 
     @Test func notFoundForMissingCommand() async throws {
@@ -135,7 +156,7 @@ struct CLIRunnerTests {
         try reader.close()
         // `availableData` would raise NSFileHandleOperationException here and
         // abort the process; the crash-safe drain reports EOF.
-        #expect(CLIRunner.drainChunk(from: reader) == nil)
+        #expect(Subprocess.drainChunk(from: reader) == nil)
     }
 
     @Test func drainChunkReturnsBytesThenNilAtEOF() throws {
@@ -144,10 +165,10 @@ struct CLIRunnerTests {
         try pipe.fileHandleForWriting.close() // signal EOF after the payload
         let reader = pipe.fileHandleForReading
 
-        let first = CLIRunner.drainChunk(from: reader)
+        let first = Subprocess.drainChunk(from: reader)
         #expect(first.map { String(decoding: $0, as: UTF8.self) } == "hello")
         // Write end closed + payload consumed → next drain is EOF (nil).
-        #expect(CLIRunner.drainChunk(from: reader) == nil)
+        #expect(Subprocess.drainChunk(from: reader) == nil)
     }
 
     @Test func pathEnrichmentIncludesHomebrewLocalAndBun() {

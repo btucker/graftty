@@ -24,7 +24,7 @@ public enum GitRunner {
     /// on non-zero exit. Use when non-zero means "the call failed."
     ///
     /// `timeout` bounds the subprocess: pass a value for recurring work so
-    /// a wedged socket or filesystem read is SIGTERMed and surfaced as
+    /// a wedged socket or filesystem read is terminated and surfaced as
     /// `CLIError.timedOut` rather than hanging. `nil` (the default) is
     /// unbounded, preserving interactive call sites.
     public static func run(

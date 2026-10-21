@@ -2,6 +2,21 @@ import Foundation
 import Testing
 @testable import GrafttyKit
 
+@Suite("Legacy channel cleanup timeout")
+struct LegacyChannelCleanupTimeoutTests {
+    @Test("@spec TEAM-8.5: The application shall bound the legacy `claude mcp remove graftty-channel` cleanup with a 30-second timeout so a wedged `claude` cannot block the remaining cleanup steps.")
+    func unregisterIsBoundedByTimeout() async {
+        let exec = FakeCLIExecutor()
+        exec.stub(
+            command: "claude",
+            args: ["mcp", "remove", "graftty-channel"],
+            output: CLIOutput(stdout: "", stderr: "", exitCode: 0)
+        )
+        await LegacyChannelCleanup.unregisterMCPServer(executor: exec)
+        #expect(exec.invocations.map(\.timeout) == [.seconds(30)])
+    }
+}
+
 @Suite("@spec TEAM-8.1: When the application starts, the application shall best-effort run `claude mcp remove graftty-channel`, ignoring non-zero exit and logging failure.")
 struct LegacyChannelCleanupTests {
     @Test func unregistersMCPServer() async {
