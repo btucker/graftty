@@ -145,12 +145,7 @@ public enum AgentStopNotification {
     }
 
     public static func displayName(_ runtime: TeamHookRuntime) -> String {
-        switch runtime {
-        case .codex:
-            return "Codex"
-        case .claude:
-            return "Claude"
-        }
+        runtime.displayName
     }
 
     public static func attentionText(

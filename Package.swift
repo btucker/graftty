@@ -303,7 +303,7 @@ let package = Package(
             sources: isLinux ? ["Ports/PortBindingTests.swift", "Ports/LsofOutputParserTests.swift", "Ports/PortScannerTests.swift", "Ports/ProcessTreeWalkerTests.swift", "Ports/LinuxProcSocketScannerTests.swift", "Host/HeadlessHostPortTests.swift", "Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "Model/WorktreePanesProjectionTests.swift", "Host/HostAgentEnvironmentTests.swift", "HostSetup/LinuxHostAgentInstallTests.swift", "HostSetup/LinuxHostSetupTests.swift", "HostSetup/LinuxHostSetupExecutionTests.swift", "HostSetup/LinuxHostPackagingTests.swift", "HostSetup/LinuxHostMaintenanceTests.swift",
                 "CI/CITestPlanningTests.swift",
                 "Support/MutableBox.swift", "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Notification/ControlRequestCoreTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift", "Web/WebSocketOutputTests.swift",
-                "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamInboxParseCacheTests.swift", "Teams/CodexWrapperTemplateTests.swift", "Teams/LegacyCodexWrapperScript.swift", "Teams/TeamPresenceStorageTests.swift",
+                "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamInboxParseCacheTests.swift", "Teams/CodexWrapperTemplateTests.swift", "Teams/LegacyCodexWrapperScript.swift", "Teams/TeamDeliveryPipelineTests.swift", "Teams/TeamPresenceStorageTests.swift",
                 "Teams/AttentionFileHandoffTests.swift", "Remote/MacToMac/GrafttyBonjourServiceTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift",
                 "Persistence/JSONStoreCompatibilityTests.swift"] : nil,
             resources: [

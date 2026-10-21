@@ -1,20 +1,7 @@
 import Foundation
 
-public actor ClaudePeerDeliveryService {
-    private struct DeliveryKey: Hashable, Sendable {
-        let team: String
-        let worktree: String
-    }
-
-    private let inbox: TeamInbox
-    private let presenceRecords: @Sendable () -> [TeamPresenceRecord]
-    private let agentReachability: @Sendable (TeamPresenceRecord) -> Bool
-    private let client: any ClaudePeerClienting
-    private let eventLog: TeamEventLog?
-    private let replyBridge: ClaudePeerReplyBridge?
-    private let wakeBeforeDelivery: @Sendable (String) -> Bool
-    private var inFlight: Set<DeliveryKey> = []
-    private var dirty: Set<DeliveryKey> = []
+public final class ClaudePeerDeliveryService: Sendable {
+    private let pipeline: TeamDeliveryPipeline<ClaudePeerTransport>
 
     public init(
         inbox: TeamInbox,
@@ -25,99 +12,59 @@ public actor ClaudePeerDeliveryService {
         replyBridge: ClaudePeerReplyBridge? = nil,
         wakeBeforeDelivery: @escaping @Sendable (String) -> Bool = { _ in true }
     ) {
-        self.inbox = inbox
-        self.presenceRecords = presenceRecords
-        self.agentReachability = agentReachability
-        self.client = client
-        self.eventLog = eventLog
-        self.replyBridge = replyBridge
-        self.wakeBeforeDelivery = wakeBeforeDelivery
+        let logger = TeamDeliveryEventLogger(
+            eventLog: eventLog,
+            kind: .nativePeerDeliveryAttempt,
+            runtime: .claude
+        )
+        pipeline = TeamDeliveryPipeline(
+            inbox: inbox,
+            presenceRecords: presenceRecords,
+            isReachable: agentReachability,
+            wakeBeforeDelivery: wakeBeforeDelivery,
+            logger: logger,
+            transport: ClaudePeerTransport(client: client, replyBridge: replyBridge, logger: logger)
+        )
     }
 
     public func onMessageArrival(team: String, worktree: String) async {
-        let key = DeliveryKey(team: team, worktree: worktree)
-        guard inFlight.insert(key).inserted else {
-            dirty.insert(key)
-            return
-        }
-        defer { inFlight.remove(key) }
-        repeat {
-            dirty.remove(key)
-            let advanced = await deliverOnce(team: team, worktree: worktree)
-            if !advanced, dirty.remove(key) == nil { break }
-        } while true
+        await pipeline.onMessageArrival(team: team, worktree: worktree)
     }
+}
 
-    @discardableResult
-    private func deliverOnce(team: String, worktree: String) async -> Bool {
-        let records = presenceRecords().filter {
-            $0.teamID == team && $0.worktree == worktree
-        }
-        // Codex-only worktrees are fanned at this service too; skip the
-        // inbox parse and directory build when no Claude peer can exist.
-        guard records.contains(where: { record in
+/// Delivers through a protocol-v1 Claude peer socket, one sender run per
+/// frame; the arrival loop sends later runs in follow-up passes.
+struct ClaudePeerTransport: TeamDeliveryTransport {
+    let runtime = TeamHookRuntime.claude
+    let client: any ClaudePeerClienting
+    let replyBridge: ClaudePeerReplyBridge?
+    let logger: TeamDeliveryEventLogger
+
+    /// Codex-only worktrees are fanned at this transport too; skip the
+    /// wake and directory build when no Claude peer can exist.
+    func mayServe(_ records: [TeamPresenceRecord]) -> Bool {
+        records.contains { record in
             record.runtime == .claude
                 && record.transport != nil
                 && record.isSubagent != true
-        }) else {
-            return false
         }
-        let directory = TeamAgentDirectory(
-            records: records,
-            isReachable: agentReachability
-        )
-        let allUnread: [TeamInboxMessage]
-        do {
-            allUnread = try inbox.worktreePendingMessages(
-                teamID: team,
-                recipientWorktree: worktree,
-            )
-        } catch {
-            log(team: team, worktree: worktree, outcome: "error_inbox_read")
-            return false
-        }
-        guard !allUnread.isEmpty else { return false }
-        guard wakeBeforeDelivery(worktree) else { return false }
+    }
 
-        let selected: TeamAgentDescriptor?
-        selected = allUnread.lazy.compactMap { message -> TeamAgentDescriptor? in
-            do {
-                let targetRuntime = message.to.runtime.flatMap(TeamHookRuntime.init(rawValue:))
-                let candidate = try directory.resolve(
-                    worktreePath: worktree,
-                    runtime: targetRuntime,
-                    explicitAgentID: message.to.agentID
-                )
-                return candidate?.runtime == .claude ? candidate : nil
-            } catch {
-                return nil
-            }
-        }.first
-        guard let selected else {
-            log(team: team, worktree: worktree, outcome: "skipped_unreachable")
-            return false
-        }
-        guard case .claude(let socketPath, let protocolVersion) = selected.transport,
+    func deliver(
+        _ pending: [TeamInboxMessage],
+        to agent: TeamAgentDescriptor,
+        team: String,
+        worktree: String
+    ) async -> TeamDeliveryOutcome {
+        guard case .claude(let socketPath, let protocolVersion) = agent.transport,
               protocolVersion == ClaudePeerProtocol.version else {
-            log(team: team, worktree: worktree, outcome: "skipped_missing_transport")
-            return false
+            return .pending(.init(outcome: "skipped_missing_transport"))
         }
-        let defaultAgent = try? directory.resolve(
-            worktreePath: worktree,
-            explicitAgentID: nil
-        )
-        let acceptsUntargeted = defaultAgent?.id == selected.id
-        let pending = TeamInbox.runtimeDeliverableMessages(
-            allUnread,
-            runtime: TeamHookRuntime.claude.rawValue,
-            agentID: selected.id.rawValue,
-            acceptsUntargeted: acceptsUntargeted
-        )
-        guard !pending.isEmpty else { return false }
+        guard !pending.isEmpty else { return .pending(nil) }
+        let agentID = agent.id.rawValue
 
         // One frame carries one native sender identity, so a frame may only
-        // contain the leading run of rows that share a derived name; the
-        // arrival loop redelivers, sending later runs in follow-up frames.
+        // contain the leading run of rows that share a derived name.
         let senderName = ClaudePeerSenderName.name(for: pending[0])
         let run = Array(pending.prefix(while: {
             ClaudePeerSenderName.name(for: $0) == senderName && $0.from == pending[0].from
@@ -125,19 +72,21 @@ public actor ClaudePeerDeliveryService {
 
         let replySocket: String?
         do {
-            replySocket = try await replyBridge?.replySocketPath(message: pending[0], recipient: selected)
+            replySocket = try await replyBridge?.replySocketPath(message: pending[0], recipient: agent)
         } catch {
             // Delivery still includes the inbox ID for CLI replies if the
             // optional native listener cannot be created or reaches capacity.
             replySocket = nil
-            log(team: team, worktree: worktree, outcome: "error_reply_socket", agentID: selected.id.rawValue, error: String(describing: error))
+            logger.log(team: team, worktree: worktree, .init(
+                outcome: "error_reply_socket",
+                detail: ["agentID": agentID, "error": String(describing: error)]
+            ))
         }
 
         // A batch that overflows the peer protocol's frame cap would
         // otherwise be retried identically forever, wedging the queue.
         // Halve the batch until it fits; the next pass delivers the rest.
         var batch = run
-        var skippedOversized = false
         do {
             while true {
                 do {
@@ -156,68 +105,18 @@ public actor ClaudePeerDeliveryService {
             // A lone row that exceeds the frame cap can never be delivered;
             // skip the watermark past it so the poison row cannot wedge the
             // queue. The row stays in inbox history for manual reading.
-            skippedOversized = true
-        } catch {
-            log(
-                team: team,
-                worktree: worktree,
-                outcome: "error_delivery",
-                agentID: selected.id.rawValue,
-                messageIDs: batch.map(\.id),
-                error: String(describing: error)
-            )
-            return false
-        }
-
-        do {
-            try inbox.acknowledgeMessages(
-                teamID: team,
-                worktree: worktree,
-                messageIDs: batch.map(\.id)
+            return .acknowledged(
+                batch.map(\.id),
+                .init(outcome: "skipped_oversized", detail: ["agentID": agentID])
             )
         } catch {
-            log(
-                team: team,
-                worktree: worktree,
-                outcome: "error_watermark_write",
-                agentID: selected.id.rawValue,
-                messageIDs: batch.map(\.id),
-                error: String(describing: error)
-            )
-            return false
+            return .pending(.init(outcome: "error_delivery", detail: [
+                "agentID": agentID,
+                "messageIDs": batch.map(\.id).joined(separator: ","),
+                "error": String(describing: error),
+            ]))
         }
-        log(
-            team: team,
-            worktree: worktree,
-            outcome: skippedOversized ? "skipped_oversized" : "sent",
-            agentID: selected.id.rawValue,
-            messageIDs: batch.map(\.id)
-        )
-        return true
-    }
-
-    private func log(
-        team: String,
-        worktree: String,
-        outcome: String,
-        agentID: String? = nil,
-        messageIDs: [String] = [],
-        error: String? = nil
-    ) {
-        guard let eventLog else { return }
-        var detail = [
-            "worktree": worktree,
-            "runtime": TeamHookRuntime.claude.rawValue,
-            "outcome": outcome,
-        ]
-        if let agentID { detail["agentID"] = agentID }
-        if !messageIDs.isEmpty { detail["messageIDs"] = messageIDs.joined(separator: ",") }
-        if let error { detail["error"] = error }
-        try? eventLog.append(.init(
-            teamID: team,
-            kind: .nativePeerDeliveryAttempt,
-            detail: detail
-        ))
+        return .acknowledged(batch.map(\.id), .init(outcome: "sent", detail: ["agentID": agentID]))
     }
 }
 

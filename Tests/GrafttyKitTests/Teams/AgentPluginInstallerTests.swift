@@ -5,6 +5,14 @@ import Testing
 
 @Suite("Native agent plugin installer")
 struct AgentPluginInstallerTests {
+    @Test("Plugin providers are the hook runtimes, so every runtime has exactly one plugin provider and display name.")
+    func pluginProvidersAreHookRuntimes() {
+        let providers: [AgentPluginProvider] = TeamHookRuntime.allCases
+        #expect(providers.map(\.rawValue) == ["codex", "claude"])
+        #expect(providers.map(\.displayName) == ["Codex", "Claude"])
+        #expect(TeamHookRuntime.allCases.map(AgentStopNotification.displayName) == ["Codex", "Claude"])
+    }
+
     @Test("@spec AGENT-6.40: When a development build's bundled plugin content changes without a new app build number, the application shall give the plugin a distinct cache version.")
     func developmentPluginContentChangesCacheVersion() throws {
         let root = FileManager.default.temporaryDirectory
