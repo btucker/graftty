@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CryptoKit
 import GrafttyCommandUI
 import GrafttyHostAgent
 import GrafttyKit
@@ -9,6 +10,12 @@ import WebRTC
 
 /// Holds long-lived non-SwiftUI services for the app. Retained for the lifetime of
 /// `GrafttyApp` so weak delegates (e.g. `WorktreeMonitor.delegate`) stay alive.
+///
+/// @spec REMOTE-1.13
+/// The application shall construct one `HostIdentityStore` and one
+/// `TrustedPeerStore` per process and share them with the pairing
+/// coordinator, the paired-access signaling server, the inbound host pool
+/// and the Settings paired-devices list.
 @MainActor
 final class AppServices {
     let socketServer: SocketServer
@@ -75,6 +82,24 @@ final class AppServices {
     /// presented sheet share this instance; its process-wide admission is
     /// also shared with the Settings pairing listener.
     let hostPairingCoordinator: RemoteMacHostPairingCoordinator
+    /// The one `TrustedPeerStore` for this process. The pairing coordinator,
+    /// the paired-access signaling server, every `WebRTCHostAgent`, and
+    /// `PairedDevicesSection` (list/remove) share it, so writes from pairing
+    /// and from Settings serialize on the same lock.
+    let trustedPeerStore: TrustedPeerStore
+    /// The one `HostIdentityStore` for this process, shared by the pairing
+    /// coordinator and the paired-access signaling server.
+    private let hostIdentityStore: HostIdentityStore
+    /// Loads the host signing key at launch, before the pairing coordinator
+    /// exists, and retains the first key that loads (REMOTE-1.12).
+    private let hostKeyProvider: HostKeyProvider
+    /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
+    /// its live SSH connection into (REMOTE-3.1 revocation, W4).
+    /// `PairedDevicesSection`'s "Remove" action calls
+    /// `registry.revoke(deviceID:)` right after removing the peer from
+    /// `trustedPeerStore`, closing the live connection immediately rather
+    /// than waiting for the peer's next userauth attempt to fail.
+    let sshConnectionRegistry = SSHConnectionRegistry()
     let remoteMacsModel: RemoteMacsModel
     let remoteMacPairingDriverFactory: @MainActor () -> AddRemoteMacPairingDriving
     let remoteMacAccessEnabled: Bool
@@ -133,8 +158,21 @@ final class AppServices {
                 UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
             }
         )
+        let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
+        self.hostIdentityStore = hostIdentityStore
+        let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
+        self.trustedPeerStore = trustedPeerStore
+        let hostKeyProvider = HostKeyProvider(load: hostIdentityStore.loadOrGenerateAndPersist)
+        self.hostKeyProvider = hostKeyProvider
+        do {
+            _ = try hostKeyProvider.key()
+        } catch {
+            NSLog("[Graftty] failed to load remote host identity: %@", String(describing: error))
+        }
         self.hostPairingCoordinator = Self.makeHostPairingCoordinator(
-            admission: pairingAdmission
+            admission: pairingAdmission,
+            identityStore: hostIdentityStore,
+            peerStore: trustedPeerStore
         )
         let remoteMacsModel = RemoteMacsModel(store: RemoteMacStore())
         self.remoteMacsModel = remoteMacsModel
@@ -150,7 +188,7 @@ final class AppServices {
         }
         self.remoteMacAccessEnabled = Self.remoteMacAccessEnabledDefault()
         do {
-            let localFingerprint = try Self.localHostFingerprint()
+            let localFingerprint = try localHostFingerprint()
             let browser = GrafttyBonjourBrowser(
                 localDeviceID: Self.localRemoteDeviceID(),
                 localFingerprint: localFingerprint,
@@ -210,15 +248,10 @@ final class AppServices {
     }
 
     private static func makeHostPairingCoordinator(
-        admission: HostPairingAdmission
+        admission: HostPairingAdmission,
+        identityStore: HostIdentityStore,
+        peerStore: TrustedPeerStore
     ) -> RemoteMacHostPairingCoordinator {
-        let identityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
-        let peerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
-        do {
-            _ = try identityStore.loadOrGenerateAndPersist()
-        } catch {
-            NSLog("[Graftty] failed to prepare host pairing identity: %@", String(describing: error))
-        }
         let session = HostPairingSession(
             identityStore: identityStore,
             peerStore: peerStore,
@@ -264,15 +297,9 @@ final class AppServices {
                 lanBaseURL: endpoint.baseURL()
             )
         )
-        let identityStore = HostIdentityStore(
-            directory: HostIdentityStore.defaultDirectory
-        )
-        let peerStore = TrustedPeerStore(
-            directory: TrustedPeerStore.defaultDirectory
-        )
         let signalingServer = AuthenticatedSignalingServer(
-            identityStore: identityStore,
-            peerStore: peerStore,
+            identityStore: hostIdentityStore,
+            peerStore: trustedPeerStore,
             hostDeviceID: Self.localRemoteDeviceID(),
             routesProvider: { endpoint.routes() }
         )
@@ -336,7 +363,7 @@ final class AppServices {
         // Resolve every throwing identity dependency before binding. If this
         // fails after `server.start()`, the listener would not yet be retained
         // by `lanRemoteAccessServer` and therefore could not be stopped.
-        let localHostFingerprint = try Self.localHostFingerprint()
+        let localHostFingerprint = try localHostFingerprint()
         try server.start()
         guard let port = server.listeningPort else {
             server.stop()
@@ -447,9 +474,25 @@ final class AppServices {
         return true
     }
 
-    private static func localHostFingerprint() throws -> RemoteIdentityFingerprint {
-        let identityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
-        let hostKey = try identityStore.loadOrGenerateAndPersist()
+    /// Host signing key for the inbound host pool. The paired-access
+    /// listener authenticates v2 offers with the device keys before passing
+    /// them to the pool, whose agents open SSH sessions over the resulting
+    /// DataChannel → zmx attach. Retries the shared store if every earlier
+    /// load failed. `nil` when this load fails too; startup then builds no
+    /// host pool and paired access fails with `hostAgentUnavailable`.
+    func hostKey() -> Curve25519.Signing.PrivateKey? {
+        do {
+            return try hostKeyProvider.key()
+        } catch {
+            NSLog("[Graftty] failed to load remote host identity: %@", String(describing: error))
+            return nil
+        }
+    }
+
+    /// Fingerprint of the retained host key, loading it if every earlier
+    /// load failed.
+    private func localHostFingerprint() throws -> RemoteIdentityFingerprint {
+        let hostKey = try hostKeyProvider.key()
         let publicKey = try RemoteIdentityPublicKey(
             rawRepresentation: hostKey.publicKey.rawRepresentation
         )

@@ -715,14 +715,14 @@ extension GrafttyApp {
         appState appStateBinding: Binding<AppState>,
         terminalManager: TerminalManager,
         services: AppServices,
-        trustedPeerStore: TrustedPeerStore,
-        sshConnectionRegistry: SSHConnectionRegistry,
         buildWorktreePanesSnapshot: @escaping @Sendable @MainActor () -> [WorktreePanes],
         localWorktreeOrigin: WorktreeOrigin,
         portScanner panesPortScanner: PortScanner,
         zmxBinary: URL,
         zmxDir: URL
     ) -> WebRTCHostAgentPool {
+        let trustedPeerStore = services.trustedPeerStore
+        let sshConnectionRegistry = services.sshConnectionRegistry
         let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { onChange in
             // Initial snapshot fires synchronously so the first frame
             // hits the wire before the polling loop's first sleep.

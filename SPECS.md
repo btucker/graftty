@@ -2874,6 +2874,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.11** On the protocol-v2 upgrade, the application shall discard every pre-v2 trusted peer, pinned host, paired saved-host, and Remote-Mac record and require a new pairing ceremony, while preserving host/client identity keys and manual unpaired mobile host records.
 
+**REMOTE-1.12** If an earlier host identity load failed and a later load succeeds, the application shall retain the recovered key and use it for both the advertised fingerprint and the inbound host pool.
+
+**REMOTE-1.13** The application shall construct one `HostIdentityStore` and one `TrustedPeerStore` per process and share them with the pairing coordinator, the paired-access signaling server, the inbound host pool and the Settings paired-devices list.
+
 ### REMOTE-2.x — Authenticated Attach
 
 **REMOTE-2.1** When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
