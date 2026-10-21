@@ -3,7 +3,6 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyTunnel
 import NIOCore
-import NIOExtras
 import NIOSSH
 
 /// Server-side channel-open dispatcher. Installs into every inbound
@@ -21,10 +20,10 @@ import NIOSSH
 ///   - `env` / `pty-req` / `shell`  → R4 terminal-session path: install
 ///     `TerminalSessionHandler` and forward the observed event so the
 ///     handler can process it normally.
-///   - `subsystem "panes-state@graftty.dev"` → install
-///     `LengthPrefixedFraming` + `PanesStateChannelHandler` and ack.
-///   - `subsystem "pane-control@graftty.dev"` → install
-///     `LengthPrefixedFraming` + `PaneControlChannelHandler` and ack.
+///   - a subsystem in `framedSubsystems` (panes-state, pane-control,
+///     worktree-management, Chrome tabs, team) → install
+///     `LengthPrefixedFraming` with that subsystem's frame bound + its
+///     handler and ack, or refuse when its factory declines the connection.
 ///   - Unknown subsystem → fail (if `wantReply`) and close the channel.
 ///
 /// After dispatch the dispatcher removes itself from the pipeline.
@@ -189,39 +188,30 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
             let token = String(request.subsystem.dropFirst(GrafttyWebRTC.historySubsystemPrefix.count))
             guard isBulkTransport, let bulkChannels, let deviceID = deviceIDProvider(),
                   bulkChannels.register(token: token, deviceID: deviceID, channel: context.channel) else {
-                if request.wantReply { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil) }
-                context.close(promise: nil)
+                refuse(request, context: context)
                 return
             }
             if request.wantReply { context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil) }
             return
         }
-        switch request.subsystem {
-        case SSHChannelTypeNames.chromeTabs:
+        if let spec = Self.framedSubsystems[request.subsystem] {
             dispatched = true
-            guard worktreeManagementAllowed(), let deviceID = deviceIDProvider(), let chromeTabMutator else {
-                if request.wantReply { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil) }
-                context.close(promise: nil); return
-            }
-            installSubsystem(handler: ChromeTabChannelHandler(deviceID: deviceID, mutator: chromeTabMutator, onDisconnect: chromeTabOnDisconnect), request: request, context: context)
-
-        case SSHChannelTypeNames.team:
-            dispatched = true
-            guard teamAllowed(), let deviceID = deviceIDProvider(), let teamHandler else {
-                if request.wantReply { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil) }
-                context.close(promise: nil)
+            guard let handler = spec.makeHandler(self) else {
+                refuse(request, context: context)
                 return
             }
             installSubsystem(
-                handler: TeamChannelHandler(deviceID: deviceID, handler: teamHandler, onConnect: teamOnConnect, onDisconnect: teamOnDisconnect),
+                handler: handler,
+                maximumBufferSize: spec.maximumBufferSize,
                 request: request,
                 context: context
             )
-
+            return
+        }
+        switch request.subsystem {
         case SSHChannelTypeNames.terminalPaged:
             guard let pagedFactory else {
-                if request.wantReply { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil) }
-                context.close(promise: nil)
+                refuse(request, context: context)
                 return
             }
             dispatched = true
@@ -237,98 +227,95 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
                 context.close(promise: nil)
             }
 
-        case SSHChannelTypeNames.panesState:
-            dispatched = true
-            installSubsystem(
-                // Reverse-order install: pipeline at dispatch time is [self];
-                // each `.after(self)` insert lands immediately after self,
-                // pushing earlier inserts further down. Calling in reverse
-                // order yields [self, codec, decoder, prepender, panesHandler].
-                handler: PanesStateChannelHandler(subscribe: panesStateSubscribe),
-                request: request,
-                context: context
-            )
-
-        case SSHChannelTypeNames.panesStateV2:
-            dispatched = true
-            installSubsystem(
-                handler: PanesStateChannelHandler(subscribe: panesStateV2Subscribe),
-                request: request,
-                context: context
-            )
-
-        case SSHChannelTypeNames.paneControl:
-            dispatched = true
-            installSubsystem(
-                handler: PaneControlChannelHandler(mutator: paneControlMutator),
-                request: request,
-                context: context
-            )
-
-        case SSHChannelTypeNames.worktreeManagement:
-            dispatched = true
-            guard worktreeManagementAllowed() else {
-                if request.wantReply {
-                    context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
-                }
-                context.close(promise: nil)
-                return
-            }
-            installSubsystem(
-                handler: WorktreeManagementChannelHandler(
-                    mutator: worktreeManagementMutator
-                ),
-                request: request,
-                context: context
-            )
-
         default:
             // Unknown subsystem — refuse cleanly.
-            if request.wantReply {
-                context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
-            }
-            context.close(promise: nil)
+            refuse(request, context: context)
         }
+    }
+
+    /// A length-prefixed subsystem: its frame-decoder bound and a factory
+    /// that returns `nil` to refuse the subsystem on this connection.
+    private struct SubsystemSpec: Sendable {
+        var maximumBufferSize: Int?
+        let makeHandler: @Sendable (SubsystemDispatcher) -> (any ChannelHandler)?
+    }
+
+    private static let framedSubsystems: [String: SubsystemSpec] = [
+        SSHChannelTypeNames.chromeTabs: SubsystemSpec(
+            maximumBufferSize: ChromeTabRequest.maximumRequestBytes + 4
+        ) { dispatcher in
+            guard dispatcher.worktreeManagementAllowed(),
+                  let deviceID = dispatcher.deviceIDProvider(),
+                  let mutator = dispatcher.chromeTabMutator else { return nil }
+            return ChromeTabChannelHandler(
+                deviceID: deviceID, mutator: mutator, onDisconnect: dispatcher.chromeTabOnDisconnect
+            )
+        },
+        SSHChannelTypeNames.team: SubsystemSpec(
+            maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes
+        ) { dispatcher in
+            guard dispatcher.teamAllowed(),
+                  let deviceID = dispatcher.deviceIDProvider(),
+                  let handler = dispatcher.teamHandler else { return nil }
+            return TeamChannelHandler(
+                deviceID: deviceID, handler: handler,
+                onConnect: dispatcher.teamOnConnect, onDisconnect: dispatcher.teamOnDisconnect
+            )
+        },
+        SSHChannelTypeNames.panesState: SubsystemSpec { dispatcher in
+            PanesStateChannelHandler(subscribe: dispatcher.panesStateSubscribe)
+        },
+        SSHChannelTypeNames.panesStateV2: SubsystemSpec { dispatcher in
+            PanesStateChannelHandler(subscribe: dispatcher.panesStateV2Subscribe)
+        },
+        SSHChannelTypeNames.paneControl: SubsystemSpec { dispatcher in
+            PaneControlChannelHandler(mutator: dispatcher.paneControlMutator)
+        },
+        SSHChannelTypeNames.worktreeManagement: SubsystemSpec { dispatcher in
+            guard dispatcher.worktreeManagementAllowed() else { return nil }
+            return WorktreeManagementChannelHandler(mutator: dispatcher.worktreeManagementMutator)
+        },
+    ]
+
+    /// Fails the request (if it wants a reply) and closes the channel.
+    private func refuse(
+        _ request: SSHChannelRequestEvent.SubsystemRequest,
+        context: ChannelHandlerContext
+    ) {
+        if request.wantReply {
+            context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
+        }
+        context.close(promise: nil)
     }
 
     /// Installs the shared framing stack (codec → decoder → prepender → `handler`)
     /// after `self` in the pipeline, acks or nacks the subsystem request, then
-    /// removes `self`. The reverse-insertion order ensures the pipeline reads as
-    /// `[codec, decoder, prepender, handler]` from the channel inward.
+    /// removes `self`. Each `.after(self)` insert lands immediately after
+    /// `self`, so inserting in reverse yields `[codec, decoder, prepender,
+    /// handler]` from the channel inward.
     private func installSubsystem(
         handler: any NIOCore.ChannelHandler,
+        maximumBufferSize: Int?,
         request: SSHChannelRequestEvent.SubsystemRequest,
         context: ChannelHandlerContext
     ) {
         do {
-            try context.pipeline.syncOperations.addHandler(handler, position: .after(self))
-            try context.pipeline.syncOperations.addHandler(
-                LengthPrefixedFraming.makeFramePrepender(), position: .after(self))
-            if request.subsystem == SSHChannelTypeNames.chromeTabs {
-                try context.pipeline.syncOperations.addHandler(
-                    ByteToMessageHandler(LengthFieldBasedFrameDecoder(lengthFieldLength: .four), maximumBufferSize: ChromeTabRequest.maximumRequestBytes + 4), position: .after(self))
-            } else if request.subsystem == SSHChannelTypeNames.team {
-                try context.pipeline.syncOperations.addHandler(
-                    ByteToMessageHandler(LengthFieldBasedFrameDecoder(lengthFieldLength: .four), maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes),
-                    position: .after(self)
-                )
-            } else {
-                try context.pipeline.syncOperations.addHandler(
-                    LengthPrefixedFraming.makeFrameDecoder(), position: .after(self))
-            }
+            let pipeline = context.pipeline.syncOperations
+            try pipeline.addHandler(handler, position: .after(self))
+            try pipeline.addHandler(LengthPrefixedFraming.makeFramePrepender(), position: .after(self))
+            try pipeline.addHandler(
+                LengthPrefixedFraming.makeFrameDecoder(maximumBufferSize: maximumBufferSize),
+                position: .after(self)
+            )
             // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
             // so the downstream framing handlers operate on raw bytes.
-            try context.pipeline.syncOperations.addHandler(
-                SSHChannelDataCodec(), position: .after(self))
+            try pipeline.addHandler(SSHChannelDataCodec(), position: .after(self))
             if request.wantReply {
                 context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
             }
-            context.pipeline.syncOperations.removeHandler(context: context, promise: nil)
+            pipeline.removeHandler(context: context, promise: nil)
         } catch {
-            if request.wantReply {
-                context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
-            }
-            context.close(promise: nil)
+            refuse(request, context: context)
         }
     }
 }

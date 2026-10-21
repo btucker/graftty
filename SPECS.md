@@ -3014,6 +3014,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.22** When different devices send concurrent first offers with one pool slot available, the host shall admit exactly one offer and count pending agent creation and negotiation toward capacity.
 
+**REMOTE-11.23** If a pane-control or worktree-management RPC response does not arrive before its deadline, then the client shall fail that RPC with a timeout using elapsed time independently of the transport event-loop clock.
+
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
 **REMOTE-12.1** If the saved Remote Macs file exists but cannot be decoded, the application shall move it to a timestamped corruption backup before allowing a later save to create a fresh file.
