@@ -27,10 +27,14 @@ Inspect `git worktree list` and the roster before retrying creation. Failed hook
 For an existing worktree with no suitable agent, first open and select it in Graftty. A new pane's shell waits for its first visible layout. If panes have no automatic command, launch one:
 
 ```sh
-graftty pane add '<worktree-name>' --command 'codex -- "Check Graftty messages, then report ready for a task."'
+graftty pane add '<worktree-name>' --agent codex --prompt-stdin <<'GRAFTTY_PANE_7F3A91C2'
+<task>
+GRAFTTY_PANE_7F3A91C2
 ```
 
-Replace `codex` with `claude` as needed. `pane add` takes a worktree name, with no `--agent` or `--prompt-stdin`. Confirm reachability, then send the task through `team send --stdin`.
+Replace `codex` with `claude` as needed. `pane add` takes a worktree name. `--agent` launches the runtime as `worktree add --agent` does; the shell waits until it is ready. `--prompt-stdin` and `--prompt` require `--agent`, and `--command` runs an arbitrary shell line instead. When the worktree has no live or starting agent of that runtime, the task is also saved in the durable inbox. Confirm reachability before relinquishing the task.
+
+The same command adds a reviewer or pair beside a live implementer. If a live or starting agent of the same runtime already uses the worktree, the added agent's task travels only in its launch command, so that agent never receives it. Address the added agent by its exact ID from `graftty team list --json`.
 
 Inspect with `graftty pane list '<worktree-name>'` and `graftty pane show '<worktree-name>:<id>' --lines 100`, using the 1-based pane ID. `graftty pane send` writes directly to the PTY with no inbox or consent layer and presses Return by default. Run `graftty pane send --help` before using it; use team messages for coordination.
 
