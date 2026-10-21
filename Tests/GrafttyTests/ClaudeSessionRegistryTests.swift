@@ -114,6 +114,65 @@ struct ClaudeSessionRegistryTests {
         #expect(r.livenessBySession["graftty-aaaa1111"] == .idle)
         #expect(r.livenessBySession["codex-pane"] == .busy)
     }
+
+    @Test("@spec AGENT-2.6: The application shall bound each `claude agents --json` and `ps` liveness-poll subprocess with a 5-second timeout, and if that timeout expires, then the application shall produce an empty Claude polling result so the next tick can poll again.")
+    func pollSubprocessesAreBoundedByTimeout() async {
+        let exec = TimeoutRecordingExecutor(
+            agentsJSON: #"[{"pid":100,"cwd":"/a","kind":"interactive","sessionId":"s","startedAt":1,"status":"busy"}]"#,
+            ps: "100 claude ZMX_SESSION=graftty-aaaa1111")
+        let r = ClaudeSessionRegistry(executor: exec, claudePath: "claude")
+        await r.refresh()
+        #expect(r.livenessBySession["graftty-aaaa1111"] == .busy)
+        #expect(exec.timeouts.map(\.command) == ["claude", "ps"])
+        #expect(exec.timeouts.allSatisfy { $0.timeout == .seconds(5) })
+
+        for command in ["claude", "ps"] {
+            exec.timingOutCommand = command
+            await r.refresh()
+            #expect(r.livenessBySession.isEmpty, "\(command) timeout")
+            exec.timingOutCommand = nil
+            await r.refresh()
+            #expect(r.livenessBySession["graftty-aaaa1111"] == .busy, "next tick after \(command) timeout")
+        }
+    }
+}
+
+/// Records the `timeout:` passed to each capture. Calls that reach the
+/// unbounded overload record a `nil` timeout.
+private final class TimeoutRecordingExecutor: CLIExecutor, @unchecked Sendable {
+    private let lock = NSLock()
+    private let agentsJSON: String
+    private let ps: String
+    private var _timeouts: [(command: String, timeout: Duration?)] = []
+    private var _timingOutCommand: String?
+    var timeouts: [(command: String, timeout: Duration?)] { lock.withLock { _timeouts } }
+    var timingOutCommand: String? {
+        get { lock.withLock { _timingOutCommand } }
+        set { lock.withLock { _timingOutCommand = newValue } }
+    }
+
+    init(agentsJSON: String, ps: String) {
+        self.agentsJSON = agentsJSON
+        self.ps = ps
+    }
+
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await capture(command: command, args: args, at: directory)
+    }
+
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await capture(command: command, args: args, at: directory, timeout: nil)
+    }
+
+    func capture(command: String, args: [String], at directory: String,
+                 timeout: Duration?) async throws -> CLIOutput {
+        let timesOut = lock.withLock {
+            _timeouts.append((command, timeout))
+            return command == _timingOutCommand
+        }
+        if timesOut { throw CLIError.timedOut(command: command, seconds: 5) }
+        return CLIOutput(stdout: command == "ps" ? ps : agentsJSON, stderr: "", exitCode: 0)
+    }
 }
 
 /// First `claude` call awaits `release` (signalling once it has entered);
