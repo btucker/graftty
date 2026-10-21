@@ -111,12 +111,13 @@ struct RenderedTerminalViewportTests {
             })
         }
 
-        let visible = try await render(shared: KeyboardFrameObservation(bottomInset: 300, sequence: 1))
-        try await waitForLayout("mounted pane lays out the keyboard control bar") {
-            visible.frame().maxY < visible.window.bounds.maxY - 30
+        do {
+            let visible = try await render(shared: KeyboardFrameObservation(bottomInset: 300, sequence: 1))
+            defer { visible.window.isHidden = true; visible.client.stop() }
+            try await waitForLayout("mounted pane lays out the keyboard control bar") {
+                visible.frame().maxY < visible.window.bounds.maxY - 30
+            }
         }
-        visible.window.isHidden = true
-        visible.client.stop()
 
         let hidden = try await render(shared: KeyboardFrameObservation())
         defer { hidden.window.isHidden = true; hidden.client.stop() }

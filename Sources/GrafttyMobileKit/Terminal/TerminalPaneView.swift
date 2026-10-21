@@ -351,9 +351,9 @@ public final class TerminalInputContainerView: UIView,
     /// clearance is re-checked after parsed output instead of on a timer.
     private weak var clearanceOutputSession: InMemoryTerminalSession?
     private var isClearanceRefreshScheduled = false
-    private var lastOutputClearanceRefresh: TimeInterval?
+    private var lastScheduledClearanceRefresh: TimeInterval?
     /// Streaming output re-checks no more often than the timer it replaced.
-    private static let outputClearanceRefreshInterval: TimeInterval = 0.25
+    private static let scheduledClearanceRefreshInterval: TimeInterval = 0.25
 
     /// Claims the session's single backlog handler. Only a container that
     /// reserves top chrome observes output, and each session backs one
@@ -370,26 +370,35 @@ public final class TerminalInputContainerView: UIView,
         session?.setOutputBacklogHandler(highWater: 1, lowWater: 0) { isBacklogged in
             guard !isBacklogged else { return }
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { target.view?.scheduleOutputClearanceRefresh() }
+                MainActor.assumeIsolated { target.view?.scheduleClearanceRefresh() }
             }
         }
     }
 
-    private func scheduleOutputClearanceRefresh() {
-        guard reservesTopChromeSpace, !isClearanceRefreshScheduled else { return }
+    /// Throttled re-check after parsed output. Retained panes keep parsing
+    /// offscreen, so a container outside a window skips it and re-checks
+    /// when it returns to one, as the window-gated timer it replaced did.
+    private func scheduleClearanceRefresh() {
+        guard reservesTopChromeSpace, window != nil, !isClearanceRefreshScheduled else { return }
         isClearanceRefreshScheduled = true
         let now = ProcessInfo.processInfo.systemUptime
-        let delay = lastOutputClearanceRefresh.map {
-            max(0, Self.outputClearanceRefreshInterval - (now - $0))
+        let delay = lastScheduledClearanceRefresh.map {
+            max(0, Self.scheduledClearanceRefreshInterval - (now - $0))
         } ?? 0
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.isClearanceRefreshScheduled = false
-                self.lastOutputClearanceRefresh = ProcessInfo.processInfo.systemUptime
+                guard self.window != nil else { return }
+                self.lastScheduledClearanceRefresh = ProcessInfo.processInfo.systemUptime
                 self.refreshFirstLineClearance()
             }
         }
+    }
+
+    override public func didMoveToWindow() {
+        super.didMoveToWindow()
+        scheduleClearanceRefresh()
     }
 
     private func refreshFirstLineClearance() {
@@ -1622,17 +1631,17 @@ extension TerminalInputContainerView: TerminalSurfaceGridResizeDelegate {
     }
 }
 
-/// Observes touch-begin without claiming the gesture: reports, then
-/// immediately fails so libghostty's pan/pinch and the selection
-/// recognizers proceed untouched. Powers render-pace promotion —
-/// local scrolling renders without host output, so a finger on the
-/// surface must count as activity.
 /// Lets the session's background backlog handler reach the container on main.
 private final class WeakTerminalInputContainer: @unchecked Sendable {
     weak var view: TerminalInputContainerView?
     init(_ view: TerminalInputContainerView) { self.view = view }
 }
 
+/// Observes touch-begin without claiming the gesture: reports, then
+/// immediately fails so libghostty's pan/pinch and the selection
+/// recognizers proceed untouched. Powers render-pace promotion —
+/// local scrolling renders without host output, so a finger on the
+/// surface must count as activity.
 final class AnyTouchObserverGestureRecognizer: UIGestureRecognizer {
     var onTouchBegan: ((Bool) -> Void)?
 
