@@ -7,7 +7,7 @@ import os
 /// Polls `claude agents --json` (+ a batched `ps eww` to recover each
 /// session's inherited `ZMX_SESSION`) and merges provider hook activity
 /// for Codex and Claude into per-pane busy/idle state.
-/// Read-only with respect to Claude Code. Modeled on `PRStatusStore`.
+/// Read-only with respect to Claude Code.
 @MainActor
 @Observable
 public final class ClaudeSessionRegistry {
