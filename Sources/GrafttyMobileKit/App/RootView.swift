@@ -199,7 +199,7 @@ public struct RootView: View {
         let initialPath = navigationPath
         let initialSelection = notificationSelection
         Task { @MainActor in
-            func isCurrent() -> Bool {
+            @MainActor func isCurrent() -> Bool {
                 navigationIntent.isCurrent(intent) && recentPaneOpeningID == openingID
                     && scenePhase == .active && gate.state == .unlocked
                     && navigationPath == initialPath && notificationSelection == initialSelection

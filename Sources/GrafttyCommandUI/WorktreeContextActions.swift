@@ -19,11 +19,11 @@ public struct WorktreeContextActions {
     public enum Failure: Error, Equatable { case unavailable, notReady }
 
     @MainActor public static func resolve(_ path: String, source: WorktreePanes,
-        fetch: () async throws -> [WorktreePanes], reopen: (String) async throws -> Void,
-        isCurrent: () -> Bool,
-        pause: () async throws -> Void = { try await Task.sleep(for: .milliseconds(250)) }
+        fetch: @MainActor () async throws -> [WorktreePanes], reopen: @MainActor (String) async throws -> Void,
+        isCurrent: @MainActor () -> Bool,
+        pause: @MainActor () async throws -> Void = { try await Task.sleep(for: .milliseconds(250)) }
     ) async throws -> (worktree: WorktreePanes, rows: [WorktreePanes]) {
-        func checkCurrent() throws {
+        @MainActor func checkCurrent() throws {
             try Task.checkCancellation()
             guard isCurrent() else { throw CancellationError() }
         }
