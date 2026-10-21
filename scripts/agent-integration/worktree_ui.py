@@ -18,12 +18,19 @@ import uuid
 
 
 REPO = Path(__file__).resolve().parents[2]
+# Types moved out of WorktreeListContent after older baselines. A baseline
+# WorktreeListContent still declares them, so files the baseline lacks are emptied.
+SPLIT_FILES = (
+    'Sources/GrafttyMobileKit/UI/RemoteMacConnectionRow.swift',
+    'Sources/GrafttyMobileKit/UI/WorktreeBlock.swift',
+    'Sources/GrafttyMobileKit/UI/WorktreeLoadingView.swift',
+)
 BASELINE_FILES = (
     'Sources/GrafttyMobileKit/UI/WorktreeListContent.swift',
     'Sources/GrafttyMobileKit/Terminal/MobilePagedTerminalRenderer.swift',
     'Sources/GrafttyMobileKit/UI/RemoteOpenButton.swift',
     'Sources/GrafttyMobileKit/UI/MobileWorktreeContextDrawer.swift',
-)
+) + SPLIT_FILES
 TESTS = (
     'GrafttyMobileBrowserTests/WorktreeRowAlignmentTests',
     'GrafttyMobileBrowserTests/RemoteBrowserButtonTests',
@@ -248,7 +255,8 @@ def main():
             try:
                 summary['baselineCommit'] = capture(['git', 'rev-parse', options.baseline + '^{commit}'])
                 for name in BASELINE_FILES:
-                    source = execute(['git', 'show', summary['baselineCommit'] + ':' + name])[1]
+                    absent = name in SPLIT_FILES and not capture(['git', 'ls-tree', summary['baselineCommit'], '--', name])
+                    source = '' if absent else execute(['git', 'show', summary['baselineCommit'] + ':' + name])[1]
                     if name.endswith('/WorktreeListContent.swift'):
                         source = source.replace('private struct WorktreeRowContent: View', 'struct WorktreeRowContent: View')
                     if name.endswith('/MobileWorktreeContextDrawer.swift'):
