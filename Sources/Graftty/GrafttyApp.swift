@@ -1533,7 +1533,6 @@ struct GrafttyApp: App {
         let panesPortBindings = portBindingsModel
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
-        let panesPortScanner = portScanner
         let panesClaudeRegistry = services.claudeSessionRegistry
         let localWorktreeOrigin = WorktreeOrigin(
             deviceID: AppServices.localRemoteDeviceID(),
@@ -1747,24 +1746,8 @@ struct GrafttyApp: App {
             }
         }
 
-        // Prepare production channel callbacks before creating the pool and
-        // starting the paired-access listener.
-        //
-        // `panesStateSubscribe`: emits initial snapshot, then polls
-        // `buildWorktreePanesSnapshot` on a 1Hz cadence and re-emits when
-        // the snapshot differs from the previously-sent one. Polling
-        // (rather than a pub-sub source) is intentional — AppState is a
-        // SwiftUI `@State` value type with no Combine/AsyncStream publisher,
-        // and the `/ws` HTTP path the desktop sidebar/web client uses is
-        // itself poll-based, so the SSH transport doesn't promise tighter
-        // freshness than the HTTP transport already provides. A pub-sub
-        // hook is left as a post-R6 follow-up.
-        //
-        // `paneControlMutator`: maps session-name targets to `PaneSlotID`
-        // via `TerminalManager.paneID(forSessionName:)` and dispatches to
-        // the same `splitPane` / `closePane` static methods the Mac sidebar
-        // context menu drives. `swap` returns `unsupported` — no native
-        // implementation exists yet; tracked as a post-R5 follow-up.
+        // Build the paired-device pool before starting the paired-access
+        // listener.
         services.hostPairingCoordinator.setStartupError(
             "Paired access is still starting. Try again in a moment."
         )
@@ -1778,7 +1761,7 @@ struct GrafttyApp: App {
                 sshConnectionRegistry: sshConnectionRegistry,
                 buildWorktreePanesSnapshot: buildWorktreePanesSnapshot,
                 localWorktreeOrigin: localWorktreeOrigin,
-                portScanner: panesPortScanner,
+                portScanner: portScanner,
                 zmxBinary: zmxBinary,
                 zmxDir: zmxDir
             )

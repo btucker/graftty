@@ -43,7 +43,7 @@ extension GrafttyApp {
     /// Builds the paired-device `PaneControlChannelHandler` mutator. Relayed
     /// panes forward to their owning Mac; local targets map session names to
     /// `PaneSlotID`s and drive the same pane-layout statics as the sidebar.
-    static func makePaneControlMutator(
+    private static func makePaneControlMutator(
         appState appStateBinding: Binding<AppState>,
         terminalManager: TerminalManager,
         services: AppServices
@@ -240,7 +240,7 @@ extension GrafttyApp {
     /// Builds the paired-device `WorktreeManagementChannelHandler` mutator.
     /// Relayed resources forward to their owning Mac; local requests run
     /// against `appState` and the shared worktree flows.
-    static func makeWorktreeManagementMutator(
+    private static func makeWorktreeManagementMutator(
         appState appStateBinding: Binding<AppState>,
         terminalManager: TerminalManager,
         services: AppServices,
@@ -694,6 +694,22 @@ extension GrafttyApp {
     /// Builds the paired-device `WebRTCHostAgentPool` and the channel
     /// callbacks every agent in it shares: panes-state subscriptions, pane
     /// control, worktree management, and the Chrome tab broker.
+    ///
+    /// `panesStateSubscribe`: emits initial snapshot, then polls
+    /// `buildWorktreePanesSnapshot` on a 1Hz cadence and re-emits when
+    /// the snapshot differs from the previously-sent one. Polling
+    /// (rather than a pub-sub source) is intentional — AppState is a
+    /// SwiftUI `@State` value type with no Combine/AsyncStream publisher,
+    /// and the `/ws` HTTP path the desktop sidebar/web client uses is
+    /// itself poll-based, so the SSH transport doesn't promise tighter
+    /// freshness than the HTTP transport already provides. A pub-sub
+    /// hook is left as a post-R6 follow-up.
+    ///
+    /// `paneControlMutator`: maps session-name targets to `PaneSlotID`
+    /// via `TerminalManager.paneID(forSessionName:)` and dispatches to
+    /// the same `splitPane` / `closePane` static methods the Mac sidebar
+    /// context menu drives. `swap` returns `unsupported` — no native
+    /// implementation exists yet; tracked as a post-R5 follow-up.
     static func makeHostAgentPool(
         hostKey: Curve25519.Signing.PrivateKey,
         appState appStateBinding: Binding<AppState>,
