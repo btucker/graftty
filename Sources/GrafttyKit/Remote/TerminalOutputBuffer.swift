@@ -1,4 +1,5 @@
 import Foundation
+import NIO
 
 /// One-reader PTY output queue. Only the dedicated blocking PTY reader may call
 /// append; async consumers never block a cooperative executor or NIO event loop.
@@ -8,7 +9,7 @@ final class TerminalOutputBuffer: @unchecked Sendable {
     private let condition = NSCondition()
     private let byteLimit: Int
     private let frameLimit: Int
-    private var frames: [Data] = []
+    private var frames = CircularBuffer<Data>()
     private var byteCount = 0
     private var finished = false
     private var waiter: CheckedContinuation<Data?, Never>?
@@ -61,7 +62,7 @@ final class TerminalOutputBuffer: @unchecked Sendable {
         condition.lock()
         finished = true
         if discard {
-            frames = []
+            frames = CircularBuffer()
             byteCount = 0
         }
         let waiter = self.waiter
