@@ -395,7 +395,7 @@ final class TerminalManager: ObservableObject {
 
     /// Fires once per surface destruction so the team-presence pipeline can
     /// evict records keyed off the pane's session name. Wired by
-    /// `GrafttyApp.startup()` after presence monitoring is constructed.
+    /// `NativeTeamDelivery.install()` during `GrafttyApp.startup()`.
     var paneClosed: ((PaneSlotID, String?) -> Void)?
 
     /// Fired when cmd-click resolves to a CLI editor; owner spawns a new
