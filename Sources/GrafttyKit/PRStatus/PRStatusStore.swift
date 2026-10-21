@@ -37,23 +37,16 @@ public final class PRStatusStore {
     @ObservationIgnored private let fetcherFor: (HostingProvider) -> PRFetcher?
     @ObservationIgnored private let detectHost: @Sendable (String) async throws -> HostingOrigin?
     @ObservationIgnored private let remoteBranchStore: RemoteBranchStore?
-    @ObservationIgnored private let backgroundProcessLimiter: BackgroundProcessLimiter
 
     @ObservationIgnored private var hostByRepo: [String: HostingOrigin?] = [:]
 
-    /// All per-repo polling state collapsed into a single value.
-    /// `inFlightSince` doubles as the abandoned-fetch detector: a
-    /// dispatch older than `refreshCadence` is treated as stuck
-    /// and superseded by the next one. `generation` increments on
-    /// every dispatch so a stuck Task's late write is dropped.
-    /// @spec PR-8.17
-    private struct RepoFetchState {
-        var inFlightSince: Date?
-        var lastFetch: Date?
-        var failureStreak: Int = 0
-        var generation: Int = 0
-    }
-    @ObservationIgnored private var fetchStateByRepo: [String: RepoFetchState] = [:]
+    /// All per-repo polling state (in-flight timestamp, last fetch,
+    /// failure streak, generation). A dispatch older than the scheduler's
+    /// abandonment threshold is treated as stuck and superseded by the
+    /// next one; the generation increments on every dispatch so a stuck
+    /// Task's late write is dropped. The scheduler's round-robin cursor
+    /// drives ordinary (unforced) polling. @spec PR-8.17
+    @ObservationIgnored private let scheduler: RepoPollScheduler
 
     private struct PRTransitionIdentity: Equatable {
         let origin: HostingOrigin
@@ -96,10 +89,8 @@ public final class PRStatusStore {
     /// bypassing the cadence gate for every repo in a large workspace.
     @ObservationIgnored private var forcedRepoPaths: Set<String> = []
     @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
-    @ObservationIgnored private var pollCursor = RoundRobinBatchCursor()
     @ObservationIgnored private var forcedPollCursor = RoundRobinBatchCursor()
     @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.graftty", category: "PRStatusStore")
-    private static let pollBatchSize = 4
 
     /// Fires on PR state, CI-conclusion, or mergeable-state transitions
     /// for a tracked worktree. Idempotent polls (same info twice) do not
@@ -125,7 +116,10 @@ public final class PRStatusStore {
     ) {
         self.executor = executor
         self.remoteBranchStore = remoteBranchStore
-        self.backgroundProcessLimiter = backgroundProcessLimiter
+        self.scheduler = RepoPollScheduler(
+            limiter: backgroundProcessLimiter,
+            cadence: Self.cadenceFor(failureStreak:)
+        )
         if let fetcherFor {
             self.fetcherFor = fetcherFor
         } else {
@@ -184,20 +178,20 @@ public final class PRStatusStore {
     // MARK: - Test hooks
 
     func generationForTesting(_ repoPath: String) -> Int {
-        fetchStateByRepo[repoPath]?.generation ?? 0
+        scheduler.generation(repoPath)
     }
 
     func isInFlightForTesting(_ repoPath: String) -> Bool {
-        fetchStateByRepo[repoPath]?.inFlightSince != nil
+        scheduler.isInFlight(repoPath)
     }
 
     /// Seed the in-flight timestamp so tests can simulate a prior
-    /// refresh Task that's been pending longer than `refreshCadence`
-    /// — i.e., considered abandoned. A subsequent `refresh` call
+    /// refresh Task that's been pending longer than the abandonment
+    /// threshold — i.e., considered abandoned. A subsequent `refresh` call
     /// must then dispatch a fresh Task rather than silently
     /// deferring to the stuck one.
     func seedInFlightSinceForTesting(_ date: Date, forRepo repoPath: String) {
-        fetchStateByRepo[repoPath, default: RepoFetchState()].inFlightSince = date
+        scheduler.seedInFlightForTesting(repoPath, since: date)
     }
 
     /// Seed the last-fetch timestamp so tests can simulate enough
@@ -206,7 +200,7 @@ public final class PRStatusStore {
     /// non-forced `tick`. Pair with `seedInFlightSinceForTesting`
     /// when fast-forwarding both the in-flight cap and the cadence.
     func seedLastFetchForTesting(_ date: Date, forRepo repoPath: String) {
-        fetchStateByRepo[repoPath, default: RepoFetchState()].lastFetch = date
+        scheduler.seedLastCompletionForTesting(repoPath, at: date)
     }
 
     func applyInfoForTesting(worktreePath: String, info: PRInfo) {
@@ -227,50 +221,24 @@ public final class PRStatusStore {
            cached == nil || cached?.provider == .unsupported {
             return false
         }
-        let now = Date()
-        let inFlightCap = Double(Self.refreshCadence().components.seconds)
-        var state = fetchStateByRepo[repoPath, default: RepoFetchState()]
-        if let started = state.inFlightSince,
-           now.timeIntervalSince(started) < inFlightCap {
+        if scheduler.isLive(repoPath) {
             return false
         }
-        if !force, let last = state.lastFetch {
-            let interval = Double(Self.cadenceFor(failureStreak: state.failureStreak).components.seconds)
-            if now.timeIntervalSince(last) < interval {
-                return false
-            }
+        if !force, scheduler.isCoolingDown(repoPath) {
+            return false
         }
 
-        state.inFlightSince = now
-        state.generation += 1
-        fetchStateByRepo[repoPath] = state
-        let gen = state.generation
-        let backgroundProcessLimiter = self.backgroundProcessLimiter
+        let gen = scheduler.claim(repoPath)
+        let scheduler = self.scheduler
 
         Task {
-            await backgroundProcessLimiter.run { [weak self] in
-                guard let self,
-                      await self.beginLimitedRepoFetch(
-                        repoPath: repoPath,
-                        fetchGeneration: gen
-                      ) else { return }
-                await self.performRepoFetch(repoPath: repoPath, fetchGeneration: gen)
+            // A request may wait behind other pollers in the shared process
+            // pool; the scheduler skips it if superseded meanwhile and gives
+            // the host query its full abandonment window once it starts.
+            await scheduler.run(repoPath, generation: gen) { [weak self] in
+                await self?.performRepoFetch(repoPath: repoPath, fetchGeneration: gen)
             }
         }
-        return true
-    }
-
-    private func beginLimitedRepoFetch(
-        repoPath: String,
-        fetchGeneration: Int
-    ) -> Bool {
-        guard fetchStateByRepo[repoPath]?.generation == fetchGeneration else {
-            return false
-        }
-        // A request may have waited behind other pollers in the shared
-        // process pool. Give the actual host query its full abandonment
-        // window instead of counting time spent suspended in the queue.
-        fetchStateByRepo[repoPath]?.inFlightSince = Date()
         return true
     }
 
@@ -306,8 +274,7 @@ public final class PRStatusStore {
 
     private func performRepoFetch(repoPath: String, fetchGeneration: Int) async {
         defer {
-            if fetchStateByRepo[repoPath]?.generation == fetchGeneration {
-                fetchStateByRepo[repoPath]?.inFlightSince = nil
+            if scheduler.release(repoPath, generation: fetchGeneration) {
                 if !forcedRepoPaths.isEmpty {
                     ticker?.pulse()
                 }
@@ -328,11 +295,11 @@ public final class PRStatusStore {
                 origin = nil
             }
         }
-        if fetchStateByRepo[repoPath]?.generation != fetchGeneration { return }
+        if !scheduler.isCurrent(repoPath, generation: fetchGeneration) { return }
         guard let origin, origin.provider != .unsupported,
               let fetcher = fetcherFor(origin.provider) else {
             applySnapshot(RepoPRSnapshot(prsByBranch: [:]), repoPath: repoPath, origin: nil)
-            fetchStateByRepo[repoPath]?.lastFetch = Date()
+            scheduler.recordCompletion(repoPath)
             return
         }
 
@@ -346,18 +313,16 @@ public final class PRStatusStore {
         do {
             snapshot = try await fetcher.fetch(origin: origin, branchesOfInterest: branchesOfInterest)
         } catch {
-            if fetchStateByRepo[repoPath]?.generation != fetchGeneration { return }
+            if !scheduler.isCurrent(repoPath, generation: fetchGeneration) { return }
             logger.info("PR fetch failed for repo \(repoPath): \(String(describing: error))")
             // PR-7.10: per-worktree `infos` stays untouched on
             // failure. Next successful fetch reconciles.
-            fetchStateByRepo[repoPath]?.failureStreak += 1
-            fetchStateByRepo[repoPath]?.lastFetch = Date()
+            scheduler.recordFailure(repoPath)
             return
         }
 
-        if fetchStateByRepo[repoPath]?.generation != fetchGeneration { return }
-        fetchStateByRepo[repoPath]?.lastFetch = Date()
-        fetchStateByRepo[repoPath]?.failureStreak = 0
+        if !scheduler.isCurrent(repoPath, generation: fetchGeneration) { return }
+        scheduler.recordSuccess(repoPath)
 
         applySnapshot(snapshot, repoPath: repoPath, origin: origin)
     }
@@ -537,15 +502,6 @@ extension PRStatusStore {
         return !branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Time-bound cap on the per-repo `inFlight` guard. A normal
-    /// `gh pr list` resolves in under a few seconds; anything
-    /// in-flight longer is assumed abandoned (stuck subprocess,
-    /// rate-limit back-off, auth retry loop) and superseded by the
-    /// next dispatch.
-    nonisolated static func refreshCadence() -> Duration {
-        .seconds(30)
-    }
-
     /// Local host detection performs Git repository setup before reading
     /// the origin URL, so File Provider-backed metadata can block it just
     /// like divergence probes. Finish before the 30-second replacement cap.
@@ -635,17 +591,8 @@ extension PRStatusStore {
         let candidatePaths = Set(candidates.map(\.path))
         forcedRepoPaths.formIntersection(candidatePaths)
 
-        let now = Date()
-        let inFlightCap = Double(Self.refreshCadence().components.seconds)
-        let liveInFlightPaths: Set<String> = Set(fetchStateByRepo.compactMap { repoPath, state in
-            guard let started = state.inFlightSince,
-                  now.timeIntervalSince(started) < inFlightCap else { return nil }
-            return repoPath
-        })
-        let availableDispatches = max(
-            0,
-            Self.pollBatchSize - liveInFlightPaths.count
-        )
+        let liveInFlightPaths = scheduler.liveKeys()
+        let availableDispatches = scheduler.availableDispatchSlots()
         let forcedCandidates = candidates.filter {
             forcedRepoPaths.contains($0.path)
                 && !liveInFlightPaths.contains($0.path)
@@ -669,7 +616,7 @@ extension PRStatusStore {
                 !forcedBatchPaths.contains($0.path)
                     && !liveInFlightPaths.contains($0.path)
             }
-            let batch = pollCursor.nextBatch(
+            let batch = scheduler.nextBatch(
                 from: ordinaryCandidates,
                 maximumCount: ordinaryBudget,
                 path: \.path
@@ -686,13 +633,11 @@ extension PRStatusStore {
     }
 
     /// Drop bookkeeping for repos no longer in the model. Without
-    /// this, `fetchStateByRepo` and `hostByRepo` grow unbounded as
-    /// the user adds and removes repos over a long-running
+    /// this, the per-repo fetch slots and `hostByRepo` grow unbounded
+    /// as the user adds and removes repos over a long-running
     /// session. @spec PR-8.22
     private func pruneStaleRepoState(currentRepoPaths: Set<String>) {
-        for repoPath in fetchStateByRepo.keys where !currentRepoPaths.contains(repoPath) {
-            fetchStateByRepo.removeValue(forKey: repoPath)
-        }
+        scheduler.prune(keeping: currentRepoPaths)
         for repoPath in hostByRepo.keys where !currentRepoPaths.contains(repoPath) {
             hostByRepo.removeValue(forKey: repoPath)
         }
