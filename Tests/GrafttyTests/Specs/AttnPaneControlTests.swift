@@ -12,7 +12,7 @@ struct PaneShowHandlerTests {
     func tails200To50() async throws {
         let body = (1...200).map { "line\($0)" }.joined(separator: "\n")
         let stubReader = StubZmxHistoryReader(output: body)
-        let response = GrafttyApp.handleShowPane_forTesting(
+        let response = SocketRequestRouter.handleShowPane_forTesting(
             path: "/wt", index: 1, lines: 50,
             reader: stubReader
         )
@@ -38,7 +38,7 @@ struct PaneShowHandlerTests {
             .map { String(repeating: "x", count: 100) + "\($0)" }
             .joined(separator: "\n")
         let stub = StubZmxHistoryReader(output: body)
-        let response = GrafttyApp.handleShowPane_forTesting(
+        let response = SocketRequestRouter.handleShowPane_forTesting(
             path: "/wt", index: 1, lines: 50, reader: stub
         )
         guard case .paneShow(let text) = response else {
@@ -61,7 +61,7 @@ struct PaneSendHandlerTests {
     @MainActor
     func sendsAndCommits() async throws {
         let sink = RecordingPaneInputSink()
-        let response = GrafttyApp.handleSendPane_forTesting(
+        let response = SocketRequestRouter.handleSendPane_forTesting(
             text: "pnpm test", pressEnter: true, sink: sink
         )
         #expect(response == .ok)
@@ -73,7 +73,7 @@ struct PaneSendHandlerTests {
     @MainActor
     func noEnterTypesOnly() async throws {
         let sink = RecordingPaneInputSink()
-        let response = GrafttyApp.handleSendPane_forTesting(
+        let response = SocketRequestRouter.handleSendPane_forTesting(
             text: "y", pressEnter: false, sink: sink
         )
         #expect(response == .ok)
@@ -85,7 +85,7 @@ struct PaneSendHandlerTests {
     @MainActor
     func rejectedWriteReturnsError() {
         let sink = RecordingPaneInputSink(acceptsDelivery: false)
-        let response = GrafttyApp.handleSendPane_forTesting(
+        let response = SocketRequestRouter.handleSendPane_forTesting(
             text: "pnpm test", pressEnter: true, sink: sink
         )
 
@@ -96,7 +96,7 @@ struct PaneSendHandlerTests {
     @MainActor
     func missingSurfaceUsesZmxSession() {
         let writer = RecordingZmxPaneInputWriter()
-        let response = GrafttyApp.handleSendPaneWithoutSurface_forTesting(
+        let response = SocketRequestRouter.handleSendPaneWithoutSurface_forTesting(
             text: "pnpm test",
             pressEnter: true,
             sessionName: "graftty-a21c104c",
@@ -113,7 +113,7 @@ struct PaneSendHandlerTests {
     @MainActor
     func missingSurfaceNoEnter() {
         let writer = RecordingZmxPaneInputWriter()
-        let response = GrafttyApp.handleSendPaneWithoutSurface_forTesting(
+        let response = SocketRequestRouter.handleSendPaneWithoutSurface_forTesting(
             text: "y",
             pressEnter: false,
             sessionName: "graftty-a21c104c",

@@ -6,9 +6,9 @@ import Testing
 
 /// Characterization tests that pin the control-socket router's current
 /// behavior so it can be moved and restructured without regressions
-/// (issue #478). They exercise `GrafttyApp.handleNotification` (the
+/// (issue #478). They exercise `SocketRequestRouter.handleNotification` (the
 /// fire-and-forget `onMessage` path) and the side-effect-free branches of
-/// `GrafttyApp.handlePaneRequest` (the request/response path).
+/// `SocketRequestRouter.handleRequest` (the request/response path).
 @MainActor
 @Suite("Socket router characterization")
 struct SocketRouterCharacterizationTests {
@@ -52,7 +52,7 @@ struct SocketRouterCharacterizationTests {
     }
 
     private static func notify(_ message: NotificationMessage, _ box: StateBox) {
-        GrafttyApp.handleNotification(
+        SocketRequestRouter.handleNotification(
             message,
             appState: box.binding,
             terminalManager: TerminalManager(socketPath: "/tmp/graftty-router-characterization.sock")
@@ -207,8 +207,31 @@ struct SocketRouterCharacterizationTests {
             try? FileManager.default.removeItem(at: directory)
         }
 
+        let remoteTeamRouter = RemoteTeamRouter()
+
+        /// Routes through the production entry point, including the
+        /// pre-routing that runs before `handlePaneRequest`.
         func route(_ message: NotificationMessage, _ box: StateBox) async -> ResponseMessage? {
-            await GrafttyApp.handlePaneRequest(
+            await SocketRequestRouter(
+                appState: box.binding,
+                terminalManager: terminalManager,
+                teamInbox: teamInbox,
+                teamEventDispatcher: dispatcher,
+                worktreeMonitor: WorktreeMonitor(),
+                statsStore: WorktreeStatsStore(),
+                prStatusStore: PRStatusStore(remoteBranchStore: remoteBranchStore),
+                worktreeCreations: creations,
+                worktreeRemovals: removals,
+                remoteBranchStore: remoteBranchStore,
+                agentRegistry: ClaudeSessionRegistry(),
+                remoteMacsModel: remoteMacsModel,
+                remoteTeamRouter: remoteTeamRouter
+            ).handleRequest(message)
+        }
+
+        /// Calls `handlePaneRequest` directly, bypassing pre-routing.
+        func paneDispatch(_ message: NotificationMessage, _ box: StateBox) async -> ResponseMessage? {
+            await SocketRequestRouter.handlePaneRequest(
                 message,
                 appState: box.binding,
                 terminalManager: terminalManager,
@@ -271,13 +294,28 @@ struct SocketRouterCharacterizationTests {
         #expect(list.map(\.focused) == [false, true])
     }
 
-    @Test("routes the dispatcher does not own report unavailability")
-    func unownedRoutesReportUnavailable() async throws {
+    @Test("pane dispatch keeps stubs for messages the router pre-routes")
+    func paneDispatchStubsForPreRoutedMessages() async throws {
         let router = try RequestRouter()
         let (box, _, _) = Self.fixture()
-        #expect(await router.route(
+        #expect(await router.paneDispatch(
             .teamReply(callerWorktree: Self.worktreePath, messageID: "m", text: "t", priority: .normal), box
         ) == .error("Team reply routing is unavailable"))
+        #expect(await router.paneDispatch(.reconnectRemoteClient(target: "mac"), box)
+            == .error("Client reconnect routing is unavailable"))
+    }
+
+    @Test("the router pre-routes remote and reply messages before pane dispatch")
+    func routerPreRoutesBeforePaneDispatch() async throws {
+        let router = try RequestRouter()
+        let (box, _, _) = Self.fixture()
+        #expect(await router.route(.reconnectRemoteClient(target: "mac"), box)
+            == .error("Unknown or disconnected viewing Mac 'mac'. Connected clients: none"))
+        let reply = await router.route(
+            .teamReply(callerWorktree: Self.worktreePath, messageID: "m", text: "t", priority: .normal), box
+        )
+        #expect(reply != nil)
+        #expect(reply != .error("Team reply routing is unavailable"))
     }
 
     @Test("unknown worktree operation IDs report expiry")

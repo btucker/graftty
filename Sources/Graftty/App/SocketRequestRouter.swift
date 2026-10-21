@@ -6,7 +6,131 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
 
-extension GrafttyApp {
+/// Routes control-socket traffic from the `graftty` CLI and other local
+/// clients into app state. `SocketServer` delivers fire-and-forget messages
+/// to `handleMessage(_:)` and request/response messages to
+/// `handleRequest(_:)`, both on the main actor.
+///
+/// Collaborators are injected individually so tests can build a router
+/// without `AppServices`, which touches the real application-support
+/// directory.
+@MainActor
+final class SocketRequestRouter {
+    let appState: Binding<AppState>
+    let terminalManager: TerminalManager
+    let teamInbox: TeamInbox
+    let teamEventDispatcher: TeamEventDispatcher
+    let worktreeMonitor: WorktreeMonitor
+    let statsStore: WorktreeStatsStore
+    let prStatusStore: PRStatusStore
+    let worktreeCreations: CLIWorktreeCreationStore
+    let worktreeRemovals: CLIWorktreeRemovalStore
+    let remoteBranchStore: RemoteBranchStore
+    let agentRegistry: ClaudeSessionRegistry
+    let remoteMacsModel: RemoteMacsModel
+    let remoteTeamRouter: RemoteTeamRouter
+
+    init(
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        teamInbox: TeamInbox,
+        teamEventDispatcher: TeamEventDispatcher,
+        worktreeMonitor: WorktreeMonitor,
+        statsStore: WorktreeStatsStore,
+        prStatusStore: PRStatusStore,
+        worktreeCreations: CLIWorktreeCreationStore,
+        worktreeRemovals: CLIWorktreeRemovalStore,
+        remoteBranchStore: RemoteBranchStore,
+        agentRegistry: ClaudeSessionRegistry,
+        remoteMacsModel: RemoteMacsModel,
+        remoteTeamRouter: RemoteTeamRouter
+    ) {
+        self.appState = appState
+        self.terminalManager = terminalManager
+        self.teamInbox = teamInbox
+        self.teamEventDispatcher = teamEventDispatcher
+        self.worktreeMonitor = worktreeMonitor
+        self.statsStore = statsStore
+        self.prStatusStore = prStatusStore
+        self.worktreeCreations = worktreeCreations
+        self.worktreeRemovals = worktreeRemovals
+        self.remoteBranchStore = remoteBranchStore
+        self.agentRegistry = agentRegistry
+        self.remoteMacsModel = remoteMacsModel
+        self.remoteTeamRouter = remoteTeamRouter
+    }
+
+    convenience init(
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        services: AppServices
+    ) {
+        self.init(
+            appState: appState,
+            terminalManager: terminalManager,
+            teamInbox: services.teamInbox,
+            teamEventDispatcher: services.teamEventDispatcher,
+            worktreeMonitor: services.worktreeMonitor,
+            statsStore: services.statsStore,
+            prStatusStore: services.prStatusStore,
+            worktreeCreations: services.cliWorktreeCreations,
+            worktreeRemovals: services.cliWorktreeRemovals,
+            remoteBranchStore: services.remoteBranchStore,
+            agentRegistry: services.claudeSessionRegistry,
+            remoteMacsModel: services.remoteMacsModel,
+            remoteTeamRouter: services.remoteTeamRouter
+        )
+    }
+
+    /// Fire-and-forget path (`SocketServer.onMessage`).
+    func handleMessage(_ message: NotificationMessage) {
+        Self.handleNotification(
+            message,
+            appState: appState,
+            terminalManager: terminalManager
+        )
+    }
+
+    /// Request/response path (`SocketServer.onAsyncRequest`). Remote
+    /// worktree, client-reconnect, and team-reply messages are routed
+    /// before pane dispatch; the rest go through `handlePaneRequest`.
+    func handleRequest(_ message: NotificationMessage) async -> ResponseMessage? {
+        let binding = appState
+        if case .remoteWorktree(let target, let request) = message {
+            return await remoteTeamRouter.worktree(target: target, request: request, repos: binding.wrappedValue.repos)
+        }
+        if case .reconnectRemoteClient(let target) = message {
+            return await remoteTeamRouter.reconnectClient(target: target)
+        }
+        if case .teamReply = message {
+            return await GrafttyApp.handleTeamReply(
+                message, appState: binding, router: remoteTeamRouter,
+                inbox: teamInbox, dispatcher: teamEventDispatcher
+            )
+        }
+        if let response = await GrafttyApp.handleRemoteTeamSend(
+            message, appState: binding, router: remoteTeamRouter
+        ) { return response }
+        let response = await Self.handlePaneRequest(
+            message,
+            appState: binding,
+            terminalManager: terminalManager,
+            teamInbox: teamInbox,
+            teamEventDispatcher: teamEventDispatcher,
+            worktreeMonitor: worktreeMonitor,
+            statsStore: statsStore,
+            prStatusStore: prStatusStore,
+            worktreeCreations: worktreeCreations,
+            worktreeRemovals: worktreeRemovals,
+            remoteBranchStore: remoteBranchStore,
+            agentRegistry: agentRegistry,
+            remoteMacsModel: remoteMacsModel
+        )
+        return await remoteTeamRouter.includingRemoteMembers(in: response, for: message)
+    }
+}
+
+extension SocketRequestRouter {
     @MainActor
     static func handleNotification(
         _ message: NotificationMessage,
@@ -42,7 +166,7 @@ extension GrafttyApp {
                         guard let slot = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                             .paneSlot(forSessionName: paneSessionName) else { continue }
                         if let effectiveClearAfter {
-                            setAttentionForTerminal(
+                            GrafttyApp.setAttentionForTerminal(
                                 appState: appState,
                                 terminalID: slot,
                                 text: text,
@@ -276,7 +400,7 @@ extension GrafttyApp {
                 appState: appState, terminalManager: terminalManager
             )
         case .teamMessage(let callerPath, let recipient, let text):
-            return await handleTeamSend(
+            return await GrafttyApp.handleTeamSend(
                 callerPath: callerPath,
                 callerAgentID: nil,
                 recipient: recipient,
@@ -287,7 +411,7 @@ extension GrafttyApp {
                 teamEventDispatcher: teamEventDispatcher
             )
         case .teamSend(let callerPath, let callerAgentID, let recipient, let text, let priority):
-            return await handleTeamSend(
+            return await GrafttyApp.handleTeamSend(
                 callerPath: callerPath,
                 callerAgentID: callerAgentID,
                 recipient: recipient,
@@ -298,7 +422,7 @@ extension GrafttyApp {
                 teamEventDispatcher: teamEventDispatcher
             )
         case .teamBroadcast(let callerPath, let callerAgentID, let text, let priority):
-            return await handleTeamBroadcast(
+            return await GrafttyApp.handleTeamBroadcast(
                 callerPath: callerPath,
                 callerAgentID: callerAgentID,
                 text: text,
@@ -319,7 +443,7 @@ extension GrafttyApp {
             let providerSleepActivity
         ):
             terminalManager.autoSleep.providerActivity(path: callerPath, session: paneSessionName, sessionID: sessionID, activity: providerSleepActivity ?? .unknown, runtime: runtime)
-            return await handleTeamHook(
+            return await GrafttyApp.handleTeamHook(
                 callerPath: callerPath,
                 callerAgentID: callerAgentID,
                 runtime: runtime,
@@ -342,14 +466,14 @@ extension GrafttyApp {
             AttentionRecapCoordinator.shared.report(recap, worktree: callerPath, agentID: callerAgentID)
             return .ok
         case .teamInbox(let request):
-            return await handleTeamInbox(
+            return await GrafttyApp.handleTeamInbox(
                 request: request,
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
         case .teamInboxAdvance(let callerPath, let callerAgentID, let throughID):
-            return await handleTeamInboxAdvance(
+            return await GrafttyApp.handleTeamInboxAdvance(
                 callerPath: callerPath,
                 callerAgentID: callerAgentID,
                 throughID: throughID,
@@ -358,7 +482,7 @@ extension GrafttyApp {
                 teamEventDispatcher: teamEventDispatcher
             )
         case .teamMembers(let callerPath, let worktree, let repo):
-            return handleTeamMembers(
+            return GrafttyApp.handleTeamMembers(
                 callerPath: callerPath,
                 worktree: worktree,
                 repo: repo,
@@ -367,7 +491,7 @@ extension GrafttyApp {
                 teamEventDispatcher: teamEventDispatcher
             )
         case .teamList(let callerPath):
-            return handleTeamMembers(
+            return GrafttyApp.handleTeamMembers(
                 callerPath: callerPath,
                 worktree: nil,
                 repo: nil,
@@ -387,7 +511,7 @@ extension GrafttyApp {
             let response = WorktreePinRequestHandler.handle(
                 worktreePath: path, isPinned: isPinned, state: &appState.wrappedValue
             )
-            if response == .ok { Self.persistAppState(appState.wrappedValue) }
+            if response == .ok { GrafttyApp.persistAppState(appState.wrappedValue) }
             return response
         case .createWorktree(
             let callerPath,
@@ -643,7 +767,7 @@ extension GrafttyApp {
                 if let index = appState.wrappedValue.indices(forWorktreePath: worktreePath) {
                     appState.wrappedValue.repos[index.repo].worktrees[index.worktree].cancelExpectedLaunch()
                 }
-                Self.persistAppState(appState.wrappedValue)
+                GrafttyApp.persistAppState(appState.wrappedValue)
                 let message: String
                 if case .discoveryFailed(let detail) = error {
                     message = detail
@@ -705,7 +829,7 @@ extension GrafttyApp {
         guard let targetID = wt.firstPane else {
             return .error("no panes to split")
         }
-        guard let newID = splitPane(
+        guard let newID = GrafttyApp.splitPane(
             appState: appState,
             terminalManager: terminalManager,
             targetID: targetID,
@@ -741,7 +865,7 @@ extension GrafttyApp {
         guard let targetID = wt.splitTree.leaf(atPaneID: index) else {
             return .error("no pane with id \(index) in this worktree")
         }
-        closePane(
+        GrafttyApp.closePane(
             appState: appState,
             terminalManager: terminalManager,
             targetID: targetID,
