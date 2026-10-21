@@ -77,16 +77,19 @@ final class AppServices {
     /// also shared with the Settings pairing listener.
     let hostPairingCoordinator: RemoteMacHostPairingCoordinator
     /// The one `TrustedPeerStore` for this process. The pairing coordinator,
-    /// every `WebRTCHostAgent`, and `PairedDevicesSection` (list/remove)
-    /// share it, so writes from pairing and from Settings serialize on the
-    /// same lock.
+    /// the paired-access signaling server, every `WebRTCHostAgent`, and
+    /// `PairedDevicesSection` (list/remove) share it, so writes from pairing
+    /// and from Settings serialize on the same lock.
     let trustedPeerStore: TrustedPeerStore
+    /// The one `HostIdentityStore` for this process, shared by the pairing
+    /// coordinator and the paired-access signaling server.
+    private let hostIdentityStore: HostIdentityStore
     /// Host signing key, loaded once at launch before startup creates the
     /// inbound host pool. The paired-access listener authenticates v2 offers
     /// with the device keys before passing them to the pool, whose agents
     /// open SSH sessions over the resulting DataChannel → zmx attach. `nil`
-    /// when the identity could not be loaded; paired access then starts
-    /// without a host pool.
+    /// when the identity could not be loaded; startup then builds no host
+    /// pool and paired access fails with `hostAgentUnavailable`.
     let hostKey: Curve25519.Signing.PrivateKey?
     /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
     /// its live SSH connection into (REMOTE-3.1 revocation, W4).
@@ -154,13 +157,14 @@ final class AppServices {
             }
         )
         let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
+        self.hostIdentityStore = hostIdentityStore
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
         self.trustedPeerStore = trustedPeerStore
         do {
             self.hostKey = try hostIdentityStore.loadOrGenerateAndPersist()
         } catch {
             self.hostKey = nil
-            NSLog("[Graftty] failed to load remote host identity: \(error)")
+            NSLog("[Graftty] failed to load remote host identity: %@", String(describing: error))
         }
         self.hostPairingCoordinator = Self.makeHostPairingCoordinator(
             admission: pairingAdmission,
@@ -181,7 +185,7 @@ final class AppServices {
         }
         self.remoteMacAccessEnabled = Self.remoteMacAccessEnabledDefault()
         do {
-            let localFingerprint = try Self.localHostFingerprint()
+            let localFingerprint = try localHostFingerprint()
             let browser = GrafttyBonjourBrowser(
                 localDeviceID: Self.localRemoteDeviceID(),
                 localFingerprint: localFingerprint,
@@ -290,15 +294,9 @@ final class AppServices {
                 lanBaseURL: endpoint.baseURL()
             )
         )
-        let identityStore = HostIdentityStore(
-            directory: HostIdentityStore.defaultDirectory
-        )
-        let peerStore = TrustedPeerStore(
-            directory: TrustedPeerStore.defaultDirectory
-        )
         let signalingServer = AuthenticatedSignalingServer(
-            identityStore: identityStore,
-            peerStore: peerStore,
+            identityStore: hostIdentityStore,
+            peerStore: trustedPeerStore,
             hostDeviceID: Self.localRemoteDeviceID(),
             routesProvider: { endpoint.routes() }
         )
@@ -362,7 +360,7 @@ final class AppServices {
         // Resolve every throwing identity dependency before binding. If this
         // fails after `server.start()`, the listener would not yet be retained
         // by `lanRemoteAccessServer` and therefore could not be stopped.
-        let localHostFingerprint = try Self.localHostFingerprint()
+        let localHostFingerprint = try localHostFingerprint()
         try server.start()
         guard let port = server.listeningPort else {
             server.stop()
@@ -473,9 +471,10 @@ final class AppServices {
         return true
     }
 
-    private static func localHostFingerprint() throws -> RemoteIdentityFingerprint {
-        let identityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
-        let hostKey = try identityStore.loadOrGenerateAndPersist()
+    /// Fingerprint of the launch-loaded `hostKey`. Retries the shared store
+    /// only when the launch load failed.
+    private func localHostFingerprint() throws -> RemoteIdentityFingerprint {
+        let hostKey = try hostKey ?? hostIdentityStore.loadOrGenerateAndPersist()
         let publicKey = try RemoteIdentityPublicKey(
             rawRepresentation: hostKey.publicKey.rawRepresentation
         )

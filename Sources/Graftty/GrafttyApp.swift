@@ -1503,8 +1503,6 @@ struct GrafttyApp: App {
                 appState: appStateBinding,
                 terminalManager: terminalManager,
                 services: services,
-                trustedPeerStore: services.trustedPeerStore,
-                sshConnectionRegistry: services.sshConnectionRegistry,
                 buildWorktreePanesSnapshot: buildWorktreePanesSnapshot,
                 localWorktreeOrigin: localWorktreeOrigin,
                 portScanner: portScanner,
