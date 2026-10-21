@@ -790,7 +790,10 @@ struct SingleSessionView: View {
     /// Height (pts) of the keyboard's overlap with the screen, used
     /// as an explicit bottom padding on the fullscreen layout
     /// (`IOS-6.9`). Populated from `keyboardWillChangeFrame`.
-    @State private var keyboardBottomInset: CGFloat = 0
+    @State private var observedKeyboardBottomInset: CGFloat = 0
+    /// Embedded panes read their split tree's single keyboard observation
+    /// instead of subscribing themselves (IPAD-2.10).
+    @Environment(\.multiPaneKeyboardFrame) private var multiPaneKeyboardFrame
     /// Box that holds a weak reference to the live terminal-input
     /// container so the SwiftUI control-bar buttons can cancel an
     /// active selection per IOS-11.7.
@@ -803,11 +806,24 @@ struct SingleSessionView: View {
     /// The iOS-scaled Mac ghostty config used to build `controller`.
     /// Cached so owner-selected font preferences can be applied without re-fetching.
     @State private var baseConfigText: String?
+    /// Terminal theme background, parsed from the Mac-resolved ghostty config.
+    /// Painted behind the whole session so the control-bar row and the strip
+    /// revealed during keyboard transitions match the terminal's background
+    /// instead of showing system chrome. The Mac resolves themes / named /
+    /// palette colors to hex before sending the config, so this matches what
+    /// libghostty actually renders. Falls back to the shared default. Parsed
+    /// once when `baseConfigText` is assigned rather than on every body.
+    @State private var themeBackgroundColor = GhosttyThemeColors.fallback.background
     /// Latest owner-selected size. Pinch actions already update the live
     /// Ghostty surface; this state preserves that size across configuration updates.
     @State private var preferredFontSize: Float?
     @State private var terminalBrowserRequest: TerminalBrowserRequest?
     @State private var terminalBrowserError: String?
+
+    private var keyboardBottomInset: CGFloat {
+        if isEmbeddedPane, let multiPaneKeyboardFrame { return multiPaneKeyboardFrame.bottomInset }
+        return observedKeyboardBottomInset
+    }
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -856,6 +872,21 @@ struct SingleSessionView: View {
         isPaneFocused && isKeyboardVisible && !keyboardAllowed
     }
 
+    /// Runs once per keyboard frame notification. Also dismisses an
+    /// in-flight keyboard presentation if Hide keyboard was chosen before
+    /// its frame notification arrived.
+    private func dismissKeyboardIfDisallowed() {
+        guard Self.shouldDismissKeyboard(
+            isKeyboardVisible: isKeyboardVisible,
+            keyboardAllowed: keyboardAllowed,
+            isPaneFocused: isPaneFocused
+        ) else { return }
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil, from: nil, for: nil
+        )
+    }
+
     static func shouldFocusKeyboardOnOwnerTransition(
         wasOwner: Bool,
         isOwner: Bool,
@@ -895,16 +926,6 @@ struct SingleSessionView: View {
         baseConfigText.map {
             Self.configByApplyingFontPreference(preferredFontSize, to: $0)
         }
-    }
-
-    /// Terminal theme background, parsed from the Mac-resolved ghostty config.
-    /// Painted behind the whole session so the control-bar row and the strip
-    /// revealed during keyboard transitions match the terminal's background
-    /// instead of showing system chrome. The Mac resolves themes / named /
-    /// palette colors to hex before sending the config, so this matches what
-    /// libghostty actually renders. Falls back to the shared default.
-    private var themeBackgroundColor: Color {
-        (baseConfigText.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback).background
     }
 
     enum ConnectionState: Equatable {
@@ -975,7 +996,7 @@ struct SingleSessionView: View {
         self._client = State(initialValue: initialClient)
         self._controller = State(initialValue: initialController)
         self._connection = State(initialValue: initialClient == nil ? .connecting : .live)
-        self._keyboardBottomInset = State(initialValue: initialKeyboardBottomInset)
+        self._observedKeyboardBottomInset = State(initialValue: initialKeyboardBottomInset)
     }
 
     var body: some View {
@@ -1158,29 +1179,14 @@ struct SingleSessionView: View {
             }
             .animation(.easeInOut(duration: 0.25), value: keyboardBottomInset)
             .animation(.easeInOut(duration: 0.15), value: keyboardAllowed)
-            .onReceive(NotificationCenter.default.publisher(
-                for: UIResponder.keyboardWillChangeFrameNotification
-            )) { notification in
-                guard let value = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
-                let newInset = KeyboardFrameInset.bottomInset(
-                    keyboardEndFrame: value.cgRectValue,
-                    screenBounds: UIScreen.main.bounds
-                )
-                if newInset != keyboardBottomInset {
-                    keyboardBottomInset = newInset
+            .onKeyboardBottomInsetChange(isEnabled: !isEmbeddedPane) { newInset in
+                if newInset != observedKeyboardBottomInset {
+                    observedKeyboardBottomInset = newInset
                 }
-                // Also dismiss an in-flight keyboard presentation if Hide
-                // keyboard was chosen before its frame notification arrived.
-                if Self.shouldDismissKeyboard(
-                    isKeyboardVisible: isKeyboardVisible,
-                    keyboardAllowed: keyboardAllowed,
-                    isPaneFocused: isPaneFocused
-                ) {
-                    UIApplication.shared.sendAction(
-                        #selector(UIResponder.resignFirstResponder),
-                        to: nil, from: nil, for: nil
-                    )
-                }
+                dismissKeyboardIfDisallowed()
+            }
+            .onChange(of: isEmbeddedPane ? multiPaneKeyboardFrame : nil) {
+                dismissKeyboardIfDisallowed()
             }
             // Reads gate?.state inside `dialKey` so the @Observable
             // gate's unlock triggers re-evaluation. `connection` is
@@ -1233,6 +1239,7 @@ struct SingleSessionView: View {
                     controller = retainedPanes?.cached(retainedPaneKey)?.container?.terminalView.controller
                         ?? MobileTerminalControllerFactory.make(configText: text)
                     baseConfigText = text
+                    themeBackgroundColor = GhosttyThemeColors(parsingConfigText: text).background
                     preferredFontSize = GhosttyConfigFetcher.lastFontSize(in: text)
                         .map(Float.init)
                 }

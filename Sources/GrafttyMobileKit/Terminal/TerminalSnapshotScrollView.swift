@@ -79,9 +79,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
             updateContentTimer()
         }
     }
-    var onContentUpdate: (() -> Void)? {
-        didSet { updateContentTimer() }
-    }
+    /// Polls paged history, which has no change notification of its own.
     private var contentTimer: Timer?
     private var includesAdditionalHistory: Bool {
         #if GRAFTTY_PAGED_HISTORY
@@ -126,6 +124,7 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     }
 
     var hasScrollback: Bool { historyRows > 0 }
+    var pollsContentForTesting: Bool { contentTimer != nil }
 
     /// Rows visible above the live grid, including rows not fetched yet.
     var additionalHistoryRowCapacity: UInt32 {
@@ -219,12 +218,9 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     private func updateContentTimer() {
         contentTimer?.invalidate()
         contentTimer = nil
-        if window != nil && (includesAdditionalHistory || onContentUpdate != nil) {
+        if window != nil && includesAdditionalHistory {
             let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.refreshAdditionalHistory()
-                    self?.onContentUpdate?()
-                }
+                MainActor.assumeIsolated { self?.refreshAdditionalHistory() }
             }
             RunLoop.main.add(timer, forMode: .common)
             contentTimer = timer

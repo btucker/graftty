@@ -2134,6 +2134,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.40** When the user drags to scroll a mouse-capturing application in a mobile follower pane, the application shall request control and forward the drag after the owner viewport is ready, keep keyboard input disabled until Show keyboard is chosen, and preserve ownership during passive attachment and local scrolling in other panes.
 
+**IOS-6.41** While a mobile terminal reserves space for top chrome, the application shall re-evaluate first-line clearance after received output has been parsed, without polling the viewport on a timer, and shall read the viewport for that check at most four times per second.
+
+**IOS-6.42** While a mobile terminal that reserves space for top chrome is outside a window, the application shall not read its viewport for first-line clearance after received output, and shall re-evaluate that clearance when the terminal returns to a window.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.
@@ -2347,6 +2351,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-2.8** While the regular-width iPad detail is visible, the application shall extend the terminal tree to the top and bottom detail-column edges beneath transparent navigation chrome, keeping split controls over the panes and respecting the sidebar boundary.
 
 **IPAD-2.9** While the iPad detail toolbar offers Split Left, Split Right, Split Up, and Split Down, each button shall use a directional inset-filled rectangle whose filled half indicates where the new pane will be created, matching the Mac terminal context menu rather than using one indistinguishable axis-only icon per opposing pair.
+
+**IPAD-2.10** While the regular-width iPad detail renders a split tree, the application shall observe keyboard frame changes once for the whole tree and derive each embedded pane's keyboard visibility from that shared observation, including a pane mounted while the keyboard is already visible.
 
 ### IPAD-3.x — Focused-Pane Toolbar
 
