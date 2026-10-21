@@ -79,8 +79,9 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
             updateContentTimer()
         }
     }
-    /// Re-checks content that changes without a notification: first-line
-    /// clearance while there is no scrollback, and paged history.
+    /// Polled on the content timer for content that changes without a
+    /// notification. Without paged history, the timer runs only while this
+    /// view is in a window and has no scrollback.
     var onContentUpdate: (() -> Void)? {
         didSet { updateContentTimer() }
     }
@@ -227,12 +228,15 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         // With scrollback, clearance is off and only a scrollbar callback
         // can change that, so the content update needs no polling then.
         if window != nil && (includesAdditionalHistory || (onContentUpdate != nil && !hasScrollback)) {
-            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] timer in
                 MainActor.assumeIsolated {
-                    self?.refreshAdditionalHistory()
-                    self?.onContentUpdate?()
+                    guard let self else { timer.invalidate(); return }
+                    self.refreshAdditionalHistory()
+                    self.onContentUpdate?()
                 }
             }
+            // Lets each pane's poll coalesce with other wakeups.
+            timer.tolerance = 0.05
             RunLoop.main.add(timer, forMode: .common)
             contentTimer = timer
         }

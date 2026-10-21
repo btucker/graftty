@@ -2136,7 +2136,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.40** When the user drags to scroll a mouse-capturing application in a mobile follower pane, the application shall request control and forward the drag after the owner viewport is ready, keep keyboard input disabled until Show keyboard is chosen, and preserve ownership during passive attachment and local scrolling in other panes.
 
-**IOS-6.41** While a mobile terminal that reserves space for top chrome is in a window and has no scrollback, the application shall re-evaluate first-line clearance at most four times per second; while it has scrollback, the application shall not poll its viewport for that check.
+**IOS-6.41** While a mobile terminal that reserves space for top chrome is in a window and has no scrollback, the application shall poll its viewport for first-line clearance at most four times per second; while it has scrollback, the application shall not poll its viewport for that check.
 
 **IOS-6.42** While a mobile terminal that reserves space for top chrome is outside a window, the application shall not read its viewport for first-line clearance after received output, and shall re-evaluate that clearance when the terminal returns to a window.
 

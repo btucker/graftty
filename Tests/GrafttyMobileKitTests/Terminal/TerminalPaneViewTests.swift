@@ -2198,7 +2198,7 @@ struct TerminalTouchScrollTests {
 @Suite(.serialized)
 @MainActor
 struct FirstLineClearanceRefreshTests {
-    @Test("@spec IOS-6.41: While a mobile terminal that reserves space for top chrome is in a window and has no scrollback, the application shall re-evaluate first-line clearance at most four times per second; while it has scrollback, the application shall not poll its viewport for that check.")
+    @Test("@spec IOS-6.41: While a mobile terminal that reserves space for top chrome is in a window and has no scrollback, the application shall poll its viewport for first-line clearance at most four times per second; while it has scrollback, the application shall not poll its viewport for that check.")
     func clearancePollsOnlyWithoutScrollback() async throws {
         let mounted = try await mountedContainer()
         defer { mounted.tearDown() }
@@ -2215,8 +2215,8 @@ struct FirstLineClearanceRefreshTests {
         session.receive(Data("\u{1b}[2J\u{1b}[Hprompt".utf8))
         try await waitUntil("cleared screen restores clearance") { mounted.topInset() > 0 }
 
-        // Streaming output reads the viewport no more often than the timer:
-        // one tick per 250 ms, plus at most one read already in flight.
+        // However fast output streams, the viewport is read only on the
+        // 250 ms timer: two or three ticks in 500 ms.
         let readsBefore = container.firstLineClearanceReadCountForTesting
         let start = ContinuousClock.now
         while ContinuousClock.now - start < .milliseconds(500) {
@@ -2224,7 +2224,7 @@ struct FirstLineClearanceRefreshTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         let streamingReads = container.firstLineClearanceReadCountForTesting - readsBefore
-        #expect(streamingReads >= 1, "Streaming output must re-check clearance")
+        #expect(streamingReads >= 1, "The timer must re-check clearance while output streams")
         #expect(streamingReads <= 4, "Read the viewport \(streamingReads) times in 500 ms")
 
         let rows = Int(try #require(container.terminalGridMetrics).rows)
@@ -2293,8 +2293,6 @@ struct FirstLineClearanceRefreshTests {
         try await waitUntil("lone first line keeps clearance") {
             session.readViewportText()?.contains("prompt") == true && mounted.topInset() > 0
         }
-        // Let any refresh scheduled by the visible output settle first.
-        try await Task.sleep(for: .milliseconds(300))
 
         container.removeFromSuperview()
         let readsBefore = container.firstLineClearanceReadCountForTesting
