@@ -342,6 +342,46 @@ struct GrafttyAppPaneLifecycleTests {
         #expect(!manager.routeHostManagedPaneCommand(.close, for: remote))
     }
 
+    @Test("dispatchPaneCommand routes to a host-managed handler before the local pane callback")
+    func dispatchPaneCommandPrefersHostManagedHandler() {
+        let remote = PaneSlotID()
+        let local = PaneSlotID()
+        let manager = TerminalManager(socketPath: "/tmp/graftty-command-test.sock")
+        var routed: [HostManagedPaneCommand] = []
+        var localCalls: [String] = []
+        manager.registerHostManagedPaneCommandHandler(for: remote) { routed.append($0) }
+        manager.onSplitRequest = { id, split in localCalls.append("split \(id == local) \(split)") }
+        manager.onCloseRequest = { id in localCalls.append("close \(id == local)") }
+        manager.onSurfaceClosed = { id in localCalls.append("surfaceClosed \(id == local)") }
+        manager.onGotoSplit = { id, direction in localCalls.append("focus \(id == local) \(direction)") }
+        manager.onGotoSplitOrder = { id, forward in localCalls.append("focusOrder \(id == local) \(forward)") }
+        manager.onToggleZoom = { id in localCalls.append("zoom \(id == local)") }
+        manager.onResizeSplit = { id, direction, amount in
+            localCalls.append("resize \(id == local) \(direction) \(amount)")
+        }
+        manager.onEqualizeSplits = { id in localCalls.append("equalize \(id == local)") }
+
+        let commands: [HostManagedPaneCommand] = [
+            .split(.left), .close, .surfaceClosed, .focus(.right),
+            .focusOrder(forward: true), .toggleZoom,
+            .resize(direction: .down, amount: 4), .equalize,
+        ]
+        for command in commands {
+            manager.dispatchPaneCommand(command, for: remote)
+        }
+        #expect(routed.count == commands.count)
+        #expect(localCalls.isEmpty)
+
+        for command in commands {
+            manager.dispatchPaneCommand(command, for: local)
+        }
+        #expect(routed.count == commands.count)
+        #expect(localCalls == [
+            "split true left", "close true", "surfaceClosed true", "focus true right",
+            "focusOrder true true", "zoom true", "resize true down 4", "equalize true",
+        ])
+    }
+
     @Test func reassignPaneByPWDMovesPaneSessionToTargetWorktree() {
         let slot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000031")!)
         let session = PaneSessionID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000041")!)

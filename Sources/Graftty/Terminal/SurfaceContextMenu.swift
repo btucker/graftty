@@ -169,7 +169,7 @@ extension SurfaceNSView {
 
     private func requestSplit(_ direction: PaneSplit) {
         guard let terminalID, let terminalManager else { return }
-        terminalManager.onSplitRequest?(terminalID, direction)
+        terminalManager.dispatchPaneCommand(.split(direction), for: terminalID)
     }
 
     // MARK: - Reset / Inspector / Read-only
