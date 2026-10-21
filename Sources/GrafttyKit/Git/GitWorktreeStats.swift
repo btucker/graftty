@@ -118,6 +118,17 @@ public enum GitWorktreeStats {
         Int(output.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    /// Parse `git rev-list --left-right --count A...B` output: the count
+    /// of commits only in `A`, a tab, and the count only in `B`. Returns
+    /// nil unless both are present and numeric.
+    public static func parseLeftRightCount(_ output: String) -> (left: Int, right: Int)? {
+        let fields = output.split(whereSeparator: \.isWhitespace)
+        guard fields.count == 2, let left = Int(fields[0]), let right = Int(fields[1]) else {
+            return nil
+        }
+        return (left, right)
+    }
+
     /// Parse output of `git diff --shortstat`. Empty output means no diff —
     /// return (0, 0) rather than failing, since "no changes" is a valid answer.
     public static func parseShortStat(_ output: String) -> (insertions: Int, deletions: Int) {
@@ -145,8 +156,9 @@ public enum GitWorktreeStats {
     }
 
     /// Computes divergence stats for a worktree vs. the union of its
-    /// upstream refs. Runs four local git commands in sequence; each is
-    /// awaited so callers yield rather than block. Throws if git fails
+    /// upstream refs. Runs three local git commands in sequence (four when
+    /// there are two upstream refs); each is awaited so callers yield
+    /// rather than block. Throws if git fails
     /// to launch or exits non-zero.
     ///
     /// Semantics:
@@ -179,69 +191,51 @@ public enum GitWorktreeStats {
         deadline: GitCommandDeadline?,
         using executor: CLIExecutor? = nil
     ) async throws -> WorktreeStats {
-        let allRefs = upstreamRefs.all
-
-        let behindArgs = ["rev-list", "--count"] + allRefs + ["^HEAD"]
-        let behindOutput: String
-        do {
-            behindOutput = try await GitRunner.run(
-                args: behindArgs,
-                at: worktreePath,
-                timeout: try deadline?.remaining(),
-                using: executor
-            )
-        } catch let err as CLIError {
-            throw GitWorktreeStatsError.gitFailed(err)
-        }
-        guard let behind = parseSingleCount(behindOutput) else {
-            throw GitWorktreeStatsError.unparseableRevList(behindOutput)
+        func git(_ args: [String]) async throws -> String {
+            do {
+                return try await GitRunner.run(
+                    args: args,
+                    at: worktreePath,
+                    timeout: try deadline?.remaining(),
+                    using: executor
+                )
+            } catch let err as CLIError {
+                throw GitWorktreeStatsError.gitFailed(err)
+            }
         }
 
-        var aheadArgs = ["rev-list", "--count", "HEAD"]
-        aheadArgs.append(contentsOf: allRefs.map { "^\($0)" })
-        let aheadOutput: String
-        do {
-            aheadOutput = try await GitRunner.run(
-                args: aheadArgs,
-                at: worktreePath,
-                timeout: try deadline?.remaining(),
-                using: executor
+        let ahead: Int
+        let behind: Int
+        if upstreamRefs.branchRef == nil {
+            // One ref: the symmetric difference splits into exactly the two
+            // one-sided counts, so a single child answers both.
+            let output = try await git(
+                ["rev-list", "--left-right", "--count", "HEAD...\(upstreamRefs.defaultRef)"]
             )
-        } catch let err as CLIError {
-            throw GitWorktreeStatsError.gitFailed(err)
-        }
-        guard let ahead = parseSingleCount(aheadOutput) else {
-            throw GitWorktreeStatsError.unparseableRevList(aheadOutput)
+            guard let counts = parseLeftRightCount(output) else {
+                throw GitWorktreeStatsError.unparseableRevList(output)
+            }
+            (ahead, behind) = (counts.left, counts.right)
+        } else {
+            let allRefs = upstreamRefs.all
+            let behindOutput = try await git(["rev-list", "--count"] + allRefs + ["^HEAD"])
+            guard let behindCount = parseSingleCount(behindOutput) else {
+                throw GitWorktreeStatsError.unparseableRevList(behindOutput)
+            }
+            let aheadOutput = try await git(["rev-list", "--count", "HEAD"] + allRefs.map { "^\($0)" })
+            guard let aheadCount = parseSingleCount(aheadOutput) else {
+                throw GitWorktreeStatsError.unparseableRevList(aheadOutput)
+            }
+            (ahead, behind) = (aheadCount, behindCount)
         }
 
         // Lines: use the worktree's own branch upstream when present,
         // else the default. `branch...HEAD` (three-dot) counts work from
         // the merge-base forward — i.e. "your commits on this branch".
         let diffBase = upstreamRefs.branchRef ?? upstreamRefs.defaultRef
-        let diffOutput: String
-        do {
-            diffOutput = try await GitRunner.run(
-                args: ["diff", "--shortstat", "\(diffBase)...HEAD"],
-                at: worktreePath,
-                timeout: try deadline?.remaining(),
-                using: executor
-            )
-        } catch let err as CLIError {
-            throw GitWorktreeStatsError.gitFailed(err)
-        }
-        let diff = parseShortStat(diffOutput)
+        let diff = parseShortStat(try await git(["diff", "--shortstat", "\(diffBase)...HEAD"]))
 
-        let statusOutput: String
-        do {
-            statusOutput = try await GitRunner.run(
-                args: ["status", "--porcelain"],
-                at: worktreePath,
-                timeout: try deadline?.remaining(),
-                using: executor
-            )
-        } catch let err as CLIError {
-            throw GitWorktreeStatsError.gitFailed(err)
-        }
+        let statusOutput = try await git(["status", "--porcelain"])
         let dirty = !statusOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         return WorktreeStats(
