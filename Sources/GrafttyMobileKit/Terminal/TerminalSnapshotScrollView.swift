@@ -130,6 +130,8 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
 
     var hasScrollback: Bool { historyRows > 0 }
     var pollsContentForTesting: Bool { contentTimer != nil }
+    private(set) var contentPollCountForTesting = 0
+    var sceneActivationStateForTesting: UIScene.ActivationState?
 
     /// Rows visible above the live grid, including rows not fetched yet.
     var additionalHistoryRowCapacity: UInt32 {

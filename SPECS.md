@@ -2144,6 +2144,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.44** When a mobile terminal that reserves space for top chrome replaces its screen content without received output, the application shall re-evaluate first-line clearance.
 
+**IOS-6.45** While the window scene of a mobile terminal that reserves space for top chrome is in the background, the application shall not poll its viewport for first-line clearance, and shall resume polling when the scene returns to the foreground.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active authenticated terminal channel and invalidate each paired host connection while preserving each mounted `InMemoryTerminalSession` and Ghostty surface. The zmx daemon remains alive per `ZMX-4.4`, so reconnect picks up the same session without freeing a renderer that QuartzCore may still reference.

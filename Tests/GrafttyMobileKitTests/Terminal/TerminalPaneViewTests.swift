@@ -2215,17 +2215,20 @@ struct FirstLineClearanceRefreshTests {
         session.receive(Data("\u{1b}[2J\u{1b}[Hprompt".utf8))
         try await waitUntil("cleared screen restores clearance") { mounted.topInset() > 0 }
 
-        // However fast output streams, the viewport is read only on the
-        // 250 ms timer: two or three ticks in 500 ms.
-        let readsBefore = container.firstLineClearanceReadCountForTesting
+        // However fast output streams, the poll runs only on its 250 ms timer.
+        // Scrollbar callbacks re-check directly and are outside this cap, so
+        // count timer ticks, bounded by the time that actually elapsed.
+        let pollsBefore = container.snapshotScrollView.contentPollCountForTesting
         let start = ContinuousClock.now
         while ContinuousClock.now - start < .milliseconds(500) {
             session.receive(Data("x".utf8))
             try await Task.sleep(for: .milliseconds(10))
         }
-        let streamingReads = container.firstLineClearanceReadCountForTesting - readsBefore
-        #expect(streamingReads >= 1, "The timer must re-check clearance while output streams")
-        #expect(streamingReads <= 4, "Read the viewport \(streamingReads) times in 500 ms")
+        let elapsed = ContinuousClock.now - start
+        let polls = container.snapshotScrollView.contentPollCountForTesting - pollsBefore
+        let allowed = Int(elapsed / .milliseconds(250)) + 1
+        #expect(polls >= 1, "The timer must poll while there is no scrollback")
+        #expect(polls <= allowed, "Polled \(polls) times in \(elapsed), allowed \(allowed)")
 
         let rows = Int(try #require(container.terminalGridMetrics).rows)
         session.receive(Data(String(repeating: "\r\noutput", count: rows * 2).utf8))
@@ -2238,6 +2241,18 @@ struct FirstLineClearanceRefreshTests {
             !container.snapshotScrollView.hasScrollback
                 && container.snapshotScrollView.pollsContentForTesting && mounted.topInset() > 0
         }
+    }
+
+    @Test("@spec IOS-6.45: While the window scene of a mobile terminal that reserves space for top chrome is in the background, the application shall not poll its viewport for first-line clearance, and shall resume polling when the scene returns to the foreground.")
+    func clearancePollingPausesInBackgroundScene() async throws {
+        let mounted = try await mountedContainer()
+        defer { mounted.tearDown() }
+        let scrollView = mounted.container.snapshotScrollView
+        #expect(scrollView.pollsContentForTesting)
+        scrollView.sceneActivationStateForTesting = .background
+        #expect(!scrollView.pollsContentForTesting, "A backgrounded scene must not poll")
+        scrollView.sceneActivationStateForTesting = .foregroundActive
+        #expect(scrollView.pollsContentForTesting, "Returning to the foreground must resume polling")
     }
 
     @Test("@spec IOS-6.43: When a width-only resize wraps or unwraps the lone first line of a mobile terminal that reserves space for top chrome, the application shall re-evaluate first-line clearance without further output.")
