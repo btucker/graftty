@@ -172,6 +172,8 @@ public final class WorktreeStatsStore {
         )
         self.autoTracking = autoTracking ?? GitAutoTracking(backgroundProcessLimiter: backgroundProcessLimiter)
         self.computeLocalDefault = computeLocalDefault
+        statsScheduler.bind(owner: self)
+        fetchScheduler.bind(owner: self)
     }
 
     func generationForTesting(_ worktreePath: String) -> Int {

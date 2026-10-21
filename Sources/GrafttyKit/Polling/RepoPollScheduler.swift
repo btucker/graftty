@@ -43,6 +43,10 @@ final class RepoPollScheduler {
     private let now: () -> Date
     private var slots: [String: Slot] = [:]
     private var lastGeneration = 0
+    /// The store this scheduler works for. Queued work is skipped once the
+    /// store is gone, matching the stores' former permit-time `guard let self`.
+    private weak var owner: AnyObject?
+    private var hasOwner = false
     private var cursor = RoundRobinBatchCursor()
 
     /// - Parameters:
@@ -62,6 +66,14 @@ final class RepoPollScheduler {
         self.batchSize = batchSize
         self.cadence = cadence
         self.now = now
+    }
+
+    /// Ties queued work to `owner`'s lifetime: work that obtains a permit
+    /// after `owner` is deallocated is skipped. Stores call this once from
+    /// their initializer.
+    func bind(owner: AnyObject) {
+        self.owner = owner
+        hasOwner = true
     }
 
     // MARK: - Slot state
@@ -204,7 +216,8 @@ final class RepoPollScheduler {
     }
 
     private func begin(_ key: String, generation: Int) -> Bool {
-        guard isCurrent(key, generation: generation) else { return false }
+        guard !hasOwner || owner != nil,
+              isCurrent(key, generation: generation) else { return false }
         slots[key]?.inFlightSince = now()
         return true
     }

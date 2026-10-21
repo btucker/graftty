@@ -144,6 +144,7 @@ public final class PRStatusStore {
                 )
             }
         }
+        scheduler.bind(owner: self)
     }
 
     /// Force a fetch for the repo containing this worktree,

@@ -167,6 +167,30 @@ struct RepoPollSchedulerTests {
         #expect(!ran.value)
     }
 
+    @Test func runSkipsWorkWhoseOwnerWasReleasedWhileWaitingForAPermit() async {
+        final class Owner {}
+        let clock = TestClock()
+        let limiter = BackgroundProcessLimiter(capacity: 1)
+        let scheduler = makeScheduler(clock: clock, limiter: limiter)
+        var owner: Owner? = Owner()
+        scheduler.bind(owner: owner!)
+        let gate = PermitGate()
+        let occupant = Task { await limiter.run { await gate.hold() } }
+        await gate.waitUntilHeld()
+
+        let generation = scheduler.claim("/r")
+        let ran = MutableBox(false)
+        let queued = Task {
+            await scheduler.run("/r", generation: generation) { ran.value = true }
+        }
+        owner = nil
+        await gate.open()
+        await occupant.value
+
+        #expect(await queued.value == nil)
+        #expect(!ran.value)
+    }
+
     @Test func runRestartsTheAbandonmentWindowWhenItObtainsAPermit() async {
         let clock = TestClock()
         let scheduler = makeScheduler(clock: clock)

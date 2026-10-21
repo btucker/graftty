@@ -433,8 +433,7 @@ struct RemoteBranchStoreTests {
         #expect(store.hasRemote(repoPath: "/repo", branch: "new"))
 
         // The abandoned scan returns last; its late result is discarded.
-        lister.resumeAll()
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await awaitNextScanFinish(of: store) { lister.resumeAll() }
         #expect(store.hasRemote(repoPath: "/repo", branch: "new"))
         #expect(!store.hasRemote(repoPath: "/repo", branch: "old"))
         #expect(!store.isInFlightForTesting("/repo"))
@@ -468,13 +467,51 @@ struct RemoteBranchStoreTests {
 
         // The abandoned scan finally returns, but its result is discarded,
         // so its waiter must wait for the superseding scan's result.
-        lister.resumeOldest()
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await awaitNextScanFinish(of: store) { lister.resumeOldest() }
         #expect(completionSnapshot == nil)
 
         lister.resumeAll()
         try await waitUntil(timeout: 1.0) { completionSnapshot != nil }
         #expect(completionSnapshot == ["new"])
+    }
+
+    @MainActor
+    @Test func deallocatedStoreSkipsAScanStillWaitingForAPermit() async throws {
+        let limiter = BackgroundProcessLimiter(capacity: 1)
+        let blocker = PermitBlocker()
+        let occupyingTask = Task {
+            await limiter.run {
+                await blocker.wait()
+            }
+        }
+        try await waitUntil(timeout: 1.0) { blocker.isWaiting }
+
+        let lister = RecordingRemoteBranchLister(results: [
+            "/repo": .success(["main"]),
+        ])
+        var store: RemoteBranchStore? = RemoteBranchStore(
+            list: lister.list,
+            backgroundProcessLimiter: limiter
+        )
+        weak let weakStore = store
+        store?.refresh(repoPath: "/repo")
+        // The scan is queued behind the occupying permit.
+        while await limiter.waiterCountForTesting < 1 {
+            await Task.yield()
+        }
+        store = nil
+        #expect(weakStore == nil)
+
+        // FIFO: this probe runs only after the queued scan has had its turn.
+        let probe = Task { await limiter.run {} }
+        while await limiter.waiterCountForTesting < 2 {
+            await Task.yield()
+        }
+        blocker.resume()
+        await occupyingTask.value
+        await probe.value
+
+        #expect(lister.invocationCount(for: "/repo") == 0)
     }
 
     @MainActor
@@ -561,6 +598,22 @@ struct RemoteBranchStoreTests {
         store.stop()
         store.pulse()
         #expect(ticker.pulseCallCount == 1)
+    }
+
+    /// Runs `action` and returns once the store finishes its next scan,
+    /// whether that scan's result was applied or discarded.
+    @MainActor
+    private func awaitNextScanFinish(
+        of store: RemoteBranchStore,
+        after action: () -> Void
+    ) async {
+        await withCheckedContinuation { continuation in
+            store.onScanFinishedForTesting = { [weak store] in
+                store?.onScanFinishedForTesting = nil
+                continuation.resume()
+            }
+            action()
+        }
     }
 
     private func waitUntil(

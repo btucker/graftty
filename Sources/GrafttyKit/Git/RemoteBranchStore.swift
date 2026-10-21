@@ -62,6 +62,8 @@ public final class RemoteBranchStore {
 
     public typealias ListFunction = @Sendable (_ repoPath: String) async throws -> RemoteBranchSnapshot
 
+    /// Called after every scan finishes, applied or discarded.
+    @ObservationIgnored var onScanFinishedForTesting: (@MainActor () -> Void)?
     @ObservationIgnored public var onChange: (@MainActor (_ repoPath: String, _ old: Set<String>, _ new: Set<String>) -> Void)?
     @ObservationIgnored private let list: ListFunction
     /// Per-repo scan slots, abandonment, and the polling cursor.
@@ -90,6 +92,7 @@ public final class RemoteBranchStore {
     ) {
         self.list = list
         self.scheduler = RepoPollScheduler(limiter: backgroundProcessLimiter)
+        scheduler.bind(owner: self)
     }
 
     /// True iff `branch` has an upstream tracked under origin, or a
@@ -259,6 +262,7 @@ public final class RemoteBranchStore {
         for callback in callbacks {
             callback()
         }
+        onScanFinishedForTesting?()
     }
 
     nonisolated static func isEligibleLocalBranch(_ branch: String) -> Bool {
