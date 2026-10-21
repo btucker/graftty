@@ -326,7 +326,7 @@ public final class TerminalInputContainerView: UIView,
             if onPhysicalViewportReady != nil { setNeedsLayout() }
         }
     }
-    private var awaitingPhysicalViewport = false
+    var awaitingPhysicalViewport = false
     public var authoritativeGrid: SessionClient.GridSize? {
         didSet {
             guard authoritativeGrid != oldValue else { return }
@@ -454,7 +454,7 @@ public final class TerminalInputContainerView: UIView,
         ))
     }
 
-    private var isCommittedSoftwareInputEligible = false
+    var isCommittedSoftwareInputEligible = false
     var agentCompletion: AgentCompletionModel? {
         get { terminalView.agentCompletion }
         set {
@@ -481,7 +481,7 @@ public final class TerminalInputContainerView: UIView,
         return agentCompletion?.handleKey(key) == true
     }
 
-    private var storedCommittedSoftwareInput: TerminalPaneView.CommittedSoftwareInput?
+    var storedCommittedSoftwareInput: TerminalPaneView.CommittedSoftwareInput?
     var committedSoftwareInput: TerminalPaneView.CommittedSoftwareInput? {
         get { storedCommittedSoftwareInput }
         set {
@@ -524,8 +524,8 @@ public final class TerminalInputContainerView: UIView,
             UIMenuSystem.main.setNeedsRebuild()
         }
     }
-    private var storedHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
-    private(set) var keyCommandUpdateRequestCountForTesting = 0
+    var storedHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
+    var keyCommandUpdateRequestCountForTesting = 0
     private(set) lazy var selectionController = TerminalSelectionController(
         surface: RealSurfaceProxy(surfaceProvider: { [weak self] in self?.terminalView.surface })
     )
@@ -546,14 +546,14 @@ public final class TerminalInputContainerView: UIView,
             updateTerminalGestureEnablement()
         }
     }
-    private var pendingApplicationScroll = CGPoint.zero
-    private var applicationScrollLocation = CGPoint.zero
-    private var applicationScrollAttachmentID: UUID?
-    private var applicationScrollEnded = false
-    private var applicationScrollTask: Task<Void, Never>?
+    var pendingApplicationScroll = CGPoint.zero
+    var applicationScrollLocation = CGPoint.zero
+    var applicationScrollAttachmentID: UUID?
+    var applicationScrollEnded = false
+    var applicationScrollTask: Task<Void, Never>?
     #if DEBUG
-    private(set) var diagnosticApplicationScrollRequests: UInt64 = 0
-    private(set) var diagnosticApplicationScrollDeliveries: UInt64 = 0
+    var diagnosticApplicationScrollRequests: UInt64 = 0
+    var diagnosticApplicationScrollDeliveries: UInt64 = 0
     #endif
 
     private lazy var applicationScrollRecognizer: UIPanGestureRecognizer = {
@@ -659,9 +659,9 @@ public final class TerminalInputContainerView: UIView,
             if (oldValue == nil) != (onBackRequested == nil) { setNeedsLayout() }
         }
     }
-    private var configuredFontSize: Float?
+    var configuredFontSize: Float?
     private var observedFontSize: Float?
-    private var observedPinchScale: CGFloat = 1
+    var observedPinchScale: CGFloat = 1
     private var isObservingFontSize = false
     private var onObservedFontSizeChange: ((Float) -> Void)?
 
@@ -755,7 +755,7 @@ public final class TerminalInputContainerView: UIView,
     /// `storedHardwareKeyboardCommands` at handle time (see
     /// `matchingHardwareKeyboardCommand`), so a signature-equal update never
     /// needs a rebuilt array.
-    private var cachedKeyCommands: [UIKeyCommand]?
+    var cachedKeyCommands: [UIKeyCommand]?
 
     override public var keyCommands: [UIKeyCommand]? {
         let effectiveCommands = effectiveHardwareKeyboardCommands
@@ -792,7 +792,7 @@ public final class TerminalInputContainerView: UIView,
         }
     }
 
-    private var effectiveHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] {
+    var effectiveHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] {
         guard isCommittedSoftwareInputEligible else { return hardwareKeyboardCommands }
         let availableTransportCommands = Self.terminalHardwareTextCommands.filter { command in
             !hardwareKeyboardCommands.contains {
@@ -818,8 +818,8 @@ public final class TerminalInputContainerView: UIView,
         }
     }
 
-    private lazy var longPressMenu = UIEditMenuInteraction(delegate: self)
-    private lazy var selectionMenu = UIEditMenuInteraction(delegate: self)
+    lazy var longPressMenu = UIEditMenuInteraction(delegate: self)
+    lazy var selectionMenu = UIEditMenuInteraction(delegate: self)
 
     private lazy var anyTouchObserver: AnyTouchObserverGestureRecognizer = {
         let r = AnyTouchObserverGestureRecognizer()
@@ -828,14 +828,14 @@ public final class TerminalInputContainerView: UIView,
         return r
     }()
 
-    private lazy var selectionPanRecognizer: UIPanGestureRecognizer = {
+    lazy var selectionPanRecognizer: UIPanGestureRecognizer = {
         let r = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionPan(_:)))
         r.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         r.maximumNumberOfTouches = 1
         r.isEnabled = false
         return r
     }()
-    private var selectionPanStartedInViewport = false
+    var selectionPanStartedInViewport = false
     private lazy var backSwipeRecognizer: UISwipeGestureRecognizer = {
         let recognizer = UISwipeGestureRecognizer(target: self, action: #selector(handleBackSwipe(_:)))
         recognizer.direction = .right
@@ -849,8 +849,8 @@ public final class TerminalInputContainerView: UIView,
     /// Captures the most-recent long-press location so the menu's
     /// `Select` action can word-select at the original touch point even
     /// after the gesture has ended. Updated on `.began`.
-    private var lastLongPressPoint: CGPoint = .zero
-    private var longPressURL: URL?
+    var lastLongPressPoint: CGPoint = .zero
+    var longPressURL: URL?
     private(set) var terminalGridMetrics: TerminalGridMetrics?
     var openURL: (URL) -> Void = { _ in }
     var copyLink: (URL) -> Void = { UIPasteboard.general.string = $0.absoluteString }
@@ -875,14 +875,14 @@ public final class TerminalInputContainerView: UIView,
         longPressMenu.dismissMenu()
     }
 
-    private var probingLink = false
-    private var probedLink: String?
+    var probingLink = false
+    var probedLink: String?
     /// Paste and edit-menu dismissal are independent UIKit callbacks whose
     /// relative ordering is not part of our contract. Pair them by long-press
     /// menu generation and refocus only after both have happened.
-    private var longPressMenuGeneration: UInt = 0
-    private var pendingPasteRefocusGeneration: UInt?
-    private var completedLongPressMenuDismissalGeneration: UInt?
+    var longPressMenuGeneration: UInt = 0
+    var pendingPasteRefocusGeneration: UInt?
+    var completedLongPressMenuDismissalGeneration: UInt?
 
     override public init(frame: CGRect) {
         super.init(frame: frame)
@@ -968,7 +968,7 @@ public final class TerminalInputContainerView: UIView,
     }
     #endif
 
-    private func applyObservedFontSizeSteps(_ steps: Int) {
+    func applyObservedFontSizeSteps(_ steps: Int) {
         guard isObservingFontSize, let observedFontSize else { return }
         let adjusted = TerminalFontSizeAdjustment.apply(
             steps: steps,
@@ -1066,7 +1066,7 @@ public final class TerminalInputContainerView: UIView,
         longPressMenu.presentEditMenu(with: config)
     }
 
-    @objc private func handleSelectionPan(_ recognizer: UIPanGestureRecognizer) {
+    @objc func handleSelectionPan(_ recognizer: UIPanGestureRecognizer) {
         guard selectionController.isActive else { return }
         let point = recognizer.location(in: terminalView)
         switch recognizer.state {
@@ -1103,12 +1103,12 @@ public final class TerminalInputContainerView: UIView,
     /// Masked pans whose `allowedTouchTypes` were narrowed on entering
     /// selection mode, with their prior values, so exit restores exactly
     /// what libghostty/setup installed.
-    private var selectionModeSavedTouchTypes: [(UIPanGestureRecognizer, [NSNumber])] = []
+    var selectionModeSavedTouchTypes: [(UIPanGestureRecognizer, [NSNumber])] = []
     private var suppressedTerminalGestures: [ObjectIdentifier: Bool] = [:]
 
     /// Selection and the checkpoint canvas can both suppress pinch. Restore
     /// each original state only after both restrictions have been released.
-    private func updateTerminalGestureEnablement() {
+    func updateTerminalGestureEnablement() {
         backSwipeRecognizer.isEnabled = onBackRequested != nil && !selectionController.isActive
         applicationScrollRecognizer.isEnabled = onApplicationScrollRequested != nil && !selectionController.isActive
         if selectionController.isActive { cancelPendingApplicationScroll() }
@@ -1132,7 +1132,7 @@ public final class TerminalInputContainerView: UIView,
     }
 
     /// @spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and the active terminal or checkpoint-canvas scroll recognizers shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
-    private func enterSelectionMode() {
+    func enterSelectionMode() {
         guard !selectionPanRecognizer.isEnabled else { return }
         selectionPanRecognizer.isEnabled = true
         selectionModeSavedTouchTypes = []
@@ -1152,7 +1152,7 @@ public final class TerminalInputContainerView: UIView,
         updateTerminalGestureEnablement()
     }
 
-    private func exitSelectionMode() {
+    func exitSelectionMode() {
         selectionPanRecognizer.isEnabled = false
         for (pan, savedTouchTypes) in selectionModeSavedTouchTypes {
             pan.allowedTouchTypes = savedTouchTypes
@@ -1174,7 +1174,7 @@ public final class TerminalInputContainerView: UIView,
         presentSelectionMenu(near: center)
     }
 
-    fileprivate func performPaste(for menuGeneration: UInt) {
+    func performPaste(for menuGeneration: UInt) {
         cancelPendingApplicationScroll()
         terminalView.commitAndResetTextContext()
         onPasteRequested?()
@@ -1270,7 +1270,7 @@ public final class TerminalInputContainerView: UIView,
         handleAnyTouchBegan(changesCursor: changesCursor)
     }
 
-    private func handleAnyTouchBegan(changesCursor: Bool) {
+    func handleAnyTouchBegan(changesCursor: Bool) {
         // A finger tap only changes keyboard focus. Keep the initial boundary
         // so the first percent key can open completion at an empty prompt.
         if changesCursor || agentCompletion?.isActive == true {
@@ -1307,7 +1307,7 @@ public final class TerminalInputContainerView: UIView,
         }
     }
 
-    private func longPressMenuIdentifier(for generation: UInt) -> AnyHashable {
+    func longPressMenuIdentifier(for generation: UInt) -> AnyHashable {
         "long-press:\(generation)" as AnyHashable
     }
 
@@ -1471,7 +1471,7 @@ public final class TerminalInputContainerView: UIView,
         return super.canPerformAction(action, withSender: sender)
     }
 
-    @objc private func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {
+    @objc func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {
         guard let match = matchingHardwareKeyboardCommand(for: command) else { return }
         cancelPendingApplicationScroll()
         if hardwareKeyboardCommands.contains(where: { $0.id == match.id }) {
@@ -1480,7 +1480,7 @@ public final class TerminalInputContainerView: UIView,
         match.perform()
     }
 
-    private func matchingHardwareKeyboardCommand(
+    func matchingHardwareKeyboardCommand(
         for keyCommand: UIKeyCommand
     ) -> TerminalPaneView.HardwareKeyboardCommand? {
         guard let commandID = keyCommand.propertyList as? String,
@@ -1604,7 +1604,7 @@ final class AnyTouchObserverGestureRecognizer: UIGestureRecognizer {
     }
 }
 
-private extension UIKeyModifierFlags {
+extension UIKeyModifierFlags {
     var appCommandModifiers: UIKeyModifierFlags {
         intersection([.shift, .control, .alternate, .command])
     }
@@ -1643,7 +1643,7 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
         }
     }
 
-    private func longPressUIMenu(for generation: UInt, hasPasteContent: Bool) -> UIMenu {
+    func longPressUIMenu(for generation: UInt, hasPasteContent: Bool) -> UIMenu {
         var children: [UIMenuElement] = [
             UIAction(title: "Select") { [weak self] _ in self?.performSelectAtLongPressPoint() },
             UIAction(title: "Select All") { [weak self] _ in self?.performSelectAll() },
