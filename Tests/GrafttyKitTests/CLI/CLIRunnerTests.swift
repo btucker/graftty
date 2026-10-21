@@ -69,29 +69,58 @@ struct CLIRunnerTests {
         #expect(elapsed < 90.0, "timed-out run must not wait out the full 120s sleep")
     }
 
-    @Test("@spec CLI-1.3: If a timed-out subprocess is still running two seconds after the application sends SIGTERM, then the application shall send SIGKILL so the caller receives the timeout instead of waiting for a child that ignores SIGTERM.")
+    @Test("@spec CLI-1.3: If a stopped subprocess, timed out or cancelled, is still running when its kill grace (two seconds by default) elapses after SIGTERM, then the application shall send SIGKILL so the caller is released instead of waiting for a child that ignores SIGTERM.")
     func timeoutEscalatesToKillForChildIgnoringTerminate() async throws {
-        // Production waits two seconds before SIGKILL; the test shortens
-        // the grace so the bound costs milliseconds of CI time.
-        #expect(SubprocessLaunch(executable: "/bin/sh", arguments: [], timeoutLabel: "sh").killGrace == .seconds(2))
-        // `exec` keeps the ignored SIGTERM disposition on the sleeping
-        // process itself, so only SIGKILL can end it before 120s. As in
-        // the test above, the loose bound only guards against a hang.
-        let start = Date()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-kill-escalation-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let ready = directory.appendingPathComponent("ready")
+        try #require(mkfifo(ready.path, 0o600) == 0)
+
+        // The manual scheduler drives both delays, so no wall-clock timer
+        // decides the outcome. The child reports its PID through the FIFO
+        // only after installing the TERM trap, so SIGTERM cannot win a race
+        // against the trap and pass the test without escalation.
+        let scheduler = ManualSubprocessScheduler()
+        var launch = SubprocessLaunch(
+            executable: "/bin/sh",
+            arguments: ["-c", "trap '' TERM; echo $$ > \"$1\"; exec sleep 120", "sh", ready.path],
+            directory: directory.path,
+            timeout: .seconds(30),
+            timeoutLabel: "sh"
+        )
+        launch.scheduler = scheduler.scheduler
+        let run = Task { try await Subprocess.run(launch) }
+
+        let reported = await Self.readFIFO(ready).trimmingCharacters(in: .whitespacesAndNewlines)
+        let pid = try #require(pid_t(reported))
+        defer { kill(pid, SIGKILL) } // releases `run` if escalation is broken
+
+        let timeout = await scheduler.nextAction()
+        #expect(timeout.seconds == 30)
+        timeout.run() // SIGTERM, which the child ignores
+        let escalation = try #require(scheduler.pendingAction(), "no SIGKILL was scheduled after SIGTERM")
+        #expect(escalation.seconds == 2)
+        escalation.run()
+
         do {
-            _ = try await Subprocess.run(SubprocessLaunch(
-                executable: "/bin/sh",
-                arguments: ["-c", "trap '' TERM; exec sleep 120"],
-                directory: NSTemporaryDirectory(),
-                timeout: .milliseconds(100),
-                timeoutLabel: "sh",
-                killGrace: .milliseconds(100)
-            ))
+            _ = try await run.value
             Issue.record("should have thrown timedOut")
         } catch CLIError.timedOut(let cmd, _) {
             #expect(cmd == "sh")
         }
-        #expect(Date().timeIntervalSince(start) < 90.0)
+    }
+
+    private static func readFIFO(_ url: URL) async -> String {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                // Opening a FIFO blocks until the child opens it for writing;
+                // reading to EOF then returns everything the child wrote.
+                let data = FileHandle(forReadingAtPath: url.path)?.readDataToEndOfFile() ?? Data()
+                continuation.resume(returning: String(decoding: data, as: UTF8.self))
+            }
+        }
     }
 
     @Test func runWithGenerousTimeoutReturnsNormally() async throws {
@@ -240,5 +269,51 @@ struct CLIRunnerTests {
         #expect(lines.count == lineCount + 1)
         #expect(lines.first == "1")
         #expect(lines[lineCount - 1] == "1")
+    }
+}
+
+/// Records each delayed stop action instead of arming a timer, so a test can
+/// fire the timeout and the SIGKILL escalation itself.
+private final class ManualSubprocessScheduler: @unchecked Sendable {
+    struct Action {
+        let seconds: TimeInterval
+        let run: @Sendable () -> Void
+    }
+
+    private let lock = NSLock()
+    private var pending: [Action] = []
+    private var waiter: CheckedContinuation<Action, Never>?
+
+    var scheduler: SubprocessScheduler {
+        SubprocessScheduler { [self] seconds, action in add(Action(seconds: seconds, run: action)) }
+    }
+
+    /// Waits for the next scheduled action.
+    func nextAction() async -> Action {
+        await withCheckedContinuation { continuation in
+            let ready: Action? = lock.withLock {
+                if !pending.isEmpty { return pending.removeFirst() }
+                waiter = continuation
+                return nil
+            }
+            if let ready { continuation.resume(returning: ready) }
+        }
+    }
+
+    /// Returns an action already scheduled, without waiting.
+    func pendingAction() -> Action? {
+        lock.withLock { pending.isEmpty ? nil : pending.removeFirst() }
+    }
+
+    private func add(_ action: Action) {
+        let waiting: CheckedContinuation<Action, Never>? = lock.withLock {
+            if let waiter {
+                self.waiter = nil
+                return waiter
+            }
+            pending.append(action)
+            return nil
+        }
+        waiting?.resume(returning: action)
     }
 }

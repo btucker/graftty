@@ -23,11 +23,13 @@ struct ShellEnvProbeTests {
     }
 }
 
-/// Runs `LoginShellEnvProbe` against a fake `/bin/sh` login shell.
+/// Runs `LoginShellEnvProbe` against a fake `/bin/sh` login shell. Each
+/// script plays the rc files, sets `EDITOR=nvim`, then evaluates the probe's
+/// `-ilc` command exactly as a real shell would.
 @Suite("LoginShellEnvProbe subprocess")
 struct LoginShellEnvProbeSubprocessTests {
-    /// A private directory holding the fake shell, plus any PID files the
-    /// script writes there.
+    /// A private directory holding the fake shell, plus any PID or marker
+    /// files the script writes there.
     private struct FakeShell {
         let directory: URL
         var path: String { directory.appendingPathComponent("shell").path }
@@ -36,7 +38,8 @@ struct LoginShellEnvProbeSubprocessTests {
             directory = FileManager.default.temporaryDirectory
                 .appendingPathComponent("graftty-shell-probe-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try ("#!/bin/sh\n" + script(directory)).write(toFile: path, atomically: true, encoding: .utf8)
+            let body = "#!/bin/sh\n" + script(directory) + "\nEDITOR=nvim\nexport EDITOR\neval \"$2\"\n"
+            try body.write(toFile: path, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: path)
         }
 
@@ -56,7 +59,6 @@ struct LoginShellEnvProbeSubprocessTests {
             head -c 300000 /dev/zero | tr '\\0' x
             echo
             head -c 300000 /dev/zero | tr '\\0' y >&2
-            echo nvim
             """
         }
         defer { shell.remove() }
@@ -64,20 +66,43 @@ struct LoginShellEnvProbeSubprocessTests {
         #expect(LoginShellEnvProbe(shellPath: shell.path, timeout: 5).value(forName: "EDITOR") == "nvim")
     }
 
-    @Test("@spec EDITOR-1.12: When a login-shell rc file leaves a background job holding the probe stdout open, the application shall return the probed value once the shell exits rather than wait for the background job.")
-    func valueSurvivesBackgroundJobHoldingStdout() throws {
+    @Test("@spec EDITOR-1.12: When a login-shell rc file starts a background job that outlives the shell, the application shall return the probed value once the shell exits rather than wait for the background job.")
+    func valueReturnsWhileBackgroundJobIsStillRunning() throws {
         let shell = try FakeShell { directory in
             """
-            sleep 30 &
+            ( exec sleep 30 ) &
             echo $! > '\(directory.path)/background.pid'
-            echo nvim
             """
         }
         defer { shell.remove() }
 
+        let start = ContinuousClock.now
         let value = LoginShellEnvProbe(shellPath: shell.path, timeout: 5).value(forName: "EDITOR")
-        if let background = shell.pid("background.pid") { kill(background, SIGKILL) }
+        let elapsed = start.duration(to: .now)
+        let background = try #require(shell.pid("background.pid"))
+        let stillRunning = kill(background, 0) == 0
+        kill(background, SIGKILL)
+
         #expect(value == "nvim")
+        // Returning while the 30 s job is alive proves the probe did not
+        // wait for it; the elapsed bound sits far below that lifetime.
+        #expect(stillRunning, "probe returned only after the background job exited")
+        #expect(elapsed < .seconds(10))
+    }
+
+    @Test("@spec EDITOR-1.14: While login-shell rc files run, the application shall give them and the jobs they start /dev/null as stdout and write the probed value to a private result file only from the final command, so a profile background job can never hold or grow the result capture.")
+    func rcFilesNeverInheritTheResultCapture() throws {
+        let shell = try FakeShell { directory in
+            """
+            [ -f /dev/fd/1 ] && echo inherited > '\(directory.path)/leak'
+            """
+        }
+        defer { shell.remove() }
+
+        #expect(LoginShellEnvProbe(shellPath: shell.path, timeout: 5).value(forName: "EDITOR") == "nvim")
+        let leaked = FileManager.default.fileExists(
+            atPath: shell.directory.appendingPathComponent("leak").path)
+        #expect(!leaked, "rc-file stdout was a regular file a background job could keep growing")
     }
 
     @Test("@spec EDITOR-1.13: If the login-shell probe exceeds its timeout, then the application shall kill the shell with SIGKILL, because an interactive shell ignores SIGTERM.")

@@ -34,6 +34,19 @@ struct SubprocessLaunch: Sendable {
     var terminatesOnCancellation = false
     /// How long a stopped child may ignore SIGTERM before SIGKILL (CLI-1.3).
     var killGrace: Duration = .seconds(2)
+    /// Runs the delayed timeout and SIGKILL actions.
+    var scheduler: SubprocessScheduler = .dispatch
+}
+
+/// Runs a delayed stop action. Production uses GCD; tests inject a manual
+/// scheduler so they fire the timeout and the SIGKILL escalation themselves
+/// instead of waiting on wall-clock timers (CLI-1.3).
+struct SubprocessScheduler: Sendable {
+    let after: @Sendable (_ seconds: TimeInterval, _ action: @escaping @Sendable () -> Void) -> Void
+
+    static let dispatch = SubprocessScheduler { seconds, action in
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: action)
+    }
 }
 
 struct SubprocessOutput: Sendable {
@@ -112,7 +125,8 @@ enum Subprocess {
             process.standardError = stderr
         }
 
-        let termination = SubprocessTermination(process: process, killGrace: Subprocess.seconds(of: launch.killGrace))
+        let termination = SubprocessTermination(
+            process: process, killGrace: Subprocess.seconds(of: launch.killGrace), scheduler: launch.scheduler)
         let launchedPipes = pipes
         let waitsForPipeEOF = launch.capture == .pipes
         let status: Int32 = try await withTaskCancellationHandler {
@@ -189,26 +203,28 @@ enum Subprocess {
 
 /// Stops one subprocess on timeout or cancellation: SIGTERM first, then
 /// SIGKILL if the child is still running after `killGrace` (CLI-1.3). One
-/// lock orders launch, stop, and reaping so a stop never signals a PID after
-/// the termination handler has reaped it.
+/// lock orders launch, stop, and the kill check; `isRunning` is what keeps a
+/// late action from signalling a reaped PID.
 ///
-/// Delayed work items capture this object and the `Process` weakly.
-/// `DispatchQueue.asyncAfter` retains even a canceled item until its
-/// deadline, so a strong capture would keep a fast command's `Process` and
-/// pipe descriptors alive for the rest of a long timeout (CLI-1.2).
+/// Delayed actions capture this object, and it holds the `Process`, weakly.
+/// `DispatchQueue.asyncAfter` retains a scheduled closure until its deadline,
+/// so a strong capture would keep a fast command's `Process` and pipe
+/// descriptors alive for the rest of a long timeout (CLI-1.2). An action that
+/// fires after the process finished is a no-op.
 final class SubprocessTermination: @unchecked Sendable {
     private let killGrace: TimeInterval
+    private let scheduler: SubprocessScheduler
 
     private let lock = NSLock()
     private weak var process: Process?
     private var isFinished = false
     private var stopRequested = false
     private var _didTimeout = false
-    private var timer: DispatchWorkItem?
 
-    init(process: Process, killGrace: TimeInterval = 2) {
+    init(process: Process, killGrace: TimeInterval = 2, scheduler: SubprocessScheduler = .dispatch) {
         self.process = process
         self.killGrace = killGrace
+        self.scheduler = scheduler
     }
 
     var didTimeout: Bool { lock.withLock { _didTimeout } }
@@ -222,34 +238,26 @@ final class SubprocessTermination: @unchecked Sendable {
     }
 
     func armTimeout(after seconds: Double) {
-        let item = DispatchWorkItem { [weak self] in self?.stop(timedOut: true) }
-        let armed = lock.withLock {
-            guard !isFinished else { return false }
-            timer = item
-            return true
-        }
-        if armed { DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: item) }
+        guard !lock.withLock({ isFinished }) else { return }
+        scheduler.after(seconds) { [weak self] in self?.stop(timedOut: true) }
     }
 
     /// Called once the process has exited (or failed to launch).
     func finish() {
-        lock.withLock {
-            isFinished = true
-            timer?.cancel()
-            timer = nil
-        }
+        lock.withLock { isFinished = true }
     }
 
     func stop(timedOut: Bool) {
-        lock.withLock {
-            guard !isFinished else { return }
+        let signalled = lock.withLock { () -> Bool in
+            guard !isFinished else { return false }
             stopRequested = true
-            guard let process, process.isRunning else { return }
+            guard let process, process.isRunning else { return false }
             if timedOut { _didTimeout = true }
             process.terminate()
-            DispatchQueue.global().asyncAfter(deadline: .now() + killGrace) { [weak self] in
-                self?.killIfRunning()
-            }
+            return true
+        }
+        if signalled {
+            scheduler.after(killGrace) { [weak self] in self?.killIfRunning() }
         }
     }
 

@@ -41,29 +41,34 @@ public struct LoginShellEnvProbe: ShellEnvProbe {
         self.timeout = timeout
     }
 
+    /// Environment variable naming the private result file that the
+    /// probe's final command writes (EDITOR-1.14).
+    static let resultPathVariable = "GRAFTTY_SHELL_PROBE_RESULT"
+
     public func value(forName name: String) -> String? {
-        // Capture stdout in a private file rather than a pipe: an rc file
-        // that prints more than a pipe buffer holds cannot block on write
-        // (EDITOR-1.11), and a profile background job that inherits stdout
-        // cannot hold the capture open after the shell exits (EDITOR-1.12).
-        let stdoutURL = FileManager.default.temporaryDirectory
+        // rc files, and every job they start, get /dev/null as stdout: large
+        // output cannot block them (EDITOR-1.11), and no background job can
+        // hold or keep growing the result capture (EDITOR-1.12, EDITOR-1.14).
+        // Only the final `echo` opens the private result file.
+        let resultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-shell-env-\(UUID().uuidString)")
         guard FileManager.default.createFile(
-            atPath: stdoutURL.path, contents: nil, attributes: [.posixPermissions: 0o600]
-        ), let stdout = try? FileHandle(forWritingTo: stdoutURL) else { return nil }
-        defer {
-            try? stdout.close()
-            try? FileManager.default.removeItem(at: stdoutURL)
-        }
+            atPath: resultURL.path, contents: nil, attributes: [.posixPermissions: 0o600]
+        ) else { return nil }
+        defer { try? FileManager.default.removeItem(at: resultURL) }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shellPath)
         // -i: interactive (sources rc files), -l: login (sources profile),
-        // -c: command. The single-quote in the shell command prevents any
-        // word-splitting on $name; we only support [A-Za-z_][A-Za-z0-9_]*
-        // names so injection is impossible.
-        process.arguments = ["-ilc", "echo \"$\(name)\""]
-        process.standardOutput = stdout
+        // -c: command. The double quotes prevent word-splitting on $name; we
+        // only support [A-Za-z_][A-Za-z0-9_]* names so injection is
+        // impossible. The redirect target comes from the environment, which
+        // sh, bash, zsh, and fish all expand the same way.
+        process.arguments = ["-ilc", "echo \"$\(name)\" > \"$\(Self.resultPathVariable)\""]
+        var environment = ProcessInfo.processInfo.environment
+        environment[Self.resultPathVariable] = resultURL.path
+        process.environment = environment
+        process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         let exited = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }
@@ -83,7 +88,7 @@ public struct LoginShellEnvProbe: ShellEnvProbe {
         }
 
         guard process.terminationStatus == 0,
-              let data = try? Data(contentsOf: stdoutURL) else { return nil }
+              let data = try? Data(contentsOf: resultURL) else { return nil }
         return Self.parseValueOutput(data)
     }
 
