@@ -111,9 +111,16 @@ struct WorktreeHistoryContent: View {
                             .accessibilityIdentifier("worktree.context.history.message.\(event.id)")
                             Image(systemName: "bubble.left.and.bubble.right").font(.caption)
                             heading(event)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        if expandedGroups.contains(event.id) { details(event) }
+                        if expandedGroups.contains(event.id) {
+                            if event.sourceWorktreePath != nil, openWorktree != nil {
+                                Text(event.title).font(.caption2).foregroundStyle(secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            details(event)
+                        }
                     }
                     .padding(10)
                     .background(secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
@@ -137,16 +144,16 @@ struct WorktreeHistoryContent: View {
                 Button {
                     unavailableWorktree = !openWorktree(path)
                 } label: {
-                    Text(event.title).font(.callout).fontWeight(.semibold)
+                    Text(event.kind == .agentMessage ? path : event.title).font(.callout).fontWeight(.semibold)
                         .lineLimit(event.kind == .agentMessage && !expandedGroups.contains(event.id) ? 2 : nil)
                         .truncationMode(.middle)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(minHeight: 44, alignment: .leading)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Color.accentColor)
-                .help("Open \(path)")
+                .help(event.title)
                 .accessibilityLabel("Open worktree \(path)")
                 .accessibilityIdentifier("worktree.context.history.link.\(event.id)")
             } else {
