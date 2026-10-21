@@ -55,6 +55,7 @@ jobs:
         run: |
           python3 -B -m unittest discover -s scripts/agent-endpoint-spike -p 'test_*.py'
           python3 -B -m unittest discover -s scripts/agent-integration -p 'test_*.py'
+          python3 -B scripts/ci/test_test_plan.py
 
   macos-build-and-test:
     # macos-26 ships Xcode 26 which bundles a current swift-testing.
@@ -66,9 +67,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Show tool versions
+        id: toolchain
         run: |
           swift --version
           xcodebuild -version
+          echo "id=$( { swift --version; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - name: Test shared SwiftPM wrapper
         timeout-minutes: 2
@@ -76,13 +79,27 @@ jobs:
 
       - uses: ./.github/actions/paging-renderer
 
-      - name: Cache SwiftPM build
+      - name: Cache SwiftPM dependencies
         uses: actions/cache@v4
         with:
-          path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}
+          path: |
+            .build/checkouts
+            .build/repositories
+            .build/artifacts
+          key: macos-deps-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+
+      - name: Restore compiled SwiftPM build
+        id: swift-build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .build/*-apple-macosx
+            .build/build.db
+            .build/debug.yaml
+            .build/workspace-state.json
+          key: macos-build-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-spm-
+            macos-build-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-
 
       - name: Resolve Swift dependencies
         timeout-minutes: 5
@@ -106,86 +123,31 @@ jobs:
         # remote refresh, and fail if the resolved graph unexpectedly changes.
         run: swift build --manifest-cache none -Xcc "$GRAFTTY_RENDERER_CONTEXT" --build-tests --disable-automatic-resolution -Xswiftc -warnings-as-errors
 
+      - name: Save compiled SwiftPM build
+        # Refresh successful main builds; PRs consume the rolling main cache
+        # without filling the repository quota with branch snapshots.
+        if: github.ref == 'refs/heads/main' && steps.swift-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .build/*-apple-macosx
+            .build/build.db
+            .build/debug.yaml
+            .build/workspace-state.json
+          key: ${{ steps.swift-build-cache.outputs.cache-primary-key }}
+
       - name: Test package targets in isolated processes
-        # The complete serial suite took 9m04s on a passing hosted run and
-        # exceeded 10m while still making progress on another. Allow runner
-        # variance across discovery and per-batch process startup; the ownership
-        # corpus below retains its separate five-minute performance gate.
+        # Preserve serial execution within bounded processes, but anchor suite
+        # boundaries so similarly named suites cannot run in multiple batches.
         timeout-minutes: 15
-        # `script` gives swift test a PTY-like stdout so output streams
-        # in real time instead of being block-buffered by the CI log pipe.
-        # A package-wide invocation intermittently stalls while the many async,
-        # subprocess, WebRTC, and socket suites contend in one test process.
-        # Launch one process per target while reusing the preceding build.
-        #
-        # SwiftPM's target-qualified --filter is honored by XCTest but stripped
-        # before Swift Testing runs; using it alone makes Swift Testing execute
-        # the ENTIRE package once per target. Build a suite-name filter from
-        # `swift test list` for Swift Testing, and run XCTest separately with
-        # its target-qualified filter. OwnershipModelTests keeps its dedicated
-        # corpus gate below.
-        run: |
-          set -o pipefail
-          test_targets="$(
-            swift package describe --type json \
-              | jq -r '.targets[] | select(.type == "test" and .name != "OwnershipModelTests") | .c99name'
-          )"
-          if [[ -z "$test_targets" ]]; then
-            echo "::error::No non-ownership Swift test targets were discovered"
-            exit 1
-          fi
+        run: python3 -B scripts/ci/run-macos-tests.py
 
-          test_list="$(swift test list -Xcc "$GRAFTTY_RENDERER_CONTEXT" --skip-build)"
-          while IFS= read -r target; do
-            echo "::group::$target"
-            suite_names="$(
-              awk -v prefix="${target}." '
-                index($0, prefix) == 1 {
-                  name = substr($0, length(prefix) + 1)
-                  sub(/\/.*/, "", name)
-                  print name
-                }
-              ' <<< "$test_list" \
-                | sort -u \
-                | sed 's/[][(){}.^$*+?|\\]/\\&/g'
-            )"
-
-            # Keep regexes below Swift Testing's practical argument-size
-            # ceiling and serialize within each process. Several NIO server
-            # suites synchronously join event-loop shutdown from cooperative
-            # tasks; unbounded Swift Testing parallelism can park the entire
-            # cooperative pool in those joins.
-            suite_filter=""
-            suite_count=0
-            while IFS= read -r suite; do
-              [[ -z "$suite" ]] && continue
-              if [[ -n "$suite_filter" ]]; then
-                suite_filter="${suite_filter}|${suite}"
-              else
-                suite_filter="$suite"
-              fi
-              suite_count=$((suite_count + 1))
-              if [[ "$suite_count" -eq 20 ]]; then
-                /usr/bin/script -q /dev/null \
-                  swift test -Xcc "$GRAFTTY_RENDERER_CONTEXT" --skip-build --disable-xctest --no-parallel \
-                    --filter "(${suite_filter})" \
-                  < /dev/null
-                suite_filter=""
-                suite_count=0
-              fi
-            done <<< "$suite_names"
-            if [[ -n "$suite_filter" ]]; then
-              /usr/bin/script -q /dev/null \
-                swift test -Xcc "$GRAFTTY_RENDERER_CONTEXT" --skip-build --disable-xctest --no-parallel \
-                  --filter "(${suite_filter})" \
-                < /dev/null
-            fi
-            /usr/bin/script -q /dev/null \
-              swift test -Xcc "$GRAFTTY_RENDERER_CONTEXT" --skip-build --disable-swift-testing \
-                --filter "^${target}\\." \
-              < /dev/null
-            echo "::endgroup::"
-          done <<< "$test_targets"
+      - name: Upload Mac test selection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-test-selection
+          path: .ci-results/macos
 
       - name: Ownership model corpus gate
         timeout-minutes: 5
@@ -198,15 +160,23 @@ jobs:
         # rather than bumping it.
         run: /usr/bin/script -q /dev/null swift test -Xcc "$GRAFTTY_RENDERER_CONTEXT" --filter OwnershipModel --skip-build
 
-  ios-build-for-testing:
+  ios-test-shards:
+    name: ios-test (${{ matrix.shard }})
     runs-on: macos-26
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [unit, integration]
     steps:
       - uses: actions/checkout@v4
 
       - name: Show tool versions
+        id: toolchain
         run: |
           swift --version
           xcodebuild -version
+          echo "id=$( { swift --version; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/paging-renderer
 
@@ -217,26 +187,22 @@ jobs:
         working-directory: Apps/GrafttyMobile
         run: xcodegen generate
 
-      # Cache the resolved SwiftPM sources (.spm) and compiled DerivedData
-      # (.derivedData). The exact-SHA cache written by this job is also the
-      # handoff to the test shards below: build the app and test bundle once,
-      # then let four fresh runners restore those products and test without
-      # rebuilding. Both dirs are pinned to fixed workspace paths because the
-      # default DerivedData path carries a random suffix that would never
-      # cache-hit. Bump `v3` to bust.
-      #
-      # Restore + save are split (not the combined `actions/cache`) so the
-      # build products are available to downstream jobs before they start.
-      - name: Restore SPM / DerivedData cache
-        id: spm-cache
+      # Each runner builds and tests directly: no second scheduling queue or
+      # exact-cache handoff. Both compile the same complete test bundle.
+      - name: Cache iOS SwiftPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .spm
+          key: ios-deps-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml') }}
+
+      - name: Restore iOS compiled build
+        id: ios-build-cache
         uses: actions/cache/restore@v4
         with:
-          path: |
-            .spm
-            .derivedData
-          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}-${{ github.sha }}
+          path: .derivedData
+          key: ios-build-v4-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
           restore-keys: |
-            ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}-
+            ios-build-v4-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-
 
       - name: Build GrafttyMobile for testing (iOS Simulator SDK)
         timeout-minutes: 10
@@ -245,6 +211,7 @@ jobs:
         # in project.yml handles signing. Without a real signature the
         # iOS Keychain rejects every SecItemAdd with errSecMissingEntitlement.
         run: |
+          # shellcheck disable=SC2016 # Xcode expands $(inherited).
           xcodebuild \
             -project Apps/GrafttyMobile/GrafttyMobile.xcodeproj \
             -scheme GrafttyMobile \
@@ -260,66 +227,13 @@ jobs:
             "OTHER_SWIFT_FLAGS=\$(inherited) -Xcc $GRAFTTY_RENDERER_CONTEXT" \
             build-for-testing
 
-      - name: Save SPM / DerivedData cache
-        # Never publish partial DerivedData from a failed build: a later
-        # restore-key match would otherwise spread the bad handoff.
-        if: ${{ success() && steps.spm-cache.outputs.cache-hit != 'true' }}
+      - name: Save iOS compiled build
+        # One writer, after a successful build; tests always execute afterwards.
+        if: github.ref == 'refs/heads/main' && matrix.shard == 'unit' && steps.ios-build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: |
-            .spm
-            .derivedData
-          key: ${{ steps.spm-cache.outputs.cache-primary-key }}
-
-  ios-test-shards:
-    name: ios-test (${{ matrix.shard }})
-    needs: ios-build-for-testing
-    runs-on: macos-26
-    # Fresh simulator boot can spend several minutes in Apple data migration.
-    # Give provisioning and testing independent canaries below; this outer
-    # ceiling only catches a job that overruns both budgets plus setup time.
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # The ordinary unit suites finish in about a minute. The remaining
-          # shards balance the real WebRTC/SSH integration suites using recent
-          # CI timings. Their suite-level `.serialized` traits remain intact;
-          # isolation comes from running each shard on its own macOS runner.
-          - shard: unit
-            test-arguments: >-
-              -skip-testing:GrafttyMobileKitTests/RemoteConnectionCoordinatorTests
-              -skip-testing:GrafttyMobileKitTests/RemoteConnectionReconnectTests
-              -skip-testing:GrafttyRemoteClientTests/RemoteHostConnectionLoopbackTests
-              -skip-testing:GrafttyRemoteClientTests/SSHAuthLoopbackTests
-              -skip-testing:GrafttyRemoteClientTests/SSHOverWebRTCLoopbackTests
-              -skip-testing:GrafttyRemoteClientTests/SSHPanesAndControlLoopbackTests
-              -skip-testing:GrafttyRemoteClientTests/SSHTerminalLoopbackTests
-          - shard: coordinator
-            test-arguments: >-
-              -only-testing:GrafttyMobileKitTests/RemoteConnectionCoordinatorTests
-          - shard: ssh-auth-terminal
-            test-arguments: >-
-              -only-testing:GrafttyRemoteClientTests/SSHAuthLoopbackTests
-              -only-testing:GrafttyRemoteClientTests/SSHTerminalLoopbackTests
-          - shard: remote-loopbacks
-            test-arguments: >-
-              -only-testing:GrafttyMobileKitTests/RemoteConnectionReconnectTests
-              -only-testing:GrafttyRemoteClientTests/RemoteHostConnectionLoopbackTests
-              -only-testing:GrafttyRemoteClientTests/SSHOverWebRTCLoopbackTests
-              -only-testing:GrafttyRemoteClientTests/SSHPanesAndControlLoopbackTests
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Restore exact build-for-testing products
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            .spm
-            .derivedData
-          key: ios-build-v3-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}-${{ github.sha }}
-          fail-on-cache-miss: true
+          path: .derivedData
+          key: ${{ steps.ios-build-cache.outputs.cache-primary-key }}
 
       - name: Create isolated iOS simulator
         timeout-minutes: 12
@@ -333,24 +247,29 @@ jobs:
         timeout-minutes: 15
         env:
           SHARD_NAME: ${{ matrix.shard }}
-          TEST_ARGUMENTS: ${{ matrix.test-arguments }}
-        run: scripts/run-ios-test-shard.sh
+        run: |
+          TEST_ARGUMENTS="$(python3 -B scripts/ci/test_plan.py "$SHARD_NAME")"
+          export TEST_ARGUMENTS
+          scripts/run-ios-test-shard.sh
 
-  # Preserve the original required-check name while the implementation runs
-  # as one build job plus a test matrix.
+      - name: Upload iOS test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-tests-${{ matrix.shard }}
+          path: .derivedData/Logs/Test/*.xcresult
+
+  # Preserve the original required-check name across both complete runners.
   ios-build-and-test:
     if: ${{ always() }}
-    needs:
-      - ios-build-for-testing
-      - ios-test-shards
+    needs: ios-test-shards
     runs-on: ubuntu-latest
     steps:
       - name: Verify every iOS build and test shard succeeded
         env:
-          BUILD_RESULT: ${{ needs.ios-build-for-testing.result }}
           TEST_RESULT: ${{ needs.ios-test-shards.result }}
         run: |
-          if [[ "$BUILD_RESULT" != "success" || "$TEST_RESULT" != "success" ]]; then
-            echo "::error::iOS build result: $BUILD_RESULT; test matrix result: $TEST_RESULT"
+          if [[ "$TEST_RESULT" != "success" ]]; then
+            echo "::error::iOS build/test matrix result: $TEST_RESULT"
             exit 1
           fi

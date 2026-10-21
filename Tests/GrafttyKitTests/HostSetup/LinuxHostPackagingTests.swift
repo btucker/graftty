@@ -2,6 +2,17 @@ import Foundation
 import Testing
 
 struct LinuxHostPackagingTests {
+    @Test("@spec DIST-4.8: When a Linux zmx build restores compiled artifacts, the release scripts shall execute the unit tests again, retain format validation and ReleaseSafe compilation, and isolate cache entries by architecture and build inputs.")
+    func warmCompilationCacheStillRunsTests() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", repository.appendingPathComponent("scripts/linux/test-packaging.py").path,
+                             "ZmxBuildTests.test_warm_cache_preserves_test_execution"]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
+
     @Test("@spec DIST-4.7: If Linux zmx builds encounter a transient dependency download failure, then the release scripts shall retry at most three times, preserve exhausted failures, and stop immediately for compiler or test failures.")
     func transientDependencyDownloadsAreRetried() throws {
         let process = Process()
