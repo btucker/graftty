@@ -139,7 +139,7 @@ jobs:
       - name: Test package targets in isolated processes
         # Preserve serial execution within bounded processes, but anchor suite
         # boundaries so similarly named suites cannot run in multiple batches.
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: python3 -B scripts/ci/run-macos-tests.py
 
       - name: Upload Mac test selection

@@ -20,9 +20,8 @@ def main():
         ["swift", "test", "list", "-Xcc", os.environ["GRAFTTY_RENDERER_CONTEXT"],
          "--skip-build", "--disable-swift-testing"], text=True).splitlines()
     xctest_inventory = [line.strip() for line in xctest_inventory if line.strip()]
-    package = json.loads(subprocess.check_output(["swift", "package", "describe", "--type", "json"], text=True))
-    targets = sorted(target["c99name"] for target in package["targets"]
-                     if target["type"] == "test" and target["name"] != "OwnershipModelTests")
+    targets = sorted({identifier.split(".", 1)[0] for identifier in xctest_inventory
+                      if not identifier.startswith("OwnershipModelTests.")})
     evidence = Path(".ci-results/macos")
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence / "test-plan.json").write_text(json.dumps(
