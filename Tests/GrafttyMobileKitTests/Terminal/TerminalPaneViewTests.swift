@@ -2198,13 +2198,13 @@ struct TerminalTouchScrollTests {
 @Suite(.serialized)
 @MainActor
 struct FirstLineClearanceRefreshTests {
-    @Test("@spec IOS-6.41: While a mobile terminal reserves space for top chrome, the application shall re-evaluate first-line clearance after received output has been parsed, without polling the viewport on a timer, and shall read the viewport for that check at most four times per second.")
-    func clearanceFollowsParsedOutputWithoutPolling() async throws {
+    @Test("@spec IOS-6.41: While a mobile terminal that reserves space for top chrome is in a window and has no scrollback, the application shall re-evaluate first-line clearance at most four times per second; while it has scrollback, the application shall not poll its viewport for that check.")
+    func clearancePollsOnlyWithoutScrollback() async throws {
         let mounted = try await mountedContainer()
         defer { mounted.tearDown() }
         let (container, session) = (mounted.container, mounted.session)
-        #expect(!container.snapshotScrollView.pollsContentForTesting,
-                "First-line clearance must not keep a repeating timer alive")
+        #expect(container.snapshotScrollView.pollsContentForTesting,
+                "Without scrollback, only polling observes every content change")
 
         session.receive(Data("prompt".utf8))
         try await waitUntil("lone first line keeps clearance") {
@@ -2215,9 +2215,8 @@ struct FirstLineClearanceRefreshTests {
         session.receive(Data("\u{1b}[2J\u{1b}[Hprompt".utf8))
         try await waitUntil("cleared screen restores clearance") { mounted.topInset() > 0 }
 
-        // Streaming output must not read the viewport more often than the
-        // timer this replaced: one leading read, one per 250 ms, and at most
-        // one refresh still pending from the previous step.
+        // Streaming output reads the viewport no more often than the timer:
+        // one tick per 250 ms, plus at most one read already in flight.
         let readsBefore = container.firstLineClearanceReadCountForTesting
         let start = ContinuousClock.now
         while ContinuousClock.now - start < .milliseconds(500) {
@@ -2227,6 +2226,62 @@ struct FirstLineClearanceRefreshTests {
         let streamingReads = container.firstLineClearanceReadCountForTesting - readsBefore
         #expect(streamingReads >= 1, "Streaming output must re-check clearance")
         #expect(streamingReads <= 4, "Read the viewport \(streamingReads) times in 500 ms")
+
+        let rows = Int(try #require(container.terminalGridMetrics).rows)
+        session.receive(Data(String(repeating: "\r\noutput", count: rows * 2).utf8))
+        try await waitUntil("scrollback stops polling and removes clearance") {
+            container.snapshotScrollView.hasScrollback
+                && !container.snapshotScrollView.pollsContentForTesting && mounted.topInset() == 0
+        }
+        session.receive(Data("\u{1b}[3J\u{1b}[2J\u{1b}[Hprompt".utf8))
+        try await waitUntil("erased scrollback resumes polling and restores clearance") {
+            !container.snapshotScrollView.hasScrollback
+                && container.snapshotScrollView.pollsContentForTesting && mounted.topInset() > 0
+        }
+    }
+
+    @Test("@spec IOS-6.43: When a width-only resize wraps or unwraps the lone first line of a mobile terminal that reserves space for top chrome, the application shall re-evaluate first-line clearance without further output.")
+    func clearanceFollowsWidthOnlyReflow() async throws {
+        let mounted = try await mountedContainer()
+        defer { mounted.tearDown() }
+        let (container, session) = (mounted.container, mounted.session)
+        let columns = Int(try #require(container.terminalGridMetrics).columns)
+        let line = String(repeating: "x", count: max(1, columns - 2))
+        session.receive(Data(line.utf8))
+        try await waitUntil("lone first line keeps clearance") {
+            session.readViewportText()?.contains(line) == true && mounted.topInset() > 0
+        }
+
+        let fullWidth = container.frame.width
+        container.frame.size.width = fullWidth / 2
+        try await waitUntil("narrowed grid wraps the line and removes clearance") {
+            container.layoutIfNeeded()
+            return Int(container.terminalGridMetrics?.columns ?? UInt16.max) < line.count
+                && mounted.topInset() == 0
+        }
+        container.frame.size.width = fullWidth
+        try await waitUntil("widened grid unwraps the line and restores clearance") {
+            container.layoutIfNeeded()
+            return Int(container.terminalGridMetrics?.columns ?? 0) >= line.count
+                && mounted.topInset() > 0
+        }
+    }
+
+    @Test("@spec IOS-6.44: When a mobile terminal that reserves space for top chrome replaces its screen content without received output, the application shall re-evaluate first-line clearance.")
+    func clearanceFollowsContentReplacedWithoutOutput() async throws {
+        let mounted = try await mountedContainer()
+        defer { mounted.tearDown() }
+        let (container, session) = (mounted.container, mounted.session)
+        session.receive(Data("prompt\r\nsecond line".utf8))
+        try await waitUntil("multiline screen has no clearance") {
+            session.readViewportText()?.contains("second line") == true && mounted.topInset() == 0
+        }
+        // A terminal reset rewrites the grid inside libghostty, the same way
+        // a paged snapshot installs, without bytes from the session.
+        #expect(container.terminalView.surface?.performBindingAction("reset") == true)
+        try await waitUntil("emptied screen restores clearance") {
+            session.readViewportText()?.contains("second line") == false && mounted.topInset() > 0
+        }
     }
 
     @Test("@spec IOS-6.42: While a mobile terminal that reserves space for top chrome is outside a window, the application shall not read its viewport for first-line clearance after received output, and shall re-evaluate that clearance when the terminal returns to a window.")
