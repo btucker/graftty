@@ -2902,6 +2902,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-6.4** When the channel closes (channelInactive), the handler shall cancel the subscription so the snapshot pipeline stops firing.
 
+**REMOTE-6.5** If open is called again on a panes-state client whose channel is already open, then the client shall reject that call without interrupting snapshot delivery on the open channel.
+
 ### REMOTE-7.x — pane_control Channel
 
 **REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability. (Enforced at userauth: a peer with `terminalControl: .disabled` is rejected.)

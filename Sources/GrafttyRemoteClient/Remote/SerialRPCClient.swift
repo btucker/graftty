@@ -10,8 +10,10 @@ import Foundation
 /// a replacement driver.
 actor SerialRPCClient<Request: Sendable, Response: Sendable> {
     struct Policy: Sendable {
-        /// Thrown by calls made while closed, and by calls whose connection
-        /// was closed before their response arrived.
+        /// Thrown by calls made while closed, and by calls whose response
+        /// arrived after their connection was closed. A request still queued
+        /// when `close()` runs throws `CancellationError`; one in flight
+        /// throws whatever the closed driver reports.
         var closedError: any Error
         /// Maximum requests queued or in flight, with the error past it.
         var queueLimit: (count: Int, error: any Error)?

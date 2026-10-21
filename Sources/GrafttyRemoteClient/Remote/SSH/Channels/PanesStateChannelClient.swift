@@ -104,7 +104,9 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                 onClose: { [weak self] in self?.handleChildClose() }
             )
         } catch {
-            inboundContinuation.finish()
+            // The inbound stream stays untouched: a rejected repeat open must
+            // not end delivery for the channel that is already open, and a
+            // failed first open never starts the drain that would read it.
             throw ClientError.openFailed(error)
         }
         // The single serial drain dispatches snapshots in wire order; frames

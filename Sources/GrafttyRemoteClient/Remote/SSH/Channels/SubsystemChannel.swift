@@ -130,10 +130,12 @@ final class SubsystemChannel: @unchecked Sendable {
     }
 
     /// Opens the child channel and requests the subsystem. A channel opens
-    /// at most once; any failure closes it.
+    /// at most once: a repeat call throws `SubsystemErrors.closed` and leaves
+    /// the first open untouched; any other failure closes the channel.
     ///
-    /// `onFrame` receives each inbound frame. `onClose` runs once, after the
-    /// child channel closes for any reason, including a refusal after open.
+    /// `onFrame` receives each inbound frame. `onClose` runs once, after an
+    /// opened child channel closes for any reason, including a refusal after
+    /// open; it does not run when `close()` wins the race with the open.
     func open(
         onFrame: @escaping @Sendable (Data) -> Void,
         onError: (@Sendable (any Error) -> Void)? = nil,
