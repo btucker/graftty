@@ -3614,6 +3614,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.5** When Codex or Claude hooks report turn activity, the application shall include their working panes in Running and project working counts, remove stopped or waiting panes, and clear activity when the pane's command ends.
 
+**AGENT-2.6** The application shall bound each `claude agents --json` and `ps` liveness-poll subprocess with a 5-second timeout, and if that timeout expires, then the application shall produce an empty Claude polling result so the next tick can poll again.
+
 ### AGENT-3.x
 
 **AGENT-3.1** When an explicit provider attention event carries a `paneSessionName` resolving to a live pane, the application shall attach the needs-input attention to that pane rather than the worktree.
@@ -3989,6 +3991,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PORTS-1.4** Lsof failure leaves snapshot empty
 
 **PORTS-1.5** When scanning worktree ports, the application shall exclude established connections, UDP sockets, regular files, and port zero from the listening port list.
+
+**PORTS-1.6** The application shall bound each `lsof` port-scan subprocess with a 5-second timeout, and if that timeout expires, then the application shall treat the scan as an lsof failure so the next tick can scan again.
 
 ### PORTS-2.x
 

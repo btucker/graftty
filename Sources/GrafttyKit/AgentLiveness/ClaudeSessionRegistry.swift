@@ -82,19 +82,24 @@ public final class ClaudeSessionRegistry {
         if livenessBySession != merged { livenessBySession = merged }
     }
 
+    /// Bounds each poll subprocess. `PollingTicker` awaits every tick before
+    /// sleeping, so one wedged `claude`/`ps` would otherwise stall liveness
+    /// polling until restart (AGENT-2.6).
+    static let pollTimeout: Duration = .seconds(5)
+
     private static func poll(
         executor: CLIExecutor, claudePath: String, logger: Logger
     ) async -> [String: AgentLiveness] {
         do {
             let agents = try await executor.capture(
-                command: claudePath, args: ["agents", "--json"], at: ".")
+                command: claudePath, args: ["agents", "--json"], at: ".", timeout: pollTimeout)
             guard agents.exitCode == 0 else { return [:] }
             let pids = AgentLivenessParsing.pids(agentsJSON: agents.stdout)
             guard !pids.isEmpty else { return [:] }
             let ps = try await executor.capture(
                 command: "ps",
                 args: ["eww", "-o", "pid=,command=", "-p", pids.map(String.init).joined(separator: ",")],
-                at: ".")
+                at: ".", timeout: pollTimeout)
             return AgentLivenessParsing.liveness(agentsJSON: agents.stdout, psOutput: ps.stdout)
         } catch {
             logger.debug("claude agents poll failed: \(String(describing: error))")
