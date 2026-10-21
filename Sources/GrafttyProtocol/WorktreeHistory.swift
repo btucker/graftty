@@ -110,6 +110,10 @@ public struct WorktreeTimeline: Sendable {
         public let completed: String
         public let decisions: [String]
         public var sourceWorktreePath: String? = nil
+
+        public var sourceWorktreeName: String? {
+            sourceWorktreePath.map { URL(fileURLWithPath: $0).lastPathComponent }
+        }
     }
 
     public struct Row: Identifiable, Sendable {

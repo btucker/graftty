@@ -115,7 +115,7 @@ struct WorktreeHistoryContent: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         if expandedGroups.contains(event.id) {
-                            if event.sourceWorktreePath != nil, openWorktree != nil {
+                            if event.sourceWorktreePath != nil {
                                 Text(event.title).font(.caption2).foregroundStyle(secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -144,7 +144,7 @@ struct WorktreeHistoryContent: View {
                 Button {
                     unavailableWorktree = !openWorktree(path)
                 } label: {
-                    Text(event.kind == .agentMessage ? path : event.title).font(.callout).fontWeight(.semibold)
+                    Text(event.kind == .agentMessage ? event.sourceWorktreeName ?? path : event.title).font(.callout).fontWeight(.semibold)
                         .lineLimit(event.kind == .agentMessage && !expandedGroups.contains(event.id) ? 2 : nil)
                         .truncationMode(.middle)
                         .fixedSize(horizontal: false, vertical: true)
@@ -157,7 +157,9 @@ struct WorktreeHistoryContent: View {
                 .accessibilityLabel("Open worktree \(path)")
                 .accessibilityIdentifier("worktree.context.history.link.\(event.id)")
             } else {
-                Text(event.title).font(.callout).fontWeight(.semibold)
+                Text(event.kind == .agentMessage ? event.sourceWorktreeName ?? event.title : event.title)
+                    .font(.callout).fontWeight(.semibold)
+                    .help(event.title)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if event.id == timeline.events.last?.id {

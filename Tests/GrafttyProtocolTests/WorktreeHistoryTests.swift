@@ -5,6 +5,16 @@ import Testing
 struct WorktreeHistoryTests {
     private let start = Date(timeIntervalSince1970: 100)
 
+    @Test("@spec CONTEXT-22: When Context history displays a source worktree, the application shall label it with its directory name while retaining its full path for navigation and sender details.")
+    func worktreeLabelsUseNames() {
+        var history = WorktreeHistory()
+        history.record(.init(text: "<graftty-peer-message agent=\"/Users/example/repo/.worktrees/fix layout#codex-123\">Checked.</graftty-peer-message>", at: start))
+        let event = WorktreeTimeline(history: history, brief: nil).events.first
+        #expect(event?.sourceWorktreeName == "fix layout")
+        #expect(event?.sourceWorktreePath == "/Users/example/repo/.worktrees/fix layout")
+        #expect(event?.title.contains("#codex-123") == true)
+    }
+
     @Test("@spec CONTEXT-20: When Context history identifies a peer by an absolute worktree address, the application shall expose its worktree path separately from its agent suffix for in-app navigation, while leaving unnamed peers and non-path sender labels unlinked.")
     func peerAddressesExposeWorktreePaths() {
         var history = WorktreeHistory()

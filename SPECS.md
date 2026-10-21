@@ -3946,6 +3946,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-21** When a Context history worktree link is opened on mobile, the application shall resolve a unique available target from fresh snapshots on the source host, reopen closed targets before selection, and abandon resolution when newer navigation supersedes it.
 
+### CONTEXT-22.x
+
+**CONTEXT-22** When Context history displays a source worktree, the application shall label it with its directory name while retaining its full path for navigation and sender details.
+
 ## MEM — MEM
 
 ### MEM-1.x
