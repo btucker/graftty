@@ -7,7 +7,7 @@ import GrafttyProtocol
 @Suite("GrafttyApp — Codex app-server inbox delivery wiring")
 struct CodexAppServerInboxDeliveryWiringTests {
     @Test("New inbox messages trigger exactly one Codex app-server delivery per recipient worktree, regardless of concurrent fan-out order.")
-    func newMessagesTriggerDeliveryPerRecipientWorktree() async {
+    func newMessagesTriggerDeliveryPerRecipientWorktree() async throws {
         let delivery = RecordingCodexDelivery()
         let state = GrafttyApp.CodexAppServerInboxObserverDeliveryState(lastSeenCount: 1)
         let messages = [
@@ -18,10 +18,11 @@ struct CodexAppServerInboxDeliveryWiringTests {
         ]
 
         let recipientWorktrees = await state.claimRecipientWorktrees(in: messages)
-        await GrafttyApp.deliverCodexAppServerMessages(
+        await GrafttyApp.drainNativeDeliveryMessages(
             teamID: "/repo",
             recipientWorktrees: recipientWorktrees,
-            delivery: delivery
+            inbox: try Self.makeInbox(),
+            deliveries: [delivery]
         )
 
         let calls = await delivery.calls
@@ -50,8 +51,9 @@ struct CodexAppServerInboxDeliveryWiringTests {
     }
 
     @Test("Rapid successive observer callbacks do not redeliver already claimed messages while delivery is suspended.")
-    func rapidCallbacksClaimMessageRangesBeforeAwaitingDelivery() async {
+    func rapidCallbacksClaimMessageRangesBeforeAwaitingDelivery() async throws {
         let delivery = BlockingCodexDelivery(blockFirstCall: true)
+        let inbox = try Self.makeInbox()
         let state = GrafttyApp.CodexAppServerInboxObserverDeliveryState()
         let firstMessages = [
             Self.message(id: "new-1", worktree: "/repo/.worktrees/alice"),
@@ -65,6 +67,7 @@ struct CodexAppServerInboxDeliveryWiringTests {
             state: state,
             teamID: "/repo",
             messages: firstMessages,
+            inbox: inbox,
             delivery: delivery
         )
         let firstStarted = await Self.waitUntil { await delivery.callCount() >= 1 }
@@ -73,6 +76,7 @@ struct CodexAppServerInboxDeliveryWiringTests {
             state: state,
             teamID: "/repo",
             messages: secondMessages,
+            inbox: inbox,
             delivery: delivery
         )
         let secondStarted = await Self.waitUntil { await delivery.callCount() >= 2 }
@@ -90,13 +94,15 @@ struct CodexAppServerInboxDeliveryWiringTests {
     }
 
     @Test("A slow delivery for one worktree does not block another worktree in the same batch from starting.")
-    func batchDeliveryFansOutAcrossRecipientWorktrees() async {
+    func batchDeliveryFansOutAcrossRecipientWorktrees() async throws {
         let delivery = BlockingCodexDelivery(blockWorktree: "/repo/.worktrees/alice")
 
-        async let batch: Void = GrafttyApp.deliverCodexAppServerMessages(
+        let inbox = try Self.makeInbox()
+        async let batch: Void = GrafttyApp.drainNativeDeliveryMessages(
             teamID: "/repo",
             recipientWorktrees: ["/repo/.worktrees/alice", "/repo/.worktrees/bob"],
-            delivery: delivery
+            inbox: inbox,
+            deliveries: [delivery]
         )
 
         let bothStarted = await Self.waitUntil { await delivery.callCount() >= 2 }
@@ -215,10 +221,10 @@ struct CodexAppServerInboxDeliveryWiringTests {
             liveSessionNames: restoredSessionNames
         )
 
-        await GrafttyApp.retryCodexAppServerDeliveryForPresenceWorktrees(
+        await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
             inbox: inbox,
             records: [presence],
-            delivery: delivery
+            deliveries: [delivery]
         )
 
         #expect(terminalManager.handle(forSessionName: sessionName) == nil)
@@ -243,10 +249,10 @@ struct CodexAppServerInboxDeliveryWiringTests {
             Self.presence(team: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex, pane: "graftty-a"),
         ]
 
-        await GrafttyApp.retryCodexAppServerDeliveryForPresenceWorktrees(
+        await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
             inbox: inbox,
             records: records,
-            delivery: delivery
+            deliveries: [delivery]
         )
 
         #expect(await delivery.calls.isEmpty)
@@ -274,10 +280,10 @@ struct CodexAppServerInboxDeliveryWiringTests {
             Self.presence(team: "/other", worktree: "/other/.worktrees/dan", runtime: .codex, pane: "graftty-d"),
         ]
 
-        await GrafttyApp.retryCodexAppServerDeliveryForPresenceWorktrees(
+        await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
             inbox: inbox,
             records: records,
-            delivery: delivery
+            deliveries: [delivery]
         )
 
         #expect(await delivery.callSet() == Set([
@@ -306,10 +312,10 @@ struct CodexAppServerInboxDeliveryWiringTests {
             ),
         ]
 
-        await GrafttyApp.retryCodexAppServerDeliveryForPresenceWorktrees(
+        await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
             inbox: inbox,
             records: records,
-            delivery: delivery
+            deliveries: [delivery]
         )
         #expect(await delivery.calls == [
             .init(team: "/repo", worktree: worktree),
@@ -406,13 +412,15 @@ struct CodexAppServerInboxDeliveryWiringTests {
         state: GrafttyApp.CodexAppServerInboxObserverDeliveryState,
         teamID: String,
         messages: [TeamInboxMessage],
+        inbox: TeamInbox,
         delivery: CodexAppServerDeliveryTrigger
     ) async {
         let recipientWorktrees = await state.claimRecipientWorktrees(in: messages)
-        await GrafttyApp.deliverCodexAppServerMessages(
+        await GrafttyApp.drainNativeDeliveryMessages(
             teamID: teamID,
             recipientWorktrees: recipientWorktrees,
-            delivery: delivery
+            inbox: inbox,
+            deliveries: [delivery]
         )
     }
 
@@ -672,10 +680,11 @@ struct CodexAppServerInboxDeliveryWiringTests {
         func deliverAppendedMessages() async {
             let messages = (try? inbox.messages(teamID: teamID)) ?? []
             let recipientWorktrees = await observerState.claimRecipientWorktrees(in: messages)
-            await GrafttyApp.deliverCodexAppServerMessages(
+            await GrafttyApp.drainNativeDeliveryMessages(
                 teamID: teamID,
                 recipientWorktrees: recipientWorktrees,
-                delivery: delivery
+                inbox: inbox,
+                deliveries: [delivery]
             )
         }
     }

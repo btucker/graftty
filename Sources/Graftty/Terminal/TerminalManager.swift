@@ -355,12 +355,6 @@ final class TerminalManager: ObservableObject {
     /// rather than fall back to time-based heuristics.
     var onShellReady: ((PaneSlotID) -> Void)?
 
-    /// Called on OSC 9;4 progress reports from programs like `git clone`
-    /// or `apt` that advertise progress. The host updates the attention
-    /// badge so the user can keep tabs on long-running jobs without
-    /// staying on the pane.
-    var onProgressReport: ((PaneSlotID, ProgressReport) -> Void)?
-
     /// Called when libghostty dispatches `goto_split` with a spatial
     /// direction (left/right/up/down). Host navigates focus to the
     /// nearest neighbor in that direction.
@@ -442,17 +436,6 @@ final class TerminalManager: ObservableObject {
             return false
         }
         return true
-    }
-
-    /// Swift-native mirror of `ghostty_action_progress_report_s` so
-    /// callers outside the Terminal module don't need to import
-    /// GhosttyKit just to pattern-match on progress state.
-    enum ProgressReport {
-        case indeterminate
-        case paused
-        case error
-        /// 0–100 when the terminal program reported an exact percentage.
-        case percent(Int8)
     }
 
     /// Path to the Graftty control socket, exposed to spawned shells via `GRAFTTY_SOCK`.
@@ -1721,19 +1704,6 @@ final class TerminalManager: ObservableObject {
             guard let id = terminalID(from: target) else { return }
             let finished = action.action.command_finished
             onCommandFinished?(id, finished.exit_code, finished.duration)
-
-        case GHOSTTY_ACTION_PROGRESS_REPORT:
-            guard let id = terminalID(from: target) else { return }
-            let progress = action.action.progress_report
-            let translated: ProgressReport
-            switch progress.state {
-            case GHOSTTY_PROGRESS_STATE_ERROR:         translated = .error
-            case GHOSTTY_PROGRESS_STATE_INDETERMINATE: translated = .indeterminate
-            case GHOSTTY_PROGRESS_STATE_PAUSE:         translated = .paused
-            default:
-                translated = progress.progress >= 0 ? .percent(progress.progress) : .indeterminate
-            }
-            onProgressReport?(id, translated)
 
         case GHOSTTY_ACTION_NEW_SPLIT:
             guard let id = terminalID(from: target) else { return }

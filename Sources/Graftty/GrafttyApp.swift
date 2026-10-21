@@ -807,12 +807,11 @@ struct GrafttyApp: App {
                 )
             }
         }
-        // PROGRESS_REPORT intentionally unhandled — shell-integration
+        // PROGRESS_REPORT is intentionally unhandled: shell-integration
         // progress pings (OSC 9;4 from tools emitting indeterminate or
         // percent status) were too loud relative to the urgency they
-        // convey. The underlying plumbing in TerminalManager stays
-        // wired; we can revisit with a dedicated, less-aggressive
-        // visual if the need comes back.
+        // convey. TerminalManager ignores the action; add a dedicated,
+        // less-aggressive visual if the need comes back.
 
         // First prompt on a newly-ready pane → maybe type the user's
         // default command. `maybeRunDefaultCommand` consults UserDefaults
