@@ -1544,6 +1544,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-4.10** When the WebSocket bridge spawns a `zmx attach` child to back a mobile-client session, the application shall propagate the same shell-integration env (`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERMINFO` when ghostty-terminfo is available, and `ZDOTDIR` pointing at Ghostty's zsh shell-integration when the user's shell is zsh) that host-managed native panes use (per `ZMX-6.3` / `ZMX-6.5`). Without this, the WS attach can win the create-session race against the Mac surface's attach (which is slow because it follows `git worktree add` + discovery) and spawn the daemon's user shell with no shell integration — silencing the first-PWD trigger (so the host pane never types the user's default command) and leaving the shell without truecolor.
 
+**WEB-4.11** If a WebSocket terminal client cannot drain output, then the application shall bound queued output to 8 MiB of payload and 1024 frames per connection, including work awaiting its event loop, and disconnect that client on overflow without silently dropping terminal bytes on an open connection.
+
 ### WEB-5.x — Client
 
 **WEB-5.1** The bundled client shall render a single terminal (ghostty-web, a WASM build of libghostty — the same VT parser as the native app pane) that attaches to the session indicated by the `/session/<name>` URL path. If a client arrives at the root path `/` with a `?session=<name>` query parameter, the client shall redirect to `/session/<name>` (backward compatibility). Sharing a parser with the native pane is what keeps escape-sequence behavior (cursor movement, SGR state, OSC 8 hyperlinks, scrollback) identical across clients.

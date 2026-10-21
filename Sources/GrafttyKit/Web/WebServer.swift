@@ -1148,6 +1148,7 @@ public final class WebServer {
         private var session: WebSession?
         private weak var channel: Channel?
         private var coordinator: TerminalAttachCoordinator?
+        private var output: WebSocketOutput?
 
         init(
             sessionName: String,
@@ -1174,6 +1175,8 @@ public final class WebServer {
 
         func handlerAdded(context: ChannelHandlerContext) {
             channel = context.channel
+            let output = WebSocketOutput(channel: context.channel)
+            self.output = output
             let writeOnLoop = NIOLoopBound({ [weak self] (data: Data) in
                 self?.session?.write(data)
             }, eventLoop: context.eventLoop)
@@ -1188,14 +1191,8 @@ public final class WebServer {
                 defaultKind: defaultKind,
                 ownershipStore: ownershipStore,
                 broadcaster: ownershipBroadcaster,
-                sendText: { [weak channel = context.channel] payload in
-                    guard let channel else { return }
-                    channel.eventLoop.execute {
-                        var buf = channel.allocator.buffer(capacity: payload.utf8.count)
-                        buf.writeString(payload)
-                        let frame = WebSocketFrame(fin: true, opcode: .text, data: buf)
-                        channel.writeAndFlush(frame, promise: nil)
-                    }
+                sendText: { payload in
+                    output.send(Data(payload.utf8), opcode: .text)
                 },
                 resize: { [weak self] windowSize in
                     self?.session?.resize(windowSize: windowSize)
@@ -1216,14 +1213,8 @@ public final class WebServer {
                 workingDirectory: workingDirectory,
                 spawnConfiguration: spawnConfiguration
             ))
-            sess.onPTYData = { [weak self] data in
-                guard let self, let channel = self.channel else { return }
-                channel.eventLoop.execute {
-                    var buffer = channel.allocator.buffer(capacity: data.count)
-                    buffer.writeBytes(data)
-                    let frame = WebSocketFrame(fin: true, opcode: .binary, data: buffer)
-                    channel.writeAndFlush(frame, promise: nil)
-                }
+            sess.onPTYData = { data in
+                output.send(data, opcode: .binary)
             }
             sess.onExit = { [weak self] in
                 guard let self, let channel = self.channel else { return }
@@ -1278,8 +1269,7 @@ public final class WebServer {
                 session?.close()
                 context.close(promise: nil)
             case .ping:
-                let pong = WebSocketFrame(fin: true, opcode: .pong, data: frame.unmaskedData)
-                context.writeAndFlush(NIOAny(pong), promise: nil)
+                output?.send(Data(frame.unmaskedData.readableBytesView), opcode: .pong)
             default:
                 break
             }
@@ -1288,6 +1278,7 @@ public final class WebServer {
         func channelInactive(context: ChannelHandlerContext) {
             coordinator?.detach()
             session?.close()
+            output = nil
         }
     }
 }
