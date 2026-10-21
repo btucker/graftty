@@ -94,6 +94,45 @@ struct JSONFileStoreTests {
         #expect(throws: DecodingError.self) { try plain.load() }
     }
 
+    /// Stands in for a persisted type whose decoder validates a field and
+    /// throws its own error type (e.g. `DirectSSHEndpoint`).
+    private struct Validated: Codable {
+        struct Invalid: Error {}
+        init(from decoder: Decoder) throws { throw Invalid() }
+        func encode(to encoder: Encoder) throws {}
+    }
+
+    @Test("@spec PERSIST-5.7: If a JSONFileStore's value rejects the file's contents with its own error while decoding, then the application shall report the contents as malformed with a DecodingError, so the store's corrupt-file recovery applies.")
+    func validationErrorsReportAsMalformed() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fileURL = dir.appendingPathComponent("x.json")
+        try Data("[{}]".utf8).write(to: fileURL)
+        let store = JSONFileStore<[Validated]>(fileURL: fileURL)
+
+        #expect(throws: DecodingError.self) { try store.load() }
+        #expect(store.loadMovingAsideCorruptFile() == nil)
+        #expect(!FileManager.default.fileExists(atPath: fileURL.path))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).count == 1)
+    }
+
+    @Test("loadMovingAsideCorruptFile() treats a missing or unreadable file as absent without a backup")
+    func loadMovingAsideLeavesUnreadableFilesAlone() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = JSONFileStore<Record>(fileURL: dir.appendingPathComponent("x.json"))
+        #expect(store.loadMovingAsideCorruptFile() == nil)
+        try store.save(record)
+        #expect(store.loadMovingAsideCorruptFile() == record)
+
+        // A directory where the file should be: unreadable, not malformed.
+        let blocked = JSONFileStore<Record>(fileURL: dir.appendingPathComponent("sub"))
+        try FileManager.default.createDirectory(at: blocked.fileURL, withIntermediateDirectories: true)
+        #expect(blocked.loadMovingAsideCorruptFile() == nil)
+        #expect(FileManager.default.fileExists(atPath: blocked.fileURL.path))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted() == ["sub", "x.json"])
+    }
+
     @Test("remove() deletes the file and is a no-op when it is already gone")
     func removeIsIdempotent() throws {
         let dir = try makeTempDir()

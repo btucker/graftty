@@ -223,20 +223,11 @@ public final class PinnedHostStore: @unchecked Sendable {
     /// Read failures and foreign protocol versions yield an empty envelope;
     /// malformed contents are first moved aside so callers can recover.
     private func _load() -> Envelope {
-        let empty = Envelope(version: RemoteAccessProtocol.version, hosts: [])
-        do {
-            guard let envelope = try file.load(), envelope.version == RemoteAccessProtocol.version else {
-                return empty
-            }
-            return envelope
-        } catch is DecodingError {
-            // Best effort: if the rename fails (permissions, etc.) we still return empty
-            // so operations like revocation remain possible after corruption.
-            file.moveAsideCorruptFile()
-            return empty
-        } catch {
-            return empty
+        guard let envelope = file.loadMovingAsideCorruptFile(),
+              envelope.version == RemoteAccessProtocol.version else {
+            return Envelope(version: RemoteAccessProtocol.version, hosts: [])
         }
+        return envelope
     }
 
     private func _save(_ envelope: Envelope) throws {

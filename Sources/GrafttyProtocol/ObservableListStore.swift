@@ -77,10 +77,12 @@ public final class ObservableListStore<Element: Codable & Sendable> {
         hasLoaded = true
     }
 
-    /// Persists `list` and, only once the write succeeds, publishes it.
+    /// Persists `list` and, only once the write succeeds, publishes it as
+    /// loaded, so a pending `loadIfNeeded()` cannot replace it.
     public func write(_ list: [Element]) throws {
         try file.save(list)
         elements = list.sorted(by: areInIncreasingOrder)
+        hasLoaded = true
     }
 
     nonisolated private static func read(
@@ -88,15 +90,10 @@ public final class ObservableListStore<Element: Codable & Sendable> {
         corruptFile: CorruptFilePolicy,
         isLoadable: (Element) -> Bool
     ) -> [Element] {
-        do {
-            return try (file.load() ?? []).filter(isLoadable)
-        } catch is DecodingError {
-            if corruptFile == .moveAside {
-                file.moveAsideCorruptFile()
-            }
-            return []
-        } catch {
-            return []
+        let rows = switch corruptFile {
+        case .moveAside: file.loadMovingAsideCorruptFile()
+        case .discard: try? file.load()
         }
+        return (rows ?? []).filter(isLoadable)
     }
 }

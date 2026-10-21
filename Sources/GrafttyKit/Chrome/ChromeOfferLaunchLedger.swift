@@ -34,9 +34,9 @@ struct ChromeOfferLaunchLedger {
                 posixPermissions: 0o600
             )
         }
-        guard let file, let storageURL, FileManager.default.fileExists(atPath: storageURL.path) else { return }
+        guard let file, FileManager.default.fileExists(atPath: file.fileURL.path) else { return }
         do {
-            let handle = try FileHandle(forReadingFrom: storageURL)
+            let handle = try FileHandle(forReadingFrom: file.fileURL)
             defer { try? handle.close() }
             let bytes = try handle.read(upToCount: Self.maximumFileBytes + 1) ?? Data()
             guard bytes.count <= Self.maximumFileBytes else { throw Failure.unreadableHistory }

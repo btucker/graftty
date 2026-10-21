@@ -33,11 +33,13 @@ struct JSONStoreCompatibilityTests {
     }
 
     /// Unsorted encoders do not fix key order, so stores written without
-    /// `.sortedKeys` are compared as parsed JSON rather than as bytes.
+    /// `.sortedKeys` are compared as key-sorted re-serializations rather than
+    /// as bytes (portable, unlike bridging the parsed tree to `NSObject`).
     private static func sameJSON(_ lhs: Data, _ rhs: Data) throws -> Bool {
-        let l = try JSONSerialization.jsonObject(with: lhs) as? NSObject
-        let r = try JSONSerialization.jsonObject(with: rhs) as? NSObject
-        return l != nil && l == r
+        func canonical(_ data: Data) throws -> Data {
+            try JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: data), options: [.sortedKeys])
+        }
+        return try canonical(lhs) == canonical(rhs)
     }
 
     private static func legacyISODecoder() -> JSONDecoder {
@@ -220,5 +222,38 @@ struct JSONStoreCompatibilityTests {
         let reloaded = RemoteMacStore(storeURL: url)
         await reloaded.loadIfNeeded()
         #expect(reloaded.remoteMacs == [mac])
+    }
+
+    @MainActor
+    @Test("a saved Mac that fails field validation is backed up before the next save replaces remote-macs.json")
+    func remoteMacStoreBacksUpValidationFailures() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("remote-macs.json")
+        let saved = RemoteMac(
+            id: RemoteDeviceID(value: "mac-1"),
+            label: "Studio Mac",
+            fingerprint: try RemoteIdentityFingerprint(rawBytes: Data(repeating: 0x11, count: 32)),
+            maintenanceDestination: try LinuxHostDestination("me@studio"),
+            addedAt: Self.at
+        )
+        // `LinuxHostDestination` rejects this value with its own error type,
+        // not a `DecodingError`.
+        let legacy = String(decoding: try Self.legacyPrettySortedEncoder(iso8601: true).encode([saved]), as: UTF8.self)
+        try Data(legacy.replacingOccurrences(of: "me@studio", with: "-oProxyCommand").utf8).write(to: url)
+
+        let store = RemoteMacStore(storeURL: url)
+        try store.add(RemoteMac(
+            id: RemoteDeviceID(value: "mac-2"),
+            label: "Laptop",
+            fingerprint: try RemoteIdentityFingerprint(rawBytes: Data(repeating: 0x22, count: 32)),
+            addedAt: Self.at
+        ))
+
+        let backups = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            .filter { $0.hasPrefix("remote-macs.json.corrupt.") }
+        #expect(backups.count == 1)
+        let backup = try Data(contentsOf: dir.appendingPathComponent(try #require(backups.first)))
+        #expect(String(decoding: backup, as: UTF8.self).contains("-oProxyCommand"))
     }
 }

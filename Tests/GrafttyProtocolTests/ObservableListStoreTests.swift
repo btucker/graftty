@@ -74,10 +74,26 @@ struct ObservableListStoreTests {
         defer { try? FileManager.default.removeItem(at: blocker) }
         // A regular file where the store needs its parent directory.
         try Data().write(to: blocker)
+        let unloaded = makeStore(blocker.appendingPathComponent("rows.json"))
+        #expect(throws: (any Error).self) { try unloaded.write([Row(name: "a", rank: 1)]) }
+        #expect(!unloaded.hasLoaded)
+
         let store = makeStore(blocker.appendingPathComponent("rows.json"))
         store.ensureLoaded()
-
         #expect(throws: (any Error).self) { try store.write([Row(name: "a", rank: 1)]) }
         #expect(store.elements.isEmpty)
+    }
+
+    @Test("a successful write marks the store loaded so a pending load cannot replace it")
+    func writeMarksLoaded() async throws {
+        let url = makeFileURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try makeStore(url).write([Row(name: "old", rank: 1)])
+
+        let store = makeStore(url)
+        try store.write([Row(name: "new", rank: 2)])
+        #expect(store.hasLoaded)
+        await store.loadIfNeeded()
+        #expect(store.elements.map(\.name) == ["new"])
     }
 }

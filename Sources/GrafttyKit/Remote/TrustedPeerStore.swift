@@ -166,23 +166,15 @@ public final class TrustedPeerStore: @unchecked Sendable {
 
     // MARK: Private helpers (call only while holding `lock`)
 
-    /// Read failures and foreign protocol versions yield an empty envelope;
-    /// malformed contents are first moved aside so callers can recover.
+    /// Read failures and foreign protocol versions yield an empty envelope, so
+    /// operations like revocation remain possible after corruption; malformed
+    /// contents are first moved aside.
     private func _load() -> Envelope {
-        let empty = Envelope(version: RemoteAccessProtocol.version, peers: [])
-        do {
-            guard let envelope = try file.load(), envelope.version == RemoteAccessProtocol.version else {
-                return empty
-            }
-            return envelope
-        } catch is DecodingError {
-            // Best effort: if the rename fails (permissions, etc.) we still return empty
-            // so operations like revocation remain possible after corruption.
-            file.moveAsideCorruptFile()
-            return empty
-        } catch {
-            return empty
+        guard let envelope = file.loadMovingAsideCorruptFile(),
+              envelope.version == RemoteAccessProtocol.version else {
+            return Envelope(version: RemoteAccessProtocol.version, peers: [])
         }
+        return envelope
     }
 
     private func _save(_ envelope: Envelope) throws {
