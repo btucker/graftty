@@ -4,9 +4,9 @@ import Testing
 @testable import GrafttyKit
 import GrafttyProtocol
 
-@Suite("GrafttyApp — Codex app-server inbox delivery wiring")
+@Suite("GrafttyApp — native inbox delivery wiring")
 struct CodexAppServerInboxDeliveryWiringTests {
-    @Test("New inbox messages trigger exactly one Codex app-server delivery per recipient worktree, regardless of concurrent fan-out order.")
+    @Test("New inbox messages trigger exactly one native delivery attempt per recipient worktree when that attempt leaves the inbox unchanged, regardless of concurrent fan-out order.")
     func newMessagesTriggerDeliveryPerRecipientWorktree() async throws {
         let delivery = RecordingCodexDelivery()
         let state = GrafttyApp.CodexAppServerInboxObserverDeliveryState(lastSeenCount: 1)
@@ -258,8 +258,8 @@ struct CodexAppServerInboxDeliveryWiringTests {
         #expect(await delivery.calls.isEmpty)
     }
 
-    @Test("Presence refresh retries only Codex worktrees with pending unread messages.")
-    func presenceRefreshRetriesOnlyPendingCodexPresenceWorktrees() async throws {
+    @Test("Presence refresh retries only Codex or transport-backed Claude worktrees with pending unread messages.")
+    func presenceRefreshRetriesOnlyPendingNativePresenceWorktrees() async throws {
         let delivery = RecordingCodexDelivery()
         let inbox = try Self.makeInbox()
         let bobDelivered = try Self.appendMessage(to: "/repo/.worktrees/bob", inbox: inbox)
@@ -271,6 +271,12 @@ struct CodexAppServerInboxDeliveryWiringTests {
             teamID: "/repo"
         )
         _ = try Self.appendMessage(to: "/repo/.worktrees/alice", inbox: inbox)
+        // Pending, but this Claude presence has no peer transport to deliver through.
+        _ = try Self.appendMessage(
+            to: "/repo/.worktrees/claude",
+            runtime: TeamHookRuntime.claude.rawValue,
+            inbox: inbox
+        )
         _ = try Self.appendMessage(to: "/other/.worktrees/dan", teamID: "/other", inbox: inbox)
         let records = [
             Self.presence(team: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex, pane: "graftty-a"),

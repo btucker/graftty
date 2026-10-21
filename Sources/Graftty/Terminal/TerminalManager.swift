@@ -1777,7 +1777,8 @@ final class TerminalManager: ObservableObject {
              GHOSTTY_ACTION_TOGGLE_FULLSCREEN,
              GHOSTTY_ACTION_TOGGLE_MAXIMIZE,
              GHOSTTY_ACTION_TOGGLE_WINDOW_DECORATIONS,
-             GHOSTTY_ACTION_CHECK_FOR_UPDATES:
+             GHOSTTY_ACTION_CHECK_FOR_UPDATES,
+             GHOSTTY_ACTION_PROGRESS_REPORT:
             break
 
         default:
