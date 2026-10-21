@@ -300,7 +300,7 @@ let package = Package(
                            .product(name: "NIOEmbedded", package: "swift-nio")] + cryptoDependencies,
             sources: isLinux ? ["Ports/PortBindingTests.swift", "Ports/LsofOutputParserTests.swift", "Ports/PortScannerTests.swift", "Ports/ProcessTreeWalkerTests.swift", "Ports/LinuxProcSocketScannerTests.swift", "Host/HeadlessHostPortTests.swift", "Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "Host/HostAgentEnvironmentTests.swift", "HostSetup/LinuxHostAgentInstallTests.swift", "HostSetup/LinuxHostSetupTests.swift", "HostSetup/LinuxHostSetupExecutionTests.swift", "HostSetup/LinuxHostPackagingTests.swift", "HostSetup/LinuxHostMaintenanceTests.swift",
                 "Support/MutableBox.swift", "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Notification/ControlRequestCoreTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift", "Web/WebSocketOutputTests.swift",
-                "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamPresenceStorageTests.swift",
+                "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamInboxParseCacheTests.swift", "Teams/TeamPresenceStorageTests.swift",
                 "Teams/AttentionFileHandoffTests.swift", "Remote/MacToMac/GrafttyBonjourServiceTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift"] : nil,
             resources: [
                 .process("Hosting/Fixtures"),

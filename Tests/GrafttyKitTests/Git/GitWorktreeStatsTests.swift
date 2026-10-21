@@ -7,9 +7,8 @@ struct GitWorktreeStatsParserTests {
 
     // MARK: parseSingleCount
     // `git rev-list --count <refs>` prints a single non-negative integer.
-    // Ahead and behind are computed with separate invocations now that
-    // the union-of-upstreams semantics (two refs on the left) rules out
-    // `--left-right --count`'s symmetric-diff shortcut.
+    // A two-ref union needs separate ahead / behind invocations; a single
+    // ref uses `--left-right --count` (see `parseLeftRightCount`).
 
     @Test func parsesSingleCountNonZero() throws {
         #expect(GitWorktreeStats.parseSingleCount("42\n") == 42)
@@ -446,5 +445,104 @@ struct GitWorktreeStatsResolveUpstreamRefsTests {
         #expect(stats.behind == 2,
                 "two distinct commits — one on origin/main, one on origin/feature — should count as ↓2 via union, not double-counted as ↓3")
         #expect(stats.ahead == 0)
+    }
+}
+
+@Suite("""
+@spec DIVERGE-3.1: The application shall compute the ahead and behind counts against the upstream refs from `DIVERGE-3.0`. When there is a single ref, the application shall run one `git rev-list --left-right --count HEAD...<ref>` and read the left count as ahead and the right count as behind. When there are two refs, the application shall run `git rev-list --count <refs> ^HEAD` for behind and `git rev-list --count HEAD ^<refs>` for ahead; `rev-list` natively dedupes, so a commit reachable from both upstream refs is counted once.
+""")
+struct GitWorktreeStatsRevListTests {
+    private static func stubDiffAndStatus(_ executor: FakeCLIExecutor, diffBase: String) {
+        executor.stub(command: "git", args: ["diff", "--shortstat", "\(diffBase)...HEAD"],
+                      output: .init(stdout: "", stderr: "", exitCode: 0))
+        executor.stub(command: "git", args: ["status", "--porcelain"],
+                      output: .init(stdout: "", stderr: "", exitCode: 0))
+    }
+
+    @Test func singleRefCountsAheadAndBehindInOneChild() async throws {
+        let executor = FakeCLIExecutor()
+        executor.stub(command: "git", args: ["rev-list", "--left-right", "--count", "HEAD...origin/main"],
+                      output: .init(stdout: "2\t3\n", stderr: "", exitCode: 0))
+        Self.stubDiffAndStatus(executor, diffBase: "origin/main")
+
+        let stats = try await GitWorktreeStats.compute(
+            worktreePath: "/wt",
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main"),
+            deadline: nil,
+            using: executor
+        )
+
+        #expect(stats.ahead == 2)
+        #expect(stats.behind == 3)
+        #expect(executor.invocations.filter { $0.args.first == "rev-list" }.count == 1)
+        #expect(executor.invocations.count == 3)
+    }
+
+    @Test func unionOfTwoRefsKeepsSeparateAheadAndBehindChildren() async throws {
+        let executor = FakeCLIExecutor()
+        executor.stub(command: "git", args: ["rev-list", "--count", "origin/main", "origin/feature", "^HEAD"],
+                      output: .init(stdout: "3\n", stderr: "", exitCode: 0))
+        executor.stub(command: "git", args: ["rev-list", "--count", "HEAD", "^origin/main", "^origin/feature"],
+                      output: .init(stdout: "2\n", stderr: "", exitCode: 0))
+        Self.stubDiffAndStatus(executor, diffBase: "origin/feature")
+
+        let stats = try await GitWorktreeStats.compute(
+            worktreePath: "/wt",
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main", branchRef: "origin/feature"),
+            deadline: nil,
+            using: executor
+        )
+
+        #expect(stats.ahead == 2)
+        #expect(stats.behind == 3)
+        #expect(executor.invocations.filter { $0.args.first == "rev-list" }.count == 2)
+    }
+
+    @Test func singleRefRejectsMalformedLeftRightOutput() async throws {
+        let executor = FakeCLIExecutor()
+        executor.stub(command: "git", args: ["rev-list", "--left-right", "--count", "HEAD...origin/main"],
+                      output: .init(stdout: "2\n", stderr: "", exitCode: 0))
+        Self.stubDiffAndStatus(executor, diffBase: "origin/main")
+
+        await #expect(throws: GitWorktreeStatsError.unparseableRevList("2\n")) {
+            try await GitWorktreeStats.compute(
+                worktreePath: "/wt",
+                upstreamRefs: UpstreamRefs(defaultRef: "origin/main"),
+                deadline: nil,
+                using: executor
+            )
+        }
+    }
+
+    @Test func singleRefMatchesSeparateCountsInARealRepo() async throws {
+        let (root, clone, _) = try makeClonedRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let other = root.appendingPathComponent("other-clone")
+        try shellInRepo("git clone \(root.appendingPathComponent("upstream.git").path) \(other.path)", at: root)
+        try shellInRepo("""
+            printf 'omega\\n' >> file.txt && git add file.txt && git commit -m 'omega' && \
+            git push origin main
+            """, at: other)
+        try shellInRepo("""
+            git fetch origin && \
+            printf 'local\\n' > local.txt && git add local.txt && git commit -m 'local one' && \
+            printf 'more\\n' >> local.txt && git add local.txt && git commit -m 'local two'
+            """, at: clone)
+
+        let stats = try await GitWorktreeStats.compute(
+            worktreePath: clone.path,
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main")
+        )
+        // A duplicated ref takes the separate-children path; rev-list
+        // dedupes it, so both paths must agree.
+        let separate = try await GitWorktreeStats.compute(
+            worktreePath: clone.path,
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main", branchRef: "origin/main")
+        )
+
+        #expect(stats.ahead == 2)
+        #expect(stats.behind == 1)
+        #expect(stats.ahead == separate.ahead)
+        #expect(stats.behind == separate.behind)
     }
 }

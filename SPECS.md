@@ -694,7 +694,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-2.5** While a repository is in the sidebar, the application shall watch `<repoPath>/.git/logs/refs/remotes/origin/` using FSEvents so that any operation which advances a remote-tracking ref — `git push` (the common `gh pr create` path), `git fetch`, and prune — surfaces as an origin-ref change. One watch per repository covers all linked worktrees, since they share the main checkout's git directory.
 
-**GIT-2.6** While a worktree is in the sidebar and non-stale, the application shall recursively watch the worktree's directory with `FSEventStreamCreate` (coalescing latency 0.5s) so that working-tree edits, stages / unstages via `.git/index`, and untracked-file creation surface as content-change events. Events for the worktree root, the bare `.git` directory, and the `.git/objects/` subtree shall be filtered out: the root and `.git` are coarse parent-mtime bumps that fire alongside more specific descendant events and carry no additional signal, and `.git/objects/` is pure pack-churn noise from `git gc` / pack writes. The watched path shall be resolved via `realpath(3)` before use because FSEvents always reports canonical paths (e.g. `/private/var/...` rather than `/var/...`) and an unresolved root makes the filter's `hasPrefix` comparison miss every event. The membership, path, and HEAD watchers in GIT-2.1–GIT-2.4 use kqueue vnode sources (`DispatchSourceFileSystemObject`), which cannot watch a subtree recursively; the origin-ref watcher in GIT-2.5 and this working-tree watcher use FSEvents because both must observe changes below a directory.
+**GIT-2.6** While a worktree is non-stale and its monitor was created with content watching enabled (`GIT-2.13`), the application shall recursively watch the worktree's directory with `FSEventStreamCreate` (coalescing latency 0.5s) so that working-tree edits, stages / unstages via `.git/index`, and untracked-file creation surface as content-change events. Events for the worktree root, the bare `.git` directory, and the `.git/objects/` subtree shall be filtered out: the root and `.git` are coarse parent-mtime bumps that fire alongside more specific descendant events and carry no additional signal, and `.git/objects/` is pure pack-churn noise from `git gc` / pack writes. The watched path shall be resolved via `realpath(3)` before use because FSEvents always reports canonical paths (e.g. `/private/var/...` rather than `/var/...`) and an unresolved root makes the filter's `hasPrefix` comparison miss every event. The membership, path, and HEAD watchers in GIT-2.1–GIT-2.4 use kqueue vnode sources (`DispatchSourceFileSystemObject`), which cannot watch a subtree recursively; the origin-ref watcher in GIT-2.5 and this working-tree watcher use FSEvents because both must observe changes below a directory.
 
 **GIT-2.8** While repositories are in the sidebar, the application shall scan local `refs/remotes/origin/*` for at most four repositories per ten-second tick without contacting the network and advance a round-robin cursor so every repository is scanned within `ceil(repoCount / 4)` ticks. The scan shall maintain repo-scoped locally-known remote branch names and shall not replace the repo-level fetch cadence that discovers branches created from another clone.
 
@@ -705,6 +705,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-2.11** When recurring remote-branch polling scans local Git refs, the application shall time-bound every subprocess so a filesystem-blocked repository releases its in-flight slot and retained pipe descriptors without requiring an application restart.
 
 **GIT-2.12** If a repository's remote-branch scan remains in flight past the 30-second abandonment threshold, then the application shall treat that scan as abandoned, start a fresh scan for the next refresh request, and discard the abandoned scan's late result.
+
+**GIT-2.13** While the monitor's owner has not opted in to content-change events, the application shall not arm the working-tree content watcher from `GIT-2.6`, because only the headless host's maintenance loop consumes those events and an unconsumed recursive stream still runs its path filter on every build-output write.
 
 ### GIT-3.x — Change Handling
 
@@ -1258,7 +1260,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-3.0** Divergence shall be measured against the union of a worktree's upstream refs:
 
-**DIVERGE-3.1** The application shall compute the behind count by running `git rev-list --count <refs> ^HEAD` and the ahead count by running `git rev-list --count HEAD ^<refs>` (each `<ref>` from `DIVERGE-3.0` prefixed with `^` for the ahead command). `rev-list` natively dedupes, so a commit reachable from both upstream refs is counted once.
+**DIVERGE-3.1** The application shall compute the ahead and behind counts against the upstream refs from `DIVERGE-3.0`. When there is a single ref, the application shall run one `git rev-list --left-right --count HEAD...<ref>` and read the left count as ahead and the right count as behind. When there are two refs, the application shall run `git rev-list --count <refs> ^HEAD` for behind and `git rev-list --count HEAD ^<refs>` for ahead; `rev-list` natively dedupes, so a commit reachable from both upstream refs is counted once.
 
 **DIVERGE-3.2** When computing insertion and deletion line counts, the application shall run `git diff --shortstat <ref>...HEAD` where `<ref>` is `origin/<worktree-branch>` when that tracking ref exists, otherwise the local default branch for pinned agents with auto-tracking enabled or `origin/<defaultBranch>` for other worktrees. The diff shall use a single ref rather than the full union.
 
@@ -2621,6 +2623,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-11.7** If the worktree watermark cannot be advanced during hook delivery, then the application shall leave the session cursor unadvanced so the undelivered messages are redelivered by a later hook.
 
 **TEAM-11.9** When an existing session cursor trails its worktree's shared delivery watermark, hook delivery shall use the later watermark as its effective read position so rows successfully read by another delivery surface are not redelivered.
+
+**TEAM-11.11** While a team's message log is unchanged on disk, the application shall reuse its previously decoded rows instead of re-reading and re-decoding the log, so one team hook delivery decodes the log at most once.
 
 ### TEAM-12.x
 
