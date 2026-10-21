@@ -30,12 +30,7 @@ public struct SidebarWorktreeReportOrder {
             metadata?.isPinned = frozen.sidebar?.isPinned
             metadata?.folders = frozen.sidebar?.folders ?? []
             metadata?.folderIDs = frozen.sidebar?.folderIDs
-            return WorktreePanes(path: row.path, displayName: row.displayName, repoDisplayName: row.repoDisplayName,
-                repositoryID: row.repositoryID, displayBranch: row.displayBranch, state: row.state,
-                isMainCheckout: row.isMainCheckout, prBadge: row.prBadge, stats: row.stats,
-                attentionText: row.attentionText, attentionSource: row.attentionSource, attentionTimestamp: row.attentionTimestamp,
-                layout: row.layout, origin: row.origin, route: row.route, sidebar: metadata,
-                ports: row.ports, portBindings: row.portBindings)
+            return row.with(sidebar: metadata)
         } + live.filter { !frozenKeys.contains(key($0)) }
     }
 

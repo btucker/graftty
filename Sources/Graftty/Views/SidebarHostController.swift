@@ -156,7 +156,7 @@ final class SidebarHostController: ObservableObject {
     }
 }
 
-/// Uses the same pane conversion as the published snapshot, including liveness.
+/// Uses the same `WorktreePanes(entry:repo:inputs:)` projection as the published snapshot.
 @MainActor
 func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
                           titles: [PaneSlotID: String], liveness: [String: AgentLiveness], prBadges: [String: PRBadge] = [:],
@@ -167,24 +167,20 @@ func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
                                                defaultBranch: defaultBranch(repo))
         return SidebarHostNavigation.displayedWorktrees(in: repo).map { wt in
             sidebarLocalWorktree(wt, repo: repo, owner: owner, displayName: labels[wt.id] ?? "",
-                                 titles: titles, liveness: liveness, prBadge: prBadges[wt.path],
-                                 folders: ancestry[wt.id]?.map(\.name) ?? [], folderIDs: ancestry[wt.id]?.map(\.id))
+                                 titles: titles, liveness: liveness, prBadge: prBadges[wt.path], folders: ancestry[wt.id])
         }
     }
 }
 
 /// Build one row without projecting every sibling on each row render.
+/// Stats stay nil (the sidebar reads `WorktreeStatsStore` directly), and
+/// stopped worktrees keep their saved layout, unlike published snapshots.
 @MainActor
 func sidebarLocalWorktree(_ wt: WorktreeEntry, repo: RepoEntry, owner: WorktreeOrigin,
                           displayName: String, titles: [PaneSlotID: String], liveness: [String: AgentLiveness],
-                          prBadge: PRBadge?, folders: [String] = [], folderIDs: [String]? = nil, ports: [WorktreePort] = []) -> WorktreePanes {
-    let projectID = "\(owner.deviceID.value):\(repo.id.uuidString)"
-    return WorktreePanes(path: wt.path, displayName: displayName, repoDisplayName: repo.displayName,
-        repositoryID: repo.path, displayBranch: wt.displayBranch, state: WorktreeWireState(wt.state),
-        isMainCheckout: wt.path == repo.path, prBadge: prBadge, stats: nil,
-        attentionText: wt.attention?.text, attentionSource: wt.attention?.source, attentionTimestamp: wt.attention?.timestamp,
-        layout: wt.splitTree.root.map { paneLayoutNode(from: $0, paneSessions: wt.paneSessions, titles: titles,
-                                                       paneAttention: wt.paneAttention, liveness: liveness) },
-        origin: owner, sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID, folders: folders,
-                                                               repositoryPath: repo.path, folderIDs: folderIDs), ports: ports)
+                          prBadge: PRBadge?, folders: [SidebarWorktreeHierarchy.Folder]? = nil, ports: [WorktreePort] = []) -> WorktreePanes {
+    WorktreePanes(entry: wt, repo: repo, inputs: WorktreeRowInputs(
+        origin: owner, projectID: "\(owner.deviceID.value):\(repo.id.uuidString)", displayName: displayName,
+        folders: folders, prBadge: prBadge, paneTitles: titles, liveness: liveness,
+        includeLayoutWhenStopped: true, ports: ports))
 }

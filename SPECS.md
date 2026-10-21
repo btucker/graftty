@@ -2306,7 +2306,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.8** While `IPadRootLayout` is presented, the application shall apply the shared `themedSidebarSurface(_:)` view modifier (defined in `GrafttyProtocol`) to the sidebar container so the host's ghostty `sidebarBackground` (a ±6% luminance shift of the terminal background) reads through a transparent `List`, and shall apply `.preferredColorScheme(theme.isDark ? .dark : .light)` to the layout so the system-rendered sidebar-toggle button picks contrast that matches the sidebar's text color. The Mac sidebar consumes the same `themedSidebarSurface` helper, single-sourcing the surface treatment.
 
-**IPAD-1.9** The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the server-side projection in `GrafttyApp.swift`'s `setWorktreePanesProvider`) and the iPad sidebar (received from the authenticated panes-state channel) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
+**IPAD-1.9** The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the shared `WorktreePanes(entry:repo:inputs:)` projection in GrafttyKit, also used by the published Mac and Linux snapshots) and the iPad sidebar (received from the authenticated panes-state channel) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
 
 **IPAD-1.10** While `IPadRootLayout` is presented, the detail column's `.ignoresSafeArea(...)` shall be restricted to `[.top, .bottom]` edges so the terminal extends under the navigation bar and home indicator but never bleeds across the leading column boundary into the sidebar's region — the sidebar shifts the terminal horizontally rather than overlapping it.
 
@@ -2333,6 +2333,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-1.21** While iPad navigation has less than 1100 points of available window width, the application shall use the icon rail without overwriting the user's expanded-rail preference.
 
 **IPAD-1.22** While the iPad split-view sidebar has a compact column size class, the application shall retain the project rail and select projects within the sidebar rather than push compact navigation destinations.
+
+**IPAD-1.23** When a host publishes or renders a worktree row, the application shall project it through the one shared WorktreePanes projection, sending a pane layout only for a running worktree unless the Mac sidebar asks to keep a stopped worktree's saved layout, and dropping divergence stats for a worktree without an on-disk checkout.
 
 ### IPAD-2.x — Multi-Pane Detail View
 
@@ -3307,6 +3309,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-22.38** When a headless runtime receives an explicit agent installer, automatic provider setup shall retain its CLI hook path.
 
 **REMOTE-22.39** When a headless host advertises agent prompt staging, the application shall replace bare agent fallback commands with a staged structured or bootstrap prompt, preserve legacy explicit commands without structured prompts, and deliver the selected prompt unchanged to the provider.
+
+**REMOTE-22.40** When a headless host publishes a pane that has not reported a title, the application shall send an empty title so clients render their shared untitled placeholder.
+
+**REMOTE-22.41** If a headless host worktree has no on-disk checkout, then the application shall omit its cached divergence stats from the published row.
 
 ### REMOTE-23.x
 

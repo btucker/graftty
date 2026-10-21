@@ -206,6 +206,26 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.portBindings = portBindings
     }
 
+    /// Copy with the relay/presentation fields replaced; nil keeps the
+    /// current value. Lets relays and report ordering rewrite identity
+    /// without re-listing every field.
+    public func with(
+        path: String? = nil,
+        repositoryID: String? = nil,
+        layout: PaneLayoutNode? = nil,
+        origin: WorktreeOrigin? = nil,
+        route: WorktreeRoute? = nil,
+        sidebar: SidebarWorktreeMetadata? = nil
+    ) -> WorktreePanes {
+        WorktreePanes(
+            path: path ?? self.path, displayName: displayName, repoDisplayName: repoDisplayName,
+            repositoryID: repositoryID ?? self.repositoryID, displayBranch: displayBranch, state: state,
+            isMainCheckout: isMainCheckout, prBadge: prBadge, stats: stats,
+            attentionText: attentionText, attentionSource: attentionSource, attentionTimestamp: attentionTimestamp,
+            layout: layout ?? self.layout, origin: origin ?? self.origin, route: route ?? self.route,
+            sidebar: sidebar ?? self.sidebar, ports: ports, portBindings: portBindings)
+    }
+
     /// Custom decode preserves readability when an older server
     /// serves the pre-sidebar-mirror shape (path/displayName/
     /// repoDisplayName/layout only): missing fields fall back to

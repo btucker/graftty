@@ -195,6 +195,36 @@ struct HeadlessHostRuntimeTests {
         #expect(saved.worktree(forPath: root.path)?.splitTree.leafCount == 1)
     }
 
+    @Test("@spec REMOTE-22.40: When a headless host publishes a pane that has not reported a title, the application shall send an empty title so clients render their shared untitled placeholder.")
+    func untitledPanePublishesEmptyTitle() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let session = try await runtime.openWorktree(root.path)
+        let leaves = runtime.snapshot().first?.layout?.leaves ?? []
+        #expect(leaves.map(\.sessionName) == [session])
+        #expect(leaves.map(\.title) == [""])
+        #expect(leaves.map(\.displayTitle) == ["shell"])
+    }
+
+    @Test("@spec REMOTE-22.41: If a headless host worktree has no on-disk checkout, then the application shall omit its cached divergence stats from the published row.")
+    func staleWorktreeOmitsCachedStats() throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gone = root.appendingPathComponent(".worktrees/gone").path
+        let state = AppState(repos: [RepoEntry(path: root.path, displayName: "project", worktrees: [
+            WorktreeEntry(path: root.path, branch: "main"),
+            WorktreeEntry(path: gone, branch: "gone", state: .stale),
+        ])])
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let stats = WorktreeWireStats(ahead: 2, behind: 0, hasUncommittedChanges: true, baseRef: "origin/main")
+        runtime.worktreeStats = [root.path: stats, gone: stats]
+        let rows = Dictionary(uniqueKeysWithValues: runtime.snapshot().map { ($0.path, $0) })
+        #expect(rows[root.path]?.stats == stats)
+        #expect(rows[gone]?.state == .stale)
+        #expect(rows[gone]?.stats == nil)
+    }
+
     @Test("@spec REMOTE-22.4: If headless pane startup fails, then the application shall preserve the prior persisted layout and return an error.")
     func failedSplitDoesNotPublishPane() async throws {
         let (root, config, state) = try fixture()
