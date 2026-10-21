@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Prove hosted Quick Look retention against main, then the current implementation.
 
-The baseline replaces RootView only, keeping current tests and representable
-attachment tokens so baseline compilation cannot masquerade as regression RED.
+The baseline replaces RootView only (emptying files later split out of it),
+keeping current tests and representable attachment tokens so baseline
+compilation cannot masquerade as regression RED.
 """
 import argparse
 from contextlib import contextmanager
@@ -20,6 +21,10 @@ import uuid
 from worktree_ui import REPO, capture, execute, read_result
 
 SOURCE = 'Sources/GrafttyMobileKit/App/RootView.swift'
+# Types moved out of RootView after older baselines. A baseline RootView still
+# declares them, so the overlay empties whichever files the baseline lacks.
+SPLIT_SOURCES = ('Sources/GrafttyMobileKit/Terminal/SingleSessionView.swift',
+                 'Sources/GrafttyMobileKit/UI/TerminalFloatingControls.swift')
 TESTS = ('GrafttyMobileBrowserTests/RemoteBrowserButtonTests/nativePreviewPreservesTerminalConnection(embedded:retained:)',
          'GrafttyMobileKitTests/TerminalPaneViewTests/focusRequestNotConsumedUntilTerminalCanFocus',
          'GrafttyMobileKitTests/TerminalPaneViewTests')
@@ -41,21 +46,21 @@ def derived_data_lock(derived):
         yield
 
 
-def require_clean_baseline_source(expected=None):
-    """Never overlay an untracked, staged, or locally modified RootView."""
-    source = REPO / SOURCE
+def require_clean_baseline_source(expected=None, name=SOURCE):
+    """Never overlay an untracked, staged, or locally modified source."""
+    source = REPO / name
     if source.is_symlink() or not source.is_file():
-        raise RuntimeError('Baseline overlay requires a regular tracked source file: ' + SOURCE)
-    capture(['git', 'ls-files', '--error-unmatch', '--', SOURCE])
-    if capture(['git', 'status', '--porcelain=v1', '--untracked-files=all', '--', SOURCE]):
-        raise RuntimeError('Commit or restore local changes before baseline overlay: ' + SOURCE)
+        raise RuntimeError('Baseline overlay requires a regular tracked source file: ' + name)
+    capture(['git', 'ls-files', '--error-unmatch', '--', name])
+    if capture(['git', 'status', '--porcelain=v1', '--untracked-files=all', '--', name]):
+        raise RuntimeError('Commit or restore local changes before baseline overlay: ' + name)
     # status can hide changes under assume-unchanged/skip-worktree. Compare
     # the real file bytes as a Git blob as well, without updating the index.
-    if capture(['git', 'hash-object', '--', SOURCE]) != capture(['git', 'rev-parse', 'HEAD:' + SOURCE]):
-        raise RuntimeError('Baseline overlay source differs from HEAD: ' + SOURCE)
+    if capture(['git', 'hash-object', '--', name]) != capture(['git', 'rev-parse', 'HEAD:' + name]):
+        raise RuntimeError('Baseline overlay source differs from HEAD: ' + name)
     original = source.read_bytes()
     if expected is not None and original != expected:
-        raise RuntimeError('Source changed while preparing baseline validation: ' + SOURCE)
+        raise RuntimeError('Source changed while preparing baseline validation: ' + name)
     return original
 
 
@@ -97,7 +102,8 @@ def baseline_overlay(options, summary, original):
     summary['sourceRestored'] = False
     try:
         replace_source(REPO / SOURCE, baseline, expected=original)
-        yield
+        with split_sources_emptied(options, summary):
+            yield
     finally:
         recovery = None
         try:
@@ -124,6 +130,36 @@ def baseline_overlay(options, summary, original):
         if recovery is not None:
             raise RuntimeError('Source changed during RED; saved to ' + str(recovery)
                                + '; original restored; GREEN will not run')
+
+
+@contextmanager
+def split_sources_emptied(options, summary):
+    """Empty split-out sources absent at the baseline; restore them unless edited."""
+    emptied = {}
+    try:
+        for name in SPLIT_SOURCES:
+            path = REPO / name
+            if not path.is_file() or capture(['git', 'ls-tree', summary['baselineCommit'], '--', name]):
+                continue
+            data = require_clean_baseline_source(name=name)
+            (options.output / (path.name + '.backup')).write_bytes(data)
+            replace_source(path, b'', expected=data)
+            emptied[name] = data
+        summary['baselineEmptiedSources'] = sorted(emptied)
+        yield
+    finally:
+        # Restore each file independently; replace_source refuses to overwrite
+        # bytes an editor wrote during RED, and one failure must not leave the
+        # remaining split sources empty.
+        unrestored = []
+        for name, data in emptied.items():
+            try:
+                replace_source(REPO / name, data, expected=b'')
+            except (OSError, RuntimeError) as error:
+                unrestored.append(name + ': ' + str(error))
+        if unrestored:
+            raise RuntimeError('Source changed during RED: ' + '; '.join(unrestored)
+                               + '; current bytes kept, backups in evidence; GREEN will not run')
 
 
 def adapt_baseline_source(source):
@@ -288,7 +324,11 @@ def run_validation(options):
     simulator = None
     try:
         original = require_clean_baseline_source() if options.baseline else (REPO / SOURCE).read_bytes()
-        summary['currentSourceHashes'] = {SOURCE: hashlib.sha256(original).hexdigest()}
+        # RED may empty split sources too; the native-run gate rechecks every hash.
+        originals = {SOURCE: original, **{name: (REPO / name).read_bytes()
+                                          for name in SPLIT_SOURCES if (REPO / name).is_file()}}
+        summary['currentSourceHashes'] = {name: hashlib.sha256(data).hexdigest()
+                                          for name, data in originals.items()}
         runtimes = json.loads(capture(['xcrun', 'simctl', 'list', 'runtimes', '--json']))['runtimes']
         available = [r for r in runtimes if r.get('isAvailable') and '.iOS-' in r['identifier']
                      and (not options.runtime or options.runtime == r['identifier'])]
@@ -305,7 +345,7 @@ def run_validation(options):
         if options.baseline:
             with baseline_overlay(options, summary, original):
                 summary['red'] = run_phase('red', options, simulator)
-        summary['sourceRestored'] = (REPO / SOURCE).read_bytes() == original
+        summary['sourceRestored'] = all((REPO / name).read_bytes() == data for name, data in originals.items())
         if not summary['sourceRestored']:
             raise RuntimeError('Source restoration failed')
         summary['green'] = run_phase('green', options, simulator)
