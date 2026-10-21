@@ -49,9 +49,16 @@ public final class PaneControlChannelClient: @unchecked Sendable {
     private var deadline: Scheduled<Void>?
     private var closed = false
 
-    public init(parentChannel: Channel, parentHandler: NIOSSHHandler) {
+    private let responseDeadline: Duration
+
+    public init(
+        parentChannel: Channel,
+        parentHandler: NIOSSHHandler,
+        rpcDeadline: Duration = PaneControlChannelClient.rpcDeadline
+    ) {
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
+        self.responseDeadline = rpcDeadline
     }
 
     /// Opens the SSH session channel and sends the subsystem request.
@@ -128,7 +135,7 @@ public final class PaneControlChannelClient: @unchecked Sendable {
                 cont.resume(throwing: ClientError.busy)
                 return
             }
-            let deadline = loop.scheduleTask(in: .seconds(30)) { [weak self] () -> Void in
+            let deadline = loop.scheduleTask(in: .nanoseconds(Int64(responseDeadline.components.seconds) * 1_000_000_000 + responseDeadline.components.attoseconds / 1_000_000_000)) { [weak self] () -> Void in
                 self?.failPending(ClientError.timedOut)
             }
             self.lock.withLock { self.deadline = deadline }
