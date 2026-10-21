@@ -25,8 +25,8 @@ import Glibc
 ///   - `TerminalByteStream`'s async `send`/`resize`/`close` plus the
 ///     `inboundBytes` `AsyncStream`, used by the SSH `terminal` channel
 ///     (`TerminalSessionHandler`).
-/// Both surfaces observe the same underlying PTY; `dispatchPTYData` and
-/// `dispatchExit` feed both the callbacks and the `AsyncStream`.
+/// Both surfaces observe the same underlying PTY; output is delivered only
+/// through the surface selected at start().
 ///
 /// **Pick exactly one delivery surface per instance.** `start()` locks in
 /// which surface `dispatchPTYData` feeds by checking whether `onPTYData`
@@ -36,11 +36,9 @@ import Glibc
 /// sets `onPTYData` before calling `start()`, so its engine is
 /// callback-mode; `TerminalSessionHandler` (the SSH path) never sets
 /// `onPTYData`, so its engine is stream-mode. The unselected surface
-/// isn't merely idle — `inboundBytes` is an `AsyncStream` with the
-/// default `.unbounded` buffering policy, so an engine that yielded into
-/// it regardless of whether anything ever iterates it would retain every
-/// PTY output chunk for the session's lifetime (unbounded memory growth
-/// on the callback surface, which nothing drains). Setting `onPTYData`
+/// receives nothing. In stream mode, a 2 MiB / 256-frame queue pauses
+/// the dedicated attach reader while its SSH consumer is stalled.
+/// Setting `onPTYData`
 /// AFTER `start()` on a stream-mode engine does not switch surfaces —
 /// the choice is made once, at `start()`. `onPTYSize`/`onExit` are not
 /// part of this either/or split — they're safe to set regardless of
@@ -130,10 +128,9 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
     /// `TerminalByteStream.inboundBytes`: the same PTY bytes delivered
     /// to `onPTYData`, for consumers that prefer the async-stream
     /// surface (the SSH `terminal` channel) over the callback surface.
-    /// Finished exactly once, from `closeSync()`, on either explicit
-    /// `close()` or reader-thread EOF.
+    /// Reader EOF drains queued bytes; explicit close or cancellation discards them.
     public let inboundBytes: AsyncStream<Data>
-    private let continuation: AsyncStream<Data>.Continuation
+    private let outputBuffer: TerminalOutputBuffer
 
     private let config: Config
     private var spawned: PtyProcess.Spawned?
@@ -193,16 +190,20 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
 
     public init(config: Config) {
         self.config = config
-        var cont: AsyncStream<Data>.Continuation!
-        self.inboundBytes = AsyncStream { c in cont = c }
-        self.continuation = cont
+        let buffer = TerminalOutputBuffer()
+        self.outputBuffer = buffer
+        self.inboundBytes = AsyncStream(
+            unfolding: { await buffer.next() },
+            onCancel: { buffer.onCancel?(); buffer.finish(discard: true) }
+        )
+        buffer.onCancel = { [weak self] in self?.closeSync() }
     }
 
     public func start() throws {
         guard attachmentRegistry?.prepareToAttach(sessionName: config.sessionName) != false else { throw Error.wakeFailed }
         stateLock.lock()
         defer { stateLock.unlock() }
-        guard spawned == nil else { throw Error.alreadyStarted }
+        guard spawned == nil, !isClosed else { throw Error.alreadyStarted }
 
         // Lock in the delivery surface before any thread that could call
         // dispatchPTYData exists (startReaderThread(), below, is the
@@ -327,7 +328,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
 
     /// `TerminalByteStream.close`: callers rely on `inboundBytes`
     /// finishing synchronously with this call (see the protocol doc) —
-    /// `closeSync()` finishes the continuation before returning, so
+    /// `closeSync()` finishes the output queue before returning, so
     /// awaiting this is sufficient.
     public func close() async {
         closeSync()
@@ -361,11 +362,8 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         // session that reuses this name doesn't inherit a stale byte count.
         inputState?.removeSession(config.sessionName)
 
-        // Finish the AsyncStream so any `for await` consumer (e.g. the
-        // SSH `terminal` channel) exits its loop. Safe to call even if
-        // the reader thread's EOF already finished it — finish() is a
-        // documented no-op once the stream has already finished.
-        continuation.finish()
+        // Release queued output and wake both the consumer and a blocked reader.
+        outputBuffer.finish(discard: true)
 
         if let spawned {
             // WEB-4.5: SIGTERM (not SIGKILL) so `zmx attach` gets a chance
@@ -398,6 +396,11 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
             var buf = [UInt8](repeating: 0, count: 8192)
             var decoder = ZmxReplayGridDecoder()
             while true {
+                guard let engine = self else { break }
+                engine.stateLock.lock()
+                let closed = engine.isClosed
+                engine.stateLock.unlock()
+                if closed { break }
                 let n = buf.withUnsafeMutableBufferPointer { GrafttyPOSIX.read(fd, $0.baseAddress, $0.count) }
                 if n <= 0 { break }
                 self?.dispatchDecodedOutput(decoder.consume(Data(buf[0..<n])))
@@ -431,6 +434,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
 
     private func dispatchPTYData(_ data: Data) {
         stateLock.lock()
+        guard !isClosed else { stateLock.unlock(); return }
         let cb = onPTYData
         let surface = deliverySurface
         if surface == .stream { _streamYieldCountForTesting += 1 }
@@ -442,19 +446,14 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         // that later had `onPTYData` assigned anyway — e.g. by a caller
         // that doesn't realize `start()` already locked in the other
         // surface — would double-deliver every chunk: once via `cb?(data)`
-        // and once via `continuation.yield(data)`. The switch makes each
+        // and once via `outputBuffer.append(data)`. The switch makes each
         // surface's bytes go through exactly the branch `start()` selected.
         switch surface {
         case .callback:
             cb?(data)
         case .stream:
-            // Only the surface selected at start() ever receives bytes —
-            // the other one is not just unused, it must not buffer (see
-            // the class doc). Without this guard, an AsyncStream's
-            // default .unbounded policy retains every chunk nobody will
-            // ever drain for the engine's whole lifetime: unbounded
-            // per-session memory growth on the callback (`/ws`) surface.
-            continuation.yield(data)
+            // A stalled SSH writer backpressures this dedicated reader thread.
+            if !outputBuffer.append(data) { closeSync() }
         }
     }
 
@@ -466,7 +465,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         // Reader EOF means the PTY closed; finish the AsyncStream even if
         // the caller never calls close() (e.g. a `TerminalByteStream`
         // consumer whose only close signal is the stream ending).
-        continuation.finish()
+        outputBuffer.finish()
     }
 
     /// For attachments without snapshot metadata, polls the PTY winsize
