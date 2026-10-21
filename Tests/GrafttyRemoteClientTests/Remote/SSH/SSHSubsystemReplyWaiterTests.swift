@@ -23,11 +23,7 @@ struct SSHSubsystemReplyWaiterTests {
                 start: { events.recordStart() }
             )
         }
-        // Timeout resumes the waiter before invoking the abort callback.
-        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
-        while events.abortCount == 0, ContinuousClock.now < deadline {
-            await Task.yield()
-        }
+        // The abort action completes before the waiter resumes (REMOTE-11.24).
         #expect(events.abortCount == 1)
         #expect(events.startCount == 1)
     }
@@ -105,8 +101,12 @@ struct SSHSubsystemReplyWaiterTests {
         #expect(events.abortCount == 1)
     }
 
-    @Test("@spec REMOTE-11.24: When an SSH reply deadline or cancellation wins, the client shall run its abort action before resuming the waiting caller, so a caller can never act on a channel that is about to be torn down.")
-    func abortRunsBeforeTheCallerResumes() async throws {
+    enum AbortTrigger: CaseIterable, Sendable {
+        case deadline, cancellation
+    }
+
+    @Test("@spec REMOTE-11.24: When an SSH reply deadline or cancellation wins, the client shall run its abort action before resuming the waiting caller, so a caller can never act on a channel that is about to be torn down.", arguments: AbortTrigger.allCases)
+    func abortRunsBeforeTheCallerResumes(trigger: AbortTrigger) async throws {
         let deadline = ManualDeadline()
         let events = WaiterEvents()
         let order = OrderLog()
@@ -130,7 +130,10 @@ struct SSHSubsystemReplyWaiterTests {
         }
         await events.waitUntilStarted()
 
-        deadline.fire()
+        switch trigger {
+        case .deadline: deadline.fire()
+        case .cancellation: task.cancel()
+        }
         await task.value
 
         #expect(order.entries == ["aborted", "resumed"])

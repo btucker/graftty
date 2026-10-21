@@ -346,9 +346,8 @@ final class SubsystemRPCChannel<Request: Encodable & Sendable, Response: Sendabl
         do {
             waiter.finish(.success(try decode(bytes)))
         } catch {
-            waiter.finish(.failure(error), beforeResuming: { [weak self] in
-                if self?.policy.strictFrames == true { self?.close() }
-            })
+            // Runs synchronously inside `finish`, so `self` is alive.
+            waiter.finish(.failure(error), beforeResuming: { [self] in if policy.strictFrames { close() } })
         }
     }
 

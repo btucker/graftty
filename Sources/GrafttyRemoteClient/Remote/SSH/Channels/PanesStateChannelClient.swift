@@ -31,7 +31,6 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     public var sidebarSnapshot: SidebarSnapshot? { lock.withLock { navigationSnapshot } }
     private var onSnapshot: OnSnapshot
     private var onClosed: OnClosed
-    private var drainTask: Task<Void, Never>?
 
     /// Serial inbound queue. The frame relay yields raw frame bytes onto
     /// this stream; a single drain Task spawned in `open()` consumes them
@@ -99,12 +98,12 @@ public final class PanesStateChannelClient: @unchecked Sendable {
             // so a partial-open failure still propagates `onClosed` to the
             // store; otherwise its `connectionState` would stay
             // `.subscribed` indefinitely.
-            // Both callbacks hold the client strongly, so an owner that
-            // releases it still gets every snapshot and the close. The cycle
-            // ends when the child closes: NIO drops the pipeline's handlers
-            // and the close callback has run.
+            // The close callback and the drain hold the client strongly, so
+            // an owner that releases it still gets every snapshot and the
+            // close. Both end with the channel: NIO drops the close callback
+            // once it has run, and the drain ends when the stream finishes.
             try await channel.open(
-                onFrame: { [self] bytes in inboundContinuation.yield(bytes) },
+                onFrame: { [inboundContinuation] in inboundContinuation.yield($0) },
                 onClose: { [self] in handleChildClose() }
             )
         } catch {
@@ -115,7 +114,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         }
         // The single serial drain dispatches snapshots in wire order; frames
         // that arrived during the open wait in `inboundStream`.
-        let drain = Task { [inboundStream, self] in
+        Task { [inboundStream, self] in
             for await bytes in inboundStream {
                 // Snapshot the closure under the lock so a concurrent
                 // setCallbacks(...) doesn't race with the read.
@@ -130,7 +129,6 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                 }
             }
         }
-        lock.withLock { drainTask = drain }
     }
 
     /// Closes the SSH child channel.

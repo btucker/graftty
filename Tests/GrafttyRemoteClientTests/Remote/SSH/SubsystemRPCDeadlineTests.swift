@@ -3,10 +3,45 @@ import GrafttyProtocol
 import Testing
 @testable import GrafttyRemoteClient
 
-@Suite("Subsystem RPC deadlines on the WebRTC event-loop type")
+// The waits below have no deadline of their own, and RPCs ignore task
+// cancellation, so a regression fails here instead of hanging the run.
+@Suite("Subsystem RPC deadlines on the WebRTC event-loop type", .timeLimit(.minutes(1)))
 struct SubsystemRPCDeadlineTests {
     @Test("@spec REMOTE-11.23: If a pane-control or worktree-management RPC response does not arrive before its deadline, then the client shall fail that RPC with a timeout using elapsed time independently of the transport event-loop clock.")
-    func paneControlResponseDeadlineIgnoresTheEventLoopClock() async throws {
+    func publicDeadlinesUseElapsedTime() async throws {
+        let link = try await InMemorySSHLink.make(serverChild: ScriptedSubsystemHost.install())
+        // The in-memory link's event loops never advance their clock, so a
+        // deadline scheduled on them could not fire here, even one a
+        // nanosecond out. On Swift's clock that nanosecond has already
+        // elapsed, so the test proves the wiring without a real wait.
+        let paneControl = PaneControlChannelClient(
+            parentChannel: link.client,
+            parentHandler: link.clientHandler,
+            rpcDeadline: .nanoseconds(1)
+        )
+        let worktrees = WorktreeManagementChannelClient(
+            parentChannel: link.client,
+            parentHandler: link.clientHandler,
+            responseTimeout: .nanoseconds(1)
+        )
+        try await paneControl.open()
+        try await worktrees.open()
+
+        let pane = await Result(catching: { try await paneControl.send(.equalize(target: "pane")) })
+        if case .failure(PaneControlChannelClient.ClientError.timedOut) = pane {} else {
+            Issue.record("expected pane control .timedOut, got \(pane)")
+        }
+        let worktree = await Result(catching: { try await worktrees.send(.open(worktreeID: "/tmp/w")) })
+        if case .failure(WorktreeManagementChannelClient.ClientError.timedOut) = worktree {} else {
+            Issue.record("expected worktree management .timedOut, got \(worktree)")
+        }
+        paneControl.close()
+        worktrees.close()
+        await link.close()
+    }
+
+    @Test("pane control keeps its channel usable after a response deadline")
+    func paneControlSurvivesResponseDeadline() async throws {
         let received = RequestCounter()
         let link = try await InMemorySSHLink.make(
             serverChild: ScriptedSubsystemHost.install(
@@ -23,8 +58,6 @@ struct SubsystemRPCDeadlineTests {
         )
         try await client.open()
 
-        // The in-memory link's event loops never advance their clock, so a
-        // deadline scheduled on them could not fire here.
         let first = Task { try await client.send(.equalize(target: "pane")) }
         await received.waitUntil(1)
         await clock.waitUntilArmed()
