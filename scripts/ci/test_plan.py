@@ -51,18 +51,41 @@ def mac_filters(test_ids, batch_size=20):
 
 def verify_swift_results(test_ids, result_paths):
     """Require one result (including disabled tests) for every discovered ID."""
-    expected = Counter(identifier for identifier in test_ids
-                       if not identifier.startswith("OwnershipModelTests."))
     actual = Counter()
     for path in result_paths:
-        for test in ET.parse(path).iter("testcase"):
+        try:
+            result = ET.parse(path)
+        except (ET.ParseError, OSError) as error:
+            raise ValueError(f"Incomplete Swift test results in {path}; inspect the matching batch transcript") from error
+        for test in result.iter("testcase"):
             module, separator, suite = test.attrib["classname"].partition(".")
             # Swift Testing lists nested suites with '/', but xUnit uses '.'.
             prefix = module + "." + suite.replace(".", "/") + "/" if separator else module + "."
             actual[prefix + test.attrib["name"]] += 1
+    return verify_inventory(test_ids, actual)
+
+
+def verify_xctest_results(test_ids, transcript_paths):
+    """Serial XCTest emits completion records but no SwiftPM xUnit report."""
+    completion = re.compile(r"^Test Case '-\[(\S+) (\S+)\]' (passed|skipped|failed) \(")
+    actual = Counter()
+    for path in transcript_paths:
+        for line in path.read_text().splitlines():
+            match = completion.match(line)
+            if match:
+                classname, name, status = match.groups()
+                if status == "failed":
+                    raise ValueError(f"Failed XCTest {classname}/{name} in {path}")
+                actual[classname + "/" + name] += 1
+    return verify_inventory(test_ids, actual)
+
+
+def verify_inventory(test_ids, actual):
+    expected = Counter(identifier for identifier in test_ids
+                       if not identifier.startswith("OwnershipModelTests."))
     missing, unexpected = expected - actual, actual - expected
     if missing or unexpected:
-        raise ValueError(f"Swift test inventory mismatch: missing={dict(missing)}, unexpected={dict(unexpected)}")
+        raise ValueError(f"Test inventory mismatch: missing={dict(missing)}, unexpected={dict(unexpected)}")
     return sorted(actual)
 
 

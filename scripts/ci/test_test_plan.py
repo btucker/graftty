@@ -9,6 +9,34 @@ import test_plan
 
 
 class MacPlanTests(unittest.TestCase):
+    def test_xctest_completions_match_discovery_including_skips(self):
+        tests = ["MacTests.Native/testPass", "MacTests.Native/testSkipped"]
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "xctest.log"
+            transcript.write_text("Test Case '-[MacTests.Native testPass]' started.\n"
+                                  "Test Case '-[MacTests.Native testPass]' passed (0.010 seconds).\n"
+                                  "Test Case '-[MacTests.Native testSkipped]' skipped (0.001 seconds).\n")
+            self.assertEqual(test_plan.verify_xctest_results(tests, [transcript]), tests)
+            for inventory, results in [(tests + ["MacTests.Native/testMissing"], [transcript]),
+                                       (tests, [transcript, transcript]), (tests[:1], [transcript])]:
+                with self.assertRaises(ValueError):
+                    test_plan.verify_xctest_results(inventory, results)
+
+    def test_xctest_started_or_failed_is_not_a_successful_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "xctest.log"
+            for status in ["started.", "failed (0.010 seconds)."]:
+                transcript.write_text(f"Test Case '-[MacTests.Native testPass]' {status}\n")
+                with self.assertRaises(ValueError):
+                    test_plan.verify_xctest_results(["MacTests.Native/testPass"], [transcript])
+
+    def test_incomplete_results_identify_the_batch_and_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = Path(directory) / "swift-22.xml"
+            result.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<testsuites>\n')
+            with self.assertRaisesRegex(ValueError, "Incomplete Swift test results.*swift-22.xml"):
+                test_plan.verify_swift_results(["MacTests.Sidebar/test()"], [result])
+
     def test_execution_results_match_discovery_including_disabled_and_nested_tests(self):
         tests = ["KitTests.Parent/Child/nested()", "KitTests.Parent/parameterized(_:)",
                  "KitTests.Parent/backlog()", "KitTests.topLevel()", "OwnershipModelTests.Corpus/run()"]

@@ -148,6 +148,8 @@ jobs:
         with:
           name: macos-test-selection
           path: .ci-results/macos
+          include-hidden-files: true
+          retention-days: 7
 
       - name: Ownership model corpus gate
         timeout-minutes: 5
@@ -258,6 +260,8 @@ jobs:
         with:
           name: ios-tests-${{ matrix.shard }}
           path: .ci-results/ios
+          include-hidden-files: true
+          retention-days: 7
 
   # Preserve the original required-check name across both complete runners.
   ios-build-and-test:
