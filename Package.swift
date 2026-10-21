@@ -196,10 +196,13 @@ let package = Package(
         .target(
             name: "GrafttyTunnel",
             dependencies: [
+                .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOExtras", package: "swift-nio-extras"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
-            ],
+            ] + webRTCDependencies,
             swiftSettings: strictWarnings
         ),
         .target(
@@ -327,6 +330,7 @@ let package = Package(
             name: "GrafttyRemoteClientTests",
             dependencies: [
                 "GrafttyRemoteClient",
+                "GrafttyTunnel",
                 "GrafttyProtocol",
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOCore", package: "swift-nio"),

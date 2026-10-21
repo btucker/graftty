@@ -26,10 +26,9 @@ extension RTCDataChannel: DataChannelSink {
 /// to a swift-nio `Channel` (a byte-stream API) so that handlers like
 /// `NIOSSHHandler` can run over an SCTP-backed DataChannel.
 ///
-/// Mirror of `Sources/GrafttyHostAgent/SSH/SSHNIOTransport.swift`. The
-/// two files are kept as near-duplicates so the Mac-side host agent and
-/// shared remote client speak the same byte-stream-over-DataChannel
-/// shape without a shared module.
+/// Shared by the Mac-side host agent (`WebRTCHostAgent`) and the remote
+/// client (`RemoteHostConnection`) so both speak the same
+/// byte-stream-over-DataChannel shape.
 ///
 /// Architecture:
 /// - The transport owns a `NIOAsyncTestingChannel` running on a fresh
@@ -63,9 +62,8 @@ extension RTCDataChannel: DataChannelSink {
 /// Concurrency: `@unchecked Sendable` because the transport carries its
 /// own synchronization — all NIO state lives on the testing loop, and
 /// all WebRTC delegate callbacks are bridged onto that loop via
-/// `execute`. The delegate (`DataChannelDelegate`) is itself
-/// `@unchecked Sendable` with the WebRTC SDK serial-queue invariant
-/// documented in `RemoteHostConnection`.
+/// `execute`. The delegate (`DataChannelInbox`) is itself
+/// `@unchecked Sendable` and serializes WebRTC's callbacks under its lock.
 public final class SSHNIOTransport: @unchecked Sendable {
 
     /// Maximum bytes per outbound SCTP message. WebRTC defaults
@@ -413,6 +411,11 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // handler's readyState check rather than queued onto a closed
         // channel.
         dataChannel.close()
+        // The inbox stays attached as the channel delegate; late
+        // WebRTC-thread events forward into `handleDataChannelOpen` /
+        // `handleDataChannelClosed` / `deliverInbound`, all of which
+        // no-op once `closed` is set.
+        //
         // We're already on the testing loop; call `close0` via the
         // channel's `close(mode:promise:)` path. This fires
         // `channelInactive` through the pipeline and tears down the

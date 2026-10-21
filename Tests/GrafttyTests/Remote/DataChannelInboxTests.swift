@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import GrafttyHostAgent
+@testable import GrafttyTunnel
 
 /// Drives the inbox through its internal ingestion seams — no native
 /// WebRTC objects (this suite must never start the WebRTC engine; see

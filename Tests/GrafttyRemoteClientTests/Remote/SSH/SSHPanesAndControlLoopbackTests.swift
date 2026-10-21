@@ -7,6 +7,7 @@ import NIOSSH
 import Testing
 import WebRTC
 @testable import GrafttyRemoteClient
+import GrafttyTunnel
 
 /// End-to-end SSH-over-WebRTC loopback tests for the R5 panes-state and
 /// pane-control channel types.

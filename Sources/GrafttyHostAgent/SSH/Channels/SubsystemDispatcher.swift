@@ -1,6 +1,7 @@
 import Foundation
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyTunnel
 import NIOCore
 import NIOExtras
 import NIOSSH

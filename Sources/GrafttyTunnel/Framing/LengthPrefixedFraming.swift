@@ -7,8 +7,8 @@ import NIOExtras
 /// channel byte stream (parent design §8.2).
 ///
 /// `NIOExtras` ships exactly the codecs we need; this file just names
-/// the configured constructors so both the server-side and the
-/// mobile-side mirror agree on the same field width (4 bytes, big-endian).
+/// the configured constructors so the host and the remote client agree
+/// on the same field width (4 bytes, big-endian).
 public enum LengthPrefixedFraming {
     /// Decode `<u32 BE length><payload>` into one `ByteBuffer` per
     /// payload. Add directly to the pipeline via `addHandler`.

@@ -5,6 +5,7 @@ import NIO
 import NIOEmbedded
 import Testing
 @testable import GrafttyRemoteClient
+@testable import GrafttyTunnel
 import WebRTC
 
 @Suite("SSHNIOTransport unit tests — partial-write closes channel.")
