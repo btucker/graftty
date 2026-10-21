@@ -58,9 +58,23 @@ public enum WorktreeAgentLaunchCommand {
         return nil
     }
 
+    /// Saved initial tasks for `runtime` that no agent has taken yet.
+    public static func pendingInitialPrompts(
+        runtime: TeamHookRuntime,
+        repo: RepoEntry,
+        worktreePath: String,
+        inbox: TeamInbox
+    ) throws -> [TeamInboxMessage] {
+        try inbox.worktreePendingMessages(
+            teamID: repo.path, recipientWorktree: worktreePath
+        ).filter { $0.kind == "agent_initial_prompt" && $0.to.runtime == runtime.rawValue }
+    }
+
     /// Keep the task independently of the short-lived shell loader file.
     /// Runtime addressing allows a manually launched replacement session to
     /// recover it without tying the task to an agent that has not started yet.
+    /// Returns the saved row, or nil for a blank prompt.
+    @discardableResult
     public static func saveInitialPrompt(
         _ prompt: String?,
         runtime: TeamHookRuntime,
@@ -68,13 +82,13 @@ public enum WorktreeAgentLaunchCommand {
         worktreePath: String,
         branchName: String,
         inbox: TeamInbox
-    ) throws {
+    ) throws -> TeamInboxMessage? {
         guard let prompt,
-              !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let obsolete = try inbox.worktreePendingMessages(
-            teamID: repo.path, recipientWorktree: worktreePath
-        ).filter { $0.kind == "agent_initial_prompt" && $0.to.runtime == runtime.rawValue }
-        try inbox.appendMessage(
+              !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let obsolete = try pendingInitialPrompts(
+            runtime: runtime, repo: repo, worktreePath: worktreePath, inbox: inbox
+        )
+        let message = try inbox.appendMessage(
             teamID: repo.path,
             teamName: repo.displayName,
             repoPath: repo.path,
@@ -95,6 +109,7 @@ public enum WorktreeAgentLaunchCommand {
         try inbox.acknowledgeMessages(
             teamID: repo.path, worktree: worktreePath, messageIDs: obsolete.map(\.id)
         )
+        return message
     }
 
     public static func prepare(

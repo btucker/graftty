@@ -847,6 +847,15 @@ extension SocketRequestRouter {
             return .error(error)
         }
         var launch = PreparedWorktreeAgentLaunch(command: command, promptFile: nil)
+        var savedTask: TeamInboxMessage?
+        // A durable task saved for an agent that never launches would reach
+        // the next agent of that runtime, possibly the implementer.
+        func abandonLaunch() async {
+            launch.discardPromptFile()
+            if let savedTask {
+                _ = await OffMainIO.run { try? PaneAgentLaunch.withdrawInitialPrompt(savedTask, inbox: teamInbox) }
+            }
+        }
         if let agentRuntime {
             do {
                 launch = try WorktreeAgentLaunchCommand.prepare(agent: agentRuntime, prompt: agentPrompt, exactCommand: nil)
@@ -855,17 +864,25 @@ extension SocketRequestRouter {
             }
             if let repo = appState.wrappedValue.repo(forWorktreePath: path),
                let branch = appState.wrappedValue.worktree(forPath: path)?.branch {
-                // ATTN-2.19: presence and inbox access are file I/O, so they
-                // run off the main actor.
-                let records = await OffMainIO.run {
-                    (try? TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).listAll()) ?? []
-                }
-                let liveness = automaticDeliveryLiveness(records: records, terminalManager: terminalManager)
+                // Map pane sessions on the main actor; read presence inside the
+                // off-main save, after its pending-task check (AGENT-6.57).
+                let paneSessionNames = terminalManager.paneSessionNames
+                let liveness = AppTeamDeliveryLiveness(
+                    livePaneSession: { paneSessionNames.contains($0) },
+                    processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
+                )
                 do {
-                    _ = try await OffMainIO.run {
+                    // ATTN-2.19: presence and inbox access are file I/O.
+                    savedTask = try await OffMainIO.run {
                         try PaneAgentLaunch.saveInitialPrompt(
                             agentPrompt, runtime: agentRuntime, repo: repo, worktreePath: path,
-                            branchName: branch, inbox: teamInbox, presenceRecords: records, liveness: liveness
+                            branchName: branch, inbox: teamInbox,
+                            presenceRecords: {
+                                try TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).list(
+                                    teamID: TeamLookup.id(forRepoPath: repo.path), worktree: path, runtime: agentRuntime
+                                )
+                            },
+                            liveness: liveness
                         )
                     }
                 } catch {
@@ -874,7 +891,7 @@ extension SocketRequestRouter {
                 }
                 // The worktree can stop while the file I/O is suspended.
                 if let error = splitTargetError() {
-                    launch.discardPromptFile()
+                    await abandonLaunch()
                     return .error(error)
                 }
             }
@@ -882,38 +899,39 @@ extension SocketRequestRouter {
         // ATTN-1.25: hand the command to surface creation, which runs it
         // once the shell is ready; typing after the split could arrive first.
         guard let targetID = appState.wrappedValue.worktree(forPath: path)?.firstPane,
-              GrafttyApp.splitPane(
+              let newPaneID = GrafttyApp.splitPane(
                   appState: appState,
                   terminalManager: terminalManager,
                   targetID: targetID,
                   split: direction,
                   extraInitialInput: PaneAgentLaunch.initialInput(launch.command)
-              ) != nil else {
-            launch.discardPromptFile()
+              ) else {
+            await abandonLaunch()
             return .error("split failed")
+        }
+        // ATTN-1.28: destroying the pane removes a prompt file its loader never
+        // ran and withdraws the durable task. Both are no-ops once the agent
+        // has started and taken its task.
+        if agentRuntime != nil {
+            // Like `worktree add`, start the agent even if the worktree's
+            // views never mount; otherwise it waits until someone opens it.
+            terminalManager.handle(for: newPaneID)?.startForBackgroundLaunch()
+            let staged = launch
+            let task = savedTask
+            terminalManager.trackStagedLaunch(for: newPaneID) {
+                staged.discardPromptFile()
+                if let task {
+                    Task { _ = await OffMainIO.run { try? PaneAgentLaunch.withdrawInitialPrompt(task, inbox: teamInbox) } }
+                }
+            }
         }
         if let agentRuntime, let index = appState.wrappedValue.indices(forWorktreePath: path) {
             appState.wrappedValue.repos[index.repo].worktrees[index.worktree]
                 .expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(agentPrompt), runtime: agentRuntime)
+            // As in `createWorktree`: no window may be observing state.
+            try? appState.wrappedValue.save(to: AppState.defaultDirectory)
         }
         return .ok
-    }
-
-    /// Snapshot of automatic-delivery liveness for `records`. The pane
-    /// mapping is read on the main actor; the result is safe off it.
-    @MainActor
-    private static func automaticDeliveryLiveness(
-        records: [TeamPresenceRecord],
-        terminalManager: TerminalManager
-    ) -> AppTeamDeliveryLiveness {
-        let liveSessionNames = GrafttyApp.livePaneSessionNamesForAutomaticDelivery(
-            records: records,
-            terminalManager: terminalManager
-        )
-        return AppTeamDeliveryLiveness(
-            livePaneSession: { liveSessionNames.contains($0) },
-            processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
-        )
     }
 
     @MainActor

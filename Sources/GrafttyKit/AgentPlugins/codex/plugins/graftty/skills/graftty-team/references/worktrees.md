@@ -24,7 +24,7 @@ From your tracked worktree, send a follow-up to the full returned `graftty-mac:/
 
 Inspect `git worktree list` and the roster before retrying creation. Failed hooks may leave directories behind; do not recreate or automatically delete them. Diagnose registration if Git lists a worktree that Graftty does not.
 
-For an existing worktree with no suitable agent, first open and select it in Graftty. A new pane's shell waits for its first visible layout. If panes have no automatic command, launch one:
+For an existing worktree with no suitable agent, first open it in Graftty; `pane add` needs a running worktree. An agent pane starts even when the worktree is not selected. If panes have no automatic command, launch one:
 
 ```sh
 graftty pane add '<worktree-name>' --agent codex --prompt-stdin <<'GRAFTTY_PANE_7F3A91C2'

@@ -47,6 +47,22 @@ struct CLIPaneAgentTests {
             agentRuntime: nil, command: "pnpm test", agentPrompt: nil, teamsEnabled: false) == nil)
     }
 
+    @Test("@spec ATTN-1.28: When a pane added with `graftty pane add --agent` is destroyed, the application shall delete that pane's staged agent prompt file and withdraw its pending durable initial task, so a pane closed before its agent starts leaves no task behind for the next agent of that runtime.")
+    @MainActor
+    func destroyedPaneRunsStagedLaunchCleanup() {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-pane-prompt-test.sock")
+        let pane = PaneSlotID()
+        var cleanups = 0
+        manager.trackStagedLaunch(for: pane) { cleanups += 1 }
+
+        manager.destroySurface(terminalID: PaneSlotID())
+        #expect(cleanups == 0)
+        manager.destroySurface(terminalID: pane)
+        #expect(cleanups == 1)
+        manager.destroySurface(terminalID: pane)
+        #expect(cleanups == 1)
+    }
+
     @Test("`graftty pane add --help` documents --agent, --prompt-stdin, and exact-ID addressing")
     func helpDocumentsAgentLaunch() {
         let help = PaneAdd.helpMessage()

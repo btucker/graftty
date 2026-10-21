@@ -41,17 +41,17 @@ struct PaneAgentLaunchTests {
 
         let saved = try PaneAgentLaunch.saveInitialPrompt(
             "review the diff", runtime: .claude, repo: repo, worktreePath: worktree,
-            branchName: "alice", inbox: inbox, presenceRecords: records, liveness: liveness
+            branchName: "alice", inbox: inbox, presenceRecords: { records }, liveness: liveness
         )
-        #expect(!saved)
+        #expect(saved == nil)
         let pending = try inbox.worktreePendingMessages(teamID: repo.path, recipientWorktree: worktree)
         #expect(pending.map(\.body) == ["implement the feature"])
 
         let savedWithoutOwner = try PaneAgentLaunch.saveInitialPrompt(
             "review the diff", runtime: .codex, repo: repo, worktreePath: worktree,
-            branchName: "alice", inbox: inbox, presenceRecords: records, liveness: liveness
+            branchName: "alice", inbox: inbox, presenceRecords: { records }, liveness: liveness
         )
-        #expect(savedWithoutOwner)
+        #expect(savedWithoutOwner != nil)
         let rows = try inbox.worktreePendingMessages(teamID: repo.path, recipientWorktree: worktree)
         let codexRow = try #require(rows.first { $0.to.runtime == "codex" })
         #expect(codexRow.kind == "agent_initial_prompt")
@@ -60,9 +60,9 @@ struct PaneAgentLaunchTests {
 
         let savedBlank = try PaneAgentLaunch.saveInitialPrompt(
             "  \n", runtime: .codex, repo: repo, worktreePath: worktree,
-            branchName: "alice", inbox: inbox, presenceRecords: [], liveness: liveness
+            branchName: "alice", inbox: inbox, presenceRecords: { [] }, liveness: liveness
         )
-        #expect(!savedBlank)
+        #expect(savedBlank == nil)
     }
 
     @Test("A starting same-runtime implementer keeps its pending initial task")
@@ -80,12 +80,63 @@ struct PaneAgentLaunchTests {
         )
         let saved = try PaneAgentLaunch.saveInitialPrompt(
             "review the diff", runtime: .claude, repo: repo, worktreePath: worktree,
-            branchName: "alice", inbox: inbox, presenceRecords: [],
+            branchName: "alice", inbox: inbox, presenceRecords: { [] },
             liveness: PaneAgentFakeLiveness(liveSessions: [], processStartTimes: [:])
         )
-        #expect(!saved)
+        #expect(saved == nil)
         let pending = try inbox.worktreePendingMessages(teamID: repo.path, recipientWorktree: worktree)
         #expect(pending.map(\.body) == ["implement the feature"])
+    }
+
+    @Test("An implementer that registers and takes its task during the check never receives the added task")
+    func implementerRegisteringDuringCheckKeepsAddedTaskOut() throws {
+        let worktree = "/repo/.worktrees/alice"
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let inbox = TeamInbox(rootDirectory: root)
+        try WorktreeAgentLaunchCommand.saveInitialPrompt(
+            "implement the feature", runtime: .claude, repo: repo,
+            worktreePath: worktree, branchName: "alice", inbox: inbox
+        )
+        let implementerTask = try #require(
+            inbox.worktreePendingMessages(teamID: repo.path, recipientWorktree: worktree).first
+        )
+        // The presence read sees no implementer yet; right after it, the
+        // implementer registers and acknowledges its own initial task.
+        let saved = try PaneAgentLaunch.saveInitialPrompt(
+            "review the diff", runtime: .claude, repo: repo, worktreePath: worktree,
+            branchName: "alice", inbox: inbox,
+            presenceRecords: {
+                defer {
+                    _ = try? inbox.acknowledgeMessages(
+                        teamID: repo.path, worktree: worktree, messageIDs: [implementerTask.id]
+                    )
+                }
+                return []
+            },
+            liveness: PaneAgentFakeLiveness(liveSessions: [], processStartTimes: [:])
+        )
+        #expect(saved == nil)
+        let pending = try inbox.worktreePendingMessages(teamID: repo.path, recipientWorktree: worktree)
+        #expect(!pending.contains { $0.body == "review the diff" })
+    }
+
+    @Test("A withdrawn initial task never reaches a later agent of that runtime")
+    func withdrawnTaskLeavesNoPendingRow() throws {
+        let worktree = "/repo/.worktrees/alice"
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let inbox = TeamInbox(rootDirectory: root)
+        // The split failed after the save, so no agent will run this task.
+        let saved = try #require(try PaneAgentLaunch.saveInitialPrompt(
+            "review the diff", runtime: .codex, repo: repo, worktreePath: worktree,
+            branchName: "alice", inbox: inbox, presenceRecords: { [] },
+            liveness: PaneAgentFakeLiveness(liveSessions: [], processStartTimes: [:])
+        ))
+        try PaneAgentLaunch.withdrawInitialPrompt(saved, inbox: inbox)
+        #expect(try inbox.worktreePendingMessages(teamID: repo.path, recipientWorktree: worktree).isEmpty)
     }
 
     private static func temporaryDirectory() throws -> URL {

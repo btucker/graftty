@@ -103,10 +103,10 @@ public extension HeadlessHostRuntime {
                 return .paneList(worktree.splitTree.allLeaves.enumerated().map { offset, slot in
                     PaneInfo(id: offset + 1, title: worktree.paneTitleMetadata[slot]?.title, focused: worktree.focusedPaneSlotID == slot)
                 })
-            case .addPane(let path, let direction, let command, let agentRuntime, _):
+            case .addPane(let path, let direction, let command, let agentRuntime, let agentPrompt):
                 // The CLI probes `.paneAgentCapability` first, which this
                 // host does not advertise; refuse rather than run a plain split.
-                guard agentRuntime == nil else { throw HostRuntimeError.invalid("pane add --agent is not supported on this host") }
+                guard agentRuntime == nil, agentPrompt == nil else { throw HostRuntimeError.invalid("pane add --agent is not supported on this host") }
                 let worktree = try requireWorktree(path)
                 if let slot = worktree.focusedPaneSlotID ?? worktree.splitTree.allLeaves.first, let session = worktree.paneSessions[slot] {
                     _ = try await splitPane(target: launcher.sessionName(for: session), direction: PaneControlRequest.SplitDirection(rawValue: direction.rawValue) ?? .right, command: command)

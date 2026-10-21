@@ -15,8 +15,10 @@ public enum PaneAgentLaunch {
     /// AGENT-6.57: The durable copy is addressed to the runtime, so the
     /// runtime's current delivery owner would receive it. Skip it when a live
     /// agent of that runtime owns delivery or a same-runtime initial task is
-    /// still pending; the launch command still carries the task. Returns whether a row was written. Performs inbox file I/O,
-    /// so app callers run it off the main actor (ATTN-2.19).
+    /// still pending, or presence cannot be read; the launch command still
+    /// carries the task. Returns the saved row, or nil when none was written.
+    /// Performs inbox file I/O, so app callers run it off the main actor
+    /// (ATTN-2.19).
     @discardableResult
     public static func saveInitialPrompt(
         _ prompt: String?,
@@ -25,26 +27,37 @@ public enum PaneAgentLaunch {
         worktreePath: String,
         branchName: String,
         inbox: TeamInbox,
-        presenceRecords: [TeamPresenceRecord],
+        presenceRecords: () throws -> [TeamPresenceRecord],
         liveness: any TeamDeliveryLivenessChecking
-    ) throws -> Bool {
+    ) throws -> TeamInboxMessage? {
         guard let prompt,
-              !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+              !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        // An implementer that has not registered yet still has its own task
+        // pending; saving would supersede it and could hand it this one.
+        // Check that before reading presence: an implementer registers
+        // before taking its task, so one whose task is gone by now is
+        // already in the presence read below.
+        let implementerStarting = try !WorktreeAgentLaunchCommand.pendingInitialPrompts(
+            runtime: runtime, repo: repo, worktreePath: worktreePath, inbox: inbox
+        ).isEmpty
+        guard !implementerStarting,
+              let records = try? presenceRecords() else { return nil }
         let key = TeamDeliveryOwnerKey(
             teamID: TeamLookup.id(forRepoPath: repo.path), worktree: worktreePath, runtime: runtime
         )
-        let resolver = TeamDeliveryOwnershipResolver(records: { presenceRecords }, liveness: liveness)
-        guard resolver.owner(for: key) == nil else { return false }
-        // An implementer that has not registered yet still has its own task
-        // pending; saving would supersede it and could hand it this one.
-        let implementerStarting = try inbox.worktreePendingMessages(
-            teamID: repo.path, recipientWorktree: worktreePath
-        ).contains { $0.kind == "agent_initial_prompt" && $0.to.runtime == runtime.rawValue }
-        guard !implementerStarting else { return false }
-        try WorktreeAgentLaunchCommand.saveInitialPrompt(
+        let resolver = TeamDeliveryOwnershipResolver(records: { records }, liveness: liveness)
+        guard resolver.owner(for: key) == nil else { return nil }
+        return try WorktreeAgentLaunchCommand.saveInitialPrompt(
             prompt, runtime: runtime, repo: repo,
             worktreePath: worktreePath, branchName: branchName, inbox: inbox
         )
-        return true
+    }
+
+    /// Withdraws a saved task whose pane never launched, so a later agent of
+    /// that runtime cannot inherit it. Performs inbox file I/O.
+    public static func withdrawInitialPrompt(_ message: TeamInboxMessage, inbox: TeamInbox) throws {
+        try inbox.acknowledgeMessages(
+            teamID: message.repoPath, worktree: message.to.worktree, messageIDs: [message.id]
+        )
     }
 }
