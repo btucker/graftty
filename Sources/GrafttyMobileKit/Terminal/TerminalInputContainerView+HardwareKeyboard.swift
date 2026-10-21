@@ -74,9 +74,7 @@ extension TerminalInputContainerView {
             let previousSignature = effectiveHardwareKeyboardCommandSignature
             storedHardwareKeyboardCommands = newValue
             guard previousSignature != effectiveHardwareKeyboardCommandSignature else { return }
-            cachedKeyCommands = nil
-            keyCommandUpdateRequestCountForTesting += 1
-            UIMenuSystem.main.setNeedsRebuild()
+            invalidateKeyCommands()
         }
     }
 

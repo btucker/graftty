@@ -25,7 +25,7 @@ public final class TerminalInputContainerView: UIView,
             if onPhysicalViewportReady != nil { setNeedsLayout() }
         }
     }
-    var awaitingPhysicalViewport = false
+    private(set) var awaitingPhysicalViewport = false
     public var authoritativeGrid: SessionClient.GridSize? {
         didSet {
             guard authoritativeGrid != oldValue else { return }
@@ -153,7 +153,7 @@ public final class TerminalInputContainerView: UIView,
         ))
     }
 
-    var isCommittedSoftwareInputEligible = false
+    private(set) var isCommittedSoftwareInputEligible = false
     var agentCompletion: AgentCompletionModel? {
         get { terminalView.agentCompletion }
         set {
@@ -180,7 +180,7 @@ public final class TerminalInputContainerView: UIView,
         return agentCompletion?.handleKey(key) == true
     }
 
-    var storedCommittedSoftwareInput: TerminalPaneView.CommittedSoftwareInput?
+    private(set) var storedCommittedSoftwareInput: TerminalPaneView.CommittedSoftwareInput?
     var committedSoftwareInput: TerminalPaneView.CommittedSoftwareInput? {
         get { storedCommittedSoftwareInput }
         set {
@@ -218,13 +218,11 @@ public final class TerminalInputContainerView: UIView,
                 storedCommittedSoftwareInput = nil
             }
             guard wasEligible != isCommittedSoftwareInputEligible else { return }
-            cachedKeyCommands = nil
-            keyCommandUpdateRequestCountForTesting += 1
-            UIMenuSystem.main.setNeedsRebuild()
+            invalidateKeyCommands()
         }
     }
     var storedHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
-    var keyCommandUpdateRequestCountForTesting = 0
+    private(set) var keyCommandUpdateRequestCountForTesting = 0
     private(set) lazy var selectionController = TerminalSelectionController(
         surface: RealSurfaceProxy(surfaceProvider: { [weak self] in self?.terminalView.surface })
     )
@@ -272,7 +270,7 @@ public final class TerminalInputContainerView: UIView,
             if (oldValue == nil) != (onBackRequested == nil) { setNeedsLayout() }
         }
     }
-    var configuredFontSize: Float?
+    private(set) var configuredFontSize: Float?
     private var observedFontSize: Float?
     var observedPinchScale: CGFloat = 1
     private var isObservingFontSize = false
@@ -356,7 +354,7 @@ public final class TerminalInputContainerView: UIView,
     /// `storedHardwareKeyboardCommands` at handle time (see
     /// `matchingHardwareKeyboardCommand`), so a signature-equal update never
     /// needs a rebuilt array.
-    var cachedKeyCommands: [UIKeyCommand]?
+    private var cachedKeyCommands: [UIKeyCommand]?
 
     override public var keyCommands: [UIKeyCommand]? {
         let effectiveCommands = effectiveHardwareKeyboardCommands
@@ -382,8 +380,15 @@ public final class TerminalInputContainerView: UIView,
         return commands
     }
 
-    lazy var longPressMenu = UIEditMenuInteraction(delegate: self)
-    lazy var selectionMenu = UIEditMenuInteraction(delegate: self)
+    /// Drops the cached `keyCommands` and asks UIKit to query them again.
+    func invalidateKeyCommands() {
+        cachedKeyCommands = nil
+        keyCommandUpdateRequestCountForTesting += 1
+        UIMenuSystem.main.setNeedsRebuild()
+    }
+
+    private(set) lazy var longPressMenu = UIEditMenuInteraction(delegate: self)
+    private(set) lazy var selectionMenu = UIEditMenuInteraction(delegate: self)
 
     private lazy var anyTouchObserver: AnyTouchObserverGestureRecognizer = {
         let r = AnyTouchObserverGestureRecognizer()
@@ -392,7 +397,7 @@ public final class TerminalInputContainerView: UIView,
         return r
     }()
 
-    lazy var selectionPanRecognizer: UIPanGestureRecognizer = {
+    private(set) lazy var selectionPanRecognizer: UIPanGestureRecognizer = {
         let r = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionPan(_:)))
         r.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         r.maximumNumberOfTouches = 1
