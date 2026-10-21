@@ -157,12 +157,14 @@ class ZmxBuildTests(unittest.TestCase):
         self.output = self.repo / "out/zmx"
         write_flock(self.tools / "flock")
         self.executable("git", r"""
-import sys
+import os, sys
 from pathlib import Path
 if sys.argv[1] == 'clone':
     root = Path(sys.argv[-1])
     root.mkdir()
     (root / 'build.zig.zon').write_text('.version = "0.7.0",\n')
+if 'checkout' in sys.argv and os.environ['GRAFTTY_TEST_ZMX_FAILURE'] == 'checkout':
+    sys.exit(47)
 """)
         self.executable("sleep", "pass\n")
         self.executable("zig", r"""
@@ -231,6 +233,14 @@ elif args[0] == 'build':
         self.assertEqual(result.returncode, 42, result.stderr)
         self.assertEqual(self.calls.read_text().splitlines(), ["test"])
         self.assertFalse(self.output.exists())
+
+    def test_failed_source_preparation_can_be_retried(self):
+        self.env["GRAFTTY_ZMX_CACHE_DIR"] = str(self.repo / "cache")
+        failed = self.run_build("checkout")
+        self.assertEqual(failed.returncode, 47, failed.stderr)
+        result = self.run_build("success")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), ["test", "release"])
 
     def test_warm_cache_preserves_test_execution(self):
         cache = self.repo / "cache"

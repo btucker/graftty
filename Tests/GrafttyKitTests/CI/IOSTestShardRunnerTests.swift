@@ -3,6 +3,19 @@ import Testing
 
 @Suite("@spec TECH-6.1: If an iOS CI test shard loses access to its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.")
 struct IOSTestShardRunnerTests {
+    @Test("@spec TECH-6.4: When an iOS CI runner executes multiple integration batches, the workflow shall preserve separate test processes and result bundles, reuse its simulator, execute later batches after a test failure, and retain the failure status.")
+    func preservesProcessBoundariesAndFailuresAcrossBatches() throws {
+        for firstExit in [Int32(0), 65] {
+            let result = try runFixture(firstExitCode: firstExit, removeSimulator: false,
+                testArguments: "-only-testing:FirstTests\n-only-testing:SecondTests")
+            #expect(result.exitCode == firstExit)
+            #expect(result.xcodebuildAttempts == 2)
+            #expect(result.simulatorsCreated == 1)
+            #expect(result.simulatorsRemaining == 0)
+            #expect(result.resultBundles == ["batch-1-attempt-1.xcresult", "batch-2-attempt-1.xcresult"])
+        }
+    }
+
     @Test("@spec TECH-6.2: While an iOS CI shard discovers its simulator destination, the workflow shall allow 60 seconds for discovery on both the first attempt and its bounded recovery attempt.")
     func allowsColdDestinationDiscovery() throws {
         for retry in [false, true] {
@@ -97,7 +110,8 @@ struct IOSTestShardRunnerTests {
         reportDestinationResolutionFailure: Bool = false,
         availableTrailingLines: Int = 0,
         minimumDestinationTimeout: Int = 0,
-        secondExitCode: Int32 = 0
+        secondExitCode: Int32 = 0,
+        testArguments: String = "-only-testing:FixtureTests"
     ) throws -> FixtureResult {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
@@ -149,7 +163,7 @@ struct IOSTestShardRunnerTests {
         environment["GITHUB_ENV"] = root.appendingPathComponent("github-env").path
         environment["SHARD_NAME"] = "fixture"
         environment["SIMULATOR_UDID"] = "sim-1"
-        environment["TEST_ARGUMENTS"] = "-only-testing:FixtureTests"
+        environment["TEST_ARGUMENTS"] = testArguments
         process.environment = environment
         let output = Pipe()
         process.standardOutput = output
@@ -168,7 +182,8 @@ struct IOSTestShardRunnerTests {
             ),
             simulatorsRemaining: try fileManager.contentsOfDirectory(
                 atPath: state.path
-            ).count { $0.hasPrefix("device-") }
+            ).count { $0.hasPrefix("device-") },
+            resultBundles: try fileManager.contentsOfDirectory(atPath: root.appendingPathComponent(".ci-results/ios").path).sorted()
         )
     }
 
@@ -246,14 +261,22 @@ struct IOSTestShardRunnerTests {
     count="$((count + 1))"
     echo "$count" > "$FAKE_STATE/xcodebuild-count"
     destination_timeout=0
+    result_bundle=''
     while [[ "$#" -gt 0 ]]; do
       if [[ "$1" == "-destination-timeout" ]]; then
         destination_timeout="$2"
+        shift 2
+      elif [[ "$1" == "-resultBundlePath" ]]; then
+        result_bundle="$2"
         shift 2
       else
         shift
       fi
     done
+    # Xcode refuses to overwrite a result bundle, including after a failed
+    # destination attempt. Verify both attempts retain distinct evidence.
+    [[ "$result_bundle" == .ci-results/ios/batch-*-attempt-*.xcresult ]] || exit 71
+    mkdir "$result_bundle" || exit 72
     if [[ "$destination_timeout" -lt "$FAKE_MINIMUM_DESTINATION_TIMEOUT" ]]; then
       echo "xcodebuild: error: Unable to find a device matching the provided destination specifier:" >&2
       exit 70
@@ -281,4 +304,5 @@ private struct FixtureResult {
     let xcodebuildAttempts: Int
     let simulatorsCreated: Int
     let simulatorsRemaining: Int
+    let resultBundles: [String]
 }

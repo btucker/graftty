@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 
-from test_plan import mac_filters
+from test_plan import mac_filters, verify_swift_results
 
 
 def main():
@@ -31,6 +31,8 @@ def main():
                             "--xunit-output", str(evidence / f"swift-{index}.xml")],
                            stdin=stdin, check=True)
             print("::endgroup::", flush=True)
+        verified = verify_swift_results(inventory, [evidence / f"swift-{i}.xml" for i in range(1, len(filters) + 1)])
+        (evidence / "verified-swift-tests.json").write_text(json.dumps(verified, indent=2) + "\n")
         for target in targets:
             print(f"::group::XCTest {target}", flush=True)
             subprocess.run(["/usr/bin/script", "-q", str(evidence / f"xctest-{target}.log"), *swift,

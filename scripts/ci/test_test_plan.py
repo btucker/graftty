@@ -1,19 +1,38 @@
 #!/usr/bin/env python3
 """Check test selection against inventories, including overlapping suite names."""
 import re
+from pathlib import Path
+import tempfile
 import unittest
 
 import test_plan
 
 
 class MacPlanTests(unittest.TestCase):
+    def test_execution_results_match_discovery_including_disabled_and_nested_tests(self):
+        tests = ["KitTests.Parent/Child/nested()", "KitTests.Parent/parameterized(_:)",
+                 "KitTests.Parent/backlog()", "KitTests.topLevel()", "OwnershipModelTests.Corpus/run()"]
+        with tempfile.TemporaryDirectory() as directory:
+            result = Path(directory) / "results.xml"
+            result.write_text('''<testsuites><testsuite>
+              <testcase classname="KitTests.Parent.Child" name="nested()"/>
+              <testcase classname="KitTests.Parent" name="parameterized(_:)"/>
+              <testcase classname="KitTests.Parent" name="backlog()"><skipped/></testcase>
+              <testcase classname="KitTests" name="topLevel()"/>
+            </testsuite></testsuites>''')
+            self.assertEqual(test_plan.verify_swift_results(tests, [result]), sorted(tests[:-1]))
+            for inventory, results in [(tests + ["KitTests.New/test()"], [result]),
+                                       (tests, [result, result]), (tests[:-2], [result])]:
+                with self.assertRaises(ValueError):
+                    test_plan.verify_swift_results(inventory, results)
+
     def test_every_discovered_test_matches_exactly_one_batch(self):
         tests = [
             "ProtocolTests.PagedTerminalTests/roundTrip()",
             "MacTests.MacPagedTerminalTests/realTerminal()",
             "KitTests.ZmxAttachEngineTests/attach()",
             "KitTests.PagedZmxAttachEngineTests/history()",
-            "KitTests.Parent.Child/nested()",
+            "KitTests.Parent/Child/nested()",
             "KitTests.Child/standalone()",
             "KitTests.Parent/parent()",
             "OtherTests.Parent/anotherModule()",

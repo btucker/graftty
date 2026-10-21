@@ -9,6 +9,13 @@ expected_zig=$(tr -d '[:space:]' < "$repo/scripts/zmx/ZIG_VERSION")
 commit=$(tr -d '[:space:]' < "$repo/scripts/zmx/UPSTREAM_COMMIT")
 [[ $commit =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid zmx revision' >&2; exit 1; }
 patches=(graftty.patch paging.patch always-run-tests.patch)
+preparing=''
+transient_stage=''
+cleanup() {
+    [[ -z $preparing ]] || rm -rf -- "$preparing"
+    [[ -z $transient_stage ]] || rm -rf -- "$transient_stage"
+}
+trap cleanup EXIT
 if [[ -n ${GRAFTTY_ZMX_CACHE_DIR:-} ]]; then
     [[ $GRAFTTY_ZMX_CACHE_DIR == /* ]] || { echo 'Zmx cache path must be absolute' >&2; exit 64; }
     fingerprint=$(python3 - "$repo" "$arch" <<'PY'
@@ -32,17 +39,21 @@ PY
     export ZIG_LOCAL_CACHE_DIR="$stage/local"
 else
     stage=$(mktemp -d)
-    trap 'rm -rf -- "$stage"' EXIT
+    transient_stage=$stage
 fi
 if [[ ! -f "$stage/source/.graftty-prepared" ]]; then
     [[ ! -e "$stage/source" ]] || { echo "Incomplete zmx source cache: $stage/source" >&2; exit 1; }
-    git clone --quiet https://github.com/neurosnap/zmx.git "$stage/source"
-    git -C "$stage/source" checkout --quiet "$commit"
+    preparing=$(mktemp -d "$stage/preparing.XXXXXX")
+    git clone --quiet https://github.com/neurosnap/zmx.git "$preparing/source"
+    git -C "$preparing/source" checkout --quiet "$commit"
     for patch in "${patches[@]}"; do
-        git -C "$stage/source" apply --check "$repo/scripts/zmx/$patch"
-        git -C "$stage/source" apply "$repo/scripts/zmx/$patch"
+        git -C "$preparing/source" apply --check "$repo/scripts/zmx/$patch"
+        git -C "$preparing/source" apply "$repo/scripts/zmx/$patch"
     done
-    touch "$stage/source/.graftty-prepared"
+    touch "$preparing/source/.graftty-prepared"
+    mv "$preparing/source" "$stage/source"
+    rmdir "$preparing"
+    preparing=''
 fi
 version=$(sed -n 's/^[[:space:]]*\.version = "\([^"]*\)",$/\1/p' "$stage/source/build.zig.zon")
 [[ -n $version ]] || { echo 'Missing zmx version' >&2; exit 1; }

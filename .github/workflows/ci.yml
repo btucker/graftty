@@ -257,7 +257,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-tests-${{ matrix.shard }}
-          path: .derivedData/Logs/Test/*.xcresult
+          path: .ci-results/ios
 
   # Preserve the original required-check name across both complete runners.
   ios-build-and-test:

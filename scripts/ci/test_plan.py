@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """Build complete, disjoint test selections from discovered identifiers."""
 import argparse
+from collections import Counter
 import re
+import xml.etree.ElementTree as ET
 
 
-IOS_INTEGRATION_SUITES = (
-    "GrafttyMobileKitTests/RemoteConnectionCoordinatorTests",
-    "GrafttyMobileKitTests/RemoteConnectionReconnectTests",
-    "GrafttyRemoteClientTests/RemoteHostConnectionLoopbackTests",
-    "GrafttyRemoteClientTests/SSHAuthLoopbackTests",
-    "GrafttyRemoteClientTests/SSHOverWebRTCLoopbackTests",
-    "GrafttyRemoteClientTests/SSHPanesAndControlLoopbackTests",
-    "GrafttyRemoteClientTests/SSHTerminalLoopbackTests",
+# Keep the existing integration process boundaries when sharing one runner.
+IOS_INTEGRATION_GROUPS = (
+    ("GrafttyMobileKitTests/RemoteConnectionCoordinatorTests",),
+    ("GrafttyRemoteClientTests/SSHAuthLoopbackTests",
+     "GrafttyRemoteClientTests/SSHTerminalLoopbackTests"),
+    ("GrafttyMobileKitTests/RemoteConnectionReconnectTests",
+     "GrafttyRemoteClientTests/RemoteHostConnectionLoopbackTests",
+     "GrafttyRemoteClientTests/SSHOverWebRTCLoopbackTests",
+     "GrafttyRemoteClientTests/SSHPanesAndControlLoopbackTests"),
 )
+IOS_INTEGRATION_SUITES = tuple(suite for group in IOS_INTEGRATION_GROUPS for suite in group)
+
 
 
 def mac_filters(test_ids, batch_size=20):
@@ -44,6 +49,23 @@ def mac_filters(test_ids, batch_size=20):
     return patterns
 
 
+def verify_swift_results(test_ids, result_paths):
+    """Require one result (including disabled tests) for every discovered ID."""
+    expected = Counter(identifier for identifier in test_ids
+                       if not identifier.startswith("OwnershipModelTests."))
+    actual = Counter()
+    for path in result_paths:
+        for test in ET.parse(path).iter("testcase"):
+            module, separator, suite = test.attrib["classname"].partition(".")
+            # Swift Testing lists nested suites with '/', but xUnit uses '.'.
+            prefix = module + "." + suite.replace(".", "/") + "/" if separator else module + "."
+            actual[prefix + test.attrib["name"]] += 1
+    missing, unexpected = expected - actual, actual - expected
+    if missing or unexpected:
+        raise ValueError(f"Swift test inventory mismatch: missing={dict(missing)}, unexpected={dict(unexpected)}")
+    return sorted(actual)
+
+
 def ios_selects(group, identifier):
     integration = any(identifier == suite or identifier.startswith(suite + "/")
                       for suite in IOS_INTEGRATION_SUITES)
@@ -62,4 +84,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("group", choices=("unit", "integration"))
     args = parser.parse_args()
-    print(" ".join(ios_arguments(args.group)))
+    if args.group == "unit":
+        print(" ".join(ios_arguments(args.group)))
+    else:
+        for group in IOS_INTEGRATION_GROUPS:
+            print(" ".join("-only-testing:" + suite for suite in group))
