@@ -33,13 +33,17 @@ public final class TrustedPeerStore: @unchecked Sendable {
 
     // MARK: Properties
 
-    private let directory: URL
+    private let file: JSONFileStore<Envelope>
     private let lock = NSLock()
 
     // MARK: Init
 
     public init(directory: URL) {
-        self.directory = directory
+        file = JSONFileStore(
+            fileURL: directory.appendingPathComponent(Self.fileName),
+            dates: .iso8601,
+            outputFormatting: [.prettyPrinted, .sortedKeys]
+        )
     }
 
     // MARK: Public API
@@ -49,7 +53,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func add(_ peer: TrustedPeer) throws {
         lock.lock()
         defer { lock.unlock() }
-        var envelope = try _load()
+        var envelope = _load()
         let fingerprint = peer.fingerprint
         guard !envelope.peers.contains(where: { $0.fingerprint == fingerprint }) else {
             throw Error.duplicateFingerprint
@@ -66,7 +70,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func upsertAfterPairing(_ peer: TrustedPeer) throws {
         lock.lock()
         defer { lock.unlock() }
-        var envelope = try _load()
+        var envelope = _load()
         guard !envelope.peers.contains(where: {
             $0.id != peer.id && $0.fingerprint == peer.fingerprint
         }) else {
@@ -81,7 +85,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func remove(id: RemoteDeviceID) throws {
         lock.lock()
         defer { lock.unlock() }
-        var envelope = try _load()
+        var envelope = _load()
         guard let idx = envelope.peers.firstIndex(where: { $0.id == id }) else {
             throw Error.notFound
         }
@@ -94,7 +98,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func update(_ peer: TrustedPeer) throws {
         lock.lock()
         defer { lock.unlock() }
-        var envelope = try _load()
+        var envelope = _load()
         guard let idx = envelope.peers.firstIndex(where: { $0.id == peer.id }) else {
             throw Error.notFound
         }
@@ -106,7 +110,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func get(id: RemoteDeviceID) throws -> TrustedPeer? {
         lock.lock()
         defer { lock.unlock() }
-        let envelope = try _load()
+        let envelope = _load()
         return envelope.peers.first(where: { $0.id == id })
     }
 
@@ -114,7 +118,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func contains(fingerprint: RemoteIdentityFingerprint) throws -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        let envelope = try _load()
+        let envelope = _load()
         return envelope.peers.contains(where: { $0.fingerprint == fingerprint })
     }
 
@@ -125,7 +129,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func get(fingerprint: RemoteIdentityFingerprint) throws -> TrustedPeer? {
         lock.lock()
         defer { lock.unlock() }
-        let envelope = try _load()
+        let envelope = _load()
         return envelope.peers.first(where: { $0.fingerprint == fingerprint })
     }
 
@@ -135,7 +139,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func list() throws -> [TrustedPeer] {
         lock.lock()
         defer { lock.unlock() }
-        let envelope = try _load()
+        let envelope = _load()
         return envelope.peers.sorted { lhs, rhs in
             switch (lhs.lastSeenAt, rhs.lastSeenAt) {
             case (.some(let l), .some(let r)):
@@ -162,37 +166,26 @@ public final class TrustedPeerStore: @unchecked Sendable {
 
     // MARK: Private helpers (call only while holding `lock`)
 
-    private func _load() throws -> Envelope {
-        let fileURL = directory.appendingPathComponent(Self.fileName)
-        guard let data = try? Data(contentsOf: fileURL) else {
-            return Envelope(version: RemoteAccessProtocol.version,peers: [])
-        }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+    /// Read failures and foreign protocol versions yield an empty envelope;
+    /// malformed contents are first moved aside so callers can recover.
+    private func _load() -> Envelope {
+        let empty = Envelope(version: RemoteAccessProtocol.version, peers: [])
         do {
-            let envelope = try decoder.decode(Envelope.self, from: data)
-            guard envelope.version == RemoteAccessProtocol.version else {
-                return Envelope(version: RemoteAccessProtocol.version, peers: [])
+            guard let envelope = try file.load(), envelope.version == RemoteAccessProtocol.version else {
+                return empty
             }
             return envelope
-        } catch {
-            // Corrupt file: back it up and return an empty envelope so callers can recover.
+        } catch is DecodingError {
             // Best effort: if the rename fails (permissions, etc.) we still return empty
             // so operations like revocation remain possible after corruption.
-            let ms = Int(Date().timeIntervalSince1970 * 1000)
-            let backupURL = directory.appendingPathComponent("\(Self.fileName).corrupt.\(ms)")
-            try? FileManager.default.moveItem(at: fileURL, to: backupURL)
-            return Envelope(version: RemoteAccessProtocol.version,peers: [])
+            file.moveAsideCorruptFile()
+            return empty
+        } catch {
+            return empty
         }
     }
 
     private func _save(_ envelope: Envelope) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let fileURL = directory.appendingPathComponent(Self.fileName)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(envelope)
-        try data.write(to: fileURL, options: .atomic)
+        try file.save(envelope)
     }
 }
