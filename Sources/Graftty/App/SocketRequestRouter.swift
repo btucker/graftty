@@ -7,9 +7,9 @@ import GrafttyProtocol
 import GrafttyRemoteClient
 
 /// Routes control-socket traffic from the `graftty` CLI and other local
-/// clients into app state. `SocketServer` delivers fire-and-forget messages
-/// to `handleMessage(_:)` and request/response messages to
-/// `handleRequest(_:)`, both on the main actor.
+/// clients into app state. `SocketServer` delivers every message to
+/// `handleMessage(_:)` and also awaits `handleRequest(_:)` for messages that
+/// expect a response, both on the main actor.
 ///
 /// Collaborators are injected individually so tests can build a router
 /// without `AppServices`, which touches the real application-support
@@ -92,28 +92,35 @@ final class SocketRequestRouter {
     }
 
     /// Request/response path (`SocketServer.onAsyncRequest`). Remote
-    /// worktree, client-reconnect, and team-reply messages are routed
-    /// before pane dispatch; the rest go through `handlePaneRequest`.
+    /// worktree, client-reconnect, team-reply, and remote (`graftty-mac:`)
+    /// team-send messages are routed before pane dispatch; the rest go
+    /// through `handlePaneRequest`, and team lists gain remote members.
     func handleRequest(_ message: NotificationMessage) async -> ResponseMessage? {
-        let binding = appState
         if case .remoteWorktree(let target, let request) = message {
-            return await remoteTeamRouter.worktree(target: target, request: request, repos: binding.wrappedValue.repos)
+            return await remoteTeamRouter.worktree(target: target, request: request, repos: appState.wrappedValue.repos)
         }
         if case .reconnectRemoteClient(let target) = message {
             return await remoteTeamRouter.reconnectClient(target: target)
         }
         if case .teamReply = message {
             return await GrafttyApp.handleTeamReply(
-                message, appState: binding, router: remoteTeamRouter,
+                message, appState: appState, router: remoteTeamRouter,
                 inbox: teamInbox, dispatcher: teamEventDispatcher
             )
         }
         if let response = await GrafttyApp.handleRemoteTeamSend(
-            message, appState: binding, router: remoteTeamRouter
+            message, appState: appState, router: remoteTeamRouter
         ) { return response }
-        let response = await Self.handlePaneRequest(
+        let response = await handlePaneRequest(message)
+        return await remoteTeamRouter.includingRemoteMembers(in: response, for: message)
+    }
+
+    /// Pane dispatch with this router's collaborators, without the
+    /// pre-routing `handleRequest` applies first.
+    func handlePaneRequest(_ message: NotificationMessage) async -> ResponseMessage? {
+        await Self.handlePaneRequest(
             message,
-            appState: binding,
+            appState: appState,
             terminalManager: terminalManager,
             teamInbox: teamInbox,
             teamEventDispatcher: teamEventDispatcher,
@@ -126,7 +133,6 @@ final class SocketRequestRouter {
             agentRegistry: agentRegistry,
             remoteMacsModel: remoteMacsModel
         )
-        return await remoteTeamRouter.includingRemoteMembers(in: response, for: message)
     }
 }
 
@@ -247,8 +253,8 @@ extension SocketRequestRouter {
              .worktreePinCapability, .setWorktreePinned,
              .worktreeRemoveStatus, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree,
              .attentionReport, .linuxSetupIdentity, .completeLinuxSetup:
-            // Request-style messages are handled by handlePaneRequest via
-            // the SocketServer.onRequest callback; they are no-ops on the
+            // Request-style messages are answered by `handleRequest` via
+            // SocketServer.onAsyncRequest; they are no-ops on the
             // fire-and-forget onMessage path.
             break
         }
