@@ -48,7 +48,7 @@ public final class WorktreeMonitor: @unchecked Sendable {
         eventStreams.keys.filter { $0.hasPrefix("content:") }.count
     }
 
-    /// `GIT-2.12`: false leaves `watchWorktreeContents` a no-op so owners
+    /// `GIT-2.13`: false leaves `watchWorktreeContents` a no-op so owners
     /// that ignore content changes don't pay for a recursive stream per
     /// worktree.
     private let watchContents: Bool
@@ -174,7 +174,7 @@ public final class WorktreeMonitor: @unchecked Sendable {
     /// affect `git status` or `git diff --shortstat` output and would
     /// otherwise fire thousands of no-op refreshes. One stream per
     /// worktree, coalesced with a 0.5s latency. No-op unless the monitor
-    /// was created with `watchContents: true` (`GIT-2.12`).
+    /// was created with `watchContents: true` (`GIT-2.13`).
     public func watchWorktreeContents(worktreePath: String) {
         guard watchContents else { return }
         let key = "content:\(worktreePath)"
