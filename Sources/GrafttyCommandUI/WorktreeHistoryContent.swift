@@ -5,8 +5,10 @@ import SwiftUI
 struct WorktreeHistoryContent: View {
     let timeline: WorktreeTimeline
     let secondary: Color
+    var openWorktree: ((String) -> Bool)? = nil
     @State private var showsAll = false
     @State private var expandedGroups: Set<String> = []
+    @State private var unavailableWorktree = false
 
     private var focusedRows: [WorktreeTimeline.Row] { timeline.rows(showAll: false) }
     private var hasGroups: Bool { focusedRows.contains(where: \.isGroup) }
@@ -38,6 +40,11 @@ struct WorktreeHistoryContent: View {
                     }
                 }
             }
+        }
+        .alert("Worktree unavailable", isPresented: $unavailableWorktree) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("This worktree is no longer available on the connected host.")
         }
     }
 
@@ -87,24 +94,25 @@ struct WorktreeHistoryContent: View {
                 }
                 if event.kind == .agentMessage {
                     VStack(alignment: .leading, spacing: 6) {
-                        Button {
-                            if !expandedGroups.insert(event.id).inserted { expandedGroups.remove(event.id) }
-                        } label: {
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Button {
+                                if !expandedGroups.insert(event.id).inserted { expandedGroups.remove(event.id) }
+                            } label: {
                                 Image(systemName: expandedGroups.contains(event.id) ? "chevron.down" : "chevron.right")
                                     .font(.caption2)
-                                Image(systemName: "bubble.left.and.bubble.right")
-                                    .font(.caption)
-                                heading(event)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
                             }
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                            .foregroundStyle(secondary)
+                            .accessibilityLabel(event.title)
+                            .accessibilityValue(expandedGroups.contains(event.id) ? "Expanded" : "Collapsed")
+                            .accessibilityHint("Expand or collapse this message")
+                            .accessibilityIdentifier("worktree.context.history.message.\(event.id)")
+                            Image(systemName: "bubble.left.and.bubble.right").font(.caption)
+                            heading(event)
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(secondary)
-                        .accessibilityLabel(event.title)
-                        .accessibilityValue(expandedGroups.contains(event.id) ? "Expanded" : "Collapsed")
-                        .accessibilityIdentifier("worktree.context.history.message.\(event.id)")
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         if expandedGroups.contains(event.id) { details(event) }
                     }
                     .padding(10)
@@ -117,7 +125,7 @@ struct WorktreeHistoryContent: View {
             .padding(.bottom, event.id == timeline.events.last?.id ? 0 : 22)
         }
         .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: event.kind == .agentMessage ? .contain : .combine)
+        .accessibilityElement(children: event.kind == .agentMessage || (event.sourceWorktreePath != nil && openWorktree != nil) ? .contain : .combine)
         .accessibilityIdentifier("worktree.context.history.event.\(event.id)")
     }
 
@@ -125,6 +133,22 @@ struct WorktreeHistoryContent: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             if event.kind == .user {
                 Text("Your input").font(.caption2).foregroundStyle(Color.orange)
+            } else if let path = event.sourceWorktreePath, let openWorktree {
+                Button {
+                    unavailableWorktree = !openWorktree(path)
+                } label: {
+                    Text(event.title).font(.callout).fontWeight(.semibold)
+                        .lineLimit(event.kind == .agentMessage && !expandedGroups.contains(event.id) ? 2 : nil)
+                        .truncationMode(.middle)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .help("Open \(path)")
+                .accessibilityLabel("Open worktree \(path)")
+                .accessibilityIdentifier("worktree.context.history.link.\(event.id)")
             } else {
                 Text(event.title).font(.callout).fontWeight(.semibold)
                     .fixedSize(horizontal: false, vertical: true)

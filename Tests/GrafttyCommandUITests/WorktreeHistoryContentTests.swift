@@ -13,11 +13,13 @@ struct WorktreeHistoryContentTests {
         let peerID = UUID()
         let peerText = String(repeating: "The agent checked the layout and kept the full investigation available. ", count: 25)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        var openedPaths: [String] = []
         func content(_ message: String) -> some View {
             var history = WorktreeHistory()
             history.record(.init(text: "I lean toward TypeScript.", at: start))
             history.record(.init(id: peerID, text: "<graftty-peer-message agent=\"/repo/layout#claude\">\(message)</graftty-peer-message>", at: start.addingTimeInterval(1)))
-            return WorktreeHistoryContent(timeline: .init(history: history, brief: nil), secondary: .secondary)
+            return WorktreeHistoryContent(timeline: .init(history: history, brief: nil), secondary: .secondary,
+                openWorktree: { openedPaths.append($0); return true })
                 .padding(20).frame(width: width).fixedSize(horizontal: false, vertical: true)
                 .background(Color(nsColor: .windowBackgroundColor))
                 .environment(\.colorScheme, .dark)
@@ -35,15 +37,23 @@ struct WorktreeHistoryContentTests {
         try await Task.sleep(for: .milliseconds(100))
         try capture(host, named: "messages-collapsed-\(Int(width))")
         let collapsedHeight = host.fittingSize.height
-        let point = host.convert(NSPoint(x: width / 2, y: host.isFlipped ? host.bounds.height - 48 : 48), to: nil)
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            let click = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
-                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
-            window.sendEvent(click)
+        func click(_ x: Double) throws {
+            let point = host.convert(NSPoint(x: x, y: host.isFlipped ? 178 : host.bounds.height - 178), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let click = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                window.sendEvent(click)
+            }
         }
+        try click(width / 2)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(openedPaths == ["/repo/layout"])
+        #expect(abs(host.fittingSize.height - collapsedHeight) < 3, "Opening the worktree must not toggle the message")
+        try click(72)
         try await Task.sleep(for: .milliseconds(100))
         host.layoutSubtreeIfNeeded()
-        #expect(host.fittingSize.height > collapsedHeight + 400, "Clicking the sender must reveal the complete peer message")
+        #expect(host.fittingSize.height > collapsedHeight + 400, "Clicking the chevron must reveal the complete peer message")
+        #expect(openedPaths.count == 1, "Expanding must not navigate to the worktree")
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
         try capture(host, named: "messages-expanded-\(Int(width))")

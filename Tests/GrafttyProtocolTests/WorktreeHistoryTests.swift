@@ -5,6 +5,18 @@ import Testing
 struct WorktreeHistoryTests {
     private let start = Date(timeIntervalSince1970: 100)
 
+    @Test("@spec CONTEXT-20: When Context history identifies a peer by an absolute worktree address, the application shall expose its worktree path separately from its agent suffix for in-app navigation, while leaving unnamed peers and non-path sender labels unlinked.")
+    func peerAddressesExposeWorktreePaths() {
+        var history = WorktreeHistory()
+        for sender in ["/repo/R&amp;D#codex-abcdef012345", "/repo/with spaces#claude", "/repo/hash#name#claude-abcdef", "/repo/literal#name", "Graftty bridge", "uds:/tmp/peer.sock"] {
+            history.record(.init(text: "<graftty-peer-message agent=\"\(sender)\">A report.</graftty-peer-message>", at: start))
+        }
+        history.record(.init(text: "<graftty-peer-message>A report.</graftty-peer-message>", at: start))
+        let events = WorktreeTimeline(history: history, brief: nil).events
+        #expect(events.map(\.sourceWorktreePath) == ["/repo/R&D", "/repo/with spaces", "/repo/hash#name", "/repo/literal#name", nil, nil, nil])
+        #expect(events.first?.title == "Message from /repo/R&D#codex-abcdef012345")
+    }
+
     @Test("@spec CONTEXT-18: When provider prompt history contains human text, peer envelopes, or generated system, forge, and hook context, the application shall highlight only human text as user input, retain peer content with its available sender provenance, and exclude generated context, including in restored history and mixed Codex and Claude turns.")
     func providerUserRolesDoNotEstablishHumanAuthorship() throws {
         // Codex turn/start and Claude's native peer transport both use user

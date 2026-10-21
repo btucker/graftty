@@ -3938,6 +3938,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-19** When worktree history displays human input and peer messages on Mac or mobile, the application shall label human text only as 'Your input' and show peer messages as distinct sender-labelled disclosures collapsed by default, with their full content available on expansion.
 
+### CONTEXT-20.x
+
+**CONTEXT-20** When Context history identifies a peer by an absolute worktree address, the application shall expose its worktree path separately from its agent suffix for in-app navigation, while leaving unnamed peers and non-path sender labels unlinked.
+
+### CONTEXT-21.x
+
+**CONTEXT-21** When a Context history worktree link is opened on mobile, the application shall resolve a unique available target from fresh snapshots on the source host, reopen closed targets before selection, and abandon resolution when newer navigation supersedes it.
+
 ## MEM — MEM
 
 ### MEM-1.x
