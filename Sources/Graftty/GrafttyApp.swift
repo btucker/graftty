@@ -1497,7 +1497,7 @@ struct GrafttyApp: App {
         services.hostPairingCoordinator.setStartupError(
             "Paired access is still starting. Try again in a moment."
         )
-        if let hostKey = services.hostKey {
+        if let hostKey = services.hostKey() {
             let hostAgentPool = Self.makeHostAgentPool(
                 hostKey: hostKey,
                 appState: appStateBinding,

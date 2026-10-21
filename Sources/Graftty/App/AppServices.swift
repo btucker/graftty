@@ -10,6 +10,12 @@ import WebRTC
 
 /// Holds long-lived non-SwiftUI services for the app. Retained for the lifetime of
 /// `GrafttyApp` so weak delegates (e.g. `WorktreeMonitor.delegate`) stay alive.
+///
+/// @spec REMOTE-1.13
+/// The application shall construct one `HostIdentityStore` and one
+/// `TrustedPeerStore` per process and share them with the pairing
+/// coordinator, the paired-access signaling server, the inbound host pool
+/// and the Settings paired-devices list.
 @MainActor
 final class AppServices {
     let socketServer: SocketServer
@@ -84,13 +90,8 @@ final class AppServices {
     /// The one `HostIdentityStore` for this process, shared by the pairing
     /// coordinator and the paired-access signaling server.
     private let hostIdentityStore: HostIdentityStore
-    /// Host signing key, loaded once at launch before startup creates the
-    /// inbound host pool. The paired-access listener authenticates v2 offers
-    /// with the device keys before passing them to the pool, whose agents
-    /// open SSH sessions over the resulting DataChannel → zmx attach. `nil`
-    /// when the identity could not be loaded; startup then builds no host
-    /// pool and paired access fails with `hostAgentUnavailable`.
-    var hostKey: Curve25519.Signing.PrivateKey? { hostKeyProvider.launchKey }
+    /// Loads the host signing key at launch, before the pairing coordinator
+    /// exists, and retains the first key that loads (REMOTE-1.12).
     private let hostKeyProvider: HostKeyProvider
     /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
     /// its live SSH connection into (REMOTE-3.1 revocation, W4).
@@ -473,8 +474,23 @@ final class AppServices {
         return true
     }
 
-    /// Fingerprint of the launch-loaded `hostKey`. Retries the shared store
-    /// only when the launch load failed.
+    /// Host signing key for the inbound host pool. The paired-access
+    /// listener authenticates v2 offers with the device keys before passing
+    /// them to the pool, whose agents open SSH sessions over the resulting
+    /// DataChannel → zmx attach. Retries the shared store if every earlier
+    /// load failed. `nil` when this load fails too; startup then builds no
+    /// host pool and paired access fails with `hostAgentUnavailable`.
+    func hostKey() -> Curve25519.Signing.PrivateKey? {
+        do {
+            return try hostKeyProvider.key()
+        } catch {
+            NSLog("[Graftty] failed to load remote host identity: %@", String(describing: error))
+            return nil
+        }
+    }
+
+    /// Fingerprint of the retained host key, loading it if every earlier
+    /// load failed.
     private func localHostFingerprint() throws -> RemoteIdentityFingerprint {
         let hostKey = try hostKeyProvider.key()
         let publicKey = try RemoteIdentityPublicKey(
