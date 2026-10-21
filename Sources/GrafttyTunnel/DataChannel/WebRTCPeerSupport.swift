@@ -61,35 +61,49 @@ public enum WebRTCPeerSupport {
 }
 
 /// Delegate adapter that bridges WebRTC's NSObject-callback world to
-/// Swift closures the owning actor sets and reads. WebRTC's SDK
-/// dispatches every delegate call for a given peer connection on a
-/// fixed internal queue, so the closure properties are read serially —
-/// `nonisolated(unsafe)` marks the deliberate sharing across that
-/// boundary, while `@Sendable` on the closure type prevents callers
-/// from capturing non-Sendable actor state by accident.
+/// Swift closures the owning actor sets. Owners assign the closures from
+/// their actors while WebRTC invokes them on its signaling thread, so a
+/// lock guards every access and each callback runs outside it. `@Sendable`
+/// on the closure types prevents callers from capturing non-Sendable actor
+/// state by accident.
 ///
 /// Callbacks carry the source peer connection's `ObjectIdentifier` so an
 /// owner that replaces its peer connection can ignore stale events.
 public final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
-    public nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
+    public typealias DataChannelHandler = @Sendable (ObjectIdentifier, RTCDataChannel, DataChannelInbox) -> Void
+    public typealias IceStateHandler = @Sendable (ObjectIdentifier, RTCIceConnectionState, UInt64) -> Void
+
+    private struct Callbacks {
+        var iceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
+        var dataChannel: DataChannelHandler?
+        var iceStateChange: IceStateHandler?
+        var iceGatheringComplete: (@Sendable (ObjectIdentifier) -> Void)?
+    }
+
+    private let lock = NSLock()
+    private var callbacks = Callbacks()
+    private var iceEventSequence: UInt64 = 0
+
+    public var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)? {
+        get { lock.withLock { callbacks.iceCandidate } }
+        set { lock.withLock { callbacks.iceCandidate = newValue } }
+    }
     /// Fired for each remotely created data channel, with a
     /// `DataChannelInbox` already attached as its delegate.
-    public nonisolated(unsafe) var onDataChannel: (@Sendable (
-        ObjectIdentifier,
-        RTCDataChannel,
-        DataChannelInbox
-    ) -> Void)?
+    public var onDataChannel: DataChannelHandler? {
+        get { lock.withLock { callbacks.dataChannel } }
+        set { lock.withLock { callbacks.dataChannel = newValue } }
+    }
     /// The trailing `UInt64` increases with every ICE state event so an
     /// owner can discard callbacks that arrive out of order.
-    public nonisolated(unsafe) var onIceStateChange: (@Sendable (
-        ObjectIdentifier,
-        RTCIceConnectionState,
-        UInt64
-    ) -> Void)?
-    public nonisolated(unsafe) var onIceGatheringComplete: (@Sendable (ObjectIdentifier) -> Void)?
-
-    private let iceEventSequenceLock = NSLock()
-    private var iceEventSequence: UInt64 = 0
+    public var onIceStateChange: IceStateHandler? {
+        get { lock.withLock { callbacks.iceStateChange } }
+        set { lock.withLock { callbacks.iceStateChange = newValue } }
+    }
+    public var onIceGatheringComplete: (@Sendable (ObjectIdentifier) -> Void)? {
+        get { lock.withLock { callbacks.iceGatheringComplete } }
+        set { lock.withLock { callbacks.iceGatheringComplete = newValue } }
+    }
 
     public override init() {}
 
@@ -98,11 +112,11 @@ public final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, 
     public func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     public func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     public func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
-        let sequence = iceEventSequenceLock.withLock {
+        let (handler, sequence) = lock.withLock {
             iceEventSequence &+= 1
-            return iceEventSequence
+            return (callbacks.iceStateChange, iceEventSequence)
         }
-        onIceStateChange?(ObjectIdentifier(peerConnection), newState, sequence)
+        handler?(ObjectIdentifier(peerConnection), newState, sequence)
     }
     public func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
         if newState == .complete {

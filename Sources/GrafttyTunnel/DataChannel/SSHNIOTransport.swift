@@ -1,6 +1,6 @@
 #if canImport(WebRTC)
 import Foundation
-import NIO
+import NIOCore
 import NIOEmbedded
 import WebRTC
 
@@ -137,7 +137,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
     /// the DataChannel's only delegate — `onClose` is the caller's only
     /// way to observe a DataChannel death once the transport owns the
     /// stream. Set via the initializer — see its doc comment.
-    public var onClose: (@Sendable () -> Void)?
+    private let onClose: (@Sendable () -> Void)?
 
     /// Convenience for a channel that has no inbox yet (a locally
     /// created channel wrapped at creation time): makes an inbox,
@@ -199,9 +199,10 @@ public final class SSHNIOTransport: @unchecked Sendable {
         }.wait()
         self.inbox = inbox
 
-        // A local SSH deadline can close the NIO channel before WebRTC
-        // notices the dead path. Propagate that close to the data channel
-        // and connection owner so the coordinator evicts its cached peer.
+        // A local SSH deadline or protocol error can close the NIO channel
+        // before WebRTC notices the dead path. Propagate that close to the
+        // data channel and `onClose` at once so the owner can release the
+        // connection (SSH-1.8).
         channel.closeFuture.whenComplete { [weak self] _ in
             self?.performClose()
         }
