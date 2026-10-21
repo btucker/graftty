@@ -51,6 +51,11 @@ jobs:
           python3 scripts/generate-specs.py --check \
             || { echo "::error::SPECS.md is stale relative to @spec annotations. Run scripts/generate-specs.py locally and recommit."; exit 1; }
 
+      - name: Check Linux test allowlists
+        run: |
+          python3 -B -m unittest discover -s scripts -p 'test_check_linux_test_allowlist.py'
+          python3 -B scripts/check-linux-test-allowlist.py
+
       - name: Test scripted agent protocols and action controller
         run: |
           python3 -B -m unittest discover -s scripts/agent-endpoint-spike -p 'test_*.py'
