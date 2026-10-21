@@ -203,6 +203,30 @@ public final class TeamInbox {
     /// thread behind a stuck or convoying lock holder indefinitely.
     private let watermarkLockTimeout: TimeInterval
 
+    /// TEAM-11.11: decoded `messages.jsonl` rows keyed by log path and
+    /// validated against the file's (inode, size, mtime) on every read.
+    /// The log is append-only, so any write changes the signature; readers
+    /// inside the watermark lock re-stat and therefore never act on rows
+    /// older than the file they hold the lock over.
+    private let messageLogCacheLock = NSLock()
+    private var messageLogCache: [String: CachedMessageLog] = [:]
+    private var messageLogParseCount = 0
+    /// Test-only: number of times `messages.jsonl` was read and decoded.
+    var messageLogParseCountForTesting: Int {
+        messageLogCacheLock.withLock { messageLogParseCount }
+    }
+
+    private struct MessageLogSignature: Equatable {
+        let fileNumber: UInt64
+        let size: UInt64
+        let modificationDate: Date
+    }
+
+    private struct CachedMessageLog {
+        let signature: MessageLogSignature
+        let messages: [TeamInboxMessage]
+    }
+
     public init(
         rootDirectory: URL,
         idGenerator: @escaping () -> String = TeamInbox.defaultID,
@@ -287,12 +311,49 @@ public final class TeamInbox {
     /// Keeps absence distinct from an existing empty inbox for file observers.
     func messagesIfFileExists(teamID: String) throws -> [TeamInboxMessage]? {
         let url = messagesURL(teamID: teamID)
-        guard let data = try dataIfFileExists(at: url) else { return nil }
+        let path = url.path
+        // Stat before reading: an append that lands between the two then
+        // only costs a redundant decode on the next call, never a stale hit.
+        let signature = Self.messageLogSignature(atPath: path)
+        if let signature,
+           let cached = messageLogCacheLock.withLock({ messageLogCache[path] }),
+           cached.signature == signature {
+            return cached.messages
+        }
+        guard let data = try dataIfFileExists(at: url) else {
+            messageLogCacheLock.withLock { _ = messageLogCache.removeValue(forKey: path) }
+            return nil
+        }
         let text = String(decoding: data, as: UTF8.self)
-        return text.split(separator: "\n").compactMap { line in
+        let messages = text.split(separator: "\n").compactMap { line -> TeamInboxMessage? in
             guard let data = String(line).data(using: .utf8) else { return nil }
             return try? decoder.decode(TeamInboxMessage.self, from: data)
         }
+        messageLogCacheLock.withLock {
+            messageLogParseCount += 1
+            // A size mismatch means the file grew after the stat; leave the
+            // entry for the next read to fill under the newer signature.
+            if let signature, signature.size == UInt64(data.count) {
+                messageLogCache[path] = CachedMessageLog(signature: signature, messages: messages)
+            } else {
+                messageLogCache.removeValue(forKey: path)
+            }
+        }
+        return messages
+    }
+
+    private static func messageLogSignature(atPath path: String) -> MessageLogSignature? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let fileNumber = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value,
+              let size = (attributes[.size] as? NSNumber)?.uint64Value,
+              let modificationDate = attributes[.modificationDate] as? Date else {
+            return nil
+        }
+        return MessageLogSignature(
+            fileNumber: fileNumber,
+            size: size,
+            modificationDate: modificationDate
+        )
     }
 
     public func unreadMessages(
@@ -641,11 +702,17 @@ public final class TeamInbox {
             worktree: worktree
         )
         let requested = Set(messageIDs)
+        // Last occurrence wins, matching `messageIndex(_:in:)`.
+        var lastIndexByID: [String: Int] = [:]
+        lastIndexByID.reserveCapacity(allMessages.count)
+        for (index, message) in allMessages.enumerated() {
+            lastIndexByID[message.id] = index
+        }
         for id in requested {
-            guard let message = allMessages.last(where: { $0.id == id }) else {
+            guard let index = lastIndexByID[id] else {
                 throw TeamInboxError.advanceTargetNotFound(id)
             }
-            guard message.to.worktree == worktree else {
+            guard allMessages[index].to.worktree == worktree else {
                 throw TeamInboxError.advanceTargetNotAddressed(
                     messageID: id,
                     worktree: worktree
@@ -658,7 +725,7 @@ public final class TeamInbox {
         retainedPending.subtract(requested)
 
         let newestRequestedIndex = requested.compactMap {
-            messageIndex($0, in: allMessages)
+            lastIndexByID[$0]
         }.filter { $0 > (currentIndex ?? -1) }.max()
         var watermarkID = current?.lastDeliveredToAnySessionID
         if let newestRequestedIndex {
