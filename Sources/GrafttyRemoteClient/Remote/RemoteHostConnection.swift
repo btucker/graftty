@@ -131,7 +131,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         expectedHostFingerprint: RemoteIdentityFingerprint
     ) {
         // SSL and codec subsystems are process-wide; initialize once.
-        Self.initializeWebRTC()
+        WebRTCPeerSupport.initializeSSL()
         // nil factories: DataChannel-only — no video codec work needed.
         self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         self.delegate = PeerConnectionDelegate()
@@ -151,7 +151,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         // way. Installed up-front (like `onIceCandidate` above) so a
         // failure that lands before `createOffer` completes is still
         // observed.
-        self.delegate.onIceStateChange = { [weak self] iceState in
+        self.delegate.onIceStateChange = { [weak self] _, iceState, _ in
             Task { await self?.handleIceStateChange(iceState) }
         }
         // The data-channel-death terminal signal is wired via the
@@ -240,7 +240,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
                 continuation.resume(returning: sdp)
             }
         }
-        try await Self.setLocalDescription(pc, offer)
+        try await WebRTCPeerSupport.setLocalDescription(pc, offer)
         await waitForIceGatheringComplete(pc)
         return pc.localDescription ?? offer
     }
@@ -254,7 +254,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         if pc.iceGatheringState == .complete { return }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             self.iceGatheringContinuation = continuation
-            self.delegate.onIceGatheringComplete = { [weak self] in
+            self.delegate.onIceGatheringComplete = { [weak self] _ in
                 Task { await self?.handleIceGatheringComplete() }
             }
             // Re-check inside the actor: if gathering completed between
@@ -293,7 +293,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     public func applyAnswer(_ answer: RTCSessionDescription) async throws {
         do {
             guard let pc = peerConnection else { throw ConnectionError.notConfigured }
-            try await Self.setRemoteDescription(pc, answer)
+            try await WebRTCPeerSupport.setRemoteDescription(pc, answer)
             remoteDescriptionApplied = true
             // Drain candidates that trickled in ahead of the answer.
             // Best-effort per candidate, mirroring the trickle path's
@@ -818,58 +818,12 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         setState(.failed(reason: "data channel did not open within \(Self.dataChannelOpenTimeout)"))
     }
 
-    /// Initialise WebRTC's SSL subsystem exactly once per process.
-    /// `RTCInitializeSSL` / `RTCCleanupSSL` are not ref-counted in all SDK
-    /// builds; calling cleanup while another connection is live can tear down
-    /// SSL globally. A static token avoids both repeated init cost and the
-    /// premature-cleanup hazard.
-    private static let _webRTCInitOnce: Void = { RTCInitializeSSL() }()
-    private static func initializeWebRTC() { _ = _webRTCInitOnce }
-
     /// The baseline peer-connection configuration used by Graftty.
     ///
     /// Public so platform adapters and interoperability tests can create the
     /// answering peer with the same LAN-focused ICE policy as this client.
     public static func defaultConfig() -> RTCConfiguration {
-        let config = RTCConfiguration()
-        // Empty ICE servers — LAN / Tailscale loopback uses mDNS-derived
-        // host candidates only; no STUN/TURN needed in M1.1 scope.
-        config.iceServers = []
-        config.iceTransportPolicy = .all
-        config.candidateNetworkPolicy = .all
-        config.maxIPv6Networks = .max
-        config.sdpSemantics = .unifiedPlan
-        // Signaling is non-trickle: the only candidates the host receives
-        // are bundled into this initial SDP. Continual gathering keeps
-        // `iceGatheringState` from completing, so createOffer() otherwise
-        // pays its five-second fallback. Network-interface changes after
-        // negotiation require a fresh connection under this policy.
-        config.continualGatheringPolicy = .gatherOnce
-        return config
-    }
-
-    private static func setLocalDescription(
-        _ pc: RTCPeerConnection,
-        _ sdp: RTCSessionDescription
-    ) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            pc.setLocalDescription(sdp) { error in
-                if let error { continuation.resume(throwing: error); return }
-                continuation.resume()
-            }
-        }
-    }
-
-    private static func setRemoteDescription(
-        _ pc: RTCPeerConnection,
-        _ sdp: RTCSessionDescription
-    ) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            pc.setRemoteDescription(sdp) { error in
-                if let error { continuation.resume(throwing: error); return }
-                continuation.resume()
-            }
-        }
+        WebRTCPeerSupport.defaultConfig()
     }
 
     public enum ConnectionError: Error, Equatable, Sendable {
@@ -883,40 +837,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         case closed
         case dataChannelOpenTimedOut
     }
-}
-
-/// Delegate adapter that bridges WebRTC's NSObject-callback world to
-/// Swift closures the surrounding actor sets and reads. WebRTC's SDK
-/// dispatches every delegate call for a given peer connection on a
-/// fixed internal queue, so the closure properties are read serially —
-/// `nonisolated(unsafe)` marks the deliberate sharing across that
-/// boundary, while `@Sendable` on the closure type prevents callers
-/// from capturing non-Sendable actor state by accident. M1.2 wires
-/// signaling onto the ICE candidate signal captured here.
-private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
-    nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
-
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
-    func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
-    /// See `RemoteHostConnection.handleIceStateChange` for which ICE
-    /// states are treated as terminal.
-    nonisolated(unsafe) var onIceStateChange: (@Sendable (RTCIceConnectionState) -> Void)?
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
-        onIceStateChange?(newState)
-    }
-    nonisolated(unsafe) var onIceGatheringComplete: (@Sendable () -> Void)?
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
-        if newState == .complete {
-            onIceGatheringComplete?()
-        }
-    }
-    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
-        onIceCandidate?(candidate)
-    }
-    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
 }
 
 /// Sendable-compatible container for `NIOSSHHandler`.

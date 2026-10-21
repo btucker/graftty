@@ -7,6 +7,7 @@ import NIOSSH
 import Testing
 import WebRTC
 @testable import GrafttyRemoteClient
+import GrafttyTunnel
 
 /// End-to-end SSH-over-WebRTC auth tests using real `PinnedHostStore`
 /// on the client side + real `SSHClientSetup` + real

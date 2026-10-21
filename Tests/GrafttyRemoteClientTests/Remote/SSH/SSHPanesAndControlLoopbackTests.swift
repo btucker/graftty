@@ -7,6 +7,7 @@ import NIOSSH
 import Testing
 import WebRTC
 @testable import GrafttyRemoteClient
+import GrafttyTunnel
 
 /// End-to-end SSH-over-WebRTC loopback tests for the R5 panes-state and
 /// pane-control channel types.
@@ -518,7 +519,7 @@ fileprivate final class TestSubsystemRouter: ChannelInboundHandler, RemovableCha
                 // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
                 // so the downstream framing handlers operate on raw bytes.
                 try context.pipeline.syncOperations.addHandler(
-                    InlineSSHChannelDataCodec(),
+                    SSHChannelDataCodec(),
                     position: .after(self)
                 )
                 if request.wantReply {
@@ -549,7 +550,7 @@ fileprivate final class TestSubsystemRouter: ChannelInboundHandler, RemovableCha
                 )
                 // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer.
                 try context.pipeline.syncOperations.addHandler(
-                    InlineSSHChannelDataCodec(),
+                    SSHChannelDataCodec(),
                     position: .after(self)
                 )
                 if request.wantReply {
@@ -689,34 +690,6 @@ fileprivate final class InlineServerPaneControlHandler: ChannelInboundHandler, @
                 channel.writeAndFlush(buf, promise: nil)
             }
         }
-    }
-}
-
-// MARK: - InlineSSHChannelDataCodec
-//
-// Test-local mirror of `GrafttyMobileKit.SSHChannelDataCodec` and
-// `GrafttyHostAgent.SSHChannelDataCodec`. Cannot share the type directly
-// because (a) `SSHChannelDataCodec` in GrafttyMobileKit is internal, and
-// (b) we need the same codec on the server-side pipeline too.
-// Mirrors `DataToBufferCodec` from swift-nio-ssh's NIOSSHServer example.
-
-fileprivate final class InlineSSHChannelDataCodec: ChannelDuplexHandler, @unchecked Sendable {
-    typealias InboundIn = SSHChannelData
-    typealias InboundOut = ByteBuffer
-    typealias OutboundIn = ByteBuffer
-    typealias OutboundOut = SSHChannelData
-
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        let channelData = unwrapInboundIn(data)
-        guard case .channel = channelData.type,
-              case .byteBuffer(let buf) = channelData.data
-        else { return }
-        context.fireChannelRead(wrapInboundOut(buf))
-    }
-
-    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
-        let buf = unwrapOutboundIn(data)
-        context.write(wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(buf))), promise: promise)
     }
 }
 

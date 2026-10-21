@@ -1,7 +1,7 @@
 import Testing
 import WebRTC
-@testable import GrafttyHostAgent
 import GrafttyRemoteClient
+import GrafttyTunnel
 
 @Suite("WebRTC non-trickle ICE gathering policy")
 struct ICEGatheringPolicyTests {
@@ -14,7 +14,7 @@ struct ICEGatheringPolicyTests {
                 == .gatherOnce
         )
         #expect(
-            WebRTCHostAgent.defaultConfig().continualGatheringPolicy
+            WebRTCPeerSupport.defaultConfig().continualGatheringPolicy
                 == .gatherOnce
         )
     }

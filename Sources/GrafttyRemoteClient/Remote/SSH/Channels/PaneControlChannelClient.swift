@@ -1,5 +1,6 @@
 import Foundation
 import GrafttyProtocol
+import GrafttyTunnel
 import NIOCore
 import NIOConcurrencyHelpers
 import NIOSSH

@@ -2,6 +2,7 @@
 import CryptoKit
 import Foundation
 import GrafttyProtocol
+import GrafttyTunnel
 import NIOCore
 import NIOSSH
 import Testing

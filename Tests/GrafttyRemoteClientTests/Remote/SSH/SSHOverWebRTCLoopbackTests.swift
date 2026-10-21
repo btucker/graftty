@@ -6,6 +6,7 @@ import NIOSSH
 import Testing
 import WebRTC
 @testable import GrafttyRemoteClient
+import GrafttyTunnel
 
 /// R2 architecture decision gate. Pairs two `RTCPeerConnection`s
 /// in-process, wraps each side's resulting `RTCDataChannel` in an

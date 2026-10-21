@@ -5,6 +5,7 @@ import NIO
 import NIOEmbedded
 import Testing
 @testable import GrafttyRemoteClient
+@testable import GrafttyTunnel
 import WebRTC
 
 @Suite("SSHNIOTransport unit tests — partial-write closes channel.")
@@ -178,6 +179,33 @@ struct SSHNIOTransportUnitTests {
         // closes run. Letting the transport deinitialize concurrently with
         // `pc.close()` can deadlock libwebrtc's worker-thread join when this
         // suite shares a Swift Testing process with socket-heavy targets.
+        await transport.close()
+    }
+
+    @Test("@spec SSH-1.8: When the NIO channel of an SSH-over-DataChannel transport closes, the host and the client shall close the underlying WebRTC DataChannel at once rather than wait for the transport owner to observe the closure.")
+    func closingNIOChannelClosesDataChannel() async throws {
+        let factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
+        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        let pc = try #require(factory.peerConnection(
+            with: RemoteHostConnection.defaultConfig(),
+            constraints: constraints,
+            delegate: nil
+        ))
+        defer { pc.close() }
+        let dc = try #require(pc.dataChannel(forLabel: "close-propagation", configuration: RTCDataChannelConfiguration()))
+        defer { dc.close() }
+        #expect(dc.readyState == .connecting)
+
+        let transport = SSHNIOTransport(dataChannel: dc)
+        try await transport.channel.close().get()
+        // The close promise succeeds before the channel's close future does.
+        // The transport registers its close-future callback at construction,
+        // so that callback has run once this later registration resumes.
+        try await transport.channel.closeFuture.get()
+
+        #expect(dc.readyState == .closing || dc.readyState == .closed)
+        // Join the embedded teardown before the deferred native closes,
+        // matching `pendingInboundCapClosesTransport`.
         await transport.close()
     }
 }
