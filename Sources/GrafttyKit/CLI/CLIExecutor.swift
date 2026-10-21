@@ -21,7 +21,8 @@ public enum CLIError: Error, Equatable {
     /// Process launch itself failed (permission denied, bad cwd, etc.).
     case launchFailed(command: String, message: String)
     /// The process exceeded the caller-supplied timeout and was
-    /// terminated (SIGTERM). The polling fetches (stats `git fetch`, PR
+    /// terminated (SIGTERM, then SIGKILL if it outlives a 2 s grace —
+    /// CLI-1.3). The polling fetches (stats `git fetch`, PR
     /// `gh`/`glab`) pass a bounded timeout so a wedged network subprocess
     /// — a socket stuck across a sleep/wake or a dead VPN link, which
     /// `git`/`gh` will otherwise wait on indefinitely — surfaces as a

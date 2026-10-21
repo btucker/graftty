@@ -2558,6 +2558,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-8.4** When the application starts, if `defaultCommand` contains `--dangerously-load-development-channels server:graftty-channel`, the application shall strip the substring (with any adjacent leading whitespace), write the cleaned value back to `defaultCommand`, and present a one-shot informational `NSAlert` describing the change.
 
+**TEAM-8.5** The application shall bound the legacy `claude mcp remove graftty-channel` cleanup with a 30-second timeout so a wedged `claude` cannot block the remaining cleanup steps.
+
 ### TEAM-9.x — Stop Hook Filtering
 
 **TEAM-9.1** When a Stop-event hook command (`graftty team hook <runtime> stop`) is invoked and the JSON the runtime wrote to the hook's stdin contains an `agent_id` string — Claude Code's marker that this Stop fired inside a Task subagent context rather than for a top-level agent turn — the CLI shall short-circuit before doing any per-Stop work: no `teamHook` socket message is sent. Without this filter, every Task subagent end can start redundant lifecycle work while the top-level agent is still working.
@@ -2799,6 +2801,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **EDITOR-1.9** When the user cmd-clicks a binary file path in a terminal pane, the application shall open the file with its system default app, equivalent to `open <file>`, without creating an editor pane.
 
 **EDITOR-1.10** When a native terminal restores a snapshot containing an OSC 7 working-directory URI, the application shall resolve local relative file links without aborting, preserve absolute and OSC8 link activation, and remain usable after repeated restoration.
+
+**EDITOR-1.11** When login-shell rc files write more output than a pipe buffer holds, the application shall still return the probed value within the probe timeout rather than stall on the full pipe.
+
+**EDITOR-1.12** When a login-shell rc file starts a background job that outlives the shell, the application shall return the probed value once the shell exits rather than wait for the background job.
+
+**EDITOR-1.13** If the login-shell probe exceeds its timeout, then the application shall kill the shell with SIGKILL, because an interactive shell ignores SIGTERM.
+
+**EDITOR-1.14** While login-shell rc files run, the application shall give them and the jobs they start /dev/null as stdout and write the probed value to a private result file only from the final command, so a profile background job can never hold or grow the result capture.
 
 ## REMOTE — Secure Remote Access
 
@@ -3863,6 +3873,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CLI-1.1** When a subprocess pipe's read fd is closed out from under the in-flight readability handler (process/pipe teardown after a timeout SIGTERM, where the per-stream EOF wait lapsed under load), the application shall treat the read as EOF rather than crash. The legacy `NSFileHandle.availableData` raises an *uncatchable* `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd, SIGABRT-ing the whole process; the crash-safe drain returns `nil`.
 
 **CLI-1.2** When a timeout-enabled subprocess exits before its deadline, the application shall allow its Process and pipe descriptors to be released immediately rather than retain them in the delayed timeout work item until the original deadline.
+
+**CLI-1.3** If a stopped subprocess, timed out or cancelled, is still running when its kill grace (two seconds by default) elapses after SIGTERM, then the application shall send SIGKILL so the caller is released instead of waiting for a child that ignores SIGTERM.
 
 ## CONTEXT — CONTEXT
 
