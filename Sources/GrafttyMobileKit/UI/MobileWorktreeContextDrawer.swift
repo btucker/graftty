@@ -22,6 +22,7 @@ struct MobileWorktreeContextDrawer: ViewModifier {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openWorktreeContext) private var inheritedOpen
+    @Environment(\.worktreeContextActions) private var contextActions
     @State private var isPresented = false
     @State private var width: CGFloat = 0
 
@@ -61,6 +62,7 @@ struct MobileWorktreeContextDrawer: ViewModifier {
                                 .accessibilityLabel("Close context")
                                 .accessibilityAddTraits(.isButton)
                             WorktreeContextPanel(context: context, onClose: close)
+                                .environment(\.worktreeContextActions, navigationActions)
                                 .accessibilityAddTraits(.isModal)
                                 .frame(width: min(420, max(0, geometry.size.width - 20)))
                                 .frame(maxHeight: .infinity)
@@ -75,6 +77,16 @@ struct MobileWorktreeContextDrawer: ViewModifier {
             .onChange(of: scenePhase) { _, phase in if phase != .active { close() } }
             .onChange(of: gate?.state) { _, state in if state == .locked { close() } }
             .onChange(of: context == nil) { _, missing in if missing { close() } }
+    }
+
+    private var navigationActions: WorktreeContextActions? {
+        contextActions.map { actions in
+            WorktreeContextActions { path, source in
+                guard actions.openWorktree(path, source) else { return false }
+                close()
+                return true
+            }
+        }
     }
 
     private func open() {

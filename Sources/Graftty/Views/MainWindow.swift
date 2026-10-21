@@ -305,6 +305,9 @@ struct MainWindow: View {
                         WorktreeContextPanel(context: context, foreground: terminalManager.theme.foreground,
                             secondary: terminalManager.theme.foreground.opacity(0.6),
                             onClose: { showsWorktreeContext = false })
+                            .environment(\.worktreeContextActions, WorktreeContextActions { [identity = selectedRemoteIdentity] path, _ in
+                                openContextWorktree(path, remoteIdentity: identity)
+                            })
                             .frame(width: 360)
                             .background(terminalManager.theme.background)
                             .padding(.top, 30)
@@ -638,6 +641,22 @@ struct MainWindow: View {
         return remoteMacsModel.worktreePanesByRemote[identity]?.first {
             $0.path == path && ($0.origin?.relayDepth ?? 0) == 0
         }
+    }
+
+    private func openContextWorktree(_ path: String, remoteIdentity: RemoteMacIdentity?) -> Bool {
+        if let remoteIdentity {
+            guard let mac = remoteMacsModel.savedRemoteMacs.first(where: { RemoteMacIdentity($0) == remoteIdentity }),
+                  remoteMacsModel.connectionState(for: remoteIdentity) == .connected,
+                  let row = remoteMacsModel.worktreePanesByRemote[remoteIdentity]?.first(where: {
+                      $0.path == path && ($0.origin?.relayDepth ?? 0) == 0
+                  }), row.state.hasOnDiskWorktree, !row.state.isInFlight else { return false }
+            selectRemoteWorktree(mac, worktreePath: path)
+            return true
+        }
+        guard let worktree = appState.worktree(forPath: path), worktree.state.hasOnDiskWorktree,
+              !worktree.state.isInFlight else { return false }
+        attentionOpenGeneration &+= 1
+        return selectWorktree(path, acknowledging: true)
     }
 
     private var selectedContext: SidebarWorktreeContext? {

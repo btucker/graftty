@@ -7,6 +7,7 @@ public struct WorktreeBriefContent: View {
     private let foreground: Color
     private let secondary: Color
     private let compact: Bool
+    @Environment(\.worktreeContextActions) private var actions
 
     public init(context: SidebarWorktreeContext, foreground: Color = .primary, secondary: Color = .secondary, compact: Bool = false) {
         self.context = context
@@ -70,7 +71,8 @@ public struct WorktreeBriefContent: View {
             let timeline = WorktreeTimeline(history: context.worktree.sidebar?.history, brief: context.brief)
             if !timeline.events.isEmpty {
                 Divider()
-                WorktreeHistoryContent(timeline: timeline, secondary: secondary)
+                WorktreeHistoryContent(timeline: timeline, secondary: secondary,
+                    openWorktree: actions.map { actions in { actions.openWorktree($0, context.worktree) } })
                     .id(context.item.worktreeIdentity)
             }
         }

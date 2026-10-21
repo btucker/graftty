@@ -16,6 +16,7 @@ public struct RootView: View {
     @State private var navigationIntent = MobileNavigationIntent()
     @State private var recentPaneOpeningID: UUID?
     @State private var recentPaneError: String?
+    @State private var contextWorktreeError: String?
     @Environment(\.scenePhase) private var scenePhase
     @State private var iPadAppState = IPadAppState()
     @State private var retainedPanes = RetainedPaneClientPool<RetainedMobilePane>()
@@ -75,6 +76,12 @@ public struct RootView: View {
             }
         }
         .environment(\.biometricGate, gate)
+        .environment(\.worktreeContextActions, WorktreeContextActions { [hostID = iPadAppState.selectedHostId] path, source in
+            openContextWorktree(path, source: source, hostID: hostID)
+        })
+        .alert("Could not open worktree", isPresented: Binding(
+            get: { contextWorktreeError != nil }, set: { if !$0 { contextWorktreeError = nil } }
+        )) { Button("OK") { contextWorktreeError = nil } } message: { Text(contextWorktreeError ?? "") }
         .environment(\.mobileNotificationPaneActivation, notificationPaneActivation)
         .environment(\.recentPaneActions, MobileRecentPaneActions(history: iPadAppState.recentPanes, open: { entry in
             let id = UUID()
@@ -176,6 +183,66 @@ public struct RootView: View {
               let worktree = iPadAppState.latestWorktrees.first(where: { $0.path == iPadAppState.selectedWorktreePath }),
               let pane = iPadAppState.focusedPaneId else { return }
         iPadAppState.recentPanes.record(hostID: host.id, hostLabel: host.label, worktree: worktree, sessionName: pane)
+    }
+
+    private func openContextWorktree(_ path: String, source: WorktreePanes, hostID: UUID?) -> Bool {
+        guard scenePhase == .active, gate.state == .unlocked,
+              let hostID, hostID == iPadAppState.selectedHostId,
+              let host = hostStore.hosts.first(where: { $0.id == hostID }),
+              source.path == iPadAppState.selectedWorktreePath
+        else { return false }
+        let intent = navigationIntent.begin()
+        let openingID = UUID()
+        notificationPaneActivation.cancel()
+        recentPaneOpeningID = openingID
+        if let pending = notifications.pendingRoute { notifications.consume(pending) }
+        let initialPath = navigationPath
+        let initialSelection = notificationSelection
+        Task { @MainActor in
+            @MainActor func isCurrent() -> Bool {
+                navigationIntent.isCurrent(intent) && recentPaneOpeningID == openingID
+                    && scenePhase == .active && gate.state == .unlocked
+                    && navigationPath == initialPath && notificationSelection == initialSelection
+            }
+            defer { if recentPaneOpeningID == openingID { recentPaneOpeningID = nil } }
+            do {
+                let target = try await WorktreeContextActions.resolve(path, source: source, fetch: {
+                    if let notificationIO { return try await notificationIO.fetch(host) }
+                    return try await coordinator.worktreePanes(for: host)
+                }, reopen: { path in
+                    if let notificationIO { return try await notificationIO.reopen(host, path) }
+                    guard try await coordinator.sendWorktreeManagement(.open(worktreeID: path), to: host) == .ok
+                    else { throw WorktreeContextActions.Failure.notReady }
+                }, isCurrent: isCurrent)
+                guard isCurrent() else { return }
+                iPadAppState.latestWorktrees = target.rows
+                applyContextWorktree(target.worktree, host: host)
+            } catch is CancellationError {
+            } catch {
+                guard isCurrent() else { return }
+                contextWorktreeError = "The worktree couldn't be opened on \(host.label). It may be unavailable or the host may be offline."
+            }
+        }
+        return true
+    }
+
+    private func applyContextWorktree(_ row: WorktreePanes, host: Host) {
+        let project = SidebarProjection.projects([row]).first
+        if let project { iPadAppState.sidebarNavigation.showProject(project.id) }
+        IPadRootLayout.applyWorktreeSelection(appState: iPadAppState, worktree: row)
+        if horizontalSizeClass != .regular {
+            var path = NavigationPath()
+            path.append(host)
+            if showsProjectRail, let project { path.append(ProjectStep(host: host, project: project)) }
+            switch MobileNavigationDecision.decide(layout: row.layout) {
+            case let .session(sessionName, title):
+                path.append(SessionStep(host: host, worktreePath: row.path, sessionName: sessionName,
+                    title: title, worktreeProject: project))
+            case .worktreeDetail:
+                path.append(WorktreeStep(host: host, worktree: row, project: project))
+            }
+            navigationPath = path
+        }
     }
 
     private func openRecentPane(_ entry: MobileRecentPanes.Entry, openingID: UUID) async {

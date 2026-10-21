@@ -3946,6 +3946,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-18** When provider prompt history contains human text, peer envelopes, or generated system, forge, and hook context, the application shall highlight only human text as user input, retain peer content with its available sender provenance, and exclude generated context, including in restored history and mixed Codex and Claude turns.
 
+### CONTEXT-19.x
+
+**CONTEXT-19** When worktree history displays human input and peer messages on Mac or mobile, the application shall label human text only as 'Your input' and show peer messages as distinct sender-labelled disclosures collapsed by default, with their full content available on expansion.
+
+### CONTEXT-20.x
+
+**CONTEXT-20** When Context history identifies a peer by an absolute worktree address, the application shall expose its worktree path separately from its agent suffix for in-app navigation, while leaving unnamed peers and non-path sender labels unlinked.
+
+### CONTEXT-21.x
+
+**CONTEXT-21** When a Context history worktree link is opened on mobile, the application shall resolve a unique available target from fresh snapshots on the source host, reopen closed targets before selection, and abandon resolution when newer navigation supersedes it.
+
+### CONTEXT-22.x
+
+**CONTEXT-22** When Context history displays a source worktree, the application shall label it with its directory name while retaining its full path for navigation and sender details.
+
 ## MEM — MEM
 
 ### MEM-1.x
