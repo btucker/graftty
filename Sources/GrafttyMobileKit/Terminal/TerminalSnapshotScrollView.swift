@@ -79,7 +79,11 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
             updateContentTimer()
         }
     }
-    /// Polls paged history, which has no change notification of its own.
+    /// Re-checks content that changes without a notification: first-line
+    /// clearance while there is no scrollback, and paged history.
+    var onContentUpdate: (() -> Void)? {
+        didSet { updateContentTimer() }
+    }
     private var contentTimer: Timer?
     private var includesAdditionalHistory: Bool {
         #if GRAFTTY_PAGED_HISTORY
@@ -168,7 +172,9 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         let wasAtBottom = contentOffset.y >= contentSize.height - bounds.height - 1
         let withinCanvas = contentOffset.y - CGFloat(nativeRow) * rowHeight
         let replacedHistory = value.total < (scrollbar?.total ?? 0)
+        let hadScrollback = hasScrollback
         scrollbar = value
+        if hasScrollback != hadScrollback { updateContentTimer() }
         nativeRow = min(value.offset, historyRows)
         guard canvas != nil else { return }
         reconcile(wasAtBottom: wasAtBottom || replacedHistory, withinCanvas: withinCanvas)
@@ -218,9 +224,14 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     private func updateContentTimer() {
         contentTimer?.invalidate()
         contentTimer = nil
-        if window != nil && includesAdditionalHistory {
+        // With scrollback, clearance is off and only a scrollbar callback
+        // can change that, so the content update needs no polling then.
+        if window != nil && (includesAdditionalHistory || (onContentUpdate != nil && !hasScrollback)) {
             let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshAdditionalHistory() }
+                MainActor.assumeIsolated {
+                    self?.refreshAdditionalHistory()
+                    self?.onContentUpdate?()
+                }
             }
             RunLoop.main.add(timer, forMode: .common)
             contentTimer = timer

@@ -2276,8 +2276,8 @@ struct FirstLineClearanceRefreshTests {
         try await waitUntil("multiline screen has no clearance") {
             session.readViewportText()?.contains("second line") == true && mounted.topInset() == 0
         }
-        // A terminal reset rewrites the grid inside libghostty, the same way
-        // a paged snapshot installs, without bytes from the session.
+        // A terminal reset rewrites the grid inside libghostty without
+        // bytes from the session.
         #expect(container.terminalView.surface?.performBindingAction("reset") == true)
         try await waitUntil("emptied screen restores clearance") {
             session.readViewportText()?.contains("second line") == false && mounted.topInset() > 0
