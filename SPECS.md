@@ -2946,9 +2946,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.12** When the host receives an owner resize carrying pixel dimensions, the application shall apply them to the attached PTY together with the grid, and shall treat absent or invalid pixel fields as unspecified so older clients keep grid-only behavior.
 
+**REMOTE-9.13** If queued SSH terminal frames reach the receive budget, then the application shall reject further frames so the owning channel can disconnect explicitly instead of retaining output without limit.
+
+**REMOTE-9.14** When an SSH terminal receiver cancels or disconnects, the application shall release its pending receive work and discarded output, reject output after closure, and preserve final output before a deliberate remote exit.
+
 ### REMOTE-10.x
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
+
+**REMOTE-10.2** While a legacy SSH terminal consumer is stalled, the application shall bound queued output and backpressure its attach reader without losing bytes, and shall release queued output when the attachment closes.
 
 ### REMOTE-11.x
 

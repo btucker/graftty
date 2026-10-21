@@ -42,6 +42,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         case notConnected
         case pagingUnsupported
         case channelClosed
+        case receiveBufferOverflow
         /// The remote PTY process reached EOF and deliberately closed the
         /// SSH child channel. This is not a retryable transport failure.
         case sessionEnded(exitStatus: Int)
@@ -58,7 +59,9 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private var historySetupTask: Task<Void, Never>?
     internal var hasHistoryChannelForTesting: Bool { lock.withLock { historyChannel != nil } }
     private var receiveBuffer = TerminalReceiveBuffer()
-    private var pendingReceivers: [CheckedContinuation<WebSocketFrame, Error>] = []
+    private var pendingReceivers: [(id: UUID, continuation: CheckedContinuation<WebSocketFrame, Error>)] = []
+    var bufferedByteCountForTesting: Int { lock.withLock { receiveBuffer.byteCount } }
+    var pendingReceiverCountForTesting: Int { lock.withLock { pendingReceivers.count } }
     private var didFailReceive: (any Error)?
     private var closed = false
 
@@ -94,7 +97,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             return true
         }
         guard accepted else { child.close(promise: nil); throw ClientError.channelClosed }
-        child.closeFuture.whenComplete { [weak self] _ in self?.close() }
+        child.closeFuture.whenComplete { [weak self] _ in self?.handleChildClose() }
         if let terminal = lock.withLock({ childChannel }) {
             try await Self.sendEnv(channel: terminal, name: GrafttyWebRTC.historyTokenEnvironment, value: token)
         }
@@ -212,39 +215,50 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     }
 
     public func receive() async throws -> WebSocketFrame {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<WebSocketFrame, Error>) in
-            lock.withLock {
-                if let next = receiveBuffer.popFirst() {
-                    cont.resume(returning: next)
-                    return
+        let id = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { cont in
+                lock.withLock {
+                    if Task.isCancelled { cont.resume(throwing: CancellationError()) }
+                    else if let next = receiveBuffer.popFirst() { cont.resume(returning: next) }
+                    else if let error = didFailReceive { cont.resume(throwing: error) }
+                    else if closed { cont.resume(throwing: ClientError.channelClosed) }
+                    else { pendingReceivers.append((id, cont)) }
                 }
-                if let error = didFailReceive {
-                    cont.resume(throwing: error)
-                    return
-                }
-                if closed {
-                    cont.resume(throwing: ClientError.channelClosed)
-                    return
-                }
-                pendingReceivers.append(cont)
             }
+        } onCancel: {
+            let waiter = self.lock.withLock {
+                guard let index = self.pendingReceivers.firstIndex(where: { $0.id == id }) else { return nil as CheckedContinuation<WebSocketFrame, Error>? }
+                return self.pendingReceivers.remove(at: index).continuation
+            }
+            waiter?.resume(throwing: CancellationError())
         }
     }
 
     public func close() {
-        let channels = lock.withLock {
+        terminate(discardOutput: true)
+    }
+
+    /// Explicit close, overflow and transport failure release retained output
+    /// immediately. A deliberate remote exit preserves its final bounded bytes.
+    private func terminate(discardOutput: Bool, error: any Error = ClientError.channelClosed) {
+        let result = lock.withLock {
             closed = true
-            return (childChannel, historyChannel, historySetupTask)
+            if didFailReceive == nil { didFailReceive = error }
+            if discardOutput { receiveBuffer.removeAll() }
+            let pending = pendingReceivers
+            pendingReceivers.removeAll()
+            let channels = (childChannel, historyChannel, historySetupTask)
+            childChannel = nil
+            historyChannel = nil
+            historySetupTask = nil
+            historyToken = nil
+            return (pending, channels, didFailReceive!)
         }
-        channels.2?.cancel()
-        channels.1?.close(promise: nil)
-        if let child = channels.0 {
-            child.close(promise: nil)
-        } else {
-            // No child yet — close() raced connect() before childChannel
-            // was assigned. Drain pendingReceivers so callers don't hang.
-            handleChildClose()
-        }
+        for waiter in result.0 { waiter.continuation.resume(throwing: result.2) }
+        result.1.2?.cancel()
+        result.1.1?.close(promise: nil)
+        result.1.0?.close(promise: nil)
     }
 
     public func resize(cols: Int, rows: Int) async {
@@ -359,59 +373,51 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 
     // MARK: - Inbound bytes from the SSH channel
 
-    fileprivate func deliverInboundBinary(_ data: Data) {
+    func deliverInboundBinary(_ data: Data) {
         deliverInbound(.binary(data))
     }
 
-    fileprivate func deliverInboundText(_ text: String) {
+    func deliverInboundText(_ text: String) {
         deliverInbound(.text(text))
     }
 
     private func deliverInbound(_ frame: WebSocketFrame) {
-        lock.withLock {
-            receiveBuffer.append(frame)
-            while let next = pendingReceivers.first,
-                  let output = receiveBuffer.popFirst() {
-                pendingReceivers.removeFirst()
-                next.resume(returning: output)
+        let overflow = lock.withLock {
+            guard !closed else { return false }
+            guard receiveBuffer.append(frame) else {
+                // Mark failure before releasing the lock so another inbound
+                // callback cannot enqueue after overflow but before teardown.
+                closed = true
+                didFailReceive = ClientError.receiveBufferOverflow
+                return true
             }
+            while !pendingReceivers.isEmpty, let output = receiveBuffer.popFirst() {
+                pendingReceivers.removeFirst().continuation.resume(returning: output)
+            }
+            return false
         }
+        if overflow { terminate(discardOutput: true, error: ClientError.receiveBufferOverflow) }
     }
 
-    fileprivate func handleChildClose() {
-        lock.withLock { historySetupTask }?.cancel()
-        lock.withLock { historyChannel }?.close(promise: nil)
-        let result: (
-            [CheckedContinuation<WebSocketFrame, Error>],
-            any Error
-        ) = lock.withLock {
-            let pending = pendingReceivers
-            pendingReceivers.removeAll()
-            closed = true
-            let failure = didFailReceive ?? ClientError.channelClosed
-            didFailReceive = failure
-            return (pending, failure)
+    func handleChildClose() {
+        let ended = lock.withLock {
+            if let error = didFailReceive as? ClientError, case .sessionEnded = error { return true }
+            return false
         }
-        for cont in result.0 {
-            cont.resume(throwing: result.1)
-        }
+        terminate(discardOutput: !ended)
     }
 
-    fileprivate func handleSessionEnded(exitStatus: Int) {
+    func handleSessionEnded(exitStatus: Int) {
         let failure = ClientError.sessionEnded(exitStatus: exitStatus)
-        let toResume: [CheckedContinuation<WebSocketFrame, Error>] = lock.withLock {
-            // Preserve the first terminal outcome if duplicate exit-status
-            // events arrive. `handleChildClose` also preserves this error.
-            guard didFailReceive == nil else { return [] }
+        let toResume = lock.withLock {
+            guard didFailReceive == nil else { return [CheckedContinuation<WebSocketFrame, Error>]() }
             didFailReceive = failure
             closed = true
-            let pending = pendingReceivers
+            let pending = pendingReceivers.map(\.continuation)
             pendingReceivers.removeAll()
             return pending
         }
-        for cont in toResume {
-            cont.resume(throwing: failure)
-        }
+        for cont in toResume { cont.resume(throwing: failure) }
     }
 
     // MARK: - Channel-request senders

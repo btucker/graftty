@@ -11,6 +11,91 @@ import Testing
 @Suite("ZmxAttachEngine")
 struct ZmxAttachEngineTests {
 
+    @Test("@spec REMOTE-10.2: While a legacy SSH terminal consumer is stalled, the application shall bound queued output and backpressure its attach reader without losing bytes, and shall release queued output when the attachment closes.", .timeLimit(.minutes(1)))
+    func stalledConsumerBackpressuresAndCloseDiscardsQueuedOutput() async throws {
+        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-output-backpressure")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let started = dir.appendingPathComponent("started")
+        let completed = dir.appendingPathComponent("completed")
+        let script = dir.appendingPathComponent("zmx")
+        try Self.writeScript("""
+        #!/usr/bin/python3
+        import os, time
+        open(\(String(reflecting: started.path)), 'w').close()
+        chunk = bytes(65536)
+        for _ in range(64):
+            remaining = memoryview(chunk)
+            while remaining:
+                remaining = remaining[os.write(1, remaining):]
+        open(\(String(reflecting: completed.path)), 'w').close()
+        time.sleep(20)
+        """, to: script)
+        let engine = Self.makeEngine(zmxExecutable: script, zmxDir: dir, sessionName: "bounded")
+        try engine.start()
+        defer { engine.close() }
+        try #require(PTYFixtureTestSupport.waitForFile(started))
+        #expect(!PTYFixtureTestSupport.waitForFile(completed, timeout: 1))
+        await engine.close()
+        var iterator = engine.inboundBytes.makeAsyncIterator()
+        #expect(await iterator.next() == nil)
+    }
+
+    @Test("a legacy SSH consumer drains all output before EOF", .timeLimit(.minutes(1)))
+    func streamDeliversAllBytesBeforeEOF() async throws {
+        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-output-drain")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appendingPathComponent("zmx")
+        try Self.writeScript("""
+        #!/usr/bin/python3
+        import os
+        chunk = bytes(65536)
+        for _ in range(64):
+            remaining = memoryview(chunk)
+            while remaining:
+                remaining = remaining[os.write(1, remaining):]
+        """, to: script)
+        let engine = Self.makeEngine(zmxExecutable: script, zmxDir: dir, sessionName: "drain")
+        try engine.start()
+        defer { engine.close() }
+        let watchdog = Task {
+            try? await Task.sleep(for: .seconds(5))
+            if !Task.isCancelled { await engine.close() }
+        }
+        defer { watchdog.cancel() }
+        var count = 0
+        for await chunk in engine.inboundBytes {
+            #expect(chunk.allSatisfy { $0 == 0 })
+            count += chunk.count
+        }
+        #expect(count == 4 * 1024 * 1024)
+    }
+
+    @Test("canceling an idle SSH consumer closes its attach reader", .timeLimit(.minutes(1)))
+    func cancelingStreamConsumerClosesEngine() async throws {
+        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-output-cancel")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appendingPathComponent("zmx")
+        try Self.writeScript("#!/bin/sh\nexec sleep 20\n", to: script)
+        let engine = Self.makeEngine(zmxExecutable: script, zmxDir: dir, sessionName: "cancel")
+        let registry = RemoteAttachmentRegistry()
+        engine.attachmentRegistry = registry
+        try engine.start()
+        #expect(registry.isRemoteAttached(sessionName: "cancel"))
+        defer { engine.close() }
+        let consumer = Task { for await _ in engine.inboundBytes {} }
+        consumer.cancel()
+        let watchdog = Task {
+            try? await Task.sleep(for: .seconds(2))
+            if !Task.isCancelled { Issue.record("Consumer cancellation stalled"); await engine.close() }
+        }
+        defer { watchdog.cancel() }
+        await consumer.value
+        // Cancellation must detach and close the PTY, not merely stop iteration.
+        #expect(!registry.isRemoteAttached(sessionName: "cancel"))
+        var iterator = engine.inboundBytes.makeAsyncIterator()
+        #expect(await iterator.next() == nil)
+    }
+
     private static func writeScript(_ body: String, to url: URL) throws {
         try body.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
