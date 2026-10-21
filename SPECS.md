@@ -3784,7 +3784,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.25** When a Claude SessionStart hook binds a new session identity to the same live process and peer socket as an older identity in one worktree, the application shall atomically replace the superseded presence row across concurrent hook processes; if a later non-SessionStart hook reports the superseded identity, then the application shall preserve the new binding rather than resurrect the old agent.
 
-**AGENT-6.26** When Graftty materializes a provider team skill, the skill shall direct an agent to proactively delegate suitable independent work by launching a new top-level agent with `graftty worktree add --agent --prompt-stdin`, distinguish delegation from creating a worktree alone, require the parent to confirm child reachability before relinquishing the delegated scope, and preserve the user's authorization boundaries.
+**AGENT-6.26** When Graftty materializes a provider team skill, the skill shall limit delegation to user requests, permit reuse for an active assignment or established role, direct unrelated new tasks to fresh agents after a PR merges unless the user requests reuse, limit peer messages to necessary active-task coordination, distinguish delegation from creating a worktree alone, and require child reachability before the parent relinquishes the delegated scope.
 
 **AGENT-6.27** When Graftty delivers an inbox row, the application shall use a `<graftty-peer-message>` envelope only for agent-authored rows, a `<graftty-forge-message provider="<provider>">` envelope for forge-originated system rows, and a `<graftty-system-message>` envelope for other system rows; every envelope shall preserve urgent priority and neutralize body text that could forge a sibling Graftty message envelope.
 
@@ -3843,6 +3843,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.54** When Graftty prepares provider plugins with linked supporting reference directories or files, the application shall materialize those resources so each cached plugin remains self-contained after the source and sibling provider are removed.
 
 **AGENT-6.55** When Graftty packages progressive skill guidance, the application shall retain readable relative links within each independent provider plugin, with supporting procedures reachable from their skill entrypoints.
+
+**AGENT-6.56** When Graftty materializes a provider team skill, the skill shall direct agents to use STE-inspired controlled English with direct requests, one instruction per sentence, consistent technical terms, conditions before actions, and factual results that distinguish passed, failed, pending, and not-run checks.
 
 ## CLI — CLI
 
