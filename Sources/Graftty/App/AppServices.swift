@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CryptoKit
 import GrafttyCommandUI
 import GrafttyHostAgent
 import GrafttyKit
@@ -75,6 +76,25 @@ final class AppServices {
     /// presented sheet share this instance; its process-wide admission is
     /// also shared with the Settings pairing listener.
     let hostPairingCoordinator: RemoteMacHostPairingCoordinator
+    /// The one `TrustedPeerStore` for this process. The pairing coordinator,
+    /// every `WebRTCHostAgent`, and `PairedDevicesSection` (list/remove)
+    /// share it, so writes from pairing and from Settings serialize on the
+    /// same lock.
+    let trustedPeerStore: TrustedPeerStore
+    /// Host signing key, loaded once at launch before startup creates the
+    /// inbound host pool. The paired-access listener authenticates v2 offers
+    /// with the device keys before passing them to the pool, whose agents
+    /// open SSH sessions over the resulting DataChannel → zmx attach. `nil`
+    /// when the identity could not be loaded; paired access then starts
+    /// without a host pool.
+    let hostKey: Curve25519.Signing.PrivateKey?
+    /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
+    /// its live SSH connection into (REMOTE-3.1 revocation, W4).
+    /// `PairedDevicesSection`'s "Remove" action calls
+    /// `registry.revoke(deviceID:)` right after removing the peer from
+    /// `trustedPeerStore`, closing the live connection immediately rather
+    /// than waiting for the peer's next userauth attempt to fail.
+    let sshConnectionRegistry = SSHConnectionRegistry()
     let remoteMacsModel: RemoteMacsModel
     let remoteMacPairingDriverFactory: @MainActor () -> AddRemoteMacPairingDriving
     let remoteMacAccessEnabled: Bool
@@ -133,8 +153,19 @@ final class AppServices {
                 UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
             }
         )
+        let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
+        let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
+        self.trustedPeerStore = trustedPeerStore
+        do {
+            self.hostKey = try hostIdentityStore.loadOrGenerateAndPersist()
+        } catch {
+            self.hostKey = nil
+            NSLog("[Graftty] failed to load remote host identity: \(error)")
+        }
         self.hostPairingCoordinator = Self.makeHostPairingCoordinator(
-            admission: pairingAdmission
+            admission: pairingAdmission,
+            identityStore: hostIdentityStore,
+            peerStore: trustedPeerStore
         )
         let remoteMacsModel = RemoteMacsModel(store: RemoteMacStore())
         self.remoteMacsModel = remoteMacsModel
@@ -210,15 +241,10 @@ final class AppServices {
     }
 
     private static func makeHostPairingCoordinator(
-        admission: HostPairingAdmission
+        admission: HostPairingAdmission,
+        identityStore: HostIdentityStore,
+        peerStore: TrustedPeerStore
     ) -> RemoteMacHostPairingCoordinator {
-        let identityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
-        let peerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
-        do {
-            _ = try identityStore.loadOrGenerateAndPersist()
-        } catch {
-            NSLog("[Graftty] failed to prepare host pairing identity: %@", String(describing: error))
-        }
         let session = HostPairingSession(
             identityStore: identityStore,
             peerStore: peerStore,

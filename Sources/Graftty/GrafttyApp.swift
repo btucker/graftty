@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import CryptoKit
 import GrafttyCommandUI
 import GrafttyHostAgent
 import GrafttyKit
@@ -147,20 +146,6 @@ struct GrafttyApp: App {
     @StateObject private var webController: WebServerController
     @StateObject private var updaterController: UpdaterController
     let services: AppServices
-    /// Same `TrustedPeerStore` instance the coordinator and
-    /// `WebRTCHostAgent` share — `PairedDevicesSection` reads it directly
-    /// (list/remove) since the coordinator doesn't expose it publicly.
-    private let trustedPeerStore: TrustedPeerStore
-    private let hostKey: Curve25519.Signing.PrivateKey?
-    /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
-    /// its live SSH connection into (REMOTE-3.1 revocation, W4). Exposed
-    /// alongside `trustedPeerStore` so `PairedDevicesSection`'s "Remove"
-    /// action can call `registry.revoke(deviceID:)` right after removing
-    /// the peer from `trustedPeerStore` — closing the live connection
-    /// immediately rather than waiting for the peer's next userauth
-    /// attempt to fail.
-    private let sshConnectionRegistry: SSHConnectionRegistry
-
     /// Observable proxy for per-pane port bindings. Mutated by the
     /// `PortScanner` `onChange` callback; injected into the SwiftUI
     /// environment so `SidebarView` can render port chips on each row.
@@ -252,23 +237,6 @@ struct GrafttyApp: App {
         )
         _webController = StateObject(wrappedValue: webController)
         _updaterController = StateObject(wrappedValue: UpdaterController())
-
-        // Load identity before startup creates the inbound host pool. The dedicated
-        // paired-access listener authenticates v2 offers with the device keys
-        // before passing them to the pool, whose agents open SSH sessions over the
-        // resulting DataChannel → zmx attach.
-        let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
-        let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
-        self.trustedPeerStore = trustedPeerStore
-        let sshConnectionRegistry = SSHConnectionRegistry()
-        self.sshConnectionRegistry = sshConnectionRegistry
-
-        do {
-            self.hostKey = try hostIdentityStore.loadOrGenerateAndPersist()
-        } catch {
-            self.hostKey = nil
-            NSLog("[Graftty] failed to load remote host identity: \(error)")
-        }
     }
 
     /// If another Graftty process with our `CFBundleIdentifier` is
@@ -456,8 +424,8 @@ struct GrafttyApp: App {
                     .tabItem { Label("General", systemImage: "gear") }
                 WebSettingsPane(
                     pairingCoordinator: services.hostPairingCoordinator,
-                    trustedPeerStore: trustedPeerStore,
-                    sshConnectionRegistry: sshConnectionRegistry
+                    trustedPeerStore: services.trustedPeerStore,
+                    sshConnectionRegistry: services.sshConnectionRegistry
                 )
                     .environmentObject(webController)
                     .tabItem { Label("Web Access", systemImage: "network") }
@@ -1529,14 +1497,14 @@ struct GrafttyApp: App {
         services.hostPairingCoordinator.setStartupError(
             "Paired access is still starting. Try again in a moment."
         )
-        if let hostKey {
+        if let hostKey = services.hostKey {
             let hostAgentPool = Self.makeHostAgentPool(
                 hostKey: hostKey,
                 appState: appStateBinding,
                 terminalManager: terminalManager,
                 services: services,
-                trustedPeerStore: trustedPeerStore,
-                sshConnectionRegistry: sshConnectionRegistry,
+                trustedPeerStore: services.trustedPeerStore,
+                sshConnectionRegistry: services.sshConnectionRegistry,
                 buildWorktreePanesSnapshot: buildWorktreePanesSnapshot,
                 localWorktreeOrigin: localWorktreeOrigin,
                 portScanner: portScanner,
