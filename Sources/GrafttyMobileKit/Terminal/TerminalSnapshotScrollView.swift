@@ -118,6 +118,13 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         panGestureRecognizer.allowedScrollTypesMask = [.continuous, .discrete]
         isScrollEnabled = false
         addSubview(terminalView)
+        // Activation, not willEnterForeground: the scene still reports
+        // background until it activates.
+        for name in [UIScene.didEnterBackgroundNotification, UIScene.didActivateNotification] {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(sceneActivityDidChange(_:)), name: name, object: nil
+            )
+        }
     }
 
     @available(*, unavailable)
@@ -131,7 +138,9 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     var hasScrollback: Bool { historyRows > 0 }
     var pollsContentForTesting: Bool { contentTimer != nil }
     private(set) var contentPollCountForTesting = 0
-    var sceneActivationStateForTesting: UIScene.ActivationState?
+    var sceneActivationStateForTesting: UIScene.ActivationState? {
+        didSet { updateContentTimer() }
+    }
 
     /// Rows visible above the live grid, including rows not fetched yet.
     var additionalHistoryRowCapacity: UInt32 {
@@ -224,15 +233,27 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
         updateContentTimer()
     }
 
+    private var isSceneInBackground: Bool {
+        (sceneActivationStateForTesting ?? window?.windowScene?.activationState) == .background
+    }
+
+    @objc private func sceneActivityDidChange(_ notification: Notification) {
+        guard let scene = notification.object as? UIScene, scene === window?.windowScene else { return }
+        updateContentTimer()
+    }
+
     private func updateContentTimer() {
         contentTimer?.invalidate()
         contentTimer = nil
         // With scrollback, clearance is off and only a scrollbar callback
         // can change that, so the content update needs no polling then.
-        if window != nil && (includesAdditionalHistory || (onContentUpdate != nil && !hasScrollback)) {
+        // A backgrounded scene keeps its window but shows nothing (IOS-6.45).
+        if window != nil && (includesAdditionalHistory
+            || (onContentUpdate != nil && !hasScrollback && !isSceneInBackground)) {
             let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] timer in
                 MainActor.assumeIsolated {
                     guard let self else { timer.invalidate(); return }
+                    self.contentPollCountForTesting += 1
                     self.refreshAdditionalHistory()
                     self.onContentUpdate?()
                 }
