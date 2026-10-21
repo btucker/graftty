@@ -1,3 +1,5 @@
+import AppKit
+import GhosttyKit
 import SwiftUI
 import Testing
 @testable import Graftty
@@ -369,17 +371,50 @@ struct GrafttyAppPaneLifecycleTests {
         for command in commands {
             manager.dispatchPaneCommand(command, for: remote)
         }
-        #expect(routed.count == commands.count)
+        #expect(routed == commands)
         #expect(localCalls.isEmpty)
 
         for command in commands {
             manager.dispatchPaneCommand(command, for: local)
         }
-        #expect(routed.count == commands.count)
+        #expect(routed == commands)
         #expect(localCalls == [
             "split true left", "close true", "surfaceClosed true", "focus true right",
             "focusOrder true true", "zoom true", "resize true down 4", "equalize true",
         ])
+    }
+
+    @Test("Surface context-menu splits and surface closes for a host-managed pane reach its handler, not the local callbacks")
+    func surfaceEntryPointsRouteHostManagedPaneCommands() throws {
+        _ = NSApplication.shared
+        let manager = TerminalManager(socketPath: "/tmp/graftty-command-test.sock")
+        manager.initialize()
+        manager.zmxLauncher = ZmxLauncher(
+            executable: URL(fileURLWithPath: "/usr/bin/false"),
+            zmxDir: URL(fileURLWithPath: "/tmp/graftty-command-unused")
+        )
+        let id = PaneSlotID()
+        defer { manager.evictSurface(terminalID: id, forRetry: true) }
+        let handle = try #require(manager.createSurface(
+            terminalID: id,
+            paneSessionID: PaneSessionID(),
+            worktreePath: "/tmp"
+        ))
+        let view = try #require(handle.view as? SurfaceNSView)
+        let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(
+            try #require(ghostty_surface_userdata(handle.surface))
+        ).takeUnretainedValue()
+        var routed: [HostManagedPaneCommand] = []
+        var localCalls = 0
+        manager.registerHostManagedPaneCommandHandler(for: id) { routed.append($0) }
+        manager.onSplitRequest = { _, _ in localCalls += 1 }
+        manager.onSurfaceClosed = { _ in localCalls += 1 }
+
+        view.splitRight(nil)
+        manager.receiveSurfaceClosed(box)
+
+        #expect(routed == [.split(.right), .surfaceClosed])
+        #expect(localCalls == 0)
     }
 
     @Test func reassignPaneByPWDMovesPaneSessionToTargetWorktree() {

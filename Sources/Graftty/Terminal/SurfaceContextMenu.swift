@@ -156,11 +156,11 @@ extension SurfaceNSView {
     // MARK: - Splits
     //
     // Dispatches split requests up to the host via
-    // `TerminalManager.onSplitRequest`. We *don't* call
-    // `ghostty_surface_split` directly: that routes through libghostty's
-    // action-callback system, which Graftty doesn't own (the action handler
-    // in TerminalManager is a stub). Going through the Swift callback
-    // lets the model layer (AppState → SplitTree) stay authoritative.
+    // `TerminalManager.dispatchPaneCommand`, which hands host-managed panes
+    // to their handler and everything else to `onSplitRequest`. We *don't*
+    // call `ghostty_surface_split` directly: going through the Swift
+    // dispatcher lets the model layer (AppState → SplitTree) stay
+    // authoritative.
 
     @objc func splitRight(_ sender: Any?) { requestSplit(.right) }
     @objc func splitLeft(_ sender: Any?) { requestSplit(.left) }

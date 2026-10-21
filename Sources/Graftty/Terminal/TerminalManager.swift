@@ -25,7 +25,7 @@ enum NavigationDirection {
     }
 }
 
-enum HostManagedPaneCommand {
+enum HostManagedPaneCommand: Equatable {
     case split(PaneSplit)
     case close
     case surfaceClosed
@@ -1274,8 +1274,10 @@ final class TerminalManager: ObservableObject {
 
     /// Delivers a pane command: a host-managed pane's handler claims it
     /// first (REMOTE-13.15); otherwise the matching local `on*` callback
-    /// runs. Every pane-command entry point goes through here so the
-    /// host-managed check lives in one place.
+    /// runs. Surface-originated commands (libghostty actions, the surface
+    /// context menu, `close_surface_cb`) go through here, so callers must
+    /// not invoke those `on*` callbacks directly. Menu-bar commands route
+    /// the focused pane separately in `GrafttyApp+MenuActions`.
     func dispatchPaneCommand(_ command: HostManagedPaneCommand, for terminalID: PaneSlotID) {
         if routeHostManagedPaneCommand(command, for: terminalID) { return }
         switch command {
