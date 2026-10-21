@@ -153,8 +153,9 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// so a repeated notification with identical text is still observable;
     /// nil preserves compatibility with snapshots from older hosts.
     public let attentionTimestamp: Date?
-    /// nil when the worktree has no panes currently running. Always
-    /// nil for worktrees in `.closed`, `.stale`, or `.creating`.
+    /// nil when the worktree has no panes currently running. Published
+    /// snapshots send it only for `.running` rows; the Mac sidebar's own
+    /// local rows keep a stopped worktree's saved layout.
     public let layout: PaneLayoutNode?
     /// nil for legacy snapshots. New origin-aware snapshots identify their
     /// owning Mac explicitly, including local rows (`relayDepth == 0`).

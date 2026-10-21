@@ -195,7 +195,7 @@ struct HeadlessHostRuntimeTests {
         #expect(saved.worktree(forPath: root.path)?.splitTree.leafCount == 1)
     }
 
-    @Test("@spec REMOTE-22.40: When a headless host publishes a pane that has not reported a title, the application shall send an empty title so clients render their shared untitled placeholder.")
+    @Test("@spec REMOTE-22.40: When a headless host publishes a pane that has not reported a title, the application shall send an empty title, as Mac hosts do, so clients apply their own untitled-pane fallback (IOS-4.10) instead of a host-supplied placeholder.")
     func untitledPanePublishesEmptyTitle() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }

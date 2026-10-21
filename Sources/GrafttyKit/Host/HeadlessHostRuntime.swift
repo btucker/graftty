@@ -317,10 +317,11 @@ public final class HeadlessHostRuntime {
     public func snapshot() -> [WorktreePanes] {
         let liveness = Dictionary(uniqueKeysWithValues: busyAgents.map { ($0, AgentLiveness.busy) })
         return state.repos.flatMap { repo in
-            SidebarHostNavigation.displayedWorktrees(in: repo).map { worktree in
+            let siblingPaths = repo.worktrees.map(\.path)
+            return SidebarHostNavigation.displayedWorktrees(in: repo).map { worktree in
                 WorktreePanes(entry: worktree, repo: repo, inputs: WorktreeRowInputs(
                     origin: origin, projectID: repo.path,
-                    displayName: worktree.displayName(amongSiblingPaths: repo.worktrees.map(\.path)),
+                    displayName: worktree.displayName(amongSiblingPaths: siblingPaths),
                     stats: worktreeStats[worktree.path],
                     paneTitles: worktree.paneTitleMetadata.compactMapValues(\.title), liveness: liveness,
                     portBindings: wirePortBindings(for: worktree)))

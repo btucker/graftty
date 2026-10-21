@@ -3310,7 +3310,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.39** When a headless host advertises agent prompt staging, the application shall replace bare agent fallback commands with a staged structured or bootstrap prompt, preserve legacy explicit commands without structured prompts, and deliver the selected prompt unchanged to the provider.
 
-**REMOTE-22.40** When a headless host publishes a pane that has not reported a title, the application shall send an empty title so clients render their shared untitled placeholder.
+**REMOTE-22.40** When a headless host publishes a pane that has not reported a title, the application shall send an empty title, as Mac hosts do, so clients apply their own untitled-pane fallback (IOS-4.10) instead of a host-supplied placeholder.
 
 **REMOTE-22.41** If a headless host worktree has no on-disk checkout, then the application shall omit its cached divergence stats from the published row.
 
