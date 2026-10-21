@@ -4326,6 +4326,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **SSH-1.7** When SSH terminal input passes the display-owner gate, the host shall preserve its authorization through the ordered PTY writer while keeping legacy input and rejected follower input outside that authorized path.
 
+**SSH-1.8** When the NIO channel of an SSH-over-DataChannel transport closes, the host and the client shall close the underlying WebRTC DataChannel at once rather than wait for the transport owner to observe the closure.
+
 ## TEST — TEST
 
 ### TEST-1.x

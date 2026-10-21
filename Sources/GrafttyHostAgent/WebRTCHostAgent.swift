@@ -138,7 +138,7 @@ public actor WebRTCHostAgent {
     private lazy var factory: RTCPeerConnectionFactory = {
         // SSL and codec subsystems are process-wide; initialize once,
         // immediately before the first native factory build.
-        Self.initializeWebRTC()
+        WebRTCPeerSupport.initializeSSL()
         // nil factories: DataChannel-only — no video codec work needed.
         return RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
     }()
@@ -281,7 +281,7 @@ public actor WebRTCHostAgent {
             replacingExistingConnection: replacingExistingConnection
         )
         do {
-            let config = Self.defaultConfig()
+            let config = WebRTCPeerSupport.defaultConfig()
             let constraints = RTCMediaConstraints(
                 mandatoryConstraints: nil,
                 optionalConstraints: nil
@@ -331,7 +331,7 @@ public actor WebRTCHostAgent {
                 generation: generation,
                 timeout: Self.authenticationDeadline
             )
-            try await Self.setRemoteDescription(pc, offer)
+            try await WebRTCPeerSupport.setRemoteDescription(pc, offer)
             try ensureCurrentConnection(generation: generation, peerConnection: pc)
 
             let answer = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
@@ -342,7 +342,7 @@ public actor WebRTCHostAgent {
                 }
             }
             try ensureCurrentConnection(generation: generation, peerConnection: pc)
-            try await Self.setLocalDescription(pc, answer)
+            try await WebRTCPeerSupport.setLocalDescription(pc, answer)
             try ensureCurrentConnection(generation: generation, peerConnection: pc)
             try await waitForIceGatheringComplete(
                 pc,
@@ -1039,54 +1039,6 @@ public actor WebRTCHostAgent {
         )
     }
 
-    /// `RTCInitializeSSL` is process-wide and not refcounted in every SDK
-    /// build, so a per-instance `deinit { RTCCleanupSSL() }` would tear SSL
-    /// down for other live connections. A one-shot static token initialises
-    /// once and never cleans up; this matches what production iOS apps
-    /// using WebRTC.framework typically do.
-    private static let _webRTCInitOnce: Void = { RTCInitializeSSL() }()
-    private static func initializeWebRTC() { _ = _webRTCInitOnce }
-
-    static func defaultConfig() -> RTCConfiguration {
-        let config = RTCConfiguration()
-        config.iceServers = []
-        config.iceTransportPolicy = .all
-        config.candidateNetworkPolicy = .all
-        config.maxIPv6Networks = .max
-        config.sdpSemantics = .unifiedPlan
-        // Signaling is non-trickle: the answer's initial SDP is the host's
-        // only opportunity to send candidates. Continual gathering keeps
-        // `iceGatheringState` from completing, so acceptOffer() otherwise
-        // pays its five-second fallback. Network-interface changes after
-        // negotiation require a fresh connection under this policy.
-        config.continualGatheringPolicy = .gatherOnce
-        return config
-    }
-
-    private static func setLocalDescription(
-        _ pc: RTCPeerConnection,
-        _ sdp: RTCSessionDescription
-    ) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            pc.setLocalDescription(sdp) { error in
-                if let error { continuation.resume(throwing: error); return }
-                continuation.resume()
-            }
-        }
-    }
-
-    private static func setRemoteDescription(
-        _ pc: RTCPeerConnection,
-        _ sdp: RTCSessionDescription
-    ) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            pc.setRemoteDescription(sdp) { error in
-                if let error { continuation.resume(throwing: error); return }
-                continuation.resume()
-            }
-        }
-    }
-
     public enum HostError: Error, Equatable, Sendable {
         case peerConnectionInitFailed
         case sdpGenerationFailed
@@ -1102,54 +1054,5 @@ public actor WebRTCHostAgent {
         case busy
     }
 }
-
-/// See the matching comment in `RemoteHostConnection.swift` —
-/// WebRTC dispatches delegate calls serially per connection, so the
-/// unsafe is bounded; `@Sendable` keeps callers honest.
-private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
-    nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
-    nonisolated(unsafe) var onDataChannel: (@Sendable (
-        ObjectIdentifier,
-        RTCDataChannel,
-        DataChannelInbox
-    ) -> Void)?
-
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
-    func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
-    nonisolated(unsafe) var onIceStateChange: (@Sendable (
-        ObjectIdentifier,
-        RTCIceConnectionState,
-        UInt64
-    ) -> Void)?
-    private let iceEventSequenceLock = NSLock()
-    private var iceEventSequence: UInt64 = 0
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
-        let sequence = iceEventSequenceLock.withLock {
-            iceEventSequence &+= 1
-            return iceEventSequence
-        }
-        onIceStateChange?(ObjectIdentifier(peerConnection), newState, sequence)
-    }
-    nonisolated(unsafe) var onIceGatheringComplete: (@Sendable (ObjectIdentifier) -> Void)?
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
-        if newState == .complete {
-            onIceGatheringComplete?(ObjectIdentifier(peerConnection))
-        }
-    }
-    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
-        onIceCandidate?(candidate)
-    }
-    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
-        // WebRTC serializes message delivery behind this callback. Attach
-        // the inbox before returning so the actor hop cannot lose bytes.
-        let inbox = DataChannelInbox()
-        dataChannel.delegate = inbox
-        onDataChannel?(ObjectIdentifier(peerConnection), dataChannel, inbox)
-    }
-}
-
 
 #endif
