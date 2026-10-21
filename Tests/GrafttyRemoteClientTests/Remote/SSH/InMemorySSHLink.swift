@@ -3,7 +3,9 @@ import CryptoKit
 #else
 @preconcurrency import Crypto
 #endif
+import Foundation
 import GrafttyProtocol
+import GrafttyTunnel
 import NIOCore
 import NIOEmbedded
 import NIOSSH
@@ -32,10 +34,10 @@ final class InMemorySSHLink: @unchecked Sendable {
         self.pumps = pumps
     }
 
-    /// `serverChild` builds the handler installed on every server-side
-    /// session child channel.
+    /// `serverChild` configures the pipeline of every server-side session
+    /// child channel.
     static func make(
-        serverChild: @escaping @Sendable () -> any ChannelHandler & Sendable
+        serverChild: @escaping @Sendable (Channel) throws -> Void
     ) async throws -> InMemorySSHLink {
         let serverKey = Curve25519.Signing.PrivateKey()
         let clientKey = Curve25519.Signing.PrivateKey()
@@ -55,7 +57,7 @@ final class InMemorySSHLink: @unchecked Sendable {
                 allocator: server.allocator,
                 inboundChildChannelInitializer: { child, _ in
                     child.eventLoop.makeCompletedFuture {
-                        try child.pipeline.syncOperations.addHandler(serverChild())
+                        try serverChild(child)
                     }
                 }
             )
@@ -110,12 +112,42 @@ final class InMemorySSHLink: @unchecked Sendable {
     }
 }
 
-/// Accepts every subsystem request and swallows every request frame: a
-/// host whose mutator never returns.
-final class StalledSubsystemHost: ChannelInboundHandler, @unchecked Sendable {
-    typealias InboundIn = SSHChannelData
+/// Accepts every subsystem request, swallows the first `unanswered` request
+/// frames — a host whose mutator never returns for them — and answers each
+/// later one with `reply`.
+final class ScriptedSubsystemHost: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+    typealias OutboundOut = ByteBuffer
 
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {}
+    private var unanswered: Int
+    private let reply: Data
+
+    init(unanswered: Int = .max, reply: Data = Data()) {
+        self.unanswered = unanswered
+        self.reply = reply
+    }
+
+    /// Installs framing and a scripted host on a server child channel.
+    static func install(
+        unanswered: Int = .max,
+        reply: Data = Data()
+    ) -> @Sendable (Channel) throws -> Void {
+        { child in
+            let pipeline = child.pipeline.syncOperations
+            try pipeline.addHandler(SSHChannelDataCodec())
+            try pipeline.addHandler(LengthPrefixedFraming.makeFrameDecoder())
+            try pipeline.addHandler(LengthPrefixedFraming.makeFramePrepender())
+            try pipeline.addHandler(ScriptedSubsystemHost(unanswered: unanswered, reply: reply))
+        }
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard unanswered == 0 else {
+            unanswered -= 1
+            return
+        }
+        context.writeAndFlush(wrapOutboundOut(context.channel.allocator.buffer(bytes: reply)), promise: nil)
+    }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         guard let request = event as? SSHChannelRequestEvent.SubsystemRequest else {

@@ -7,7 +7,12 @@ import Testing
 struct SubsystemRPCDeadlineTests {
     @Test("@spec REMOTE-11.23: If a pane-control or worktree-management RPC response does not arrive before its deadline, then the client shall fail that RPC with a timeout using elapsed time independently of the transport event-loop clock.")
     func paneControlResponseDeadlineUsesElapsedTime() async throws {
-        let link = try await InMemorySSHLink.make { StalledSubsystemHost() }
+        let link = try await InMemorySSHLink.make(
+            serverChild: ScriptedSubsystemHost.install(
+                unanswered: 1,
+                reply: try JSONEncoder().encode(PaneControlResponse.ok)
+            )
+        )
         let client = PaneControlChannelClient(
             parentChannel: link.client,
             parentHandler: link.clientHandler,
@@ -24,13 +29,24 @@ struct SubsystemRPCDeadlineTests {
             await link.close()
             return
         }
+        // Pane control keeps the channel after a timeout so a wedged
+        // mutator does not cost the connection its layout controls.
+        let next = await Self.bounded(onExpiry: { client.close() }) {
+            try await client.send(.equalize(target: "pane"))
+        }
+        guard case .success(.ok) = next else {
+            Issue.record("expected the next RPC to succeed, got \(next)")
+            client.close()
+            await link.close()
+            return
+        }
         client.close()
         await link.close()
     }
 
     @Test("a worktree-management response deadline fires on the WebRTC event-loop type and closes the channel")
     func worktreeManagementResponseDeadlineUsesElapsedTime() async throws {
-        let link = try await InMemorySSHLink.make { StalledSubsystemHost() }
+        let link = try await InMemorySSHLink.make(serverChild: ScriptedSubsystemHost.install())
         let client = WorktreeManagementChannelClient(
             parentChannel: link.client,
             parentHandler: link.clientHandler,
