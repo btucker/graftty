@@ -259,6 +259,160 @@ struct HeadlessHostRuntimeTests {
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.emoji == "🖥️")
     }
 
+    // MARK: - Shared control dispatcher (ControlRequestCore) behavior on Linux
+
+    private func runningRuntime() async throws -> (URL, HeadlessHostRuntime, String) {
+        let (root, config, state) = try fixture()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let session = try await runtime.openWorktree(root.path)
+        return (root, runtime, session)
+    }
+
+    private func hook(_ runtime: HeadlessHostRuntime, _ path: String, _ provider: TeamHookRuntime = .codex,
+                      _ event: TeamHookEvent, session: String? = "s1", pane: String? = nil,
+                      reason: AgentHookAttentionReason? = nil, agent: String? = "codex-test") async -> ResponseMessage {
+        await runtime.handle(.teamHook(callerWorktree: path, callerAgentID: agent, runtime: provider, event: event,
+            sessionID: session, paneSessionName: pane, attentionReason: reason, stopHookActive: true))
+    }
+
+    @Test("@spec REMOTE-22.40: When a headless host receives an attention-only provider hook, the application shall answer an empty hook output without consulting the team inbox, even for an untracked worktree.")
+    func attentionOnlyHookFastPath() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        for event: TeamHookEvent in [.preToolUse, .permissionRequest, .userPromptSubmit, .postToolUseFailure, .postToolUse] {
+            #expect(await hook(runtime, "/untracked/worktree", .codex, event) == .teamHookOutput("{}"))
+        }
+    }
+
+    @Test("@spec REMOTE-22.41: When a headless host receives a provider hook for a pane in the caller's worktree, the application shall publish that pane busy from prompt submission through tool use and idle at a stop, a session start, or a blocking attention reason, and shall ignore panes outside the caller's worktree.")
+    func hookLivenessMatchesMac() async throws {
+        let (root, runtime, session) = try await runningRuntime()
+        defer { try? FileManager.default.removeItem(at: root) }
+        func busy() -> Bool? {
+            guard case .leaf(_, _, _, let isBusy, _, _)? = runtime.snapshot().first?.layout else { return nil }
+            return isBusy
+        }
+        _ = await hook(runtime, root.path, .claude, .userPromptSubmit, pane: session)
+        #expect(busy() == true)
+        _ = await hook(runtime, root.path, .claude, .postToolUse, pane: session)
+        #expect(busy() == true)
+        _ = await hook(runtime, root.path, .claude, .preToolUse, pane: session, reason: .permission)
+        #expect(busy() == false)
+        _ = await hook(runtime, root.path, .claude, .preToolUse, pane: session)
+        _ = await hook(runtime, root.path, .claude, .sessionStart, pane: session)
+        #expect(busy() == false)
+        // A hook naming another worktree's pane does not mark this pane busy.
+        _ = await hook(runtime, "/elsewhere", .claude, .userPromptSubmit, pane: session)
+        #expect(busy() == false)
+    }
+
+    @Test("@spec REMOTE-22.42: When a headless host renders session-start instructions for the main checkout, the application shall key them by the repository's refreshed default branch, falling back to the saved hint.")
+    func sessionStartUsesRefreshedDefaultBranch() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent(".graftty/trunk", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "Trunk role: keep the release green.".write(to: directory.appendingPathComponent("GRAFTTY.md"), atomically: true, encoding: .utf8)
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        runtime.repositoryBranches[root.path] = RemoteBranchSnapshot(defaultBranch: "trunk")
+        guard case .teamHookOutput(let output) = await hook(runtime, root.path, .claude, .sessionStart) else {
+            Issue.record("expected session-start hook output")
+            return
+        }
+        // Keyed by the stale hint, the file would still render, but as an
+        // unclaimed file rather than the main checkout's own role.
+        #expect(output.contains("Your instructions:"), "\(output)")
+        #expect(output.contains("Trunk role: keep the release green."))
+        #expect(!output.contains("Instruction files matching no current worktree"), "\(output)")
+    }
+
+    @Test("@spec REMOTE-22.43: When a headless host records a provider's stopped turn, the application shall label it with the provider's display name and drop a stop older than that session's recorded progress.")
+    func stoppedTurnMatchesMac() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        // No stop is recorded yet, so only the session's progress can drop
+        // the stale stop (not the newer-recorded-stop rule).
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("attention"))
+        try handoff.progress(worktree: root.path, agentID: "codex-late", runtime: .codex, sessionID: "late")
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        try handoff.stage(AttentionRecap(title: "Stale", completed: "Old", next: "None", emoji: "🧊"),
+            worktree: root.path, agentID: "codex-late")
+        _ = try handoff.stop(worktree: root.path, agentID: "codex-late", runtime: .codex, sessionID: "late",
+            paneSessionName: nil, stopHookActive: false, stoppedAt: Date(timeIntervalSinceNow: -3600))
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.state.worktree(forPath: root.path)?.lastAgentStop == nil)
+
+        _ = await hook(runtime, root.path, .codex, .stop)
+        #expect(runtime.state.worktree(forPath: root.path)?.lastAgentStop?.agentName == "Codex")
+    }
+
+    @Test("@spec REMOTE-22.44: When a headless host receives provider hooks for a session that raised blocking attention, the application shall keep that attention through PreToolUse and clear it on PostToolUseFailure.")
+    func hookAttentionTransitionsMatchMac() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        _ = await hook(runtime, root.path, .codex, .permissionRequest, reason: .permission)
+        #expect(runtime.state.worktree(forPath: root.path)?.attention?.source == .agentStop)
+        _ = await hook(runtime, root.path, .codex, .preToolUse)
+        #expect(runtime.state.worktree(forPath: root.path)?.attention?.source == .agentStop)
+        _ = await hook(runtime, root.path, .codex, .postToolUseFailure)
+        #expect(runtime.state.worktree(forPath: root.path)?.attention == nil)
+        #expect(try AppState.load(from: root).worktree(forPath: root.path)?.attention == nil)
+    }
+
+    @Test("@spec REMOTE-22.45: When a headless host receives a notification with an auto-clear duration, the application shall store the normalized duration on the attention it persists.")
+    func notifyStoresNormalizedAutoClear() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        #expect(await runtime.handle(.notify(path: root.path, text: "Later", clearAfter: 1_000_000)) == .ok)
+        #expect(try AppState.load(from: root).worktree(forPath: root.path)?.attention?.clearAfter == Attention.clearAfterMaxSeconds)
+    }
+
+    @Test("@spec REMOTE-22.46: When a headless host receives a team send or message for a graftty-mac address, the application shall forward it to the paired peer only for a tracked caller.")
+    func remoteTeamMessagesForward() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        var forwarded: [NotificationMessage] = []
+        runtime.remoteTeamSender = { message in forwarded.append(message); return .ok }
+        let address = "graftty-mac://peer-device/Users/me/project"
+        #expect(await runtime.handle(.teamMessage(callerWorktree: root.path, recipient: address, text: "hi")) == .ok)
+        #expect(await runtime.handle(.teamSend(callerWorktree: root.path, callerAgentID: "codex-test", recipient: address,
+            text: "urgent", priority: .urgent)) == .ok)
+        #expect(forwarded == [
+            .teamSend(callerWorktree: root.path, callerAgentID: nil, recipient: address, text: "hi", priority: .normal),
+            .teamSend(callerWorktree: root.path, callerAgentID: "codex-test", recipient: address, text: "urgent", priority: .urgent),
+        ])
+        #expect(await runtime.handle(.teamMessage(callerWorktree: "/untracked", recipient: address, text: "x"))
+            == .error(TeamInboxRequestError.callerNotTracked.description))
+        #expect(forwarded.count == 2)
+    }
+
+    @Test("@spec REMOTE-22.47: When a headless host receives a provider hook without a caller agent ID, the application shall resolve the agent from the provider session's presence record before delivering its targeted messages.")
+    func hookResolvesAgentFromPresence() async throws {
+        let (root, config, initial) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let peerPath = root.appendingPathComponent("peer").path
+        var state = initial
+        state.repos[0].worktrees.append(WorktreeEntry(path: peerPath, branch: "peer"))
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let agentID = "claude-0123456789ab"
+        try TeamPresenceStorage(rootDirectory: config.stateDirectory.appendingPathComponent("teams")).write(TeamPresenceRecord(
+            teamID: root.path, worktree: root.path, runtime: .claude, paneSessionName: nil, pid: getpid(),
+            registeredAt: Date(), runtimeSessionID: "native-session", agentID: agentID))
+        #expect(await runtime.handle(.teamSend(callerWorktree: peerPath, recipient: "\(root.path)#\(agentID)",
+            text: "for the exact agent", priority: .urgent)) == .ok)
+        guard case .teamHookOutput(let output) = await hook(runtime, root.path, .claude, .postToolUse,
+            session: "native-session", agent: nil) else {
+            Issue.record("expected hook output")
+            return
+        }
+        #expect(output.contains("for the exact agent"), "\(output)")
+    }
+
     @Test("@spec REMOTE-22.6: When a headless host registers a repository, the application shall discover its Git worktrees and persist one canonical registration.")
     func registration() async throws {
         let (root, config, _) = try fixture()

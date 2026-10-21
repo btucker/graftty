@@ -25,7 +25,10 @@ public final class HeadlessHostRuntime {
     var busyPaths: Set<String> = []
     var creations: [String: WorktreeCreateStatus] = [:]
     var removals: [String: WorktreeRemoveStatus] = [:]
-    var busyAgents: Set<String> = []
+    /// Provider hook busy/idle state per pane session, fed by the shared
+    /// control core. The headless host does not poll `claude agents`.
+    let agentLiveness = ClaudeSessionRegistry()
+    lazy var controlPlatform = HeadlessControlPlatform(runtime: self)
     var deliveryTask: Task<Void, Never>?
     public var remoteTeamSender: (@MainActor @Sendable (NotificationMessage) async -> ResponseMessage)?
     var maintenance: HostMaintenance?
@@ -336,7 +339,7 @@ public final class HeadlessHostRuntime {
             let name = launcher.sessionName(for: session)
             let attention = worktree.paneAttention[slot]
             return .leaf(sessionName: name, title: worktree.paneTitleMetadata[slot]?.title ?? "shell",
-                attentionText: attention?.text, isBusy: busyAgents.contains(name), attentionSource: attention?.source,
+                attentionText: attention?.text, isBusy: agentLiveness.livenessBySession[name] == .busy, attentionSource: attention?.source,
                 attentionTimestamp: attention?.timestamp)
         case .split(let split):
             guard let left = layout(split.left, worktree: worktree), let right = layout(split.right, worktree: worktree) else { return nil }

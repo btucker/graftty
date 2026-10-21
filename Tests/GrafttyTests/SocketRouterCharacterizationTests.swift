@@ -3,12 +3,14 @@ import SwiftUI
 import Testing
 @testable import Graftty
 @testable import GrafttyKit
+import GrafttyProtocol
 
 /// Characterization tests that pin the control-socket router's current
 /// behavior so it can be moved and restructured without regressions
-/// (issue #478). They exercise `SocketRequestRouter.handleNotification` (the
+/// (issues #478, #481). They exercise `SocketRequestRouter.handleMessage` (the
 /// fire-and-forget `onMessage` path) and the side-effect-free branches of
-/// `SocketRequestRouter.handleRequest` (the request/response path).
+/// `SocketRequestRouter.handleRequest` (the request/response path), both of
+/// which now run through the shared `ControlRequestCore`.
 @MainActor
 @Suite("Socket router characterization")
 struct SocketRouterCharacterizationTests {
@@ -52,14 +54,11 @@ struct SocketRouterCharacterizationTests {
     }
 
     private static func notify(_ message: NotificationMessage, _ box: StateBox) {
-        SocketRequestRouter.handleNotification(
-            message,
-            appState: box.binding,
-            terminalManager: TerminalManager(socketPath: "/tmp/graftty-router-characterization.sock")
-        )
+        // swiftlint:disable:next force_try
+        try! RequestRouter().router(for: box).handleMessage(message)
     }
 
-    // MARK: - handleNotification
+    // MARK: - handleMessage
 
     @Test("notify without a pane session sets worktree-scoped user attention")
     func notifySetsWorktreeAttention() {
@@ -208,7 +207,9 @@ struct SocketRouterCharacterizationTests {
             try? FileManager.default.removeItem(at: directory)
         }
 
-        private func router(for box: StateBox) -> SocketRequestRouter {
+        var teamsEnabled = false
+
+        func router(for box: StateBox) -> SocketRequestRouter {
             SocketRequestRouter(
                 appState: box.binding,
                 terminalManager: terminalManager,
@@ -222,17 +223,18 @@ struct SocketRouterCharacterizationTests {
                 remoteBranchStore: remoteBranchStore,
                 agentRegistry: ClaudeSessionRegistry(),
                 remoteMacsModel: remoteMacsModel,
-                remoteTeamRouter: remoteTeamRouter
+                remoteTeamRouter: remoteTeamRouter,
+                teamsEnabled: { [teamsEnabled] in teamsEnabled }
             )
         }
 
-        /// Routes through the production entry point, including the
-        /// pre-routing that runs before `handlePaneRequest`.
+        /// Routes through the production entry point: the shared core,
+        /// then Mac platform dispatch, then remote-member enrichment.
         func route(_ message: NotificationMessage, _ box: StateBox) async -> ResponseMessage? {
             await router(for: box).handleRequest(message)
         }
 
-        /// Calls `handlePaneRequest` directly, bypassing pre-routing.
+        /// Calls Mac platform dispatch directly, bypassing the shared core.
         func paneDispatch(_ message: NotificationMessage, _ box: StateBox) async -> ResponseMessage? {
             await router(for: box).handlePaneRequest(message)
         }
@@ -287,20 +289,20 @@ struct SocketRouterCharacterizationTests {
         #expect(list.map(\.focused) == [false, true])
     }
 
-    @Test("pane dispatch keeps stubs for messages the router pre-routes")
-    func paneDispatchStubsForPreRoutedMessages() async throws {
+    @Test("Mac platform dispatch answers remote routing itself and leaves team replies to the shared core")
+    func platformDispatchHasNoRoutingStubs() async throws {
         let router = try RequestRouter()
         let (box, _, _) = Self.fixture()
+        #expect(await router.paneDispatch(.reconnectRemoteClient(target: "mac"), box)
+            == .error("Unknown or disconnected viewing Mac 'mac'. Connected clients: none"))
+        #expect(await router.paneDispatch(Self.remoteWorktreeStatus, box)
+            == .error("Unknown or disconnected Mac 'mac'. Connected Macs: none"))
         #expect(await router.paneDispatch(
             .teamReply(callerWorktree: Self.worktreePath, messageID: "m", text: "t", priority: .normal), box
-        ) == .error("Team reply routing is unavailable"))
-        #expect(await router.paneDispatch(.reconnectRemoteClient(target: "mac"), box)
-            == .error("Client reconnect routing is unavailable"))
-        #expect(await router.paneDispatch(Self.remoteWorktreeStatus, box)
-            == .error("Remote worktree routing is unavailable"))
+        ) == .error("This request is not handled by the Mac app"))
     }
 
-    @Test("the router pre-routes remote and reply messages before pane dispatch")
+    @Test("the router answers remote and reply messages through the production path")
     func routerPreRoutesBeforePaneDispatch() async throws {
         let router = try RequestRouter()
         let (box, _, _) = Self.fixture()
@@ -316,7 +318,74 @@ struct SocketRouterCharacterizationTests {
             Issue.record("expected the team reply handler to reject an unknown message")
             return
         }
-        #expect(replyError != "Team reply routing is unavailable")
+        #expect(replyError != "This request is not handled by the Mac app")
+    }
+
+    /// A connected peer that records forwarded sends and lists one member.
+    @MainActor
+    private final class FakePeer {
+        let device = RemoteDeviceID(value: "peer-device")
+        var sent: [RemoteTeamRequest] = []
+
+        func connect(_ router: RemoteTeamRouter) {
+            router.register(deviceID: device, connectionID: UUID(), label: "Studio") { [self] data in
+                let request = try JSONDecoder().decode(RemoteTeamRequest.self, from: data)
+                let response: RemoteTeamResponse
+                if case .list = request {
+                    response = .members([TeamListMember(name: "api", branch: "main", worktreePath: "/Users/peer/api",
+                                                        isMainWorktree: true, isRunning: true)])
+                } else {
+                    await MainActor.run { sent.append(request) }
+                    response = .ok
+                }
+                return try JSONEncoder().encode(response)
+            }
+        }
+    }
+
+    @Test("graftty-mac team sends and messages forward to the connected peer through the shared core")
+    func remoteTeamSendForwardsToPeer() async throws {
+        let router = try RequestRouter()
+        router.teamsEnabled = true
+        let peer = FakePeer()
+        peer.connect(router.remoteTeamRouter)
+        let (box, _, _) = Self.fixture()
+        let address = "graftty-mac://peer-device/Users/peer/api"
+        #expect(await router.route(.teamSend(callerWorktree: Self.worktreePath, callerAgentID: "codex-test",
+            recipient: address, text: "hello", priority: .urgent), box) == .ok)
+        #expect(await router.route(.teamMessage(callerWorktree: Self.worktreePath, recipient: address, text: "hi"), box) == .ok)
+        #expect(peer.sent == [
+            .send(senderWorktree: Self.worktreePath, senderAgentID: "codex-test", recipientWorktree: "/Users/peer/api",
+                  recipientSuffix: nil, text: "hello", priority: .urgent),
+            .send(senderWorktree: Self.worktreePath, senderAgentID: nil, recipientWorktree: "/Users/peer/api",
+                  recipientSuffix: nil, text: "hi", priority: .normal),
+        ])
+        router.teamsEnabled = false
+        #expect(await router.route(.teamMessage(callerWorktree: Self.worktreePath, recipient: address, text: "x"), box)
+            == .error(TeamInboxRequestError.teamModeDisabled.description))
+        #expect(peer.sent.count == 2)
+    }
+
+    @Test("team lists through the router include the connected peer's members")
+    func teamListIncludesRemoteMembers() async throws {
+        let router = try RequestRouter()
+        router.teamsEnabled = true
+        FakePeer().connect(router.remoteTeamRouter)
+        let (box, _, _) = Self.fixture()
+        guard case .teamList(_, let members)? = await router.route(.teamList(callerWorktree: Self.worktreePath), box) else {
+            Issue.record("expected a team list")
+            return
+        }
+        #expect(members.map(\.name).contains("Studio/api"))
+        #expect(members.contains { $0.worktreePath == Self.worktreePath })
+        // A scoped member query is not enriched.
+        guard case .teamList(_, let scoped)? = await router.route(
+            .teamMembers(callerWorktree: Self.worktreePath, worktree: Self.worktreePath, repo: nil), box
+        ) else {
+            Issue.record("expected a scoped team list")
+            return
+        }
+        #expect(!scoped.map(\.name).contains("Studio/api"))
     }
 
     @Test("unknown worktree operation IDs report expiry")
