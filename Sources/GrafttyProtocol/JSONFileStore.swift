@@ -68,13 +68,40 @@ public struct JSONFileStore<Value: Codable>: Sendable {
         return try decode(data)
     }
 
+    /// Loads the value, or `nil` when the file is missing, unreadable or
+    /// malformed. Malformed contents are first moved aside (best effort) so
+    /// the caller's next save cannot destroy the user's prior data.
+    public func loadMovingAsideCorruptFile() -> Value? {
+        do {
+            return try load()
+        } catch is DecodingError {
+            moveAsideCorruptFile()
+            return nil
+        } catch {
+            return nil
+        }
+    }
+
+    /// Every decode failure throws `DecodingError`, including errors a
+    /// value's own `init(from:)` throws, so callers' corruption handling
+    /// covers field validation too (PERSIST-5.7).
     public func decode(_ data: Data) throws -> Value {
         let decoder: JSONDecoder
         switch dates {
         case .deferredToDate: decoder = JSONDecoder()
         case .iso8601: decoder = .iso8601()
         }
-        return try decoder.decode(Value.self, from: data)
+        do {
+            return try decoder.decode(Value.self, from: data)
+        } catch let error as DecodingError {
+            throw error
+        } catch {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [],
+                debugDescription: "Rejected while decoding: \(error)",
+                underlyingError: error
+            ))
+        }
     }
 
     public func encode(_ value: Value) throws -> Data {

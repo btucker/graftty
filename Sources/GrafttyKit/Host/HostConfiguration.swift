@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 /// Paths and listening endpoints of a headless host. zmx sockets live in the
 /// state directory so logout and runtime-directory cleanup do not end panes.
@@ -58,14 +59,17 @@ public struct HostConfiguration: Codable, Sendable, Equatable {
         return sibling
     }
 
+    /// `prepareDirectories()` owns the state directory's creation and 0700 mode.
+    private static func file(in stateDirectory: URL) -> JSONFileStore<HostConfiguration> {
+        JSONFileStore(fileURL: stateDirectory.appendingPathComponent("host-config.json"), createsDirectory: false)
+    }
+
     public func save() throws {
-        try JSONEncoder().encode(self).write(to: stateDirectory.appendingPathComponent("host-config.json"), options: .atomic)
+        try Self.file(in: stateDirectory).save(self)
     }
 
     public static func load(stateDirectory: URL) throws -> HostConfiguration? {
-        let path = stateDirectory.appendingPathComponent("host-config.json")
-        guard FileManager.default.fileExists(atPath: path.path) else { return nil }
-        return try JSONDecoder().decode(Self.self, from: Data(contentsOf: path))
+        try file(in: stateDirectory).load()
     }
 
     public func prepareDirectories() throws {

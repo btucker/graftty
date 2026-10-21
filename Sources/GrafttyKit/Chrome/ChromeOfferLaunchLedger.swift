@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 /// Private profile receipts survive viewer disconnects and host app restarts.
 struct ChromeOfferLaunchLedger {
@@ -7,7 +8,9 @@ struct ChromeOfferLaunchLedger {
         var tabID: String?
     }
     private static let maximumFileBytes = 8 * 1024 * 1024
-    private let storageURL: URL?
+    /// Reads stay bounded by `maximumFileBytes`, so only decoding and the
+    /// size-checked write go through the store; it never creates directories.
+    private let file: JSONFileStore<[UUID: Receipt]>?
     private var receipts: [UUID: Receipt] = [:]
     private var unreadable = false
     enum Failure: Error, CustomStringConvertible {
@@ -23,14 +26,21 @@ struct ChromeOfferLaunchLedger {
     }
 
     init(storageURL: URL? = nil) {
-        self.storageURL = storageURL
-        guard let storageURL, FileManager.default.fileExists(atPath: storageURL.path) else { return }
+        file = storageURL.map {
+            JSONFileStore(
+                fileURL: $0,
+                outputFormatting: [.withoutEscapingSlashes],
+                createsDirectory: false,
+                posixPermissions: 0o600
+            )
+        }
+        guard let file, FileManager.default.fileExists(atPath: file.fileURL.path) else { return }
         do {
-            let handle = try FileHandle(forReadingFrom: storageURL)
+            let handle = try FileHandle(forReadingFrom: file.fileURL)
             defer { try? handle.close() }
             let bytes = try handle.read(upToCount: Self.maximumFileBytes + 1) ?? Data()
             guard bytes.count <= Self.maximumFileBytes else { throw Failure.unreadableHistory }
-            receipts = try JSONDecoder().decode([UUID: Receipt].self, from: bytes)
+            receipts = try file.decode(bytes)
             guard receipts.count <= 128, receipts.values.allSatisfy({
                 $0.url.utf8.count <= 8192 && ($0.tabID?.utf8.count ?? 0) <= 128
             }) else { throw Failure.unreadableHistory }
@@ -68,12 +78,9 @@ struct ChromeOfferLaunchLedger {
     }
 
     private func save() throws {
-        guard let storageURL else { return }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.withoutEscapingSlashes]
-        let bytes = try encoder.encode(receipts)
+        guard let file else { return }
+        let bytes = try file.encode(receipts)
         guard bytes.count <= Self.maximumFileBytes else { throw Failure.full }
-        try bytes.write(to: storageURL, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storageURL.path)
+        try file.write(bytes)
     }
 }

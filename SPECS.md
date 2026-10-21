@@ -1040,6 +1040,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-5.4** The application shall encode a JSONFileStore's dates and output formatting exactly as the store is configured, so a migrated store keeps the byte format its earlier releases wrote.
 
+**PERSIST-5.5** When an ObservableListStore is mutated before its asynchronous load completes, the application shall first load the persisted rows synchronously so the write builds on them instead of replacing them with an empty list.
+
+**PERSIST-5.6** When an ObservableListStore reads malformed JSON, the application shall present an empty list and move the file aside only if the store's corrupt-file policy is moveAside.
+
+**PERSIST-5.7** If a JSONFileStore's value rejects the file's contents with its own error while decoding, then the application shall report the contents as malformed with a DecodingError, so the store's corrupt-file recovery applies.
+
 ## PWD — Manual Pane Routing
 
 ### PWD-1.x — User-Initiated Move
