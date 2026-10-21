@@ -29,6 +29,9 @@ public actor BackgroundProcessLimiter {
         }
     }
 
+    /// Number of operations suspended waiting for a permit.
+    var waiterCountForTesting: Int { waiters.count }
+
     private func acquire() async {
         if activeCount < capacity {
             activeCount += 1

@@ -704,6 +704,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-2.11** When recurring remote-branch polling scans local Git refs, the application shall time-bound every subprocess so a filesystem-blocked repository releases its in-flight slot and retained pipe descriptors without requiring an application restart.
 
+**GIT-2.12** If a repository's remote-branch scan remains in flight past the 30-second abandonment threshold, then the application shall treat that scan as abandoned, start a fresh scan for the next refresh request, and discard the abandoned scan's late result.
+
 ### GIT-3.x — Change Handling
 
 **GIT-3.1** When a new worktree is detected, the application shall add a new entry in the closed state and briefly flash its background highlight.
@@ -1284,7 +1286,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-4.9** When a compute attempt fails transiently (the default branch was resolvable but `git rev-list`/`diff-tree`/etc. threw), the application shall preserve the worktree's last-known `WorktreeStats` rather than clearing the sidebar gutter. Only when the repo has no resolvable default branch at all (origin removed, clone converted to non-origin setup) shall the stats be wiped. Without this, the ↑N ↓M badge flickers off for the polling window whenever git is briefly unhealthy — same UX concern as `PR-7.10`.
 
-**DIVERGE-4.10** When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, claiming a fetch slot before checking for running worktrees leaves the repo path latched in `inFlightRepos`: every subsequent poll classifies it as active, skips the local-compute gate, and never re-invokes `WorktreeStatsStore.refresh`. The user-visible shape is a sidebar gutter whose ↓N count remains frozen until the app is relaunched.
+**DIVERGE-4.10** When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, claiming a fetch slot before checking for running worktrees leaves the repo path latched in its in-flight fetch slot: every subsequent poll classifies it as active, skips the local-compute gate, and never re-invokes `WorktreeStatsStore.refresh`. The user-visible shape is a sidebar gutter whose ↓N count remains frozen until the app is relaunched.
 
 **DIVERGE-4.11** If a per-repo `git fetch` dispatched by the divergence-stats polling tick remains in flight past the abandonment threshold despite its subprocess deadline, then the application shall treat the repo slot as abandoned and let a later tick dispatch a fresh fetch rather than latch the repo path for the lifetime of the session.
 
