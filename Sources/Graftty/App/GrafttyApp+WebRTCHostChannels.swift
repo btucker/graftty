@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CryptoKit
 import GrafttyCommandUI
 import GrafttyHostAgent
 import GrafttyKit
@@ -686,5 +687,228 @@ extension GrafttyApp {
             }
         }
         return worktreeManagementMutator
+    }
+}
+
+extension GrafttyApp {
+    /// Builds the paired-device `WebRTCHostAgentPool` and the channel
+    /// callbacks every agent in it shares: panes-state subscriptions, pane
+    /// control, worktree management, and the Chrome tab broker.
+    static func makeHostAgentPool(
+        hostKey: Curve25519.Signing.PrivateKey,
+        appState appStateBinding: Binding<AppState>,
+        terminalManager: TerminalManager,
+        services: AppServices,
+        trustedPeerStore: TrustedPeerStore,
+        sshConnectionRegistry: SSHConnectionRegistry,
+        buildWorktreePanesSnapshot: @escaping @Sendable @MainActor () -> [WorktreePanes],
+        localWorktreeOrigin: WorktreeOrigin,
+        portScanner panesPortScanner: PortScanner,
+        zmxBinary: URL,
+        zmxDir: URL
+    ) -> WebRTCHostAgentPool {
+        let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { onChange in
+            // Initial snapshot fires synchronously so the first frame
+            // hits the wire before the polling loop's first sleep.
+            let snapshot: @MainActor () -> PanesStateMessage = {
+                let projects = SidebarHostController.shared.localProjects(appStateBinding.wrappedValue.repos, owner: localWorktreeOrigin)
+                let navigation = SidebarSnapshot(projects: (appStateBinding.wrappedValue.sidebarNavigation?.order ?? .init()).sorted(projects))
+                return .snapshot(buildWorktreePanesSnapshot(), sidebar: navigation)
+            }
+            let initial = await MainActor.run { snapshot() }
+            await onChange(initial)
+
+            let task = Task {
+                var last = initial
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1))
+                    if Task.isCancelled { return }
+                    let next = await MainActor.run { snapshot() }
+                    if next != last {
+                        last = next
+                        await onChange(next)
+                    }
+                }
+            }
+            return PanesStateChannelHandler.Cancellable {
+                task.cancel()
+            }
+        }
+
+        let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe = {
+            onChange in
+            let snapshot: @MainActor () async -> PanesStateMessage = {
+                let remote = await services.remoteMacsModel.sidebarRelaySnapshot()
+                let navigation = SidebarHostController.shared.snapshot(state: appStateBinding, owner: localWorktreeOrigin, remote: remote.projects,
+                    authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(services.remoteMacsModel.savedRemoteMacs.map(\.id)))
+                let worktrees = buildWorktreePanesSnapshot() + remote.worktrees
+                let order = Dictionary(navigation.projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
+                let sorted = worktrees.enumerated().sorted {
+                    let a = order[SidebarProjection.projectID($0.element), default: .max]
+                    let b = order[SidebarProjection.projectID($1.element), default: .max]
+                    return a == b ? $0.offset < $1.offset : a < b
+                }.map(\.element)
+                return .snapshot(sorted, sidebar: navigation)
+            }
+            let initial = await snapshot()
+            await onChange(initial)
+
+            let task = Task {
+                var last = initial
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1))
+                    if Task.isCancelled { return }
+                    let next = await snapshot()
+                    if next != last {
+                        last = next
+                        await onChange(next)
+                    }
+                }
+            }
+            return PanesStateChannelHandler.Cancellable {
+                task.cancel()
+            }
+        }
+
+        let paneControlMutator: PaneControlChannelHandler.Mutator = Self.makePaneControlMutator(
+            appState: appStateBinding,
+            terminalManager: terminalManager,
+            services: services
+        )
+        let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator =
+            Self.makeWorktreeManagementMutator(
+                appState: appStateBinding,
+                terminalManager: terminalManager,
+                services: services,
+                portScanner: panesPortScanner,
+                localWorktreeOrigin: localWorktreeOrigin
+            )
+
+        // Explicit phone launch opts into an isolated worktree profile.
+        let chromeBroker = ChromeTabBroker(authorize: { target, peerID in
+            await MainActor.run {
+                guard let peer = try? trustedPeerStore.get(id: RemoteDeviceID(value: peerID)),
+                      peer.capabilities.terminalControl == .allowed,
+                      peer.capabilities.worktreeManagement == .allowed,
+                      terminalManager.paneID(forSessionName: target) != nil,
+                      let path = terminalManager.worktreePath(forSessionName: target),
+                      ChromeTabBroker.ownsDisplay(clientID: services.displayOwnershipStore.snapshot(sessionName: target).ownerClientID?.rawValue, peerID: peerID) else { return nil }
+                return path
+            }
+        }, makeBackend: { DedicatedChromeBackend(worktreePath: $0) })
+        let chromeTabMutator: ChromeTabChannelHandler.Mutator = { request, peer, viewer in
+            await chromeBroker.handle(request, peerID: peer.value, viewerID: viewer)
+        }
+        let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { viewer in
+            await chromeBroker.disconnect(viewerID: viewer)
+        }
+
+        // Every device gets a fully configured connection agent. Shared
+        // registries keep revocation and routing consistent across devices.
+        let activeRemotePeers = ActiveRemotePeerRegistry()
+        let hostAgentPool = WebRTCHostAgentPool(makeAgent: {
+            [hostKey, trustedPeerStore, sshConnectionRegistry,
+             terminalManager = terminalManager,
+             registry = services.remoteAttachmentRegistry,
+             remoteMacsModel = services.remoteMacsModel,
+             remoteTeamRouter = services.remoteTeamRouter,
+             displayOwnershipStore = services.displayOwnershipStore,
+             activeRemotePeers, panesStateSubscribe, panesStateV2Subscribe,
+             paneControlMutator, worktreeManagementMutator, chromeTabMutator, chromeTabOnDisconnect,
+             zmxExe = zmxBinary, zmxDir] in
+            let hostAgent = WebRTCHostAgent(
+                hostKey: hostKey,
+                trustedPeerStore: trustedPeerStore,
+                activeRemotePeers: activeRemotePeers,
+                streamFactory: {
+                    [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName in
+                    if sessionName.hasPrefix("relay-pane-") {
+                        return try await remoteMacsModel.openRelayedTerminal(
+                            alias: sessionName
+                        )
+                    }
+                    let (workingDirectoryPath, spawnConfiguration) = await MainActor.run {
+                        (terminalManager.worktreePath(forSessionName: sessionName),
+                         terminalManager.remoteSpawnConfiguration(forSessionName: sessionName))
+                    }
+                    let workingDirectory = workingDirectoryPath.map {
+                        URL(fileURLWithPath: $0, isDirectory: true)
+                    }
+                    let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
+                        zmxExecutable: zmxExe,
+                        zmxDir: zmxDir,
+                        sessionName: sessionName,
+                        workingDirectory: workingDirectory,
+                        spawnConfiguration: spawnConfiguration
+                    ))
+                    engine.attachmentRegistry = registry
+                    try engine.start()
+                    return engine
+                },
+                pagedFactory: { [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName in
+                    if sessionName.hasPrefix("relay-pane-") {
+                        return try await remoteMacsModel.openRelayedPagedTerminal(alias: sessionName)
+                    }
+                    let (path, spawnConfiguration) = await MainActor.run {
+                        (terminalManager.worktreePath(forSessionName: sessionName),
+                         terminalManager.remoteSpawnConfiguration(forSessionName: sessionName))
+                    }
+                    // Paging attaches only to existing daemons. A newly
+                    // created mobile pane must first spawn its shell.
+                    var bootstrap: ZmxAttachEngine?
+                    defer { bootstrap?.close() }
+                    let socket = zmxDir.appendingPathComponent(sessionName).path
+                    if !FileManager.default.fileExists(atPath: socket) {
+                        let session = ZmxAttachEngine(config: .init(
+                            zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
+                            workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) },
+                            spawnConfiguration: spawnConfiguration
+                        ))
+                        // Discard bootstrap output. The paged channel will
+                        // obtain its own checkpoint once the daemon exists.
+                        session.onPTYData = { _ in }
+                        bootstrap = session
+                        try session.start()
+                        let deadline = ContinuousClock.now + .seconds(5)
+                        while !FileManager.default.fileExists(atPath: socket), ContinuousClock.now < deadline {
+                            try await Task.sleep(for: .milliseconds(20))
+                        }
+                    }
+                    let engine = PagedZmxAttachEngine(config: .init(
+                        zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
+                        workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) }
+                    ))
+                    engine.attachmentRegistry = registry
+                    try await engine.start()
+                    return engine
+                },
+                panesStateSubscribe: panesStateSubscribe,
+                panesStateV2Subscribe: panesStateV2Subscribe,
+                paneControlMutator: paneControlMutator,
+                worktreeManagementMutator: worktreeManagementMutator,
+                chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
+                displayOwnershipStore: displayOwnershipStore,
+                sshConnectionRegistry: sshConnectionRegistry
+            )
+            await hostAgent.setTeamMessaging(
+                handler: { deviceID, data in
+                    await remoteTeamRouter.receive(from: deviceID, data: data)
+                },
+                onConnect: { deviceID, session in
+                    let label = (try? trustedPeerStore.get(id: deviceID))?.displayName ?? deviceID.value
+                    await remoteTeamRouter.register(
+                        deviceID: deviceID,
+                        connectionID: session.id,
+                        label: label,
+                        closeForReconnect: { await session.close() }
+                    ) { data in try await session.send(data) }
+                },
+                onDisconnect: { deviceID, connectionID in
+                    await remoteTeamRouter.unregister(deviceID: deviceID, connectionID: connectionID)
+                }
+            )
+            return hostAgent
+        })
+        return hostAgentPool
     }
 }
