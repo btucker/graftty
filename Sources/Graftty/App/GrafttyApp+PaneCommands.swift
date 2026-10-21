@@ -14,30 +14,6 @@ enum WorktreeStartResult: Equatable {
 }
 
 extension GrafttyApp {
-    private func splitFocusedPane(direction: SplitDirection) {
-        guard let path = appState.selectedWorktreePath else { return }
-        for repoIdx in appState.repos.indices {
-            for wtIdx in appState.repos[repoIdx].worktrees.indices {
-                let wt = appState.repos[repoIdx].worktrees[wtIdx]
-                if wt.path == path, wt.state == .running,
-                   let focused = wt.firstPane {
-                    // Cmd+D = "Split Horizontally" = new pane to the right;
-                    // Cmd+Shift+D = "Split Vertically" = new pane below. Map
-                    // to `PaneSplit` so we reuse the same insertion logic as
-                    // the context menu.
-                    let split: PaneSplit = direction == .horizontal ? .right : .down
-                    Self.splitPane(
-                        appState: $appState,
-                        terminalManager: terminalManager,
-                        targetID: focused,
-                        split: split
-                    )
-                    return
-                }
-            }
-        }
-    }
-
     /// Shared closed-to-running transition used by local sidebar selection
     /// and authenticated remote-open requests.
     @MainActor

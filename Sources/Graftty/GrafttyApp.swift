@@ -1,13 +1,11 @@
 import SwiftUI
 import AppKit
 import CryptoKit
-import UserNotifications
 import GrafttyCommandUI
 import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
-import WebRTC
 
 /// Keeps handler installation and listener publication in one ordered call.
 /// The listener closure must remain last because `SocketServer.start()`
@@ -84,7 +82,7 @@ struct AppTeamDeliveryLiveness: TeamDeliveryLivenessChecking {
     }
 }
 
-/// Seam for `handleShowPane` so tests can inject a canned scrollback
+/// Seam for the `.showPane` route so tests can inject a canned scrollback
 /// without spawning a `zmx` subprocess.
 protocol ZmxHistoryReader: Sendable {
     func history(sessionName: String) throws -> String
@@ -1873,11 +1871,7 @@ struct GrafttyApp: App {
                     appState: appStateBinding,
                     terminalManager: terminalManager,
                     services: services,
-                    worktreeMonitor: worktreeMonitor,
-                    statsStore: statsStore,
-                    teamEventDispatcher: dispatcherForWeb,
                     portScanner: panesPortScanner,
-                    remoteBranchStore: panesRemoteBranchStore,
                     localWorktreeOrigin: localWorktreeOrigin
                 )
 

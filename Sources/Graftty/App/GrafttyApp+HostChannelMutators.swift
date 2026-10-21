@@ -243,13 +243,13 @@ extension GrafttyApp {
         appState appStateBinding: Binding<AppState>,
         terminalManager: TerminalManager,
         services: AppServices,
-        worktreeMonitor: WorktreeMonitor,
-        statsStore: WorktreeStatsStore,
-        teamEventDispatcher dispatcherForWeb: TeamEventDispatcher,
         portScanner panesPortScanner: PortScanner,
-        remoteBranchStore panesRemoteBranchStore: RemoteBranchStore,
         localWorktreeOrigin: WorktreeOrigin
     ) -> WorktreeManagementChannelHandler.Mutator {
+        let worktreeMonitor = services.worktreeMonitor
+        let statsStore = services.statsStore
+        let dispatcherForWeb = services.teamEventDispatcher
+        let panesRemoteBranchStore = services.remoteBranchStore
         let localRepositorySnapshot: @MainActor () -> [RemoteRepositoryInfo] = {
             appStateBinding.wrappedValue.repos.map { repo in
                 let snapshot = panesRemoteBranchStore.branchesByRepo[repo.path]

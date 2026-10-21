@@ -14,6 +14,7 @@ import Testing
 struct SocketRouterCharacterizationTests {
     private static let worktreePath = "/repo/feature"
 
+    @MainActor
     private final class StateBox {
         var state: AppState
         init(_ state: AppState) { self.state = state }
@@ -111,6 +112,17 @@ struct SocketRouterCharacterizationTests {
         #expect(box.worktree.paneAttention[panes[0]] == nil)
     }
 
+    @Test("notify with a pane session and auto-clear sets clearing pane attention")
+    func notifySetsClearingPaneAttention() {
+        let (box, panes, sessions) = Self.fixture()
+        Self.notify(.notify(path: Self.worktreePath, text: "Soon", clearAfter: 30, paneSessionName: sessions[0]), box)
+        #expect(box.worktree.attention == nil)
+        #expect(box.worktree.paneAttention[panes[0]]?.text == "Soon")
+        #expect(box.worktree.paneAttention[panes[0]]?.clearAfter == 30)
+        #expect(box.worktree.paneAttention[panes[0]]?.source == .userNotify)
+        #expect(box.worktree.paneAttention[panes[1]] == nil)
+    }
+
     @Test("notify with an unresolvable pane session falls back to worktree attention")
     func notifyUnknownPaneFallsBackToWorktree() {
         let (box, _, _) = Self.fixture()
@@ -166,7 +178,7 @@ struct SocketRouterCharacterizationTests {
     // MARK: - handlePaneRequest
 
     @MainActor
-    private struct RequestRouter {
+    private final class RequestRouter {
         let directory: URL
         let terminalManager = TerminalManager(socketPath: "/tmp/graftty-router-characterization.sock")
         let teamInbox: TeamInbox
@@ -189,6 +201,10 @@ struct SocketRouterCharacterizationTests {
             remoteMacsModel = RemoteMacsModel(
                 store: RemoteMacStore(storeURL: directory.appendingPathComponent("remotes.json"))
             )
+        }
+
+        deinit {
+            try? FileManager.default.removeItem(at: directory)
         }
 
         func route(_ message: NotificationMessage, _ box: StateBox) async -> ResponseMessage? {

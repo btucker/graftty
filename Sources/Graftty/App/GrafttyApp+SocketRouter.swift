@@ -750,40 +750,9 @@ extension GrafttyApp {
         return .ok
     }
 
-    @MainActor
-    fileprivate static func handleShowPane(
-        path: String,
-        index: Int,
-        lines: Int,
-        appState: Binding<AppState>,
-        terminalManager: TerminalManager,
-        reader: ZmxHistoryReader
-    ) -> ResponseMessage {
-        guard let wt = appState.wrappedValue.worktree(forPath: path) else {
-            return .error("not tracked")
-        }
-        guard wt.state == .running else {
-            return .error("worktree not running")
-        }
-        guard let terminalID = wt.splitTree.leaf(atPaneID: index) else {
-            return .error("no pane with id \(index) in this worktree")
-        }
-        guard let sessionID = wt.paneSessions[terminalID] else {
-            return .error("pane has no session")
-        }
-        let session = ZmxLauncher.sessionName(for: sessionID)
-        do {
-            let body = try reader.history(sessionName: session)
-            return .paneShow(ScrollbackTail.tail(body, lines: lines))
-        } catch {
-            return .error("zmx history failed: \(error.localizedDescription)")
-        }
-    }
-
-    /// Test seam: lets the spec test exercise `handleShowPane` without
-    /// constructing a full `AppState`. Skips worktree lookup / state checks
-    /// and goes straight to the reader so we exercise the read+tail logic
-    /// in isolation.
+    /// Test seam: lets the spec test exercise the `.showPane` route's
+    /// read+tail logic without constructing a full `AppState`. Skips
+    /// worktree lookup / state checks and goes straight to the reader.
     @MainActor
     internal static func handleShowPane_forTesting(
         path: String, index: Int, lines: Int,
