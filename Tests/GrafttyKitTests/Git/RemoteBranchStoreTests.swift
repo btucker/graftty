@@ -399,6 +399,43 @@ struct RemoteBranchStoreTests {
     }
 
     @MainActor
+    @Test("""
+    @spec GIT-2.12: If a repository's remote-branch scan remains in flight past the 30-second abandonment threshold, then the application shall treat that scan as abandoned, start a fresh scan for the next refresh request, and discard the abandoned scan's late result.
+    """)
+    func refreshSupersedesAbandonedScan() async throws {
+        let lister = RecordingRemoteBranchLister(
+            results: ["/repo": .success(["old"])],
+            suspendUntilResumed: true
+        )
+        let store = RemoteBranchStore(list: lister.list)
+
+        store.refresh(repoPath: "/repo")
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 1
+        }
+        // The first scan hung past the abandonment threshold.
+        store.seedInFlightSinceForTesting(
+            Date(timeIntervalSinceNow: -3600),
+            forRepo: "/repo"
+        )
+
+        lister.set(result: .success(["new"]), for: "/repo")
+        var completed = false
+        store.refresh(repoPath: "/repo") {
+            completed = true
+        }
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 2
+        }
+        lister.resumeAll()
+
+        try await waitUntil(timeout: 1.0) { completed }
+        #expect(store.hasRemote(repoPath: "/repo", branch: "new"))
+        #expect(!store.hasRemote(repoPath: "/repo", branch: "old"))
+        #expect(!store.isInFlightForTesting("/repo"))
+    }
+
+    @MainActor
     @Test func startRefreshesEachTrackedRepoOnTickerFire() async throws {
         let lister = RecordingRemoteBranchLister(results: [
             "/a": .success(["main"]),

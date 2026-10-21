@@ -64,16 +64,17 @@ public final class RemoteBranchStore {
 
     @ObservationIgnored public var onChange: (@MainActor (_ repoPath: String, _ old: Set<String>, _ new: Set<String>) -> Void)?
     @ObservationIgnored private let list: ListFunction
-    @ObservationIgnored private let backgroundProcessLimiter: BackgroundProcessLimiter
-    @ObservationIgnored private var inFlight: [String: Int] = [:]
-    @ObservationIgnored private var generation: [String: Int] = [:]
-    @ObservationIgnored private var pendingRerun: [String: Int] = [:]
+    /// Per-repo scan slots, abandonment, and the polling cursor.
+    @ObservationIgnored private let scheduler: RepoPollScheduler
+    /// Repos with one trailing scan queued behind a live one, and the
+    /// completions waiting on that trailing scan.
+    @ObservationIgnored private var pendingRerun: Set<String> = []
+    @ObservationIgnored private var pendingCompletions: [String: [@MainActor () -> Void]] = [:]
+    /// Completions keyed by the generation of the scan they wait on.
     @ObservationIgnored private var completions: [String: [Int: [@MainActor () -> Void]]] = [:]
     @ObservationIgnored private var ticker: PollingTickerLike?
     @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
-    @ObservationIgnored private var pollCursor = RoundRobinBatchCursor()
     @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.graftty", category: "RemoteBranchStore")
-    private static let pollBatchSize = 4
     // ISO8601DateFormatter is thread-safe for date parsing; nonisolated(unsafe) acknowledges
     // the missing Sendable conformance while preserving the single-allocation benefit.
     private nonisolated(unsafe) static let iso8601Formatter: ISO8601DateFormatter = {
@@ -88,7 +89,7 @@ public final class RemoteBranchStore {
         backgroundProcessLimiter: BackgroundProcessLimiter = BackgroundProcessLimiter(capacity: 4)
     ) {
         self.list = list
-        self.backgroundProcessLimiter = backgroundProcessLimiter
+        self.scheduler = RepoPollScheduler(limiter: backgroundProcessLimiter)
     }
 
     /// True iff `branch` has an upstream tracked under origin, or a
@@ -118,18 +119,18 @@ public final class RemoteBranchStore {
 
     public func clear(repoPath: String) {
         branchesByRepo.removeValue(forKey: repoPath)
-        inFlight.removeValue(forKey: repoPath)
-        if let pendingGeneration = pendingRerun.removeValue(forKey: repoPath) {
-            completions[repoPath]?[pendingGeneration] = nil
-            if completions[repoPath]?.isEmpty == true {
-                completions.removeValue(forKey: repoPath)
-            }
-        }
-        generation[repoPath, default: 0] += 1
+        pendingRerun.remove(repoPath)
+        pendingCompletions.removeValue(forKey: repoPath)
+        scheduler.invalidate(repoPath)
     }
 
     func isInFlightForTesting(_ repoPath: String) -> Bool {
-        inFlight[repoPath] != nil
+        scheduler.isInFlight(repoPath)
+    }
+
+    /// Simulates a scan that started at `date` and is still running.
+    func seedInFlightSinceForTesting(_ date: Date, forRepo repoPath: String) {
+        scheduler.seedInFlightForTesting(repoPath, since: date)
     }
 
     public func start(
@@ -156,57 +157,47 @@ public final class RemoteBranchStore {
 
     private func pollTick() {
         let repos = getRepos().filter(\.isGitTracked)
-        let batch = pollCursor.nextBatch(
-            from: repos,
-            maximumCount: Self.pollBatchSize,
-            path: \.path
-        )
+        let batch = scheduler.nextBatch(from: repos, path: \.path)
         for repo in batch {
             refresh(repoPath: repo.path)
         }
     }
 
     public func refresh(repoPath: String, completion: (@MainActor () -> Void)? = nil) {
-        if inFlight[repoPath] != nil {
-            let refreshGeneration: Int
-            if let pendingGeneration = pendingRerun[repoPath] {
-                refreshGeneration = pendingGeneration
-            } else {
-                refreshGeneration = generation[repoPath, default: 0] + 1
-                pendingRerun[repoPath] = refreshGeneration
-            }
+        if scheduler.isLive(repoPath) {
+            // Coalesce into one trailing scan so a ref change observed
+            // during the live scan is not missed. A scan past the
+            // abandonment threshold no longer coalesces: the code below
+            // supersedes it and starts the queued rerun now (GIT-2.12).
+            pendingRerun.insert(repoPath)
             if let completion {
-                completions[repoPath, default: [:]][refreshGeneration, default: []].append(completion)
+                pendingCompletions[repoPath, default: []].append(completion)
             }
             return
         }
 
-        generation[repoPath, default: 0] += 1
-        let refreshGeneration = generation[repoPath, default: 0]
-        beginRefresh(repoPath: repoPath, refreshGeneration: refreshGeneration, completion: completion)
+        pendingRerun.remove(repoPath)
+        var callbacks = pendingCompletions.removeValue(forKey: repoPath) ?? []
+        if let completion {
+            callbacks.append(completion)
+        }
+        beginRefresh(repoPath: repoPath, callbacks: callbacks)
     }
 
     private func beginRefresh(
         repoPath: String,
-        refreshGeneration: Int,
-        completion: (@MainActor () -> Void)? = nil
+        callbacks: [@MainActor () -> Void]
     ) {
-        generation[repoPath] = refreshGeneration
-        inFlight[repoPath] = refreshGeneration
-        if let completion {
-            completions[repoPath, default: [:]][refreshGeneration, default: []].append(completion)
+        let refreshGeneration = scheduler.claim(repoPath)
+        if !callbacks.isEmpty {
+            completions[repoPath, default: [:]][refreshGeneration] = callbacks
         }
         let list = self.list
-        let backgroundProcessLimiter = self.backgroundProcessLimiter
+        let scheduler = self.scheduler
         Task { [weak self] in
             do {
-                let snapshot: RemoteBranchSnapshot? = try await backgroundProcessLimiter.run { [weak self] in
-                    guard let self,
-                          await self.shouldRunRefresh(
-                            repoPath: repoPath,
-                            refreshGeneration: refreshGeneration
-                          ) else { return nil }
-                    return try await list(repoPath)
+                let snapshot = try await scheduler.run(repoPath, generation: refreshGeneration) {
+                    try await list(repoPath)
                 }
                 if let snapshot {
                     self?.apply(
@@ -227,19 +218,11 @@ public final class RemoteBranchStore {
         }
     }
 
-    private func shouldRunRefresh(
-        repoPath: String,
-        refreshGeneration: Int
-    ) -> Bool {
-        generation[repoPath, default: 0] == refreshGeneration
-            && inFlight[repoPath] == refreshGeneration
-    }
-
     private func apply(repoPath: String, snapshot: RemoteBranchSnapshot, refreshGeneration: Int) {
         defer {
             finish(repoPath: repoPath, refreshGeneration: refreshGeneration)
         }
-        guard generation[repoPath, default: 0] == refreshGeneration else { return }
+        guard scheduler.isCurrent(repoPath, generation: refreshGeneration) else { return }
         let oldSnapshot = branchesByRepo[repoPath]
         let oldBranches = oldSnapshot?.branches ?? []
         guard oldSnapshot != snapshot else { return }
@@ -250,10 +233,7 @@ public final class RemoteBranchStore {
     }
 
     private func finish(repoPath: String, refreshGeneration: Int) {
-        let shouldStartPending = inFlight[repoPath] == refreshGeneration
-        if inFlight[repoPath] == refreshGeneration {
-            inFlight.removeValue(forKey: repoPath)
-        }
+        let ownedSlot = scheduler.release(repoPath, generation: refreshGeneration)
 
         let callbacks = completions[repoPath]?[refreshGeneration] ?? []
         completions[repoPath]?[refreshGeneration] = nil
@@ -261,8 +241,11 @@ public final class RemoteBranchStore {
             completions.removeValue(forKey: repoPath)
         }
 
-        if shouldStartPending, let pendingGeneration = pendingRerun.removeValue(forKey: repoPath) {
-            beginRefresh(repoPath: repoPath, refreshGeneration: pendingGeneration)
+        if ownedSlot, pendingRerun.remove(repoPath) != nil {
+            beginRefresh(
+                repoPath: repoPath,
+                callbacks: pendingCompletions.removeValue(forKey: repoPath) ?? []
+            )
         }
 
         for callback in callbacks {
