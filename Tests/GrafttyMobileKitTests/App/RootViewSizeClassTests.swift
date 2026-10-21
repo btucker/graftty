@@ -9,44 +9,6 @@ import UIKit
 @MainActor
 @Suite("RootView size-class router — IPAD-1.1 + IPAD-7.1")
 struct RootViewSizeClassTests {
-    @Test(arguments: [false, true])
-    func compactPanePreviewsDoNotBecomeRecentTerminalVisits(isRegularWidth: Bool) async throws {
-        let defaults = try #require(UserDefaults(suiteName: "visible-recent-pane-\(UUID())"))
-        let state = IPadAppState(defaults: defaults)
-        let host = Host(label: "Mac", baseURL: URL(string: "https://fixture.invalid")!)
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let store = HostStore(storeURL: directory.appendingPathComponent("hosts.json"))
-        try store.add(host)
-        let row = WorktreePanes(path: "/split", displayName: "Split", repoDisplayName: "Project", displayBranch: "split",
-            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
-            layout: .split(direction: .horizontal, ratio: 0.5,
-                left: .leaf(sessionName: "first", title: "First", attentionText: nil, isBusy: false, attentionSource: nil),
-                right: .leaf(sessionName: "second", title: "Second", attentionText: nil, isBusy: false, attentionSource: nil)))
-        state.selectedHostId = host.id
-        state.latestWorktrees = [row]
-        let gate = BiometricGate(authenticator: RecentPaneAuthenticator())
-        gate.applicationWillEnterForeground()
-        await gate.authenticateOnActivation()
-        let root = RootView(hostStore: store, gate: gate, notifications: MobileAgentNotifications(defaults: defaults),
-            appState: state, notificationIO: .init(fetch: { _ in [row] }, reopen: { _, _ in }))
-        let controller = UIHostingController(rootView: root
-            .environment(\.horizontalSizeClass, isRegularWidth ? .regular : .compact)
-            .environment(\.scenePhase, .inactive))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: isRegularWidth ? 834 : 390, height: 844))
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        controller.view.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(100))
-        // Compact selection opens pane previews. Regular selection mounts
-        // the terminal tree. Merely preselecting a leaf is not a compact visit.
-        state.selectedWorktreePath = row.path
-        state.focusedPaneId = "first"
-        controller.view.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(state.recentPanes.entries.isEmpty == !isRegularWidth)
-    }
     @Test func recentPaneChoiceUpdatesTheActualHostWorktreeAndPaneRoute() throws {
         let state = IPadAppState(defaults: try #require(UserDefaults(suiteName: "recent-selection-\(UUID())")))
         let host = Host(label: "Other Mac", baseURL: URL(string: "https://other.invalid")!)
@@ -190,7 +152,4 @@ W3 Task 3: `RootView` owns a single `RemoteConnectionCoordinator` and hands the 
     }
 }
 
-private struct RecentPaneAuthenticator: BiometricAuthenticator {
-    func authenticate() async -> Result<Void, Error> { .success(()) }
-}
 #endif

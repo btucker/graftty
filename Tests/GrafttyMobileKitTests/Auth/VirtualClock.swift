@@ -22,8 +22,13 @@ final class VirtualClock: Clock, @unchecked Sendable {
     func sleep(for duration: TimeInterval) async throws {
         let id = UUID()
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 lock.withLock {
+                    // Cancellation can run before this continuation is registered.
+                    guard !Task.isCancelled else {
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
                     let deadline = _now.addingTimeInterval(duration)
                     sleepers[id] = Sleeper(
                         duration: duration,

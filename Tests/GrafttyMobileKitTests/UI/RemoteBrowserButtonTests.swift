@@ -15,6 +15,67 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct RemoteBrowserButtonTests {
+    // Mount RootView in the hosted, serialized UIKit target. The unhosted
+    // model-test runner has no application scene for a real window lifecycle.
+    @Test(arguments: [false, true])
+    func compactPanePreviewsDoNotBecomeRecentTerminalVisits(isRegularWidth: Bool) async throws {
+        let suiteName = "visible-recent-pane-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let state = IPadAppState(defaults: defaults)
+        let host = Host(label: "Mac", baseURL: URL(string: "https://fixture.invalid")!)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostStore(storeURL: directory.appendingPathComponent("hosts.json"))
+        try store.add(host)
+        let row = WorktreePanes(path: "/split", displayName: "Split", repoDisplayName: "Project", displayBranch: "split",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "first", title: "First", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: .leaf(sessionName: "second", title: "Second", attentionText: nil, isBusy: false, attentionSource: nil)))
+        state.selectedHostId = host.id
+        state.latestWorktrees = [row]
+        let gate = BiometricGate(authenticator: BrowserUnlockAuthenticator())
+        gate.applicationWillEnterForeground()
+        await gate.authenticateOnActivation()
+        let root = RootView(hostStore: store, gate: gate, notifications: MobileAgentNotifications(defaults: defaults),
+            appState: state, notificationIO: .init(fetch: { _ in [row] }, reopen: { _, _ in }))
+        let controller = UIHostingController(rootView: root
+            .environment(\.horizontalSizeClass, isRegularWidth ? .regular : .compact)
+            .environment(\.scenePhase, .inactive))
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: isRegularWidth ? 834 : 390, height: 844)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        controller.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        // Compact selection opens pane previews. Regular selection mounts
+        // the terminal tree. Merely preselecting a leaf is not a compact visit.
+        state.selectedWorktreePath = row.path
+        state.focusedPaneId = "first"
+        controller.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(state.recentPanes.entries.isEmpty == !isRegularWidth)
+    }
+
+    @Test("Mounted browser polling waits for the complete injected interval", .timeLimit(.minutes(1)))
+    func pollingUsesTheInjectedClock() async throws {
+        let fixture = try makeButtonFixture(owner: true)
+        defer { close(fixture) }
+        let clock = fixture.state.pollingClock
+        try await waitUntil { clock.hasPendingSleep(for: 3) }
+        let previous = fixture.state.offerPolls
+        clock.advance(by: 2)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(fixture.state.offerPolls == previous)
+        clock.advance(by: 1)
+        try await waitUntil { fixture.state.offerPolls == previous + 1 && clock.hasPendingSleep(for: 3) }
+    }
+
     @Test("@spec CONTEXT-10: While mobile terminal controls are visible, the application shall display an icon-only Context action immediately left of Browser in the same floating control group, retain separate accessible actions, and preserve the mounted terminal and pending request when opening or closing context.", .timeLimit(.minutes(1)))
     func drawerPreservesMountedTerminal() async throws {
         let recap = AttentionRecap(title: "Worktree context", context: "Help me reload my context when returning to a worktree.",
@@ -147,7 +208,7 @@ struct RemoteBrowserButtonTests {
         try await Task.sleep(for: .milliseconds(300))
         fixture.state.visible = true
         try await waitForImages(fixture)
-        try await Task.sleep(for: .seconds(3.2))
+        try await pollAgain(fixture)
         #expect(fixture.host.presentedViewController == nil)
         #expect(fixture.state.reads == reads)
     }
@@ -157,7 +218,7 @@ struct RemoteBrowserButtonTests {
         let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false, autoPreview: true)
         defer { close(fixture) }
         fixture.state.slowRead = true
-        fixture.state.offers = [imageOffer()]
+        try await pollAgain(fixture, offers: [imageOffer()])
         try await waitUntil { fixture.state.reads > 0 }
         fixture.state.focused = false
         try await waitUntil { fixture.state.cancelledReads == 1 }
@@ -172,7 +233,7 @@ struct RemoteBrowserButtonTests {
         let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false, autoPreview: true)
         defer { close(fixture) }
         fixture.state.failRead = true
-        fixture.state.offers = [imageOffer()]
+        try await pollAgain(fixture, offers: [imageOffer()])
         try await waitUntil { fixture.host.presentedViewController is UIAlertController }
         let reads = fixture.state.reads
         try await finishPresentation(in: fixture)
@@ -180,7 +241,7 @@ struct RemoteBrowserButtonTests {
         try await Task.sleep(for: .milliseconds(300))
         fixture.state.visible = true
         try await waitForImages(fixture)
-        try await Task.sleep(for: .seconds(3.2))
+        try await pollAgain(fixture)
         #expect(fixture.state.reads == reads)
     }
 
@@ -189,10 +250,10 @@ struct RemoteBrowserButtonTests {
         let fixture = try makeButtonFixture(owner: true, image: true, imageInitiallyAvailable: false, autoPreview: true)
         defer { close(fixture) }
         let group = UUID()
-        fixture.state.offers = ["before.png", "after.png"].map {
+        try await pollAgain(fixture, offers: ["before.png", "after.png"].map {
             RemoteOpenOffer(id: UUID(), filename: $0, byteCount: imageBytes.count, paneSessionName: "pane",
                             previewKind: "file", previewOwnerDeviceID: .init(value: "fixture-phone"), previewGroupID: group)
-        }
+        })
         try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
         let controller = try #require(quickLook(in: fixture.host.presentedViewController))
         let source = try #require(controller.dataSource)
@@ -217,9 +278,8 @@ struct RemoteBrowserButtonTests {
         let file = try #require(source.previewController(controller, previewItemAt: 0).previewItemURL)
         try await finishPresentation(in: fixture)
         let reads = fixture.state.reads
-        fixture.state.offers = []
         // Model expiry at the host, then destroy the pane's view state.
-        try await Task.sleep(for: .seconds(3.3))
+        try await pollAgain(fixture, offers: [])
         fixture.state.visible = false
         try await Task.sleep(for: .milliseconds(300))
         fixture.state.visible = true
@@ -336,7 +396,7 @@ struct RemoteBrowserButtonTests {
         try await Task.sleep(for: .milliseconds(150))
         #expect(field.isFirstResponder)
         #expect(!accessibilityObjects(in: fixture.host.view).contains { $0.accessibilityLabel == "Preview" })
-        fixture.state.offers = [incoming]
+        try await pollAgain(fixture, offers: [incoming])
         try await waitForImages(fixture, filename: "image.png")
         try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
         #expect(!field.isFirstResponder)
@@ -348,7 +408,7 @@ struct RemoteBrowserButtonTests {
         #expect(FileManager.default.fileExists(atPath: url.path))
         try await finishPresentation(in: fixture)
         #expect(FileManager.default.fileExists(atPath: url.path))
-        try await Task.sleep(for: .seconds(3.2))
+        try await pollAgain(fixture)
         #expect(fixture.host.presentedViewController == nil)
         try await waitForImages(fixture)
         try activateImages(in: fixture.host.view)
@@ -397,14 +457,14 @@ struct RemoteBrowserButtonTests {
         try await waitForImages(fixture)
         try activateImages(in: fixture.host.view)
         try await waitUntil { fixture.state.reads > 0 }
-        fixture.state.offers = [imageOffer("replacement.png")]
-        try await Task.sleep(for: .seconds(3.3))
+        try await pollAgain(fixture, offers: [imageOffer("replacement.png")])
+        try await waitUntil { fixture.state.cancelledReads > 0 }
         fixture.state.slowRead = false
         try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
         let controller = try #require(quickLook(in: fixture.host.presentedViewController))
         let url = try #require(controller.dataSource?.previewController(controller, previewItemAt: 0).previewItemURL)
         #expect(url.lastPathComponent == "replacement.png")
-        fixture.state.offers = [imageOffer("newest.png")]
+        try await pollAgain(fixture, offers: [imageOffer("newest.png")])
         try await waitUntil {
             guard let next = quickLook(in: fixture.host.presentedViewController), next !== controller else { return false }
             return next.dataSource?.previewController(next, previewItemAt: 0).previewItemURL?.lastPathComponent == "newest.png"
@@ -417,7 +477,7 @@ struct RemoteBrowserButtonTests {
         defer { close(fixture) }
         fixture.state.failRead = !unsupportedPreview
         fixture.state.unsupportedPreview = unsupportedPreview
-        if unsupportedPreview { fixture.state.offers = [imageOffer("image.graftty-unknown-preview")] }
+        if unsupportedPreview { try await pollAgain(fixture, offers: [imageOffer("image.graftty-unknown-preview")]) }
         try await waitForImages(fixture, filename: unsupportedPreview ? "image.graftty-unknown-preview" : "image.png")
         try activateImages(in: fixture.host.view)
         try await waitUntil { fixture.host.presentedViewController is UIAlertController }
@@ -427,7 +487,7 @@ struct RemoteBrowserButtonTests {
         try await finishPresentation(in: fixture)
         fixture.state.failRead = false
         fixture.state.unsupportedPreview = false
-        if unsupportedPreview { fixture.state.offers = [imageOffer()] }
+        if unsupportedPreview { try await pollAgain(fixture, offers: [imageOffer()]) }
         try await waitForImages(fixture, filename: "image.png")
         try activateImages(in: fixture.host.view)
         try await waitUntil { quickLook(in: fixture.host.presentedViewController) != nil }
@@ -602,6 +662,8 @@ struct RemoteBrowserButtonTests {
         var hasSnapshot = true
         var gate: BiometricGate?
         var visible = true
+        let pollingClock = VirtualClock()
+        var offerPolls = 0
         var offers: [RemoteOpenOffer] = []
         var slowRead = false
         var failRead = false
@@ -690,8 +752,9 @@ struct RemoteBrowserButtonTests {
                             if state.failRead { return .error(code: "unavailable", message: "Unavailable", forceAllowed: false, shortStatus: nil) }
                             return .openResource(.chunk(state.unsupportedPreview ? Data(repeating: 0, count: imageBytes.count) : imageBytes))
                         }
+                        state.offerPolls += 1
                         return .openResource(.offers(state.offers))
-                    }, browserConnectionReady: state.ready, isPaneFocused: state.focused, hasOwnershipSnapshot: state.hasSnapshot,
+                    }, pollingClock: state.pollingClock, browserConnectionReady: state.ready, isPaneFocused: state.focused, hasOwnershipSnapshot: state.hasSnapshot,
                     isPaneOwner: { state.owner }, canPresentAuthentication: { true }, terminalRequest: .constant(nil), chromePresentation: initialPresentation)
                     .environment(\.scenePhase, state.active ? .active : .background)
                     .environment(\.accessibilityEnabled, true)
@@ -750,9 +813,21 @@ struct RemoteBrowserButtonTests {
         try await waitUntil { fixture.host.presentedViewController == nil }
         try await Task.sleep(for: .milliseconds(50))
     }
+    private func pollAgain(_ fixture: ButtonFixture, offers: [RemoteOpenOffer]? = nil) async throws {
+        let clock = fixture.state.pollingClock
+        try await waitUntil { clock.hasPendingSleep(for: 3) }
+        let previous = fixture.state.offerPolls
+        if let offers { fixture.state.offers = offers }
+        clock.advance(by: 3)
+        try await waitUntil { fixture.state.offerPolls > previous && clock.hasPendingSleep(for: 3) }
+        // Preserve the original post-poll observation window for negative UI
+        // assertions. Only the polling clock advances; UIKit still runs normally.
+        try await Task.sleep(for: .milliseconds(200))
+    }
+
     private func waitUntil(_ stage: String = "hosted browser condition", sourceLocation: SourceLocation = #_sourceLocation, _ condition: () -> Bool) async throws {
-        // Offer polling can consume three seconds before UIKit starts its
-        // presentation. Quick Look's simulator extension also starts lazily.
+        // UIKit presentation and Quick Look's simulator extension still run
+        // on real time; the offer polling clock is controlled by each fixture.
         let deadline = ContinuousClock.now + .seconds(10)
         while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
         try #require(condition(), "Timed out waiting for \(stage)", sourceLocation: sourceLocation)
