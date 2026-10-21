@@ -3934,6 +3934,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-18** When provider prompt history contains human text, peer envelopes, or generated system, forge, and hook context, the application shall highlight only human text as user input, retain peer content with its available sender provenance, and exclude generated context, including in restored history and mixed Codex and Claude turns.
 
+### CONTEXT-19.x
+
+**CONTEXT-19** When worktree history displays human input and peer messages on Mac or mobile, the application shall label human text only as 'Your input' and show peer messages as distinct sender-labelled disclosures collapsed by default, with their full content available on expansion.
+
 ## MEM — MEM
 
 ### MEM-1.x
