@@ -19,7 +19,7 @@ struct WorktreeMonitorFSEventsLifetimeTests {
         // Always unblock the native queue, including on assertion failures.
         defer {
             gate.resume.signal()
-            DispatchQueue.global().async { subscription.cancel() }
+            teardownQueue().async { subscription.cancel() }
         }
 
         try triggerCallback(directory, entered: gate.entered)
@@ -46,12 +46,12 @@ struct WorktreeMonitorFSEventsLifetimeTests {
         let cancelled = DispatchGroup()
         for _ in 0..<16 {
             cancelled.enter()
-            DispatchQueue.global().async {
+            teardownQueue().async {
                 subscription.cancel()
                 cancelled.leave()
             }
         }
-        try #require(cancelled.wait(timeout: .now() + 3) == .success)
+        try #require(cancelled.wait(timeout: .now() + 5) == .success)
         try drainWithDeadline(queue)
         #expect(gate.released.wait(timeout: .now() + 3) == .success)
         #expect(gate.payload == nil)
@@ -64,11 +64,11 @@ struct WorktreeMonitorFSEventsLifetimeTests {
         let gate = CallbackGate()
         let queue = DispatchQueue(label: "test.fsevents.deinit")
         let dropped = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
+        teardownQueue().async {
             dropSubscription(directory, queue: queue, gate: gate)
             dropped.signal()
         }
-        try #require(dropped.wait(timeout: .now() + 3) == .success)
+        try #require(dropped.wait(timeout: .now() + 5) == .success)
         try drainWithDeadline(queue)
         #expect(gate.released.wait(timeout: .now() + 3) == .success)
         #expect(gate.payload == nil)
@@ -93,7 +93,7 @@ struct WorktreeMonitorFSEventsLifetimeTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let gate = CallbackGate()
         let target = CancellationTarget()
-        defer { DispatchQueue.global().async { target.cancel() } }
+        defer { teardownQueue().async { target.cancel() } }
         let queue = DispatchQueue(label: "test.fsevents.reentrant")
         queue.suspend()
         do {
@@ -121,11 +121,17 @@ struct WorktreeMonitorFSEventsLifetimeTests {
 
     private func cancelWithDeadline(_ subscription: FSEventsSubscription) throws {
         let cancelled = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
+        teardownQueue().async {
             subscription.cancel()
             cancelled.signal()
         }
-        try #require(cancelled.wait(timeout: .now() + 3) == .success)
+        try #require(cancelled.wait(timeout: .now() + 5) == .success)
+    }
+
+    private func teardownQueue() -> DispatchQueue {
+        // Private serial queues can make progress while other suites occupy
+        // the global concurrent pool with blocking subprocess and socket work.
+        DispatchQueue(label: "test.fsevents.teardown", qos: .userInitiated)
     }
 
     private func drainWithDeadline(_ queue: DispatchQueue) throws {
@@ -249,7 +255,7 @@ private let gatedCallback: FSEventStreamCallback = { stream, info, count, paths,
     guard let gate = CallbackGate.current() else { return }
     defer { gate.exited.signal() }
     gate.entered.signal()
-    guard gate.resume.wait(timeout: .now() + 5) == .success,
+    guard gate.resume.wait(timeout: .now() + 10) == .success,
           gate.payload != nil else { return }
     fileEventsCallback(stream, info, count, paths, flags, ids)
 }
