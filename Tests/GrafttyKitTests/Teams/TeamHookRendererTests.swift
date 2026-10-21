@@ -45,14 +45,17 @@ struct TeamHookRendererTests {
         }
     }
 
-    @Test("@spec AGENT-6.44: When an agent session starts, the application shall instruct the agent to keep one agent per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, and to delegate new-worktree work with graftty worktree add and an agent.")
+    @Test("@spec AGENT-6.44: When an agent session starts, the application shall instruct the agent to keep one implementer per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, to delegate new-worktree work with graftty worktree add and an agent, and to add a reviewer or pair to an existing worktree with graftty pane add and an agent that does not edit files unless the implementer hands off.")
     func managedSessionForbidsManualWorktrees() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
             let json = try TeamHookRenderer.sessionStart(runtime: runtime)
             let context = try additionalContext(from: json)
-            #expect(context.contains("one agent per worktree"))
+            #expect(context.contains("one implementer per worktree"))
+            #expect(!context.contains("one agent per worktree"))
             #expect(context.contains("`git worktree add`"))
             #expect(context.contains("`graftty worktree add <name> --agent"))
+            #expect(context.contains("`graftty pane add <worktree> --agent <codex|claude> --prompt-stdin`"))
+            #expect(context.contains("unless the implementer hands off"))
         }
     }
 

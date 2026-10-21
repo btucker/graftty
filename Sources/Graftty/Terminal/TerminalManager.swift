@@ -109,6 +109,9 @@ final class TerminalManager: ObservableObject {
     private var pendingShellReadyInitialInput: [PaneSlotID: String] = [:]
     private var shellStartupCommands: [PaneSlotID: String] = [:]
     private var shellStartupReceipts: [PaneSlotID: URL] = [:]
+    /// ATTN-1.28: cleanup for an agent launch staged in a pane (its prompt
+    /// file and durable initial task), run when the pane is destroyed.
+    private var stagedLaunchCleanups: [PaneSlotID: () -> Void] = [:]
     private var initialInputDeliveryResults: [PaneSlotID: Bool] = [:]
     private var initialInputDeliveryWaiters:
         [PaneSlotID: [CheckedContinuation<Bool, Never>]] = [:]
@@ -985,6 +988,11 @@ final class TerminalManager: ObservableObject {
         paneSlotIDsBySessionName[sessionName]?.id
     }
 
+    /// Every zmx session name currently mapped to a pane.
+    var paneSessionNames: Set<String> {
+        Set(paneSlotIDsBySessionName.keys)
+    }
+
     /// The owning worktree captured when the session mapping was recorded.
     /// Remote attach can arrive before the local Ghostty surface completes
     /// its own zmx spawn, so it must use this path when it wins daemon
@@ -1212,6 +1220,11 @@ final class TerminalManager: ObservableObject {
         terminalIDs.contains { surfaces[$0]?.needsConfirmQuit == true }
     }
 
+    /// Runs `cleanup` once when `terminalID` is destroyed.
+    func trackStagedLaunch(for terminalID: PaneSlotID, cleanup: @escaping () -> Void) {
+        stagedLaunchCleanups[terminalID] = cleanup
+    }
+
     /// Request close on each named surface and drop our reference. The surface itself
     /// is freed when the last strong reference to the `SurfaceHandle` drops.
     func destroySurfaces(terminalIDs: [PaneSlotID]) {
@@ -1375,6 +1388,7 @@ final class TerminalManager: ObservableObject {
         if let receipt = shellStartupReceipts.removeValue(forKey: terminalID) {
             try? FileManager.default.removeItem(at: receipt)
         }
+        stagedLaunchCleanups.removeValue(forKey: terminalID)?()
         rehydratedSurfaces.remove(terminalID)
         evictedGridSizes.removeValue(forKey: terminalID)
         forgetPaneSession(for: terminalID)
