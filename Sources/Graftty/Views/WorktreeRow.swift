@@ -11,39 +11,6 @@ private enum WorktreeRowGeometry {
     static let paneIndent = SidebarPaneLayout.markerLeading - horizontalInset
 }
 
-/// Red pill used by both `WorktreeRow` (worktree-scoped CLI notify) and
-/// `PaneTitleRow` (pane-scoped shell-integration pings). Centralized so
-/// a restyle — font, padding, color — lands in one place and the two
-/// scopes can't drift visually.
-struct AttentionCapsule: View {
-    let style: AttentionCapsuleStyle
-
-    var body: some View {
-        switch style {
-        case let .needsInput(label):
-            // Agent "needs input" is a bare red icon (no pill) — the glyph
-            // itself is the badge. Text is kept for accessibility + tooltip.
-            Image(systemName: AttentionCapsuleStyle.needsInputSymbol)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundColor(.red)
-                .accessibilityLabel(label)
-                .help(label)
-        case let .text(text):
-            Text(text)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(Color.red)
-                .foregroundColor(.white)
-                .clipShape(Capsule())
-        }
-    }
-}
-
 /// Child row under a running worktree showing a single pane's title
 /// (from libghostty's `SET_TITLE` action). Indented to communicate the
 /// hierarchy; the `↳` glyph is there for at-a-glance parsing when the
@@ -61,8 +28,8 @@ struct PaneTitleRow: View {
     /// within the active worktree. Gets the brightest text treatment and a
     /// bolder `↳` glyph so the user can see "typing goes here".
     let isFocusedPane: Bool
-    /// True while this pane's claude session is busy (AGENT-2.2). Tints the
-    /// title green — but only when no attention capsule is present, since a
+    /// True while this pane's claude session is busy (AGENT-2.2). Italicizes
+    /// the title — but only when no attention capsule is present, since a
     /// needs-input ping (claude waiting) supersedes "working".
     let isBusy: Bool
     let theme: GhosttyTheme
@@ -84,77 +51,28 @@ struct PaneTitleRow: View {
         attentionStyle == nil && !portBindings.isEmpty
     }
 
-    /// Busy style applies only when no capsule is shown (ping supersedes).
-    /// Shared with the iPad row via `PaneTitleBusyStyle` so the rule can't
-    /// drift.
-    private var titleIsBusy: Bool {
-        PaneTitleBusyStyle.applies(isBusy: isBusy, hasAttentionCapsule: attentionStyle != nil)
-    }
-
-    /// LAYOUT-2.31: the agent "needs input" state colors the title red too
-    /// (alongside the red icon) so it's scannable, not just a small glyph.
-    private var isNeedsInput: Bool {
-        if case .needsInput = attentionStyle { return true }
-        return false
-    }
-
-    private var paneMarker: some View {
-        SidebarPaneMarker(
-            attentionCount: attentionCount,
-            isFocused: isFocusedPane,
-            arrowColor: theme.paneArrow(
-                isFocusedPane: isFocusedPane,
-                isActiveWorktree: isActiveWorktree
-            )
-        )
-    }
-
-    @ViewBuilder
-    private var titleText: some View {
-        // AGENT-2.2: a busy pane renders its (already-animating) title in
-        // italic — a quiet "working" cue rather than a color shift. Apply
-        // italic at the *Text* level (Text.italic(), not the View
-        // `.italic(_:)` modifier): when a Text-level `.fontWeight` is set,
-        // the focused pane's `.semibold` wins over the View-level italic and
-        // drops it, so the slant only showed on non-focused (regular) rows.
-        let base = Text(title.isEmpty ? "shell" : title)
-            .font(.caption)
-            .fontWeight(isFocusedPane ? .semibold : .regular)
-        (titleIsBusy ? base.italic() : base)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .foregroundColor(isNeedsInput ? .red : theme.paneTitle(
-                isFocusedPane: isFocusedPane,
-                isActiveWorktree: isActiveWorktree,
-                hasTitle: !title.isEmpty
-            ))
-    }
-
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: WorktreeRowGeometry.spacing) {
-            paneMarker
-            if let attentionStyle {
-                // LAYOUT-2.30: title (yields/truncates) + pill (keeps
-                // intrinsic width) on one line. A plain HStack — NOT
-                // FlowLayout — so the title truncates instead of the pill
-                // wrapping below it.
+        // Title, marker and attention capsule are shared with mobile
+        // (`SidebarPaneTitleRow`); the Mac adds port chips, which share a
+        // FlowLayout with the title so wrapped chips hang under it (PORTS-3.3).
+        SidebarPaneTitleRow(
+            title: title,
+            isFocusedPane: isFocusedPane,
+            isActiveWorktree: isActiveWorktree,
+            isBusy: isBusy,
+            attentionStyle: attentionStyle,
+            attentionCount: attentionCount,
+            theme: theme.core,
+            alignment: .firstTextBaseline
+        ) { titleText in
+            FlowLayout(spacing: 4, rowSpacing: 3) {
                 titleText
-                    .layoutPriority(0)
-                AttentionCapsule(style: attentionStyle)
-                    .layoutPriority(1)
-            } else {
-                // Title + port chips share a FlowLayout so wrapped chips
-                // hang under the title text (PORTS-3.3).
-                FlowLayout(spacing: 4, rowSpacing: 3) {
-                    titleText
-                    if shouldRenderPortChips {
-                        ForEach(portBindings, id: \.self) { binding in
-                            PortChip(binding: binding, theme: theme, onOpen: onOpenPort.map { action in { action(binding) } })
-                        }
+                if shouldRenderPortChips {
+                    ForEach(portBindings, id: \.self) { binding in
+                        PortChip(binding: binding, theme: theme, onOpen: onOpenPort.map { action in { action(binding) } })
                     }
                 }
             }
-            Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
         // Keep attention in the arrow slot so a count sits beside its pane
@@ -164,7 +82,6 @@ struct PaneTitleRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
-
 }
 
 /// Minimal flow layout: wraps subviews to next line at container width
