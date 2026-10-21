@@ -176,8 +176,16 @@ public final class RemoteBranchStore {
             return
         }
 
+        // A slot still in flight here holds an abandoned scan whose result
+        // will be discarded, so its waiters join the fresh scan instead of
+        // running on that discarded result (or never, if it stays hung).
+        var callbacks: [@MainActor () -> Void] = []
+        if scheduler.isInFlight(repoPath),
+           let abandoned = completions.removeValue(forKey: repoPath) {
+            callbacks = abandoned.sorted { $0.key < $1.key }.flatMap(\.value)
+        }
         pendingRerun.remove(repoPath)
-        var callbacks = pendingCompletions.removeValue(forKey: repoPath) ?? []
+        callbacks += pendingCompletions.removeValue(forKey: repoPath) ?? []
         if let completion {
             callbacks.append(completion)
         }

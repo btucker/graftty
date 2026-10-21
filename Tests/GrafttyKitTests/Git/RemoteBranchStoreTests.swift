@@ -427,12 +427,54 @@ struct RemoteBranchStoreTests {
         try await waitUntil(timeout: 1.0) {
             lister.invocationCount(for: "/repo") == 2
         }
-        lister.resumeAll()
+        lister.resumeNewest()
 
         try await waitUntil(timeout: 1.0) { completed }
         #expect(store.hasRemote(repoPath: "/repo", branch: "new"))
+
+        // The abandoned scan returns last; its late result is discarded.
+        lister.resumeAll()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(store.hasRemote(repoPath: "/repo", branch: "new"))
         #expect(!store.hasRemote(repoPath: "/repo", branch: "old"))
         #expect(!store.isInFlightForTesting("/repo"))
+    }
+
+    @MainActor
+    @Test func abandonedScanCompletionRunsAfterTheSupersedingScan() async throws {
+        let lister = RecordingRemoteBranchLister(
+            results: ["/repo": .success(["old"])],
+            suspendUntilResumed: true
+        )
+        let store = RemoteBranchStore(list: lister.list)
+        var completionSnapshot: Set<String>?
+
+        store.refresh(repoPath: "/repo") {
+            completionSnapshot = store.branchesByRepo["/repo"]?.branches ?? []
+        }
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 1
+        }
+        store.seedInFlightSinceForTesting(
+            Date(timeIntervalSinceNow: -3600),
+            forRepo: "/repo"
+        )
+
+        lister.set(result: .success(["new"]), for: "/repo")
+        store.refresh(repoPath: "/repo")
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 2
+        }
+
+        // The abandoned scan finally returns, but its result is discarded,
+        // so its waiter must wait for the superseding scan's result.
+        lister.resumeOldest()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(completionSnapshot == nil)
+
+        lister.resumeAll()
+        try await waitUntil(timeout: 1.0) { completionSnapshot != nil }
+        #expect(completionSnapshot == ["new"])
     }
 
     @MainActor
@@ -752,14 +794,30 @@ private final class RecordingRemoteBranchLister: @unchecked Sendable {
             continuations.removeAll()
             return pending
         }
+        pending.forEach(Self.resume)
+    }
 
-        for (result, continuation) in pending {
-            switch result {
-            case .success(let snapshot):
-                continuation.resume(returning: snapshot)
-            case .failure(let error):
-                continuation.resume(throwing: error)
-            }
+    /// Resumes only the earliest suspended invocation.
+    func resumeOldest() {
+        lock.withLock { continuations.isEmpty ? nil : continuations.removeFirst() }
+            .map(Self.resume)
+    }
+
+    /// Resumes only the latest suspended invocation.
+    func resumeNewest() {
+        lock.withLock { continuations.popLast() }
+            .map(Self.resume)
+    }
+
+    private static func resume(
+        _ pending: (Result<RemoteBranchSnapshot, Error>, CheckedContinuation<RemoteBranchSnapshot, Error>)
+    ) {
+        let (result, continuation) = pending
+        switch result {
+        case .success(let snapshot):
+            continuation.resume(returning: snapshot)
+        case .failure(let error):
+            continuation.resume(throwing: error)
         }
     }
 

@@ -108,6 +108,32 @@ struct RepoPollSchedulerTests {
         #expect(!scheduler.isCoolingDown("/r"))
     }
 
+    @Test func coolingDownHonorsSubSecondCadence() {
+        let clock = TestClock()
+        let scheduler = makeScheduler(clock: clock) { _ in .milliseconds(1500) }
+        scheduler.recordSuccess("/r")
+
+        clock.advance(1.2)
+        #expect(scheduler.isCoolingDown("/r"))
+        clock.advance(0.3)
+        #expect(!scheduler.isCoolingDown("/r"))
+    }
+
+    @Test func generationsStayUniqueAcrossPrune() {
+        let clock = TestClock()
+        let scheduler = makeScheduler(clock: clock)
+        let stale = scheduler.claim("/r")
+
+        // The repo leaves the model while its dispatch runs, then returns.
+        scheduler.prune(keeping: [])
+        let fresh = scheduler.claim("/r")
+
+        #expect(fresh != stale)
+        #expect(!scheduler.isCurrent("/r", generation: stale))
+        #expect(!scheduler.release("/r", generation: stale))
+        #expect(scheduler.isLive("/r"))
+    }
+
     @Test func recordCompletionKeepsTheFailureStreak() {
         let clock = TestClock()
         let scheduler = makeScheduler(clock: clock) { _ in .seconds(10) }

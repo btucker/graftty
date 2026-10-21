@@ -9,8 +9,10 @@ import Foundation
 /// suppresses fresh work, because a subprocess wedged on a lock or across
 /// sleep/wake may never reach the code that releases its slot (DIVERGE-4.4,
 /// DIVERGE-4.11, PR-7.13, GIT-2.12). `generation` is the ownership token:
-/// every claim or invalidation bumps it, so superseded work skips its permit
-/// and its late results are dropped (DIVERGE-4.5, PR-8.17).
+/// every claim or invalidation assigns a new one, so superseded work skips
+/// its permit and its late results are dropped (DIVERGE-4.5, PR-8.17).
+/// Generations are unique across all keys and never reused, so work that
+/// outlives a `prune` cannot match a later claim for the same key.
 ///
 /// Stores keep their domain logic (what runs, how results apply, trailing
 /// reruns, forced pulses) and use this type only for the slot decisions.
@@ -40,6 +42,7 @@ final class RepoPollScheduler {
     private let cadence: (_ failureStreak: Int) -> Duration
     private let now: () -> Date
     private var slots: [String: Slot] = [:]
+    private var lastGeneration = 0
     private var cursor = RoundRobinBatchCursor()
 
     /// - Parameters:
@@ -101,8 +104,7 @@ final class RepoPollScheduler {
     /// failure streak. Keys that never completed are due.
     func isCoolingDown(_ key: String) -> Bool {
         guard let slot = slots[key], let last = slot.lastCompletion else { return false }
-        let interval = cadence(slot.failureStreak)
-        return now().timeIntervalSince(last) < Double(interval.components.seconds)
+        return now().timeIntervalSince(last) < Self.seconds(cadence(slot.failureStreak))
     }
 
     func isCurrent(_ key: String, generation: Int) -> Bool {
@@ -114,19 +116,24 @@ final class RepoPollScheduler {
     /// Marks the key in flight and returns the new ownership generation.
     /// Any earlier dispatch for the key is superseded.
     func claim(_ key: String) -> Int {
-        var slot = slots[key, default: Slot()]
-        slot.inFlightSince = now()
-        slot.generation += 1
-        slots[key] = slot
-        return slot.generation
+        let generation = nextGeneration()
+        slots[key, default: Slot()].inFlightSince = now()
+        slots[key, default: Slot()].generation = generation
+        return generation
     }
 
     /// Releases the slot and supersedes any running dispatch, so a later
     /// request is not suppressed while the old work drains and the old
     /// work's late result is dropped.
     func invalidate(_ key: String) {
+        let generation = nextGeneration()
         slots[key, default: Slot()].inFlightSince = nil
-        slots[key, default: Slot()].generation += 1
+        slots[key, default: Slot()].generation = generation
+    }
+
+    private func nextGeneration() -> Int {
+        lastGeneration += 1
+        return lastGeneration
     }
 
     /// Releases the slot if `generation` still owns it. Returns whether it
@@ -203,7 +210,12 @@ final class RepoPollScheduler {
     }
 
     private nonisolated static func isLive(startedAt: Date, now: Date) -> Bool {
-        now.timeIntervalSince(startedAt) < Double(abandonmentThreshold.components.seconds)
+        now.timeIntervalSince(startedAt) < seconds(abandonmentThreshold)
+    }
+
+    private nonisolated static func seconds(_ duration: Duration) -> TimeInterval {
+        let (seconds, attoseconds) = duration.components
+        return Double(seconds) + Double(attoseconds) / 1e18
     }
 
     // MARK: - Test seams

@@ -139,8 +139,8 @@ public final class WorktreeStatsStore {
     }
 
     /// Runs `git fetch` for the repo. Throwing means the fetch failed —
-    /// caller increments `repoFailureStreak` and applies exponential
-    /// backoff. Injected so tests can drive the failure path
+    /// caller increments the repo's fetch failure streak and applies
+    /// exponential backoff. Injected so tests can drive the failure path
     /// deterministically without mutating the global `GitRunner.executor`
     /// (which poisoned concurrent test suites in cycle 122).
     @ObservationIgnored
