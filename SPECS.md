@@ -908,6 +908,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.23** The Graftty Team provider skill shall name the `pane list` / `pane show` / `pane send` commands, warn that `pane send` writes directly to the PTY without an inbox or consent layer, and point to `graftty pane send --help` for details.
 
+**ATTN-1.24** When `graftty pane add` is invoked with `--agent <codex|claude>`, the CLI shall request an agent launch in the new pane with the initial task from `--prompt` or `--prompt-stdin`, and shall reject a prompt flag without `--agent`, both prompt flags together, `--agent` with `--command`, and an unknown runtime.
+
+**ATTN-1.25** When `graftty pane add` runs a command or agent, the application shall hand it to the new pane as initial shell input that runs once the shell is ready, rather than typing it into the PTY after the split, and shall run nothing for an empty or whitespace-only command.
+
+**ATTN-1.26** When `graftty pane add --agent` is used, the CLI shall first verify that the running app advertises pane agent launch, and the add-pane request shall carry the agent runtime and initial task so an older app cannot silently treat it as a plain split.
+
+**ATTN-1.27** If an add-pane request carries an agent prompt without an agent runtime, an agent runtime together with a command, or an agent runtime while Agent Teams is disabled, then the application shall reject it before splitting a pane.
+
+**ATTN-1.28** When a pane added with `graftty pane add --agent` is destroyed, the application shall delete that pane's staged agent prompt file and withdraw its pending durable initial task, so a pane closed before its agent starts leaves no task behind for the next agent of that runtime.
+
 ### ATTN-2.x — Communication Protocol
 
 **ATTN-2.1** The application shall listen on a Unix domain socket at `~/Library/Application Support/Graftty/graftty.sock`.
@@ -2926,6 +2936,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-6.4** When the channel closes (channelInactive), the handler shall cancel the subscription so the snapshot pipeline stops firing.
 
+**REMOTE-6.5** If open is called again on a panes-state client whose channel is already open, then the client shall reject that call without interrupting snapshot delivery on the open channel.
+
+**REMOTE-6.6** While a panes-state channel is open, the client shall keep delivering snapshots and report the close even after its owner releases it.
+
 ### REMOTE-7.x — pane_control Channel
 
 **REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability. (Enforced at userauth: a peer with `terminalControl: .disabled` is rejected.)
@@ -3037,6 +3051,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.21** When the host closes its connection pool, the host shall close every pooled connection and clear the pool.
 
 **REMOTE-11.22** When different devices send concurrent first offers with one pool slot available, the host shall admit exactly one offer and count pending agent creation and negotiation toward capacity.
+
+**REMOTE-11.23** If a pane-control or worktree-management RPC response does not arrive before its deadline, then the client shall fail that RPC with a timeout using elapsed time independently of the transport event-loop clock.
+
+**REMOTE-11.24** When an SSH reply deadline or cancellation wins, the client shall run its abort action before resuming the waiting caller, so a caller can never act on a channel that is about to be torn down.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
@@ -3732,7 +3750,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
-**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject context that directs the agent to the Graftty skills, states that Graftty keeps one agent per worktree, names `graftty worktree add --agent --prompt-stdin` as the way to delegate work into a new worktree, and delivers queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
+**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject context that directs the agent to the Graftty skills, states that Graftty keeps one implementer per worktree, names `graftty worktree add --agent --prompt-stdin` as the way to delegate work into a new worktree and `graftty pane add --agent --prompt-stdin` as the way to add a reviewer or pair to an existing one, and delivers queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
 
 **AGENT-5.4** When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews provenance-tagged session-start team context, completes one turn, and thereby establishes the runtime's idle-message wake path.
 
@@ -3870,9 +3888,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.43** When Graftty installs the recap skill, the application shall instruct agents not to mention the Attention report in their response to the user unless the report command fails.
 
-**AGENT-6.44** When an agent session starts, the application shall instruct the agent to keep one agent per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, and to delegate new-worktree work with graftty worktree add and an agent.
+**AGENT-6.44** When an agent session starts, the application shall instruct the agent to keep one implementer per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, to delegate new-worktree work with graftty worktree add and an agent, and to add a reviewer or pair to an existing worktree with graftty pane add and an agent that does not edit files unless the implementer hands off.
 
-**AGENT-6.45** When Graftty installs the team skill, the application shall state that each worktree maps to exactly one agent, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, and direct agents to delegate with graftty worktree add and an agent instead.
+**AGENT-6.45** When Graftty installs the team skill, the application shall state that each worktree has exactly one implementer, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, direct agents to delegate with graftty worktree add and an agent instead, and document graftty pane add with an agent for adding a non-editing reviewer or pair to an existing worktree, addressed by exact agent ID, or by runtime suffix only when no other agent of that runtime shares the worktree.
 
 **AGENT-6.46** While the current Codex and Claude provider plugin integration is not installed, the Agent Teams Settings pane shall warn that agents will not be connected to Graftty until the plugins are installed and offer the install action; once the current integration is installed, the warning shall disappear.
 
@@ -3895,6 +3913,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.55** When Graftty packages progressive skill guidance, the application shall retain readable relative links within each independent provider plugin, with supporting procedures reachable from their skill entrypoints.
 
 **AGENT-6.56** When Graftty materializes a provider team skill, the skill shall direct agents to use STE-inspired controlled English with direct requests, one instruction per sentence, consistent technical terms, conditions before actions, and factual results that distinguish passed, failed, pending, and not-run checks.
+
+**AGENT-6.57** When `graftty pane add --agent` launches an agent with an initial task, the application shall save that task as a durable runtime-addressed inbox row only if no live agent of the same runtime already owns automatic delivery in the worktree and no initial task for that runtime is still pending there, so an existing implementer never receives or supersedes the added agent's task.
 
 ## CLI — CLI
 

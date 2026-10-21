@@ -7,6 +7,24 @@ enum CLIWorktreeCreationPolicy {
         return "Agent Teams is disabled; enable it in Graftty Settings before using --agent"
     }
 
+    /// ATTN-1.27: `pane add --agent` follows `worktree add --agent`'s rules.
+    /// Without Agent Teams no hook consumes the durable task, so a later
+    /// agent of that runtime would inherit it.
+    static func paneAddError(
+        agentRuntime: TeamHookRuntime?,
+        command: String?,
+        agentPrompt: String?,
+        teamsEnabled: Bool
+    ) -> String? {
+        if agentPrompt != nil, agentRuntime == nil {
+            return "an agent prompt requires an agent runtime"
+        }
+        if agentRuntime != nil, command != nil {
+            return "an agent runtime and a command are mutually exclusive"
+        }
+        return validationError(agentRuntime: agentRuntime, teamsEnabled: teamsEnabled)
+    }
+
     /// An interim CLI revision put a prompt-file path inside a shell command
     /// and relinquished ownership as soon as the app acknowledged the async
     /// operation. The app cannot safely recover that path if Git later fails,

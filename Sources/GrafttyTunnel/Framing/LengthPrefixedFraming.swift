@@ -12,8 +12,16 @@ import NIOExtras
 public enum LengthPrefixedFraming {
     /// Decode `<u32 BE length><payload>` into one `ByteBuffer` per
     /// payload. Add directly to the pipeline via `addHandler`.
-    public static func makeFrameDecoder() -> ByteToMessageHandler<LengthFieldBasedFrameDecoder> {
-        ByteToMessageHandler(LengthFieldBasedFrameDecoder(lengthFieldLength: .four))
+    /// `maximumBufferSize` bounds buffered undecoded bytes (prefix
+    /// included) for subsystems with a declared frame limit; `nil` is
+    /// unbounded.
+    public static func makeFrameDecoder(
+        maximumBufferSize: Int? = nil
+    ) -> ByteToMessageHandler<LengthFieldBasedFrameDecoder> {
+        ByteToMessageHandler(
+            LengthFieldBasedFrameDecoder(lengthFieldLength: .four),
+            maximumBufferSize: maximumBufferSize
+        )
     }
 
     /// Prepend `<u32 BE length>` to each outbound `ByteBuffer`. Add

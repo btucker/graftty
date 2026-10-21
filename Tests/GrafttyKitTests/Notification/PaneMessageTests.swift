@@ -97,7 +97,7 @@ struct NotificationMessagePaneTests {
     }
 
     @Test func encodeAddPaneNoCommand() throws {
-        let msg = NotificationMessage.addPane(path: "/tmp/wt", direction: .right, command: nil)
+        let msg = NotificationMessage.addPane(path: "/tmp/wt", direction: .right, command: nil, agentRuntime: nil, agentPrompt: nil)
         let data = try JSONEncoder().encode(msg)
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         #expect(json["type"] as? String == "add_pane")
@@ -107,11 +107,27 @@ struct NotificationMessagePaneTests {
     }
 
     @Test func encodeAddPaneWithCommand() throws {
-        let msg = NotificationMessage.addPane(path: "/tmp/wt", direction: .down, command: "claude")
+        let msg = NotificationMessage.addPane(path: "/tmp/wt", direction: .down, command: "claude", agentRuntime: nil, agentPrompt: nil)
         let data = try JSONEncoder().encode(msg)
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         #expect(json["direction"] as? String == "down")
         #expect(json["command"] as? String == "claude")
+    }
+
+    @Test("@spec ATTN-1.26: When `graftty pane add --agent` is used, the CLI shall first verify that the running app advertises pane agent launch, and the add-pane request shall carry the agent runtime and initial task so an older app cannot silently treat it as a plain split.")
+    func addPaneAgentFieldsRoundTrip() throws {
+        let msg = NotificationMessage.addPane(path: "/tmp/wt", direction: .down, command: nil,
+                                              agentRuntime: .codex, agentPrompt: "review")
+        let data = try JSONEncoder().encode(msg)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(json["agent_runtime"] as? String == "codex")
+        #expect(json["agent_prompt"] as? String == "review")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == msg)
+
+        let probe = try JSONEncoder().encode(NotificationMessage.paneAgentCapability)
+        let probeJSON = try JSONSerialization.jsonObject(with: probe) as! [String: Any]
+        #expect(probeJSON["type"] as? String == "pane_agent_capability")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: probe) == .paneAgentCapability)
     }
 
     @Test func encodeClosePane() throws {
@@ -134,7 +150,7 @@ struct NotificationMessagePaneTests {
     @Test func decodeAddPane() throws {
         let json = #"{"type":"add_pane","path":"/tmp/wt","direction":"left","command":"htop"}"#
         let msg = try JSONDecoder().decode(NotificationMessage.self, from: json.data(using: .utf8)!)
-        if case .addPane(let path, let direction, let command) = msg {
+        if case .addPane(let path, let direction, let command, _, _) = msg {
             #expect(path == "/tmp/wt")
             #expect(direction == .left)
             #expect(command == "htop")
@@ -144,7 +160,7 @@ struct NotificationMessagePaneTests {
     @Test func decodeAddPaneWithoutCommand() throws {
         let json = #"{"type":"add_pane","path":"/tmp/wt","direction":"right"}"#
         let msg = try JSONDecoder().decode(NotificationMessage.self, from: json.data(using: .utf8)!)
-        if case .addPane(_, _, let command) = msg {
+        if case .addPane(_, _, let command, _, _) = msg {
             #expect(command == nil)
         } else { Issue.record("Expected .addPane") }
     }

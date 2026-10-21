@@ -233,17 +233,12 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 
     private func requestPagedSubsystem(on child: Channel) async throws {
         let waiter = SSHSubsystemReplyWaiter()
-        let relay = PagedSubsystemReplyRelay(waiter: waiter)
-        try await child.pipeline.addHandler(relay)
-        try await waiter.wait(
-            timeout: .seconds(10),
-            timeoutError: ClientError.channelClosed,
-            onAbort: { child.close(promise: nil) },
-            start: {
-                child.triggerUserOutboundEvent(SSHChannelRequestEvent.SubsystemRequest(
-                    subsystem: SSHChannelTypeNames.terminalPaged, wantReply: true
-                )).whenFailure { waiter.finish(.failure($0)) }
-            }
+        try await child.pipeline.addHandler(SubsystemAckRelay(
+            waiter: waiter, rejected: ClientError.pagingUnsupported, closed: ClientError.channelClosed
+        ))
+        try await requestSubsystem(
+            SSHChannelTypeNames.terminalPaged, on: child, waiter: waiter,
+            timeout: .seconds(10), timeoutError: ClientError.channelClosed
         )
     }
 

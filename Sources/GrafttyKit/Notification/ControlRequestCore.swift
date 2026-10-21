@@ -95,7 +95,7 @@ public enum ControlRequestCore {
         case .listPanes, .addPane, .closePane, .showPane, .sendPane,
              .previewFiles, .previewImage, .offerResource,
              .createWorktree, .worktreeCreateStatus, .removeWorktree, .worktreeRemoveStatus, .setWorktreePinned,
-             .agentPromptStagingCapability, .worktreeBaseCapability, .worktreeCreateIdempotencyCapability,
+             .agentPromptStagingCapability, .paneAgentCapability, .worktreeBaseCapability, .worktreeCreateIdempotencyCapability,
              .remoteWorktreeCapability, .worktreeRemoveCapability, .worktreePinnedRemovalCapability,
              .worktreePinCapability,
              .remoteWorktree, .reconnectRemoteMac, .reconnectRemoteClient,

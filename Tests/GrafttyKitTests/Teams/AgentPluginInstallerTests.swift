@@ -811,7 +811,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.45: When Graftty installs the team skill, the application shall state that each worktree maps to exactly one agent, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, and direct agents to delegate with graftty worktree add and an agent instead.
+    @spec AGENT-6.45: When Graftty installs the team skill, the application shall state that each worktree has exactly one implementer, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, direct agents to delegate with graftty worktree add and an agent instead, and document graftty pane add with an agent for adding a non-editing reviewer or pair to an existing worktree, addressed by exact agent ID, or by runtime suffix only when no other agent of that runtime shares the worktree.
     """)
     func materializedTeamSkillForbidsManualWorktrees() throws {
         let destination = FileManager.default.temporaryDirectory
@@ -822,9 +822,19 @@ struct AgentPluginInstallerTests {
             let skill = try String(contentsOf: destination.appendingPathComponent(
                 "\(provider)/plugins/graftty/skills/graftty-team/SKILL.md"
             ))
-            #expect(skill.contains("exactly one agent"))
+            #expect(skill.contains("exactly one implementer"))
+            #expect(!skill.contains("exactly one agent"))
             #expect(skill.contains("`git worktree add`"))
             #expect(skill.contains("worktree-isolated subagents"))
+            #expect(skill.contains("graftty pane add <worktree> --agent <codex|claude> --prompt-stdin"))
+            #expect(skill.contains("unless the implementer hands off"))
+            #expect(skill.contains("<path>#<runtime>"))
+            #expect(skill.contains("only when no other agent of that runtime shares the worktree"))
+            let worktrees = try String(contentsOf: destination.appendingPathComponent(
+                "\(provider)/plugins/graftty/skills/graftty-team/references/worktrees.md"
+            ))
+            #expect(worktrees.contains("--agent"))
+            #expect(!worktrees.contains("no `--agent` or `--prompt-stdin`"))
         }
     }
 
