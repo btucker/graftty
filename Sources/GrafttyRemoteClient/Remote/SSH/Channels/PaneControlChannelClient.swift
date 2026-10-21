@@ -32,18 +32,26 @@ public final class PaneControlChannelClient: @unchecked Sendable {
 
     private let rpc: SubsystemRPCChannel<PaneControlRequest, PaneControlResponse>
 
-    public init(
+    public convenience init(
         parentChannel: Channel,
         parentHandler: NIOSSHHandler,
         rpcDeadline: Duration = PaneControlChannelClient.rpcDeadline
     ) {
+        self.init(
+            parentChannel: parentChannel,
+            parentHandler: parentHandler,
+            responseDeadline: .after(rpcDeadline)
+        )
+    }
+
+    init(parentChannel: Channel, parentHandler: NIOSSHHandler, responseDeadline: ReplyDeadline) {
         rpc = SubsystemRPCChannel(
             parentChannel: parentChannel,
             parentHandler: parentHandler,
             subsystem: SSHChannelTypeNames.paneControl,
             reply: .written(wantReply: true),
             policy: .init(
-                timeout: rpcDeadline,
+                deadline: responseDeadline,
                 closesOnDesync: false,
                 strictFrames: false,
                 closesOnCancellation: false

@@ -20,7 +20,7 @@ public final class ChromeTabChannelClient: @unchecked Sendable {
             maximumBufferSize: ChromeTabRequest.maximumResponseBytes + 4,
             reply: .acknowledged(timeout: timeout),
             policy: .init(
-                timeout: timeout,
+                deadline: .after(timeout),
                 closesOnDesync: true,
                 strictFrames: true,
                 closesOnCancellation: true

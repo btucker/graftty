@@ -121,27 +121,34 @@ final class ScriptedSubsystemHost: ChannelInboundHandler, @unchecked Sendable {
 
     private var unanswered: Int
     private let reply: Data
+    private let received: RequestCounter?
 
-    init(unanswered: Int = .max, reply: Data = Data()) {
+    init(unanswered: Int = .max, reply: Data = Data(), received: RequestCounter? = nil) {
         self.unanswered = unanswered
         self.reply = reply
+        self.received = received
     }
 
     /// Installs framing and a scripted host on a server child channel.
+    /// `received` counts the request frames the host reads.
     static func install(
         unanswered: Int = .max,
-        reply: Data = Data()
+        reply: Data = Data(),
+        received: RequestCounter? = nil
     ) -> @Sendable (Channel) throws -> Void {
         { child in
             let pipeline = child.pipeline.syncOperations
             try pipeline.addHandler(SSHChannelDataCodec())
             try pipeline.addHandler(LengthPrefixedFraming.makeFrameDecoder())
             try pipeline.addHandler(LengthPrefixedFraming.makeFramePrepender())
-            try pipeline.addHandler(ScriptedSubsystemHost(unanswered: unanswered, reply: reply))
+            try pipeline.addHandler(ScriptedSubsystemHost(
+                unanswered: unanswered, reply: reply, received: received
+            ))
         }
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        received?.increment()
         guard unanswered == 0 else {
             unanswered -= 1
             return
@@ -173,4 +180,46 @@ private final class AcceptAnyPublicKey: NIOSSHServerUserAuthenticationDelegate, 
 
 private struct UncheckedBox<Value>: @unchecked Sendable {
     let value: Value
+}
+
+/// A `ReplyDeadline` that fires only when the test says so.
+final class ManualReplyDeadline: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: [UUID: @Sendable () -> Void] = [:]
+
+    var deadline: ReplyDeadline {
+        ReplyDeadline { [self] callback in
+            let id = UUID()
+            lock.withLock { pending[id] = callback }
+            return { [weak self] in self?.lock.withLock { _ = self?.pending.removeValue(forKey: id) } }
+        }
+    }
+
+    /// Suspends until a deadline is armed.
+    func waitUntilArmed() async {
+        while lock.withLock({ pending.isEmpty }) { await Task.yield() }
+    }
+
+    /// Fires every armed deadline.
+    func fire() {
+        let callbacks = lock.withLock { () -> [@Sendable () -> Void] in
+            defer { pending.removeAll() }
+            return Array(pending.values)
+        }
+        callbacks.forEach { $0() }
+    }
+}
+
+/// Counts request frames a scripted host has read.
+final class RequestCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    var count: Int { lock.withLock { value } }
+    func increment() { lock.withLock { value += 1 } }
+
+    /// Suspends until at least `target` frames have arrived.
+    func waitUntil(_ target: Int) async {
+        while count < target { await Task.yield() }
+    }
 }

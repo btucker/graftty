@@ -18,19 +18,33 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
 
     private let rpc: SubsystemRPCChannel<WorktreeManagementRequest, WorktreeManagementResponse>
 
-    public init(
+    public convenience init(
         parentChannel: Channel,
         parentHandler: NIOSSHHandler,
         subsystemReplyTimeout: TimeAmount = .seconds(30),
         responseTimeout: TimeAmount = .seconds(30)
     ) {
+        self.init(
+            parentChannel: parentChannel,
+            parentHandler: parentHandler,
+            subsystemReplyTimeout: .nanoseconds(subsystemReplyTimeout.nanoseconds),
+            responseDeadline: .after(.nanoseconds(responseTimeout.nanoseconds))
+        )
+    }
+
+    init(
+        parentChannel: Channel,
+        parentHandler: NIOSSHHandler,
+        subsystemReplyTimeout: Duration,
+        responseDeadline: ReplyDeadline
+    ) {
         rpc = SubsystemRPCChannel(
             parentChannel: parentChannel,
             parentHandler: parentHandler,
             subsystem: SSHChannelTypeNames.worktreeManagement,
-            reply: .acknowledged(timeout: .nanoseconds(subsystemReplyTimeout.nanoseconds)),
+            reply: .acknowledged(timeout: subsystemReplyTimeout),
             policy: .init(
-                timeout: .nanoseconds(responseTimeout.nanoseconds),
+                deadline: responseDeadline,
                 closesOnDesync: true,
                 strictFrames: false,
                 closesOnCancellation: false

@@ -6,34 +6,38 @@ import Testing
 @Suite("Subsystem RPC deadlines on the WebRTC event-loop type")
 struct SubsystemRPCDeadlineTests {
     @Test("@spec REMOTE-11.23: If a pane-control or worktree-management RPC response does not arrive before its deadline, then the client shall fail that RPC with a timeout using elapsed time independently of the transport event-loop clock.")
-    func paneControlResponseDeadlineUsesElapsedTime() async throws {
+    func paneControlResponseDeadlineIgnoresTheEventLoopClock() async throws {
+        let received = RequestCounter()
         let link = try await InMemorySSHLink.make(
             serverChild: ScriptedSubsystemHost.install(
                 unanswered: 1,
-                reply: try JSONEncoder().encode(PaneControlResponse.ok)
+                reply: try JSONEncoder().encode(PaneControlResponse.ok),
+                received: received
             )
         )
+        let clock = ManualReplyDeadline()
         let client = PaneControlChannelClient(
             parentChannel: link.client,
             parentHandler: link.clientHandler,
-            rpcDeadline: .milliseconds(50)
+            responseDeadline: clock.deadline
         )
         try await client.open()
 
-        let outcome = await Self.bounded(onExpiry: { client.close() }) {
-            try await client.send(.equalize(target: "pane"))
-        }
-        guard case .failure(PaneControlChannelClient.ClientError.timedOut) = outcome else {
-            Issue.record("expected .timedOut, got \(outcome)")
+        // The in-memory link's event loops never advance their clock, so a
+        // deadline scheduled on them could not fire here.
+        let first = Task { try await client.send(.equalize(target: "pane")) }
+        await received.waitUntil(1)
+        await clock.waitUntilArmed()
+        clock.fire()
+        guard case .failure(PaneControlChannelClient.ClientError.timedOut) = await first.result else {
+            Issue.record("expected .timedOut, got \(await first.result)")
             client.close()
             await link.close()
             return
         }
         // Pane control keeps the channel after a timeout so a wedged
         // mutator does not cost the connection its layout controls.
-        let next = await Self.bounded(onExpiry: { client.close() }) {
-            try await client.send(.equalize(target: "pane"))
-        }
+        let next = await Task { try await client.send(.equalize(target: "pane")) }.result
         guard case .success(.ok) = next else {
             Issue.record("expected the next RPC to succeed, got \(next)")
             client.close()
@@ -44,60 +48,51 @@ struct SubsystemRPCDeadlineTests {
         await link.close()
     }
 
-    @Test("a worktree-management response deadline fires on the WebRTC event-loop type and closes the channel")
-    func worktreeManagementResponseDeadlineUsesElapsedTime() async throws {
-        let link = try await InMemorySSHLink.make(serverChild: ScriptedSubsystemHost.install())
+    @Test("a worktree-management response deadline closes the channel before the caller resumes")
+    func worktreeManagementDeadlinePoisonsBeforeResuming() async throws {
+        let received = RequestCounter()
+        let link = try await InMemorySSHLink.make(serverChild: ScriptedSubsystemHost.install(received: received))
+        let clock = ManualReplyDeadline()
         let client = WorktreeManagementChannelClient(
             parentChannel: link.client,
             parentHandler: link.clientHandler,
-            responseTimeout: .milliseconds(50)
+            subsystemReplyTimeout: .seconds(30),
+            responseDeadline: clock.deadline
         )
         try await client.open()
 
-        let outcome = await Self.bounded(onExpiry: { client.close() }) {
-            try await client.send(.open(worktreeID: "/tmp/w"))
+        // The second request is issued the moment the first one resumes.
+        // The wire has no request IDs, so it must find the channel already
+        // poisoned rather than write a mutation a late reply could answer.
+        let outcomes = Task { () -> (Result<WorktreeManagementResponse, any Error>, Result<WorktreeManagementResponse, any Error>) in
+            let first = await Result(catching: { try await client.send(.open(worktreeID: "/tmp/w")) })
+            let second = await Result(catching: { try await client.send(.open(worktreeID: "/tmp/w")) })
+            return (first, second)
         }
-        guard case .failure(WorktreeManagementChannelClient.ClientError.timedOut) = outcome else {
-            Issue.record("expected .timedOut, got \(outcome)")
+        await received.waitUntil(1)
+        await clock.waitUntilArmed()
+        clock.fire()
+        let (first, second) = await outcomes.value
+        guard case .failure(WorktreeManagementChannelClient.ClientError.timedOut) = first else {
+            Issue.record("expected .timedOut, got \(first)")
             client.close()
             await link.close()
             return
         }
-        // Poison-on-timeout: the wire has no request IDs, so a late reply
-        // must never be paired with a later request.
-        let next = await Self.bounded(onExpiry: { client.close() }) {
-            try await client.send(.open(worktreeID: "/tmp/w"))
-        }
-        guard case .failure(WorktreeManagementChannelClient.ClientError.channelClosed) = next else {
-            Issue.record("expected .channelClosed after the timeout, got \(next)")
+        guard case .failure(WorktreeManagementChannelClient.ClientError.channelClosed) = second else {
+            Issue.record("expected .channelClosed after the timeout, got \(second)")
+            client.close()
             await link.close()
             return
         }
+        #expect(received.count == 1)
         await link.close()
     }
+}
 
-    private struct Watchdog: Error {}
-
-    /// Runs `operation`, reporting `Watchdog` if it is still pending after
-    /// two seconds, so a deadline that never fires fails instead of hanging.
-    /// `onExpiry` must unblock `operation` (RPCs ignore task cancellation).
-    private static func bounded<Value: Sendable>(
-        onExpiry: @escaping @Sendable () -> Void,
-        _ operation: @escaping @Sendable () async throws -> Value
-    ) async -> Result<Value, any Error> {
-        await withTaskGroup(of: Result<Value, any Error>?.self) { group in
-            group.addTask {
-                do { return .success(try await operation()) }
-                catch { return .failure(error) }
-            }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(2))
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            if first == nil { onExpiry() }
-            return first ?? .failure(Watchdog())
-        }
+private extension Result where Failure == any Error {
+    init(catching body: () async throws -> Success) async {
+        do { self = .success(try await body()) }
+        catch { self = .failure(error) }
     }
 }

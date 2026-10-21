@@ -226,7 +226,7 @@ final class SubsystemChannel: @unchecked Sendable {
 /// `NIOAsyncTestingEventLoop` never advances its scheduled-task clock.
 final class SubsystemRPCChannel<Request: Encodable & Sendable, Response: Sendable>: @unchecked Sendable {
     struct Policy: Sendable {
-        var timeout: Duration
+        var deadline: ReplyDeadline
         /// Close the channel when an RPC times out or its write fails, so a
         /// late reply can never pair with a later request. Otherwise the
         /// timed-out caller is failed and the channel stays usable.
@@ -319,16 +319,16 @@ final class SubsystemRPCChannel<Request: Encodable & Sendable, Response: Sendabl
         defer { lock.withLock { if pending === waiter { pending = nil } } }
         let buffer = child.allocator.buffer(bytes: body)
         return try await waiter.wait(
-            timeout: policy.timeout,
+            scheduleTimeout: policy.deadline.schedule,
             timeoutError: errors.timedOut,
             onAbort: { [weak self] in self?.desynchronized() },
             // Reachable only when `closesOnCancellation`: `send` shields
             // other callers' RPCs from cancellation.
             onCancel: { [weak self] in self?.close() },
             start: { [weak self] in
+                let owner = self
                 child.writeAndFlush(buffer).whenFailure { error in
-                    waiter.finish(.failure(error))
-                    self?.desynchronized()
+                    waiter.finish(.failure(error), beforeResuming: { owner?.desynchronized() })
                 }
             }
         )
@@ -346,8 +346,9 @@ final class SubsystemRPCChannel<Request: Encodable & Sendable, Response: Sendabl
         do {
             waiter.finish(.success(try decode(bytes)))
         } catch {
-            waiter.finish(.failure(error))
-            if policy.strictFrames { close() }
+            waiter.finish(.failure(error), beforeResuming: { [weak self] in
+                if self?.policy.strictFrames == true { self?.close() }
+            })
         }
     }
 
