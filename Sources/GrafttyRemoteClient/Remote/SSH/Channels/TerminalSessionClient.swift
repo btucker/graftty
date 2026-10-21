@@ -54,6 +54,8 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private let sessionName: String
     private let lock = NIOLock()
     private var childChannel: Channel?
+    private var openingChannel: Channel?
+    private var openingWaiter: SSHReplyWaiter<Channel>?
     private var historyChannel: Channel?
     private var historyToken: String?
     private var historySetupTask: Task<Void, Never>?
@@ -108,16 +110,63 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     /// (ChannelSuccessEvent), ensuring the server-side stream is attached
     /// before the caller sends any terminal bytes.
     public func connect(paged: Bool = false) async throws {
+        try await withTaskCancellationHandler {
+            do {
+                try await connectChild(paged: paged)
+                try Task.checkCancellation()
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                throw error
+            }
+        } onCancel: {
+            self.close()
+        }
+    }
+
+    private func connectChild(paged: Bool) async throws {
+        let waiter = SSHReplyWaiter<Channel>()
+        let shouldOpen = lock.withLock {
+            guard !closed else { return false }
+            openingWaiter = waiter
+            return true
+        }
+        guard shouldOpen else { throw ClientError.channelClosed }
+        defer {
+            lock.withLock {
+                if openingWaiter === waiter { openingWaiter = nil }
+            }
+        }
         let child: Channel
         do {
             child = try await openChildChannel(
                 parentChannel: parentChannel,
-                parentHandler: parentHandler
-            ) { [self] child, _ in
-                child.pipeline.addHandler(InboundRelay(owner: self))
+                parentHandler: parentHandler,
+                waiter: waiter
+            ) { [weak self] child, _ in
+                guard let self else { return child.eventLoop.makeFailedFuture(ClientError.channelClosed) }
+                let accepted = self.lock.withLock {
+                    guard !self.closed else { return false }
+                    self.openingChannel = child
+                    return true
+                }
+                guard accepted else { return child.eventLoop.makeFailedFuture(ClientError.channelClosed) }
+                child.closeFuture.whenComplete { [weak self] _ in self?.handleChildClose() }
+                return child.pipeline.addHandler(InboundRelay(owner: self))
             }
         } catch {
             throw ClientError.openFailed(error)
+        }
+
+        let openingAccepted = lock.withLock {
+            guard !closed else { return false }
+            openingChannel = child
+            return true
+        }
+        guard openingAccepted else { child.close(promise: nil); throw ClientError.channelClosed }
+        defer {
+            lock.withLock {
+                if openingChannel === child { openingChannel = nil }
+            }
         }
 
         if paged {
@@ -148,7 +197,15 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         // have already been flushed above; the pipeline only sees the
         // shell reply from this point on.
         let ackPromise = child.eventLoop.makePromise(of: Void.self)
-        try await child.pipeline.addHandler(ShellAckWaiter(promise: ackPromise))
+        do {
+            try await child.pipeline.addHandler(ShellAckWaiter(promise: ackPromise))
+        } catch {
+            // A destroyed pipeline rejects installation without calling
+            // handlerRemoved, so the uninstalled waiter cannot fail its promise.
+            ackPromise.fail(error)
+            child.close(promise: nil)
+            throw error
+        }
 
         do {
             try await Self.sendShell(channel: child)
@@ -168,15 +225,10 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         let accepted = lock.withLock {
             guard !closed else { return false }
             childChannel = child
+            if openingChannel === child { openingChannel = nil }
             return true
         }
         guard accepted else { child.close(promise: nil); throw ClientError.channelClosed }
-
-        // Watch for child-channel close so receivers waiting in
-        // `receive()` see channelClosed instead of hanging.
-        child.closeFuture.whenComplete { [weak self] _ in
-            self?.handleChildClose()
-        }
     }
 
     private func requestPagedSubsystem(on child: Channel) async throws {
@@ -248,15 +300,20 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             if discardOutput { receiveBuffer.removeAll() }
             let pending = pendingReceivers
             pendingReceivers.removeAll()
-            let channels = (childChannel, historyChannel, historySetupTask)
+            let channels = (childChannel, openingChannel, historyChannel, historySetupTask)
+            let waiter = openingWaiter
             childChannel = nil
+            openingChannel = nil
+            openingWaiter = nil
             historyChannel = nil
             historySetupTask = nil
             historyToken = nil
-            return (pending, channels, didFailReceive!)
+            return (pending, channels, didFailReceive!, waiter)
         }
+        result.3?.finish(.failure(result.2))
         for waiter in result.0 { waiter.continuation.resume(throwing: result.2) }
-        result.1.2?.cancel()
+        result.1.3?.cancel()
+        result.1.2?.close(promise: nil)
         result.1.1?.close(promise: nil)
         result.1.0?.close(promise: nil)
     }
@@ -576,6 +633,7 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
 private final class ShellAckWaiter: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
     typealias InboundIn = SSHChannelData
     let promise: EventLoopPromise<Void>
+    private var resolved = false
 
     init(promise: EventLoopPromise<Void>) {
         self.promise = promise
@@ -584,15 +642,36 @@ private final class ShellAckWaiter: ChannelInboundHandler, RemovableChannelHandl
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         switch event {
         case is ChannelSuccessEvent:
-            promise.succeed()
-            context.pipeline.removeHandler(self, promise: nil)
+            finish(.success(()), context: context)
         case is ChannelFailureEvent:
-            promise.fail(TerminalSessionClient.ClientError.openFailed(ShellRejectedError()))
-            context.pipeline.removeHandler(self, promise: nil)
+            finish(.failure(TerminalSessionClient.ClientError.openFailed(ShellRejectedError())), context: context)
         default:
             break
         }
         context.fireUserInboundEventTriggered(event)
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        finish(.failure(TerminalSessionClient.ClientError.channelClosed), context: context)
+        context.fireChannelInactive()
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: any Error) {
+        finish(.failure(error), context: context)
+        context.close(promise: nil)
+    }
+
+    func handlerRemoved(context: ChannelHandlerContext) {
+        guard !resolved else { return }
+        resolved = true
+        promise.fail(TerminalSessionClient.ClientError.channelClosed)
+    }
+
+    private func finish(_ result: Result<Void, Error>, context: ChannelHandlerContext) {
+        guard !resolved else { return }
+        resolved = true
+        promise.completeWith(result)
+        context.pipeline.removeHandler(self, promise: nil)
     }
 }
 

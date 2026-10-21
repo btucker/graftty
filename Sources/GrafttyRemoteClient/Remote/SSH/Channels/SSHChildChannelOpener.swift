@@ -28,17 +28,19 @@ enum SSHChildChannelOpenError: Error, Equatable {
 /// Per-caller concerns — pipeline setup beyond `initializer`, subsystem
 /// requests, shell/pty handshakes, and error translation into a caller's own
 /// `ClientError` — stay with each call site.
+/// Callers with an explicit close operation may retain and finish `waiter` to
+/// abort the open and cancel its deadline; late confirmed children still close.
 func openChildChannel(
     parentChannel: Channel,
     parentHandler: NIOSSHHandler,
     channelType: SSHChannelType = .session,
     timeout: Duration = .seconds(10),
     closeParentOnTimeout: Bool = true,
+    waiter: SSHReplyWaiter<Channel> = .init(),
     initializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
 ) async throws -> Channel {
     try Task.checkCancellation()
     let handlerBox = UncheckedSendableBox(value: parentHandler)
-    let waiter = SSHReplyWaiter<Channel>()
     // Keep NIOSSH's promise separate from the deadline. NIOSSH still owns
     // its completion if the peer responds after the caller has timed out.
     return try await waiter.wait(
