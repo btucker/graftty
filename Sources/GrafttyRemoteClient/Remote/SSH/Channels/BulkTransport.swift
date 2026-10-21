@@ -17,18 +17,17 @@ func openBulkSubsystem(
         timeout: .seconds(5), closeParentOnTimeout: false
     ) { child, type in
         initializer(child, type).flatMap {
-            child.pipeline.addHandler(PagedSubsystemReplyRelay(waiter: waiter))
+            child.pipeline.addHandler(SubsystemAckRelay(
+                waiter: waiter,
+                rejected: TerminalSessionClient.ClientError.pagingUnsupported,
+                closed: TerminalSessionClient.ClientError.channelClosed
+            ))
         }
     }
     do {
-        try await waiter.wait(
-            timeout: .seconds(5), timeoutError: TerminalSessionClient.ClientError.channelClosed,
-            onAbort: { child.close(promise: nil) },
-            start: {
-                child.triggerUserOutboundEvent(SSHChannelRequestEvent.SubsystemRequest(
-                    subsystem: subsystem, wantReply: true
-                )).whenFailure { waiter.finish(.failure($0)) }
-            }
+        try await requestSubsystem(
+            subsystem, on: child, waiter: waiter,
+            timeout: .seconds(5), timeoutError: TerminalSessionClient.ClientError.channelClosed
         )
         return child
     } catch {

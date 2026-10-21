@@ -1,9 +1,7 @@
 import Foundation
 import GrafttyProtocol
-import GrafttyTunnel
 import NIOConcurrencyHelpers
 import NIOCore
-import NIOExtras
 import NIOSSH
 
 /// One duplex team RPC session on an already authenticated SSH connection.
@@ -72,10 +70,19 @@ public final class TeamChannelClient: @unchecked Sendable {
                 }
                 guard accepted else { throw ClientError.channelClosed }
                 child.closeFuture.whenComplete { [weak self] _ in self?.close() }
-                try child.pipeline.syncOperations.addHandler(SSHChannelDataCodec())
-                try child.pipeline.syncOperations.addHandler(ByteToMessageHandler(LengthFieldBasedFrameDecoder(lengthFieldLength: .four), maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes))
-                try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFramePrepender())
-                try child.pipeline.syncOperations.addHandler(TeamChannelRelay(owner: self))
+                try installSubsystemPipeline(
+                    on: child,
+                    maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes,
+                    relay: FrameRelay(
+                        onFrame: { [weak self] in self?.receive($0) },
+                        onError: { [weak self] _ in self?.close() }
+                    ),
+                    ack: SubsystemAckRelay(
+                        waiter: self.waiter,
+                        rejected: ClientError.subsystemRejected,
+                        closed: ClientError.channelClosed
+                    )
+                )
             }
         }.whenComplete { [weak self] result in
             switch result {
@@ -134,33 +141,8 @@ public final class TeamChannelClient: @unchecked Sendable {
         }
     }
 
-    fileprivate func receive(_ bytes: Data) {
+    private func receive(_ bytes: Data) {
         guard let session = lock.withLock({ session }) else { return }
         Task { await session.receive(bytes) }
-    }
-
-    fileprivate func subsystemReply(accepted: Bool) {
-        waiter.finish(accepted ? .success(()) : .failure(ClientError.subsystemRejected))
-    }
-}
-
-private final class TeamChannelRelay: ChannelInboundHandler, @unchecked Sendable {
-    typealias InboundIn = ByteBuffer
-    private weak var owner: TeamChannelClient?
-    init(owner: TeamChannelClient) { self.owner = owner }
-
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        owner?.receive(Data(unwrapInboundIn(data).readableBytesView))
-    }
-
-    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
-        if event is ChannelSuccessEvent { owner?.subsystemReply(accepted: true) }
-        else if event is ChannelFailureEvent { owner?.subsystemReply(accepted: false) }
-        else { context.fireUserInboundEventTriggered(event) }
-    }
-
-    func errorCaught(context: ChannelHandlerContext, error: any Error) {
-        owner?.close()
-        context.close(promise: nil)
     }
 }

@@ -3,6 +3,24 @@ import NIOConcurrencyHelpers
 
 typealias SSHSubsystemReplyWaiter = SSHReplyWaiter<Void>
 
+/// Schedules a reply deadline's callback and returns its cancellation.
+/// Tests inject a manual deadline; production uses `after(_:)`.
+struct ReplyDeadline: Sendable {
+    let schedule: @Sendable (@escaping @Sendable () -> Void) -> @Sendable () -> Void
+
+    /// Fires after `duration` of elapsed time on Swift's clock.
+    static func after(_ duration: Duration) -> ReplyDeadline {
+        ReplyDeadline { callback in
+            let task = Task {
+                do { try await Task.sleep(for: duration) }
+                catch { return }
+                callback()
+            }
+            return { task.cancel() }
+        }
+    }
+}
+
 /// Coordinates an SSH reply or child-channel open.
 ///
 /// Cancellation may run before the async operation registers its continuation.
@@ -27,6 +45,8 @@ final class SSHReplyWaiter<Value: Sendable>: @unchecked Sendable {
     /// The WebRTC transport uses NIOAsyncTestingEventLoop, whose scheduled
     /// clock does not advance with elapsed time. Network deadlines must use
     /// Swift's clock instead of that event loop's scheduleTask.
+    /// `onAbort` runs, before the caller resumes, when the deadline or (absent
+    /// `onCancel`) cancellation wins.
     func wait(
         timeout: Duration,
         timeoutError: any Error,
@@ -35,14 +55,7 @@ final class SSHReplyWaiter<Value: Sendable>: @unchecked Sendable {
         start: @escaping @Sendable () -> Void
     ) async throws -> Value {
         try await wait(
-            scheduleTimeout: { callback in
-                let task = Task {
-                    do { try await Task.sleep(for: timeout) }
-                    catch { return }
-                    callback()
-                }
-                return { task.cancel() }
-            },
+            scheduleTimeout: ReplyDeadline.after(timeout).schedule,
             timeoutError: timeoutError,
             onAbort: onAbort,
             onCancel: onCancel,
@@ -79,10 +92,7 @@ final class SSHReplyWaiter<Value: Sendable>: @unchecked Sendable {
                 }
 
                 let cancelTimeout = scheduleTimeout { [weak self] in
-                    guard self?.finish(.failure(timeoutError)) == true else {
-                        return
-                    }
-                    onAbort()
+                    self?.finish(.failure(timeoutError), beforeResuming: onAbort)
                 }
                 let shouldStart = lock.withLock {
                     guard case .waiting = state else { return false }
@@ -96,15 +106,19 @@ final class SSHReplyWaiter<Value: Sendable>: @unchecked Sendable {
                 start()
             }
         } onCancel: { [weak self] in
-            guard self?.finish(.failure(CancellationError())) == true else {
-                return
-            }
-            (onCancel ?? onAbort)()
+            self?.finish(.failure(CancellationError()), beforeResuming: onCancel ?? onAbort)
         }
     }
 
+    /// Resolves the wait once; later calls return `false`. `beforeResuming`
+    /// runs only for the call that wins, after the waiter is resolved but
+    /// before the caller resumes, so teardown it performs is complete
+    /// before the caller can act on the result.
     @discardableResult
-    func finish(_ result: Result<Value, Error>) -> Bool {
+    func finish(
+        _ result: Result<Value, Error>,
+        beforeResuming: (@Sendable () -> Void)? = nil
+    ) -> Bool {
         let completion: (
             continuation: CheckedContinuation<Value, Error>?,
             cancelTimeout: (@Sendable () -> Void)?,
@@ -133,6 +147,7 @@ final class SSHReplyWaiter<Value: Sendable>: @unchecked Sendable {
             )
         }
         guard completion.didFinish else { return false }
+        beforeResuming?()
         completion.cancelTimeout?()
         completion.continuation?.resume(with: result)
         return true
