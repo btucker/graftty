@@ -5,9 +5,9 @@ import GrafttyKit
 /// agents: the presence index and sweep ticker, per-team inbox observers,
 /// the pane-closed presence fallback, and the post-restore retry.
 ///
-/// `startup()` builds one instance, calls `install()` where it used to wire
-/// these inline, and calls `refreshAndRetryRestoredDelivery()` after
-/// restoring running worktrees and again after launch reconciliation.
+/// `GrafttyApp.startup()` builds one instance, calls `install()` once, and
+/// calls `refreshAndRetryRestoredDelivery()` after restoring running
+/// worktrees and again after launch reconciliation.
 @MainActor
 final class NativeTeamDelivery {
     private let services: AppServices
@@ -131,7 +131,8 @@ final class NativeTeamDelivery {
             )
         }
 
-        // Subscribe Codex app-server delivery to inbox file-system events.
+        // Subscribe Codex app-server and Claude peer delivery to inbox
+        // file-system events.
         // TeamInboxObserver fires with the full message list on every
         // append. We track the previous count and fire onMessageArrival
         // only when new messages arrive, to avoid redundant delivers.
@@ -229,13 +230,13 @@ final class NativeTeamDelivery {
         }
     }
 
-    func refreshPresenceIndex() -> [TeamPresenceRecord] {
+    private func refreshPresenceIndex() -> [TeamPresenceRecord] {
         let records = (try? presenceStorage.listAll()) ?? []
         presenceIndex.replace(with: records)
         return records
     }
 
-    func refreshDeliveryLiveness(records: [TeamPresenceRecord]? = nil) {
+    private func refreshDeliveryLiveness(records: [TeamPresenceRecord]? = nil) {
         let records = records ?? refreshPresenceIndex()
         let names = GrafttyApp.livePaneSessionNamesForAutomaticDelivery(
             records: records,
