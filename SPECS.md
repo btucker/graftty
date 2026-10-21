@@ -30,6 +30,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.11** When assistive technology focuses the breadcrumb button, the application shall expose the selected repository, worktree, and branch alongside the recent-worktrees action.
 
+**LAYOUT-1.12** While the macOS window detail is visible, the application shall keep its breadcrumb header at the top and reserve the remaining height for content, including when no terminal pane is open and after resizing.
+
 ### LAYOUT-2.x — Sidebar — Repository List
 
 **LAYOUT-2.1** While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.
