@@ -261,8 +261,41 @@ struct ClientDeviceIDStoreTests {
         #expect(!id.value.isEmpty)
 
         let backups = try FileManager.default.contentsOfDirectory(atPath: dir.path)
-            .filter { $0.contains("corrupt") }
-        #expect(!backups.isEmpty)
+            .filter { $0.hasPrefix("client-device-id.json.corrupt-") }
+        #expect(backups.count == 1)
+    }
+
+    /// The record shape every shipped release has read and written, frozen
+    /// here so a store refactor cannot drift from it unnoticed (#488).
+    private struct LegacyStoredID: Decodable {
+        struct DeviceID: Decodable { let value: String }
+        let version: Int
+        let deviceID: DeviceID
+    }
+
+    @Test("A client-device-id.json written by earlier releases loads unchanged")
+    func loadsFixtureWrittenByEarlierReleases() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = #"{"version":1,"deviceID":{"value":"6F9619FF-8B86-D011-B42D-00C04FC964FF"}}"#
+        try Data(fixture.utf8).write(to: dir.appendingPathComponent("client-device-id.json"))
+
+        let loaded = try ClientDeviceIDStore(directory: dir).loadOrGenerateAndPersist()
+        #expect(loaded == RemoteDeviceID(value: "6F9619FF-8B86-D011-B42D-00C04FC964FF"))
+    }
+
+    @Test("A client-device-id.json written by the current store decodes with the earlier reader")
+    func currentWriterOutputDecodesWithEarlierReader() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = try ClientDeviceIDStore(directory: dir).loadOrGenerateAndPersist()
+
+        let data = try Data(contentsOf: dir.appendingPathComponent("client-device-id.json"))
+        let legacy = try JSONDecoder().decode(LegacyStoredID.self, from: data)
+        #expect(legacy.version == 1)
+        #expect(legacy.deviceID.value == id.value)
+        let keys = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any]).keys
+        #expect(Set(keys) == ["version", "deviceID"])
     }
 }
 
