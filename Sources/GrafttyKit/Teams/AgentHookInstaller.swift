@@ -507,11 +507,12 @@ public struct AgentHookInstaller: Sendable {
     enum ShellTemplateError: Error, Equatable {
         case missingTemplate(String)
         case unknownPlaceholder(String)
+        case unterminatedPlaceholder(String)
         case unusedValues([String])
     }
 
-    private static func codexWrapperTemplate() throws -> String {
-        guard let url = GrafttyKitResourceBundle.bundle.url(forResource: "codex-wrapper", withExtension: "sh") else {
+    static func codexWrapperTemplate(in bundle: Bundle = GrafttyKitResourceBundle.bundle) throws -> String {
+        guard let url = bundle.url(forResource: "codex-wrapper", withExtension: "sh") else {
             throw ShellTemplateError.missingTemplate("codex-wrapper.sh")
         }
         // The file ends with a newline for editors; the script never did.
@@ -528,8 +529,9 @@ public struct AgentHookInstaller: Sendable {
         while let open = rest.range(of: "{{") {
             output += rest[..<open.lowerBound]
             guard let close = rest[open.upperBound...].range(of: "}}") else {
-                rest = rest[open.lowerBound...]
-                break
+                throw ShellTemplateError.unterminatedPlaceholder(
+                    String(rest[open.upperBound...].prefix { $0 != "\n" })
+                )
             }
             let name = String(rest[open.upperBound..<close.lowerBound])
             guard let value = values[name] else {

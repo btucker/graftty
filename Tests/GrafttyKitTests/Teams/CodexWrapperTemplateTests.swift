@@ -70,5 +70,8 @@ struct CodexWrapperTemplateTests {
         #expect(throws: AgentHookInstaller.ShellTemplateError.unusedValues(["B"])) {
             try AgentHookInstaller.renderShellTemplate("{{A}}", values: ["A": "x", "B": "y"])
         }
+        #expect(throws: AgentHookInstaller.ShellTemplateError.unterminatedPlaceholder("A")) {
+            try AgentHookInstaller.renderShellTemplate("x {{A\ny", values: [:])
+        }
     }
 }
