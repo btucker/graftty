@@ -18,6 +18,13 @@ struct ControlSocketWireFixtureTests {
     static let remoteCreate = RemoteWorktreeRequest.create(RemoteWorktreeCreation(
         callerWorktree: "/r", project: "app", worktreeName: "wt", branchName: "br", existing: false,
         base: "main", command: "codex", agentRuntime: .codex, agentPrompt: "go", operationID: "op"))
+    static let remoteOriginCreate: RemoteWorktreeRequest = {
+        var creation = RemoteWorktreeCreation(
+            callerWorktree: "/r", project: nil, worktreeName: "wt", branchName: "wt", existing: false,
+            base: nil, command: nil, agentRuntime: nil, agentPrompt: nil, operationID: "op")
+        creation.origin = GitRepositoryOrigin.parse("ssh://deploy@git.example.com:2222/srv/app.git")
+        return .create(creation)
+    }()
     static func setupResult() throws -> LinuxHostSetupResult {
         LinuxHostSetupResult(identity: .init(deviceID: "dev", displayName: "Linux", publicKey: "key", port: 8801),
                              openSSH: try .parse("hostname h\nuser u\nport 22\n"), destination: try .init("alias"),
@@ -32,6 +39,11 @@ struct ControlSocketWireFixtureTests {
         priority: .normal, body: "hi", agentPrompt: "prompt", source: "github")
     static let member = TeamListMember(name: "main", branch: "main", worktreePath: "/r",
                                        isMainWorktree: true, isRunning: false)
+    static let memberWithAgent = TeamListMember(
+        name: "wt", branch: "wt", worktreePath: "/r/wt", isMainWorktree: false, isRunning: true,
+        agents: [TeamListAgent(id: "codex-1", address: "/r/wt#codex-1", runtime: .codex, displayName: "Codex",
+                               isReachable: true, paneSessionName: "s")],
+        projectPath: "/r", projectName: "app")
     static let createStatus = WorktreeCreateStatus(operationID: "op", state: .failed, worktreePath: "/r/wt",
                                                    messageAddress: "/r/wt", error: "boom")
     static let removeStatus = WorktreeRemoveStatus(operationID: "op", state: .failed, worktreePath: "/r/wt",
@@ -64,6 +76,8 @@ struct ControlSocketWireFixtureTests {
              #"{"request":{"create":{"_0":{"agentPrompt":"go","agentRuntime":"codex","base":"main","branchName":"br","callerWorktree":"/r","command":"codex","existing":false,"operationID":"op","project":"app","worktreeName":"wt"}}},"target":"Studio","type":"remote_worktree"}"#),
             (.remoteWorktree(target: "Studio", request: .status(operationID: "op")),
              #"{"request":{"status":{"operationID":"op"}},"target":"Studio","type":"remote_worktree"}"#),
+            (.remoteWorktree(target: "Studio", request: remoteOriginCreate), 
+             #"{"request":{"create":{"_0":{"branchName":"wt","callerWorktree":"/r","existing":false,"operationID":"op","origin":{"host":"git.example.com","path":"/srv/app.git","port":2222,"sshUser":"deploy","transport":"ssh"},"worktreeName":"wt"}}},"target":"Studio","type":"remote_worktree"}"#),
             (.addPane(path: "/r", direction: .down, command: "ls", agentRuntime: .codex, agentPrompt: "go"),
              #"{"agent_prompt":"go","agent_runtime":"codex","command":"ls","direction":"down","path":"/r","type":"add_pane"}"#),
             (.paneAgentCapability, #"{"type":"pane_agent_capability"}"#),
@@ -130,6 +144,8 @@ struct ControlSocketWireFixtureTests {
             (.paneShow("out"), #"{"text":"out","type":"pane_show"}"#),
             (.teamList(teamName: "t", members: [member]),
              #"{"members":[{"agents":[],"branch":"main","is_main_worktree":true,"is_running":false,"name":"main","worktree_path":"/r"}],"team_name":"t","type":"team_list"}"#),
+            (.teamList(teamName: "t", members: [memberWithAgent]), 
+             #"{"members":[{"agents":[{"address":"/r/wt#codex-1","display_name":"Codex","id":"codex-1","is_reachable":true,"pane_session_name":"s","runtime":"codex"}],"branch":"wt","is_main_worktree":false,"is_running":true,"name":"wt","project_name":"app","project_path":"/r","worktree_path":"/r/wt"}],"team_name":"t","type":"team_list"}"#),
             (.teamHookOutput("{}"), #"{"output":"{}","type":"team_hook_output"}"#),
             (.teamInbox(messages: [inboxMessage], nextBeforeID: "b", nextAfterID: "a", snapshotThroughID: "s"),
              #"{"messages":[{"agent_prompt":"prompt","batch_id":"batch","body":"hi","created_at":-978307200,"from":{"agentID":"codex-1","member":"a","runtime":"codex","worktree":"/r/a"},"id":"0001","kind":"team_message","priority":"normal","repo_path":"/r","source":"github","team":"t","to":{"member":"b","worktree":"/r/b"}}],"next_after_id":"a","next_before_id":"b","snapshot_through_id":"s","type":"team_inbox"}"#),
@@ -206,7 +222,8 @@ struct ControlSocketWireFixtureTests {
             (#"{"type":"team_reply","caller_worktree":"/r","message_id":"1","text":"ok","priority":"normal"}"#,
              .teamReply(callerWorktree: "/r", messageID: "1", text: "ok", priority: .normal, fallback: false)),
             (#"{"type":"team_hook","caller_worktree":"/r","runtime":"codex","event":"stop"}"#,
-             .teamHook(callerWorktree: "/r", runtime: .codex, event: .stop, sessionID: nil, paneSessionName: nil)),
+             .teamHook(callerWorktree: "/r", callerAgentID: nil, runtime: .codex, event: .stop, sessionID: nil,
+                       paneSessionName: nil, attentionReason: nil, stopHookActive: false, providerSleepActivity: nil)),
             (#"{"type":"provider_activity","caller_worktree":"/r","runtime":"codex"}"#,
              .providerActivity(callerWorktree: "/r", runtime: .codex, sessionID: nil, paneSessionName: nil,
                                activity: .unknown)),
@@ -215,9 +232,14 @@ struct ControlSocketWireFixtureTests {
              .providerActivity(callerWorktree: "/r", runtime: .codex, sessionID: nil, paneSessionName: nil,
                                activity: .unknown)),
             (#"{"type":"team_inbox","unread":true,"all":false}"#,
-             .teamInbox(TeamInboxPageRequest(callerWorktree: nil, worktree: nil, repo: nil, member: nil, unread: true,
+             .teamInbox(TeamInboxPageRequest(callerWorktree: nil, callerAgentID: nil, consuming: false, worktree: nil, repo: nil, member: nil, unread: true,
                                              all: false, beforeID: nil, afterID: nil, snapshotThroughID: nil,
                                              forwardPagination: nil, limit: nil))),
+            (#"{"type":"attention_report","caller_worktree":"/r","caller_agent_id":"codex-1","recap":{"title":"t","completed":"c","next":"n"}}"#,
+             .attentionReport(callerWorktree: "/r", callerAgentID: "codex-1",
+                              recap: AttentionRecap(title: "t", context: nil, completed: "c", next: "n", need: nil,
+                                                    emoji: nil, emojiAlternatives: nil, purposeChanged: nil,
+                                                    checkpoint: nil, decisions: nil))),
             (#"{"type":"team_members"}"#, .teamMembers(callerWorktree: nil, worktree: nil, repo: nil)),
             (#"{"type":"add_pane","path":"/r","direction":"right"}"#,
              .addPane(path: "/r", direction: .right, command: nil)),
@@ -234,7 +256,27 @@ struct ControlSocketWireFixtureTests {
 
     @Test func olderResponsesDecode() throws {
         let legacyMember = #"{"name":"main","branch":"main","worktree_path":"/r","role":"lead","is_running":false}"#
+        let legacyCoworker = #"{"name":"wt","branch":"wt","worktree_path":"/r/wt","role":"coworker","is_running":true}"#
+        let minimalMessage = #"{"id":"0001","created_at":0,"team":"t","repo_path":"/r","from":{"member":"a","worktree":"/r/a"},"to":{"member":"b","worktree":"/r/b"},"priority":"normal","kind":"team_message","body":"hi"}"#
         let cases: [(String, ResponseMessage)] = [
+            (#"{"type":"team_list","team_name":"t","members":[\#(legacyCoworker)]}"#,
+             .teamList(teamName: "t", members: [TeamListMember(
+                name: "wt", branch: "wt", worktreePath: "/r/wt", isMainWorktree: false, isRunning: true,
+                agents: [], projectPath: nil, projectName: nil)])),
+            (#"{"type":"team_inbox","messages":[\#(minimalMessage)]}"#,
+             .teamInbox(messages: [TeamInboxMessage(
+                id: "0001", batchID: nil, createdAt: Date(timeIntervalSinceReferenceDate: 0), team: "t", repoPath: "/r",
+                from: .init(member: "a", worktree: "/r/a", runtime: nil), to: .init(member: "b", worktree: "/r/b", runtime: nil),
+                priority: .normal, body: "hi", agentPrompt: nil, source: nil)],
+                nextBeforeID: nil, nextAfterID: nil, snapshotThroughID: nil)),
+            (#"{"type":"pane_list","panes":[{"id":2,"focused":false}]}"#,
+             .paneList([PaneInfo(id: 2, title: nil, focused: false)])),
+            (#"{"type":"worktree_create","operation":{"operation_id":"op","state":"ready","worktree_path":"/r/wt","message_address":"/r/wt"}}"#,
+             .worktreeCreate(WorktreeCreateStatus(operationID: "op", state: .ready, worktreePath: "/r/wt",
+                                                  messageAddress: "/r/wt", error: nil))),
+            (#"{"type":"worktree_remove","operation":{"operation_id":"op","state":"removed","worktree_path":"/r/wt","force_allowed":false}}"#,
+             .worktreeRemove(WorktreeRemoveStatus(operationID: "op", state: .removed, worktreePath: "/r/wt",
+                                                  error: nil, forceAllowed: false, shortStatus: nil))),
             // Servers before the structured busy code put it in `message`.
             (#"{"type":"error","message":"graftty.control-socket.busy.v1"}"#, .serverBusy),
             (#"{"type":"team_list","team_name":"t","members":[\#(legacyMember)]}"#,
