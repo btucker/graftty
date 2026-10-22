@@ -620,33 +620,9 @@ public final class RemoteConnectionCoordinator {
     private nonisolated static func makePanesStore(
         connection: RemoteHostConnection, hostID: UUID
     ) async -> WorktreePanesStore? {
-        for originAware in [true, false] {
-            var openedStore: WorktreePanesStore?
-            do {
-                let client = try await connection.makePanesStateClient(
-                    onSnapshot: { _ in },
-                    onClosed: { _ in },
-                    originAware: originAware,
-                    requestReply: originAware
-                )
-                let store = WorktreePanesStore(driver: client)
-                openedStore = store
-                client.setCallbacks(
-                    onSnapshot: { [weak store] snapshot in
-                        await store?.applySnapshot(snapshot)
-                        await MobileAgentNotifications.shared.receive(snapshot, hostID: hostID)
-                    },
-                    onClosed: { [weak store] reason in
-                        await store?.markClosed(reason: reason)
-                    }
-                )
-                try await store.subscribe()
-                return store
-            } catch {
-                await openedStore?.unsubscribe()
-            }
-        }
-        return nil
+        try? await PanesStateSubscription.open(on: connection, onSnapshot: { snapshot in
+            await MobileAgentNotifications.shared.receive(snapshot, hostID: hostID)
+        })
     }
 
     /// Full negotiation body: build the connection, wire the terminal-state

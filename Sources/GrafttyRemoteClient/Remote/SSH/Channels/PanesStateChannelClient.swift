@@ -51,9 +51,8 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         onSnapshot: @escaping OnSnapshot,
         onClosed: @escaping OnClosed
     ) {
-        // Mac-to-Mac negotiation sets `requestReply` so a peer that
+        // `PanesStateSubscription` sets `requestReply` so a peer that
         // predates panes-state-v2 can reject it and the caller can retry V1.
-        // The default remains fire-and-forget for existing Mobile callers.
         self.channel = SubsystemChannel(
             parentChannel: parentChannel,
             parentHandler: parentHandler,

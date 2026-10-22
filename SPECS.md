@@ -2972,6 +2972,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-6.7** While a client waits for the first panes-state snapshot, it shall resume as soon as a snapshot or channel close is applied, report a close ahead of a snapshot, and report a timeout only when the deadline fires first.
 
+**REMOTE-6.8** When a host rejects the origin-aware panes-state-v2 subsystem, the client shall open the V1 panes-state subsystem on the same connection and deliver its snapshots to the store and the owner.
+
+**REMOTE-6.9** If opening the panes-state-v2 subsystem fails for any reason other than the host rejecting it, then the client shall report that failure without opening the V1 subsystem.
+
+**REMOTE-6.10** If the panes-state channel closes before its open completes, then the client shall fail the subscription without opening another subsystem or reporting the close or any later snapshot to the owner, and shall report closes after a completed open to the owner.
+
+**REMOTE-6.11** If the task opening a panes-state subscription is cancelled when the host rejects panes-state-v2, then the client shall stop without opening the V1 subsystem.
+
 ### REMOTE-7.x — pane_control Channel
 
 **REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability. (Enforced at userauth: a peer with `terminalControl: .disabled` is rejected.)

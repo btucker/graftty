@@ -828,14 +828,9 @@ private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unche
     }
 
     func makePanesStateDriver(
-        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
-        onClosed: @escaping @Sendable (String) async -> Void
-    ) async throws -> any PanesStateChannelDriver {
-        NegotiatingPanesStateDriver(
-            connection: connection,
-            onSnapshot: onSnapshot,
-            onClosed: onClosed
-        )
+        originAware: Bool
+    ) async throws -> any PanesStateSubscriptionDriver {
+        try await connection.makePanesStateDriver(originAware: originAware)
     }
 
     func makePaneControlDriver() async throws -> any PaneControlChannelDriver {
@@ -870,207 +865,6 @@ private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unche
     }
 }
 
-/// Prefers the origin-aware V2 snapshot channel, but explicitly negotiates it
-/// so a Mac running an older Graftty can reject the subsystem and continue on
-/// the V1 channel. V1 rows are treated as direct rows by the relay layer.
-private final class NegotiatingPanesStateDriver:
-    PanesStateChannelDriver,
-    SidebarSnapshotProviding,
-    PanesStateCallbacksConfigurable,
-    @unchecked Sendable
-{
-    private enum NegotiationError: Error {
-        case channelClosedDuringOpen(String)
-    }
-
-    private let connection: any PanesStateClientMaking
-    private let lock = NSLock()
-    private var onSnapshot: PanesStateChannelClient.OnSnapshot
-    private var onClosed: PanesStateChannelClient.OnClosed
-    var sidebarSnapshot: SidebarSnapshot? { lock.withLock { (activeClient ?? openingClient)?.sidebarSnapshot } }
-    private var activeClient: PanesStateChannelClient?
-    private var openingClient: PanesStateChannelClient?
-    private var openingToken: UUID?
-    private var activeToken: UUID?
-    private var closeDuringOpen: [UUID: String] = [:]
-    private var closed = false
-
-    init(
-        connection: any PanesStateClientMaking,
-        onSnapshot: @escaping PanesStateChannelClient.OnSnapshot,
-        onClosed: @escaping PanesStateChannelClient.OnClosed
-    ) {
-        self.connection = connection
-        self.onSnapshot = onSnapshot
-        self.onClosed = onClosed
-    }
-
-    func setCallbacks(
-        onSnapshot: @escaping PanesStateChannelClient.OnSnapshot,
-        onClosed: @escaping PanesStateChannelClient.OnClosed
-    ) {
-        lock.withLock {
-            self.onSnapshot = onSnapshot
-            self.onClosed = onClosed
-        }
-    }
-
-    func open() async throws {
-        guard lock.withLock({ !closed }) else {
-            throw CancellationError()
-        }
-        do {
-            let token = UUID()
-            lock.withLock { openingToken = token }
-            let v2 = try await makeClient(
-                originAware: true,
-                token: token
-            )
-            guard prepareToOpen(v2, token: token) else {
-                v2.close()
-                throw CancellationError()
-            }
-            try await v2.open()
-            try activate(v2, token: token)
-        } catch {
-            let shouldStop = lock.withLock {
-                openingClient = nil
-                if let openingToken {
-                    closeDuringOpen[openingToken] = nil
-                }
-                openingToken = nil
-                return closed
-            }
-            guard !shouldStop else { throw CancellationError() }
-            guard Self.isSubsystemRejection(error) else { throw error }
-
-            let token = UUID()
-            lock.withLock { openingToken = token }
-            do {
-                let legacy = try await makeClient(
-                    originAware: false,
-                    token: token
-                )
-                guard prepareToOpen(legacy, token: token) else {
-                    legacy.close()
-                    throw CancellationError()
-                }
-                try await legacy.open()
-                try activate(legacy, token: token)
-            } catch {
-                lock.withLock {
-                    openingClient = nil
-                    openingToken = nil
-                    closeDuringOpen[token] = nil
-                }
-                throw error
-            }
-        }
-    }
-
-    func close() {
-        let clients = lock.withLock {
-            closed = true
-            return [openingClient, activeClient].compactMap { $0 }
-        }
-        clients.forEach { $0.close() }
-    }
-
-    private func makeClient(
-        originAware: Bool,
-        token: UUID
-    ) async throws -> PanesStateChannelClient {
-        try await connection.makePanesStateClient(
-            onSnapshot: { [weak self] snapshot in
-                guard let self else { return }
-                let callback: PanesStateChannelClient.OnSnapshot? =
-                    self.lock.withLock {
-                    guard self.openingToken == token
-                        || self.activeToken == token else {
-                        return nil
-                    }
-                    return self.onSnapshot
-                }
-                guard let callback else { return }
-                await callback(snapshot)
-            },
-            onClosed: { [weak self] reason in
-                guard let self else { return }
-                let callback: PanesStateChannelClient.OnClosed? =
-                    self.lock.withLock {
-                        if self.activeToken == token {
-                            return self.onClosed
-                        }
-                        if self.openingToken == token {
-                            self.closeDuringOpen[token] = reason
-                        }
-                        return nil
-                    }
-                guard let callback else { return }
-                await callback(reason)
-            },
-            originAware: originAware,
-            requestReply: true
-        )
-    }
-
-    private func activate(
-        _ client: PanesStateChannelClient,
-        token: UUID
-    ) throws {
-        let closeReason: String? = lock.withLock {
-            openingClient = nil
-            openingToken = nil
-            if let reason = closeDuringOpen.removeValue(forKey: token) {
-                return reason
-            }
-            activeToken = token
-            activeClient = client
-            return nil
-        }
-        if let closeReason {
-            client.close()
-            throw NegotiationError.channelClosedDuringOpen(closeReason)
-        }
-    }
-
-    private func prepareToOpen(
-        _ client: PanesStateChannelClient,
-        token: UUID
-    ) -> Bool {
-        lock.withLock {
-            guard !closed, openingToken == token else { return false }
-            openingClient = client
-            return true
-        }
-    }
-
-    private static func isSubsystemRejection(_ error: any Error) -> Bool {
-        guard let clientError =
-            error as? PanesStateChannelClient.ClientError else {
-            return false
-        }
-        switch clientError {
-        case .subsystemRejected:
-            return true
-        case .openFailed(let underlying):
-            return isSubsystemRejection(underlying)
-        case .channelClosed:
-            return false
-        case .timedOut:
-            return false
-        }
-    }
-}
-
-private protocol PanesStateClientMaking: Sendable {
-    func makePanesStateClient(onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
-                             onClosed: @escaping @Sendable (String) async -> Void,
-                             originAware: Bool, requestReply: Bool) async throws -> PanesStateChannelClient
-}
-extension RemoteHostConnection: PanesStateClientMaking {}
-extension DirectSSHHostConnection: PanesStateClientMaking {}
-
 private final class LiveDirectSSHMacHostConnection: RemoteMacHostConnection, Sendable {
     private let connection: DirectSSHHostConnection
     init(connection: DirectSSHHostConnection) { self.connection = connection }
@@ -1083,9 +877,8 @@ private final class LiveDirectSSHMacHostConnection: RemoteMacHostConnection, Sen
     func currentState() async -> RemoteHostConnection.State { await connection.state }
     func createOfferSDP() async throws -> String { throw RemoteMacConnectionRegistry.ConnectionError.unsupportedTransport }
     func applyAnswerSDP(_ sdp: String) async throws { throw RemoteMacConnectionRegistry.ConnectionError.unsupportedTransport }
-    func makePanesStateDriver(onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
-                             onClosed: @escaping @Sendable (String) async -> Void) async throws -> any PanesStateChannelDriver {
-        NegotiatingPanesStateDriver(connection: connection, onSnapshot: onSnapshot, onClosed: onClosed)
+    func makePanesStateDriver(originAware: Bool) async throws -> any PanesStateSubscriptionDriver {
+        try await connection.makePanesStateDriver(originAware: originAware)
     }
     func makePaneControlDriver() async throws -> any PaneControlChannelDriver { try await connection.makePaneControlClient() }
     func makeWorktreeManagementDriver() async throws -> any WorktreeManagementChannelDriver { try await connection.makeWorktreeManagementClient() }
