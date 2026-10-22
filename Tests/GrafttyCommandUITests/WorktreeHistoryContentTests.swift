@@ -72,9 +72,9 @@ struct WorktreeHistoryContentTests {
     func historyRendersImmediatelyAtSidebarAndPhoneWidths() throws {
         let start = Date(timeIntervalSince1970: 1_792_411_200)
         var history = WorktreeHistory(origin: .init(date: start, source: .user))
-        history.record(.init(text: "Keep my decisions visible, and let me expand all the steps.", at: start.addingTimeInterval(150)))
-        var brief = WorktreeBrief(recap: .init(title: "How we got here", completed: "Reviewed the shared context view.", next: "Compare the timeline.", checkpoint: "Current timeline reviewed"), at: start.addingTimeInterval(60))
-        brief.update(.init(title: "How we got here", completed: "Kept creation and user input visible.", next: "Verify Mac and mobile.", checkpoint: "Timeline implemented"), at: start.addingTimeInterval(300))
+        history.record(.init(text: "Show me what changed and why.", at: start.addingTimeInterval(150)))
+        var brief = WorktreeBrief(recap: .init(title: "How we got here", completed: "Reviewed the shared context view.", next: "Compare the timeline.", decisions: ["Support both platforms"], historyEntry: .init(headline: "Found why the history repeats itself.", detail: "Checkpoints copied the entire decision list.")), at: start.addingTimeInterval(60))
+        brief.update(.init(title: "How we got here", completed: "Kept creation and user input visible.", next: "Verify Mac and mobile.", decisions: ["Support both platforms"], historyEntry: .init(headline: "Separated history entries from status updates.", detail: "Routine reports now update only the current brief.")), at: start.addingTimeInterval(300))
         for width in [260.0, 360.0, 390.0] {
             let short = NSHostingView(rootView: WorktreeHistoryContent(timeline: .init(history: history, brief: nil), secondary: .secondary)
                 .padding(24).frame(width: width).fixedSize(horizontal: false, vertical: true))

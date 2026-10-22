@@ -8,6 +8,8 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
         public var title: String
         public var completed: String
         public var decisions: [String]
+        /// Absent in saved legacy snapshots. Explicit entries remain visible and are never rewritten by status updates.
+        public var isExplicitEntry: Bool?
     }
 
     public private(set) var title: String
@@ -25,8 +27,8 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
         next = recap.next
         decisions = recap.decisions ?? []
         updatedAt = date.timeIntervalSinceReferenceDate
-        history = [Checkpoint(id: UUID(), timestamp: updatedAt,
-            title: recap.checkpoint ?? recap.title, completed: recap.completed, decisions: decisions)]
+        history = []
+        recordHistory(recap, at: updatedAt, purposeChanged: recap.purposeChanged == true, boundary: nil)
     }
 
     public mutating func update(_ recap: AttentionRecap, at date: Date, preservingCheckpointBefore boundary: Date? = nil) {
@@ -35,27 +37,51 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
         let newTitle = recap.purposeChanged == true ? recap.title : title
         let newContext = recap.context ?? (recap.purposeChanged == true ? nil : context)
         let newDecisions = recap.decisions ?? (recap.purposeChanged == true ? [] : decisions)
-        let changed = newTitle != title || newContext != context || recap.completed != completed
-            || recap.next != next || newDecisions != decisions
-        let purposeChanged = recap.purposeChanged == true
+        let purposeChanged = recap.purposeChanged == true && (newTitle != title || newContext != context)
         title = newTitle
         context = newContext
         completed = recap.completed
         next = recap.next
         decisions = newDecisions
         updatedAt = timestamp
-        let checkpointChanged = recap.checkpoint.map { $0 != history.last?.title } ?? false
-        guard changed || checkpointChanged, recap.checkpoint != nil || purposeChanged else { return }
-        let heading = recap.checkpoint ?? title
-        let canMerge = boundary.map { (history.last?.timestamp ?? -.infinity) > $0.timeIntervalSinceReferenceDate } ?? true
-        if !purposeChanged, canMerge, history.last?.title == heading {
-            history[history.count - 1].timestamp = timestamp
-            history[history.count - 1].completed = completed
-            history[history.count - 1].decisions = decisions
+        recordHistory(recap, at: timestamp, purposeChanged: purposeChanged, boundary: boundary)
+    }
+
+    private mutating func recordHistory(_ recap: AttentionRecap, at timestamp: Double,
+                                        purposeChanged: Bool, boundary: Date?) {
+        let heading: String
+        let detail: String
+        let isExplicit: Bool
+        if let entry = recap.historyEntry {
+            heading = entry.headline
+            detail = entry.detail ?? ""
+            isExplicit = true
+        } else if purposeChanged {
+            heading = title
+            detail = context ?? ""
+            isExplicit = true
+        } else if let checkpoint = recap.checkpoint {
+            heading = checkpoint
+            detail = recap.completed
+            isExplicit = false
         } else {
-            history.append(Checkpoint(id: UUID(), timestamp: timestamp, title: heading,
-                                      completed: completed, decisions: decisions))
-            if history.count > 32 { history.removeFirst(history.count - 32) }
+            return
         }
+        let last = history.last
+        let canMerge = boundary.map { (last?.timestamp ?? -.infinity) > $0.timeIntervalSinceReferenceDate } ?? true
+        if !purposeChanged, canMerge, last?.title == heading,
+           (last?.isExplicitEntry == true) == isExplicit {
+            // Retrying a report or updating only its brief must not move history.
+            if last?.completed == detail { return }
+            if !isExplicit {
+                history[history.count - 1].timestamp = timestamp
+                history[history.count - 1].completed = detail
+                history[history.count - 1].decisions = []
+                return
+            }
+        }
+        history.append(Checkpoint(id: UUID(), timestamp: timestamp, title: heading,
+                                  completed: detail, decisions: [], isExplicitEntry: isExplicit ? true : nil))
+        if history.count > 32 { history.removeFirst(history.count - 32) }
     }
 }

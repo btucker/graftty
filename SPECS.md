@@ -3892,7 +3892,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
 
-**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents to lead with the stable problem being solved and why it matters, followed by verified progress, next steps, retained decisions, meaningful checkpoints, and task-related emoji choices, with a user question only when input is needed.
+**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents to lead with the stable problem being solved and why it matters, followed by verified progress, next steps, retained decisions, optional history entries describing what changed and why without repeating current state, and task-related emoji choices, with a user question only when input is needed.
 
 **AGENT-6.39** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
 
@@ -3952,15 +3952,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-2.x
 
-**CONTEXT-2** When an agent reports a meaningful checkpoint or purpose change, the application shall retain it in the worktree history, merge consecutive updates to the same checkpoint, ignore repeated reports and older updates, and retain at most 32 checkpoints.
+**CONTEXT-2** When an agent reports a legacy checkpoint or purpose change, the application shall retain it without copying accumulated decisions, merge consecutive updates to the same legacy checkpoint, ignore repeated reports and older updates, retain at most 32 entries, and leave routine reports out of history.
 
 ### CONTEXT-3.x
 
-**CONTEXT-3** When a report includes purpose-change, checkpoint, or decision fields, the application shall validate their text bounds and preserve legacy reports that omit those fields.
+**CONTEXT-3** When a report includes purpose-change, checkpoint, history-entry, or decision fields, the application shall validate their text bounds and preserve legacy reports that omit those fields.
 
 ### CONTEXT-4.x
 
-**CONTEXT-4** When a worktree report is viewed, dismissed, resumed, serialized, or sent to a paired device, the application shall retain its current brief and checkpoint history independently of unread attention.
+**CONTEXT-4** When a worktree report is viewed, dismissed, resumed, serialized, or sent to a paired device, the application shall retain its current brief and explicit or legacy history independently of unread attention.
 
 ### CONTEXT-5.x
 
@@ -3996,7 +3996,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-14.x
 
-**CONTEXT-14** While a worktree history has more than eight events, the application shall fold only consecutive runs of at least two older agent checkpoints, retain creation, every user input, and the latest two checkpoints, and expand each run or all events in chronological order.
+**CONTEXT-14** While a worktree history has more than eight events, the application shall fold only consecutive runs of at least two older legacy checkpoints, retain creation, every user input, and the latest two checkpoints, and expand each run or all events in chronological order.
 
 ### CONTEXT-15.x
 
@@ -4029,6 +4029,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-22.x
 
 **CONTEXT-22** When Context history displays a source worktree, the application shall label it with its directory name while retaining its full path for navigation and sender details.
+
+### CONTEXT-23.x
+
+**CONTEXT-23** When a report includes an explicit history entry, the application shall retain its headline and optional detail independently of the current brief, suppress consecutive identical entries without moving their timestamps, and preserve distinct entries and entries separated by user input.
+
+### CONTEXT-24.x
+
+**CONTEXT-24** When a history contains explicit entries and legacy snapshots, the application shall keep explicit headlines visible in the shared timeline and show only decisions newly introduced relative to the previous legacy snapshot.
 
 ## MEM — MEM
 
