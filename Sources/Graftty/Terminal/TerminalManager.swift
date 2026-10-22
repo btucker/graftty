@@ -25,7 +25,7 @@ enum NavigationDirection {
     }
 }
 
-enum HostManagedPaneCommand {
+enum HostManagedPaneCommand: Equatable {
     case split(PaneSplit)
     case close
     case surfaceClosed
@@ -1272,6 +1272,26 @@ final class TerminalManager: ObservableObject {
         return true
     }
 
+    /// Delivers a pane command: a host-managed pane's handler claims it
+    /// first (REMOTE-13.15); otherwise the matching local `on*` callback
+    /// runs. Surface-originated commands (libghostty actions, the surface
+    /// context menu, `close_surface_cb`) go through here, so callers must
+    /// not invoke those `on*` callbacks directly. Menu-bar commands route
+    /// the focused pane separately in `GrafttyApp+MenuActions`.
+    func dispatchPaneCommand(_ command: HostManagedPaneCommand, for terminalID: PaneSlotID) {
+        if routeHostManagedPaneCommand(command, for: terminalID) { return }
+        switch command {
+        case .split(let split): onSplitRequest?(terminalID, split)
+        case .close: onCloseRequest?(terminalID)
+        case .surfaceClosed: onSurfaceClosed?(terminalID)
+        case .focus(let direction): onGotoSplit?(terminalID, direction)
+        case .focusOrder(let forward): onGotoSplitOrder?(terminalID, forward)
+        case .toggleZoom: onToggleZoom?(terminalID)
+        case let .resize(direction, amount): onResizeSplit?(terminalID, direction, amount)
+        case .equalize: onEqualizeSplits?(terminalID)
+        }
+    }
+
     func recordAttachmentFailure(_ message: String, for handle: SurfaceHandle) {
         guard handle.zmxSessionName != nil, surfaces[handle.terminalID] === handle else { return }
         attachmentFailures[handle.terminalID] = message
@@ -1280,7 +1300,7 @@ final class TerminalManager: ObservableObject {
     func receiveSurfaceClosed(_ box: SurfaceUserdataBox) {
         // A delayed close from the old attachment must not remove its retry.
         guard surfaces[box.terminalID]?.ownsUserdata(box) == true else { return }
-        onSurfaceClosed?(box.terminalID)
+        dispatchPaneCommand(.surfaceClosed, for: box.terminalID)
     }
 
     @discardableResult
@@ -1725,30 +1745,30 @@ final class TerminalManager: ObservableObject {
             case GHOSTTY_SPLIT_DIRECTION_DOWN:  split = .down
             default: return
             }
-            onSplitRequest?(id, split)
+            dispatchPaneCommand(.split(split), for: id)
 
         case GHOSTTY_ACTION_CLOSE_TAB:
             // Ghostty reuses close_tab for close_surface in single-pane
             // contexts; Graftty treats pane close the same way.
             guard let id = terminalID(from: target) else { return }
-            onCloseRequest?(id)
+            dispatchPaneCommand(.close, for: id)
 
         case GHOSTTY_ACTION_GOTO_SPLIT:
             guard let id = terminalID(from: target) else { return }
             let gotoDir = action.action.goto_split
             switch gotoDir {
-            case GHOSTTY_GOTO_SPLIT_LEFT:   onGotoSplit?(id, .left)
-            case GHOSTTY_GOTO_SPLIT_RIGHT:  onGotoSplit?(id, .right)
-            case GHOSTTY_GOTO_SPLIT_UP:     onGotoSplit?(id, .up)
-            case GHOSTTY_GOTO_SPLIT_DOWN:   onGotoSplit?(id, .down)
-            case GHOSTTY_GOTO_SPLIT_NEXT:     onGotoSplitOrder?(id, true)
-            case GHOSTTY_GOTO_SPLIT_PREVIOUS: onGotoSplitOrder?(id, false)
+            case GHOSTTY_GOTO_SPLIT_LEFT:   dispatchPaneCommand(.focus(.left), for: id)
+            case GHOSTTY_GOTO_SPLIT_RIGHT:  dispatchPaneCommand(.focus(.right), for: id)
+            case GHOSTTY_GOTO_SPLIT_UP:     dispatchPaneCommand(.focus(.up), for: id)
+            case GHOSTTY_GOTO_SPLIT_DOWN:   dispatchPaneCommand(.focus(.down), for: id)
+            case GHOSTTY_GOTO_SPLIT_NEXT:     dispatchPaneCommand(.focusOrder(forward: true), for: id)
+            case GHOSTTY_GOTO_SPLIT_PREVIOUS: dispatchPaneCommand(.focusOrder(forward: false), for: id)
             default: return
             }
 
         case GHOSTTY_ACTION_TOGGLE_SPLIT_ZOOM:
             guard let id = terminalID(from: target) else { return }
-            onToggleZoom?(id)
+            dispatchPaneCommand(.toggleZoom, for: id)
 
         case GHOSTTY_ACTION_RESIZE_SPLIT:
             guard let id = terminalID(from: target) else { return }
@@ -1761,11 +1781,11 @@ final class TerminalManager: ObservableObject {
             case GHOSTTY_RESIZE_SPLIT_RIGHT: direction = .right
             default: return
             }
-            onResizeSplit?(id, direction, r.amount)
+            dispatchPaneCommand(.resize(direction: direction, amount: r.amount), for: id)
 
         case GHOSTTY_ACTION_EQUALIZE_SPLITS:
             guard let id = terminalID(from: target) else { return }
-            onEqualizeSplits?(id)
+            dispatchPaneCommand(.equalize, for: id)
 
         case GHOSTTY_ACTION_RELOAD_CONFIG:
             onReloadConfig?()

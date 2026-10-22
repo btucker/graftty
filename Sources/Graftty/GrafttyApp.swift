@@ -639,12 +639,6 @@ struct GrafttyApp: App {
         // right-clicks an unfocused pane.
         terminalManager.onSplitRequest = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .split(direction),
-                    for: terminalID
-                ) {
-                    return
-                }
                 _ = Self.splitPane(
                     appState: appState,
                     terminalManager: tm,
@@ -703,9 +697,6 @@ struct GrafttyApp: App {
         // A user-issued close action targets the pane that emitted it.
         terminalManager.onCloseRequest = { [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(.close, for: terminalID) {
-                    return
-                }
                 switch paneCloseAction() {
                 case .closePane:
                     Self.closePane(
@@ -724,12 +715,6 @@ struct GrafttyApp: App {
         terminalManager.onSurfaceClosed = {
             [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .surfaceClosed,
-                    for: terminalID
-                ) {
-                    return
-                }
                 Self.closePane(
                     appState: appState,
                     terminalManager: tm,
@@ -740,12 +725,6 @@ struct GrafttyApp: App {
 
         terminalManager.onGotoSplit = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .focus(direction),
-                    for: terminalID
-                ) {
-                    return
-                }
                 Self.navigatePane(
                     appState: appState,
                     terminalManager: tm,
@@ -757,12 +736,6 @@ struct GrafttyApp: App {
 
         terminalManager.onGotoSplitOrder = { [appState = $appState, tm = terminalManager] terminalID, forward in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .focusOrder(forward: forward),
-                    for: terminalID
-                ) {
-                    return
-                }
                 Self.navigatePaneInTreeOrder(
                     appState: appState,
                     terminalManager: tm,
@@ -772,27 +745,15 @@ struct GrafttyApp: App {
             }
         }
 
-        terminalManager.onToggleZoom = { [appState = $appState, tm = terminalManager] terminalID in
+        terminalManager.onToggleZoom = { [appState = $appState] terminalID in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .toggleZoom,
-                    for: terminalID
-                ) {
-                    return
-                }
                 Self.toggleZoom(appState: appState, on: terminalID)
             }
         }
 
-        terminalManager.onResizeSplit = { [appState = $appState, tm = terminalManager] terminalID, direction, amount in
+        terminalManager.onResizeSplit = { [appState = $appState] terminalID, direction, amount in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .resize(direction: direction, amount: amount),
-                    for: terminalID
-                ) {
-                    return
-                }
-                Self.resizeSplit(
+                _ = Self.resizeSplit(
                     appState: appState,
                     target: terminalID,
                     direction: direction,
@@ -801,14 +762,8 @@ struct GrafttyApp: App {
             }
         }
 
-        terminalManager.onEqualizeSplits = { [appState = $appState, tm = terminalManager] terminalID in
+        terminalManager.onEqualizeSplits = { [appState = $appState] terminalID in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .equalize,
-                    for: terminalID
-                ) {
-                    return
-                }
                 Self.equalizeSplits(appState: appState, around: terminalID)
             }
         }
