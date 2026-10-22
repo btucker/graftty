@@ -13,7 +13,14 @@ import Foundation
 /// filtering is left to observers. See
 /// docs/superpowers/specs/2026-10-22-observable-worktree-store.md.
 public final class LatestValueBroadcast<Value: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
+    /// Serializes publishes and replays so every observer sees values in
+    /// publish order. Recursive because a value an observer's buffer drops is
+    /// released inside `yield`, and its deinit may publish again.
+    private let deliveryLock = NSRecursiveLock()
+    /// Guards the fields below. Never held while a value or continuation can
+    /// be released: a reference value's deinit may read `latest` or end an
+    /// observer, and both take this lock.
+    private let stateLock = NSLock()
     private var value: Value?
     private var isFinished = false
     private var observers: [UUID: AsyncStream<Value>.Continuation] = [:]
@@ -27,24 +34,28 @@ public final class LatestValueBroadcast<Value: Sendable>: @unchecked Sendable {
 
     /// The most recently published value; nil until the first publish.
     public var latest: Value? {
-        lock.withLock { value }
+        stateLock.withLock { value }
     }
 
     var observerCount: Int {
-        lock.withLock { observers.count }
+        stateLock.withLock { observers.count }
     }
 
     /// Records `value` and delivers it to every observer. Ignored once the
     /// broadcast has finished.
     public func publish(_ value: Value) {
-        // Yield under the lock so concurrent publishers cannot leave an
-        // observer holding an older value than `latest`. Yielding never
-        // re-enters the lock; only termination does.
-        lock.withLock {
-            guard !isFinished else { return }
-            self.value = value
-            for observer in observers.values { observer.yield(value) }
+        var displaced: Value?
+        deliveryLock.withLock {
+            let observers = stateLock.withLock { () -> [AsyncStream<Value>.Continuation] in
+                guard !isFinished else { return [] }
+                displaced = self.value
+                self.value = value
+                return Array(self.observers.values)
+            }
+            for observer in observers { observer.yield(value) }
         }
+        // The replaced value is released here, outside both locks.
+        withExtendedLifetime(displaced) {}
     }
 
     /// The latest value, if any, followed by every later one. The sequence
@@ -54,27 +65,33 @@ public final class LatestValueBroadcast<Value: Sendable>: @unchecked Sendable {
         let id = UUID()
         continuation.onTermination = { [weak self] _ in
             guard let self else { return }
-            _ = self.lock.withLock { self.observers.removeValue(forKey: id) }
+            let removed = self.stateLock.withLock { self.observers.removeValue(forKey: id) }
+            withExtendedLifetime(removed) {}
         }
-        let registered = lock.withLock { () -> Bool in
-            guard !isFinished else { return false }
-            observers[id] = continuation
-            if let value { continuation.yield(value) }
+        let registered = deliveryLock.withLock { () -> Bool in
+            let current = stateLock.withLock { () -> Value?? in
+                guard !isFinished else { return .none }
+                observers[id] = continuation
+                return .some(value)
+            }
+            guard let current else { return false }
+            if let current { continuation.yield(current) }
             return true
         }
-        // Finishing outside the lock: termination re-enters it.
+        // Finishing runs `onTermination`, which takes the state lock.
         if !registered { continuation.finish() }
         return stream
     }
 
     /// Ends every observer's sequence and ignores later publishes.
     public func finish() {
-        let observers = lock.withLock { () -> [AsyncStream<Value>.Continuation] in
+        let observers = stateLock.withLock { () -> [AsyncStream<Value>.Continuation] in
             isFinished = true
             defer { self.observers.removeAll() }
             return Array(self.observers.values)
         }
-        // Outside the lock: each finish runs `onTermination`, which takes it.
+        // Outside the lock: each finish runs `onTermination` and releases
+        // any buffered value.
         for observer in observers { observer.finish() }
     }
 }

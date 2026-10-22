@@ -42,16 +42,47 @@ struct LatestValueBroadcastTests {
             }
             return seen
         }
-        var receivedValues = received.stream.makeAsyncIterator()
+        // `Task.value` does not forward the time limit's cancellation, so a
+        // broken finish() would otherwise hang past the limit.
+        await withTaskCancellationHandler {
+            var receivedValues = received.stream.makeAsyncIterator()
+            broadcast.publish(1)
+            #expect(await receivedValues.next() == 1)
+            broadcast.publish(2)
+            broadcast.publish(3)
+            broadcast.publish(4)
+            release.continuation.yield()
+            #expect(await receivedValues.next() == 4)
+            broadcast.finish()
+            #expect(await observer.value == [1, 4])
+        } onCancel: {
+            observer.cancel()
+        }
+    }
+
+    @Test func eachLiveObserverReceivesValuesIndependently() async {
+        let broadcast = LatestValueBroadcast<Int>()
         broadcast.publish(1)
-        #expect(await receivedValues.next() == 1)
+        var first = broadcast.updates().makeAsyncIterator()
+        var second = broadcast.updates().makeAsyncIterator()
+        #expect(broadcast.observerCount == 2)
+        #expect(await first.next() == 1)
+        #expect(await second.next() == 1)
         broadcast.publish(2)
         broadcast.publish(3)
+        #expect(await first.next() == 3)
+        #expect(await second.next() == 3)
+
+        let cancelled = Task { for await _ in broadcast.updates() {} }
+        cancelled.cancel()
+        await cancelled.value
         broadcast.publish(4)
-        release.continuation.yield()
-        #expect(await receivedValues.next() == 4)
+        #expect(await first.next() == 4)
+        #expect(await second.next() == 4)
+
         broadcast.finish()
-        #expect(await observer.value == [1, 4])
+        #expect(await first.next() == nil)
+        #expect(await second.next() == nil)
     }
 
     @Test func finishEndsCurrentAndFutureObservers() async {
@@ -94,4 +125,39 @@ struct LatestValueBroadcastTests {
         broadcast = nil
         #expect(await updates.next() == nil)
     }
+
+    /// A reference payload's deinit may read the broadcast (or end an
+    /// observer). Releasing a displaced payload while the broadcast holds its
+    /// lock would deadlock; a synchronous deadlock cannot be cancelled, so
+    /// publishing runs on a queue under a bounded wait. On a deadlock the
+    /// broadcast and observer are leaked: releasing either would take the
+    /// stuck lock and hang the test process.
+    @Test(arguments: [false, true])
+    func releasingAReplacedPayloadMayReadTheBroadcast(withObserver: Bool) {
+        let fixture = ReentrantFixture(withObserver: withObserver)
+        let readsBroadcast: @Sendable () -> Void = { [weak broadcast = fixture.broadcast] in
+            _ = broadcast?.latest
+        }
+        let published = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            fixture.broadcast.publish(Payload(onRelease: readsBroadcast))
+            fixture.broadcast.publish(Payload(onRelease: {}))
+            published.signal()
+        }
+        let outcome = published.wait(timeout: .now() + 5)
+        #expect(outcome == .success)
+        if outcome != .success { _ = Unmanaged.passRetained(fixture) }
+    }
+}
+
+private final class ReentrantFixture: @unchecked Sendable {
+    let broadcast = LatestValueBroadcast<Payload>()
+    let observer: AsyncStream<Payload>?
+    init(withObserver: Bool) { observer = withObserver ? broadcast.updates() : nil }
+}
+
+private final class Payload: Sendable {
+    private let onRelease: @Sendable () -> Void
+    init(onRelease: @escaping @Sendable () -> Void) { self.onRelease = onRelease }
+    deinit { onRelease() }
 }
