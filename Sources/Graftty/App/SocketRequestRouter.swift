@@ -45,7 +45,7 @@ final class SocketRequestRouter {
         agentRegistry: ClaudeSessionRegistry,
         remoteMacsModel: RemoteMacsModel,
         remoteTeamRouter: RemoteTeamRouter,
-        teamsEnabled: @escaping () -> Bool = { UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) }
+        teamsEnabled: @escaping () -> Bool = { AppServices.teamsEnabled }
     ) {
         self.appState = appState
         self.terminalManager = terminalManager
@@ -392,7 +392,7 @@ extension SocketRequestRouter {
         defer { worktreeCreations.discardBaseCapture(operationID: operationID) }
         if let error = CLIWorktreeCreationPolicy.validationError(
             agentRuntime: agentRuntime,
-            teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            teamsEnabled: AppServices.teamsEnabled
         ) {
             return .error(error)
         }
@@ -589,7 +589,7 @@ extension SocketRequestRouter {
             agentRuntime: agentRuntime,
             command: command,
             agentPrompt: agentPrompt,
-            teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            teamsEnabled: AppServices.teamsEnabled
         ) {
             return .error(error)
         }

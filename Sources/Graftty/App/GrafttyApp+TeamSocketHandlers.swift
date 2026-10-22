@@ -123,7 +123,7 @@ private final class MacTeamPlatform: ControlTeamPlatform {
         get { appState.wrappedValue }
         set { appState.wrappedValue = newValue }
     }
-    var teamsEnabled: Bool { UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) }
+    var teamsEnabled: Bool { AppServices.teamsEnabled }
     var teamPresence: TeamPresenceStorage { TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()) }
     var remoteTeamRouting: (any ControlRemoteTeamRouting)? { router }
 }
