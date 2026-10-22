@@ -3,7 +3,6 @@ import Foundation
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
-import WebRTC
 
 struct RemoteMacIdentity: Hashable, Sendable {
     var id: RemoteDeviceID
@@ -41,12 +40,8 @@ final class RemoteMacConnectionRegistry {
         let identity: RemoteMacIdentity
         var remoteMac: RemoteMac
         let createdAt: Date
-        let connection: any RemoteMacHostConnection
+        let connection: any RemoteHostLink
         let paneEnvironment: RemoteMacPaneEnvironment
-
-        func openTerminalSession(sessionName: String, preferPaged: Bool = MacPagedTerminalRenderer.isSupported) async throws -> any WebSocketClient & Sendable {
-            try await connection.openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
-        }
 
         func sendPaneControl(
             _ request: PaneControlRequest
@@ -78,22 +73,6 @@ final class RemoteMacConnectionRegistry {
             }
         }
 
-        func sendWorktreeManagement(
-            _ request: WorktreeManagementRequest
-        ) async throws -> WorktreeManagementResponse {
-            let driver = try await connection.makeWorktreeManagementDriver()
-            let client = WorktreeManagementClient(driver: driver)
-            try await client.open()
-            do {
-                let response = try await client.send(request)
-                await client.close()
-                return response
-            } catch {
-                await client.close()
-                throw error
-            }
-        }
-
         static func == (lhs: Entry, rhs: Entry) -> Bool {
             lhs.id == rhs.id
                 && lhs.identity == rhs.identity
@@ -114,9 +93,13 @@ final class RemoteMacConnectionRegistry {
     typealias HostConnectionFactory = @MainActor @Sendable (
         Curve25519.Signing.PrivateKey,
         RemoteIdentityFingerprint
-    ) -> any RemoteMacHostConnection
+    ) -> any WebRTCHostLink
+    typealias DirectHostConnectionFactory = @MainActor @Sendable (
+        Curve25519.Signing.PrivateKey,
+        RemoteIdentityFingerprint
+    ) -> any DirectHostLink
     typealias PaneEnvironmentBuilder = @Sendable (
-        RemoteMacPaneEnvironmentHost?,
+        any RemoteHostLink,
         @escaping @Sendable ([WorktreePanes]) async -> Void,
         @escaping @Sendable (String) async -> Void
     ) async -> RemoteMacPaneEnvironment
@@ -129,12 +112,9 @@ final class RemoteMacConnectionRegistry {
     enum ConnectionError: Error, Equatable, Sendable {
         case missingBaseURL(RemoteMacIdentity)
         case missingDirectEndpoint(RemoteMacIdentity)
-        case unsupportedTransport
         case notConnected(RemoteMacIdentity)
         case paneEnvironmentUnavailable(RemoteMacIdentity)
         case connectionTerminated(RemoteMacIdentity)
-        case worktreeManagementUnavailable
-        case teamMessagingUnavailable
     }
 
     private struct ForwardKey: Hashable {
@@ -161,7 +141,7 @@ final class RemoteMacConnectionRegistry {
     private let pinnedHostUpdater: PinnedHostUpdater?
     private let signalingClient: SignalingClient
     private let connectionFactory: HostConnectionFactory
-    private let directConnectionFactory: HostConnectionFactory
+    private let directConnectionFactory: DirectHostConnectionFactory
     private let paneEnvironmentBuilder: PaneEnvironmentBuilder
     var onPaneSnapshot: PaneSnapshotHandler
     var onConnectionStateChange: ConnectionStateHandler
@@ -189,17 +169,10 @@ final class RemoteMacConnectionRegistry {
         self.pinnedHostUpdater = { try pinnedHostStore.update($0) }
         self.signalingClient = SignalingClient()
         self.connectionFactory = { clientKey, expectedHostFingerprint in
-            LiveRemoteMacHostConnection(
-                connection: RemoteHostConnection(
-                    clientKey: clientKey,
-                    expectedHostFingerprint: expectedHostFingerprint
-                )
-            )
+            RemoteHostConnection(clientKey: clientKey, expectedHostFingerprint: expectedHostFingerprint)
         }
-        self.directConnectionFactory = { clientKey, fingerprint in
-            LiveDirectSSHMacHostConnection(connection: DirectSSHHostConnection(
-                clientKey: clientKey, expectedHostFingerprint: fingerprint
-            ))
+        self.directConnectionFactory = { clientKey, expectedHostFingerprint in
+            DirectSSHHostConnection(clientKey: clientKey, expectedHostFingerprint: expectedHostFingerprint)
         }
         self.paneEnvironmentBuilder = { remoteHost, onSnapshot, onClosed in
             await RemoteMacPaneEnvironment.build(
@@ -227,8 +200,8 @@ final class RemoteMacConnectionRegistry {
         pinnedHostUpdater: PinnedHostUpdater? = nil,
         signalingClient: SignalingClient,
         connectionFactory: @escaping HostConnectionFactory,
-        directConnectionFactory: @escaping HostConnectionFactory = { key, fingerprint in
-            LiveDirectSSHMacHostConnection(connection: DirectSSHHostConnection(clientKey: key, expectedHostFingerprint: fingerprint))
+        directConnectionFactory: @escaping DirectHostConnectionFactory = { key, fingerprint in
+            DirectSSHHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
         },
         paneEnvironmentBuilder: @escaping PaneEnvironmentBuilder,
         onPaneSnapshot: @escaping PaneSnapshotHandler = { _, _ in },
@@ -255,7 +228,7 @@ final class RemoteMacConnectionRegistry {
         try Task.checkCancellation()
         let identity = RemoteMacIdentity(remoteMac)
         if var existing = entries[identity] {
-            let state = await existing.connection.currentState()
+            let state = await existing.connection.state
             try Task.checkCancellation()
             guard entries[identity]?.id == existing.id else {
                 return try await connect(
@@ -317,7 +290,7 @@ final class RemoteMacConnectionRegistry {
             }
             do {
                 try ensureCurrentAttempt(attemptID, identity: identity)
-                let state = await entry.connection.currentState()
+                let state = await entry.connection.state
                 try ensureCurrentAttempt(attemptID, identity: identity)
                 guard !state.isTerminal else {
                     throw ConnectionError.connectionTerminated(identity)
@@ -391,7 +364,7 @@ final class RemoteMacConnectionRegistry {
         guard let entry = entries[identity] else {
             throw ConnectionError.notConnected(identity)
         }
-        return try await entry.openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
+        return try await entry.connection.openTerminalClient(sessionName: sessionName, preferPaged: preferPaged)
     }
 
     func forwardedURL(identity: RemoteMacIdentity, host: String, port: Int) async throws -> URL {
@@ -434,7 +407,7 @@ final class RemoteMacConnectionRegistry {
         guard let entry = entries[identity] else {
             throw ConnectionError.notConnected(identity)
         }
-        return try await entry.sendWorktreeManagement(request)
+        return try await entry.connection.sendWorktreeManagement(request)
     }
 
     private func dial(
@@ -450,8 +423,12 @@ final class RemoteMacConnectionRegistry {
             throw ConnectionError.missingDirectEndpoint(identity)
         }
         let clientKey = try identityProvider()
-        let factory = remoteMac.transport == .directSSH ? directConnectionFactory : connectionFactory
-        let connection = factory(clientKey, identity.fingerprint)
+        let dialLink: DialLink
+        switch remoteMac.transport {
+        case .directSSH: dialLink = .direct(directConnectionFactory(clientKey, identity.fingerprint))
+        case .webRTC: dialLink = .webRTC(connectionFactory(clientKey, identity.fingerprint))
+        }
+        let connection = dialLink.connection
         await observe(
             connection: connection,
             identity: identity,
@@ -462,16 +439,17 @@ final class RemoteMacConnectionRegistry {
         do {
             var refreshedPinnedHost: PinnedHost?
             guard let pinnedHost = pinnedHostProvider(remoteMac.id) else { throw ConnectionError.notConnected(identity) }
-            if remoteMac.transport == .directSSH {
+            switch dialLink {
+            case .direct(let direct):
                 guard pinnedHost.fingerprint == identity.fingerprint else { throw ConnectionError.notConnected(identity) }
                 guard let endpoint = remoteMac.directEndpoint else { throw ConnectionError.missingDirectEndpoint(identity) }
-                try await connection.connectDirect(endpoint: endpoint)
+                try await direct.connect(host: endpoint.host, port: endpoint.port)
                 try ensureCurrentAttempt(attemptID, identity: identity)
                 var refreshed = pinnedHost
                 refreshed.lastConnectedAt = now()
                 refreshedPinnedHost = refreshed
-            } else {
-                let offerSDP = try await connection.createOfferSDP()
+            case .webRTC(let webRTC):
+                let offerSDP = try await webRTC.createOfferSDP()
                 try ensureCurrentAttempt(attemptID, identity: identity)
                 let answerSDP: String
                 var routes: [RemoteConnectionRoute] = []
@@ -501,7 +479,7 @@ final class RemoteMacConnectionRegistry {
                 refreshedPinnedHost = refreshed
                 answerSDP = exchange.answer.sdp
                 try ensureCurrentAttempt(attemptID, identity: identity)
-                try await connection.applyAnswerSDP(answerSDP)
+                try await webRTC.applyAnswerSDP(answerSDP)
                 try ensureCurrentAttempt(attemptID, identity: identity)
             }
             let environment = await paneEnvironmentBuilder(
@@ -572,12 +550,11 @@ final class RemoteMacConnectionRegistry {
     }
 
     private func observe(
-        connection: any RemoteMacHostConnection,
+        connection: any RemoteHostLink,
         identity: RemoteMacIdentity,
         entryID: UUID
     ) async {
-        await connection.setOnStateChange { [weak self] state in
-            guard state.isTerminal else { return }
+        await connection.observeTerminalState { [weak self] state in
             Task { @MainActor [weak self] in
                 self?.handleTerminalState(
                     state,
@@ -748,152 +725,15 @@ final class RemoteMacConnectionRegistry {
     }
 }
 
-protocol RemoteMacHostConnection: RemoteMacPaneEnvironmentHost {
-    func setOnStateChange(
-        _ handler: (@Sendable (RemoteHostConnection.State) -> Void)?
-    ) async
-    func currentState() async -> RemoteHostConnection.State
-    func connectDirect(endpoint: DirectSSHEndpoint) async throws
-    func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward
-    func createOfferSDP() async throws -> String
-    func applyAnswerSDP(_ sdp: String) async throws
-    func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable
-    func openTerminalSession(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable
-    func makeWorktreeManagementDriver() async throws
-        -> any WorktreeManagementChannelDriver
-    func makeTeamClient(
-        handler: @escaping @Sendable (Data) async -> Data,
-        onClose: @escaping @Sendable () async -> Void
-    ) async throws -> TeamChannelClient
-    func close() async
-}
+/// The transport a dial attempt negotiates before it has a pane environment.
+private enum DialLink {
+    case webRTC(any WebRTCHostLink)
+    case direct(any DirectHostLink)
 
-extension RemoteMacHostConnection {
-    func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward {
-        throw RemoteMacConnectionRegistry.ConnectionError.unsupportedTransport
+    var connection: any RemoteHostLink {
+        switch self {
+        case .webRTC(let link): return link
+        case .direct(let link): return link
+        }
     }
-    func connectDirect(endpoint: DirectSSHEndpoint) async throws {
-        throw RemoteMacConnectionRegistry.ConnectionError.unsupportedTransport
-    }
-    func openTerminalSession(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
-        try await openTerminalSession(sessionName: sessionName)
-    }
-    func makeTeamClient(
-        handler: @escaping @Sendable (Data) async -> Data,
-        onClose: @escaping @Sendable () async -> Void
-    ) async throws -> TeamChannelClient {
-        throw RemoteMacConnectionRegistry.ConnectionError.teamMessagingUnavailable
-    }
-
-    func setOnStateChange(
-        _ handler: (@Sendable (RemoteHostConnection.State) -> Void)?
-    ) async {}
-
-    func currentState() async -> RemoteHostConnection.State {
-        .connected
-    }
-
-    func makeWorktreeManagementDriver() async throws
-        -> any WorktreeManagementChannelDriver {
-        throw RemoteMacConnectionRegistry.ConnectionError
-            .worktreeManagementUnavailable
-    }
-}
-
-private final class LiveRemoteMacHostConnection: RemoteMacHostConnection, @unchecked Sendable {
-    private let connection: RemoteHostConnection
-
-    init(connection: RemoteHostConnection) {
-        self.connection = connection
-    }
-
-    func setOnStateChange(
-        _ handler: (@Sendable (RemoteHostConnection.State) -> Void)?
-    ) async {
-        await connection.setOnStateChange(handler)
-    }
-
-    func currentState() async -> RemoteHostConnection.State {
-        await connection.state
-    }
-
-    func createOfferSDP() async throws -> String {
-        try await connection.createOffer().sdp
-    }
-
-    func applyAnswerSDP(_ sdp: String) async throws {
-        try await connection.applyAnswer(
-            RTCSessionDescription(type: .answer, sdp: sdp)
-        )
-    }
-
-    func makePanesStateDriver(
-        originAware: Bool
-    ) async throws -> any PanesStateSubscriptionDriver {
-        try await connection.makePanesStateDriver(originAware: originAware)
-    }
-
-    func makePaneControlDriver() async throws -> any PaneControlChannelDriver {
-        try await connection.makePaneControlClient()
-    }
-
-    func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable {
-        try await openTerminalSession(sessionName: sessionName, preferPaged: MacPagedTerminalRenderer.isSupported)
-    }
-
-    func openTerminalSession(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
-        try await connection.openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
-    }
-
-    func makeWorktreeManagementDriver() async throws
-        -> any WorktreeManagementChannelDriver {
-        try await connection.makeWorktreeManagementClient()
-    }
-
-    func makeTeamClient(
-        handler: @escaping @Sendable (Data) async -> Data,
-        onClose: @escaping @Sendable () async -> Void
-    ) async throws -> TeamChannelClient {
-        try await connection.makeTeamClient(handler: handler, onClose: onClose)
-    }
-
-    func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward {
-        try await connection.forwardLocalPort(host: host, port: port)
-    }
-    func close() async {
-        await connection.close()
-    }
-}
-
-private final class LiveDirectSSHMacHostConnection: RemoteMacHostConnection, Sendable {
-    private let connection: DirectSSHHostConnection
-    init(connection: DirectSSHHostConnection) { self.connection = connection }
-    func connectDirect(endpoint: DirectSSHEndpoint) async throws {
-        try await connection.connect(host: endpoint.host, port: endpoint.port)
-    }
-    func setOnStateChange(_ handler: (@Sendable (RemoteHostConnection.State) -> Void)?) async {
-        await connection.setOnStateChange(handler)
-    }
-    func currentState() async -> RemoteHostConnection.State { await connection.state }
-    func createOfferSDP() async throws -> String { throw RemoteMacConnectionRegistry.ConnectionError.unsupportedTransport }
-    func applyAnswerSDP(_ sdp: String) async throws { throw RemoteMacConnectionRegistry.ConnectionError.unsupportedTransport }
-    func makePanesStateDriver(originAware: Bool) async throws -> any PanesStateSubscriptionDriver {
-        try await connection.makePanesStateDriver(originAware: originAware)
-    }
-    func makePaneControlDriver() async throws -> any PaneControlChannelDriver { try await connection.makePaneControlClient() }
-    func makeWorktreeManagementDriver() async throws -> any WorktreeManagementChannelDriver { try await connection.makeWorktreeManagementClient() }
-    func makeTeamClient(handler: @escaping @Sendable (Data) async -> Data,
-                        onClose: @escaping @Sendable () async -> Void) async throws -> TeamChannelClient {
-        try await connection.makeTeamClient(handler: handler, onClose: onClose)
-    }
-    func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable {
-        try await openTerminalSession(sessionName: sessionName, preferPaged: MacPagedTerminalRenderer.isSupported)
-    }
-    func openTerminalSession(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable {
-        try await connection.openTerminalSession(sessionName: sessionName, preferPaged: preferPaged)
-    }
-    func forwardLocalPort(host: String, port: Int) async throws -> LocalPortForward {
-        try await connection.forwardLocalPort(host: host, port: port)
-    }
-    func close() async { await connection.close() }
 }

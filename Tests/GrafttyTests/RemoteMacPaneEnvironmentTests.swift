@@ -51,7 +51,9 @@ struct RemoteMacPaneEnvironmentTests {
     }
 }
 
-private actor PaneEnvironmentHost: RemoteMacPaneEnvironmentHost {
+private actor PaneEnvironmentHost: RemoteHostLinkFake {
+    var state: RemoteHostConnection.State { .connected }
+    func setOnStateChange(_ handler: (@Sendable (RemoteHostConnection.State) -> Void)?) {}
     private let panesDriver: any PanesStateSubscriptionDriver
     private let controlDriver: any PaneControlChannelDriver
 
@@ -70,6 +72,12 @@ private actor PaneEnvironmentHost: RemoteMacPaneEnvironmentHost {
     func makePaneControlDriver() async throws -> any PaneControlChannelDriver {
         controlDriver
     }
+
+    func openTerminalClient(sessionName: String, preferPaged: Bool) throws -> any WebSocketClient & Sendable {
+        throw RemoteHostLinkChannelUnavailable()
+    }
+
+    func close() {}
 }
 
 private final class RecordingPanesStateDriver: PanesStateSubscriptionDriver, @unchecked Sendable {

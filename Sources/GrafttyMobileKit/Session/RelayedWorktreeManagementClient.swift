@@ -17,15 +17,7 @@ enum RelayedWorktreeManagementClient {
         guard let connection = await provider?() else {
             throw ClientError.pairedConnectionUnavailable
         }
-        let client = try await connection.openWorktreeManagementChannel()
-        do {
-            let response = try await client.send(request)
-            client.close()
-            return response
-        } catch {
-            client.close()
-            throw error
-        }
+        return try await connection.sendWorktreeManagement(request)
     }
 }
 #endif
