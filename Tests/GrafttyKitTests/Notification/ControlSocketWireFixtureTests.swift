@@ -10,26 +10,30 @@ import GrafttyProtocol
 /// editing the expected JSON.
 @Suite("@spec ATTN-2.25: The control-socket protocol shall keep every request and response type tag and field key stable across releases, and shall keep decoding the optional fields that older peers omit, so an older running application keeps serving a newer CLI.")
 struct ControlSocketWireFixtureTests {
-    // Nested payloads have their own wire tests; only the key that carries
-    // them belongs to the envelope contract, so they are spliced in.
-    static let recap = AttentionRecap(title: "Fix auth", completed: "Tests pass", next: "Open PR")
+    // Nested payloads mostly use synthesized Codable, so a Swift rename alone
+    // changes their keys; they are frozen in full rather than spliced in.
+    static let recap = AttentionRecap(
+        title: "Fix auth", context: "Login", completed: "Tests pass", next: "Open PR", need: "Review",
+        emoji: "e1", emojiAlternatives: ["e2"], purposeChanged: true, checkpoint: "Green", decisions: ["JWT"])
     static let remoteCreate = RemoteWorktreeRequest.create(RemoteWorktreeCreation(
-        callerWorktree: "/r", project: nil, worktreeName: "wt", branchName: "wt", existing: false,
-        base: nil, command: nil, agentRuntime: nil, agentPrompt: nil, operationID: "op"))
+        callerWorktree: "/r", project: "app", worktreeName: "wt", branchName: "br", existing: false,
+        base: "main", command: "codex", agentRuntime: .codex, agentPrompt: "go", operationID: "op"))
     static func setupResult() throws -> LinuxHostSetupResult {
         LinuxHostSetupResult(identity: .init(deviceID: "dev", displayName: "Linux", publicKey: "key", port: 8801),
                              openSSH: try .parse("hostname h\nuser u\nport 22\n"), destination: try .init("alias"),
-                             projectPaths: ["/home/u/app"])
+                             projectPaths: ["/home/u/app"],
+                             toolOutcomes: [.init(component: .codex, status: .succeeded, message: "ok")])
     }
     static let trust = LinuxHostTrustRequest(deviceID: "dev", displayName: "Mac", publicKey: "key")
     static let inboxMessage = TeamInboxMessage(
-        id: "0001", batchID: nil, createdAt: Date(timeIntervalSince1970: 0), team: "t", repoPath: "/r",
-        from: .init(member: "a", worktree: "/r/a", runtime: nil), to: .init(member: "b", worktree: "/r/b", runtime: nil),
-        priority: .normal, body: "hi")
+        id: "0001", batchID: "batch", createdAt: Date(timeIntervalSince1970: 0), team: "t", repoPath: "/r",
+        from: .init(member: "a", worktree: "/r/a", runtime: "codex", agentID: "codex-1"),
+        to: .init(member: "b", worktree: "/r/b", runtime: nil),
+        priority: .normal, body: "hi", agentPrompt: "prompt", source: "github")
     static let member = TeamListMember(name: "main", branch: "main", worktreePath: "/r",
                                        isMainWorktree: true, isRunning: false)
-    static let createStatus = WorktreeCreateStatus(operationID: "op", state: .pending, worktreePath: "/r/wt",
-                                                   messageAddress: "/r/wt")
+    static let createStatus = WorktreeCreateStatus(operationID: "op", state: .failed, worktreePath: "/r/wt",
+                                                   messageAddress: "/r/wt", error: "boom")
     static let removeStatus = WorktreeRemoveStatus(operationID: "op", state: .failed, worktreePath: "/r/wt",
                                                    error: "dirty", forceAllowed: true, shortStatus: "M a")
 
@@ -43,10 +47,11 @@ struct ControlSocketWireFixtureTests {
         [
             (.linuxSetupIdentity, #"{"type":"linux_setup_identity"}"#),
             (.completeLinuxSetup(try setupResult()),
-             #"{"result":\#(try json(try setupResult())),"type":"complete_linux_setup"}"#),
+             #"{"result":{"destination":"alias","identity":{"deviceID":"dev","displayName":"Linux","port":8801,"publicKey":"key"},"openSSH":{"hostname":"h","port":22,"user":"u"},"projectPaths":["/home/u/app"],"toolOutcomes":[{"component":"codex","message":"ok","status":"succeeded"}]},"type":"complete_linux_setup"}"#),
             (.previewFiles(path: "/r", targets: ["a.md"], paneSessionName: "s"),
              #"{"pane_session_name":"s","path":"/r","targets":["a.md"],"type":"preview_files"}"#),
-            (.previewImage(path: "/r", target: "a.png"), #"{"path":"/r","target":"a.png","type":"preview_image"}"#),
+            (.previewImage(path: "/r", target: "a.png", paneSessionName: "s"),
+             #"{"pane_session_name":"s","path":"/r","target":"a.png","type":"preview_image"}"#),
             (.offerResource(path: "/r", target: "a.pdf", paneSessionName: "s"),
              #"{"pane_session_name":"s","path":"/r","target":"a.pdf","type":"open_resource"}"#),
             (.notify(path: "/r", text: "hi", clearAfter: 5, paneSessionName: "s"),
@@ -56,7 +61,9 @@ struct ControlSocketWireFixtureTests {
             (.reconnectRemoteMac(target: "Studio"), #"{"target":"Studio","type":"reconnect_remote_mac"}"#),
             (.reconnectRemoteClient(target: "iPad"), #"{"target":"iPad","type":"reconnect_remote_client"}"#),
             (.remoteWorktree(target: "Studio", request: remoteCreate),
-             #"{"request":\#(try json(remoteCreate)),"target":"Studio","type":"remote_worktree"}"#),
+             #"{"request":{"create":{"_0":{"agentPrompt":"go","agentRuntime":"codex","base":"main","branchName":"br","callerWorktree":"/r","command":"codex","existing":false,"operationID":"op","project":"app","worktreeName":"wt"}}},"target":"Studio","type":"remote_worktree"}"#),
+            (.remoteWorktree(target: "Studio", request: .status(operationID: "op")),
+             #"{"request":{"status":{"operationID":"op"}},"target":"Studio","type":"remote_worktree"}"#),
             (.addPane(path: "/r", direction: .down, command: "ls", agentRuntime: .codex, agentPrompt: "go"),
              #"{"agent_prompt":"go","agent_runtime":"codex","command":"ls","direction":"down","path":"/r","type":"add_pane"}"#),
             (.paneAgentCapability, #"{"type":"pane_agent_capability"}"#),
@@ -64,21 +71,23 @@ struct ControlSocketWireFixtureTests {
             (.showPane(path: "/r", index: 2, lines: 50), #"{"index":2,"lines":50,"path":"/r","type":"show_pane"}"#),
             (.sendPane(path: "/r", index: 2, text: "ls", pressEnter: true),
              #"{"index":2,"path":"/r","press_enter":true,"text":"ls","type":"send_pane"}"#),
+            (.teamMessage(callerWorktree: "/r", recipient: "b", text: "hi"),
+             #"{"caller_worktree":"/r","recipient":"b","text":"hi","type":"team_message"}"#),
             (.teamSend(callerWorktree: "/r", callerAgentID: "codex-1", recipient: "b", text: "hi", priority: .urgent),
              #"{"caller_agent_id":"codex-1","caller_worktree":"/r","priority":"urgent","recipient":"b","text":"hi","type":"team_send"}"#),
             (.teamReply(callerWorktree: "/r", callerAgentID: "codex-1", messageID: "0001", text: "ok",
                         priority: .normal, fallback: true),
              #"{"caller_agent_id":"codex-1","caller_worktree":"/r","fallback":true,"message_id":"0001","priority":"normal","text":"ok","type":"team_reply"}"#),
-            (.teamBroadcast(callerWorktree: "/r", callerAgentID: nil, text: "hi", priority: .normal),
-             #"{"caller_worktree":"/r","priority":"normal","text":"hi","type":"team_broadcast"}"#),
+            (.teamBroadcast(callerWorktree: "/r", callerAgentID: "codex-1", text: "hi", priority: .normal),
+             #"{"caller_agent_id":"codex-1","caller_worktree":"/r","priority":"normal","text":"hi","type":"team_broadcast"}"#),
             (.teamHook(callerWorktree: "/r", callerAgentID: "claude-1", runtime: .claude, event: .permissionRequest,
                        sessionID: "sess", paneSessionName: "s", attentionReason: .planReview, stopHookActive: true,
                        providerSleepActivity: .busy),
              #"{"attention_reason":"plan_review","caller_agent_id":"claude-1","caller_worktree":"/r","event":"permission-request","pane_session_name":"s","provider_sleep_activity":"busy","runtime":"claude","session_id":"sess","stop_hook_active":true,"type":"team_hook"}"#),
-            (.providerActivity(callerWorktree: "/r", runtime: .codex, sessionID: nil, paneSessionName: nil, activity: .idle),
-             #"{"caller_worktree":"/r","provider_sleep_activity":"idle","runtime":"codex","type":"provider_activity"}"#),
+            (.providerActivity(callerWorktree: "/r", runtime: .codex, sessionID: "sess", paneSessionName: "s", activity: .idle),
+             #"{"caller_worktree":"/r","pane_session_name":"s","provider_sleep_activity":"idle","runtime":"codex","session_id":"sess","type":"provider_activity"}"#),
             (.attentionReport(callerWorktree: "/r", callerAgentID: "codex-1", recap: recap),
-             #"{"caller_agent_id":"codex-1","caller_worktree":"/r","recap":\#(try json(recap)),"type":"attention_report"}"#),
+             #"{"caller_agent_id":"codex-1","caller_worktree":"/r","recap":{"checkpoint":"Green","completed":"Tests pass","context":"Login","decisions":["JWT"],"emoji":"e1","emojiAlternatives":["e2"],"need":"Review","next":"Open PR","purposeChanged":true,"title":"Fix auth"},"type":"attention_report"}"#),
             (.teamInbox(TeamInboxPageRequest(
                 callerWorktree: "/r", callerAgentID: "codex-1", consuming: true, worktree: "w", repo: "/r", member: "m",
                 unread: true, all: false, beforeID: "b", afterID: "a", snapshotThroughID: "s", forwardPagination: true,
@@ -86,8 +95,8 @@ struct ControlSocketWireFixtureTests {
              #"{"after_id":"a","all":false,"before_id":"b","caller_agent_id":"codex-1","caller_worktree":"/r","consuming":true,"forward_pagination":true,"limit":20,"member":"m","repo":"/r","snapshot_through_id":"s","type":"team_inbox","unread":true,"worktree":"w"}"#),
             (.teamInboxAdvance(callerWorktree: "/r", callerAgentID: "codex-1", throughID: "0009"),
              #"{"caller_agent_id":"codex-1","caller_worktree":"/r","through_id":"0009","type":"team_inbox_advance"}"#),
-            (.teamMembers(callerWorktree: "/r", worktree: "w", repo: nil),
-             #"{"caller_worktree":"/r","type":"team_members","worktree":"w"}"#),
+            (.teamMembers(callerWorktree: "/r", worktree: "w", repo: "/r"),
+             #"{"caller_worktree":"/r","repo":"/r","type":"team_members","worktree":"w"}"#),
             (.teamList(callerWorktree: "/r"), #"{"caller_worktree":"/r","type":"team_list"}"#),
             (.createWorktree(callerWorktree: "/r", worktreeName: "wt", branchName: "br", existing: false, base: "main",
                              command: "codex", agentRuntime: .codex, agentPrompt: "go", operationID: "op"),
@@ -110,7 +119,8 @@ struct ControlSocketWireFixtureTests {
 
     static func responses() throws -> [(ResponseMessage, String)] {
         [
-            (.linuxSetupIdentity(trust), #"{"identity":\#(try json(trust)),"type":"linux_setup_identity"}"#),
+            (.linuxSetupIdentity(trust),
+             #"{"identity":{"deviceID":"dev","displayName":"Mac","publicKey":"key"},"type":"linux_setup_identity"}"#),
             (.ok, #"{"type":"ok"}"#),
             (.error("boom"), #"{"message":"boom","type":"error"}"#),
             (.serverBusy,
@@ -121,18 +131,19 @@ struct ControlSocketWireFixtureTests {
             (.teamList(teamName: "t", members: [member]),
              #"{"members":[{"agents":[],"branch":"main","is_main_worktree":true,"is_running":false,"name":"main","worktree_path":"/r"}],"team_name":"t","type":"team_list"}"#),
             (.teamHookOutput("{}"), #"{"output":"{}","type":"team_hook_output"}"#),
-            (.teamInbox(messages: [inboxMessage], nextBeforeID: "b", nextAfterID: nil, snapshotThroughID: "s"),
-             #"{"messages":[\#(try json(inboxMessage))],"next_before_id":"b","snapshot_through_id":"s","type":"team_inbox"}"#),
+            (.teamInbox(messages: [inboxMessage], nextBeforeID: "b", nextAfterID: "a", snapshotThroughID: "s"),
+             #"{"messages":[{"agent_prompt":"prompt","batch_id":"batch","body":"hi","created_at":-978307200,"from":{"agentID":"codex-1","member":"a","runtime":"codex","worktree":"/r/a"},"id":"0001","kind":"team_message","priority":"normal","repo_path":"/r","source":"github","team":"t","to":{"member":"b","worktree":"/r/b"}}],"next_after_id":"a","next_before_id":"b","snapshot_through_id":"s","type":"team_inbox"}"#),
             (.worktreeCreate(createStatus),
-             #"{"operation":{"message_address":"/r/wt","operation_id":"op","state":"pending","worktree_path":"/r/wt"},"type":"worktree_create"}"#),
+             #"{"operation":{"error":"boom","message_address":"/r/wt","operation_id":"op","state":"failed","worktree_path":"/r/wt"},"type":"worktree_create"}"#),
             (.worktreeCreateRetry(operationID: "op"), #"{"operation_id":"op","type":"worktree_create_retry"}"#),
             (.worktreeRemove(removeStatus),
              #"{"operation":{"error":"dirty","force_allowed":true,"operation_id":"op","short_status":"M a","state":"failed","worktree_path":"/r/wt"},"type":"worktree_remove"}"#),
         ]
     }
 
-    /// Exhaustive on purpose: a new case fails to compile here until it has
-    /// a fixture above.
+    /// Exhaustive on purpose: a new case fails to compile here, which sends
+    /// its author to add a fixture above. The switch cannot see the lists, so
+    /// keep at least one encoding fixture per case.
     static func fixtureCoverage(_ request: NotificationMessage, _ response: ResponseMessage) {
         switch request {
         case .linuxSetupIdentity, .completeLinuxSetup, .previewFiles, .previewImage, .offerResource, .notify, .clear,
@@ -178,8 +189,18 @@ struct ControlSocketWireFixtureTests {
     /// peers' JSON and must keep their historical defaults.
     @Test func olderRequestsWithoutLaterFieldsDecode() throws {
         let cases: [(String, NotificationMessage)] = [
+            (#"{"type":"preview_files","path":"/r","targets":["a.md"]}"#,
+             .previewFiles(path: "/r", targets: ["a.md"])),
+            (#"{"type":"preview_image","path":"/r","target":"a.png"}"#, .previewImage(path: "/r", target: "a.png")),
+            (#"{"type":"open_resource","path":"/r","target":"a.pdf"}"#, .offerResource(path: "/r", target: "a.pdf")),
+            (#"{"type":"notify","path":"/r","text":"hi"}"#, .notify(path: "/r", text: "hi")),
+            (#"{"type":"clear","path":"/r"}"#, .clear(path: "/r")),
             (#"{"type":"team_message","caller_worktree":"/r","recipient":"b","text":"hi"}"#,
              .teamMessage(callerWorktree: "/r", recipient: "b", text: "hi")),
+            (#"{"type":"team_broadcast","caller_worktree":"/r","text":"hi","priority":"normal"}"#,
+             .teamBroadcast(callerWorktree: "/r", text: "hi", priority: .normal)),
+            (#"{"type":"team_inbox_advance","caller_worktree":"/r","through_id":"0009"}"#,
+             .teamInboxAdvance(callerWorktree: "/r", throughID: "0009")),
             (#"{"type":"team_send","caller_worktree":"/r","recipient":"b","text":"hi","priority":"normal"}"#,
              .teamSend(callerWorktree: "/r", recipient: "b", text: "hi", priority: .normal)),
             (#"{"type":"team_reply","caller_worktree":"/r","message_id":"1","text":"ok","priority":"normal"}"#,
@@ -189,6 +210,7 @@ struct ControlSocketWireFixtureTests {
             (#"{"type":"provider_activity","caller_worktree":"/r","runtime":"codex"}"#,
              .providerActivity(callerWorktree: "/r", runtime: .codex, sessionID: nil, paneSessionName: nil,
                                activity: .unknown)),
+            // A newer peer's unrecognized activity must also stay awake.
             (#"{"type":"provider_activity","caller_worktree":"/r","runtime":"codex","provider_sleep_activity":"napping"}"#,
              .providerActivity(callerWorktree: "/r", runtime: .codex, sessionID: nil, paneSessionName: nil,
                                activity: .unknown)),
@@ -223,5 +245,25 @@ struct ControlSocketWireFixtureTests {
         for (json, expected) in cases {
             #expect(try JSONDecoder().decode(ResponseMessage.self, from: Data(json.utf8)) == expected)
         }
+    }
+
+    /// Enum values are wire spellings too: an older peer rejects a renamed
+    /// raw value the same way it rejects a renamed key.
+    @Test func enumWireValuesStayFrozen() {
+        #expect(TeamHookRuntime.allCases.map(\.rawValue) == ["codex", "claude"])
+        #expect(TeamHookEvent.allCases.map(\.rawValue) == [
+            "session-start", "user-prompt-submit", "pre-tool-use", "post-tool-use", "post-tool-use-failure",
+            "permission-request", "stop",
+        ])
+        #expect(LinuxHostComponent.allCases.map(\.rawValue) == ["graftty", "codex", "claude"])
+        #expect([PaneSplit.right, .left, .up, .down].map(\.rawValue) == ["right", "left", "up", "down"])
+        #expect([TeamInboxPriority.normal, .urgent].map(\.rawValue) == ["normal", "urgent"])
+        #expect([AgentHookAttentionReason.permission, .question, .planReview].map(\.rawValue)
+                == ["permission", "question", "plan_review"])
+        #expect([ProviderSleepActivity.unknown, .busy, .idle].map(\.rawValue) == ["unknown", "busy", "idle"])
+        #expect([WorktreeCreateState.pending, .ready, .failed].map(\.rawValue) == ["pending", "ready", "failed"])
+        #expect([WorktreeRemoveState.pending, .removed, .failed].map(\.rawValue) == ["pending", "removed", "failed"])
+        #expect([LinuxHostComponentOutcome.Status.succeeded, .failed, .unknown, .skipped].map(\.rawValue)
+                == ["succeeded", "failed", "unknown", "skipped"])
     }
 }
