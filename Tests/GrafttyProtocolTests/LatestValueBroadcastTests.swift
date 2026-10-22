@@ -83,4 +83,15 @@ struct LatestValueBroadcastTests {
         await observer.value
         #expect(broadcast.observerCount == 0)
     }
+
+    @Test func releasedBroadcastEndsItsObservers() async {
+        // An owner that drops the broadcast without finishing it (a store
+        // released without unsubscribing) must not strand its observers.
+        var broadcast: LatestValueBroadcast<Int>? = LatestValueBroadcast()
+        broadcast?.publish(1)
+        var updates = broadcast!.updates().makeAsyncIterator()
+        #expect(await updates.next() == 1)
+        broadcast = nil
+        #expect(await updates.next() == nil)
+    }
 }

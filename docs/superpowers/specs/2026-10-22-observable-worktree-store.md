@@ -68,7 +68,8 @@ Contract:
 
 ```swift
 public actor WorktreePanesStore {
-    public nonisolated let frames: LatestValueBroadcast<PanesStateMessage>
+    private nonisolated let frames: LatestValueBroadcast<PanesStateMessage>
+    public nonisolated func frameUpdates() -> AsyncStream<PanesStateMessage>
 }
 ```
 
@@ -78,6 +79,10 @@ public actor WorktreePanesStore {
   "same frame?" check (REMOTE-14.8 still guards the pull API).
 - `markClosed` and `unsubscribe` call `frames.finish()`. A store is one
   channel's lifetime: when the channel ends, its observers end.
+- The broadcast stays private, so only the store can publish or finish it.
+  An observer cannot end the stream for others or inject frames. A
+  broadcast released without `finish()` finishes in `deinit`, so its
+  observers are never stranded.
 - `nonisolated` lets a `@MainActor` view start observing without an actor
   hop. The wire and `PanesStateSubscription` are unchanged.
 
@@ -86,7 +91,7 @@ public actor WorktreePanesStore {
 - **Coordinator** (`RemoteConnectionCoordinator.worktreeUpdates(for:)`):
   an `AsyncStream` that bridges store replacement. The loop is: ensure the
   subscription (the existing `worktreePanes(for:)` path, with its dedup
-  and failure cooldown) → forward `store.frames` → when that stream
+  and failure cooldown) → forward `store.frameUpdates()` → when that stream
   finishes (close, eviction, or `invalidateAll` on background), report
   the host as unavailable and re-subscribe after a bounded retry delay.
   This replaces the reconnect that the 1 Hz polls currently do as a side
@@ -110,7 +115,7 @@ public actor WorktreePanesStore {
 ## Mac reuse (#480)
 
 - **Remote rows:** `SidebarView` (and the WebRTC relay) can observe each
-  remote Mac's `store.frames` instead of re-reading `currentSnapshot` every
+  remote Mac's `store.frameUpdates()` instead of re-reading `currentSnapshot` every
   second.
 - **Local rows:** an `AppStateChanges = LatestValueBroadcast<UInt64>`
   revision counter, published from the existing `.onChange(of: appState)`

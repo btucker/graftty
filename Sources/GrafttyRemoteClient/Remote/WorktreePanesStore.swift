@@ -22,10 +22,16 @@ public actor WorktreePanesStore {
         case closed(reason: String)
     }
 
-    /// Every applied frame, rows and sidebar metadata together, for observers
-    /// that react to changes instead of re-reading `current`. Finishes when
-    /// the channel closes or the client unsubscribes.
-    public nonisolated let frames = LatestValueBroadcast<PanesStateMessage>()
+    /// Only the store publishes or finishes; observers get `frameUpdates()`.
+    private nonisolated let frames = LatestValueBroadcast<PanesStateMessage>()
+
+    /// The latest applied frame, if any, then every later one: rows and
+    /// sidebar metadata together, for observers that react to changes instead
+    /// of re-reading `current`. Ends when the channel closes or the client
+    /// unsubscribes.
+    public nonisolated func frameUpdates() -> AsyncStream<PanesStateMessage> {
+        frames.updates()
+    }
     public private(set) var current: [WorktreePanes] = []
     public private(set) var sidebar: SidebarSnapshot?
     public var currentSnapshot: PanesStateMessage? {

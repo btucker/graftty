@@ -20,6 +20,11 @@ public final class LatestValueBroadcast<Value: Sendable>: @unchecked Sendable {
 
     public init() {}
 
+    /// An `AsyncStream` never ends on its own when its continuation is
+    /// released, so an owner dropped without `finish()` would strand every
+    /// observer's `for await` loop.
+    deinit { finish() }
+
     /// The most recently published value; nil until the first publish.
     public var latest: Value? {
         lock.withLock { value }
