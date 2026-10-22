@@ -4,7 +4,7 @@ import Testing
 @testable import GrafttyMobileKit
 
 @MainActor
-@Suite("@spec IOS-4.51: While a mobile view observes a paired host's worktrees, the application shall deliver the newest pushed panes-state frame without polling, shall report the host unavailable when its subscription fails or ends, and shall subscribe again only after a retry delay, stopping once the view stops observing.", .timeLimit(.minutes(1)))
+@Suite("@spec IOS-4.51: While a mobile view observes a paired host's worktrees, the application shall deliver the newest pushed panes-state frame without polling and shall subscribe again immediately when a subscription that delivered frames ends. If subscribing fails or a subscription ends before delivering a frame, then the application shall report the host unavailable and subscribe again only after a retry delay, stopping once the view stops observing.", .timeLimit(.minutes(1)))
 struct RemoteWorktreeUpdatesTests {
     @Test func forwardsFramesAndResubscribesAfterTheChannelEnds() async throws {
         let first = LatestValueBroadcast<PanesStateMessage>()
@@ -19,15 +19,31 @@ struct RemoteWorktreeUpdatesTests {
         first.publish(.snapshot(rows("b")))
         try #require(await updates.next() == .frame(.snapshot(rows("b"))))
 
+        // A replaced or reopened channel is not an outage: the next store's
+        // frame follows with no unavailable gap and no retry delay.
+        second.publish(.snapshot(rows("c")))
         first.finish()
+        try #require(await updates.next() == .frame(.snapshot(rows("c"))))
+        #expect(host.calls == 2)
+        #expect(retry.waitCount == 0)
+    }
+
+    @Test func reportsASubscriptionThatEndsBeforeAnyFrameAndRetries() async throws {
+        let closed = LatestValueBroadcast<PanesStateMessage>()
+        closed.finish()
+        let recovered = LatestValueBroadcast<PanesStateMessage>()
+        recovered.publish(.snapshot(rows("a")))
+        let host = FakeSubscriptions([.success(closed), .success(recovered)])
+        let retry = ManualRetry()
+        var updates = RemoteWorktreeUpdates.stream(subscribe: host.subscribe, retryDelay: retry.wait)
+            .makeAsyncIterator()
+
         try #require(await updates.next() == .unavailable)
-        // No new subscription until the retry delay elapses.
+        // An immediately closed store must not resubscribe in a hot loop.
         try #require(await retry.waitUntilPending())
         #expect(host.calls == 1)
-
-        second.publish(.snapshot(rows("c")))
         retry.release()
-        try #require(await updates.next() == .frame(.snapshot(rows("c"))))
+        try #require(await updates.next() == .frame(.snapshot(rows("a"))))
         #expect(host.calls == 2)
     }
 
@@ -93,12 +109,14 @@ private final class FakeSubscriptions {
 @MainActor
 private final class ManualRetry {
     private var waiter: CheckedContinuation<Void, any Error>?
+    private(set) var waitCount = 0
     private let pending = AsyncStream<Void>.makeStream()
     private let cancelled = AsyncStream<Void>.makeStream()
 
     func wait() async throws {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
+                waitCount += 1
                 waiter = continuation
                 pending.continuation.yield()
             }
