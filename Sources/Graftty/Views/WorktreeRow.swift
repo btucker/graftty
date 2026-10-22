@@ -50,6 +50,9 @@ struct PaneTitleRow: View {
     var shouldRenderPortChips: Bool {
         attentionStyle == nil && !portBindings.isEmpty
     }
+    /// The Mac aligns the marker, title and port chips on the first text
+    /// baseline; mobile keeps the shared row's `.center` default.
+    static let titleAlignment: VerticalAlignment = .firstTextBaseline
 
     var body: some View {
         // Title, marker and attention capsule are shared with mobile
@@ -63,7 +66,7 @@ struct PaneTitleRow: View {
             attentionStyle: attentionStyle,
             attentionCount: attentionCount,
             theme: theme.core,
-            alignment: .firstTextBaseline
+            alignment: Self.titleAlignment
         ) { titleText in
             FlowLayout(spacing: 4, rowSpacing: 3) {
                 titleText

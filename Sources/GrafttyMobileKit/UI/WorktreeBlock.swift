@@ -269,15 +269,21 @@ struct WorktreeRowContent: View {
 
 /// Trailing `↑X[+] ↓Y`, shared with the Mac worktree row. Without a theme
 /// (compact) the ahead side stays on the system secondary color.
-private struct DivergenceGutter: View {
+struct DivergenceGutter: View {
     let stats: WorktreeWireStats?
     let theme: GhosttyThemeColors?
+
+    /// Mobile uses the sidebar's 45% secondary text (the Mac uses 55% of
+    /// the foreground).
+    static func aheadColor(_ theme: GhosttyThemeColors?) -> Color {
+        theme?.sidebarSecondaryText ?? .secondary
+    }
 
     var body: some View {
         if let stats, !stats.isEmpty {
             SidebarDivergenceGutter(ahead: stats.ahead, behind: stats.behind,
                 hasUncommittedChanges: stats.hasUncommittedChanges,
-                aheadColor: theme?.sidebarSecondaryText ?? .secondary)
+                aheadColor: Self.aheadColor(theme))
         }
     }
 }

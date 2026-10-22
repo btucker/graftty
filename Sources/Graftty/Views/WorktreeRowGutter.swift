@@ -22,10 +22,16 @@ struct WorktreeRowGutter: View {
                 ahead: stats.ahead,
                 behind: stats.behind,
                 hasUncommittedChanges: stats.hasUncommittedChanges,
-                aheadColor: theme.foreground.opacity(0.55)
+                aheadColor: Self.aheadColor(theme)
             )
             .help(tooltip(stats))
         }
+    }
+
+    /// The Mac dims the ahead count to 55% of the foreground; mobile uses
+    /// the sidebar's 45% secondary text.
+    static func aheadColor(_ theme: GhosttyTheme) -> Color {
+        theme.foreground.opacity(0.55)
     }
 
     /// Hover tooltip detail: the committed-diff line counts, optionally
