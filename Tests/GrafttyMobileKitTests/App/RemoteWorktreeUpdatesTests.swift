@@ -4,7 +4,7 @@ import Testing
 @testable import GrafttyMobileKit
 
 @MainActor
-@Suite("@spec IOS-4.51: While a mobile view observes a paired host's worktrees, the application shall deliver each pushed panes-state frame without polling, shall report the host unavailable when its subscription fails or ends, and shall subscribe again only after a retry delay, stopping once the view stops observing.", .timeLimit(.minutes(1)))
+@Suite("@spec IOS-4.51: While a mobile view observes a paired host's worktrees, the application shall deliver the newest pushed panes-state frame without polling, shall report the host unavailable when its subscription fails or ends, and shall subscribe again only after a retry delay, stopping once the view stops observing.", .timeLimit(.minutes(1)))
 struct RemoteWorktreeUpdatesTests {
     @Test func forwardsFramesAndResubscribesAfterTheChannelEnds() async throws {
         let first = LatestValueBroadcast<PanesStateMessage>()
