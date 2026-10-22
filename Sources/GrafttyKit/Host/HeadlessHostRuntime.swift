@@ -32,6 +32,7 @@ public final class HeadlessHostRuntime {
     var repositoryBranches: [String: RemoteBranchSnapshot] = [:]
     var operationGeneration: UInt64 = 0
     var worktreeStats: [String: WorktreeWireStats] = [:]
+    public internal(set) var hostResources: HostResourceSnapshot?
     public var origin: WorktreeOrigin?
 
     public init(configuration: HostConfiguration, terminals: (any HostTerminalDriver)? = nil,

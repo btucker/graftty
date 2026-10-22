@@ -30,9 +30,13 @@ Host inventory uses AWS CLI v2 [`describe-instances`](https://docs.aws.amazon.co
 
 Inventory is eventually consistent and does not establish trusted Graftty ownership. Tags are discovery hints. EC2 `running` is a lifecycle state, not agent readiness. JSON reports `readiness: "unknown"` and explicit nulls for CPU utilization, available memory, free disk, pending placements, and telemetry time until authenticated telemetry exists. Incomplete or failed regional queries fail the command instead of silently returning a partial inventory. The command needs a profile and region; it does not require an instance pool.
 
-`max-instances` and `credit-mode` are saved for future provisioning. `max-hourly-usd` currently filters individual offers; fleet spending enforcement requires the placement controller. This slice does not launch instances. Authenticated telemetry, placement, Dev Container setup, parent replication, interruption handling, and skills remain backlog work.
+Paired Linux hosts now sample resources every five seconds and include observations in the existing authenticated panes-state stream. `graftty remote hosts --json` lists paired identities, connection state, resource observations, and freshness. Mac and Mobile share the wire model and client store. The Linux sampler uses successive `/proc/stat` counters, `MemAvailable`, and unprivileged `statvfs` free blocks. Disk measurements identify the filesystem path they describe. Missing or invalid metrics stay unknown, and pending placement counts remain unknown until admission is implemented.
 
-The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.10`, and `REMOTE-24.11`. The remaining disabled inventory entries still describe future behavior.
+The consumer records receipt time, rejects future timestamps beyond five seconds, expires observations after thirty seconds, and clears them on disconnect. Replayed timestamps do not refresh receipt time. Legacy hosts and malformed optional telemetry do not break pane snapshots. EC2 inventory and paired-host observations are still separate; linking them requires trusted instance enrollment, not tag matching. The desktop Mac host does not yet publish resource samples; the new sampler runs in the headless Linux host.
+
+`max-instances` and `credit-mode` are saved for future provisioning. `max-hourly-usd` currently filters individual offers; fleet spending enforcement requires the placement controller. This slice does not launch instances. Instance enrollment, placement, Dev Container setup, parent replication, interruption handling, and skills remain backlog work.
+
+The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.10` through `REMOTE-24.14`. The remaining disabled inventory entries still describe future behavior.
 
 ## Agreed direction
 

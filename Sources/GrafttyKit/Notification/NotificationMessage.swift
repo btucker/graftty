@@ -89,6 +89,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case notify(path: String, text: String, clearAfter: TimeInterval? = nil, paneSessionName: String? = nil)
     case clear(path: String, paneSessionName: String? = nil)
     case listPanes(path: String)
+    case listRemoteHosts
     case reconnectRemoteMac(target: String)
     case reconnectRemoteClient(target: String)
     case remoteWorktree(target: String, request: RemoteWorktreeRequest)
@@ -268,6 +269,8 @@ extension NotificationMessage: Codable {
         case .listPanes(let path):
             try container.encode("list_panes", forKey: .type)
             try container.encode(path, forKey: .path)
+        case .listRemoteHosts:
+            try container.encode("list_remote_hosts", forKey: .type)
         case .reconnectRemoteMac(let target):
             try container.encode("reconnect_remote_mac", forKey: .type)
             try container.encode(target, forKey: .target)
@@ -479,6 +482,8 @@ extension NotificationMessage: Codable {
         case "list_panes":
             let path = try container.decode(String.self, forKey: .path)
             self = .listPanes(path: path)
+        case "list_remote_hosts":
+            self = .listRemoteHosts
         case "reconnect_remote_mac":
             self = .reconnectRemoteMac(target: try container.decode(String.self, forKey: .target))
         case "remote_worktree":
@@ -943,6 +948,7 @@ public enum ResponseMessage: Sendable, Equatable {
         "Control socket is busy; retry the command."
 
     case linuxSetupIdentity(LinuxHostTrustRequest)
+    case remoteHosts([RemoteMacConnectionSummary])
     case ok
     case error(String)
     case serverBusy
@@ -958,7 +964,7 @@ public enum ResponseMessage: Sendable, Equatable {
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, code, message, panes, output, messages, text, operation, identity
+        case type, code, message, panes, output, messages, text, operation, identity, hosts
         case operationID = "operation_id"
         case teamName = "team_name"
         case members
@@ -973,6 +979,9 @@ extension ResponseMessage: Codable {
         case .linuxSetupIdentity(let identity):
             try container.encode("linux_setup_identity", forKey: .type)
             try container.encode(identity, forKey: .identity)
+        case .remoteHosts(let hosts):
+            try container.encode("remote_hosts", forKey: .type)
+            try container.encode(hosts, forKey: .hosts)
         case .ok:
             try container.encode("ok", forKey: .type)
         case .error(let message):
@@ -1019,6 +1028,8 @@ extension ResponseMessage: Codable {
         switch type {
         case "linux_setup_identity":
             self = .linuxSetupIdentity(try container.decode(LinuxHostTrustRequest.self, forKey: .identity))
+        case "remote_hosts":
+            self = .remoteHosts(try container.decode([RemoteMacConnectionSummary].self, forKey: .hosts))
         case "ok":
             self = .ok
         case "error":

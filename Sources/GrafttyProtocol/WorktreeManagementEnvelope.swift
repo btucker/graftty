@@ -33,6 +33,8 @@ public struct RemoteMacConnectionSummary: Codable, Sendable, Hashable,
     public let label: String
     public let lastKnownHost: String?
     public let state: State
+    public let resourceObservation: HostResourceObservation?
+    public let resourceStatus: String?
 
     public var id: ID {
         ID(deviceID: deviceID, fingerprint: fingerprint)
@@ -43,13 +45,16 @@ public struct RemoteMacConnectionSummary: Codable, Sendable, Hashable,
         fingerprint: RemoteIdentityFingerprint,
         label: String,
         lastKnownHost: String?,
-        state: State
+        state: State,
+        resourceObservation: HostResourceObservation? = nil
     ) {
         self.deviceID = deviceID
         self.fingerprint = fingerprint
         self.label = label
         self.lastKnownHost = lastKnownHost
         self.state = state
+        self.resourceObservation = state == .connected ? resourceObservation : nil
+        self.resourceStatus = self.resourceObservation.map { $0.isFresh() ? "fresh" : "stale" }
     }
 }
 

@@ -3414,6 +3414,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-24.11** When listing AWS provider instances, the CLI shall report account-scoped instance identity, lifecycle state, available hardware metadata, and observation time across configured regions, default to Graftty-tagged instances, and expose readiness and unmeasured load as unknown without treating tags as authenticated host ownership.
 
+**REMOTE-24.12** When a host publishes resource observations on its authenticated panes-state channel, the protocol shall preserve optional CPU, memory, disk, and workload measurements with a sample timestamp while accepting legacy snapshots without telemetry.
+
+**REMOTE-24.13** While a Linux host runs, the host shall periodically measure CPU utilization from successive kernel counters, available memory from MemAvailable, and unprivileged filesystem headroom, reporting unreadable or invalid measurements as unknown rather than zero.
+
+**REMOTE-24.14** When an authenticated host sample is received, the client shall assign its own receipt time, avoid refreshing replayed samples, and invalidate telemetry on disconnect so stale or absent measurements cannot imply idle capacity.
+
 ### REMOTE-25.x — Dev Container environments
 
 **REMOTE-25.1** When preparing a remote project environment, the application shall use its selected Dev Container configuration through the existing Dev Container CLI.

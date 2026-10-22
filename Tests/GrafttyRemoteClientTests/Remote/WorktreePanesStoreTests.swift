@@ -29,6 +29,27 @@ struct WorktreePanesStoreTests {
         #expect(await store.navigationSnapshot(matching: []) == .snapshot([]))
     }
 
+    @Test("@spec REMOTE-24.14: When an authenticated host sample is received, the client shall assign its own receipt time, avoid refreshing replayed samples, and invalidate telemetry on disconnect so stale or absent measurements cannot imply idle capacity.")
+    func resourceSamplesExpireAndCannotSurviveDisconnect() async throws {
+        let driver = MetadataChannelDriver()
+        let store = WorktreePanesStore(driver: driver)
+        let sample = HostResourceSnapshot(sampledAt: 100, cpuCount: 4, cpuUtilization: 0.5, diskPath: "/work")
+        driver.sidebarSnapshot = SidebarSnapshot(projects: [], hostResources: sample)
+        await store.applySnapshot([], receivedAt: Date(timeIntervalSince1970: 101))
+        await store.applySnapshot([], receivedAt: Date(timeIntervalSince1970: 110))
+        var future = sample; future.sampledAt = 10000
+        driver.sidebarSnapshot = SidebarSnapshot(projects: [], hostResources: future)
+        await store.applySnapshot([], receivedAt: Date(timeIntervalSince1970: 111))
+        let received = try #require(await store.resourceObservation)
+        #expect(received.receivedAt == 101)
+        #expect(!received.isFresh(at: Date(timeIntervalSince1970: 135)))
+        await store.markClosed(reason: "lost connection")
+        #expect(await store.resourceObservation == nil)
+        await store.applySnapshot([], receivedAt: Date(timeIntervalSince1970: 140))
+        #expect(await store.resourceObservation == nil)
+        #expect(await store.sidebar?.hostResources == nil)
+    }
+
     @Test func subscribeOpensDriverAndUpdatesState() async throws {
         let driver = FakeChannelDriver()
         let store = WorktreePanesStore(driver: driver)

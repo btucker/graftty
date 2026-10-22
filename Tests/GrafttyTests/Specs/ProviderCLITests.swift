@@ -4,6 +4,11 @@ import Testing
 import GrafttyKit
 
 struct ProviderCLITests {
+    @Test func authenticatedHostListCommandIsRegistered() throws {
+        let command = try #require(GrafttyCLI.parseAsRoot(["remote", "hosts", "--json"]) as? RemoteHosts)
+        #expect(command.json)
+    }
+
     @Test func hostInventoryCommandIsRegistered() throws {
         let tagged = try #require(GrafttyCLI.parseAsRoot(["provider", "hosts", "aws", "--json"]) as? ProviderHosts)
         #expect(tagged.json && !tagged.all)

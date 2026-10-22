@@ -73,8 +73,19 @@ public struct SidebarProject: Codable, Sendable, Hashable, Identifiable {
 public struct SidebarSnapshot: Codable, Sendable, Equatable {
     public var projects: [SidebarProject]
     public var supportsNavigationEditing: Bool
-    public init(projects: [SidebarProject], supportsNavigationEditing: Bool = true) {
+    public var hostResources: HostResourceSnapshot?
+    public init(projects: [SidebarProject], supportsNavigationEditing: Bool = true, hostResources: HostResourceSnapshot? = nil) {
         self.projects = projects; self.supportsNavigationEditing = supportsNavigationEditing
+        self.hostResources = hostResources?.isValid == true ? hostResources : nil
+    }
+    private enum CodingKeys: String, CodingKey { case projects, supportsNavigationEditing, hostResources }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        projects = try c.decode([SidebarProject].self, forKey: .projects)
+        supportsNavigationEditing = try c.decode(Bool.self, forKey: .supportsNavigationEditing)
+        // Bad optional telemetry must not discard an otherwise valid pane snapshot.
+        let resources = try? c.decode(HostResourceSnapshot.self, forKey: .hostResources)
+        hostResources = resources?.isValid == true ? resources : nil
     }
 }
 

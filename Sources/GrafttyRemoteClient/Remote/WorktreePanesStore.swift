@@ -24,6 +24,7 @@ public actor WorktreePanesStore {
 
     public private(set) var current: [WorktreePanes] = []
     public private(set) var sidebar: SidebarSnapshot?
+    public private(set) var resourceObservation: HostResourceObservation?
     public var currentSnapshot: PanesStateMessage? {
         hasReceivedSnapshot ? .snapshot(current, sidebar: sidebar) : nil
     }
@@ -60,15 +61,25 @@ public actor WorktreePanesStore {
     public func unsubscribe() async {
         driver.close()
         self.connectionState = .closed(reason: "unsubscribed")
+        clearResources()
     }
 
     /// Called by the channel driver's `onSnapshot` callback when a new
     /// snapshot arrives. Wired up by whoever constructs the driver +
     /// store (see Task 12 for production wiring; tests inject directly).
-    public func applySnapshot(_ snapshot: [WorktreePanes]) {
+    public func applySnapshot(_ snapshot: [WorktreePanes], receivedAt: Date = Date()) {
         // The channel's serial drain awaits this callback before decoding the
         // next frame, so these metadata and rows belong to the same frame.
         self.sidebar = (driver as? SidebarSnapshotProviding)?.sidebarSnapshot
+        if case .closed = connectionState {
+            clearResources()
+        } else if let sample = sidebar?.hostResources, sample.isValid {
+            // Unchanged/replayed samples must not renew the local receipt timestamp.
+            if sample.sampledAt <= receivedAt.timeIntervalSince1970 + 5,
+               resourceObservation.map({ sample.sampledAt > $0.sample.sampledAt }) ?? true {
+                resourceObservation = HostResourceObservation(sample: sample, receivedAt: receivedAt.timeIntervalSince1970)
+            }
+        } else { clearResources() }
         self.current = snapshot
         self.hasReceivedSnapshot = true
     }
@@ -77,6 +88,12 @@ public actor WorktreePanesStore {
     /// channel closes.
     public func markClosed(reason: String) {
         self.connectionState = .closed(reason: reason)
+        clearResources()
+    }
+
+    private func clearResources() {
+        resourceObservation = nil
+        sidebar?.hostResources = nil
     }
 }
 

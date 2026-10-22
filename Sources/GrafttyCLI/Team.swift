@@ -309,7 +309,7 @@ struct TeamHook: ParsableCommand {
                     stageAttentionProgress()
                 }
                 print(Self.unrenderedHookOutput(runtime: runtime, event: event))
-            case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamInbox,
+            case .remoteHosts, .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamInbox,
                 .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
                 print(Self.unrenderedHookOutput(runtime: runtime, event: event))
             }
@@ -600,7 +600,7 @@ struct TeamInbox: ParsableCommand {
             case .serverBusy:
                 writeError(ResponseMessage.serverBusyMessage)
                 throw ExitCode(1)
-            case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
+            case .remoteHosts, .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
                  .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
                 writeError("Unexpected response for team inbox")
                 throw ExitCode(1)
@@ -659,7 +659,7 @@ struct TeamInbox: ParsableCommand {
             writeError(Self.advanceFailureGuidance)
             writeError(ResponseMessage.serverBusyMessage)
             throw ExitCode(1)
-        case .linuxSetupIdentity, .paneList, .paneShow, .teamList, .teamHookOutput,
+        case .remoteHosts, .linuxSetupIdentity, .paneList, .paneShow, .teamList, .teamHookOutput,
              .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
             writeError(Self.advanceFailureGuidance)
             writeError("Unexpected response while advancing team inbox")
@@ -1410,7 +1410,7 @@ private enum TeamOutput {
         case .serverBusy:
             CLIEnv.printError(ResponseMessage.serverBusyMessage)
             throw ExitCode(1)
-        case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox,
+        case .remoteHosts, .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox,
              .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
             CLIEnv.printError("Unexpected response for team members")
             throw ExitCode(1)

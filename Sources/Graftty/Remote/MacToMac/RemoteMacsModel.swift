@@ -198,16 +198,17 @@ final class RemoteMacsModel: ObservableObject {
     func remoteMacConnectionSummaries() async
         -> [RemoteMacConnectionSummary] {
         await loadSavedRemotes()
-        return savedRemoteMacs.map { remoteMac in
-            let state = connectionState(for: RemoteMacIdentity(remoteMac))
-            return RemoteMacConnectionSummary(
-                deviceID: remoteMac.id,
-                fingerprint: remoteMac.fingerprint,
-                label: remoteMac.label,
+        var summaries: [RemoteMacConnectionSummary] = []
+        for remoteMac in savedRemoteMacs {
+            let identity = RemoteMacIdentity(remoteMac)
+            let observation = await connectionRegistry.resourceObservation(for: identity)
+            let state = connectionState(for: identity)
+            summaries.append(RemoteMacConnectionSummary(
+                deviceID: remoteMac.id, fingerprint: remoteMac.fingerprint, label: remoteMac.label,
                 lastKnownHost: remoteMac.lastKnownBaseURL?.host,
-                state: RemoteMacConnectionSummary.State(state)
-            )
+                state: RemoteMacConnectionSummary.State(state), resourceObservation: observation))
         }
+        return summaries
     }
 
     func reconnectRemoteMac(target: String) async -> ResponseMessage {
