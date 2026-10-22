@@ -13,7 +13,7 @@ import WebKit
 @MainActor
 @Suite(.serialized)
 struct HostBrowserProxyTests {
-    @Test("@spec PORTS-5.13: When the host browser loads a worktree URL, the application shall send WebKit's HTTP request through the paired host's authenticated tunnel and render the host's response.", .timeLimit(.minutes(1)), arguments: ["127.0.0.1", "localhost", "[::1]", "example.invalid"])
+    @Test("@spec PORTS-5.13: When the host browser loads a worktree URL, the application shall send WebKit's HTTP request through the paired host's authenticated tunnel and render the host's response.", .timeLimit(.minutes(2)), arguments: ["127.0.0.1", "localhost", "[::1]", "example.invalid"])
     func webKitLoadsLoopbackPageThroughProxy(targetHost: String) async throws {
         let url = URL(string: "http://\(targetHost):32123/")!
         let network = HostBrowserNetwork()
@@ -97,7 +97,7 @@ struct HostBrowserProxyTests {
         try await serving.value
     }
 
-    @Test("@spec PORTS-5.14: When a host browser sign-in page redirects to its loopback OAuth callback, the application shall forward the unchanged callback path and query through the same paired Mac.", .timeLimit(.minutes(1)))
+    @Test("@spec PORTS-5.14: When a host browser sign-in page redirects to its loopback OAuth callback, the application shall forward the unchanged callback path and query through the same paired Mac.", .timeLimit(.minutes(2)))
     func authRedirectReachesTheHostCallback() async throws {
         let callback = URL(string: "http://127.0.0.1:32135/callback/mcp?code=test-code&state=test-state")!
         var authorization = URLComponents(string: "http://example.invalid:32134/authorize")!
@@ -129,7 +129,7 @@ struct HostBrowserProxyTests {
         try await expectPage("mcp-sign-in-complete", url: authorization.url!, configuration: configuration)
     }
 
-    @Test func signInUsesPhoneNetworkingAndOnlyTunnelsItsCallback() async throws {
+    @Test(.timeLimit(.minutes(2))) func signInUsesPhoneNetworkingAndOnlyTunnelsItsCallback() async throws {
         let provider = try NWListener(using: .tcp, on: 32136)
         let callback = URL(string: "http://localhost:32137/callback?code=test&state=unchanged")!
         let queue = DispatchQueue(label: "graftty.auth.phone-provider.test")
@@ -575,14 +575,14 @@ struct HostBrowserProxyTests {
             previousKeyWindow?.makeKey()
         }
         view.load(URLRequest(url: url))
-        // CI can take several seconds to launch its first WebContent process.
-        // Keep the load bounded without accepting a failed navigation or missing page.
-        let deadline = ContinuousClock.now + .seconds(30)
+        // A fresh CI simulator can take over 30 seconds to start WebContent
+        // and GPU processes. Finish immediately on navigation or its failure.
+        let deadline = ContinuousClock.now + .seconds(60)
         while !navigation.finished, navigation.failure == nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(navigation.failure == nil, "\(String(describing: navigation.failure))")
-        try #require(navigation.finished)
+        try #require(navigation.finished, "WebKit did not finish loading the fixture page within 60 seconds")
         let body = try await view.evaluateJavaScript("document.body.textContent") as? String
         #expect(body == expected)
     }
@@ -642,7 +642,7 @@ struct HostBrowserProxyTests {
         #expect(try await Self.receive(6, from: socket) == Data("shared".utf8))
     }
 
-    @Test func closingSecondWindowPreservesFirstWindowsPublicHostProxy() async throws {
+    @Test(.timeLimit(.minutes(2))) func closingSecondWindowPreservesFirstWindowsPublicHostProxy() async throws {
         let first = HostBrowserNetwork(), second = HostBrowserNetwork()
         defer { first.stop(); second.stop() }
         let url = URL(string: "http://example.invalid:32128/")!
@@ -655,7 +655,7 @@ struct HostBrowserProxyTests {
         try await expectPage("surviving-window", url: url, configuration: configuration)
     }
 
-    @Test(arguments: ["127.0.0.1", "example.invalid"])
+    @Test(.timeLimit(.minutes(2)), arguments: ["127.0.0.1", "example.invalid"])
     func backgroundWindowsDisconnectedLeaseDoesNotBlockActiveWindow(targetHost: String) async throws {
         let first = HostBrowserNetwork(), second = HostBrowserNetwork()
         defer { first.stop(); second.stop() }

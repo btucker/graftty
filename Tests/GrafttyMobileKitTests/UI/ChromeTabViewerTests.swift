@@ -6,7 +6,6 @@ import GrafttyRemoteClient
 #if canImport(UIKit)
 import SwiftUI
 import UIKit
-import WebKit
 import Observation
 #endif
 
@@ -160,7 +159,7 @@ struct ChromeTabViewerRenderingTests {
 
     @Test("A rendered browser page keeps input hidden until the keyboard is explicitly requested")
     func rendersPageWithKeyboardHiddenAndVisible() async throws {
-        let page = try await renderBrowserPage()
+        let page = try renderBrowserFrame()
         let model = ChromeTabViewerModel(), driver = RenderedPageDriver(page: page)
         let viewer = ChromeTabViewer(target: "pane", connectionProvider: { nil },
                                      onChooseLocal: { _ in }, model: model,
@@ -174,6 +173,7 @@ struct ChromeTabViewerRenderingTests {
         try #require(model.isConnected && model.frameInputEnabled && model.image != nil)
         try saveImage(try #require(model.image), name: "page-390-decoded-frame")
         #expect(hasInk(try #require(model.image)))
+        #expect(hasBlueButton(try #require(model.image)))
         fixture.host.view.layoutIfNeeded()
         #expect(descendants(of: fixture.host.view).compactMap { $0 as? UITextField }.isEmpty)
         let hidden = try saveRender(fixture.host.view, name: "page-390-keyboard-hidden")
@@ -216,7 +216,6 @@ struct ChromeTabViewerRenderingTests {
         let visible = try saveRender(fixture.host.view, name: "page-390-keyboard-visible")
         #expect(hasInk(visible, in: pageContentRect(fixture, model: model)))
         try saveSceneRender(fixture, name: "page-390-keyboard-visible-scene")
-        try await Task.sleep(for: .seconds(3))
     }
 
     @Test("@spec CHROME-2.14: While a host Chrome tab selection or navigation awaits acknowledgment, the application shall prevent Local browser selection and use the acknowledged selected tab's URL when Local is chosen afterward.")
@@ -305,70 +304,37 @@ struct ChromeTabViewerRenderingTests {
         try saveImage(image, name: name)
     }
 
-    private func renderBrowserPage() async throws -> UIImage {
-        let scene = try #require(UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }.first { $0.activationState == .foregroundActive })
-        let previous = scene.windows.first { $0.isKeyWindow }
-        let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
-        let browser = WKWebView(frame: window.bounds)
-        browser.scrollView.contentInsetAdjustmentBehavior = .never
-        let navigation = PageNavigation()
-        browser.navigationDelegate = navigation
-        let controller = UIViewController()
-        controller.view = browser
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        defer {
-            browser.stopLoading()
-            browser.navigationDelegate = nil
-            window.isHidden = true
-            window.rootViewController = nil
-            previous?.makeKey()
+    private func renderBrowserFrame() throws -> UIImage {
+        // The remote viewer consumes JPEG frames, not a live WebKit view.
+        // Draw its input locally; HostBrowserProxyTests cover real navigation.
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 390, height: 700), format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 390, height: 700))
+            let ink = UIColor(red: 0.12, green: 0.13, blue: 0.14, alpha: 1)
+            ("Sign in to continue" as NSString).draw(
+                in: CGRect(x: 24, y: 60, width: 342, height: 80),
+                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 30), .foregroundColor: ink])
+            ("Approve access with your account." as NSString).draw(
+                in: CGRect(x: 24, y: 150, width: 342, height: 80),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 24), .foregroundColor: ink])
+            ("Email" as NSString).draw(
+                at: CGPoint(x: 24, y: 250),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 20), .foregroundColor: ink])
+            UIColor.gray.setStroke()
+            UIBezierPath(roundedRect: CGRect(x: 24, y: 286, width: 342, height: 56), cornerRadius: 8).stroke()
+            ("you@example.com" as NSString).draw(
+                at: CGPoint(x: 36, y: 300),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 22), .foregroundColor: ink])
+            UIColor(red: 0.14, green: 0.39, blue: 0.92, alpha: 1).setFill()
+            UIBezierPath(roundedRect: CGRect(x: 24, y: 370, width: 342, height: 56), cornerRadius: 8).fill()
+            ("Continue" as NSString).draw(
+                at: CGPoint(x: 150, y: 384),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 22), .foregroundColor: UIColor.white])
         }
-        browser.loadHTMLString("""
-        <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>body{margin:0;background:#fff;color:#202124;font:24px -apple-system,sans-serif}
-        main{width:100%;max-width:480px;box-sizing:border-box;padding:0 24px;margin:60px auto}h1{font-size:30px;margin-bottom:18px}
-        p{color:#59636e;line-height:1.5}label{display:block;margin-top:28px;font-size:20px}
-        input{box-sizing:border-box;width:100%;height:56px;margin-top:10px;border:1px solid #aab2bd;border-radius:8px;padding:12px;font:22px -apple-system,sans-serif}
-        button{margin-top:28px;width:100%;height:56px;border:0;border-radius:8px;background:#2463eb;color:white;font:22px -apple-system,sans-serif}
-        </style></head><body><main><h1>Sign in to continue</h1><p>Approve access with your account.</p>
-        <label>Email<input placeholder="you@example.com"></label><button>Continue</button></main></body></html>
-        """, baseURL: URL(string: "https://example.com/sign-in"))
-        // The first page in a fresh simulator also starts WebKit's processes.
-        let deadline = ContinuousClock.now + .seconds(30)
-        while !navigation.finished, navigation.error == nil, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        if let error = navigation.error { throw error }
-        try #require(navigation.finished, "WebKit did not finish loading the fixture page within 30 seconds")
-        browser.layoutIfNeeded()
-        _ = try await browser.callAsyncJavaScript("""
-        await Promise.race([
-            new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-            new Promise(resolve => setTimeout(resolve, 150))
-        ]);
-        return document.querySelector('button').getBoundingClientRect().height;
-        """, arguments: [:], in: nil, contentWorld: .page)
-        let configuration = WKSnapshotConfiguration()
-        configuration.rect = browser.bounds
-        configuration.snapshotWidth = NSNumber(value: browser.bounds.width)
-        configuration.afterScreenUpdates = true
-        let paintDeadline = ContinuousClock.now + .seconds(2)
-        repeat {
-            let image: UIImage = try await withCheckedThrowingContinuation { continuation in
-                browser.takeSnapshot(with: configuration) { image, error in
-                    if let image { continuation.resume(returning: image) }
-                    else { continuation.resume(throwing: error ?? SnapshotFailure()) }
-                }
-            }
-            try saveImage(image, name: "page-390-browser-source")
-            if hasBlueButton(image) { return image }
-            try await Task.sleep(for: .milliseconds(50))
-        } while ContinuousClock.now < paintDeadline
-        Issue.record("WKWebView snapshot did not paint the sign-in page's blue Continue button")
-        throw SnapshotFailure()
+        try saveImage(image, name: "page-390-browser-source")
+        return image
     }
 
     private func descendants(of root: UIView) -> [UIView] {
@@ -404,22 +370,6 @@ struct ChromeTabViewerRenderingTests {
             context.draw(source, in: CGRect(x: 0, y: 0, width: 64, height: 64))
             let pixels = raw.bindMemory(to: UInt8.self)
             return stride(from: 0, to: pixels.count, by: 4).filter { matching(pixels[$0], pixels[$0 + 1], pixels[$0 + 2]) }.count
-        }
-    }
-
-    private struct SnapshotFailure: Error {}
-    private final class PageNavigation: NSObject, WKNavigationDelegate {
-        var finished = false
-        var error: (any Error)?
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished = true }
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
-            self.error = error
-        }
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
-            self.error = error
-        }
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            error = NSError(domain: WKError.errorDomain, code: WKError.webContentProcessTerminated.rawValue)
         }
     }
 }
