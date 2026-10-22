@@ -167,7 +167,7 @@ enum DeleteWorktreeFlow {
                 leaverBranch: leaverBranch,
                 leaverPath: wt.path,
                 reason: .removed,
-                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+                teamsEnabled: AppServices.teamsEnabled,
                 dispatcher: teamEventDispatcher
             )
         }
