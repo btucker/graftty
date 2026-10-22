@@ -70,14 +70,14 @@ public final class TypedRequestHandler<Request: Decodable & Sendable, Response: 
         guard !Task.isCancelled else { return nil }
         let response: Response
         do {
-            let request = try JSONDecoder().decode(Request.self, from: bytes)
+            let request = try JSONDecoder.shared.decode(Request.self, from: bytes)
             guard !Task.isCancelled else { return nil }
             response = await mutator(request)
         } catch {
             response = .malformedRequest(error)
         }
         guard !Task.isCancelled else { return nil }
-        return try? JSONEncoder().encode(response)
+        return try? JSONEncoder.shared.encode(response)
     }
 }
 
