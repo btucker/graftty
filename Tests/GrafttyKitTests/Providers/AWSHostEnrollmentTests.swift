@@ -12,6 +12,36 @@ struct AWSHostEnrollmentTests {
               user: "ubuntu", executable: "/home/ubuntu/.local/bin/graftty-host", stateDirectory: "/home/ubuntu/.local/share/graftty")
     }
 
+    @Test("@spec REMOTE-26.24: When connecting through AWS Session Manager, the application shall use the completed enrollment's exact instance and SSH port, recheck its account and current parent and worker identities, and reject revoked or incomplete enrollment without restoring trust.")
+    func preparesProxyOnlyForCurrentCompletedEnrollment() async throws {
+        let root = temporaryDirectory(); defer { try? FileManager.default.removeItem(at: root) }
+        let operation = UUID()
+        let runner = EnrollmentExecutor(operation: operation, parent: parent, host: host)
+        let peers = TrustedPeerStore(directory: root.appendingPathComponent("Remote"))
+        let enrollment = AWSHostEnrollment(directory: root.appendingPathComponent("Enrollment"), peers: peers, executor: runner, pause: {})
+        await #expect(throws: (any Error).self) { _ = try await enrollment.prepareConnection(operationID: operation, parent: parent) }
+        #expect(runner.calls.isEmpty)
+        _ = try await enrollment.enroll(operationID: operation, target: target, parent: parent)
+        let plan = try await enrollment.prepareConnection(operationID: operation, parent: parent)
+        #expect(plan.identity == host)
+        #expect(plan.target == target)
+        #expect(plan.arguments.starts(with: ["ssm", "start-session", "--target", target.instanceID]))
+        #expect(plan.arguments.contains("AWS-StartSSHSession"))
+        let parameters = try #require(plan.arguments.firstIndex(of: "--parameters"))
+        #expect(try JSONDecoder().decode([String: [String]].self, from: Data(plan.arguments[parameters + 1].utf8)) == ["portNumber": ["8801"]])
+        #expect(runner.calls.last?.starts(with: ["sts", "get-caller-identity"]) == true)
+        let changed = LinuxHostTrustRequest(deviceID: parent.deviceID, displayName: parent.displayName, publicKey: host.publicKey, serverPublicKey: parent.serverPublicKey)
+        let count = runner.calls.count
+        await #expect(throws: (any Error).self) { _ = try await enrollment.prepareConnection(operationID: operation, parent: changed) }
+        #expect(runner.calls.count == count)
+        let wrongAccount = AWSHostEnrollment(directory: root.appendingPathComponent("Enrollment"), peers: peers,
+            executor: EnrollmentExecutor(operation: operation, parent: parent, host: host, fault: "account"), pause: {})
+        await #expect(throws: (any Error).self) { _ = try await wrongAccount.prepareConnection(operationID: operation, parent: parent) }
+        try peers.remove(id: .init(value: host.deviceID))
+        await #expect(throws: (any Error).self) { _ = try await enrollment.prepareConnection(operationID: operation, parent: parent) }
+        #expect(try peers.list().isEmpty)
+    }
+
     @Test func enrollsExactInstanceAndResumesWithoutRepeatingCommandOrGrant() async throws {
         let root = temporaryDirectory(); defer { try? FileManager.default.removeItem(at: root) }
         let operation = UUID()

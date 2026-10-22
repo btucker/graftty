@@ -73,22 +73,8 @@ struct RemoteSetupLinux: AsyncParsableCommand {
 
     func run() async throws {
         #if os(macOS)
-        let operation = Task { try await provision() }
-        let previousInterrupt = signal(SIGINT, SIG_IGN)
-        let previousTerminate = signal(SIGTERM, SIG_IGN)
-        let signals = [SIGINT, SIGTERM].map { number in
-            let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
-            source.setEventHandler { operation.cancel() }
-            source.resume()
-            return source
-        }
-        defer {
-            signals.forEach { $0.cancel() }
-            signal(SIGINT, previousInterrupt)
-            signal(SIGTERM, previousTerminate)
-        }
         do {
-            let result = try await operation.value
+            let result = try await withCLIInterruptCancellation { try await provision() }
             if json {
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.sortedKeys]

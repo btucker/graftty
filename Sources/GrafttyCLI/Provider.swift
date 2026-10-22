@@ -7,7 +7,7 @@ struct Provider: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Save compute preferences, inspect hosts, and compare AWS Spot offers",
         discussion: "Preferences are local to this user. Discovery and preference commands work without Graftty running. Enrollment uses the running parent app. These commands do not launch or terminate instances.",
-        subcommands: [ProviderConfigure.self, ProviderShow.self, ProviderList.self, ProviderRemove.self, ProviderOffers.self, ProviderHosts.self, ProviderEnroll.self])
+        subcommands: [ProviderConfigure.self, ProviderShow.self, ProviderList.self, ProviderRemove.self, ProviderOffers.self, ProviderHosts.self, ProviderEnroll.self, ProviderProbe.self])
 }
 
 struct ProviderConfigure: ParsableCommand {
@@ -256,7 +256,7 @@ struct ProviderEnroll: AsyncParsableCommand {
     }
 }
 
-private enum ProviderOutput {
+enum ProviderOutput {
     static func validate(_ provider: String) throws {
         guard provider == "aws" else { throw ValidationError("Unknown compute provider '\(provider)'. Supported provider: aws.") }
     }

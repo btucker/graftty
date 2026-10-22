@@ -32,6 +32,91 @@ struct DirectSSHLoopbackTests {
         await client.close(); await server.close()
     }
 
+    @Test("@spec REMOTE-26.22: When SSH uses a provider proxy's standard streams, the application shall retain host-key pinning, public-key client authentication, and bidirectional control without exposing a local TCP listener.", .timeLimit(.minutes(1)), arguments: [true, false])
+    func authenticatesProxyStreams(pinned: Bool) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        var peer = try f.peer(key: f.clientKey)
+        peer.capabilities.replication = .allowed
+        try f.store.add(peer)
+        let server = f.server()
+        let callback = AsyncStream<Data>.makeStream()
+        await server.setGitControl(.init(handler: { _, data in data }, onConnect: { _, session in
+            do { callback.continuation.yield(try await session.send(Data("worker callback".utf8))) }
+            catch { callback.continuation.finish() }
+        }))
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let proxy = Process(), input = Pipe(), output = Pipe()
+        proxy.executableURL = URL(fileURLWithPath: "/bin/sh")
+        // nc is only the loopback fixture. The production proxy will be aws.
+        proxy.arguments = ["-c", "printf 'Starting session with SessionId: fixture\\n'; exec /usr/bin/nc 127.0.0.1 \(port)"]
+        proxy.standardInput = input; proxy.standardOutput = output; proxy.standardError = FileHandle.nullDevice
+        try proxy.run()
+        defer { if proxy.isRunning { proxy.terminate() }; proxy.waitUntilExit() }
+        let fingerprint = pinned ? try f.fingerprint : try RemoteIdentityFingerprint(rawBytes: Data(repeating: 7, count: 32))
+        let client = try f.client(fingerprint: fingerprint)
+        do {
+            if pinned {
+                try await client.connect(input: output.fileHandleForReading, output: input.fileHandleForWriting)
+                let channel = try await client.makeGitControlClient(handler: { bytes in bytes })
+                try await channel.open()
+                #expect(try await channel.send(Data("parent request".utf8)) == Data("parent request".utf8))
+                var iterator = callback.stream.makeAsyncIterator()
+                #expect(await iterator.next() == Data("worker callback".utf8))
+                channel.close()
+            } else {
+                await #expect(throws: (any Error).self) { try await client.connect(input: output.fileHandleForReading, output: input.fileHandleForWriting) }
+            }
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec REMOTE-26.26: When a host resource probe receives its first authenticated sidebar snapshot, the application shall timestamp the observation locally, preserve unknown metrics, and fail on timeout or disconnect.", .timeLimit(.minutes(1)), arguments: ["sample", "unknown", "timeout", "disconnect"])
+    func probesAuthenticatedResources(mode: String) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey))
+        let sample = HostResourceSnapshot(sampledAt: Date().timeIntervalSince1970, cpuCount: 4, cpuUtilization: 0.25, diskPath: "/workspace")
+        let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
+            streamFactory: { _ in DirectEchoTerminalStream() }, panesStateSubscribe: { _ in .init {} },
+            panesStateV2Subscribe: { onChange in
+                if mode == "sample" || mode == "unknown" {
+                    await onChange(.snapshot([], sidebar: .init(projects: [], hostResources: mode == "sample" ? sample : nil)))
+                }
+                return .init {}
+            }, paneControlMutator: { _ in .ok }, displayOwnershipStore: SessionDisplayOwnershipStore())
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            if mode == "sample" {
+                let observation = try #require(try await client.resourceObservation())
+                #expect(observation.sample == sample)
+                #expect(observation.isFresh())
+            } else if mode == "unknown" {
+                #expect(try await client.resourceObservation() == nil)
+            } else if mode == "disconnect" {
+                await server.close()
+                await #expect(throws: (any Error).self) { _ = try await client.resourceObservation() }
+            } else {
+                await #expect(throws: (any Error).self) { _ = try await client.resourceObservation(timeout: .milliseconds(50)) }
+            }
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test(.timeLimit(.minutes(1))) func pipeBootstrapRejectsFilesWithoutClosingCallerHandles() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try FileManager.default.createDirectory(at: f.directory, withIntermediateDirectories: true)
+        let file = f.directory.appendingPathComponent("not-a-pipe")
+        try Data("original".utf8).write(to: file)
+        let input = try FileHandle(forReadingFrom: file)
+        defer { try? input.close() }
+        let output = Pipe()
+        let client = try f.client()
+        await #expect(throws: (any Error).self) { try await client.connect(input: input, output: output.fileHandleForWriting) }
+        #expect(try input.readToEnd() == Data("original".utf8))
+        await client.close()
+    }
+
     private struct Fixture {
         let directory = URL.temporaryDirectory.appendingPathComponent("direct-ssh-\(UUID())")
         let hostKey = Curve25519.Signing.PrivateKey()

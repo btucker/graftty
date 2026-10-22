@@ -254,6 +254,7 @@ let package = Package(
             dependencies: [
                 "GrafttyKit",
                 "GrafttyProtocol",
+                "GrafttyRemoteClient",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             swiftSettings: strictWarnings
@@ -303,7 +304,7 @@ let package = Package(
                 "Support/MutableBox.swift", "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift", "Web/WebSocketOutputTests.swift",
                 "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamInboxParseCacheTests.swift", "Teams/TeamPresenceStorageTests.swift",
                 "Teams/AttentionFileHandoffTests.swift", "Remote/MacToMac/GrafttyBonjourServiceTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift",
-                "Persistence/JSONStoreCompatibilityTests.swift", "Providers/AWSProviderTests.swift", "Providers/AWSHostEnrollmentTests.swift", "Providers/AWSHostInventoryTests.swift", "Placement/HostPlacementPlannerTests.swift", "Placement/HostPlacementLedgerTests.swift", "DevContainers/DevContainerPreparerTests.swift", "Replication/GitDelegationStoreTests.swift", "Replication/GitReceiveHookTests.swift", "Replication/GitReceiveBrokerTests.swift"] : nil,
+                "Persistence/JSONStoreCompatibilityTests.swift", "CLI/DuplexSubprocessTests.swift", "Providers/AWSProviderTests.swift", "Providers/AWSHostEnrollmentTests.swift", "Providers/AWSHostInventoryTests.swift", "Placement/HostPlacementPlannerTests.swift", "Placement/HostPlacementLedgerTests.swift", "DevContainers/DevContainerPreparerTests.swift", "Replication/GitDelegationStoreTests.swift", "Replication/GitReceiveHookTests.swift", "Replication/GitReceiveBrokerTests.swift"] : nil,
             resources: [
                 .process("Hosting/Fixtures"),
                 .copy("Web/Fixtures"),

@@ -69,6 +69,17 @@ struct ProviderCLITests {
         #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(root) }
     }
 
+    @Test("@spec REMOTE-26.25: When probing an AWS host through the CLI, the application shall require a saved enrollment operation and report its pinned identity and authenticated resource observation without accepting endpoint overrides.")
+    func probeRequiresEnrollmentWithoutEndpointOverrides() throws {
+        let args = ["provider", "probe", "aws", "--operation-id", UUID().uuidString]
+        _ = try GrafttyCLI.parseAsRoot(args + ["--json"])
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(["provider", "probe", "aws"]) }
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(["provider", "probe", "aws", "--operation-id", "bad"]) }
+        for override in ["--host", "--port", "--instance-id", "--profile"] {
+            #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(args + [override, "untrusted"]) }
+        }
+    }
+
     @Test func providerCommandsAreRegistered() throws {
         _ = try GrafttyCLI.parseAsRoot([
             "provider", "configure", "aws", "--profile", "development", "--region", "us-east-1",

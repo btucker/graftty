@@ -6,14 +6,20 @@ import CryptoKit
 import Foundation
 import GrafttyProtocol
 import NIOCore
+import NIOConcurrencyHelpers
 import NIOPosix
 import NIOSSH
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 #if canImport(Network)
 import Network
 import GrafttyTunnel
 #endif
 
-/// A pinned, key-authenticated Graftty SSH connection over TCP.
+/// A pinned, key-authenticated Graftty SSH connection over TCP or provider proxy streams.
 public actor DirectSSHHostConnection {
     public typealias State = RemoteHostConnectionState
     public private(set) var state: State = .idle
@@ -31,8 +37,20 @@ public actor DirectSSHHostConnection {
     public func setOnStateChange(_ handler: (@Sendable (State) -> Void)?) { onStateChange = handler }
 
     public func connect(host: String, port: Int = 8801) async throws {
-        guard state == .idle else { throw ConnectionError.notIdle }
         guard !host.isEmpty, (1...65535).contains(port) else { throw ConnectionError.invalidEndpoint }
+        try await connect(transport: .tcp(host, port))
+    }
+
+    /// Duplicates the proxy handles. The caller owns its process and original
+    /// handles; this connection closes only the duplicates, including on failure.
+    public func connect(input: FileHandle, output: FileHandle) async throws {
+        try await connect(transport: .pipes(input, output))
+    }
+
+    private enum Transport { case tcp(String, Int), pipes(FileHandle, FileHandle) }
+
+    private func connect(transport: Transport) async throws {
+        guard state == .idle else { throw ConnectionError.notIdle }
         try Task.checkCancellation()
         setState(.connecting)
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -41,22 +59,48 @@ public actor DirectSSHHostConnection {
         let fingerprint = expectedHostFingerprint
         var connectingChannel: Channel?
         do {
-            let channel = try await ClientBootstrap(group: group)
-                .connectTimeout(.seconds(10))
-                .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
-                .channelInitializer { channel in
-                    // Happy Eyeballs may initialize several channels. Each attempt
-                    // owns its authentication state; only the winning one is used.
-                    let waiter = SSHReplyWaiter<Void>()
-                    let handler = SSHClientSetup.makeHandler(clientKey: key, expectedHostFingerprint: fingerprint,
-                        allocator: channel.allocator,
-                        onAuthenticationRejected: { waiter.finish(.failure(ConnectionError.authenticationRejected)) })
-                    channel.closeFuture.whenComplete { _ in waiter.finish(.failure(ChannelError.ioOnClosedChannel)) }
-                    return channel.eventLoop.makeCompletedFuture {
-                        try channel.pipeline.syncOperations.addHandler(handler)
-                        try channel.pipeline.syncOperations.addHandler(DirectSSHAuthenticationHandler(waiter: waiter, handlerBox: DirectSSHHandlerBox(handler)))
+            let initialize: @Sendable (Channel) -> EventLoopFuture<Void> = { channel in
+                // TCP Happy Eyeballs may initialize several channels. Each
+                // transport owns its authentication state until it wins.
+                let waiter = SSHReplyWaiter<Void>()
+                let handler = SSHClientSetup.makeHandler(clientKey: key, expectedHostFingerprint: fingerprint,
+                    allocator: channel.allocator,
+                    onAuthenticationRejected: { waiter.finish(.failure(ConnectionError.authenticationRejected)) })
+                channel.closeFuture.whenComplete { _ in waiter.finish(.failure(ChannelError.ioOnClosedChannel)) }
+                return channel.eventLoop.makeCompletedFuture {
+                    try channel.pipeline.syncOperations.addHandler(handler)
+                    try channel.pipeline.syncOperations.addHandler(DirectSSHAuthenticationHandler(waiter: waiter, handlerBox: DirectSSHHandlerBox(handler)))
+                }
+            }
+            let channel: Channel
+            switch transport {
+            case .tcp(let host, let port):
+                channel = try await ClientBootstrap(group: group)
+                    .connectTimeout(.seconds(10))
+                    .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
+                    .channelInitializer(initialize).connect(host: host, port: port).get()
+            case .pipes(let input, let output):
+                let reader = fcntl(input.fileDescriptor, F_DUPFD_CLOEXEC, 0)
+                guard reader >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                let writer = fcntl(output.fileDescriptor, F_DUPFD_CLOEXEC, 0)
+                guard writer >= 0 else { closeDescriptor(reader); throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                let initialized = NIOLockedValueBox(false)
+                do {
+                    channel = try await NIOPipeBootstrap(group: group).channelInitializer { channel in
+                        initialized.withLockedValue { $0 = true }
+                        return initialize(channel)
                     }
-                }.connect(host: host, port: port).get()
+                        .takingOwnershipOfDescriptors(input: reader, output: writer).get()
+                } catch {
+                    // Descriptor validation/construction failures retain caller
+                    // ownership. Once initialized, NIO closes the channel on a
+                    // pipeline or registration failure. Do not close reused FDs.
+                    if !initialized.withLockedValue({ $0 }) {
+                        closeDescriptor(reader); closeDescriptor(writer)
+                    }
+                    throw error
+                }
+            }
             connectingChannel = channel
             guard !state.isTerminal else { throw CancellationError() }
             self.channel = channel
@@ -81,10 +125,20 @@ public actor DirectSSHHostConnection {
         onClosed: @escaping @Sendable (String) async -> Void,
         originAware: Bool = false, requestReply: Bool = false
     ) throws -> PanesStateChannelClient {
+        try makePanesStateClient(onSnapshot: onSnapshot, onClosed: onClosed,
+            originAware: originAware, requestReply: requestReply, onSidebarSnapshot: { _ in })
+    }
+
+    func makePanesStateClient(
+        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
+        onClosed: @escaping @Sendable (String) async -> Void,
+        originAware: Bool = false, requestReply: Bool = false,
+        onSidebarSnapshot: @escaping @Sendable (SidebarSnapshot?) async -> Void
+    ) throws -> PanesStateChannelClient {
         let (channel, handler) = try connectedTransport()
         return PanesStateChannelClient(parentChannel: channel, parentHandler: handler.handler,
             subsystemName: originAware ? SSHChannelTypeNames.panesStateV2 : SSHChannelTypeNames.panesState,
-            requestReply: requestReply, onSnapshot: onSnapshot, onClosed: onClosed)
+            requestReply: requestReply, onSnapshot: onSnapshot, onClosed: onClosed, onSidebarSnapshot: onSidebarSnapshot)
     }
     public func makeChromeTabClient() throws -> ChromeTabChannelClient {
         let (channel, handler) = try connectedTransport()
@@ -193,4 +247,12 @@ private final class DirectSSHAuthenticationHandler: ChannelInboundHandler, Senda
 private final class DirectSSHHandlerBox: @unchecked Sendable {
     let handler: NIOSSHHandler
     init(_ handler: NIOSSHHandler) { self.handler = handler }
+}
+
+private func closeDescriptor(_ descriptor: Int32) {
+    #if canImport(Darwin)
+    _ = Darwin.close(descriptor)
+    #else
+    _ = Glibc.close(descriptor)
+    #endif
 }

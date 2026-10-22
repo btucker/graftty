@@ -3490,6 +3490,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-26.21** When enrolling an existing AWS instance through the CLI, the application shall require an explicit account, instance, operation UUID, and development-user paths and use the running parent's public identity.
 
+**REMOTE-26.22** When SSH uses a provider proxy's standard streams, the application shall retain host-key pinning, public-key client authentication, and bidirectional control without exposing a local TCP listener.
+
+**REMOTE-26.23** When a provider proxy stops or fails, the application shall close its streams, stop its process group, and reap its child process, while retaining only bounded diagnostic output.
+
+**REMOTE-26.24** When connecting through AWS Session Manager, the application shall use the completed enrollment's exact instance and SSH port, recheck its account and current parent and worker identities, and reject revoked or incomplete enrollment without restoring trust.
+
+**REMOTE-26.25** When probing an AWS host through the CLI, the application shall require a saved enrollment operation and report its pinned identity and authenticated resource observation without accepting endpoint overrides.
+
+**REMOTE-26.26** When a host resource probe receives its first authenticated sidebar snapshot, the application shall timestamp the observation locally, preserve unknown metrics, and fail on timeout or disconnect.
+
 ### REMOTE-27.x — Native session replication and restore
 
 **REMOTE-27.1** While a delegated host is reachable, the application shall regularly copy worktree-associated native Claude and Codex session data to the recorded parent, excluding authentication files.

@@ -1,6 +1,20 @@
 import Foundation
 import GrafttyProtocol
 
+/// Locally checked connection intent, not proof of the remote endpoint. The
+/// caller must still authenticate SSH against `identity.publicKey`.
+public struct AWSHostConnectionPlan: Sendable, Equatable {
+    public let operationID: UUID
+    public let target: AWSHostEnrollmentTarget
+    public let identity: LinuxHostIdentity
+    public var arguments: [String] {
+        ["ssm", "start-session", "--target", target.instanceID,
+         "--document-name", "AWS-StartSSHSession", "--parameters", "{\"portNumber\":[\"\(identity.port)\"]}",
+         "--profile", target.profile, "--region", target.region, "--no-cli-pager", "--no-cli-auto-prompt",
+         "--cli-connect-timeout", "10", "--cli-read-timeout", "20"]
+    }
+}
+
 public struct AWSHostEnrollmentTarget: Codable, Sendable, Equatable {
     public let profile: String
     public let accountID: String
@@ -58,6 +72,34 @@ public struct AWSHostEnrollment: Sendable {
         let parent: LinuxHostTrustRequest
         var commandID: String?
         var identity: LinuxHostIdentity?
+    }
+
+    public func prepareConnection(operationID: UUID, parent: LinuxHostTrustRequest) async throws -> AWSHostConnectionPlan {
+        let plan = try connectionPlan(operationID: operationID, parent: parent)
+        try await verifyAccount(plan.target, deadline: .now.advanced(by: .seconds(45)))
+        try validateConnection(plan, parent: parent)
+        return plan
+    }
+
+    /// Recheck before admitting requests and after awaiting transport setup.
+    /// Removing enrollment or revoking pairing invalidates an existing plan.
+    public func validateConnection(_ plan: AWSHostConnectionPlan, parent: LinuxHostTrustRequest) throws {
+        guard try connectionPlan(operationID: plan.operationID, parent: parent) == plan else {
+            throw ProviderError("The saved AWS connection binding changed.")
+        }
+    }
+
+    private func connectionPlan(operationID: UUID, parent: LinuxHostTrustRequest) throws -> AWSHostConnectionPlan {
+        try Task.checkCancellation()
+        try ProviderHostEnrollment.validate(parent)
+        let file = JSONFileStore<Record>(fileURL: directory.appendingPathComponent(operationID.uuidString + ".json"))
+        guard let record = try file.load(), record.version == 1, record.operationID == operationID,
+              record.parent == parent, let identity = record.identity else {
+            throw ProviderError("No completed enrollment matches this operation and parent identity.")
+        }
+        try record.target.validate()
+        try verifyTrust(identity)
+        return AWSHostConnectionPlan(operationID: operationID, target: record.target, identity: identity)
     }
 
     /// The caller supplies the provisioning operation and exact instance returned
