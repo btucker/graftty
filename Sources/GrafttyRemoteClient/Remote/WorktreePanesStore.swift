@@ -22,6 +22,16 @@ public actor WorktreePanesStore {
         case closed(reason: String)
     }
 
+    /// Only the store publishes or finishes; observers get `frameUpdates()`.
+    private nonisolated let frames = LatestValueBroadcast<PanesStateMessage>()
+
+    /// The latest applied frame, if any, then every later one: rows and
+    /// sidebar metadata together, for observers that react to changes instead
+    /// of re-reading `current`. Ends when the channel closes or the client
+    /// unsubscribes.
+    public nonisolated func frameUpdates() -> AsyncStream<PanesStateMessage> {
+        frames.updates()
+    }
     public private(set) var current: [WorktreePanes] = []
     public private(set) var sidebar: SidebarSnapshot?
     public var currentSnapshot: PanesStateMessage? {
@@ -70,6 +80,7 @@ public actor WorktreePanesStore {
     public func unsubscribe() async {
         driver.close()
         self.connectionState = .closed(reason: "unsubscribed")
+        frames.finish()
     }
 
     /// Called by the channel driver's `onSnapshot` callback when a new
@@ -81,6 +92,7 @@ public actor WorktreePanesStore {
         self.sidebar = (driver as? SidebarSnapshotProviding)?.sidebarSnapshot
         self.current = snapshot
         self.hasReceivedSnapshot = true
+        frames.publish(.snapshot(snapshot, sidebar: sidebar))
     }
 
     /// Suspends until the first snapshot is applied or the channel closes,
@@ -133,6 +145,7 @@ public actor WorktreePanesStore {
     /// channel closes.
     public func markClosed(reason: String) {
         self.connectionState = .closed(reason: reason)
+        frames.finish()
     }
 }
 

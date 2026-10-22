@@ -2986,6 +2986,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-6.11** If the task opening a panes-state subscription is cancelled when the host rejects panes-state-v2, then the client shall stop without opening the V1 subsystem.
 
+**REMOTE-6.12** When a client observes a changing value through a latest-value broadcast, the application shall first deliver the latest published value, then deliver only the newest value published while the observer was busy, and shall end every observation once the broadcast finishes.
+
+**REMOTE-6.13** When a panes-state frame is applied, the client store shall publish its worktree rows and sidebar metadata together as one frame to every observer, and shall end those observations when the channel closes or the client unsubscribes.
+
 ### REMOTE-7.x — pane_control Channel
 
 **REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability. (Enforced at userauth: a peer with `terminalControl: .disabled` is rejected.)
