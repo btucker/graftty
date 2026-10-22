@@ -3484,6 +3484,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-26.18** When a host has only replication permission, the parent shall allow authenticated delegated Git requests without granting terminal, worktree-management, browser, or team access, and shall reject replication after its permission is revoked.
 
+**REMOTE-26.19** When a delegated host cannot reach its parent and an authorized wake path is available, the host shall attempt Wake-on-LAN and retry authenticated connection within the remaining operation deadline, without treating a sent wake packet as a receipt or delaying transfers to other reachable parents.
+
 ### REMOTE-27.x — Native session replication and restore
 
 **REMOTE-27.1** While a delegated host is reachable, the application shall regularly copy worktree-associated native Claude and Codex session data to the recorded parent, excluding authentication files.

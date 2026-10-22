@@ -126,6 +126,11 @@ struct RemoteTodo {
 """, .disabled("not yet implemented"))
     func remote_26_16() async throws { }
 
+    @Test("""
+@spec REMOTE-26.19: When a delegated host cannot reach its parent and an authorized wake path is available, the host shall attempt Wake-on-LAN and retry authenticated connection within the remaining operation deadline, without treating a sent wake packet as a receipt or delaying transfers to other reachable parents.
+""", .disabled("not yet implemented"))
+    func remote_26_19() async throws { }
+
     // MARK: - REMOTE-27.x — Native session replication and restore
 
     @Test("""
