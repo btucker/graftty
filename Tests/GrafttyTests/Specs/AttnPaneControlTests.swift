@@ -491,7 +491,7 @@ struct PaneSendAmbiguityTests {
     }
 }
 
-private func makeTempStateWithWorktree(branch: String, path: String) throws -> URL {
+func makeTempStateWithWorktree(branch: String, path: String) throws -> URL {
     let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent("graftty-test-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

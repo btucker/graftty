@@ -637,10 +637,10 @@ struct TeamInbox: ParsableCommand {
             writeError("Failed to advance team inbox: \(error)")
             throw ExitCode(1)
         }
-        try CLIEnv.expect(response, for: "team inbox", writeError: {
+        try CLIEnv.expectOk(response, for: "team inbox") {
             writeError(Self.advanceFailureGuidance)
             writeError($0)
-        }) { $0 == .ok ? () : nil }
+        }
     }
 
     private static let peekGuidance = "Inbox left unread. To mark that worktree's messages read, run `graftty team inbox` from that worktree without peek or diagnostic flags. Do not edit Graftty state files."

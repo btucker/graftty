@@ -376,8 +376,8 @@ enum PaneShowDispatcher {
         case .error(let msg):
             emit(msg, to: stderr)
             return 1
-        default:
-            emit("unexpected response", to: stderr)
+        case let response:
+            emit("Unexpected \(response.wireType) response for pane show", to: stderr)
             return 1
         }
     }
@@ -444,8 +444,8 @@ enum PaneSendDispatcher {
         case .error(let msg):
             emit(msg, to: stderr)
             return 1
-        default:
-            emit("unexpected response", to: stderr)
+        case let response:
+            emit("Unexpected \(response.wireType) response for pane send", to: stderr)
             return 1
         }
     }
@@ -487,8 +487,8 @@ private func resolveTargetPane(
     case .error(let msg):
         emit(msg, to: stderr)
         return nil
-    default:
-        emit("unexpected response from list", to: stderr)
+    case let response:
+        emit("Unexpected \(response.wireType) response for pane \(verb.rawValue)", to: stderr)
         return nil
     }
 }
@@ -630,8 +630,12 @@ enum CLIEnv {
         throw ExitCode(1)
     }
 
-    static func expectOk(_ response: ResponseMessage, for command: String) throws {
-        try expect(response, for: command) { $0 == .ok ? () : nil }
+    static func expectOk(
+        _ response: ResponseMessage,
+        for command: String,
+        writeError: (String) -> Void = printError
+    ) throws {
+        try expect(response, for: command, writeError: writeError) { $0 == .ok ? () : nil }
     }
 
     static func printError(_ msg: String) {
