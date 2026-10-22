@@ -909,7 +909,7 @@ struct MainWindow: View {
                 }
 
                 if appState.repos[repoIdx].worktrees[wtIdx].state == .closed {
-                    _ = GrafttyApp.startWorktree(
+                    _ = PaneCommands.startWorktree(
                         path: path,
                         appState: $appState,
                         terminalManager: terminalManager
@@ -3184,7 +3184,7 @@ struct MainWindow: View {
     }
 
     private func movePane(_ terminalID: PaneSlotID, to newPWD: String) {
-        GrafttyApp.reassignPaneByPWD(
+        PaneCommands.reassignPaneByPWD(
             appState: $appState,
             terminalManager: terminalManager,
             terminalID: terminalID,

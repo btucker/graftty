@@ -93,7 +93,7 @@ extension GrafttyApp {
                                 appStateBinding.wrappedValue
                                     .worktree(forPath: $0)
                             }?.splitTree.containsLeaf(slot) == true
-                    guard let newID = Self.splitPane(
+                    guard let newID = PaneCommands.splitPane(
                         appState: appStateBinding,
                         terminalManager: terminalManager,
                         targetID: slot,
@@ -141,7 +141,7 @@ extension GrafttyApp {
                                 appStateBinding.wrappedValue
                                     .worktree(forPath: $0)
                             }?.splitTree.containsLeaf(slot) == true
-                    Self.closePane(
+                    PaneCommands.closePane(
                         appState: appStateBinding,
                         terminalManager: terminalManager,
                         targetID: slot,
@@ -168,7 +168,7 @@ extension GrafttyApp {
                             message: "no pane with session name '\(target)'"
                         )
                     }
-                    Self.equalizeSplits(
+                    PaneCommands.equalizeSplits(
                         appState: appStateBinding,
                         around: PaneSlotID(id: paneID),
                         preserveZoom: true
@@ -217,7 +217,7 @@ extension GrafttyApp {
                             )
                         }
                     }
-                    guard Self.resizeSplit(
+                    guard PaneCommands.resizeSplit(
                         appState: appStateBinding,
                         target: PaneSlotID(id: paneID),
                         direction: resizeDirection,
@@ -548,7 +548,7 @@ extension GrafttyApp {
 
             case .open(let worktreeID):
                 return await MainActor.run {
-                    let result = Self.startWorktree(
+                    let result = PaneCommands.startWorktree(
                         path: worktreeID,
                         appState: appStateBinding,
                         terminalManager: terminalManager,

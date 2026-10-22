@@ -639,7 +639,7 @@ struct GrafttyApp: App {
         // right-clicks an unfocused pane.
         terminalManager.onSplitRequest = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
-                _ = Self.splitPane(
+                _ = PaneCommands.splitPane(
                     appState: appState,
                     terminalManager: tm,
                     targetID: terminalID,
@@ -650,7 +650,7 @@ struct GrafttyApp: App {
 
         terminalManager.onOpenInEditorPane = { [appState = $appState, tm = terminalManager] terminalID, initialInput in
             Task { @MainActor in
-                _ = Self.splitPane(
+                _ = PaneCommands.splitPane(
                     appState: appState,
                     terminalManager: tm,
                     targetID: terminalID,
@@ -665,7 +665,7 @@ struct GrafttyApp: App {
         // PWD-2.x reassignment pipeline.
         terminalManager.onMovePane = { [appState = $appState, tm = terminalManager] terminalID, destinationPath in
             MainActor.assumeIsolated {
-                Self.reassignPaneByPWD(
+                PaneCommands.reassignPaneByPWD(
                     appState: appState,
                     terminalManager: tm,
                     terminalID: terminalID,
@@ -699,7 +699,7 @@ struct GrafttyApp: App {
             MainActor.assumeIsolated {
                 switch paneCloseAction() {
                 case .closePane:
-                    Self.closePane(
+                    PaneCommands.closePane(
                         appState: appState,
                         terminalManager: tm,
                         targetID: terminalID,
@@ -715,7 +715,7 @@ struct GrafttyApp: App {
         terminalManager.onSurfaceClosed = {
             [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
-                Self.closePane(
+                PaneCommands.closePane(
                     appState: appState,
                     terminalManager: tm,
                     targetID: terminalID
@@ -725,7 +725,7 @@ struct GrafttyApp: App {
 
         terminalManager.onGotoSplit = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
-                Self.navigatePane(
+                PaneCommands.navigatePane(
                     appState: appState,
                     terminalManager: tm,
                     from: terminalID,
@@ -736,7 +736,7 @@ struct GrafttyApp: App {
 
         terminalManager.onGotoSplitOrder = { [appState = $appState, tm = terminalManager] terminalID, forward in
             MainActor.assumeIsolated {
-                Self.navigatePaneInTreeOrder(
+                PaneCommands.navigatePaneInTreeOrder(
                     appState: appState,
                     terminalManager: tm,
                     from: terminalID,
@@ -747,13 +747,13 @@ struct GrafttyApp: App {
 
         terminalManager.onToggleZoom = { [appState = $appState] terminalID in
             MainActor.assumeIsolated {
-                Self.toggleZoom(appState: appState, on: terminalID)
+                PaneCommands.toggleZoom(appState: appState, on: terminalID)
             }
         }
 
         terminalManager.onResizeSplit = { [appState = $appState] terminalID, direction, amount in
             MainActor.assumeIsolated {
-                _ = Self.resizeSplit(
+                _ = PaneCommands.resizeSplit(
                     appState: appState,
                     target: terminalID,
                     direction: direction,
@@ -764,7 +764,7 @@ struct GrafttyApp: App {
 
         terminalManager.onEqualizeSplits = { [appState = $appState] terminalID in
             MainActor.assumeIsolated {
-                Self.equalizeSplits(appState: appState, around: terminalID)
+                PaneCommands.equalizeSplits(appState: appState, around: terminalID)
             }
         }
 
@@ -798,7 +798,7 @@ struct GrafttyApp: App {
                    let session = appState.wrappedValue.repos[indices.repo].worktrees[indices.worktree].paneSessions[terminalID] {
                     registry.removePane(ZmxLauncher.sessionName(for: session))
                 }
-                Self.setAttentionForTerminal(
+                PaneCommands.setAttentionForTerminal(
                     appState: appState,
                     terminalID: terminalID,
                     text: exitCode == 0 ? "✓" : "!",
@@ -819,7 +819,7 @@ struct GrafttyApp: App {
         // decide; most of the time it's a no-op.
         terminalManager.onShellReady = { [tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
-                Self.maybeRunDefaultCommand(
+                PaneCommands.maybeRunDefaultCommand(
                     terminalManager: tm,
                     terminalID: terminalID
                 )

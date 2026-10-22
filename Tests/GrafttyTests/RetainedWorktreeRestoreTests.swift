@@ -110,7 +110,7 @@ struct RetainedWorktreeRestoreTests {
         var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "repo", worktrees: [retained])])
         let binding = Binding(get: { state }, set: { state = $0 })
         let manager = TerminalManager(socketPath: "/tmp/graftty-retained-open.sock")
-        #expect(GrafttyApp.startWorktree(path: retained.path, appState: binding, terminalManager: manager) == .started)
+        #expect(PaneCommands.startWorktree(path: retained.path, appState: binding, terminalManager: manager) == .started)
         #expect(manager.wasRehydrated(pane))
         #expect(state.repos[0].worktrees[0].paneSessions[pane] == session)
     }

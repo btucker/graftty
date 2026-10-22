@@ -13,7 +13,12 @@ enum WorktreeStartResult: Equatable {
     case unavailable
 }
 
-extension GrafttyApp {
+/// Pane and worktree mutations shared by the menu bar, the socket router,
+/// remote host channels and libghostty callbacks. Each takes the app state
+/// binding and the terminal manager it needs, so tests drive it without
+/// the `App`.
+@MainActor
+enum PaneCommands {
     /// Shared closed-to-running transition used by local sidebar selection
     /// and authenticated remote-open requests.
     @MainActor
