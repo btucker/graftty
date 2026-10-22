@@ -2662,6 +2662,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-11.11** While a team's message log is unchanged on disk, the application shall reuse its previously decoded rows instead of re-reading and re-decoding the log, so one team hook delivery decodes the log at most once.
 
+**TEAM-11.12** While a native delivery pass is running for a worktree, the application shall coalesce further arrivals for that worktree into at most one follow-up pass after the current pass finishes, and shall keep running passes while each pass acknowledges rows.
+
+**TEAM-11.13** When a native transport acknowledges only some of the rows it was offered, the application shall advance shared delivery state for exactly those rows, offer the remainder in a follow-up pass, and keep rows reserved for another runtime as pending gaps.
+
+**TEAM-11.14** If no pending row resolves to a reachable agent of a native transport's runtime, then the application shall leave every row pending without contacting that transport.
+
 ### TEAM-12.x
 
 **TEAM-12.1** When a direct `team send` message arrives for a live Codex agent whose running worktree is in the background with no mounted terminal surface, the application shall wake and deliver to the agent without selecting or foregrounding that worktree.

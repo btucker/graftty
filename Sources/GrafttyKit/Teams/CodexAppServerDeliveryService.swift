@@ -1,21 +1,7 @@
 import Foundation
 
-public actor CodexAppServerDeliveryService {
-    private struct DeliveryKey: Hashable, Sendable {
-        let team: String
-        let worktree: String
-    }
-
-    private let inbox: TeamInbox
-    private let presenceRecords: @Sendable () -> [TeamPresenceRecord]
-    private let sessionStorage: CodexAppServerSessionStorage
-    private let liveness: any TeamDeliveryLivenessChecking
-    private let client: any CodexAppServerClienting
-    private let eventLog: TeamEventLog?
-    private let now: @Sendable () -> Date
-    private let wakeBeforeDelivery: @Sendable (String) -> Bool
-    private var inFlightDeliveries: Set<DeliveryKey> = []
-    private var dirtyDeliveries: Set<DeliveryKey> = []
+public final class CodexAppServerDeliveryService: Sendable {
+    private let pipeline: TeamDeliveryPipeline<CodexAppServerTransport>
 
     public init(
         inbox: TeamInbox,
@@ -27,108 +13,59 @@ public actor CodexAppServerDeliveryService {
         now: @escaping @Sendable () -> Date = { Date() },
         wakeBeforeDelivery: @escaping @Sendable (String) -> Bool = { _ in true }
     ) {
-        self.inbox = inbox
-        self.presenceRecords = presenceRecords
-        self.sessionStorage = sessionStorage
-        self.liveness = liveness
-        self.client = client
-        self.eventLog = eventLog
-        self.now = now
-        self.wakeBeforeDelivery = wakeBeforeDelivery
+        let logger = TeamDeliveryEventLogger(
+            eventLog: eventLog,
+            kind: .codexAppServerDeliveryAttempt,
+            runtime: .codex,
+            now: now
+        )
+        pipeline = TeamDeliveryPipeline(
+            inbox: inbox,
+            presenceRecords: presenceRecords,
+            isReachable: { record in
+                TeamAgentReachability.isReachableForNativeDelivery(record, liveness: liveness)
+            },
+            wakeBeforeDelivery: wakeBeforeDelivery,
+            logger: logger,
+            transport: CodexAppServerTransport(
+                sessionStorage: sessionStorage,
+                liveness: liveness,
+                client: client
+            )
+        )
     }
 
     public func onMessageArrival(team: String, worktree: String) async {
-        let deliveryKey = DeliveryKey(team: team, worktree: worktree)
-        guard beginDelivery(deliveryKey) else {
-            dirtyDeliveries.insert(deliveryKey)
-            return
-        }
-        defer { finishDelivery(deliveryKey) }
+        await pipeline.onMessageArrival(team: team, worktree: worktree)
+    }
+}
 
-        repeat {
-            dirtyDeliveries.remove(deliveryKey)
-            let advanced = await deliverOnce(team: team, worktree: worktree)
-            if !advanced, dirtyDeliveries.remove(deliveryKey) == nil { break }
-        } while true
+/// Delivers through the owner pane's Codex app-server, sending every
+/// pending row in one turn.
+struct CodexAppServerTransport: TeamDeliveryTransport {
+    let runtime = TeamHookRuntime.codex
+    let sessionStorage: CodexAppServerSessionStorage
+    let liveness: any TeamDeliveryLivenessChecking
+    let client: any CodexAppServerClienting
+
+    func unresolvedOutcome(in directory: TeamAgentDirectory) -> String {
+        directory.agents.contains { $0.runtime == .codex && $0.isReachable }
+            ? "skipped_unreachable"
+            : "skipped_no_owner"
     }
 
-    private func beginDelivery(_ key: DeliveryKey) -> Bool {
-        guard !inFlightDeliveries.contains(key) else {
-            return false
+    func deliver(
+        _ pending: [TeamInboxMessage],
+        to agent: TeamAgentDescriptor,
+        team: String,
+        worktree: String
+    ) async -> TeamDeliveryOutcome {
+        guard let ownerPane = agent.paneSessionName else {
+            return .pending(.init(outcome: "skipped_no_owner"))
         }
-        inFlightDeliveries.insert(key)
-        return true
-    }
-
-    private func finishDelivery(_ key: DeliveryKey) {
-        inFlightDeliveries.remove(key)
-    }
-
-    @discardableResult
-    private func deliverOnce(team: String, worktree: String) async -> Bool {
-        let runtime = TeamHookRuntime.codex.rawValue
-        let allUnread: [TeamInboxMessage]
-        do {
-            allUnread = try inbox.worktreePendingMessages(
-                teamID: team,
-                recipientWorktree: worktree
-            )
-        } catch {
-            log(
-                team: team,
-                worktree: worktree,
-                runtime: runtime,
-                outcome: "error_inbox_read"
-            )
-            return false
-        }
-        guard !allUnread.isEmpty else { return false }
-        guard wakeBeforeDelivery(worktree) else { return false }
-
-        let worktreeRecords = presenceRecords().filter {
-            $0.teamID == team && $0.worktree == worktree
-        }
-        let directory = TeamAgentDirectory(
-            records: worktreeRecords,
-            isReachable: { record in
-                // The predicate shared with ClaudePeerDeliveryService and the
-                // hook-side default-agent computation: if the reachability
-                // views diverge, an untargeted head row is double-sent or
-                // claimed by neither and the worktree queue wedges.
-                TeamAgentReachability.isReachableForNativeDelivery(
-                    record,
-                    liveness: self.liveness
-                )
-            }
-        )
-        let selected = allUnread.lazy.compactMap { message -> TeamAgentDescriptor? in
-            do {
-                let targetRuntime = message.to.runtime.flatMap(TeamHookRuntime.init(rawValue:))
-                let candidate = try directory.resolve(
-                    worktreePath: worktree,
-                    runtime: targetRuntime,
-                    explicitAgentID: message.to.agentID
-                )
-                return candidate?.runtime == .codex ? candidate : nil
-            } catch {
-                return nil
-            }
-        }.first
-        guard let selected else {
-            let hasReachableCodex = directory.agents.contains {
-                $0.runtime == .codex && $0.isReachable
-            }
-            log(
-                team: team,
-                worktree: worktree,
-                runtime: runtime,
-                outcome: hasReachableCodex ? "skipped_unreachable" : "skipped_no_owner"
-            )
-            return false
-        }
-        guard let ownerPane = selected.paneSessionName else {
-            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_no_owner")
-            return false
+        var detail = ["paneSessionName": ownerPane]
+        func skip(_ outcome: String) -> TeamDeliveryOutcome {
+            .pending(.init(outcome: outcome, detail: detail))
         }
 
         let record: CodexAppServerSessionRecord
@@ -138,116 +75,33 @@ public actor CodexAppServerDeliveryService {
                 worktree: worktree,
                 paneSessionName: ownerPane
             ) else {
-                log(
-                    team: team,
-                    worktree: worktree,
-                    runtime: runtime,
-                    outcome: "skipped_missing_app_server",
-                    paneSessionName: ownerPane
-                )
-                return false
+                return skip("skipped_missing_app_server")
             }
             record = stored
         } catch {
-            log(
-                team: team,
-                worktree: worktree,
-                runtime: runtime,
-                outcome: "error_app_server_read",
-                paneSessionName: ownerPane
-            )
-            return false
+            return skip("error_app_server_read")
         }
+        guard isLiveAppServer(record) else { return skip("skipped_stale_app_server") }
+        guard !pending.isEmpty else { return skip("skipped_no_pending") }
 
-        guard isLiveAppServer(record) else {
-            log(
-                team: team,
-                worktree: worktree,
-                runtime: runtime,
-                outcome: "skipped_stale_app_server",
-                paneSessionName: ownerPane
-            )
-            return false
-        }
-
-        let defaultAgent = try? directory.resolve(
-            worktreePath: worktree,
-            explicitAgentID: nil
-        )
-        let pending = TeamInbox.runtimeDeliverableMessages(
-            allUnread,
-            runtime: runtime,
-            agentID: selected.id.rawValue,
-            acceptsUntargeted: defaultAgent?.id == selected.id
-        )
-
-        guard !pending.isEmpty else {
-            log(
-                team: team,
-                worktree: worktree,
-                runtime: runtime,
-                outcome: "skipped_no_pending",
-                paneSessionName: ownerPane
-            )
-            return false
-        }
-
-        let result: CodexAppServerDeliveryResult
         do {
-            result = try await client.deliver(
+            let result = try await client.deliver(
                 binaryPath: record.realBinaryPath,
                 socketPath: record.socketPath,
                 expectedCWD: worktree,
                 message: TeamPeerMessageFormatter.context(messages: pending),
                 target: record.threadID.map {
-                    CodexAppServerTarget(
-                        threadID: $0,
-                        activeTurnID: record.activeTurnID
-                    )
+                    CodexAppServerTarget(threadID: $0, activeTurnID: record.activeTurnID)
                 }
             )
+            detail["threadID"] = result.threadID
+            return .acknowledged(pending.map(\.id), .init(outcome: "sent", detail: detail))
         } catch {
-            log(
-                team: team,
-                worktree: worktree,
-                runtime: runtime,
-                outcome: "error_delivery",
-                paneSessionName: ownerPane,
-                messageIDs: pending.map(\.id),
-                error: String(describing: error)
-            )
-            return false
+            detail["messageIDs"] = pending.map(\.id).joined(separator: ",")
+            let description = String(describing: error)
+            if !description.isEmpty { detail["error"] = description }
+            return skip("error_delivery")
         }
-
-        do {
-            try inbox.acknowledgeMessages(
-                teamID: team,
-                worktree: worktree,
-                messageIDs: pending.map(\.id)
-            )
-        } catch {
-            log(
-                team: team,
-                worktree: worktree,
-                runtime: runtime,
-                outcome: "error_watermark_write",
-                paneSessionName: ownerPane,
-                messageIDs: pending.map(\.id),
-                threadID: result.threadID
-            )
-            return false
-        }
-
-        log(
-            team: team,
-            worktree: worktree,
-            runtime: runtime,
-            outcome: "sent",
-            paneSessionName: ownerPane,
-            messageIDs: pending.map(\.id),
-            threadID: result.threadID
-        )
-        return true
     }
 
     private func isLiveAppServer(_ record: CodexAppServerSessionRecord) -> Bool {
@@ -256,41 +110,5 @@ public actor CodexAppServerDeliveryService {
             return false
         }
         return currentStart == storedStart
-    }
-
-    private func log(
-        team: String,
-        worktree: String,
-        runtime: String,
-        outcome: String,
-        paneSessionName: String? = nil,
-        messageIDs: [String] = [],
-        threadID: String? = nil,
-        error: String? = nil
-    ) {
-        guard let eventLog else { return }
-        var detail: [String: String] = [
-            "worktree": worktree,
-            "runtime": runtime,
-            "outcome": outcome,
-        ]
-        if let paneSessionName {
-            detail["paneSessionName"] = paneSessionName
-        }
-        if !messageIDs.isEmpty {
-            detail["messageIDs"] = messageIDs.joined(separator: ",")
-        }
-        if let threadID {
-            detail["threadID"] = threadID
-        }
-        if let error, !error.isEmpty {
-            detail["error"] = error
-        }
-        try? eventLog.append(TeamEvent(
-            teamID: team,
-            kind: .codexAppServerDeliveryAttempt,
-            detail: detail,
-            timestamp: now()
-        ))
     }
 }

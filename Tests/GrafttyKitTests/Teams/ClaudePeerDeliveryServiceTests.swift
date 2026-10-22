@@ -399,8 +399,8 @@ struct ClaudePeerDeliveryServiceTests {
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("graftty-claude-delivery-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let counter = IDCounter()
-            let inbox = TeamInbox(rootDirectory: root, idGenerator: { counter.next() })
+            let ids = TeamTestFixtures.SequentialMessageIDs()
+            let inbox = TeamInbox(rootDirectory: root, idGenerator: { ids.next() })
             let client = StubClient(error: error, errorForBody: errorForBody)
             let agentID = TeamAgentIdentity(runtime: .claude, nativeSessionID: "session-1").rawValue
             let presence = TeamPresenceRecord(
@@ -442,15 +442,7 @@ struct ClaudePeerDeliveryServiceTests {
         }
 
         func deliveryEvents() throws -> [TeamEvent] {
-            let url = root
-                .appendingPathComponent(TeamInbox.fileComponent(teamID), isDirectory: true)
-                .appendingPathComponent("events.jsonl")
-            guard let data = try? Data(contentsOf: url) else { return [] }
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return String(decoding: data, as: UTF8.self)
-                .split(separator: "\n")
-                .compactMap { try? decoder.decode(TeamEvent.self, from: Data($0.utf8)) }
+            try TeamTestFixtures.events(root: root, teamID: teamID)
         }
 
         func append(
@@ -478,17 +470,6 @@ struct ClaudePeerDeliveryServiceTests {
     }
 
     private enum StubError: Error { case failed }
-
-    private final class IDCounter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var n = 0
-        func next() -> String {
-            lock.lock()
-            defer { lock.unlock() }
-            n += 1
-            return "message-\(n)"
-        }
-    }
 
     private actor StubClient: ClaudePeerClienting {
         struct Call: Sendable {

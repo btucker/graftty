@@ -1,9 +1,16 @@
 import Foundation
 import GrafttyProtocol
 
-public enum TeamHookRuntime: String, Codable, Sendable, Equatable {
+public enum TeamHookRuntime: String, Codable, Sendable, Equatable, CaseIterable {
     case codex
     case claude
+
+    public var displayName: String {
+        switch self {
+        case .codex: "Codex"
+        case .claude: "Claude"
+        }
+    }
 }
 
 public enum TeamHookEvent: String, Codable, Sendable, Equatable, CaseIterable {

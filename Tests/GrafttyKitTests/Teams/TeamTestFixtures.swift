@@ -66,6 +66,33 @@ enum TeamTestFixtures {
         return WatermarkLockHolder(process: holder)
     }
 
+    /// Deterministic `message-N` inbox IDs for `TeamInbox(idGenerator:)`.
+    final class SequentialMessageIDs: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+
+        func next() -> String {
+            lock.withLock {
+                count += 1
+                return "message-\(count)"
+            }
+        }
+    }
+
+    /// The team events a `TeamEventLog(rootDirectory: root)` appended, in
+    /// order; empty when the log was never written.
+    static func events(root: URL, teamID: String) throws -> [TeamEvent] {
+        let url = root
+            .appendingPathComponent(TeamInbox.fileComponent(teamID), isDirectory: true)
+            .appendingPathComponent("events.jsonl")
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try data.split(separator: UInt8(ascii: "\n")).map {
+            try decoder.decode(TeamEvent.self, from: Data($0))
+        }
+    }
+
     static func makeRepo(
         path: String = "/r/multi",
         displayName: String = "multi-repo",
