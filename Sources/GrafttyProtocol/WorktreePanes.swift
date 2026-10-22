@@ -144,8 +144,9 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// Worktree-scoped attention (the body of `graftty notify` or an agent
     /// stop), rendered as a red capsule next to the branch label. nil when
     /// there is no active worktree-scoped ping. On the wire it stays the flat
-    /// `attentionText` / `attentionSource` / `attentionTimestamp` keys; a
-    /// source or timestamp without text is no attention (`REMOTE-13.30`).
+    /// `attentionText` / `attentionSource` / `attentionTimestamp` keys.
+    ///
+    /// @spec REMOTE-13.30: If a worktree snapshot carries an attention source or timestamp without attention text, then the application shall treat the worktree as having no worktree-scoped attention.
     public let attention: SidebarAttentionOccurrence?
     /// Worktree-scoped attention text; nil when there is no active ping.
     public var attentionText: String? { attention?.text }
@@ -235,7 +236,9 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// serves the pre-sidebar-mirror shape (path/displayName/
     /// repoDisplayName/layout only): missing fields fall back to
     /// safe defaults rather than failing the decode.
-    private enum CodingKeys: String, CodingKey {
+    /// Internal and `CaseIterable` so the wire-fixture test can check that
+    /// `encode(to:)` writes every key.
+    enum CodingKeys: String, CodingKey, CaseIterable {
         case path, displayName, repoDisplayName, repositoryID, displayBranch, state,
              isMainCheckout, prBadge, stats, attentionText, attentionSource,
              attentionTimestamp, layout, origin, route, sidebar, ports, portBindings

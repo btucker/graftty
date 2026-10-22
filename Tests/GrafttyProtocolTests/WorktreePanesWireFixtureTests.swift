@@ -30,6 +30,16 @@ struct WorktreePanesWireFixtureTests {
         #expect(current == released)
     }
 
+    /// `encode(to:)` is hand-written, so a new field that misses an encode
+    /// line (or a value in `WorktreePanesWireFixture.rows`) fails here.
+    @Test
+    func fixtureRowsEncodeEveryCodingKey() throws {
+        let encoded = try JSONEncoder().encode(WorktreePanesWireFixture.rows)
+        let rows = try #require(try JSONSerialization.jsonObject(with: encoded) as? [[String: Any]])
+        let keys = Set(rows.flatMap(\.keys))
+        #expect(keys == Set(WorktreePanes.CodingKeys.allCases.map(\.stringValue)))
+    }
+
     @Test("""
     @spec REMOTE-13.30: If a worktree snapshot carries an attention source or timestamp without attention text, \
     then the application shall treat the worktree as having no worktree-scoped attention.
