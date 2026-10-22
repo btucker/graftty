@@ -4,6 +4,10 @@ import Testing
 import GrafttyKit
 
 struct ProviderCLITests {
+    @Test func placementPlanCommandIsRegistered() throws {
+        _ = try GrafttyCLI.parseAsRoot(["remote", "plan", "--architecture", "arm64", "--cpus", "2", "--memory-mib", "4096", "--disk-mib", "8192", "--json"])
+    }
+
     @Test func authenticatedHostListCommandIsRegistered() throws {
         let command = try #require(GrafttyCLI.parseAsRoot(["remote", "hosts", "--json"]) as? RemoteHosts)
         #expect(command.json)

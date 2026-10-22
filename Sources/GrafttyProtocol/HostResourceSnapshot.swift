@@ -5,6 +5,7 @@ import Foundation
 public struct HostResourceSnapshot: Codable, Sendable, Hashable {
     public var sampledAt: Double
     public var architecture: String?
+    public var operatingSystem: String?
     public var cpuCount: Int?
     /// Busy CPU time divided by total CPU time across all CPUs, in 0...1.
     public var cpuUtilization: Double?
@@ -16,11 +17,11 @@ public struct HostResourceSnapshot: Codable, Sendable, Hashable {
     public var pendingWorktreeOperations: Int?
     public var pendingPlacements: Int?
 
-    public init(sampledAt: Double, architecture: String? = nil, cpuCount: Int? = nil, cpuUtilization: Double? = nil,
+    public init(sampledAt: Double, architecture: String? = nil, operatingSystem: String? = nil, cpuCount: Int? = nil, cpuUtilization: Double? = nil,
                 memoryTotalBytes: Int64? = nil, memoryAvailableBytes: Int64? = nil,
                 diskPath: String, diskAvailableBytes: Int64? = nil, activeWorktrees: Int = 0,
                 pendingWorktreeOperations: Int? = nil, pendingPlacements: Int? = nil) {
-        self.sampledAt = sampledAt; self.architecture = architecture; self.cpuCount = cpuCount; self.cpuUtilization = cpuUtilization
+        self.sampledAt = sampledAt; self.architecture = architecture; self.operatingSystem = operatingSystem; self.cpuCount = cpuCount; self.cpuUtilization = cpuUtilization
         self.memoryTotalBytes = memoryTotalBytes; self.memoryAvailableBytes = memoryAvailableBytes
         self.diskPath = diskPath; self.diskAvailableBytes = diskAvailableBytes; self.activeWorktrees = activeWorktrees
         self.pendingWorktreeOperations = pendingWorktreeOperations; self.pendingPlacements = pendingPlacements

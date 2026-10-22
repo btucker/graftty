@@ -12,9 +12,11 @@ public actor HostResourceSampler {
     public init() {}
     public func sample(diskPath: String, activeWorktrees: Int, pendingOperations: Int) -> HostResourceSnapshot {
         #if os(Linux)
+        let operatingSystem = "linux"
         let measurements = linux.sample(stat: try? String(contentsOfFile: "/proc/stat", encoding: .utf8),
             meminfo: try? String(contentsOfFile: "/proc/meminfo", encoding: .utf8))
         #else
+        let operatingSystem = "macos"
         let measurements = LinuxHostResourceMeasurements.Measurements(cpuCount: ProcessInfo.processInfo.activeProcessorCount,
             cpuUtilization: nil, memoryTotalBytes: Int64(exactly: ProcessInfo.processInfo.physicalMemory), memoryAvailableBytes: nil)
         #endif
@@ -25,7 +27,7 @@ public actor HostResourceSampler {
         #else
         let architecture: String? = nil
         #endif
-        return HostResourceSnapshot(sampledAt: Date().timeIntervalSince1970, architecture: architecture,
+        return HostResourceSnapshot(sampledAt: Date().timeIntervalSince1970, architecture: architecture, operatingSystem: operatingSystem,
             cpuCount: measurements.cpuCount, cpuUtilization: measurements.cpuUtilization,
             memoryTotalBytes: measurements.memoryTotalBytes, memoryAvailableBytes: measurements.memoryAvailableBytes,
             diskPath: diskPath, diskAvailableBytes: Self.availableDiskBytes(at: diskPath), activeWorktrees: activeWorktrees,

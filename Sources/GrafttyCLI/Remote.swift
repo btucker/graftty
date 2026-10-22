@@ -6,7 +6,7 @@ import GrafttyProtocol
 struct Remote: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Set up and manage remote hosts",
-        subcommands: [RemoteHosts.self, RemoteReconnect.self, RemoteReconnectClient.self, RemoteSetupLinux.self]
+        subcommands: [RemotePlacementPlan.self, RemoteHosts.self, RemoteReconnect.self, RemoteReconnectClient.self, RemoteSetupLinux.self]
     )
 }
 
@@ -76,12 +76,16 @@ struct RemoteHosts: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "hosts", abstract: "List paired hosts and authenticated resource observations",
         discussion: "Graftty must be running. Unknown or stale metrics do not imply spare capacity. Disk measurements apply only to the reported filesystem path. AWS inventory is available separately through provider hosts aws.")
     @Flag(help: "Print identities, connection states, resource observations, and freshness as JSON") var json = false
-    func run() throws {
+    static func fetch() throws -> [RemoteMacConnectionSummary] {
         let response = try CLIEnv.sendRequest(.listRemoteHosts)
         guard case .remoteHosts(let hosts) = response else {
             try CLIEnv.expectOk(response)
             throw ValidationError("The running Graftty version does not support host telemetry.")
         }
+        return hosts
+    }
+    func run() throws {
+        let hosts = try Self.fetch()
         if json {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             print(String(decoding: try encoder.encode(hosts), as: UTF8.self))
