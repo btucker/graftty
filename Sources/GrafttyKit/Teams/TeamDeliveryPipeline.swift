@@ -132,8 +132,8 @@ actor TeamDeliveryPipeline<Transport: TeamDeliveryTransport> {
                 recipientWorktree: worktree
             )
         } catch {
-            // Every transport is fanned for every arrival; only one that may
-            // serve this worktree reports its unreadable inbox.
+            // Every transport is fanned for every arrival; a transport that
+            // can never serve this worktree stays silent about its inbox.
             if transport.mayServe(worktreeRecords(team: team, worktree: worktree)) {
                 logger.log(team: team, worktree: worktree, .init(outcome: "error_inbox_read"))
             }

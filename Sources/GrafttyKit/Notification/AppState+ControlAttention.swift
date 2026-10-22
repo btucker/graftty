@@ -72,7 +72,7 @@ public extension AppState {
         let worktree = worktree(forPath: callerPath)
         let paneSlot = paneSessionName.flatMap { worktree?.paneSlot(forSessionName: $0) }
         let stop = SidebarAgentStop(
-            agentName: AgentStopNotification.displayName(runtime),
+            agentName: runtime.displayName,
             stoppedAt: stoppedAt,
             recap: recap,
             paneTitle: paneSlot.flatMap { slot in worktree.flatMap { paneTitle(slot, $0) } },

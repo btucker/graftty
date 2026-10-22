@@ -80,7 +80,7 @@ public enum AgentStopNotification {
         return AgentStopNotificationContent(
             title: purposeTitle ?? recap?.title ?? worktreeName,
             subtitle: [emoji, worktreeName].compactMap { $0 }.joined(separator: " "),
-            body: recap?.need ?? recap?.completed ?? "\(displayName(runtime)) stopped.",
+            body: recap?.need ?? recap?.completed ?? "\(runtime.displayName) stopped.",
             userInfo: payloadMetadata(runtime: runtime, worktreePath: worktreePath, sessionID: sessionID,
                                       paneSessionName: paneSessionName, timestamp: stop.stoppedAt),
             identifier: "agent-attention:\(worktreePath)"
@@ -144,15 +144,11 @@ public enum AgentStopNotification {
         }
     }
 
-    public static func displayName(_ runtime: TeamHookRuntime) -> String {
-        runtime.displayName
-    }
-
     public static func attentionText(
         runtime: TeamHookRuntime,
         reason: AgentHookAttentionReason
     ) -> String {
-        let runtimeName = displayName(runtime)
+        let runtimeName = runtime.displayName
         switch reason {
         case .permission:
             return "\(runtimeName) needs permission"

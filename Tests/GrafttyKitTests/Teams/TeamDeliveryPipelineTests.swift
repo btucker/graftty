@@ -6,7 +6,17 @@ import Testing
 struct TeamDeliveryPipelineTests {
     @Test("@spec TEAM-11.12: While a native delivery pass is running for a worktree, the application shall coalesce further arrivals for that worktree into at most one follow-up pass after the current pass finishes, and shall keep running passes while each pass acknowledges rows.", .timeLimit(.minutes(1)))
     func arrivalsDuringAPassCoalesceIntoOneFollowUp() async throws {
-        let fixture = try Fixture(blockedCalls: 1)
+        // The blocked first pass consumes nothing, so the second pass runs
+        // only because arrivals coalesced behind it; later passes each
+        // acknowledge one row, so passes continue until the queue drains.
+        let firstOffer = MutableBox(true)
+        let fixture = try Fixture(blockedCalls: 1, behavior: { pending in
+            guard !firstOffer.value else {
+                firstOffer.value = false
+                return .pending(nil)
+            }
+            return .acknowledged(Array(pending.prefix(1)).map(\.id), TeamDeliveryLogEntry(outcome: "sent"))
+        })
         let first = try fixture.append(body: "first")
 
         async let delivery: Void = fixture.pipeline.onMessageArrival(team: fixture.teamID, worktree: fixture.worktree)
@@ -25,7 +35,7 @@ struct TeamDeliveryPipelineTests {
         await delivery
 
         let calls = await fixture.transport.calls
-        #expect(calls.map(\.pendingIDs) == [[first.id], [second.id]])
+        #expect(calls.map(\.pendingIDs) == [[first.id], [first.id, second.id], [second.id]])
         #expect(try fixture.watermark()?.lastDeliveredToAnySessionID == second.id)
     }
 
@@ -150,8 +160,8 @@ struct TeamDeliveryPipelineTests {
             root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("graftty-delivery-pipeline-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let counter = IDCounter()
-            inbox = TeamInbox(rootDirectory: root, idGenerator: { counter.next() })
+            let ids = TeamTestFixtures.SequentialMessageIDs()
+            inbox = TeamInbox(rootDirectory: root, idGenerator: { ids.next() })
             transport = StubTransport(blockedCalls: blockedCalls, mayServe: mayServe, behavior: behavior)
             let record = TeamPresenceRecord(
                 teamID: teamID,
@@ -211,26 +221,7 @@ struct TeamDeliveryPipelineTests {
         }
 
         func events() throws -> [TeamEvent] {
-            let url = root
-                .appendingPathComponent(TeamInbox.fileComponent(teamID), isDirectory: true)
-                .appendingPathComponent("events.jsonl")
-            guard let data = try? Data(contentsOf: url) else { return [] }
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try data.split(separator: UInt8(ascii: "\n")).map {
-                try decoder.decode(TeamEvent.self, from: Data($0))
-            }
-        }
-    }
-
-    private final class IDCounter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var n = 0
-        func next() -> String {
-            lock.withLock {
-                n += 1
-                return "message-\(n)"
-            }
+            try TeamTestFixtures.events(root: root, teamID: teamID)
         }
     }
 
