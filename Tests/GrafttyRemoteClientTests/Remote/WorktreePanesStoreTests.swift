@@ -98,6 +98,71 @@ struct WorktreePanesStoreTests {
     }
 }
 
+@Suite("@spec REMOTE-6.7: While a client waits for the first panes-state snapshot, it shall resume as soon as a snapshot or channel close is applied, report a close ahead of a snapshot, and report a timeout only when the deadline fires first.")
+struct FirstSnapshotWaitTests {
+    @Test func resumesWhenSnapshotArrives() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        let deadline = ManualReplyDeadline()
+        let wait = Task { try await store.waitForFirstSnapshot(deadline: deadline.deadline) }
+        await deadline.waitUntilArmed()
+
+        await store.applySnapshot([])
+
+        #expect(try await wait.value == .received)
+        #expect(!deadline.isArmed)
+    }
+
+    @Test func resumesWhenChannelCloses() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        let deadline = ManualReplyDeadline()
+        let wait = Task { try await store.waitForFirstSnapshot(deadline: deadline.deadline) }
+        await deadline.waitUntilArmed()
+
+        await store.markClosed(reason: "network-error")
+
+        #expect(try await wait.value == .closed)
+        #expect(!deadline.isArmed)
+    }
+
+    @Test func reportsCloseAheadOfSnapshot() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        await store.applySnapshot([])
+        await store.unsubscribe()
+
+        #expect(try await store.waitForFirstSnapshot(deadline: ManualReplyDeadline().deadline) == .closed)
+    }
+
+    @Test func returnsImmediatelyForAnAlreadyAppliedSnapshot() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        await store.applySnapshot([])
+
+        #expect(try await store.waitForFirstSnapshot(deadline: ManualReplyDeadline().deadline) == .received)
+    }
+
+    @Test func timesOutWhenDeadlineFiresFirst() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        let deadline = ManualReplyDeadline()
+        let wait = Task { try await store.waitForFirstSnapshot(deadline: deadline.deadline) }
+        await deadline.waitUntilArmed()
+
+        deadline.fire()
+
+        #expect(try await wait.value == .timedOut)
+    }
+
+    @Test func cancellationThrowsAndDisarmsDeadline() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        let deadline = ManualReplyDeadline()
+        let wait = Task { try await store.waitForFirstSnapshot(deadline: deadline.deadline) }
+        await deadline.waitUntilArmed()
+
+        wait.cancel()
+
+        await #expect(throws: CancellationError.self) { try await wait.value }
+        #expect(!deadline.isArmed)
+    }
+}
+
 private final class ClosingDuringOpenDriver:
     PanesStateChannelDriver,
     @unchecked Sendable {
