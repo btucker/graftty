@@ -10,6 +10,11 @@ public struct HostPlacementDemand: Codable, Sendable, Equatable {
     }
 }
 
+public struct HostDevContainerRequest: Codable, Sendable, Equatable {
+    public let configuration: String?
+    public init(configuration: String? = nil) { self.configuration = configuration }
+}
+
 /// Immutable arguments for one idempotent host admission and worktree creation.
 /// The parent identity comes from the authenticated connection, never this payload.
 public struct HostPlacementIntent: Codable, Sendable, Equatable {
@@ -17,15 +22,17 @@ public struct HostPlacementIntent: Codable, Sendable, Equatable {
     public let worktreeName: String
     public let branchName: String
     public let demand: HostPlacementDemand
-    public init(repositoryID: String, worktreeName: String, branchName: String, demand: HostPlacementDemand) {
+    public let devContainer: HostDevContainerRequest?
+    public init(repositoryID: String, worktreeName: String, branchName: String, demand: HostPlacementDemand, devContainer: HostDevContainerRequest? = nil) {
         self.repositoryID = repositoryID; self.worktreeName = worktreeName
-        self.branchName = branchName; self.demand = demand
+        self.branchName = branchName; self.demand = demand; self.devContainer = devContainer
     }
     public var worktreePath: String { (repositoryID as NSString).appendingPathComponent(".worktrees/" + worktreeName) }
 }
 
 public enum HostPlacementRequest: Codable, Sendable, Equatable {
     case create(operationID: UUID, intent: HostPlacementIntent)
+    case createInDevContainer(operationID: UUID, intent: HostPlacementIntent)
     case status(operationID: UUID)
 }
 
@@ -41,10 +48,11 @@ public struct HostPlacementRecord: Codable, Sendable, Equatable {
     public let worktreeID: String?
     public let paneID: String?
     public let message: String?
+    public let environment: PreparedDevContainer?
 
     public init(operationID: UUID, owner: RemoteMacConnectionSummary.ID, intent: HostPlacementIntent, admittedAt: Date,
-                state: State = .preparing, worktreeID: String? = nil, paneID: String? = nil, message: String? = nil) {
+                state: State = .preparing, worktreeID: String? = nil, paneID: String? = nil, message: String? = nil, environment: PreparedDevContainer? = nil) {
         self.operationID = operationID; self.owner = owner; self.intent = intent; self.admittedAt = admittedAt
-        self.state = state; self.worktreeID = worktreeID; self.paneID = paneID; self.message = message
+        self.state = state; self.worktreeID = worktreeID; self.paneID = paneID; self.message = message; self.environment = environment
     }
 }

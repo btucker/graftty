@@ -9,7 +9,7 @@ Produce version-controlled configuration that lets a new worktree prepare its de
 
 Inspect the repository's instructions, CI, dependency locks, existing `.devcontainer` configuration, and build scripts. Preserve a working setup. Identify which tasks require macOS and which can run on Linux. Do not represent a Linux container as capable of running Xcode or Apple-only tests.
 
-Use the [Dev Container specification](https://containers.dev/implementors/json_reference/) for configuration and the [Dev Container CLI](https://github.com/devcontainers/cli) for execution. Check the installed CLI's version and command help before relying on flags. Graftty's host placement command currently creates an ordinary host worktree; it does not automatically run Dev Container preparation.
+Use the [Dev Container specification](https://containers.dev/implementors/json_reference/) for configuration and the [Dev Container CLI](https://github.com/devcontainers/cli) for execution. Check the installed CLI's version and command help before relying on flags. Graftty's placement command creates a host worktree by default. `graftty remote placement create --dev-container` explicitly prepares an image or Dockerfile environment and opens its shell; `--dev-container-config` selects a configuration inside the new worktree. Compose, automated agent integration, and durable native agent-session mounts are not yet available through that path.
 
 ## Configure the project
 
@@ -27,7 +27,7 @@ Do not copy or mount SSH private keys, AWS credential files, Git credential stor
 
 Check Git metadata access inside the container. A linked worktree's `.git` file points outside its checkout; merely mounting the checkout can leave `git status` broken. Inspect `git rev-parse --git-common-dir` and the existing worktree layout before choosing mounts.
 
-The upstream CLI supports `--mount-git-worktree-common-dir` for relative Git worktrees. Check the installed command help and verify that the worktree uses the compatible relative layout before using it. Do not silently rewrite existing Git worktree metadata or mount a whole parent home directory as a shortcut. If an existing absolute layout needs another mounting arrangement, document the exact Git metadata directory and verify access without bringing unrelated files into the container.
+The upstream CLI supports `--mount-git-worktree-common-dir` for relative Git worktrees. Check the installed command help and verify that the worktree uses the compatible relative layout before using it. Both host and container Git must support the relative-worktree repository extension. Do not silently rewrite existing Git worktree metadata or mount a whole parent home directory as a shortcut. If an existing absolute layout needs another mounting arrangement, document the exact Git metadata directory and verify access without bringing unrelated files into the container.
 
 Use an existing worktree for verification. If a second worktree is needed, follow Graftty's worktree coordination workflow through the graftty-team skill. Do not create an agent workspace with `git worktree add` directly.
 

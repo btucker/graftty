@@ -207,7 +207,7 @@ final class HostService {
         await pairing.cancel()
         await ssh.close()
         http?.stop(); admin?.stop(); socket.stop()
-        try? runtime.shutdown()
+        try? await runtime.shutdown()
         withExtendedLifetime(lease) {}
     }
 

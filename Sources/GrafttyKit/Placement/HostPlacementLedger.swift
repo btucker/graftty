@@ -84,13 +84,30 @@ public final class HostPlacementLedger {
         return record
     }
 
+    public func record(for path: String) -> HostPlacementRecord? {
+        document.records.first { $0.intent.worktreePath == path && $0.state != .released }
+    }
+    public func environment(for path: String) -> PreparedDevContainer? { record(for: path)?.environment }
+
+
+    public func recordEnvironment(operationID: UUID, environment: PreparedDevContainer) throws {
+        try update(operationID) { record in
+            guard record.state == .preparing, record.intent.devContainer != nil, environment.workspace == record.intent.worktreePath else {
+                throw HostRuntimeError.invalid("Environment does not match the admitted placement")
+            }
+            return HostPlacementRecord(operationID: record.operationID, owner: record.owner, intent: record.intent,
+                admittedAt: record.admittedAt, state: record.state, worktreeID: record.worktreeID, paneID: record.paneID,
+                message: record.message, environment: environment)
+        }
+    }
+
     public func complete(operationID: UUID, worktreeID: String, paneID: String) throws {
         try update(operationID) { record in
             guard record.state == .preparing, worktreeID == record.intent.worktreePath, !paneID.isEmpty else {
                 throw HostRuntimeError.invalid("Invalid placement completion")
             }
             return HostPlacementRecord(operationID: record.operationID, owner: record.owner, intent: record.intent,
-                admittedAt: record.admittedAt, state: .created, worktreeID: worktreeID, paneID: paneID)
+                admittedAt: record.admittedAt, state: .created, worktreeID: worktreeID, paneID: paneID, environment: record.environment)
         }
     }
 
@@ -110,6 +127,15 @@ public final class HostPlacementLedger {
         if next.records != document.records { try save(next) }
     }
 
+    public func recordCleanupFailure(operationID: UUID, containerID: String, message: String) throws {
+        var next = document
+        for index in next.records.indices where next.records[index].state == .released && next.records[index].operationID == operationID {
+            next.records[index] = Self.replacing(next.records[index], state: .released,
+                message: "Worktree deleted; cleanup of stopped container " + containerID + " remains: " + String(message.prefix(2048)))
+        }
+        try save(next)
+    }
+
     private func update(_ id: UUID, change: (HostPlacementRecord) throws -> HostPlacementRecord) throws {
         guard let index = document.records.firstIndex(where: { $0.operationID == id }) else { throw HostRuntimeError.notFound("Placement not found") }
         var next = document; next.records[index] = try change(next.records[index]); try save(next)
@@ -117,7 +143,7 @@ public final class HostPlacementLedger {
     private func save(_ next: Document) throws { try file.save(next); document = next }
     private static func replacing(_ record: HostPlacementRecord, state: HostPlacementRecord.State, message: String) -> HostPlacementRecord {
         .init(operationID: record.operationID, owner: record.owner, intent: record.intent, admittedAt: record.admittedAt,
-              state: state, worktreeID: record.worktreeID, paneID: record.paneID, message: message)
+              state: state, worktreeID: record.worktreeID, paneID: record.paneID, message: message, environment: record.environment)
     }
     private static func validate(_ intent: HostPlacementIntent) throws {
         guard intent.repositoryID.hasPrefix("/"), intent.repositoryID.utf8.count <= 4096,
@@ -126,6 +152,13 @@ public final class HostPlacementLedger {
               !intent.repositoryID.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
               WorktreeCreationInput.validationError(worktreeName: intent.worktreeName, branchName: intent.branchName, existing: false, base: nil) == nil else {
             throw HostRuntimeError.invalid("Invalid placement repository, worktree or branch")
+        }
+        if let configuration = intent.devContainer?.configuration {
+            guard !configuration.isEmpty, configuration.utf8.count <= 4096, !configuration.hasPrefix("/"),
+                  !configuration.split(separator: "/").contains(".."),
+                  !configuration.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+                throw HostRuntimeError.invalid("Dev Container configuration must be a path inside the new worktree")
+            }
         }
         try HostPlacementPlanner.validate(demand: intent.demand, policy: .init())
     }

@@ -15,6 +15,13 @@ struct ProviderCLITests {
         #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(["remote", "placement", "create", "--host", "linux", "--repository", "/project", "--name", "task", "--architecture", "arm64"]) }
     }
 
+    @Test func containerPlacementRequiresExplicitOptIn() throws {
+        let args = ["remote", "placement", "create", "--host", "linux", "--operation-id", UUID().uuidString,
+            "--repository", "/project", "--name", "task", "--architecture", "arm64"]
+        _ = try GrafttyCLI.parseAsRoot(args + ["--dev-container", "--dev-container-config", ".devcontainer/custom/devcontainer.json"])
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(args + ["--dev-container-config", ".devcontainer/devcontainer.json"]) }
+    }
+
     @Test func placementTargetPinsFingerprintAndRejectsAmbiguityAndOfflineHosts() throws {
         let fingerprint = try RemoteIdentityFingerprint(rawBytes: Data(repeating: 3, count: 32))
         func host(_ id: String, state: RemoteMacConnectionSummary.State = .connected) -> RemoteMacConnectionSummary {

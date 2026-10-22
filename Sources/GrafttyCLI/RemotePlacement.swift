@@ -5,7 +5,7 @@ import GrafttyProtocol
 
 struct RemotePlacement: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "placement", abstract: "Admit a workload and create a worktree on a paired Linux host",
-        discussion: "Requires an already registered repository. Creation uses the host shell; Dev Container preparation and AWS instance launch are not yet integrated. Reuse the same operation UUID when retrying, including after a lost reply. No credentials are copied.",
+        discussion: "Requires an already registered repository. Creation returns a preparing operation while the host continues setup; query status with the same UUID. Use --dev-container on create to prepare an image or Dockerfile environment and open its shell. Graftty agent integration and durable agent-session mounts are not yet available inside the container. Agent login and AWS instance launch are not automatic. Reuse the same operation UUID when retrying, including after a lost reply. No credentials are copied.",
         subcommands: [RemotePlacementCreate.self, RemotePlacementStatus.self])
 }
 
@@ -56,12 +56,21 @@ struct RemotePlacementTarget: ParsableArguments {
             try CLIEnv.expectOk(response)
             throw ValidationError("The running Graftty version did not return a placement result.")
         }
+        guard record.operationID == (try uuid()) else { throw ValidationError("Host returned a different placement operation.") }
+        switch request {
+        case .create(_, let intent), .createInDevContainer(_, let intent):
+            guard record.intent == intent, intent.devContainer == nil || record.state != .created || record.environment != nil else {
+                throw ValidationError("Host returned a different placement configuration. Inspect the retained operation before retrying.")
+            }
+        case .status: break
+        }
         if json {
             let encoder = JSONEncoder.iso8601(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             print(String(decoding: try encoder.encode(record), as: UTF8.self))
         } else {
             print("\(record.operationID.uuidString): \(record.state.rawValue)")
             if let path = record.worktreeID { print(String(reflecting: path)) }
+            if let environment = record.environment { print("Container: \(environment.containerID); agent authentication not checked") }
             if let message = record.message { print(String(reflecting: message)) }
         }
         if record.state == .outcomeUnknown { throw ExitCode(1) }
@@ -75,14 +84,19 @@ struct RemotePlacementCreate: ParsableCommand {
     @Option(help: "Exact registered repository path on the remote host") var repository: String
     @Option(help: "New worktree name") var name: String
     @Option(help: "New branch name; defaults to the worktree name") var branch: String?
+    @Flag(help: "Prepare a Dev Container and open its shell; requires compatible Git on the host and in the container") var devContainer = false
+    @Option(help: "Selected Dev Container JSON path relative to the new worktree; requires --dev-container") var devContainerConfig: String?
     func validate() throws {
+        guard devContainer || devContainerConfig == nil else { throw ValidationError("--dev-container-config requires --dev-container") }
         guard repository.hasPrefix("/") else { throw ValidationError("Provide the registered absolute repository path on the remote host.") }
         if let error = WorktreeCreationInput.validationError(worktreeName: name, branchName: branch ?? name) { throw ValidationError(error) }
         try HostPlacementPlanner.validate(demand: resources.demand(), policy: .init())
     }
     func run() throws {
-        try target.run(.create(operationID: target.uuid(), intent: .init(repositoryID: repository, worktreeName: name,
-            branchName: branch ?? name, demand: resources.demand())))
+        let id = try target.uuid()
+        let intent = HostPlacementIntent(repositoryID: repository, worktreeName: name, branchName: branch ?? name,
+            demand: try resources.demand(), devContainer: devContainer ? .init(configuration: devContainerConfig) : nil)
+        try target.run(devContainer ? .createInDevContainer(operationID: id, intent: intent) : .create(operationID: id, intent: intent))
     }
 }
 

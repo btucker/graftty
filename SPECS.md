@@ -3428,6 +3428,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-24.18** When an agent creates or queries a remote placement, the CLI shall require a stable operation UUID and an unambiguous connected paired host and send its pinned identity with the request.
 
+**REMOTE-24.19** When a placement is admitted, the host shall return its preparing status without waiting for setup, continue independently of the request lifetime, and finish canceling owned jobs before shutdown returns.
+
 ### REMOTE-25.x — Dev Container environments
 
 **REMOTE-25.1** When preparing a remote project environment, the application shall use its selected Dev Container configuration through the existing Dev Container CLI.
@@ -3439,6 +3441,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-25.4** If container setup, required lifecycle commands, or agent readiness checks fail, then the application shall report the failed stage without claiming the agent is ready.
 
 **REMOTE-25.5** When remote preparation state changes, the application shall expose consistent progress and failures to the CLI, Mac, and GrafttyMobile.
+
+**REMOTE-25.6** When creating a worktree for the upstream Dev Container common-directory mount, the application shall request relative Git metadata without rewriting existing worktrees and shall report unsupported Git versions as a creation failure.
+
+**REMOTE-25.7** When a parent requests Dev Container placement, the host shall prepare the selected configuration before pane startup, retain its container identity for later panes, and stop and remove that container when deleting the worktree.
 
 ### REMOTE-26.x — Git replication and authenticated parent publication
 

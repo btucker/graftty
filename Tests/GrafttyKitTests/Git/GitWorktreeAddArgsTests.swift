@@ -4,6 +4,31 @@ import Foundation
 
 @Suite("GitWorktreeAdd argv shape", .serialized)
 struct GitWorktreeAddArgsTests {
+    @Test("@spec REMOTE-25.6: When creating a worktree for the upstream Dev Container common-directory mount, the application shall request relative Git metadata without rewriting existing worktrees and shall report unsupported Git versions as a creation failure.")
+    func createsRelativeMetadataForDevContainers() async throws {
+        let root = try makeTempDir(prefix: "graftty-relative-worktree")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = root.appendingPathComponent("repo", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        #expect(try shellInRepo("git init -b main && git commit --allow-empty -m initial", at: repo) == 0)
+        let path = root.appendingPathComponent("linked").path
+        let help = try await GitRunner.captureAll(args: ["worktree", "add", "-h"], at: repo.path)
+        if !(help.stdout + help.stderr).contains("relative-paths") {
+            await #expect(throws: GitWorktreeAdd.Error.self) {
+                try await GitWorktreeAdd.add(repoPath: repo.path, worktreePath: path, branch: .createNew(name: "linked"), startPoint: nil, relativePaths: true)
+            }
+            #expect(!FileManager.default.fileExists(atPath: path))
+            return
+        }
+        try await GitWorktreeAdd.add(repoPath: repo.path, worktreePath: path, branch: .createNew(name: "linked"), startPoint: nil, relativePaths: true)
+        let metadata = try String(contentsOfFile: (path as NSString).appendingPathComponent(".git"), encoding: .utf8)
+        #expect(metadata.hasPrefix("gitdir: ../"))
+        #expect(!metadata.contains(repo.path))
+        #expect(try await GitRunner.run(args: ["status", "--porcelain"], at: path).isEmpty)
+        let head = try await GitRunner.run(args: ["symbolic-ref", "--short", "HEAD"], at: path)
+        #expect(head.trimmingCharacters(in: .whitespacesAndNewlines) == "linked")
+    }
+
     @Test("createNew without startPoint ends option parsing before the path")
     func createNewNoStart() {
         let argv = GitWorktreeAdd.argvFor(

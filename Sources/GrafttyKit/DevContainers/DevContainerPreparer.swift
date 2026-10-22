@@ -13,6 +13,15 @@ public actor DevContainerPreparer {
     private var preparing: Set<String> = []
     public init(executor: any CLIExecutor = CLIRunner()) { self.executor = executor }
 
+    public func checkRelativeWorktreeSupport(at workspace: String) async throws {
+        for command in ["read-configuration", "up", "exec"] {
+            let help = try await run([command, "--help"], at: workspace, stage: "compatibility", timeout: .seconds(5))
+            guard help.stdout.contains("--mount-git-worktree-common-dir") else {
+                throw DevContainerPreparationError(stage: "compatibility", message: "Install a Dev Container CLI supporting relative Git worktree common-directory mounts")
+            }
+        }
+    }
+
     public func prepare(workspace rawWorkspace: String, configuration: String? = nil, operationID: UUID) async throws -> PreparedDevContainer {
         guard rawWorkspace.hasPrefix("/") else { throw DevContainerPreparationError(stage: "configuration", message: "Workspace must be absolute") }
         let workspace = CanonicalPath.canonicalize(rawWorkspace)
@@ -29,14 +38,7 @@ public actor DevContainerPreparer {
             throw DevContainerPreparationError(stage: "configuration", message: "Dev Container configuration exceeds 1 MiB")
         }
         let relativeGit = try usesRelativeWorktree(at: workspace)
-        if relativeGit {
-            for command in ["read-configuration", "up", "exec"] {
-                let help = try await run([command, "--help"], at: workspace, stage: "compatibility", timeout: .seconds(30))
-                guard help.stdout.contains("--mount-git-worktree-common-dir") else {
-                    throw DevContainerPreparationError(stage: "compatibility", message: "Install a Dev Container CLI supporting relative Git worktree common-directory mounts")
-                }
-            }
-        }
+        if relativeGit { try await checkRelativeWorktreeSupport(at: workspace) }
         var common = ["--workspace-folder", workspace, "--config", config, "--mount-workspace-git-root", "false"]
         if relativeGit { common += ["--mount-git-worktree-common-dir", "true"] }
         let read = try await run(["read-configuration"] + common, at: workspace, stage: "configuration", timeout: .seconds(60))
@@ -65,6 +67,68 @@ public actor DevContainerPreparer {
         return PreparedDevContainer(containerID: containerID, workspace: workspace, configurationPath: config,
             configurationDigest: SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined(),
             remoteWorkspaceFolder: remoteFolder, remoteUser: output["remoteUser"] as? String, usesRelativeGitWorktree: relativeGit)
+    }
+
+    public nonisolated static func shellCommand(for environment: PreparedDevContainer, command: String? = nil) -> String {
+        var args = ["devcontainer", "exec", "--container-id", environment.containerID,
+                    "--workspace-folder", environment.workspace, "--config", environment.configurationPath,
+                    "--mount-workspace-git-root", "false"]
+        if environment.usesRelativeGitWorktree { args += ["--mount-git-worktree-common-dir", "true"] }
+        if let command { args += ["/bin/sh", "-lc", command + "\nexec /bin/sh -l"] }
+        else { args += ["/bin/sh", "-l"] }
+        return "exec " + args.map(WorktreeAgentLaunchCommand.shellLiteral).joined(separator: " ")
+    }
+
+    /// Labels locate resources for an already authenticated, retained operation.
+    /// They never authorize a peer or establish parent identity.
+    public func findPlacementContainer(operationID: UUID, workspace: String) async throws -> String? {
+        let workspaceHash = SHA256.hash(data: Data(workspace.utf8)).map { String(format: "%02x", $0) }.joined()
+        let output = try await docker(["ps", "--all", "--quiet", "--no-trunc",
+            "--filter", "label=graftty.placement=" + operationID.uuidString.lowercased(),
+            "--filter", "label=graftty.workspace=" + workspaceHash])
+        let ids = output.stdout.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard ids.count <= 1, ids.allSatisfy(Self.validContainerID) else {
+            throw DevContainerPreparationError(stage: "cleanup", message: "Placement container discovery is ambiguous; inspect the retained operation before deleting")
+        }
+        return ids.first
+    }
+
+    /// Return whether a rejected deletion needs to restart the container.
+    public func stopForDeletion(containerID: String) async throws -> Bool {
+        guard try await containerExists(containerID) else { return false }
+        let state = try await docker(["inspect", "--format", "{{.State.Running}}", containerID])
+        let running = state.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard running == "true" || running == "false" else {
+            throw DevContainerPreparationError(stage: "cleanup", message: "Docker returned an unknown running state")
+        }
+        if running == "true" { _ = try await docker(["stop", "--timeout", "10", containerID]) }
+        return running == "true"
+    }
+    public func restartAfterRejectedDeletion(containerID: String) async throws {
+        guard Self.validContainerID(containerID) else { throw DevContainerPreparationError(stage: "cleanup", message: "Invalid retained container ID") }
+        _ = try await docker(["start", containerID])
+    }
+    public func removeStoppedContainer(containerID: String) async throws {
+        guard try await containerExists(containerID) else { return }
+        // Do not remove volumes or force-kill a container that another actor restarted.
+        _ = try await docker(["rm", containerID])
+    }
+    private static func validContainerID(_ id: String) -> Bool { id.count == 64 && id.allSatisfy { "0123456789abcdef".contains($0) } }
+    private func containerExists(_ id: String) async throws -> Bool {
+        guard Self.validContainerID(id) else { throw DevContainerPreparationError(stage: "cleanup", message: "Invalid retained container ID") }
+        let output = try await docker(["ps", "--all", "--quiet", "--no-trunc", "--filter", "id=" + id])
+        let ids = output.stdout.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard ids.isEmpty || ids == [id] else {
+            throw DevContainerPreparationError(stage: "cleanup", message: "Docker returned an unexpected container identity")
+        }
+        return !ids.isEmpty
+    }
+    private func docker(_ args: [String]) async throws -> CLIOutput {
+        do {
+            let result = try await executor.run(command: "docker", args: args, at: NSHomeDirectory(), timeout: .seconds(30))
+            guard result.exitCode == 0 else { throw DevContainerPreparationError(stage: "cleanup", message: "Docker exited with status \(result.exitCode)") }
+            return result
+        } catch { throw DevContainerPreparationError(stage: "cleanup", message: String(describing: error)) }
     }
 
     private func run(_ args: [String], at workspace: String, stage: String, timeout: Duration) async throws -> CLIOutput {
