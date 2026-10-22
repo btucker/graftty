@@ -135,7 +135,8 @@ public final class IPadAppState {
 
     // Per-host `RemoteHostConnection`s live in `RemoteConnectionCoordinator`
     // (negotiate-on-demand, in-flight dedup, eviction), not here — `RootView`
-    // holds and reads the coordinator directly on both size classes. This
-    // type owns only sidebar/detail selection and layout state.
+    // owns the coordinator and provides it to both size classes through
+    // `\.remoteConnectionCoordinator`. This type owns only sidebar/detail
+    // selection and layout state.
 }
 #endif

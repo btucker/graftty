@@ -25,10 +25,9 @@ public struct RootView: View {
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     /// Owned here (not per-screen) so a negotiated SSH connection survives
     /// navigation-stack pushes/pops on the compact path and layout
-    /// transitions on the iPad path — both `compactBody`'s
-    /// `SingleSessionView` and `IPadRootLayout` are handed the SAME
-    /// instance so a host negotiated once from either surface is cached
-    /// for the other.
+    /// transitions on the iPad path. `body` injects this one instance as
+    /// `\.remoteConnectionCoordinator` for both size classes, so a host
+    /// negotiated once from either surface is cached for the other.
     @State private var coordinator = RemoteConnectionCoordinator(
         connectionsAllowedInitially: false
     )
@@ -65,7 +64,6 @@ public struct RootView: View {
                 IPadRootLayout(
                     hostStore: hostStore,
                     appState: iPadAppState,
-                    coordinator: coordinator,
                     nearbyMacBrowser: nearbyMacBrowser
                 )
             default:
@@ -76,6 +74,7 @@ public struct RootView: View {
             }
         }
         .environment(\.biometricGate, gate)
+        .environment(\.remoteConnectionCoordinator, coordinator)
         .environment(\.worktreeContextActions, WorktreeContextActions { [hostID = iPadAppState.selectedHostId] path, source in
             openContextWorktree(path, source: source, hostID: hostID)
         })
@@ -396,8 +395,7 @@ public struct RootView: View {
         NavigationStack(path: $navigationPath) {
             HostPickerView(
                 store: hostStore,
-                browser: nearbyMacBrowser,
-                coordinator: coordinator
+                browser: nearbyMacBrowser
             )
                 .navigationDestination(for: Host.self) { host in
                     compactPicker(host: host)
@@ -408,8 +406,7 @@ public struct RootView: View {
                 .navigationDestination(for: WorktreeStep.self) { step in
                     WorktreeDetailView(
                         host: step.host,
-                        worktree: step.worktree,
-                        coordinator: coordinator
+                        worktree: step.worktree
                     ) { sessionName in
                         let session = SessionStep(
                             host: step.host,
@@ -423,7 +420,7 @@ public struct RootView: View {
                     }
                 }
                 .navigationDestination(for: SessionStep.self) { step in
-                    SingleSessionView(step: step, navigationPath: $navigationPath, coordinator: coordinator,
+                    SingleSessionView(step: step, navigationPath: $navigationPath,
                                       onBackToWorktrees: {
                                           Self.applyCompactBack(step: step, appState: iPadAppState,
                                                                 navigationPath: &navigationPath,
@@ -443,7 +440,6 @@ public struct RootView: View {
     private func compactPicker(host: Host, project: SidebarProject? = nil) -> some View {
         WorktreePickerView(
             host: host,
-            coordinator: coordinator,
             onSelect: { wt in
                 Self.applyCompactWorktreeSelection(wt, host: host, project: project, appState: iPadAppState,
                                                    navigationPath: &navigationPath)

@@ -11,7 +11,6 @@ import UIKit
 struct MultiPaneDetailView: View {
     let host: Host
     let worktree: WorktreePanes
-    let coordinator: RemoteConnectionCoordinator
     let theme: GhosttyThemeColors
     let focusedPaneId: String?
     let pendingFocusRequests: Int
@@ -65,7 +64,6 @@ struct MultiPaneDetailView: View {
                     worktreePath: worktree.path,
                     sessionName: sessionName,
                     title: title.isEmpty ? sessionName : title,
-                    coordinator: coordinator,
                     theme: theme,
                     isFocused: isFocused,
                     isUnfocused: isUnfocused,
@@ -217,7 +215,6 @@ private struct MultiPaneLeafView: View {
     let worktreePath: String
     let sessionName: String
     let title: String
-    let coordinator: RemoteConnectionCoordinator
     let theme: GhosttyThemeColors
     let isFocused: Bool
     let isUnfocused: Bool
@@ -239,7 +236,6 @@ private struct MultiPaneLeafView: View {
             ),
             navigationPath: $unusedNavigationPath,
             isFullScreen: false,
-            coordinator: coordinator,
             externalPendingFocusRequests: pendingFocusRequests,
             onExternalFocusRequestsConsumed: onFocusRequestsConsumed,
             ghosttyCommandContext: ghosttyCommandContext,

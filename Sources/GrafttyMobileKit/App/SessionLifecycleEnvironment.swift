@@ -8,6 +8,10 @@ private struct BiometricGateKey: EnvironmentKey {
     static let defaultValue: BiometricGate? = nil
 }
 
+private struct RemoteConnectionCoordinatorKey: EnvironmentKey {
+    static let defaultValue: RemoteConnectionCoordinator? = nil
+}
+
 private struct MobileNotificationPaneActivationKey: EnvironmentKey {
     static let defaultValue: MobileNotificationPaneActivation? = nil
 }
@@ -21,6 +25,15 @@ extension EnvironmentValues {
     var biometricGate: BiometricGate? {
         get { self[BiometricGateKey.self] }
         set { self[BiometricGateKey.self] = newValue }
+    }
+
+    /// RootView's one coordinator, shared by both size classes so a host
+    /// negotiated from either surface is cached for the other. `nil` only
+    /// in previews and tests that inject none: views then load no remote
+    /// worktrees and open no remote sessions.
+    var remoteConnectionCoordinator: RemoteConnectionCoordinator? {
+        get { self[RemoteConnectionCoordinatorKey.self] }
+        set { self[RemoteConnectionCoordinatorKey.self] = newValue }
     }
 }
 
@@ -219,7 +232,8 @@ public struct RemoteWorktreeProviders {
     }
 
     @MainActor
-    init(coordinator: RemoteConnectionCoordinator, host: Host) {
+    init(coordinator: RemoteConnectionCoordinator?, host: Host) {
+        guard let coordinator else { self.init(); return }
         self.init(
             includeRemoteWorktrees: coordinator.isPaired(host),
             connection: makeRemoteConnectionProvider(

@@ -12,17 +12,16 @@ public struct WorktreePickerView: View {
     public let host: Host
     let project: SidebarProject?
     public let theme: GhosttyThemeColors?
-    public let coordinator: RemoteConnectionCoordinator
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (WorktreePanes, PaneLayoutNode.Leaf) -> Void
     private let onSelectWorktreeDetail: ((WorktreePanes) -> Void)?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
+    @Environment(\.remoteConnectionCoordinator) private var coordinator
 
     public init(
         host: Host,
         theme: GhosttyThemeColors? = nil,
-        coordinator: RemoteConnectionCoordinator,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void,
         navigation: SidebarNavigationState? = nil,
@@ -33,7 +32,6 @@ public struct WorktreePickerView: View {
         self.host = host
         self.project = project
         self.theme = theme
-        self.coordinator = coordinator
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onSelectWorktreeDetail = onSelectWorktreeDetail

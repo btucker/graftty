@@ -54,9 +54,9 @@ struct WorktreeListContentTests {
     func projectDestinationHasItsOwnSelection() {
         let project = SidebarProject(id: "repo", repositoryID: "repo", name: "Repo")
         let step = ProjectStep(host: sampleHost(), project: project)
-        let root = WorktreePickerView(host: step.host, coordinator: RemoteConnectionCoordinator(),
+        let root = WorktreePickerView(host: step.host,
             onSelect: { _ in }, onSelectPane: { _, _ in })
-        let destination = WorktreePickerView(host: step.host, coordinator: root.coordinator,
+        let destination = WorktreePickerView(host: step.host,
             onSelect: { _ in }, onSelectPane: { _, _ in }, project: step.project)
         #expect(root.project == nil)
         #expect(destination.project?.id == "repo")
@@ -198,17 +198,12 @@ struct WorktreeListContentTests {
     @Test("WorktreePickerView wrapper delegates to WorktreeListContent")
     func wrapperDelegates() {
         let h = sampleHost()
-        let coordinator = RemoteConnectionCoordinator()
         let wrapper = WorktreePickerView(
             host: h,
-            coordinator: coordinator,
             onSelect: { _ in },
             onSelectPane: { _, _ in }
         )
-        let requiredCoordinator: RemoteConnectionCoordinator =
-            wrapper.coordinator
         #expect(wrapper.host.id == h.id)
-        #expect(requiredCoordinator === coordinator)
     }
 
     @Test("""

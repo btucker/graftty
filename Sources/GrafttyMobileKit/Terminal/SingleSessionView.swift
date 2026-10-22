@@ -75,12 +75,12 @@ struct SingleSessionView: View {
     /// collapsed sidebar (IPAD-1.7).
     let isFullScreen: Bool
     let showsProjectRail: Bool
-    /// Injected from `RootView` on BOTH size classes so `openTerminal()`
-    /// can negotiate (or reuse) the per-host `RemoteHostConnection` for
-    /// SSH-over-WebRTC. `nil` exists only in preview and narrowly scoped
-    /// test contexts; production refuses the dial when pairing is absent
-    /// or negotiation fails.
-    let coordinator: RemoteConnectionCoordinator?
+    /// RootView's coordinator, from the environment on BOTH size classes,
+    /// so `openTerminal()` can negotiate (or reuse) the per-host
+    /// `RemoteHostConnection` for SSH-over-WebRTC. `nil` exists only in
+    /// preview and narrowly scoped test contexts; production refuses the
+    /// dial when pairing is absent or negotiation fails.
+    @Environment(\.remoteConnectionCoordinator) private var coordinator
     /// Not-yet-honored focus requests owned by app-scoped state (the iPad
     /// layout passes `appState.pendingFocusRequests`). A pending delta, not
     /// a monotonic total, so view recreation cannot replay honored requests.
@@ -308,7 +308,6 @@ struct SingleSessionView: View {
         navigationPath: Binding<NavigationPath>,
         isFullScreen: Bool = true,
         showsProjectRail: Bool = true,
-        coordinator: RemoteConnectionCoordinator? = nil,
         externalPendingFocusRequests: Int = 0,
         onExternalFocusRequestsConsumed: (() -> Void)? = nil,
         ghosttyCommandContext: MobileGhosttyCommandContext? = nil,
@@ -330,7 +329,6 @@ struct SingleSessionView: View {
         self._navigationPath = navigationPath
         self.isFullScreen = isFullScreen
         self.showsProjectRail = showsProjectRail
-        self.coordinator = coordinator
         self.externalPendingFocusRequests = externalPendingFocusRequests
         self.onExternalFocusRequestsConsumed = onExternalFocusRequestsConsumed
         self.ghosttyCommandContext = ghosttyCommandContext
