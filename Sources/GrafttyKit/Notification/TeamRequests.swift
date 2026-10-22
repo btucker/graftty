@@ -1,9 +1,10 @@
 import Foundation
 
 // Payloads of the widest team requests. `NotificationMessage` writes the
-// `type` tag beside these keys, so each payload's JSON is the request's wire
-// JSON (frozen by ATTN-2.25). Fields a newer CLI added decode with their
-// historical defaults when an older CLI omits them.
+// `type` tag beside these keys, so a payload's keys are the request's wire
+// keys (frozen by ATTN-2.25); a payload encoded on its own lacks the tag and
+// is not a request. Fields a newer CLI added decode with their historical
+// defaults when an older CLI omits them.
 
 /// `team_send`: a message to a worktree, provider, or exact agent.
 public struct TeamSendRequest: Codable, Sendable, Equatable {

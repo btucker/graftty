@@ -406,15 +406,16 @@ struct HeadlessHostRuntimeTests {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
-        var forwarded: [NotificationMessage] = []
-        runtime.remoteTeamSender = { message in forwarded.append(message); return .ok }
+        var forwarded: [TeamSendRequest] = []
+        runtime.remoteTeamSender = { request in forwarded.append(request); return .ok }
         let address = "graftty-mac://peer-device/Users/me/project"
         #expect(await runtime.handle(.teamSend(callerWorktree: root.path, recipient: address, text: "hi", priority: .normal)) == .ok)
         #expect(await runtime.handle(.teamSend(callerWorktree: root.path, callerAgentID: "codex-test", recipient: address,
             text: "urgent", priority: .urgent)) == .ok)
         #expect(forwarded == [
-            .teamSend(callerWorktree: root.path, callerAgentID: nil, recipient: address, text: "hi", priority: .normal),
-            .teamSend(callerWorktree: root.path, callerAgentID: "codex-test", recipient: address, text: "urgent", priority: .urgent),
+            TeamSendRequest(callerWorktree: root.path, callerAgentID: nil, recipient: address, text: "hi", priority: .normal),
+            TeamSendRequest(callerWorktree: root.path, callerAgentID: "codex-test", recipient: address, text: "urgent",
+                            priority: .urgent),
         ])
         #expect(await runtime.handle(.teamSend(callerWorktree: "/untracked", recipient: address, text: "x", priority: .normal))
             == .error(TeamInboxRequestError.callerNotTracked.description))

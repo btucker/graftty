@@ -10,13 +10,13 @@ extension GrafttyApp {
     /// Native reply bridges resolve replies outside the control socket.
     @MainActor
     static func handleTeamReply(
-        _ message: NotificationMessage,
+        _ reply: TeamReplyRequest,
         appState: Binding<AppState>,
         router: RemoteTeamRouter,
         inbox: TeamInbox,
         dispatcher: TeamEventDispatcher
     ) async -> ResponseMessage {
-        await ControlRequestCore.teamReply(message, platform: MacTeamPlatform(
+        await ControlRequestCore.teamReply(reply, platform: MacTeamPlatform(
             appState: appState, teamInbox: inbox, teamEventDispatcher: dispatcher, router: router
         ))
     }

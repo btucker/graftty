@@ -80,24 +80,19 @@ struct CrossRepositoryMessagingTests {
             from: .init(member: "main", worktree: "/source", runtime: "codex", agentID: "codex-abcdef012345"),
             to: .init(member: "main", worktree: "/target", runtime: nil), priority: .normal, body: "brief"
         )
-        let request = try TeamReplyResolver(inbox: inbox).resolve(
+        let send = try TeamReplyResolver(inbox: inbox).resolve(
             callerWorktree: "/target", callerAgentID: "claude-012345abcdef",
             messageID: row.id, fallback: fallback, text: "received", priority: .normal,
             repos: repos, teamsEnabled: true
         )
-        guard case .teamSend(let send) = request else {
-            Issue.record("Expected a send request")
-            return
-        }
-        let (caller, agent, recipient, text, priority) = (send.callerWorktree, send.callerAgentID, send.recipient, send.text, send.priority)
-        #expect(recipient == "/source#\(fallback ? "codex" : "codex-abcdef012345")")
+        #expect(send.recipient == "/source#\(fallback ? "codex" : "codex-abcdef012345")")
         let record = TeamPresenceRecord(
             teamID: "/source", worktree: "/source", runtime: .codex,
             paneSessionName: nil, pid: 102, registeredAt: Date(), agentID: "codex-abcdef012345"
         )
         let reply = try Self.handler(inbox: inbox, records: [record]).send(
-            callerWorktree: caller, callerAgentID: agent, recipient: recipient,
-            text: text, priority: priority, repos: repos, teamsEnabled: true
+            callerWorktree: send.callerWorktree, callerAgentID: send.callerAgentID, recipient: send.recipient,
+            text: send.text, priority: send.priority, repos: repos, teamsEnabled: true
         )
         #expect(reply.message.to.worktree == "/source")
         #expect(reply.message.to.agentID == (fallback ? nil : "codex-abcdef012345"))

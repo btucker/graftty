@@ -132,9 +132,8 @@ final class HostService {
                 catch { return .error(String(describing: error)) }
             }
         }
-        runtime.remoteTeamSender = { [weak self] message in
-            guard let self, case .teamSend(let send) = message,
-                  let address = RemoteTeamAddress(rawValue: send.recipient),
+        runtime.remoteTeamSender = { [weak self] send in
+            guard let self, let address = RemoteTeamAddress(rawValue: send.recipient),
                   let session = self.peers[address.deviceID] else {
                 return .error("remote team connection is unavailable")
             }

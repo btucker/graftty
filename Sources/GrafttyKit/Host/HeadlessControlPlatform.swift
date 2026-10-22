@@ -49,7 +49,7 @@ final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
     func send(callerWorktree: String, callerAgentID: String?, recipient: String,
               text: String, priority: TeamInboxPriority) async -> ResponseMessage {
         guard let sender = runtime.remoteTeamSender else { return .error("remote team connection is unavailable") }
-        return await sender(.teamSend(callerWorktree: callerWorktree, callerAgentID: callerAgentID,
-                                      recipient: recipient, text: text, priority: priority))
+        return await sender(TeamSendRequest(callerWorktree: callerWorktree, callerAgentID: callerAgentID,
+                                            recipient: recipient, text: text, priority: priority))
     }
 }
