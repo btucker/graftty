@@ -53,8 +53,8 @@ public struct AWSOfferReport: Encodable, Sendable {
 }
 
 public struct AWSProviderDiscovery: Sendable {
-    private let executor: any CLIExecutor
-    public init(executor: any CLIExecutor = CLIRunner()) { self.executor = executor }
+    private let client: AWSReadOnlyClient
+    public init(executor: any CLIExecutor = CLIRunner()) { self.client = AWSReadOnlyClient(executor: executor) }
 
     public func offers(preferences: AWSProviderPreferences, requirements: AWSOfferRequirements,
                        at now: Date = Date()) async throws -> AWSOfferReport {
@@ -68,12 +68,9 @@ public struct AWSProviderDiscovery: Sendable {
         let date = ISO8601DateFormatter().string(from: now)
         for region in preferences.regions {
             try Task.checkCancellation()
-            let common = ["--profile", profile, "--region", region, "--output", "json",
-                          "--no-cli-pager", "--no-cli-auto-prompt", "--cli-connect-timeout", "10", "--cli-read-timeout", "20"]
-            let types: InstanceTypesResponse = try await query(
-                ["ec2", "describe-instance-types", "--filters", "Name=instance-type,Values=" + preferences.instanceTypes.joined(separator: ",")] + common)
-            try requireComplete(types.NextToken)
-            var metadata: [String: InstanceType] = [:]
+            let types: AWSInstanceTypesResponse = try await client.query(.instanceTypes,
+                arguments: ["--filters", "Name=instance-type,Values=" + preferences.instanceTypes.joined(separator: ",")], profile: profile, region: region)
+            var metadata: [String: AWSInstanceType] = [:]
             for type in types.InstanceTypes where preferences.instanceTypes.contains(type.InstanceType) {
                 guard type.ProcessorInfo.SupportedArchitectures.contains(requirements.architecture),
                       type.SupportedUsageClasses.contains("spot"),
@@ -83,10 +80,9 @@ public struct AWSProviderDiscovery: Sendable {
                 compatible.insert(type.InstanceType)
             }
             guard !metadata.isEmpty else { continue }
-            let prices: PricesResponse = try await query(
-                ["ec2", "describe-spot-price-history", "--instance-types"] + metadata.keys.sorted()
-                + ["--product-descriptions", "Linux/UNIX", "--start-time", date, "--end-time", date] + common)
-            try requireComplete(prices.NextToken)
+            let prices: PricesResponse = try await client.query(.spotPrices,
+                arguments: ["--instance-types"] + metadata.keys.sorted()
+                + ["--product-descriptions", "Linux/UNIX", "--start-time", date, "--end-time", date], profile: profile, region: region)
             var latest: [String: AWSSpotOffer] = [:]
             for price in prices.SpotPriceHistory {
                 guard let type = metadata[price.InstanceType], price.ProductDescription == "Linux/UNIX",
@@ -122,27 +118,6 @@ public struct AWSProviderDiscovery: Sendable {
             observationsStartedAt: now)
     }
 
-    private func query<T: Decodable>(_ args: [String]) async throws -> T {
-        try Task.checkCancellation()
-        let output: CLIOutput
-        do {
-            output = try await executor.run(command: "aws", args: args, at: NSHomeDirectory(), timeout: .seconds(45))
-        } catch CLIError.notFound {
-            throw ProviderError("Install the AWS CLI v2 and configure your profile before querying offers.")
-        } catch CLIError.nonZeroExit(_, _, let stderr) {
-            throw ProviderError("AWS discovery failed: \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
-        }
-        try Task.checkCancellation()
-        do { return try JSONDecoder().decode(T.self, from: Data(output.stdout.utf8)) }
-        catch { throw ProviderError("AWS returned an unsupported or incomplete JSON response: \(error)") }
-    }
-
-    private func requireComplete(_ nextToken: String?) throws {
-        guard nextToken?.isEmpty != false else {
-            throw ProviderError("AWS returned incomplete paginated results; no offer ranking was produced.")
-        }
-    }
-
     private static func parseDate(_ text: String) -> Date? {
         let format = ISO8601DateFormatter()
         format.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -152,19 +127,7 @@ public struct AWSProviderDiscovery: Sendable {
     }
 }
 
-private struct InstanceTypesResponse: Decodable { let InstanceTypes: [InstanceType]; let NextToken: String? }
-private struct InstanceType: Decodable {
-    let InstanceType: String
-    let VCpuInfo: CPUs
-    let MemoryInfo: Memory
-    let ProcessorInfo: Processor
-    let SupportedUsageClasses: [String]
-    let BurstablePerformanceSupported: Bool
-    struct CPUs: Decodable { let DefaultVCpus: Int }
-    struct Memory: Decodable { let SizeInMiB: Int }
-    struct Processor: Decodable { let SupportedArchitectures: [String] }
-}
-private struct PricesResponse: Decodable { let SpotPriceHistory: [Price]; let NextToken: String? }
+private struct PricesResponse: AWSPaginatedResponse { let SpotPriceHistory: [Price]; let NextToken: String? }
 private struct Price: Decodable {
     let InstanceType: String
     let AvailabilityZone: String

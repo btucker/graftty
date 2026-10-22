@@ -3412,6 +3412,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-24.10** When querying AWS Spot offers, the CLI shall compare the latest effective Linux prices for the configured pool by region and Availability Zone, filter architecture and resource requirements, use the preferred type only to break equal-price ties, and distinguish observed prices from verified capacity.
 
+**REMOTE-24.11** When listing AWS provider instances, the CLI shall report account-scoped instance identity, lifecycle state, available hardware metadata, and observation time across configured regions, default to Graftty-tagged instances, and expose readiness and unmeasured load as unknown without treating tags as authenticated host ownership.
+
 ### REMOTE-25.x — Dev Container environments
 
 **REMOTE-25.1** When preparing a remote project environment, the application shall use its selected Dev Container configuration through the existing Dev Container CLI.

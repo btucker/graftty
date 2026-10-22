@@ -63,6 +63,13 @@ public struct AWSProviderPreferences: Codable, Equatable, Sendable {
         }
     }
 
+    public func validateForInventory() throws {
+        try validate()
+        guard profile != nil, !regions.isEmpty else {
+            throw ProviderError("Configure aws with --profile and --region before listing hosts.")
+        }
+    }
+
     public func validateForDiscovery() throws {
         try validate()
         guard profile != nil, !regions.isEmpty, !instanceTypes.isEmpty else {

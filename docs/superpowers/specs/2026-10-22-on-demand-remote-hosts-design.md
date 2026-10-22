@@ -12,21 +12,27 @@ The behavioral backlog lives in [RemoteTodo.swift](../../../Tests/GrafttyTests/S
 
 ## Implementation status
 
-The first slice implements `graftty provider configure|show|remove aws` and `graftty provider list` preferences and `graftty provider offers aws` discovery. Configuration is per user and references an existing AWS CLI profile. No credential contents are stored.
+The CLI implements saved provider preferences, Spot offer comparison, and EC2 host inventory. Use `graftty provider configure|show|remove aws`, `graftty provider list`, `graftty provider offers aws`, and `graftty provider hosts aws`. Configuration is per user and references an existing AWS CLI profile. No credential contents are stored.
 
 ```sh
 graftty provider configure aws --profile development --region us-east-1 \
   --instance-types t4g.large,t4g.xlarge,m7g.xlarge \
   --preferred-instance-type t4g.xlarge
 graftty provider offers aws --architecture arm64 --min-cpus 4 --min-memory-mib 16384 --json
+graftty provider hosts aws --json
+graftty provider hosts aws --all --json
 graftty provider configure aws --clear preferred-instance-type
 ```
 
 Offer discovery requires AWS CLI v2 and queries instance metadata and current Linux Spot rates. It filters the configured pool by architecture, CPU, memory, selected zones, and an optional hourly limit. Results sort by price, with the preferred type breaking equal-price ties. Each result distinguishes when the rate took effect from when it was observed. Rates do not establish available capacity or host load. Failed or incomplete queries fail the command instead of producing a partial ranking.
 
-`max-instances` and `credit-mode` are saved for future provisioning. `max-hourly-usd` currently filters individual offers; fleet spending enforcement requires the placement controller. This slice does not launch instances. Host inventory, telemetry, placement, Dev Container setup, parent replication, interruption handling, and skills remain backlog work.
+Host inventory uses AWS CLI v2 [`describe-instances`](https://docs.aws.amazon.com/cli/latest/reference/ec2/describe-instances.html) across the saved regions. It defaults to the discovery tag `graftty:managed=true`; `--all` includes untagged instances. Each entry identifies its AWS account, region, and instance ID. It retains stopped and recently terminated instances and machines outside the current instance pool or placement zones. Hardware lookup batches up to 100 types per request and respects instance-specific CPU options.
 
-The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, and `REMOTE-24.10`. The remaining disabled inventory entries still describe future behavior.
+Inventory is eventually consistent and does not establish trusted Graftty ownership. Tags are discovery hints. EC2 `running` is a lifecycle state, not agent readiness. JSON reports `readiness: "unknown"` and explicit nulls for CPU utilization, available memory, free disk, pending placements, and telemetry time until authenticated telemetry exists. Incomplete or failed regional queries fail the command instead of silently returning a partial inventory. The command needs a profile and region; it does not require an instance pool.
+
+`max-instances` and `credit-mode` are saved for future provisioning. `max-hourly-usd` currently filters individual offers; fleet spending enforcement requires the placement controller. This slice does not launch instances. Authenticated telemetry, placement, Dev Container setup, parent replication, interruption handling, and skills remain backlog work.
+
+The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.10`, and `REMOTE-24.11`. The remaining disabled inventory entries still describe future behavior.
 
 ## Agreed direction
 
@@ -81,12 +87,12 @@ graftty provider configure aws --profile development --region us-east-1
 graftty provider configure aws --instance-types t4g.large,t4g.xlarge,t4g.2xlarge
 graftty provider configure aws --preferred-instance-type t4g.xlarge --market spot
 graftty provider show aws --json
-graftty host list --provider aws --json
+graftty provider hosts aws --json
 graftty worktree plan fix-auth --provider aws --json
 graftty worktree add fix-auth --provider aws --agent codex --prompt-stdin
 ```
 
-The final CLI needs list, show, update, clear, and removal operations for saved preferences. Removing a registration must not implicitly terminate its instances. Whether the group is named `provider` or nested under `remote` remains open.
+The `provider` CLI implements list, show, update, clear, and removal of saved preferences. Removing a registration does not terminate its instances.
 
 ## Placement uses compatibility, capacity, and price
 

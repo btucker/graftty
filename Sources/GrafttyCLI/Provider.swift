@@ -5,9 +5,9 @@ import GrafttyProtocol
 
 struct Provider: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Save compute preferences and compare AWS Spot offers",
+        abstract: "Save compute preferences, inspect hosts, and compare AWS Spot offers",
         discussion: "Preferences are local to this user. These commands do not require Graftty to be running and do not launch or terminate instances.",
-        subcommands: [ProviderConfigure.self, ProviderShow.self, ProviderList.self, ProviderRemove.self, ProviderOffers.self])
+        subcommands: [ProviderConfigure.self, ProviderShow.self, ProviderList.self, ProviderRemove.self, ProviderOffers.self, ProviderHosts.self])
 }
 
 struct ProviderConfigure: ParsableCommand {
@@ -172,6 +172,37 @@ struct ProviderOffers: AsyncParsableCommand {
         if !report.unpricedInstanceTypes.isEmpty { print("No price observed in selected zones: " + report.unpricedInstanceTypes.joined(separator: ", ")) }
         if report.overBudgetOfferCount > 0 { print("Offers above hourly limit: \(report.overBudgetOfferCount)") }
         for limitation in report.limitations { print(limitation) }
+    }
+}
+
+struct ProviderHosts: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "hosts", abstract: "List EC2 instances in configured regions",
+        discussion: "Defaults to instances tagged graftty:managed=true. --all includes untagged instances. Inventory includes machines outside your current instance pool and placement zones. EC2 running state and tags do not establish authenticated Graftty readiness or available capacity.")
+    @Argument(help: "Compute provider: aws") var provider: String
+    @Flag(help: "Include instances without the Graftty discovery tag") var all = false
+    @Flag(help: "Print inventory with explicit nulls for unknown load") var json = false
+    func validate() throws { try ProviderOutput.validate(provider) }
+    func run() async throws {
+        guard let preferences = try AWSProviderStore().load() else { throw ValidationError("Configure aws before listing hosts.") }
+        let report = try await AWSHostInventory().hosts(preferences: preferences, includeUntagged: all)
+        if json { try ProviderOutput.json(report); return }
+        print(Self.table(report))
+    }
+
+    static func table(_ report: AWSHostInventoryReport) -> String {
+        var lines = ["IDENTITY\tSTATE\tTYPE\tARCH\tZONE\tVCPU\tMEMORY_MIB\tGRAFTTY_TAGGED\tREADY\tLOAD"]
+        for host in report.hosts {
+            let cells = [host.identity, host.state, host.instanceType ?? "unknown", host.architecture ?? "unknown",
+                host.availabilityZone ?? "unknown", host.cpus.map(String.init) ?? "unknown", host.memoryMiB.map(String.init) ?? "unknown",
+                String(host.grafttyTagged), host.readiness, "unknown"]
+            // AWS fields are data. Do not let control characters become terminal commands or table delimiters.
+            lines.append(cells.map { cell in
+                cell.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? "?" : String($0) }.joined()
+            }.joined(separator: "\t"))
+        }
+        if report.hosts.isEmpty { lines.append("No matching instances in configured regions.") }
+        lines.append(contentsOf: report.limitations)
+        return lines.joined(separator: "\n")
     }
 }
 

@@ -303,7 +303,7 @@ let package = Package(
                 "Support/MutableBox.swift", "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift", "Web/WebSocketOutputTests.swift",
                 "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamInboxParseCacheTests.swift", "Teams/TeamPresenceStorageTests.swift",
                 "Teams/AttentionFileHandoffTests.swift", "Remote/MacToMac/GrafttyBonjourServiceTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift",
-                "Persistence/JSONStoreCompatibilityTests.swift", "Providers/AWSProviderTests.swift"] : nil,
+                "Persistence/JSONStoreCompatibilityTests.swift", "Providers/AWSProviderTests.swift", "Providers/AWSHostInventoryTests.swift"] : nil,
             resources: [
                 .process("Hosting/Fixtures"),
                 .copy("Web/Fixtures"),
