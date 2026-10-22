@@ -1,8 +1,6 @@
 import Foundation
 import GrafttyProtocol
 
-public enum GitReplicaObjectFormat: String, Sendable { case sha1, sha256 }
-
 /// A parent-owned receive process plan. Keep its hook directory intact until the
 /// process and its children have exited: Git treats an absent pre-receive hook as
 /// permission to proceed. No automatic deletion occurs when this value is dropped.
@@ -66,6 +64,8 @@ public actor GitReplicaStore {
         guard bare == "true", format == objectFormat.rawValue else { throw GitReceiveHookError.wrongRepository }
         let hooks = generationDirectory.appendingPathComponent("receive-" + UUID().uuidString.lowercased(), isDirectory: true)
         try Self.privateDirectory(hooks)
+        var handedOff = false
+        defer { if !handedOff { try? FileManager.default.removeItem(at: hooks) } }
         let context = GitReceiveHookContext(delegationDirectory: delegations.directory.path, repositoryPath: repository.path,
             scope: scope, authenticatedPeer: authenticatedPeer)
         let contextFile = hooks.appendingPathComponent("context.json")
@@ -75,6 +75,7 @@ public actor GitReplicaStore {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: hook.path)
         try Task.checkCancellation()
         _ = try delegations.authorize(scope, authenticatedPeer: authenticatedPeer)
+        handedOff = true
         return GitReceiveCommand(repository: repository, hooksDirectory: hooks, arguments: ["git",
             "-c", "core.hooksPath=" + hooks.path, "-c", "receive.fsckObjects=true", "-c", "receive.denyDeletes=true",
             "-c", "receive.autogc=false", "receive-pack", repository.path], environment: environment)

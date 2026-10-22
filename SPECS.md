@@ -2964,7 +2964,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-7.x — pane_control Channel
 
-**REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability. (Enforced at userauth: a peer with `terminalControl: .disabled` is rejected.)
+**REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability.
 
 **REMOTE-7.2** When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<right|down|left|up>}`, the host shall replace the leaf whose `sessionName == target` with a new split node placed to the requested side of the original leaf, applied on the main actor, and reply `{"ok":true}` on success.
 
@@ -3474,11 +3474,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-26.13** When preparing a delegated Git receiver, the parent shall authenticate its scope before creating storage, isolate each assignment generation in a bare repository, and require its own receive hook without inheriting caller Git configuration.
 
-**REMOTE-26.14** When a peer opens the Git control subsystem, the host shall require worktree-management permission, derive the device and key fingerprint from SSH authentication, and keep bidirectional requests on that authenticated connection.
+**REMOTE-26.14** When a peer opens the Git control subsystem, the host shall require replication permission, derive the device and key fingerprint from SSH authentication, and keep bidirectional requests on that authenticated connection.
 
-**REMOTE-26.15** When a delegated host starts or loses its parent connection, the host shall initiate and retry an authenticated connection to each recorded parent without copying private keys or requiring the Mac to expose an SSH port.
+**REMOTE-26.15** When a delegated host starts or loses its parent connection, the host shall initiate and retry an authenticated connection to each recorded parent without copying private keys or requiring a publicly reachable SSH port on the Mac.
 
 **REMOTE-26.16** While a parent is unreachable, the host shall retain unacknowledged work locally while it survives, retry with bounded backoff, and report Git and session progress as saved only after their respective parent acknowledgements.
+
+**REMOTE-26.17** When a parent prepares a Git transfer, the application shall issue a bounded, short-lived, single-use receive token, bind it to the authenticated host and current delegation, and recheck authority before releasing its receive command.
+
+**REMOTE-26.18** When a host has only replication permission, the parent shall allow authenticated delegated Git requests without granting terminal, worktree-management, browser, or team access, and shall reject replication after its permission is revoked.
 
 ### REMOTE-27.x — Native session replication and restore
 

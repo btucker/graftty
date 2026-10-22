@@ -44,6 +44,7 @@ struct SSHHostSessionConfiguration: Sendable {
             hostKey: hostKey,
             trustedPeerStore: trustedPeerStore,
             expectedDeviceID: expectedDeviceID,
+            allowReplicationOnly: gitControl != nil,
             activePeerRegistry: activeRemotePeers,
             closeActiveTransport: closeTransport,
             onActivePeerRegistered: { entryID in
@@ -58,7 +59,7 @@ struct SSHHostSessionConfiguration: Sendable {
             },
             inboundChildChannelInitializer: { child, type in
                 if case .directTCPIP(let destination) = type {
-                    guard peerBox.browserTunnelAllowed(host: destination.targetHost, port: destination.targetPort) else {
+                    guard peerBox.terminalControlAllowed, peerBox.browserTunnelAllowed(host: destination.targetHost, port: destination.targetPort) else {
                         return child.eventLoop.makeFailedFuture(SSHHostSessionError.unsupportedChannelType)
                     }
                     return SSHTCPBridge.connect(host: destination.targetHost, port: destination.targetPort, channel: child)
@@ -90,15 +91,17 @@ struct SSHHostSessionConfiguration: Sendable {
                         ownershipBroadcaster: ownershipBroadcaster,
                         deviceIDProvider: { peerBox.deviceID },
                         worktreeManagementAllowed: { peerBox.worktreeManagementAllowed },
+                        terminalControlAllowed: { peerBox.terminalControlAllowed },
+                        replicationAllowed: { peerBox.gitControlIdentity(in: trustedPeerStore) != nil },
                         displayKindProvider: { peerBox.displayKind },
                         gitControlHandler: gitControl.map { callbacks -> TeamChannelHandler.Handler in
                             { deviceID, bytes in
-                                guard !Task.isCancelled, let identity = peerBox.gitControlIdentity, identity.deviceID == deviceID else { return Data() }
+                                guard !Task.isCancelled, let identity = peerBox.gitControlIdentity(in: trustedPeerStore), identity.deviceID == deviceID else { return Data() }
                                 return await callbacks.handler(identity, bytes)
                             }
                         },
                         gitControlOnConnect: { deviceID, session in
-                            guard let callbacks = gitControl, let identity = peerBox.gitControlIdentity, identity.deviceID == deviceID else {
+                            guard let callbacks = gitControl, let identity = peerBox.gitControlIdentity(in: trustedPeerStore), identity.deviceID == deviceID else {
                                 await session.close(); return
                             }
                             await callbacks.onConnect(identity, session)
@@ -148,8 +151,11 @@ final class AuthenticatedPeerBox: @unchecked Sendable {
         }
     }
 
-    var gitControlIdentity: RemoteMacConnectionSummary.ID? {
-        guard let peer, peer.capabilities.worktreeManagement == .allowed, peer.kind == .mac || peer.kind == .linux else { return nil }
+    var terminalControlAllowed: Bool { peer?.capabilities.terminalControl == .allowed }
+
+    func gitControlIdentity(in store: TrustedPeerStore) -> RemoteMacConnectionSummary.ID? {
+        guard let peer, peer.capabilities.replication == .allowed, peer.kind == .mac || peer.kind == .linux,
+              SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: store, allowReplicationOnly: true) else { return nil }
         return .init(deviceID: peer.id, fingerprint: peer.fingerprint)
     }
 

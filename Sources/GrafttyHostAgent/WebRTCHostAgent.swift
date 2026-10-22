@@ -884,7 +884,7 @@ public actor WebRTCHostAgent {
     /// hangs headless mac CI — see `factory`'s lazy-init comment). `internal`
     /// so `@testable import GrafttyHostAgent` can reach it directly.
     internal func shouldCloseAfterRegister(peer: TrustedPeer) -> Bool {
-        !SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: trustedPeerStore)
+        !SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: trustedPeerStore, allowReplicationOnly: gitControl != nil)
     }
 
     private func startAuthenticationDeadline(

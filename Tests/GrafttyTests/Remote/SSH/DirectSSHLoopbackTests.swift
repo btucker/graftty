@@ -15,6 +15,23 @@ import Network
 
 @Suite(.serialized)
 struct DirectSSHLoopbackTests {
+    @Test(.timeLimit(.minutes(1)), arguments: [true, false])
+    func replicationOnlyRejectsMobilePeersAndMissingReceiver(configured: Bool) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let peer = TrustedPeer(id: .init(value: "worker"), kind: configured ? .iphone : .linux,
+            publicKey: try .init(rawRepresentation: f.clientKey.publicKey.rawRepresentation), displayName: "worker",
+            capabilities: .init(terminalControl: .disabled, portTunnel: .disabled, screenView: .disabled,
+                                screenControl: .disabled, worktreeManagement: .disabled, replication: .allowed),
+            pairedAt: Date(), lastSeenAt: nil)
+        try f.store.add(peer)
+        let server = f.server()
+        if configured { await server.setGitControl(.init(handler: { _, _ in Issue.record("Unauthorized worker reached Git"); return Data() })) }
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        await #expect(throws: (any Error).self) { try await client.connect(host: "127.0.0.1", port: port) }
+        await client.close(); await server.close()
+    }
+
     private struct Fixture {
         let directory = URL.temporaryDirectory.appendingPathComponent("direct-ssh-\(UUID())")
         let hostKey = Curve25519.Signing.PrivateKey()
@@ -82,10 +99,11 @@ struct DirectSSHLoopbackTests {
         await client.close(); await server.close()
     }
 
-    @Test("@spec REMOTE-26.14: When a peer opens the Git control subsystem, the host shall require worktree-management permission, derive the device and key fingerprint from SSH authentication, and keep bidirectional requests on that authenticated connection.", .timeLimit(.minutes(1)), arguments: [true, false], [true, false])
+    @Test("@spec REMOTE-26.14: When a peer opens the Git control subsystem, the host shall require replication permission, derive the device and key fingerprint from SSH authentication, and keep bidirectional requests on that authenticated connection.", .timeLimit(.minutes(1)), arguments: [true, false], [true, false])
     func gitControlUsesAuthenticatedIdentity(allowed: Bool, configured: Bool) async throws {
         let f = Fixture(); defer { f.cleanup() }
-        let peer = try f.peer(key: f.clientKey, managementAllowed: allowed)
+        var peer = try f.peer(key: f.clientKey, managementAllowed: false)
+        peer.capabilities.replication = allowed ? .allowed : .disabled
         try f.store.add(peer)
         let expected = RemoteMacConnectionSummary.ID(deviceID: peer.id, fingerprint: peer.fingerprint)
         let server = f.server()

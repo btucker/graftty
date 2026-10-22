@@ -106,7 +106,7 @@ public actor DirectSSHHostServer {
                     guard connections.insert(channel) else {
                         return channel.eventLoop.makeFailedFuture(ChannelError.ioOnClosedChannel)
                     }
-                    let session = DirectSSHSession(channel: channel, store: store, registry: registry)
+                    let session = DirectSSHSession(channel: channel, store: store, registry: registry, allowReplicationOnly: config.gitControl != nil)
                     let deadline = channel.eventLoop.scheduleTask(in: .seconds(30)) { channel.close(promise: nil) }
                     channel.closeFuture.whenComplete { _ in
                         deadline.cancel()
@@ -166,10 +166,12 @@ private actor DirectSSHSession {
     let channel: Channel
     let store: TrustedPeerStore
     let registry: SSHConnectionRegistry
+    let allowReplicationOnly: Bool
     var registration: (RemoteDeviceID, SSHConnectionRegistry.RegistrationToken)?
     var closed = false
-    init(channel: Channel, store: TrustedPeerStore, registry: SSHConnectionRegistry) {
+    init(channel: Channel, store: TrustedPeerStore, registry: SSHConnectionRegistry, allowReplicationOnly: Bool) {
         self.channel = channel; self.store = store; self.registry = registry
+        self.allowReplicationOnly = allowReplicationOnly
     }
     func register(peer: TrustedPeer) async {
         guard !closed, channel.isActive else { return }
@@ -180,7 +182,7 @@ private actor DirectSSHSession {
         }
         registration = (peer.id, token)
         // Revocation or capability edits may have raced the async registration.
-        guard SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: store) else {
+        guard SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: store, allowReplicationOnly: allowReplicationOnly) else {
             await close()
             return
         }

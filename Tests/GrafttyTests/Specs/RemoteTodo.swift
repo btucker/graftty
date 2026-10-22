@@ -117,7 +117,7 @@ struct RemoteTodo {
     func remote_26_9() async throws { }
 
     @Test("""
-@spec REMOTE-26.15: When a delegated host starts or loses its parent connection, the host shall initiate and retry an authenticated connection to each recorded parent without copying private keys or requiring the Mac to expose an SSH port.
+@spec REMOTE-26.15: When a delegated host starts or loses its parent connection, the host shall initiate and retry an authenticated connection to each recorded parent without copying private keys or requiring a publicly reachable SSH port on the Mac.
 """, .disabled("not yet implemented"))
     func remote_26_15() async throws { }
 

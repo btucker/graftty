@@ -52,6 +52,8 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     /// shared box at that point always sees the value userauth set before
     /// NIOSSH allowed any channel to open.
     private let deviceIDProvider: @Sendable () -> RemoteDeviceID?
+    private let terminalControlAllowed: @Sendable () -> Bool
+    private let replicationAllowed: @Sendable () -> Bool
     private let worktreeManagementAllowed: @Sendable () -> Bool
     /// Authenticated transport kind. The control envelope's kind remains
     /// caller-controlled and must not decide ownership eligibility.
@@ -80,6 +82,8 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         ownershipBroadcaster: DisplayOwnershipBroadcaster,
         deviceIDProvider: @escaping @Sendable () -> RemoteDeviceID?,
         worktreeManagementAllowed: @escaping @Sendable () -> Bool = { true },
+        terminalControlAllowed: @escaping @Sendable () -> Bool = { true },
+        replicationAllowed: @escaping @Sendable () -> Bool = { false },
         displayKindProvider: @escaping @Sendable () -> DisplayClientKind = { .ios },
         gitControlHandler: TeamChannelHandler.Handler? = nil,
         gitControlOnConnect: @escaping TeamChannelHandler.OnConnect = { _, _ in },
@@ -119,6 +123,8 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         self.ownershipBroadcaster = ownershipBroadcaster
         self.deviceIDProvider = deviceIDProvider
         self.worktreeManagementAllowed = worktreeManagementAllowed
+        self.terminalControlAllowed = terminalControlAllowed
+        self.replicationAllowed = replicationAllowed
         self.displayKindProvider = displayKindProvider
     }
 
@@ -136,6 +142,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         case is SSHChannelRequestEvent.EnvironmentRequest,
              is SSHChannelRequestEvent.PseudoTerminalRequest,
              is SSHChannelRequestEvent.ShellRequest:
+            guard terminalControlAllowed() else { context.close(promise: nil); return }
             // Terminal session — R4's path. Install TerminalSessionHandler
             // after self, refire the event so the new handler can process
             // it (dispatched=true blocks recursion through self), then
@@ -181,6 +188,12 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         _ request: SSHChannelRequestEvent.SubsystemRequest,
         context: ChannelHandlerContext
     ) {
+        // Replication-only workers cannot inspect or control their parent's
+        // terminals, worktrees, browsers, team, or terminal-history channels.
+        guard terminalControlAllowed() || request.subsystem == SSHChannelTypeNames.gitControl else {
+            refuse(request, context: context)
+            return
+        }
         if request.subsystem == GrafttyWebRTC.bulkSubsystem {
             dispatched = true
             if request.wantReply {
@@ -251,7 +264,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
 
     private static let framedSubsystems: [String: SubsystemSpec] = [
         SSHChannelTypeNames.gitControl: SubsystemSpec(maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes) { dispatcher in
-            guard dispatcher.teamAllowed(), dispatcher.worktreeManagementAllowed(),
+            guard dispatcher.replicationAllowed(),
                   let deviceID = dispatcher.deviceIDProvider(), let handler = dispatcher.gitControlHandler else { return nil }
             return TeamChannelHandler(deviceID: deviceID, handler: handler,
                 onConnect: dispatcher.gitControlOnConnect, onDisconnect: dispatcher.gitControlOnDisconnect)
