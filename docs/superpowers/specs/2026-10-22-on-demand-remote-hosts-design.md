@@ -45,7 +45,9 @@ The consumer records receipt time, rejects future timestamps beyond five seconds
 
 `max-instances` and `credit-mode` are saved for future provisioning. `max-hourly-usd` currently filters individual offers; fleet spending enforcement requires the placement controller. This slice does not launch instances. Instance enrollment, automatic placement and provisioning, Dev Container runtime preparation, parent replication, interruption handling, and the remote-host skill remain backlog work. The project-setup skill is bundled for both Claude and Codex; it guides version-controlled Dev Container setup, resource and authentication requirements, and verification across worktrees.
 
-The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.8`, and `REMOTE-24.10` through `REMOTE-24.18`, plus `REMOTE-28.1`. The remaining disabled inventory entries still describe future behavior.
+The Dev Container CLI adapter now resolves selected JSONC configuration, runs image/Dockerfile lifecycle setup, and verifies Git access in the returned container. It waits for process exit, records the selected configuration digest, labels containers by workspace and placement operation, and rejects Compose, escaping configuration paths, and unsupported absolute linked-worktree layouts. Relative worktrees require the upstream common-directory mount option. It does not inject credential mounts or report agent authentication readiness. This adapter is not yet connected to placement creation or container cleanup. Tests use a fake CLI; the local Docker daemon was unavailable for a live smoke test.
+
+The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.8`, and `REMOTE-24.10` through `REMOTE-24.18`, plus `REMOTE-25.1` and `REMOTE-28.1`. The remaining disabled inventory entries still describe future behavior.
 
 ## Agreed direction
 

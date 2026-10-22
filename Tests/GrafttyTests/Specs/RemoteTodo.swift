@@ -50,11 +50,6 @@ struct RemoteTodo {
     // MARK: - REMOTE-25.x — Dev Container environments
 
     @Test("""
-@spec REMOTE-25.1: When preparing a remote project environment, the application shall use its selected Dev Container configuration through the existing Dev Container CLI.
-""", .disabled("not yet implemented"))
-    func remote_25_1() async throws { }
-
-    @Test("""
 @spec REMOTE-25.2: When a project first receives a worktree on a host, the application shall transfer the required repository history and prepare its environment on demand while allowing other projects on the same host.
 """, .disabled("not yet implemented"))
     func remote_25_2() async throws { }
