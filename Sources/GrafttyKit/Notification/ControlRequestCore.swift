@@ -10,6 +10,14 @@ public enum ControlRequestCore {
     /// response; those are answered by `handleRequest`.
     @discardableResult
     public static func handleMessage(_ message: NotificationMessage, platform: any ControlPlatform) -> Bool {
+        handleMessage(message, platform: platform, now: { .now },
+                      sleepUntil: { try await Task.sleep(until: $0, clock: .continuous) })
+    }
+
+    @discardableResult
+    static func handleMessage(_ message: NotificationMessage, platform: any ControlPlatform,
+                              now: @escaping @MainActor () -> ContinuousClock.Instant,
+                              sleepUntil: @escaping @MainActor (ContinuousClock.Instant) async throws -> Void) -> Bool {
         switch message {
         case let .providerActivity(path, runtime, sessionID, paneSessionName, activity):
             platform.providerActivity(path: path, paneSessionName: paneSessionName, sessionID: sessionID,
@@ -19,8 +27,11 @@ public enum ControlRequestCore {
                                                               paneSessionName: paneSessionName)
             try? platform.stateDidChange()
             if let autoClear {
+                // Fix the deadline on arrival, as `asyncAfter(deadline:)` did:
+                // the task below can start late while the main actor is busy.
+                let deadline = now() + .seconds(autoClear.delay)
                 Task { @MainActor [weak platform] in
-                    try? await Task.sleep(for: .seconds(autoClear.delay))
+                    try? await sleepUntil(deadline)
                     guard let platform else { return }
                     platform.state.applyAutoClear(autoClear)
                     try? platform.stateDidChange()

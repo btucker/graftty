@@ -99,6 +99,26 @@ struct ControlRequestCoreTests {
         #expect(platform.state.worktree(forPath: "/repo")?.attention?.text == "new")
     }
 
+    @MainActor
+    final class ManualTimer {
+        var now = ContinuousClock.now
+        var deadlines: [ContinuousClock.Instant] = []
+    }
+
+    @Test("notify auto-clear fixes its deadline when the notify arrives, so a busy main actor cannot postpone it")
+    func notifyAutoClearDeadlineIsFixedAtArrival() async throws {
+        let platform = try RecordingPlatform()
+        let timer = ManualTimer()
+        let arrival = timer.now
+        ControlRequestCore.handleMessage(.notify(path: "/repo", text: "soon", clearAfter: 1), platform: platform,
+                                         now: { timer.now }, sleepUntil: { timer.deadlines.append($0) })
+        // The main actor stays busy for five seconds before the timer task runs.
+        timer.now = arrival + .seconds(5)
+        for _ in 0..<1000 where platform.state.worktree(forPath: "/repo")?.attention != nil { await Task.yield() }
+        #expect(timer.deadlines == [arrival + .seconds(1)])
+        #expect(platform.state.worktree(forPath: "/repo")?.attention == nil)
+    }
+
     @Test("requests the core does not own reach the platform unchanged")
     func platformRequestsForwarded() async throws {
         let platform = try RecordingPlatform()
@@ -120,21 +140,23 @@ struct ControlRequestCoreTests {
             recipient: address, text: "hello", priority: .urgent), platform: platform) == .ok)
         #expect(await ControlRequestCore.handleRequest(.teamMessage(callerWorktree: "/repo", recipient: address,
             text: "hi"), platform: platform) == .ok)
-        let sends = try #require(platform.routing?.sends)
-        #expect(sends.map(\.text) == ["hello", "hi"])
-        #expect(sends.map(\.agent) == ["codex-a", nil])
-        #expect(sends.map(\.priority) == [.urgent, .normal])
+        let routing = try #require(platform.routing)
+        #expect(routing.sends.map(\.text) == ["hello", "hi"])
+        #expect(routing.sends.map(\.agent) == ["codex-a", nil])
+        #expect(routing.sends.map(\.priority) == [.urgent, .normal])
 
         #expect(await ControlRequestCore.handleRequest(.teamMessage(callerWorktree: "/untracked", recipient: address,
             text: "x"), platform: platform) == .error(TeamInboxRequestError.callerNotTracked.description))
+        #expect(routing.sends.count == 2)
         platform.teamsEnabled = false
         #expect(await ControlRequestCore.handleRequest(.teamMessage(callerWorktree: "/repo", recipient: address,
             text: "x"), platform: platform) == .error(TeamInboxRequestError.teamModeDisabled.description))
+        #expect(routing.sends.count == 2)
         platform.teamsEnabled = true
         platform.routing = nil
         #expect(await ControlRequestCore.handleRequest(.teamMessage(callerWorktree: "/repo", recipient: address,
             text: "x"), platform: platform) == .error("remote team connection is unavailable"))
-        #expect(sends.count == 2)
+        #expect(routing.sends.count == 2)
     }
 
     @Test("team hooks record liveness only for panes tracked in the caller's worktree and post stopped-turn notifications")
