@@ -97,7 +97,9 @@ Replies arrive through hooks; do not poll for completion. For deliberate inspect
 
 ## Delegate a task
 
-Each worktree has exactly one agent. Never create worktrees yourself with `git worktree add`, provider worktree tools, worktree-isolated subagents, or other skills. Subagents sharing your current worktree are allowed.
+Each worktree has exactly one implementer, the agent that edits its checkout. Never create worktrees yourself with `git worktree add`, provider worktree tools, worktree-isolated subagents, or other skills. Subagents sharing your current worktree are allowed.
+
+To add a reviewer or pair to an existing worktree, run `graftty pane add <worktree> --agent <codex|claude> --prompt-stdin` with the brief on stdin. An added agent does not edit files unless the implementer hands off. Added agents share the worktree path in `graftty team list --json`. The unsuffixed address reaches the earliest reachable agent, and `<path>#<runtime>` reaches the earliest agent of that runtime. Address an added agent by its exact ID. Use `<path>#<runtime>` only when no other agent of that runtime shares the worktree.
 
 When the user requests delegation, give the child bounded independent work. Avoid tiny or overlapping tasks. Creating a worktree alone does not delegate; launch its agent with the task:
 

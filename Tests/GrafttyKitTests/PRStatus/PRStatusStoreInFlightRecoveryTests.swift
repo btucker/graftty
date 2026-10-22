@@ -9,7 +9,7 @@ import Foundation
 /// repo as "in flight" forever, and every subsequent background
 /// poll plus every user-triggered `refresh()` short-circuits at
 /// the in-flight gate. The fix is the time-bounded gate
-/// (`refreshCadence`): a dispatch older than the cap is treated
+/// (`RepoPollScheduler.abandonmentThreshold`): a dispatch older than the cap is treated
 /// as abandoned and superseded; the per-repo `generation` counter
 /// drops the abandoned Task's late write if it ever returns.
 ///
@@ -67,7 +67,7 @@ struct PRStatusStoreInFlightRecoveryTests {
         try await Task.sleep(nanoseconds: 50_000_000)
         #expect(store.isInFlightForTesting("/repo"))
 
-        // Fast-forward the in-flight timestamp past `refreshCadence`
+        // Fast-forward the in-flight timestamp past the abandonment threshold
         // so the next refresh treats the prior Task as abandoned.
         store.seedInFlightSinceForTesting(
             Date().addingTimeInterval(-3600),

@@ -208,4 +208,39 @@ struct HostIdentityStoreTests {
         #expect(reloaded != nil)
         #expect(reloaded!.rawRepresentation == generated.rawRepresentation)
     }
+
+    // MARK: - On-disk compatibility (#488)
+
+    /// The record shape every shipped release has read and written, frozen
+    /// here so a store refactor cannot drift from it unnoticed.
+    private struct LegacyStoredKey: Decodable {
+        let version: Int
+        let privateKeyData: Data
+    }
+
+    @Test("A host-identity.json written by earlier releases loads unchanged")
+    func loadsFixtureWrittenByEarlierReleases() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Bytes 0x01...0x20 as written by the pre-#488 store's bare JSONEncoder.
+        let fixture = #"{"version":2,"privateKeyData":"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="}"#
+        try Data(fixture.utf8).write(to: dir.appendingPathComponent("host-identity.json"))
+
+        let loaded = try HostIdentityStore(directory: dir).load()
+        #expect(loaded?.rawRepresentation == Data(1...32))
+    }
+
+    @Test("A host-identity.json written by the current store decodes with the earlier reader")
+    func currentWriterOutputDecodesWithEarlierReader() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let key = try HostIdentityStore(directory: dir).generateAndPersist()
+
+        let data = try Data(contentsOf: dir.appendingPathComponent("host-identity.json"))
+        let legacy = try JSONDecoder().decode(LegacyStoredKey.self, from: data)
+        #expect(legacy.version == 2)
+        #expect(legacy.privateKeyData == key.rawRepresentation)
+        let keys = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any]).keys
+        #expect(Set(keys) == ["version", "privateKeyData"])
+    }
 }

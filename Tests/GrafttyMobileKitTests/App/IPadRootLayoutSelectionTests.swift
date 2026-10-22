@@ -375,7 +375,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.9: The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the server-side projection in `GrafttyApp.swift`'s `setWorktreePanesProvider`) and the iPad sidebar (received from the authenticated panes-state channel) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
+@spec IPAD-1.9: The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the shared `WorktreePanes(entry:repo:inputs:)` projection in GrafttyKit, also used by the published Mac and Linux snapshots) and the iPad sidebar (received from the authenticated panes-state channel) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
 """)
     func ipad_1_9_sharedRowContract() {
         // Smoke-check the shared accessor.
@@ -599,7 +599,7 @@ struct IPadRootLayoutSelectionTests {
 """)
     func ipad_1_16_activeWorktreeHighlightAndFocusedPaneEmphasis() {
         // Construct WorktreeListContent with selection state set; the
-        // visual rendering is wired in WorktreeBlock/PaneTitleRow.
+        // visual rendering is wired in WorktreeBlock/SidebarPaneTitleRow.
         // Smoke-check the parameter pass-through here so a future
         // signature drift surfaces in this test rather than visually.
         let view = WorktreeListContent(

@@ -203,4 +203,43 @@ struct ClientIdentityStoreTests {
             .contains(where: { $0.hasPrefix("client-identity.json.corrupt-") }) ?? false
         #expect(backupExists, "Legacy file should be backed up with .corrupt-* suffix")
     }
+
+    // MARK: - On-disk compatibility (#488)
+
+    /// The record shape every shipped release has read and written, frozen
+    /// here so a store refactor cannot drift from it unnoticed.
+    private struct LegacyStoredKey: Decodable {
+        let version: Int
+        let privateKeyData: Data
+    }
+
+    @Test("A client-identity.json written by earlier releases loads unchanged")
+    func loadsFixtureWrittenByEarlierReleases() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Bytes 0x01...0x20 as written by the pre-#488 store's bare JSONEncoder.
+        let fixture = #"{"version":2,"privateKeyData":"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="}"#
+        try Data(fixture.utf8).write(to: dir.appendingPathComponent("client-identity.json"))
+
+        let loaded = try ClientIdentityStore(directory: dir).load()
+        #expect(loaded?.rawRepresentation == Data(1...32))
+    }
+
+    @Test("A client-identity.json written by the current store decodes with the earlier reader")
+    func currentWriterOutputDecodesWithEarlierReader() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let key = try ClientIdentityStore(directory: dir).generateAndPersist()
+
+        let data = try Data(contentsOf: dir.appendingPathComponent("client-identity.json"))
+        let legacy = try JSONDecoder().decode(LegacyStoredKey.self, from: data)
+        #expect(legacy.version == 2)
+        #expect(legacy.privateKeyData == key.rawRepresentation)
+        let keys = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any]).keys
+        #expect(Set(keys) == ["version", "privateKeyData"])
+        let mode = try FileManager.default.attributesOfItem(
+            atPath: dir.appendingPathComponent("client-identity.json").path
+        )[.posixPermissions] as? Int
+        #expect(mode == 0o600)
+    }
 }

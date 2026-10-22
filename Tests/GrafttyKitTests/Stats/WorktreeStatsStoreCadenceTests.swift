@@ -34,14 +34,4 @@ struct WorktreeStatsStoreCadenceTests {
     @Test func runawayFailureStreakDoesNotExceedMaxShift() {
         #expect(WorktreeStatsStore.repoFetchCadence(failureStreak: 100) == .seconds(30 * 32))
     }
-
-    /// DIVERGE-4.4: the in-flight abandonment threshold caps how long
-    /// a still-`inFlight` Task can suppress fresh dispatches. Pinned
-    /// at 30s — long enough to absorb a normal `git` slow-path (FS
-    /// pressure, cold cache) but short enough that a hung subprocess
-    /// (ref-transaction lock during a concurrent `git push`) doesn't
-    /// permanently freeze the worktree's gutter.
-    @Test func inFlightAbandonmentThresholdIsThirtySeconds() {
-        #expect(WorktreeStatsStore.inFlightAbandonmentThreshold() == .seconds(30))
-    }
 }

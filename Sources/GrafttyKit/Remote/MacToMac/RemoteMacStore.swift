@@ -9,13 +9,27 @@ public final class RemoteMacStore {
         case notFound
     }
 
-    public private(set) var remoteMacs: [RemoteMac] = []
-    public private(set) var hasLoaded: Bool = false
+    public var remoteMacs: [RemoteMac] { list.elements }
+    public var hasLoaded: Bool { list.hasLoaded }
 
-    private let storeURL: URL
+    private let list: ObservableListStore<RemoteMac>
 
     public init(storeURL: URL = RemoteMacStore.defaultStoreURL()) {
-        self.storeURL = storeURL
+        list = ObservableListStore(
+            file: JSONFileStore(
+                fileURL: storeURL,
+                dates: .iso8601,
+                outputFormatting: [.prettyPrinted, .sortedKeys]
+            ),
+            // Preserve an unreadable file before a later pairing/save creates a
+            // fresh one, so the user's prior entries are not destroyed.
+            corruptFile: .moveAside,
+            isLoadable: { $0.pairingProtocolVersion == RemoteAccessProtocol.version },
+            areInIncreasingOrder: {
+                ($0.lastUsedAt ?? $0.lastDiscoveredAt ?? $0.addedAt)
+                    > ($1.lastUsedAt ?? $1.lastDiscoveredAt ?? $1.addedAt)
+            }
+        )
     }
 
     public nonisolated static func defaultStoreURL() -> URL {
@@ -30,14 +44,7 @@ public final class RemoteMacStore {
     }
 
     public func loadIfNeeded() async {
-        guard !hasLoaded else { return }
-        let url = storeURL
-        let loaded = await Task.detached(priority: .userInitiated) {
-            RemoteMacStore.readSync(from: url)
-        }.value
-        guard !hasLoaded else { return }
-        remoteMacs = Self.sorted(loaded)
-        hasLoaded = true
+        await list.loadIfNeeded()
     }
 
     public func add(_ remoteMac: RemoteMac) throws {
@@ -88,57 +95,18 @@ public final class RemoteMacStore {
     }
 
     private func ensureLoaded() {
-        guard !hasLoaded else { return }
-        remoteMacs = Self.sorted(Self.readSync(from: storeURL))
-        hasLoaded = true
+        list.ensureLoaded()
     }
 
-    private func write(_ list: [RemoteMac]) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
+    private func write(_ next: [RemoteMac]) throws {
         do {
-            let data = try encoder.encode(list)
-            try FileManager.default.createDirectory(
-                at: storeURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try data.write(to: storeURL, options: [.atomic])
-            remoteMacs = Self.sorted(list)
+            try list.write(next)
         } catch {
             throw StoreError.io("\(error)")
         }
     }
 
-    nonisolated private static func readSync(from url: URL) -> [RemoteMac] {
-        guard let data = try? Data(contentsOf: url) else { return [] }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        do {
-            return try decoder.decode([RemoteMac].self, from: data).filter {
-                $0.pairingProtocolVersion == RemoteAccessProtocol.version
-            }
-        } catch {
-            // Preserve the unreadable source before returning a recoverable
-            // empty model. A later pairing/save can now create a fresh file
-            // without destroying the only copy of the user's prior entries.
-            let milliseconds = Int(Date().timeIntervalSince1970 * 1_000)
-            let backupURL = url.deletingLastPathComponent().appendingPathComponent(
-                "\(url.lastPathComponent).corrupt.\(milliseconds)"
-            )
-            try? FileManager.default.moveItem(at: url, to: backupURL)
-            return []
-        }
-    }
-
     private static func sameIdentity(_ lhs: RemoteMac, _ rhs: RemoteMac) -> Bool {
         lhs.id == rhs.id && lhs.fingerprint == rhs.fingerprint
-    }
-
-    private static func sorted(_ list: [RemoteMac]) -> [RemoteMac] {
-        list.sorted {
-            ($0.lastUsedAt ?? $0.lastDiscoveredAt ?? $0.addedAt)
-                > ($1.lastUsedAt ?? $1.lastDiscoveredAt ?? $1.addedAt)
-        }
     }
 }

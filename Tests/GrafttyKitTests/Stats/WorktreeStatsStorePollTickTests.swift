@@ -289,7 +289,7 @@ struct WorktreeStatsStorePollTickTests {
 
     @MainActor
     @Test("""
-@spec DIVERGE-4.10: When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, claiming a fetch slot before checking for running worktrees leaves the repo path latched in `inFlightRepos`: every subsequent poll classifies it as active, skips the local-compute gate, and never re-invokes `WorktreeStatsStore.refresh`. The user-visible shape is a sidebar gutter whose ↓N count remains frozen until the app is relaunched.
+@spec DIVERGE-4.10: When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, claiming a fetch slot before checking for running worktrees leaves the repo path latched in its in-flight fetch slot: every subsequent poll classifies it as active, skips the local-compute gate, and never re-invokes `WorktreeStatsStore.refresh`. The user-visible shape is a sidebar gutter whose ↓N count remains frozen until the app is relaunched.
 """)
     func pollTickWithNoRunningWorktreesDoesNotLeakInFlightRepoSlot() async throws {
         let compute = RecordingCompute()

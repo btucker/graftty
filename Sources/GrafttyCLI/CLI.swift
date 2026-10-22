@@ -256,6 +256,14 @@ struct PaneAdd: ParsableCommand {
           graftty pane add drag-files                         # split drag-files
           graftty pane add drag-files --command "pnpm test"   # split + run command
           graftty pane add --direction down                   # vertical split below
+          graftty pane add drag-files --agent codex --prompt-stdin < brief.md
+                                                              # add a reviewer agent
+
+        --agent launches the agent like `graftty worktree add --agent`. An
+        added agent shares the worktree with its implementer; address it by
+        the exact ID from `graftty team list --json`. '<path>#<runtime>'
+        reaches the earliest agent of that runtime, so it reaches an added
+        agent only when no other agent of that runtime shares the worktree.
         """
     )
 
@@ -265,13 +273,33 @@ struct PaneAdd: ParsableCommand {
     @Option(name: .long, help: "Split direction: right (default), left, up, or down")
     var direction: String = "right"
 
-    @Option(name: .long, help: "Optional command to run in the new pane (typed into the shell followed by Enter)")
+    @Option(name: .long, help: "Optional command to run in the new pane once its shell is ready")
     var command: String?
+
+    @Option(name: .long, help: "Agent runtime to launch in the new pane: codex or claude")
+    var agent: String?
+
+    @Option(name: .long, help: "Initial prompt passed to --agent")
+    var prompt: String?
+
+    @Flag(name: .long, help: "Read the initial agent prompt from standard input")
+    var promptStdin: Bool = false
 
     func validate() throws {
         guard PaneSplit(rawValue: direction) != nil else {
             throw ValidationError("--direction must be one of: right, left, up, down")
         }
+        try AgentLaunchFlags.validate(agent: agent, prompt: prompt, promptStdin: promptStdin, command: command)
+    }
+
+    func request(path: String, resolvedPrompt: String?) -> NotificationMessage {
+        .addPane(
+            path: path,
+            direction: PaneSplit(rawValue: direction)!,
+            command: command,
+            agentRuntime: agent.flatMap(TeamHookRuntime.init(rawValue:)),
+            agentPrompt: resolvedPrompt
+        )
     }
 
     func run() throws {
@@ -280,8 +308,21 @@ struct PaneAdd: ParsableCommand {
             CLIEnv.printError("pane add takes a worktree name, not a pane id")
             throw ExitCode(1)
         }
-        let dir = PaneSplit(rawValue: direction)!
-        let response = try CLIEnv.sendRequest(.addPane(path: path, direction: dir, command: command))
+        let resolvedPrompt = try promptStdin ? WorktreeAdd.readPromptFromStdin() : prompt
+        if let error = WorktreeAgentLaunchCommand.validationError(prompt: resolvedPrompt) {
+            throw ValidationError(error)
+        }
+        if agent != nil {
+            // An app without this capability would ignore the agent fields
+            // and report success for a plain split.
+            try WorktreeCapability.require(
+                .paneAgentCapability,
+                unsupportedMessage: "the running Graftty app does not support pane add --agent; quit and relaunch the updated app, then retry",
+                verificationMessage: "could not verify pane add --agent support; quit and relaunch Graftty, then retry",
+                retryTransportFailuresUntil: Date().addingTimeInterval(5)
+            )
+        }
+        let response = try CLIEnv.sendRequest(request(path: path, resolvedPrompt: resolvedPrompt))
         try CLIEnv.expectOk(response)
     }
 }

@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import CryptoKit
 import GrafttyCommandUI
 import GrafttyHostAgent
 import GrafttyKit
@@ -51,23 +50,6 @@ protocol CodexAppServerDeliveryTrigger: Sendable {
 
 extension CodexAppServerDeliveryService: CodexAppServerDeliveryTrigger {}
 extension ClaudePeerDeliveryService: CodexAppServerDeliveryTrigger {}
-
-private final class LivePaneSessionNames: @unchecked Sendable {
-    private let lock = NSLock()
-    private var names: Set<String> = []
-
-    func replace(with names: Set<String>) {
-        lock.lock()
-        self.names = names
-        lock.unlock()
-    }
-
-    func contains(_ name: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return names.contains(name)
-    }
-}
 
 struct AppTeamDeliveryLiveness: TeamDeliveryLivenessChecking {
     let livePaneSession: @Sendable (String) -> Bool
@@ -164,20 +146,6 @@ struct GrafttyApp: App {
     @StateObject private var webController: WebServerController
     @StateObject private var updaterController: UpdaterController
     let services: AppServices
-    /// Same `TrustedPeerStore` instance the coordinator and
-    /// `WebRTCHostAgent` share — `PairedDevicesSection` reads it directly
-    /// (list/remove) since the coordinator doesn't expose it publicly.
-    private let trustedPeerStore: TrustedPeerStore
-    private let hostKey: Curve25519.Signing.PrivateKey?
-    /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
-    /// its live SSH connection into (REMOTE-3.1 revocation, W4). Exposed
-    /// alongside `trustedPeerStore` so `PairedDevicesSection`'s "Remove"
-    /// action can call `registry.revoke(deviceID:)` right after removing
-    /// the peer from `trustedPeerStore` — closing the live connection
-    /// immediately rather than waiting for the peer's next userauth
-    /// attempt to fail.
-    private let sshConnectionRegistry: SSHConnectionRegistry
-
     /// Observable proxy for per-pane port bindings. Mutated by the
     /// `PortScanner` `onChange` callback; injected into the SwiftUI
     /// environment so `SidebarView` can render port chips on each row.
@@ -269,23 +237,6 @@ struct GrafttyApp: App {
         )
         _webController = StateObject(wrappedValue: webController)
         _updaterController = StateObject(wrappedValue: UpdaterController())
-
-        // Load identity before startup creates the inbound host pool. The dedicated
-        // paired-access listener authenticates v2 offers with the device keys
-        // before passing them to the pool, whose agents open SSH sessions over the
-        // resulting DataChannel → zmx attach.
-        let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
-        let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
-        self.trustedPeerStore = trustedPeerStore
-        let sshConnectionRegistry = SSHConnectionRegistry()
-        self.sshConnectionRegistry = sshConnectionRegistry
-
-        do {
-            self.hostKey = try hostIdentityStore.loadOrGenerateAndPersist()
-        } catch {
-            self.hostKey = nil
-            NSLog("[Graftty] failed to load remote host identity: \(error)")
-        }
     }
 
     /// If another Graftty process with our `CFBundleIdentifier` is
@@ -473,8 +424,8 @@ struct GrafttyApp: App {
                     .tabItem { Label("General", systemImage: "gear") }
                 WebSettingsPane(
                     pairingCoordinator: services.hostPairingCoordinator,
-                    trustedPeerStore: trustedPeerStore,
-                    sshConnectionRegistry: sshConnectionRegistry
+                    trustedPeerStore: services.trustedPeerStore,
+                    sshConnectionRegistry: services.sshConnectionRegistry
                 )
                     .environmentObject(webController)
                     .tabItem { Label("Web Access", systemImage: "network") }
@@ -1197,202 +1148,12 @@ struct GrafttyApp: App {
         let claudeAgentsTicker = PollingTicker(interval: .seconds(2))
         services.claudeSessionRegistry.start(ticker: claudeAgentsTicker)
 
-        // Sweep dangling presence files left behind by SIGKILL'd agents
-        // whose wrapper trap never fired. The wrapper trap is the primary
-        // cleanup path (TEAM-PRESENCE-1.3); this fallback runs on a slow
-        // cadence and only deletes records whose recorded PID is no
-        // longer alive per `kill(pid, 0)` semantics. Continues while
-        // backgrounded for the same reason the stats poller does:
-        // agent processes can die at any time and Graftty might not be
-        // frontmost when it happens.
-        let presenceTicker = PollingTicker(
-            interval: .seconds(30),
-            pauseWhenInactive: { false }
+        let nativeTeamDelivery = NativeTeamDelivery(
+            services: services,
+            terminalManager: tm,
+            appState: binding
         )
-        services.presenceCleanupTicker = presenceTicker
-        let presenceStorage = TeamPresenceStorage(
-            rootDirectory: TeamPresenceStorage.defaultRoot()
-        )
-        let presenceIndex = TeamPresenceIndex(
-            records: (try? presenceStorage.listAll()) ?? []
-        )
-        func refreshPresenceIndex() -> [TeamPresenceRecord] {
-            let records = (try? presenceStorage.listAll()) ?? []
-            presenceIndex.replace(with: records)
-            return records
-        }
-
-        let livePaneSessionNames = LivePaneSessionNames()
-        func refreshDeliveryLiveness(records: [TeamPresenceRecord]? = nil) {
-            let records = records ?? refreshPresenceIndex()
-            let names = Self.livePaneSessionNamesForAutomaticDelivery(
-                records: records,
-                terminalManager: tm
-            )
-            livePaneSessionNames.replace(with: names)
-        }
-
-        let deliveryLiveness = AppTeamDeliveryLiveness(
-            livePaneSession: { livePaneSessionNames.contains($0) },
-            processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
-        )
-        let codexAppServerDeliveryService = CodexAppServerDeliveryService(
-            inbox: services.teamInbox,
-            presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
-            sessionStorage: CodexAppServerSessionStorage(rootDirectory: TeamPresenceStorage.defaultRoot()),
-            liveness: deliveryLiveness,
-            client: CodexAppServerClient(),
-            wakeBeforeDelivery: { sleepCoordinator.wake(path: $0) }
-        )
-        let claudeReplyBridge = ClaudePeerReplyBridge { original, recipient, reply in
-            // The bridge binds a socket to the recipient that received the
-            // original row. Refuse a reply after that exact session disappears.
-            let reachable = await OffMainIO.run {
-                let records = (try? presenceStorage.listAll()) ?? []
-                return records.contains {
-                    TeamAgentDirectory.identity(for: $0) == recipient.id && $0.worktree == recipient.worktreePath
-                        && $0.transport == recipient.transport
-                        && TeamAgentReachability.isReachable($0)
-                }
-            }
-            guard reachable else { return .error("The replying Claude agent is no longer reachable") }
-            return await Self.handleTeamReply(
-                .teamReply(callerWorktree: recipient.worktreePath, callerAgentID: recipient.id.rawValue,
-                           messageID: original.id, text: reply.body,
-                           priority: reply.priority == .now ? .urgent : .normal),
-                appState: binding, router: remoteTeamRouter, inbox: teamInbox,
-                dispatcher: teamEventDispatcher
-            )
-        }
-        let claudePeerDeliveryService = ClaudePeerDeliveryService(
-            inbox: services.teamInbox,
-            presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
-            agentReachability: { record in
-                // The shared native-delivery predicate, closed over the same
-                // liveness view the Codex service uses, so both services and
-                // the hook-side default-agent computation agree on which
-                // agent owns an untargeted head row.
-                TeamAgentReachability.isReachableForNativeDelivery(
-                    record,
-                    liveness: deliveryLiveness
-                )
-            },
-            replyBridge: claudeReplyBridge,
-            wakeBeforeDelivery: { sleepCoordinator.wake(path: $0) }
-        )
-        presenceTicker.start {
-            let records = await presenceIndex.refresh {
-                await TeamPresenceMonitor.sweep(storage: presenceStorage)
-            }
-            refreshDeliveryLiveness(records: records)
-            let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-            await Self.retryNativeDeliveryForPresenceWorktrees(
-                inbox: services.teamInbox,
-                records: records,
-                deliveries: Self.nativeDeliveries(
-                    codex: codexAppServerDeliveryService,
-                    claude: claudePeerDeliveryService,
-                    enabled: teamsEnabled
-                )
-            )
-        }
-
-        // Subscribe Codex app-server delivery to inbox file-system events.
-        // TeamInboxObserver fires with the full message list on every
-        // append. We track the previous count and fire onMessageArrival
-        // only when new messages arrive, to avoid redundant delivers.
-        // We watch each team's inbox for all repos that exist at startup time;
-        // the watcher self-heals for the file-not-yet-created case via the
-        // directory watch inside TeamInboxObserver.
-        let inboxRoot = AppState.defaultDirectory
-            .appendingPathComponent("team-inbox", isDirectory: true)
-        for repo in binding.wrappedValue.repos {
-            let teamID = repo.path
-            let observer = TeamInboxObserver(rootDirectory: inboxRoot, teamID: teamID)
-            // Per-observer state claims message ranges before awaiting
-            // app-server delivery. `TeamInboxObserver` callbacks can overlap
-            // once they hop through Task/MainActor, so the actor owns the
-            // count update.
-            // (A previous version used a shared `[String: Int]` map across
-            // all observer closures and crashed under concurrent mutation
-            // by multiple observer queues — Swift Dictionary is not
-            // thread-safe.)
-            let deliveryState = CodexAppServerInboxObserverDeliveryState(skipInitialSnapshot: true)
-            let cancellable = observer.start {
-                [weak codexAppServerDeliveryService, weak claudePeerDeliveryService] messages in
-                Task { @MainActor in
-                    refreshDeliveryLiveness()
-                    guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else {
-                        await deliveryState.markSeen(messages)
-                        return
-                    }
-                    guard codexAppServerDeliveryService != nil || claudePeerDeliveryService != nil else {
-                        await deliveryState.markSeen(messages)
-                        return
-                    }
-                    let recipientWorktrees = await deliveryState.claimRecipientWorktrees(in: messages)
-                    let awakeRecipients = recipientWorktrees.filter { tm.wakeWorktree($0) }
-                    var deliveries: [any CodexAppServerDeliveryTrigger] = []
-                    if let codexAppServerDeliveryService {
-                        deliveries.append(codexAppServerDeliveryService)
-                    }
-                    if let claudePeerDeliveryService {
-                        deliveries.append(claudePeerDeliveryService)
-                    }
-                    await Self.drainNativeDeliveryMessages(
-                        teamID: teamID,
-                        recipientWorktrees: awakeRecipients,
-                        inbox: services.teamInbox,
-                        deliveries: deliveries
-                    )
-                }
-            }
-            services.inboxObserverCancellables.append(cancellable)
-            services.inboxObservers.append(observer)
-        }
-
-        // Persist the delivery service on AppServices so it outlives startup().
-        services.codexAppServerDeliveryService = codexAppServerDeliveryService
-        services.claudePeerDeliveryService = claudePeerDeliveryService
-
-        // When a pane is destroyed, sweep any TeamPresenceRecord whose
-        // paneSessionName matches the closing pane. The agent's own
-        // `team unregister` cleanup hook is the primary path; this fallback
-        // covers the SIGKILL / hard-quit case where the pane went away
-        // without the registered process getting a chance to clean up.
-        tm.paneClosed = { [presenceStorage] _, sessionName in
-            guard let sessionName else { return }
-            services.claudeSessionRegistry.removePane(sessionName)
-            _ = refreshPresenceIndex()
-            for record in presenceIndex.records(forPaneSessionName: sessionName) {
-                try? presenceStorage.delete(
-                    teamID: record.teamID,
-                    worktree: record.worktree,
-                    runtime: record.runtime,
-                    paneSessionName: record.paneSessionName,
-                    agentID: record.agentID
-                )
-                presenceIndex.remove(
-                    teamID: record.teamID,
-                    worktree: record.worktree,
-                    runtime: record.runtime,
-                    paneSessionName: record.paneSessionName
-                )
-            }
-            let records = presenceIndex.allRecords()
-            refreshDeliveryLiveness(records: records)
-            Task {
-                await Self.retryNativeDeliveryForPresenceWorktrees(
-                    inbox: services.teamInbox,
-                    records: records,
-                    deliveries: Self.nativeDeliveries(
-                        codex: codexAppServerDeliveryService,
-                        claude: claudePeerDeliveryService,
-                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-                    )
-                )
-            }
-        }
+        nativeTeamDelivery.install()
 
         tm.restorePaneTitleMetadata(appState.savedPaneTitleMetadata)
         restoreRunningWorktrees()
@@ -1402,22 +1163,7 @@ struct GrafttyApp: App {
         // those mappings exist, then retry unread rows from while the app was
         // down; otherwise a background owner can be skipped until the
         // 30-second presence ticker runs.
-        func refreshAndRetryRestoredDelivery() {
-            let restoredPresenceRecords = refreshPresenceIndex()
-            refreshDeliveryLiveness(records: restoredPresenceRecords)
-            Task {
-                await Self.retryNativeDeliveryForPresenceWorktrees(
-                    inbox: services.teamInbox,
-                    records: restoredPresenceRecords,
-                    deliveries: Self.nativeDeliveries(
-                        codex: codexAppServerDeliveryService,
-                        claude: claudePeerDeliveryService,
-                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-                    )
-                )
-            }
-        }
-        refreshAndRetryRestoredDelivery()
+        nativeTeamDelivery.refreshAndRetryRestoredDelivery()
 
         reconcileOnLaunch {
             staleWorktreeAutoDismissTicker.start {
@@ -1445,7 +1191,7 @@ struct GrafttyApp: App {
                     }
                 )
             }
-            refreshAndRetryRestoredDelivery()
+            nativeTeamDelivery.refreshAndRetryRestoredDelivery()
         }
 
         // TERM-11.5: WebSocket `/ws` sessions report attach/detach into the
@@ -1533,7 +1279,6 @@ struct GrafttyApp: App {
         let panesPortBindings = portBindingsModel
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
-        let panesPortScanner = portScanner
         let panesClaudeRegistry = services.claudeSessionRegistry
         let localWorktreeOrigin = WorktreeOrigin(
             deviceID: AppServices.localRemoteDeviceID(),
@@ -1555,41 +1300,22 @@ struct GrafttyApp: App {
                     defaultBranch: defaultBranch
                 )
                 for wt in SidebarHostNavigation.displayedWorktrees(in: repo) {
-                    let stats = wt.state.hasOnDiskWorktree
-                        ? panesStatsStore.stats[wt.path]
-                        : nil
-                    out.append(WorktreePanes(
-                        path: wt.path,
-                        displayName: labels[wt.id] ?? "",
-                        repoDisplayName: repo.displayName,
-                        repositoryID: repo.path,
-                        displayBranch: wt.displayBranch,
-                        state: WorktreeWireState(wt.state),
-                        isMainCheckout: wt.path == repo.path,
-                        prBadge: panesPRStore.infos[wt.path].map(PRBadge.init(from:)),
-                        stats: stats?.toWire(),
-                        attentionText: wt.attention?.text,
-                        attentionSource: wt.attention?.source,
-                        attentionTimestamp: wt.attention?.timestamp,
-                        layout: (wt.state == .running ? wt.splitTree.root : nil)
-                            .map {
-                                paneLayoutNode(
-                                    from: $0,
-                                    paneSessions: wt.paneSessions,
-                                    titles: terminalManager.displayTitles,
-                                    paneAttention: wt.paneAttention,
-                                    liveness: panesClaudeRegistry.livenessBySession
-                                )
-                            },
+                    let running = wt.state == .running
+                    out.append(WorktreePanes(entry: wt, repo: repo, inputs: WorktreeRowInputs(
                         origin: localWorktreeOrigin,
-                        sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
-                            folders: ancestry[wt.id]?.map(\.name) ?? [], repositoryPath: repo.path, folderIDs: ancestry[wt.id]?.map(\.id)),
-                        ports: wt.state == .running ? panesPortBindings.ports(for: wt.splitTree.allLeaves) : [],
-                        portBindings: wt.state == .running ? Dictionary(uniqueKeysWithValues: wt.splitTree.allLeaves.compactMap { slot in
+                        projectID: projectID,
+                        displayName: labels[wt.id] ?? "",
+                        folders: ancestry[wt.id],
+                        prBadge: panesPRStore.infos[wt.path].map(PRBadge.init(from:)),
+                        stats: panesStatsStore.stats[wt.path]?.toWire(),
+                        paneTitles: terminalManager.displayTitles,
+                        liveness: panesClaudeRegistry.livenessBySession,
+                        ports: running ? panesPortBindings.ports(for: wt.splitTree.allLeaves) : [],
+                        portBindings: running ? Dictionary(uniqueKeysWithValues: wt.splitTree.allLeaves.compactMap { slot in
                             guard let session = wt.paneSessions[slot], let bindings = panesPortBindings.bindings[slot], !bindings.isEmpty else { return nil }
                             return (ZmxLauncher.sessionName(for: session), bindings)
                         }) : nil
-                    ))
+                    )))
                 }
             }
             return out
@@ -1747,230 +1473,23 @@ struct GrafttyApp: App {
             }
         }
 
-        // Prepare production channel callbacks before creating the pool and
-        // starting the paired-access listener.
-        //
-        // `panesStateSubscribe`: emits initial snapshot, then polls
-        // `buildWorktreePanesSnapshot` on a 1Hz cadence and re-emits when
-        // the snapshot differs from the previously-sent one. Polling
-        // (rather than a pub-sub source) is intentional — AppState is a
-        // SwiftUI `@State` value type with no Combine/AsyncStream publisher,
-        // and the `/ws` HTTP path the desktop sidebar/web client uses is
-        // itself poll-based, so the SSH transport doesn't promise tighter
-        // freshness than the HTTP transport already provides. A pub-sub
-        // hook is left as a post-R6 follow-up.
-        //
-        // `paneControlMutator`: maps session-name targets to `PaneSlotID`
-        // via `TerminalManager.paneID(forSessionName:)` and dispatches to
-        // the same `splitPane` / `closePane` static methods the Mac sidebar
-        // context menu drives. `swap` returns `unsupported` — no native
-        // implementation exists yet; tracked as a post-R5 follow-up.
+        // Build the paired-device pool before starting the paired-access
+        // listener.
         services.hostPairingCoordinator.setStartupError(
             "Paired access is still starting. Try again in a moment."
         )
-        if let hostKey {
-            let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { onChange in
-                // Initial snapshot fires synchronously so the first frame
-                // hits the wire before the polling loop's first sleep.
-                let snapshot: @MainActor () -> PanesStateMessage = {
-                    let projects = SidebarHostController.shared.localProjects(appStateBinding.wrappedValue.repos, owner: localWorktreeOrigin)
-                    let navigation = SidebarSnapshot(projects: (appStateBinding.wrappedValue.sidebarNavigation?.order ?? .init()).sorted(projects))
-                    return .snapshot(buildWorktreePanesSnapshot(), sidebar: navigation)
-                }
-                let initial = await MainActor.run { snapshot() }
-                await onChange(initial)
-
-                let task = Task {
-                    var last = initial
-                    while !Task.isCancelled {
-                        try? await Task.sleep(for: .seconds(1))
-                        if Task.isCancelled { return }
-                        let next = await MainActor.run { snapshot() }
-                        if next != last {
-                            last = next
-                            await onChange(next)
-                        }
-                    }
-                }
-                return PanesStateChannelHandler.Cancellable {
-                    task.cancel()
-                }
-            }
-
-            let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe = {
-                onChange in
-                let snapshot: @MainActor () async -> PanesStateMessage = {
-                    let remote = await services.remoteMacsModel.sidebarRelaySnapshot()
-                    let navigation = SidebarHostController.shared.snapshot(state: appStateBinding, owner: localWorktreeOrigin, remote: remote.projects,
-                        authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(services.remoteMacsModel.savedRemoteMacs.map(\.id)))
-                    let worktrees = buildWorktreePanesSnapshot() + remote.worktrees
-                    let order = Dictionary(navigation.projects.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
-                    let sorted = worktrees.enumerated().sorted {
-                        let a = order[SidebarProjection.projectID($0.element), default: .max]
-                        let b = order[SidebarProjection.projectID($1.element), default: .max]
-                        return a == b ? $0.offset < $1.offset : a < b
-                    }.map(\.element)
-                    return .snapshot(sorted, sidebar: navigation)
-                }
-                let initial = await snapshot()
-                await onChange(initial)
-
-                let task = Task {
-                    var last = initial
-                    while !Task.isCancelled {
-                        try? await Task.sleep(for: .seconds(1))
-                        if Task.isCancelled { return }
-                        let next = await snapshot()
-                        if next != last {
-                            last = next
-                            await onChange(next)
-                        }
-                    }
-                }
-                return PanesStateChannelHandler.Cancellable {
-                    task.cancel()
-                }
-            }
-
-            let paneControlMutator: PaneControlChannelHandler.Mutator = Self.makePaneControlMutator(
+        if let hostKey = services.hostKey() {
+            let hostAgentPool = Self.makeHostAgentPool(
+                hostKey: hostKey,
                 appState: appStateBinding,
                 terminalManager: terminalManager,
-                services: services
+                services: services,
+                buildWorktreePanesSnapshot: buildWorktreePanesSnapshot,
+                localWorktreeOrigin: localWorktreeOrigin,
+                portScanner: portScanner,
+                zmxBinary: zmxBinary,
+                zmxDir: zmxDir
             )
-            let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator =
-                Self.makeWorktreeManagementMutator(
-                    appState: appStateBinding,
-                    terminalManager: terminalManager,
-                    services: services,
-                    portScanner: panesPortScanner,
-                    localWorktreeOrigin: localWorktreeOrigin
-                )
-
-            // Explicit phone launch opts into an isolated worktree profile.
-            let chromeBroker = ChromeTabBroker(authorize: { target, peerID in
-                await MainActor.run {
-                    guard let peer = try? trustedPeerStore.get(id: RemoteDeviceID(value: peerID)),
-                          peer.capabilities.terminalControl == .allowed,
-                          peer.capabilities.worktreeManagement == .allowed,
-                          terminalManager.paneID(forSessionName: target) != nil,
-                          let path = terminalManager.worktreePath(forSessionName: target),
-                          ChromeTabBroker.ownsDisplay(clientID: services.displayOwnershipStore.snapshot(sessionName: target).ownerClientID?.rawValue, peerID: peerID) else { return nil }
-                    return path
-                }
-            }, makeBackend: { DedicatedChromeBackend(worktreePath: $0) })
-            let chromeTabMutator: ChromeTabChannelHandler.Mutator = { request, peer, viewer in
-                await chromeBroker.handle(request, peerID: peer.value, viewerID: viewer)
-            }
-            let chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { viewer in
-                await chromeBroker.disconnect(viewerID: viewer)
-            }
-
-            // Every device gets a fully configured connection agent. Shared
-            // registries keep revocation and routing consistent across devices.
-            let activeRemotePeers = ActiveRemotePeerRegistry()
-            let hostAgentPool = WebRTCHostAgentPool(makeAgent: {
-                [hostKey, trustedPeerStore, sshConnectionRegistry,
-                 terminalManager = terminalManager,
-                 registry = services.remoteAttachmentRegistry,
-                 remoteMacsModel = services.remoteMacsModel,
-                 remoteTeamRouter = services.remoteTeamRouter,
-                 displayOwnershipStore = services.displayOwnershipStore,
-                 activeRemotePeers, panesStateSubscribe, panesStateV2Subscribe,
-                 paneControlMutator, worktreeManagementMutator, chromeTabMutator, chromeTabOnDisconnect,
-                 zmxExe = zmxBinary, zmxDir] in
-                let hostAgent = WebRTCHostAgent(
-                    hostKey: hostKey,
-                    trustedPeerStore: trustedPeerStore,
-                    activeRemotePeers: activeRemotePeers,
-                    streamFactory: {
-                        [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName in
-                        if sessionName.hasPrefix("relay-pane-") {
-                            return try await remoteMacsModel.openRelayedTerminal(
-                                alias: sessionName
-                            )
-                        }
-                        let (workingDirectoryPath, spawnConfiguration) = await MainActor.run {
-                            (terminalManager.worktreePath(forSessionName: sessionName),
-                             terminalManager.remoteSpawnConfiguration(forSessionName: sessionName))
-                        }
-                        let workingDirectory = workingDirectoryPath.map {
-                            URL(fileURLWithPath: $0, isDirectory: true)
-                        }
-                        let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
-                            zmxExecutable: zmxExe,
-                            zmxDir: zmxDir,
-                            sessionName: sessionName,
-                            workingDirectory: workingDirectory,
-                            spawnConfiguration: spawnConfiguration
-                        ))
-                        engine.attachmentRegistry = registry
-                        try engine.start()
-                        return engine
-                    },
-                    pagedFactory: { [registry, terminalManager, remoteMacsModel, zmxExe, zmxDir] sessionName in
-                        if sessionName.hasPrefix("relay-pane-") {
-                            return try await remoteMacsModel.openRelayedPagedTerminal(alias: sessionName)
-                        }
-                        let (path, spawnConfiguration) = await MainActor.run {
-                            (terminalManager.worktreePath(forSessionName: sessionName),
-                             terminalManager.remoteSpawnConfiguration(forSessionName: sessionName))
-                        }
-                        // Paging attaches only to existing daemons. A newly
-                        // created mobile pane must first spawn its shell.
-                        var bootstrap: ZmxAttachEngine?
-                        defer { bootstrap?.close() }
-                        let socket = zmxDir.appendingPathComponent(sessionName).path
-                        if !FileManager.default.fileExists(atPath: socket) {
-                            let session = ZmxAttachEngine(config: .init(
-                                zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
-                                workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) },
-                                spawnConfiguration: spawnConfiguration
-                            ))
-                            // Discard bootstrap output. The paged channel will
-                            // obtain its own checkpoint once the daemon exists.
-                            session.onPTYData = { _ in }
-                            bootstrap = session
-                            try session.start()
-                            let deadline = ContinuousClock.now + .seconds(5)
-                            while !FileManager.default.fileExists(atPath: socket), ContinuousClock.now < deadline {
-                                try await Task.sleep(for: .milliseconds(20))
-                            }
-                        }
-                        let engine = PagedZmxAttachEngine(config: .init(
-                            zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
-                            workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) }
-                        ))
-                        engine.attachmentRegistry = registry
-                        try await engine.start()
-                        return engine
-                    },
-                    panesStateSubscribe: panesStateSubscribe,
-                    panesStateV2Subscribe: panesStateV2Subscribe,
-                    paneControlMutator: paneControlMutator,
-                    worktreeManagementMutator: worktreeManagementMutator,
-                    chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
-                    displayOwnershipStore: displayOwnershipStore,
-                    sshConnectionRegistry: sshConnectionRegistry
-                )
-                await hostAgent.setTeamMessaging(
-                    handler: { deviceID, data in
-                        await remoteTeamRouter.receive(from: deviceID, data: data)
-                    },
-                    onConnect: { deviceID, session in
-                        let label = (try? trustedPeerStore.get(id: deviceID))?.displayName ?? deviceID.value
-                        await remoteTeamRouter.register(
-                            deviceID: deviceID,
-                            connectionID: session.id,
-                            label: label,
-                            closeForReconnect: { await session.close() }
-                        ) { data in try await session.send(data) }
-                    },
-                    onDisconnect: { deviceID, connectionID in
-                        await remoteTeamRouter.unregister(deviceID: deviceID, connectionID: connectionID)
-                    }
-                )
-                return hostAgent
-            })
             services.hostAgentPool = hostAgentPool
             Task { @MainActor in
                 do {
@@ -2057,67 +1576,3 @@ struct GrafttyApp: App {
     }
 }
 
-/// Convert the Mac-side `SplitTree.Node` into the wire-format
-/// `PaneLayoutNode`. Leaves carry the ZMX session name, the pane's
-/// current displayed title (or the empty string if no metadata has arrived
-/// yet), and the pane-scoped attention text from the worktree's
-/// `paneAttention`.
-@MainActor
-func paneLayoutNode(
-    from node: SplitTree.Node,
-    paneSessions: [PaneSlotID: PaneSessionID],
-    titles: [PaneSlotID: String],
-    paneAttention: [PaneSlotID: Attention],
-    liveness: [String: AgentLiveness]
-) -> PaneLayoutNode {
-    switch node {
-    case .leaf(let id):
-        let sessionName = paneSessions[id].map(ZmxLauncher.sessionName(for:))
-        return .leaf(
-            sessionName: sessionName ?? "",
-            title: titles[id] ?? "",
-            attentionText: paneAttention[id]?.text,
-            isBusy: AgentLivenessMerge.isPaneBusy(
-                sessionName: sessionName,
-                liveness: liveness),
-            attentionSource: paneAttention[id]?.source,
-            attentionTimestamp: paneAttention[id]?.timestamp
-        )
-    case .split(let s):
-        return .split(
-            direction: s.direction == .horizontal ? .horizontal : .vertical,
-            ratio: s.ratio,
-            left: paneLayoutNode(
-                from: s.left,
-                paneSessions: paneSessions,
-                titles: titles,
-                paneAttention: paneAttention,
-                liveness: liveness
-            ),
-            right: paneLayoutNode(
-                from: s.right,
-                paneSessions: paneSessions,
-                titles: titles,
-                paneAttention: paneAttention,
-                liveness: liveness
-            )
-        )
-    }
-}
-
-extension WorktreeWireState {
-    /// Exhaustive bridge from the persistence-side `WorktreeState` (in
-    /// GrafttyKit, whose `encode(to:)` coerces `.creating` and
-    /// `.deleting` to `.closed`) to the wire enum. A `switch` rather
-    /// than `rawValue` round-trip so a future `WorktreeState` case is a
-    /// compile error here.
-    init(_ state: WorktreeState) {
-        switch state {
-        case .closed: self = .closed
-        case .running: self = .running
-        case .stale: self = .stale
-        case .creating: self = .creating
-        case .deleting: self = .deleting
-        }
-    }
-}

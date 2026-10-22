@@ -4,7 +4,7 @@ import GrafttyProtocol
 @MainActor
 final class HostMaintenance: WorktreeMonitorDelegate {
     weak var runtime: HeadlessHostRuntime?
-    let monitor = WorktreeMonitor()
+    let monitor = WorktreeMonitor(watchContents: true)
     var task: Task<Void, Never>?
     var portTask: Task<Void, Never>?
     var dirty: Set<String> = []

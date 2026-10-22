@@ -110,6 +110,10 @@ public struct WorktreeTimeline: Sendable {
         public let completed: String
         public let decisions: [String]
         public var sourceWorktreePath: String? = nil
+
+        public var sourceWorktreeName: String? {
+            sourceWorktreePath.map { URL(fileURLWithPath: $0).lastPathComponent }
+        }
     }
 
     public struct Row: Identifiable, Sendable {
@@ -131,16 +135,19 @@ public struct WorktreeTimeline: Sendable {
             return parts.enumerated().compactMap { index, part in
                 let kind: Event.Kind
                 let title: String
+                var sourcePath: String? = nil
                 switch part.source {
                 case .user: kind = .user; title = "You sent a message"
                 case .agent(let sender):
                     kind = .agentMessage
                     title = sender.map { "Message from \($0)" } ?? "Agent sent a message"
+                    sourcePath = Self.worktreePath(from: sender)
                 case .generated: return nil
                 }
                 return Event(id: input.id.uuidString + (parts.count > 1 ? ":\(index)" : ""),
                     kind: kind, timestamp: input.timestamp, title: title,
-                    completed: part.text + (input.wasTruncated && index == parts.count - 1 ? "…" : ""), decisions: [])
+                    completed: part.text + (input.wasTruncated && index == parts.count - 1 ? "…" : ""),
+                    decisions: [], sourceWorktreePath: sourcePath)
             }
         }
         result = result.enumerated().sorted {
@@ -161,6 +168,18 @@ public struct WorktreeTimeline: Sendable {
                 decisions: [], sourceWorktreePath: origin.worktreePath), at: 0)
         }
         events = result
+    }
+
+    private static func worktreePath(from sender: String?) -> String? {
+        guard let sender, sender.hasPrefix("/"),
+              !sender.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+        if let separator = sender.lastIndex(of: "#") {
+            let agent = sender[sender.index(after: separator)...]
+            if agent == "codex" || agent == "claude" || agent.hasPrefix("codex-") || agent.hasPrefix("claude-") {
+                return String(sender[..<separator])
+            }
+        }
+        return sender
     }
 
     public func rows(showAll: Bool) -> [Row] {

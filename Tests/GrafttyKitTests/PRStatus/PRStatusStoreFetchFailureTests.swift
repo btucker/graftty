@@ -81,7 +81,7 @@ struct PRStatusStoreFetchFailureTests {
         #expect(store.infos["/wt"]?.number == 42, "first fetch should publish PR#42")
 
         await fetcher.flipToThrowing()
-        // Step the in-flight clock past `refreshCadence` so the
+        // Step the in-flight clock past the abandonment threshold so the
         // next refresh isn't suppressed by the still-recorded slot.
         store.seedInFlightSinceForTesting(
             Date().addingTimeInterval(-3600),

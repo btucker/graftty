@@ -92,7 +92,16 @@ public enum NotificationMessage: Sendable, Equatable {
     case reconnectRemoteMac(target: String)
     case reconnectRemoteClient(target: String)
     case remoteWorktree(target: String, request: RemoteWorktreeRequest)
-    case addPane(path: String, direction: PaneSplit, command: String?)
+    /// `agentRuntime` launches that runtime through the staged prompt path
+    /// shared with `createWorktree`; `command` stays an arbitrary shell line.
+    case addPane(
+        path: String,
+        direction: PaneSplit,
+        command: String?,
+        agentRuntime: TeamHookRuntime? = nil,
+        agentPrompt: String? = nil
+    )
+    case paneAgentCapability
     case closePane(path: String, index: Int)
     case showPane(path: String, index: Int, lines: Int)
     case sendPane(path: String, index: Int, text: String, pressEnter: Bool)
@@ -269,11 +278,15 @@ extension NotificationMessage: Codable {
         case .reconnectRemoteClient(let target):
             try container.encode("reconnect_remote_client", forKey: .type)
             try container.encode(target, forKey: .target)
-        case .addPane(let path, let direction, let command):
+        case .addPane(let path, let direction, let command, let agentRuntime, let agentPrompt):
             try container.encode("add_pane", forKey: .type)
             try container.encode(path, forKey: .path)
             try container.encode(direction, forKey: .direction)
             try container.encodeIfPresent(command, forKey: .command)
+            try container.encodeIfPresent(agentRuntime, forKey: .agentRuntime)
+            try container.encodeIfPresent(agentPrompt, forKey: .agentPrompt)
+        case .paneAgentCapability:
+            try container.encode("pane_agent_capability", forKey: .type)
         case .closePane(let path, let index):
             try container.encode("close_pane", forKey: .type)
             try container.encode(path, forKey: .path)
@@ -476,7 +489,15 @@ extension NotificationMessage: Codable {
             let path = try container.decode(String.self, forKey: .path)
             let direction = try container.decode(PaneSplit.self, forKey: .direction)
             let command = try container.decodeIfPresent(String.self, forKey: .command)
-            self = .addPane(path: path, direction: direction, command: command)
+            self = .addPane(
+                path: path,
+                direction: direction,
+                command: command,
+                agentRuntime: try container.decodeIfPresent(TeamHookRuntime.self, forKey: .agentRuntime),
+                agentPrompt: try container.decodeIfPresent(String.self, forKey: .agentPrompt)
+            )
+        case "pane_agent_capability":
+            self = .paneAgentCapability
         case "close_pane":
             let path = try container.decode(String.self, forKey: .path)
             let index = try container.decode(Int.self, forKey: .index)

@@ -1,0 +1,184 @@
+[
+  {
+    "attentionSource" : "agentStop",
+    "attentionText" : "tests failed",
+    "attentionTimestamp" : 721692800.5,
+    "displayBranch" : "feature\/login",
+    "displayName" : "feat",
+    "isMainCheckout" : false,
+    "layout" : {
+      "direction" : "horizontal",
+      "kind" : "split",
+      "left" : {
+        "isBusy" : true,
+        "kind" : "leaf",
+        "sessionName" : "graftty-aaaa",
+        "title" : ""
+      },
+      "ratio" : 0.25,
+      "right" : {
+        "direction" : "vertical",
+        "kind" : "split",
+        "left" : {
+          "attentionSource" : "userNotify",
+          "attentionText" : "build broken",
+          "attentionTimestamp" : 721692801.25,
+          "kind" : "leaf",
+          "sessionName" : "graftty-bbbb",
+          "title" : "vim"
+        },
+        "ratio" : 0.5,
+        "right" : {
+          "attentionSource" : "commandFinished",
+          "attentionText" : "✓",
+          "kind" : "leaf",
+          "sessionName" : "",
+          "title" : ""
+        }
+      }
+    },
+    "origin" : {
+      "deviceID" : {
+        "value" : "dev-a"
+      },
+      "deviceLabel" : "Mac A",
+      "relayDepth" : 0
+    },
+    "path" : "\/repo\/.worktrees\/feat",
+    "portBindings" : {
+      "graftty-aaaa" : [
+        {
+          "host" : "localhost",
+          "pid" : 4242,
+          "port" : 3000,
+          "processName" : "node",
+          "scope" : "loopback"
+        },
+        {
+          "host" : "0.0.0.0",
+          "pid" : 4243,
+          "port" : 8080,
+          "processName" : "python",
+          "scope" : "lan",
+          "targetHost" : "0.0.0.0"
+        }
+      ]
+    },
+    "ports" : [
+      {
+        "host" : "localhost",
+        "port" : 3000,
+        "processName" : "node",
+        "scope" : "loopback"
+      }
+    ],
+    "prBadge" : {
+      "checks" : "success",
+      "mergeable" : "conflicting",
+      "number" : 42,
+      "state" : "open",
+      "url" : "https:\/\/github.com\/btucker\/graftty\/pull\/42"
+    },
+    "repoDisplayName" : "repo",
+    "repositoryID" : "\/repo",
+    "sidebar" : {
+      "agentProgressTimes" : {
+        "graftty-aaaa" : 1699999500
+      },
+      "attentionTimestamps" : {
+        "graftty-bbbb" : 1700000001.25
+      },
+      "emoji" : "🧭",
+      "folderIDs" : [
+        "f1",
+        "f2"
+      ],
+      "folders" : [
+        "Work",
+        "Auth"
+      ],
+      "id" : "dev-a:proj:\/repo\/.worktrees\/feat",
+      "isPinned" : true,
+      "lastAgentStop" : {
+        "agentName" : "claude",
+        "timestamp" : 721691800
+      },
+      "paneIDs" : {
+        "graftty-aaaa" : "1",
+        "graftty-bbbb" : "2"
+      },
+      "paneSlotIDs" : [
+        "slot-1",
+        "slot-2",
+        "slot-3"
+      ],
+      "projectID" : "dev-a:proj"
+    },
+    "state" : "running",
+    "stats" : {
+      "ahead" : 3,
+      "baseRef" : "origin\/main",
+      "behind" : 1,
+      "deletions" : 4,
+      "hasUncommittedChanges" : true,
+      "insertions" : 10
+    }
+  },
+  {
+    "displayBranch" : "main",
+    "displayName" : "main",
+    "isMainCheckout" : true,
+    "layout" : {
+      "kind" : "leaf",
+      "sessionName" : "graftty-cccc",
+      "title" : "zsh"
+    },
+    "path" : "\/repo",
+    "ports" : [
+
+    ],
+    "repoDisplayName" : "repo",
+    "repositoryID" : "\/repo",
+    "sidebar" : {
+      "folders" : [
+
+      ],
+      "id" : "dev-a:proj:\/repo",
+      "projectID" : "dev-a:proj"
+    },
+    "state" : "closed",
+    "stats" : {
+      "ahead" : 0,
+      "behind" : 0,
+      "hasUncommittedChanges" : false
+    }
+  },
+  {
+    "attentionSource" : "agentStop",
+    "attentionText" : "Claude needs input",
+    "displayBranch" : "old",
+    "displayName" : "gone",
+    "isMainCheckout" : false,
+    "origin" : {
+      "deviceID" : {
+        "value" : "dev-b"
+      },
+      "deviceLabel" : "Mac B",
+      "relayDepth" : 1
+    },
+    "path" : "alias-gone",
+    "portBindings" : {
+
+    },
+    "ports" : [
+
+    ],
+    "repoDisplayName" : "repo",
+    "repositoryID" : "repo-alias",
+    "route" : {
+      "repositoryID" : "repo-alias",
+      "worktreeID" : "alias-gone"
+    },
+    "state" : "stale"
+  }
+]

@@ -173,7 +173,7 @@ struct WorktreeStatsStoreInFlightRecoveryTests {
         try await Task.sleep(nanoseconds: 50_000_000)
         #expect(store.isInFlightForTesting("/wt"))
 
-        // Fast-forward the in-flight timestamp past `inFlightAbandonmentThreshold`
+        // Fast-forward the in-flight timestamp past the abandonment threshold
         // so the next refresh treats the prior Task as abandoned and
         // supersedes it. In production this threshold is reached
         // naturally on the next pollTick cadence (~30s after the hang).

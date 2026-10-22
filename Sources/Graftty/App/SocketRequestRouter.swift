@@ -247,7 +247,7 @@ extension SocketRequestRouter {
             }
         case .previewFiles, .previewImage, .offerResource, .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend, .teamReply,
              .teamBroadcast, .teamHook, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,
-             .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
+             .createWorktree, .agentPromptStagingCapability, .paneAgentCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
              .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability, .worktreePinnedRemovalCapability,
              .worktreePinCapability, .setWorktreePinned,
@@ -285,7 +285,7 @@ extension SocketRequestRouter {
                 return .error("The originating pane is unavailable. Run graftty open from a tracked worktree.")
             }
             guard terminalManager.wakeWorktree(worktree.path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
-        case .addPane(let path, _, _), .closePane(let path, _),
+        case .addPane(let path, _, _, _, _), .closePane(let path, _),
              .showPane(let path, _, _), .sendPane(let path, _, _, _):
             guard terminalManager.wakeWorktree(path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
         default: break
@@ -368,9 +368,10 @@ extension SocketRequestRouter {
             // The socket dispatcher routes replies through the local and
             // remote team handlers before entering pane dispatch.
             return .error("Team reply routing is unavailable")
-        case .addPane(let path, let direction, let command):
-            return addPane(path: path, direction: direction, command: command,
-                           appState: appState, terminalManager: terminalManager)
+        case .addPane(let path, let direction, let command, let agentRuntime, let agentPrompt):
+            return await addPane(path: path, direction: direction, command: command,
+                                 agentRuntime: agentRuntime, agentPrompt: agentPrompt, teamInbox: teamInbox,
+                                 appState: appState, terminalManager: terminalManager)
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
                                     appState: appState, terminalManager: terminalManager)
@@ -505,7 +506,7 @@ extension SocketRequestRouter {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
-        case .agentPromptStagingCapability:
+        case .agentPromptStagingCapability, .paneAgentCapability:
             return .ok
         case .worktreeBaseCapability:
             return .ok
@@ -823,31 +824,112 @@ extension SocketRequestRouter {
         path: String,
         direction: PaneSplit,
         command: String?,
+        agentRuntime: TeamHookRuntime?,
+        agentPrompt: String?,
+        teamInbox: TeamInbox,
         appState: Binding<AppState>,
         terminalManager: TerminalManager
-    ) -> ResponseMessage {
-        guard let wt = appState.wrappedValue.worktree(forPath: path) else {
-            return .error("not tracked")
+    ) async -> ResponseMessage {
+        if let error = CLIWorktreeCreationPolicy.paneAddError(
+            agentRuntime: agentRuntime,
+            command: command,
+            agentPrompt: agentPrompt,
+            teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+        ) {
+            return .error(error)
         }
-        guard wt.state == .running else {
-            return .error("worktree not running")
+        func splitTargetError() -> String? {
+            guard let wt = appState.wrappedValue.worktree(forPath: path) else { return "not tracked" }
+            guard wt.state == .running else { return "worktree not running" }
+            return wt.firstPane == nil ? "no panes to split" : nil
         }
-        guard let targetID = wt.firstPane else {
-            return .error("no panes to split")
+        if let error = splitTargetError() {
+            return .error(error)
         }
-        guard let newID = GrafttyApp.splitPane(
-            appState: appState,
-            terminalManager: terminalManager,
-            targetID: targetID,
-            split: direction
-        ) else {
+        var launch = PreparedWorktreeAgentLaunch(command: command, promptFile: nil)
+        var savedTask: TeamInboxMessage?
+        // A durable task saved for an agent that never launches would reach
+        // the next agent of that runtime, possibly the implementer.
+        func abandonLaunch() async {
+            launch.discardPromptFile()
+            if let savedTask {
+                _ = await OffMainIO.run { try? PaneAgentLaunch.withdrawInitialPrompt(savedTask, inbox: teamInbox) }
+            }
+        }
+        if let agentRuntime {
+            do {
+                launch = try WorktreeAgentLaunchCommand.prepare(agent: agentRuntime, prompt: agentPrompt, exactCommand: nil)
+            } catch {
+                return .error("could not stage agent prompt: \(error.localizedDescription)")
+            }
+            if let repo = appState.wrappedValue.repo(forWorktreePath: path),
+               let branch = appState.wrappedValue.worktree(forPath: path)?.branch {
+                // Map pane sessions on the main actor; read presence inside the
+                // off-main save, after its pending-task check (AGENT-6.57).
+                let paneSessionNames = terminalManager.paneSessionNames
+                let liveness = AppTeamDeliveryLiveness(
+                    livePaneSession: { paneSessionNames.contains($0) },
+                    processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
+                )
+                do {
+                    // ATTN-2.19: presence and inbox access are file I/O.
+                    savedTask = try await OffMainIO.run {
+                        try PaneAgentLaunch.saveInitialPrompt(
+                            agentPrompt, runtime: agentRuntime, repo: repo, worktreePath: path,
+                            branchName: branch, inbox: teamInbox,
+                            presenceRecords: {
+                                try TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).list(
+                                    teamID: TeamLookup.id(forRepoPath: repo.path), worktree: path, runtime: agentRuntime
+                                )
+                            },
+                            liveness: liveness
+                        )
+                    }
+                } catch {
+                    launch.discardPromptFile()
+                    return .error("could not save initial agent task: \(error.localizedDescription)")
+                }
+                // The worktree can stop while the file I/O is suspended.
+                if let error = splitTargetError() {
+                    await abandonLaunch()
+                    return .error(error)
+                }
+            }
+        }
+        // ATTN-1.25: hand the command to surface creation, which runs it
+        // once the shell is ready; typing after the split could arrive first.
+        guard let targetID = appState.wrappedValue.worktree(forPath: path)?.firstPane,
+              let newPaneID = GrafttyApp.splitPane(
+                  appState: appState,
+                  terminalManager: terminalManager,
+                  targetID: targetID,
+                  split: direction,
+                  extraInitialInput: PaneAgentLaunch.initialInput(launch.command)
+              ) else {
+            await abandonLaunch()
             return .error("split failed")
         }
-        if let command, !command.isEmpty {
-            // splitPane's `command` is automation, not a user keystroke
-            // on the newly-created surface — keep IOS-12.1's silent
-            // gate closed.
-            terminalManager.handle(for: newID)?.typeText(command + "\r", claimEngagement: false)
+        // ATTN-1.28: destroying the pane removes a prompt file its loader never
+        // ran and withdraws the durable task. Both are no-ops once the agent
+        // has started and taken its task.
+        if agentRuntime != nil {
+            // Like `worktree add`, start the agent even if the worktree's
+            // views never mount; otherwise it waits until someone opens it.
+            terminalManager.handle(for: newPaneID)?.startForBackgroundLaunch()
+            let staged = launch
+            let task = savedTask
+            terminalManager.trackStagedLaunch(for: newPaneID) {
+                staged.discardPromptFile()
+                if let task {
+                    Task { _ = await OffMainIO.run { try? PaneAgentLaunch.withdrawInitialPrompt(task, inbox: teamInbox) } }
+                }
+            }
+        }
+        if let agentRuntime, let index = appState.wrappedValue.indices(forWorktreePath: path) {
+            appState.wrappedValue.repos[index.repo].worktrees[index.worktree]
+                .expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(agentPrompt), runtime: agentRuntime)
+            // As in `createWorktree`: no window may be observing state.
+            try? appState.wrappedValue.save(to: AppState.defaultDirectory)
         }
         return .ok
     }

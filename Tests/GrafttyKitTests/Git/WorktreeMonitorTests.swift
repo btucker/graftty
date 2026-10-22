@@ -308,14 +308,16 @@ struct WorktreeMonitorTests {
             atomically: true, encoding: .utf8
         )
 
-        let monitor = WorktreeMonitor()
+        let monitor = WorktreeMonitor(watchContents: true)
         monitor.watchWorktreePath(tmp.path)
         monitor.watchHeadRef(worktreePath: tmp.path, repoPath: tmp.path)
         monitor.watchWorktreeContents(worktreePath: tmp.path)
         // path + head = 2 fds. Content is an FSEventStream, not an fd.
         #expect(monitor.liveFdCountForTesting == 2)
+        #expect(monitor.contentStreamCountForTesting == 1)
 
         monitor.stopWatchingWorktree(tmp.path)
+        #expect(monitor.contentStreamCountForTesting == 0)
 
         for _ in 0..<50 {
             if monitor.liveFdCountForTesting == 0 { break }

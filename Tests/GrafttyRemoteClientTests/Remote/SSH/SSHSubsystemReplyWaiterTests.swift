@@ -23,11 +23,7 @@ struct SSHSubsystemReplyWaiterTests {
                 start: { events.recordStart() }
             )
         }
-        // Timeout resumes the waiter before invoking the abort callback.
-        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
-        while events.abortCount == 0, ContinuousClock.now < deadline {
-            await Task.yield()
-        }
+        // The abort action completes before the waiter resumes (REMOTE-11.24).
         #expect(events.abortCount == 1)
         #expect(events.startCount == 1)
     }
@@ -105,6 +101,44 @@ struct SSHSubsystemReplyWaiterTests {
         #expect(events.abortCount == 1)
     }
 
+    enum AbortTrigger: CaseIterable, Sendable {
+        case deadline, cancellation
+    }
+
+    @Test("@spec REMOTE-11.24: When an SSH reply deadline or cancellation wins, the client shall run its abort action before resuming the waiting caller, so a caller can never act on a channel that is about to be torn down.", arguments: AbortTrigger.allCases)
+    func abortRunsBeforeTheCallerResumes(trigger: AbortTrigger) async throws {
+        let deadline = ManualDeadline()
+        let events = WaiterEvents()
+        let order = OrderLog()
+        let waiter = SSHSubsystemReplyWaiter()
+        let task = Task {
+            do {
+                try await waiter.wait(
+                    scheduleTimeout: { callback in deadline.schedule(callback) },
+                    timeoutError: TestError.timedOut,
+                    onAbort: {
+                        // Give an already-resumed caller every chance to
+                        // record itself first; bounded, with no clock.
+                        for _ in 0..<10_000 where !order.contains("resumed") { sched_yield() }
+                        order.append("aborted")
+                    },
+                    start: { events.recordStart() }
+                )
+            } catch {
+                order.append("resumed")
+            }
+        }
+        await events.waitUntilStarted()
+
+        switch trigger {
+        case .deadline: deadline.fire()
+        case .cancellation: task.cancel()
+        }
+        await task.value
+
+        #expect(order.entries == ["aborted", "resumed"])
+    }
+
     @Test("a reply cancels its deadline and ignores a late timeout")
     func replyWinsTimeoutRace() async throws {
         let deadline = ManualDeadline()
@@ -160,6 +194,15 @@ private final class ManualDeadline: @unchecked Sendable {
         let callback = lock.withLock { self.callback }
         callback?()
     }
+}
+
+private final class OrderLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var log: [String] = []
+
+    var entries: [String] { lock.withLock { log } }
+    func contains(_ entry: String) -> Bool { lock.withLock { log.contains(entry) } }
+    func append(_ entry: String) { lock.withLock { log.append(entry) } }
 }
 
 private final class WaiterEvents: @unchecked Sendable {

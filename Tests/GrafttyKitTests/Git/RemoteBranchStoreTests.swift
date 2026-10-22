@@ -399,6 +399,122 @@ struct RemoteBranchStoreTests {
     }
 
     @MainActor
+    @Test("""
+    @spec GIT-2.12: If a repository's remote-branch scan remains in flight past the 30-second abandonment threshold, then the application shall treat that scan as abandoned, start a fresh scan for the next refresh request, and discard the abandoned scan's late result.
+    """)
+    func refreshSupersedesAbandonedScan() async throws {
+        let lister = RecordingRemoteBranchLister(
+            results: ["/repo": .success(["old"])],
+            suspendUntilResumed: true
+        )
+        let store = RemoteBranchStore(list: lister.list)
+
+        store.refresh(repoPath: "/repo")
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 1
+        }
+        // The first scan hung past the abandonment threshold.
+        store.seedInFlightSinceForTesting(
+            Date(timeIntervalSinceNow: -3600),
+            forRepo: "/repo"
+        )
+
+        lister.set(result: .success(["new"]), for: "/repo")
+        var completed = false
+        store.refresh(repoPath: "/repo") {
+            completed = true
+        }
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 2
+        }
+        lister.resumeNewest()
+
+        try await waitUntil(timeout: 1.0) { completed }
+        #expect(store.hasRemote(repoPath: "/repo", branch: "new"))
+
+        // The abandoned scan returns last; its late result is discarded.
+        await awaitNextScanFinish(of: store) { lister.resumeAll() }
+        #expect(store.hasRemote(repoPath: "/repo", branch: "new"))
+        #expect(!store.hasRemote(repoPath: "/repo", branch: "old"))
+        #expect(!store.isInFlightForTesting("/repo"))
+    }
+
+    @MainActor
+    @Test func abandonedScanCompletionRunsAfterTheSupersedingScan() async throws {
+        let lister = RecordingRemoteBranchLister(
+            results: ["/repo": .success(["old"])],
+            suspendUntilResumed: true
+        )
+        let store = RemoteBranchStore(list: lister.list)
+        var completionSnapshot: Set<String>?
+
+        store.refresh(repoPath: "/repo") {
+            completionSnapshot = store.branchesByRepo["/repo"]?.branches ?? []
+        }
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 1
+        }
+        store.seedInFlightSinceForTesting(
+            Date(timeIntervalSinceNow: -3600),
+            forRepo: "/repo"
+        )
+
+        lister.set(result: .success(["new"]), for: "/repo")
+        store.refresh(repoPath: "/repo")
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 2
+        }
+
+        // The abandoned scan finally returns, but its result is discarded,
+        // so its waiter must wait for the superseding scan's result.
+        await awaitNextScanFinish(of: store) { lister.resumeOldest() }
+        #expect(completionSnapshot == nil)
+
+        lister.resumeAll()
+        try await waitUntil(timeout: 1.0) { completionSnapshot != nil }
+        #expect(completionSnapshot == ["new"])
+    }
+
+    @MainActor
+    @Test func deallocatedStoreSkipsAScanStillWaitingForAPermit() async throws {
+        let limiter = BackgroundProcessLimiter(capacity: 1)
+        let blocker = PermitBlocker()
+        let occupyingTask = Task {
+            await limiter.run {
+                await blocker.wait()
+            }
+        }
+        try await waitUntil(timeout: 1.0) { blocker.isWaiting }
+
+        let lister = RecordingRemoteBranchLister(results: [
+            "/repo": .success(["main"]),
+        ])
+        var store: RemoteBranchStore? = RemoteBranchStore(
+            list: lister.list,
+            backgroundProcessLimiter: limiter
+        )
+        weak let weakStore = store
+        store?.refresh(repoPath: "/repo")
+        // The scan is queued behind the occupying permit.
+        while await limiter.waiterCountForTesting < 1 {
+            await Task.yield()
+        }
+        store = nil
+        #expect(weakStore == nil)
+
+        // FIFO: this probe runs only after the queued scan has had its turn.
+        let probe = Task { await limiter.run {} }
+        while await limiter.waiterCountForTesting < 2 {
+            await Task.yield()
+        }
+        blocker.resume()
+        await occupyingTask.value
+        await probe.value
+
+        #expect(lister.invocationCount(for: "/repo") == 0)
+    }
+
+    @MainActor
     @Test func startRefreshesEachTrackedRepoOnTickerFire() async throws {
         let lister = RecordingRemoteBranchLister(results: [
             "/a": .success(["main"]),
@@ -482,6 +598,22 @@ struct RemoteBranchStoreTests {
         store.stop()
         store.pulse()
         #expect(ticker.pulseCallCount == 1)
+    }
+
+    /// Runs `action` and returns once the store finishes its next scan,
+    /// whether that scan's result was applied or discarded.
+    @MainActor
+    private func awaitNextScanFinish(
+        of store: RemoteBranchStore,
+        after action: () -> Void
+    ) async {
+        await withCheckedContinuation { continuation in
+            store.onScanFinishedForTesting = { [weak store] in
+                store?.onScanFinishedForTesting = nil
+                continuation.resume()
+            }
+            action()
+        }
     }
 
     private func waitUntil(
@@ -715,14 +847,30 @@ private final class RecordingRemoteBranchLister: @unchecked Sendable {
             continuations.removeAll()
             return pending
         }
+        pending.forEach(Self.resume)
+    }
 
-        for (result, continuation) in pending {
-            switch result {
-            case .success(let snapshot):
-                continuation.resume(returning: snapshot)
-            case .failure(let error):
-                continuation.resume(throwing: error)
-            }
+    /// Resumes only the earliest suspended invocation.
+    func resumeOldest() {
+        lock.withLock { continuations.isEmpty ? nil : continuations.removeFirst() }
+            .map(Self.resume)
+    }
+
+    /// Resumes only the latest suspended invocation.
+    func resumeNewest() {
+        lock.withLock { continuations.popLast() }
+            .map(Self.resume)
+    }
+
+    private static func resume(
+        _ pending: (Result<RemoteBranchSnapshot, Error>, CheckedContinuation<RemoteBranchSnapshot, Error>)
+    ) {
+        let (result, continuation) = pending
+        switch result {
+        case .success(let snapshot):
+            continuation.resume(returning: snapshot)
+        case .failure(let error):
+            continuation.resume(throwing: error)
         }
     }
 

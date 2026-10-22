@@ -100,20 +100,9 @@ struct WorktreeAdd: ParsableCommand {
                 throw ValidationError("\(flag) must not be empty")
             }
         }
-        if agent != nil && command != nil {
-            throw ValidationError("--agent and --command are mutually exclusive")
-        }
-        if prompt != nil && promptStdin {
-            throw ValidationError("--prompt and --prompt-stdin are mutually exclusive")
-        }
-        if (prompt != nil || promptStdin) && agent == nil {
-            throw ValidationError("--prompt and --prompt-stdin require --agent")
-        }
+        try AgentLaunchFlags.validate(agent: agent, prompt: prompt, promptStdin: promptStdin, command: command)
         if base != nil && existing {
             throw ValidationError("--base cannot be used with --existing")
-        }
-        if let agent, TeamHookRuntime(rawValue: agent) == nil {
-            throw ValidationError("--agent must be one of: codex, claude")
         }
         if let command, command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw ValidationError("--command must not be empty")
@@ -589,6 +578,25 @@ enum WorktreeRemoveTargetResolution: Equatable {
     case resolved(String)
     case unknown
     case ambiguous([String])
+}
+
+/// `--agent`, `--prompt`, and `--prompt-stdin` rules shared by
+/// `worktree add` and `pane add`.
+enum AgentLaunchFlags {
+    static func validate(agent: String?, prompt: String?, promptStdin: Bool, command: String?) throws {
+        if agent != nil && command != nil {
+            throw ValidationError("--agent and --command are mutually exclusive")
+        }
+        if prompt != nil && promptStdin {
+            throw ValidationError("--prompt and --prompt-stdin are mutually exclusive")
+        }
+        if (prompt != nil || promptStdin) && agent == nil {
+            throw ValidationError("--prompt and --prompt-stdin require --agent")
+        }
+        if let agent, TeamHookRuntime(rawValue: agent) == nil {
+            throw ValidationError("--agent must be one of: codex, claude")
+        }
+    }
 }
 
 enum WorktreeCapability {

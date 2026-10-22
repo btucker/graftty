@@ -55,14 +55,9 @@ final class RemoteWorktreeRelayRouter {
     static func normalizingSidebarIdentity(_ worktree: WorktreePanes, ownerID: RemoteDeviceID, ownerLabel: String) -> WorktreePanes {
         guard worktree.sidebar == nil, (worktree.origin?.relayDepth ?? 0) == 0 else { return worktree }
         let projectID = "\(ownerID.value):\(worktree.repositoryID ?? worktree.repoDisplayName)"
-        return WorktreePanes(
-            path: worktree.path, displayName: worktree.displayName, repoDisplayName: worktree.repoDisplayName,
-            repositoryID: worktree.repositoryID, displayBranch: worktree.displayBranch, state: worktree.state,
-            isMainCheckout: worktree.isMainCheckout, prBadge: worktree.prBadge, stats: worktree.stats,
-            attentionText: worktree.attentionText, attentionSource: worktree.attentionSource,
-            attentionTimestamp: worktree.attentionTimestamp, layout: worktree.layout,
+        return worktree.with(
             origin: worktree.origin ?? WorktreeOrigin(deviceID: ownerID, deviceLabel: ownerLabel, relayDepth: 0),
-            route: worktree.route, sidebar: .init(id: "\(projectID):\(worktree.path)", projectID: projectID), ports: worktree.ports, portBindings: worktree.portBindings)
+            sidebar: .init(id: "\(projectID):\(worktree.path)", projectID: projectID))
     }
 
     func promotedWorktrees(
@@ -126,19 +121,9 @@ final class RemoteWorktreeRelayRouter {
                 }
                 var sidebar = worktree.sidebar
                 sidebar?.paneIDs = worktree.sidebar?.paneIDs.map { Dictionary($0.map { (Self.alias(kind: "pane", identity: identity, value: $0.key), $0.value) }, uniquingKeysWith: { first, _ in first }) }
-                promoted.append(WorktreePanes(
+                promoted.append(worktree.with(
                     path: worktreeAlias,
-                    displayName: worktree.displayName,
-                    repoDisplayName: worktree.repoDisplayName,
                     repositoryID: repositoryAlias,
-                    displayBranch: worktree.displayBranch,
-                    state: worktree.state,
-                    isMainCheckout: worktree.isMainCheckout,
-                    prBadge: worktree.prBadge,
-                    stats: worktree.stats,
-                    attentionText: worktree.attentionText,
-                    attentionSource: worktree.attentionSource,
-                    attentionTimestamp: worktree.attentionTimestamp,
                     layout: layout,
                     origin: WorktreeOrigin(
                         deviceID: remoteMac.id,
@@ -149,9 +134,7 @@ final class RemoteWorktreeRelayRouter {
                         repositoryID: repositoryAlias,
                         worktreeID: worktreeAlias
                     ),
-                    sidebar: sidebar,
-                    ports: worktree.ports,
-                    portBindings: worktree.portBindings
+                    sidebar: sidebar
                 ))
             }
         }

@@ -10,9 +10,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from preview_ui import (SOURCE, adapt_baseline_source, baseline_overlay, derived_data_lock,
+from preview_ui import (SOURCE, SPLIT_SOURCES, adapt_baseline_source, baseline_overlay, derived_data_lock,
                         evaluate, main, replace_source, require_clean_baseline_source,
-                        run_phase, test_report_records)
+                        run_phase, run_validation, test_report_records)
 
 
 LIFECYCLE = 'GrafttyMobileBrowserTests/RemoteBrowserButtonTests/nativePreviewPreservesTerminalConnection(embedded:retained:)'
@@ -298,9 +298,7 @@ class PreviewOverlaySafetyTests(unittest.TestCase):
         self.original = (PreviewBaselineTests.SOURCE + '// Preserve exact bytes: café\n').encode()
         self.source.write_bytes(self.original)
         self.git('init', '-q')
-        self.git('add', '--', SOURCE)
-        self.git('-c', 'user.name=Preview test', '-c', 'user.email=preview@example.invalid',
-                 '-c', 'core.hooksPath=/dev/null', 'commit', '--no-gpg-sign', '-qm', 'Fixture')
+        self.commit(SOURCE)
         self.options = SimpleNamespace(output=self.repo / 'evidence', baseline='HEAD')
         self.options.output.mkdir()
         for replacement in (patch('preview_ui.REPO', self.repo),
@@ -308,6 +306,11 @@ class PreviewOverlaySafetyTests(unittest.TestCase):
                             patch('preview_ui.execute', side_effect=lambda command: (0, self.git(*command[1:])))):
             replacement.start()
             self.addCleanup(replacement.stop)
+
+    def commit(self, *paths):
+        self.git('add', '--', *paths)
+        self.git('-c', 'user.name=Preview test', '-c', 'user.email=preview@example.invalid',
+                 '-c', 'core.hooksPath=/dev/null', 'commit', '--no-gpg-sign', '-qm', 'Fixture')
 
     def git(self, *arguments):
         result = subprocess.run(['git', *arguments], cwd=self.repo, text=True,
@@ -461,6 +464,112 @@ class PreviewOverlaySafetyTests(unittest.TestCase):
         self.assertFalse(summary['sourceRestored'])
         self.assertIn('sourceRestoreError', summary)
         self.assertEqual((self.options.output / 'RootView.backup.swift').read_bytes(), self.original)
+
+    def split_sources_added_after_baseline(self, count=1):
+        """Commit split-out files after the overlay baseline, as on the real branch."""
+        self.options.baseline = self.git('rev-parse', 'HEAD').strip()
+        contents = {}
+        for name in SPLIT_SOURCES[:count]:
+            path = self.repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'struct ' + path.stem.encode() + b' {}\n')
+            contents[path] = path.read_bytes()
+        self.commit(*SPLIT_SOURCES[:count])
+        return contents
+
+    def test_overlay_empties_sources_split_out_after_baseline_and_restores_them(self):
+        (split, current), = self.split_sources_added_after_baseline().items()
+        for error in (None, RuntimeError('RED failed'), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__):
+                summary = {}
+                try:
+                    with baseline_overlay(self.options, summary, self.original):
+                        self.assertEqual(split.read_bytes(), b'')
+                        if error is not None:
+                            raise error
+                except BaseException as caught:
+                    self.assertIs(caught, error)
+                self.assertEqual(split.read_bytes(), current)
+                self.assertEqual(summary['baselineEmptiedSources'], [SPLIT_SOURCES[0]])
+                self.assertTrue(summary['sourceRestored'])
+
+    def test_split_source_present_at_baseline_is_left_untouched(self):
+        (split, current), = self.split_sources_added_after_baseline().items()
+        self.options.baseline = 'HEAD'
+        summary = {}
+        with baseline_overlay(self.options, summary, self.original):
+            self.assertEqual(split.read_bytes(), current)
+        self.assertEqual(summary['baselineEmptiedSources'], [])
+        self.assertFalse((self.options.output / (split.name + '.backup')).exists())
+
+    def test_edit_to_emptied_split_source_during_red_is_kept(self):
+        (split, current), = self.split_sources_added_after_baseline().items()
+        edited = b'// editor work during RED\n'
+        with self.assertRaisesRegex(RuntimeError, 'GREEN will not run'):
+            with baseline_overlay(self.options, {}, self.original):
+                split.write_bytes(edited)
+            self.fail('GREEN must not follow a conflicting edit')
+        self.assertEqual(split.read_bytes(), edited)
+        self.assertEqual((self.options.output / (split.name + '.backup')).read_bytes(), current)
+        self.assertEqual(self.source.read_bytes(), self.original)
+
+    def test_one_unrestorable_split_source_does_not_leave_the_others_empty(self):
+        (removed, _), (other, current) = self.split_sources_added_after_baseline(count=2).items()
+        with self.assertRaisesRegex(RuntimeError, 'GREEN will not run'):
+            with baseline_overlay(self.options, {}, self.original):
+                removed.unlink()
+        self.assertFalse(removed.exists())
+        self.assertEqual(other.read_bytes(), current)
+        self.assertEqual(self.source.read_bytes(), self.original)
+
+    def test_locally_modified_split_source_is_never_emptied(self):
+        (split, current), = self.split_sources_added_after_baseline().items()
+        edited = current + b'// uncommitted work\n'
+        split.write_bytes(edited)
+        with self.assertRaisesRegex(RuntimeError, 'local changes'):
+            with baseline_overlay(self.options, {}, self.original):
+                self.fail('A dirty split source must never enter RED')
+        self.assertEqual(split.read_bytes(), edited)
+        self.assertEqual(self.source.read_bytes(), self.original)
+
+    def test_native_run_gate_hashes_cover_split_sources(self):
+        (split, current), = self.split_sources_added_after_baseline().items()
+        runtimes = {'runtimes': [{'isAvailable': True, 'version': '26.0',
+                                  'identifier': 'com.apple.CoreSimulator.SimRuntime.iOS-26-0'}]}
+
+        def capture(command):
+            if command[0] == 'git':
+                return self.git(*command[1:]).strip()
+            return json.dumps(runtimes) if 'runtimes' in command else 'fixture'
+
+        for edit_during_red in (False, True):
+            with self.subTest(edit_during_red=edit_during_red):
+                options = SimpleNamespace(output=self.repo / ('evidence-' + str(edit_during_red)),
+                                          baseline=self.options.baseline, runtime=None)
+                options.output.mkdir()
+
+                def phase(name, *_):
+                    if name == 'red' and edit_during_red:
+                        split.write_bytes(b'// editor work during RED\n')
+                    return {'passed': True}
+
+                with patch('preview_ui.capture', side_effect=capture), \
+                     patch('preview_ui.execute', side_effect=lambda command, **_: (
+                         0, self.git(*command[1:]) if command[0] == 'git' else '')), \
+                     patch('preview_ui.run_phase', side_effect=phase), \
+                     patch.dict('os.environ', {'GRAFTTY_RENDERER_CONTEXT': 'fixture',
+                                               'GRAFTTY_GHOSTTY_PACKAGE_PATH': '/fixture'}), \
+                     patch('builtins.print'):
+                    code = run_validation(options)
+                summary = json.loads((options.output / 'result.json').read_text())
+                hashes = summary['currentSourceHashes']
+                self.assertEqual(hashes[SPLIT_SOURCES[0]], hashlib.sha256(current).hexdigest())
+                # The workflow refuses the native run when any recorded hash drifts.
+                drifted = [name for name, expected in hashes.items()
+                           if hashlib.sha256((self.repo / name).read_bytes()).hexdigest() != expected]
+                self.assertEqual(drifted, [SPLIT_SOURCES[0]] if edit_during_red else [])
+                self.assertEqual(code, 1 if edit_during_red else 0)
+                self.assertEqual('green' in summary, not edit_during_red)
 
     def test_derived_data_lock_matches_provider_runner_and_releases_after_error(self):
         derived = self.repo / 'cache' / 'ios-derived'

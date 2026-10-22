@@ -289,22 +289,19 @@ public struct AppState: Codable, Sendable, Equatable {
 
     private static let fileName = "state.json"
 
+    private static func file(in directory: URL) -> JSONFileStore<AppState> {
+        JSONFileStore(
+            fileURL: directory.appendingPathComponent(fileName),
+            outputFormatting: [.prettyPrinted, .sortedKeys]
+        )
+    }
+
     public func save(to directory: URL) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let fileURL = directory.appendingPathComponent(Self.fileName)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(self)
-        try data.write(to: fileURL, options: .atomic)
+        try Self.file(in: directory).save(self)
     }
 
     public static func load(from directory: URL) throws -> AppState {
-        let fileURL = directory.appendingPathComponent(fileName)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return AppState()
-        }
-        let data = try Data(contentsOf: fileURL)
-        return try JSONDecoder().decode(AppState.self, from: data)
+        try file(in: directory).load() ?? AppState()
     }
 
     /// Tries to load `state.json` from `directory`. On decode failure
@@ -325,14 +322,11 @@ public struct AppState: Codable, Sendable, Equatable {
         do {
             return try load(from: directory)
         } catch {
-            let fileURL = directory.appendingPathComponent(fileName)
-            let ms = Int(now().timeIntervalSince1970 * 1000)
-            let backupURL = directory.appendingPathComponent("\(fileName).corrupt.\(ms)")
             // Best effort: if the rename fails (permissions, etc.) we
             // still return empty so the app boots. The next save will
             // overwrite the corrupt file — slightly worse UX but not
             // worse than the prior silent path.
-            try? FileManager.default.moveItem(at: fileURL, to: backupURL)
+            file(in: directory).moveAsideCorruptFile(now: now())
             return AppState()
         }
     }

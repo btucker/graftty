@@ -694,7 +694,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-2.5** While a repository is in the sidebar, the application shall watch `<repoPath>/.git/logs/refs/remotes/origin/` using FSEvents so that any operation which advances a remote-tracking ref — `git push` (the common `gh pr create` path), `git fetch`, and prune — surfaces as an origin-ref change. One watch per repository covers all linked worktrees, since they share the main checkout's git directory.
 
-**GIT-2.6** While a worktree is in the sidebar and non-stale, the application shall recursively watch the worktree's directory with `FSEventStreamCreate` (coalescing latency 0.5s) so that working-tree edits, stages / unstages via `.git/index`, and untracked-file creation surface as content-change events. Events for the worktree root, the bare `.git` directory, and the `.git/objects/` subtree shall be filtered out: the root and `.git` are coarse parent-mtime bumps that fire alongside more specific descendant events and carry no additional signal, and `.git/objects/` is pure pack-churn noise from `git gc` / pack writes. The watched path shall be resolved via `realpath(3)` before use because FSEvents always reports canonical paths (e.g. `/private/var/...` rather than `/var/...`) and an unresolved root makes the filter's `hasPrefix` comparison miss every event. The membership, path, and HEAD watchers in GIT-2.1–GIT-2.4 use kqueue vnode sources (`DispatchSourceFileSystemObject`), which cannot watch a subtree recursively; the origin-ref watcher in GIT-2.5 and this working-tree watcher use FSEvents because both must observe changes below a directory.
+**GIT-2.6** While a worktree is non-stale and its monitor was created with content watching enabled (`GIT-2.13`), the application shall recursively watch the worktree's directory with `FSEventStreamCreate` (coalescing latency 0.5s) so that working-tree edits, stages / unstages via `.git/index`, and untracked-file creation surface as content-change events. Events for the worktree root, the bare `.git` directory, and the `.git/objects/` subtree shall be filtered out: the root and `.git` are coarse parent-mtime bumps that fire alongside more specific descendant events and carry no additional signal, and `.git/objects/` is pure pack-churn noise from `git gc` / pack writes. The watched path shall be resolved via `realpath(3)` before use because FSEvents always reports canonical paths (e.g. `/private/var/...` rather than `/var/...`) and an unresolved root makes the filter's `hasPrefix` comparison miss every event. The membership, path, and HEAD watchers in GIT-2.1–GIT-2.4 use kqueue vnode sources (`DispatchSourceFileSystemObject`), which cannot watch a subtree recursively; the origin-ref watcher in GIT-2.5 and this working-tree watcher use FSEvents because both must observe changes below a directory.
 
 **GIT-2.8** While repositories are in the sidebar, the application shall scan local `refs/remotes/origin/*` for at most four repositories per ten-second tick without contacting the network and advance a round-robin cursor so every repository is scanned within `ceil(repoCount / 4)` ticks. The scan shall maintain repo-scoped locally-known remote branch names and shall not replace the repo-level fetch cadence that discovers branches created from another clone.
 
@@ -703,6 +703,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-2.10** When the application renders a worktree's branch name in the UI (the breadcrumb bar per `LAYOUT-1.3` and the secondary dimmed caption in the sidebar row), it shall read this property rather than `WorktreeEntry.branch`. `displayBranch` strips every Unicode bidirectional-override scalar (same ranges as `PR-5.5`) so a collaborator-controlled branch name like `"feat\u{202E}lanigiro"` — which git accepts and which propagates into `state.json` via `git worktree list --porcelain` — can't render RTL-reversed in the breadcrumb or row. `branch` itself is preserved unchanged so downstream `git` subprocess calls, `gh pr list --head <branch>`, and the `PRStatusStore.isFetchableBranch` gate keep operating on the real ref. This is the same strip-not-reject policy `PR-5.5` uses for externally-sourced text.
 
 **GIT-2.11** When recurring remote-branch polling scans local Git refs, the application shall time-bound every subprocess so a filesystem-blocked repository releases its in-flight slot and retained pipe descriptors without requiring an application restart.
+
+**GIT-2.12** If a repository's remote-branch scan remains in flight past the 30-second abandonment threshold, then the application shall treat that scan as abandoned, start a fresh scan for the next refresh request, and discard the abandoned scan's late result.
+
+**GIT-2.13** While the monitor's owner has not opted in to content-change events, the application shall not arm the working-tree content watcher from `GIT-2.6`, because only the headless host's maintenance loop consumes those events and an unconsumed recursive stream still runs its path filter on every build-output write.
 
 ### GIT-3.x — Change Handling
 
@@ -751,6 +755,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-3.22** If a stale worktree becomes pinned while automatic dismissal discovery is suspended, then the application shall preserve the entry and its surfaces and caches.
 
 **GIT-3.23** When a stale worktree with retained terminal panes is explicitly removed, the application shall release its terminal runtime registrations before removing its model entry, including vanished-directory recovery.
+
+**GIT-3.24** When an FSEvents subscription is cancelled, the application shall keep its callback context alive until the native stream finishes all callbacks and releases the context, and shall release the subscription's stream at most once.
 
 ### GIT-4.x — Deleting a Worktree
 
@@ -902,6 +908,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.23** The Graftty Team provider skill shall name the `pane list` / `pane show` / `pane send` commands, warn that `pane send` writes directly to the PTY without an inbox or consent layer, and point to `graftty pane send --help` for details.
 
+**ATTN-1.24** When `graftty pane add` is invoked with `--agent <codex|claude>`, the CLI shall request an agent launch in the new pane with the initial task from `--prompt` or `--prompt-stdin`, and shall reject a prompt flag without `--agent`, both prompt flags together, `--agent` with `--command`, and an unknown runtime.
+
+**ATTN-1.25** When `graftty pane add` runs a command or agent, the application shall hand it to the new pane as initial shell input that runs once the shell is ready, rather than typing it into the PTY after the split, and shall run nothing for an empty or whitespace-only command.
+
+**ATTN-1.26** When `graftty pane add --agent` is used, the CLI shall first verify that the running app advertises pane agent launch, and the add-pane request shall carry the agent runtime and initial task so an older app cannot silently treat it as a plain split.
+
+**ATTN-1.27** If an add-pane request carries an agent prompt without an agent runtime, an agent runtime together with a command, or an agent runtime while Agent Teams is disabled, then the application shall reject it before splitting a pane.
+
+**ATTN-1.28** When a pane added with `graftty pane add --agent` is destroyed, the application shall delete that pane's staged agent prompt file and withdraw its pending durable initial task, so a pane closed before its agent starts leaves no task behind for the next agent of that runtime.
+
 ### ATTN-2.x — Communication Protocol
 
 **ATTN-2.1** The application shall listen on a Unix domain socket at `~/Library/Application Support/Graftty/graftty.sock`.
@@ -1013,6 +1029,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### PERSIST-4.x — Non-Persisted State
 
 **PERSIST-4.1** The application shall not persist shell scrollback, terminal screen buffer content, or the specific processes that were running.
+
+### PERSIST-5.x — JSON File Stores
+
+**PERSIST-5.1** When a JSONFileStore loads a file that does not exist, the application shall return nil without creating the file, its directory, or a corrupt-file backup.
+
+**PERSIST-5.2** When a JSONFileStore saves a value, the application shall create missing parent directories unless the store opts out, replace the file atomically, and apply the store's configured POSIX permissions.
+
+**PERSIST-5.3** When a JSONFileStore moves a corrupt file aside, the application shall rename it beside the original as either `<name>.corrupt.<milliseconds>` or `<name>.corrupt-<seconds>`, per the store's configured backup naming, leaving no file at the original path.
+
+**PERSIST-5.4** The application shall encode a JSONFileStore's dates and output formatting exactly as the store is configured, so a migrated store keeps the byte format its earlier releases wrote.
+
+**PERSIST-5.5** When an ObservableListStore is mutated before its asynchronous load completes, the application shall first load the persisted rows synchronously so the write builds on them instead of replacing them with an empty list.
+
+**PERSIST-5.6** When an ObservableListStore reads malformed JSON, the application shall present an empty list and move the file aside only if the store's corrupt-file policy is moveAside.
+
+**PERSIST-5.7** If a JSONFileStore's value rejects the file's contents with its own error while decoding, then the application shall report the contents as malformed with a DecodingError, so the store's corrupt-file recovery applies.
 
 ## PWD — Manual Pane Routing
 
@@ -1254,7 +1286,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-3.0** Divergence shall be measured against the union of a worktree's upstream refs:
 
-**DIVERGE-3.1** The application shall compute the behind count by running `git rev-list --count <refs> ^HEAD` and the ahead count by running `git rev-list --count HEAD ^<refs>` (each `<ref>` from `DIVERGE-3.0` prefixed with `^` for the ahead command). `rev-list` natively dedupes, so a commit reachable from both upstream refs is counted once.
+**DIVERGE-3.1** The application shall compute the ahead and behind counts against the upstream refs from `DIVERGE-3.0`. When there is a single ref, the application shall run one `git rev-list --left-right --count HEAD...<ref>` and read the left count as ahead and the right count as behind. When there are two refs, the application shall run `git rev-list --count <refs> ^HEAD` for behind and `git rev-list --count HEAD ^<refs>` for ahead; `rev-list` natively dedupes, so a commit reachable from both upstream refs is counted once.
 
 **DIVERGE-3.2** When computing insertion and deletion line counts, the application shall run `git diff --shortstat <ref>...HEAD` where `<ref>` is `origin/<worktree-branch>` when that tracking ref exists, otherwise the local default branch for pinned agents with auto-tracking enabled or `origin/<defaultBranch>` for other worktrees. The diff shall use a single ref rather than the full union.
 
@@ -1284,7 +1316,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-4.9** When a compute attempt fails transiently (the default branch was resolvable but `git rev-list`/`diff-tree`/etc. threw), the application shall preserve the worktree's last-known `WorktreeStats` rather than clearing the sidebar gutter. Only when the repo has no resolvable default branch at all (origin removed, clone converted to non-origin setup) shall the stats be wiped. Without this, the ↑N ↓M badge flickers off for the polling window whenever git is briefly unhealthy — same UX concern as `PR-7.10`.
 
-**DIVERGE-4.10** When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, claiming a fetch slot before checking for running worktrees leaves the repo path latched in `inFlightRepos`: every subsequent poll classifies it as active, skips the local-compute gate, and never re-invokes `WorktreeStatsStore.refresh`. The user-visible shape is a sidebar gutter whose ↓N count remains frozen until the app is relaunched.
+**DIVERGE-4.10** When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, claiming a fetch slot before checking for running worktrees leaves the repo path latched in its in-flight fetch slot: every subsequent poll classifies it as active, skips the local-compute gate, and never re-invokes `WorktreeStatsStore.refresh`. The user-visible shape is a sidebar gutter whose ↓N count remains frozen until the app is relaunched.
 
 **DIVERGE-4.11** If a per-repo `git fetch` dispatched by the divergence-stats polling tick remains in flight past the abandonment threshold despite its subprocess deadline, then the application shall treat the repo slot as abandoned and let a later tick dispatch a fresh fetch rather than latch the repo path for the lifetime of the session.
 
@@ -2142,9 +2174,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.40** When the user drags to scroll a mouse-capturing application in a mobile follower pane, the application shall request control and forward the drag after the owner viewport is ready, keep keyboard input disabled until Show keyboard is chosen, and preserve ownership during passive attachment and local scrolling in other panes.
 
-**IOS-6.41** While a mobile terminal reserves space for top chrome, the application shall re-evaluate first-line clearance after received output has been parsed, without polling the viewport on a timer, and shall read the viewport for that check at most four times per second.
+**IOS-6.41** While a mobile terminal that reserves space for top chrome is in a window and has no scrollback, the application shall poll its viewport for first-line clearance at most four times per second; while it has scrollback, the application shall not poll its viewport for that check.
 
 **IOS-6.42** While a mobile terminal that reserves space for top chrome is outside a window, the application shall not read its viewport for first-line clearance after received output, and shall re-evaluate that clearance when the terminal returns to a window.
+
+**IOS-6.43** When a width-only resize wraps or unwraps the lone first line of a mobile terminal that reserves space for top chrome, the application shall re-evaluate first-line clearance without further output.
+
+**IOS-6.44** When a mobile terminal that reserves space for top chrome replaces its screen content without received output, the application shall re-evaluate first-line clearance.
+
+**IOS-6.45** While the window scene of a mobile terminal that reserves space for top chrome is in the background, the application shall not poll its viewport for first-line clearance, and shall resume polling when the scene returns to the foreground.
 
 ### IOS-7.x — Lifecycle
 
@@ -2312,7 +2350,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.8** While `IPadRootLayout` is presented, the application shall apply the shared `themedSidebarSurface(_:)` view modifier (defined in `GrafttyProtocol`) to the sidebar container so the host's ghostty `sidebarBackground` (a ±6% luminance shift of the terminal background) reads through a transparent `List`, and shall apply `.preferredColorScheme(theme.isDark ? .dark : .light)` to the layout so the system-rendered sidebar-toggle button picks contrast that matches the sidebar's text color. The Mac sidebar consumes the same `themedSidebarSurface` helper, single-sourcing the surface treatment.
 
-**IPAD-1.9** The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the server-side projection in `GrafttyApp.swift`'s `setWorktreePanesProvider`) and the iPad sidebar (received from the authenticated panes-state channel) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
+**IPAD-1.9** The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the shared `WorktreePanes(entry:repo:inputs:)` projection in GrafttyKit, also used by the published Mac and Linux snapshots) and the iPad sidebar (received from the authenticated panes-state channel) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
 
 **IPAD-1.10** While `IPadRootLayout` is presented, the detail column's `.ignoresSafeArea(...)` shall be restricted to `[.top, .bottom]` edges so the terminal extends under the navigation bar and home indicator but never bleeds across the leading column boundary into the sidebar's region — the sidebar shifts the terminal horizontally rather than overlapping it.
 
@@ -2339,6 +2377,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-1.21** While iPad navigation has less than 1100 points of available window width, the application shall use the icon rail without overwriting the user's expanded-rail preference.
 
 **IPAD-1.22** While the iPad split-view sidebar has a compact column size class, the application shall retain the project rail and select projects within the sidebar rather than push compact navigation destinations.
+
+**IPAD-1.23** When a host publishes or renders a worktree row, the application shall project it through the one shared WorktreePanes projection, sending a pane layout only for a running worktree unless the Mac sidebar asks to keep a stopped worktree's saved layout, and dropping divergence stats for a worktree without an on-disk checkout.
 
 ### IPAD-2.x — Multi-Pane Detail View
 
@@ -2618,6 +2658,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-11.9** When an existing session cursor trails its worktree's shared delivery watermark, hook delivery shall use the later watermark as its effective read position so rows successfully read by another delivery surface are not redelivered.
 
+**TEAM-11.11** While a team's message log is unchanged on disk, the application shall reuse its previously decoded rows instead of re-reading and re-decoding the log, so one team hook delivery decodes the log at most once.
+
 ### TEAM-12.x
 
 **TEAM-12.1** When a direct `team send` message arrives for a live Codex agent whose running worktree is in the background with no mounted terminal surface, the application shall wake and deliver to the agent without selecting or foregrounding that worktree.
@@ -2840,6 +2882,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.11** On the protocol-v2 upgrade, the application shall discard every pre-v2 trusted peer, pinned host, paired saved-host, and Remote-Mac record and require a new pairing ceremony, while preserving host/client identity keys and manual unpaired mobile host records.
 
+**REMOTE-1.12** If an earlier host identity load failed and a later load succeeds, the application shall retain the recovered key and use it for both the advertised fingerprint and the inbound host pool.
+
+**REMOTE-1.13** The application shall construct one `HostIdentityStore` and one `TrustedPeerStore` per process and share them with the pairing coordinator, the paired-access signaling server, the inbound host pool and the Settings paired-devices list.
+
 ### REMOTE-2.x — Authenticated Attach
 
 **REMOTE-2.1** When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
@@ -2917,6 +2963,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-6.3** While a `panes-state@graftty.dev` channel is open, on any change to the host's `AppState.repos[*].worktrees`, splittree, attention state, or PR status, the host shall send a fresh `{"type":"snapshot","worktrees":[…]}` frame.
 
 **REMOTE-6.4** When the channel closes (channelInactive), the handler shall cancel the subscription so the snapshot pipeline stops firing.
+
+**REMOTE-6.5** If open is called again on a panes-state client whose channel is already open, then the client shall reject that call without interrupting snapshot delivery on the open channel.
+
+**REMOTE-6.6** While a panes-state channel is open, the client shall keep delivering snapshots and report the close even after its owner releases it.
 
 ### REMOTE-7.x — pane_control Channel
 
@@ -3029,6 +3079,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-11.21** When the host closes its connection pool, the host shall close every pooled connection and clear the pool.
 
 **REMOTE-11.22** When different devices send concurrent first offers with one pool slot available, the host shall admit exactly one offer and count pending agent creation and negotiation toward capacity.
+
+**REMOTE-11.23** If a pane-control or worktree-management RPC response does not arrive before its deadline, then the client shall fail that RPC with a timeout using elapsed time independently of the transport event-loop clock.
+
+**REMOTE-11.24** When an SSH reply deadline or cancellation wins, the client shall run its abort action before resuming the waiting caller, so a caller can never act on a channel that is about to be torn down.
 
 ### REMOTE-12.x — Mac-to-Mac Remote Access
 
@@ -3313,6 +3367,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-22.38** When a headless runtime receives an explicit agent installer, automatic provider setup shall retain its CLI hook path.
 
 **REMOTE-22.39** When a headless host advertises agent prompt staging, the application shall replace bare agent fallback commands with a staged structured or bootstrap prompt, preserve legacy explicit commands without structured prompts, and deliver the selected prompt unchanged to the provider.
+
+**REMOTE-22.40** When a headless host publishes a pane that has not reported a title, the application shall send an empty title, as Mac hosts do, so clients apply their own untitled-pane fallback (IOS-4.10) instead of a host-supplied placeholder.
+
+**REMOTE-22.41** If a headless host worktree has no on-disk checkout, then the application shall omit its cached divergence stats from the published row.
 
 ### REMOTE-23.x
 
@@ -3708,7 +3766,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
-**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject context that directs the agent to the Graftty skills, states that Graftty keeps one agent per worktree, names `graftty worktree add --agent --prompt-stdin` as the way to delegate work into a new worktree, and delivers queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
+**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject context that directs the agent to the Graftty skills, states that Graftty keeps one implementer per worktree, names `graftty worktree add --agent --prompt-stdin` as the way to delegate work into a new worktree and `graftty pane add --agent --prompt-stdin` as the way to add a reviewer or pair to an existing one, and delivers queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
 
 **AGENT-5.4** When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews provenance-tagged session-start team context, completes one turn, and thereby establishes the runtime's idle-message wake path.
 
@@ -3846,9 +3904,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.43** When Graftty installs the recap skill, the application shall instruct agents not to mention the Attention report in their response to the user unless the report command fails.
 
-**AGENT-6.44** When an agent session starts, the application shall instruct the agent to keep one agent per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, and to delegate new-worktree work with graftty worktree add and an agent.
+**AGENT-6.44** When an agent session starts, the application shall instruct the agent to keep one implementer per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, to delegate new-worktree work with graftty worktree add and an agent, and to add a reviewer or pair to an existing worktree with graftty pane add and an agent that does not edit files unless the implementer hands off.
 
-**AGENT-6.45** When Graftty installs the team skill, the application shall state that each worktree maps to exactly one agent, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, and direct agents to delegate with graftty worktree add and an agent instead.
+**AGENT-6.45** When Graftty installs the team skill, the application shall state that each worktree has exactly one implementer, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, direct agents to delegate with graftty worktree add and an agent instead, and document graftty pane add with an agent for adding a non-editing reviewer or pair to an existing worktree, addressed by exact agent ID, or by runtime suffix only when no other agent of that runtime shares the worktree.
 
 **AGENT-6.46** While the current Codex and Claude provider plugin integration is not installed, the Agent Teams Settings pane shall warn that agents will not be connected to Graftty until the plugins are installed and offer the install action; once the current integration is installed, the warning shall disappear.
 
@@ -3871,6 +3929,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.55** When Graftty packages progressive skill guidance, the application shall retain readable relative links within each independent provider plugin, with supporting procedures reachable from their skill entrypoints.
 
 **AGENT-6.56** When Graftty materializes a provider team skill, the skill shall direct agents to use STE-inspired controlled English with direct requests, one instruction per sentence, consistent technical terms, conditions before actions, and factual results that distinguish passed, failed, pending, and not-run checks.
+
+**AGENT-6.57** When `graftty pane add --agent` launches an agent with an initial task, the application shall save that task as a durable runtime-addressed inbox row only if no live agent of the same runtime already owns automatic delivery in the worktree and no initial task for that runtime is still pending there, so an existing implementer never receives or supersedes the added agent's task.
 
 ## CLI — CLI
 
@@ -3951,6 +4011,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-18.x
 
 **CONTEXT-18** When provider prompt history contains human text, peer envelopes, or generated system, forge, and hook context, the application shall highlight only human text as user input, retain peer content with its available sender provenance, and exclude generated context, including in restored history and mixed Codex and Claude turns.
+
+### CONTEXT-19.x
+
+**CONTEXT-19** When worktree history displays human input and peer messages on Mac or mobile, the application shall label human text only as 'Your input' and show peer messages as distinct sender-labelled disclosures collapsed by default, with their full content available on expansion.
+
+### CONTEXT-20.x
+
+**CONTEXT-20** When Context history identifies a peer by an absolute worktree address, the application shall expose its worktree path separately from its agent suffix for in-app navigation, while leaving unnamed peers and non-path sender labels unlinked.
+
+### CONTEXT-21.x
+
+**CONTEXT-21** When a Context history worktree link is opened on mobile, the application shall resolve a unique available target from fresh snapshots on the source host, reopen closed targets before selection, and abandon resolution when newer navigation supersedes it.
+
+### CONTEXT-22.x
+
+**CONTEXT-22** When Context history displays a source worktree, the application shall label it with its directory name while retaining its full path for navigation and sender details.
 
 ## MEM — MEM
 

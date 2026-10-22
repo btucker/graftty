@@ -2,6 +2,14 @@ import Foundation
 
 /// Serializes opt-in tracking per repository. Failed targets remain attempted
 /// until their upstream commit changes or the user re-enables tracking.
+///
+/// The per-repo in-flight guard deliberately has no abandonment threshold,
+/// unlike the read-only pollers built on `RepoPollScheduler`. Tracking runs
+/// mutating `git pull` and `git merge` commands. Superseding a slow one would
+/// start a second command in the same checkout while the first still holds
+/// `index.lock`. The second would fail, and because a target is marked
+/// attempted before the command runs, that upstream commit would never be
+/// retried. Each operation is bounded by its own 20-second deadline instead.
 @MainActor
 public final class GitAutoTracking {
     public struct Snapshot: Sendable {
