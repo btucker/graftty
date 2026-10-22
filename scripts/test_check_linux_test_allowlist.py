@@ -71,6 +71,10 @@ class ParseAllowlistsTests(unittest.TestCase):
             ["Ports/PortBindingTests.swift", "Support/MutableBox.swift", "Teams/TeamInboxTests.swift"],
         )
 
+    def test_allowlist_on_executable_target_is_attributed_to_that_target(self) -> None:
+        text = '.target(name: "Lib", dependencies: []),\n.executableTarget(name: "Exe", sources: isLinux ? ["a.swift"] : nil)\n'
+        self.assertEqual(lint.parse_allowlists(text), {"Exe": ["a.swift"]})
+
     def test_real_package_swift_has_kit_tests_allowlist(self) -> None:
         text = (lint.REPO_ROOT / "Package.swift").read_text()
         allowlists = lint.parse_allowlists(text)
@@ -96,6 +100,26 @@ class AppleOnlyGuardTests(unittest.TestCase):
     def test_non_apple_guard_does_not_count(self) -> None:
         self.assertFalse(self.check("import Testing\n#if canImport(Darwin)\nstruct A {}\n#endif\n"))
         self.assertFalse(self.check("import Testing\n#if os(Linux)\nstruct A {}\n#endif\n"))
+
+    def test_guard_must_wrap_the_rest_of_the_file(self) -> None:
+        # A conditional import followed by portable tests still runs nowhere on Linux.
+        self.assertFalse(self.check("import Testing\n#if canImport(AppKit)\nimport AppKit\n#endif\n\nstruct Portable {}\n"))
+        self.assertFalse(self.check("#if os(macOS)\nstruct A {}\n#else\nstruct LinuxOnly {}\n#endif\n"))
+        self.assertFalse(self.check("#if os(macOS)\nstruct A {}\n#elseif os(Linux)\nstruct B {}\n#endif\n"))
+
+    def test_nested_conditionals_inside_the_guard_count(self) -> None:
+        self.assertTrue(self.check("#if os(macOS)\n#if DEBUG\nstruct A {}\n#else\nstruct B {}\n#endif\nstruct C {}\n#endif // os(macOS)\n// end\n"))
+
+    def test_disjunction_with_a_non_apple_platform_does_not_count(self) -> None:
+        self.assertFalse(self.check("#if os(macOS) || os(Linux)\nstruct A {}\n#endif\n"))
+        self.assertFalse(self.check("#if canImport(AppKit) || canImport(Glibc)\nstruct A {}\n#endif\n"))
+        self.assertTrue(self.check("#if os(macOS) || os(iOS)\nstruct A {}\n#endif\n"))
+
+    def test_spi_import_before_guard_is_skipped(self) -> None:
+        self.assertTrue(self.check("@_spi(Testing) @testable import GrafttyKit\n#if os(macOS)\nstruct A {}\n#endif\n"))
+
+    def test_block_comment_opener_inside_line_comment_is_ignored(self) -> None:
+        self.assertTrue(self.check("// Matches Tests/*.swift\nimport Testing\n#if os(macOS)\nstruct A {}\n/* note */\n#endif\n"))
 
 
 class CheckTreeTests(unittest.TestCase):
@@ -162,6 +186,21 @@ class CheckTreeTests(unittest.TestCase):
         problems = self.problems()
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("Apple/ThumbnailTests.swift", problems[0])
+
+    def test_listed_file_wrapped_in_apple_guard_fails(self) -> None:
+        # Listed, but compiles to nothing on Linux: the same silent skip.
+        write(self.root, "Tests/GrafttyKitTests/Support/MutableBox.swift", GUARDED)
+        problems = self.problems()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("Support/MutableBox.swift", problems[0])
+        self.assertIn("compiles to nothing on Linux", problems[0])
+
+    def test_listed_directory_covers_its_files(self) -> None:
+        # SwiftPM `sources:` accepts directories as well as files.
+        text = FIXTURE_PACKAGE.replace('"Teams/TeamInboxTests.swift"', '"Teams"')
+        (self.root / "Package.swift").write_text(text)
+        write(self.root, "Tests/GrafttyKitTests/Teams/TeamPresenceTests.swift")
+        self.assertEqual(self.problems(), [])
 
 
 class BaselineParsingTests(unittest.TestCase):

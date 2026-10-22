@@ -125,12 +125,16 @@ worktree cannot replace test or run artifacts while a command is executing.
 - CI, release automation, Xcode, and `scripts/bundle.sh` intentionally continue
   to use their own build directories. The wrapper is for local agent CLI
   builds and tests.
-- `GrafttyKitTests` compiles only the files listed in its `sources: isLinux ? [...]`
-  allowlist on Linux. `scripts/check-linux-test-allowlist.py` (CI `verify-specs`) fails
-  on a new test file that is neither listed there nor guarded by a file-level
-  `#if os(macOS)` / `#if canImport(AppKit)`; list portable tests, guard Apple-only ones.
 - Existing worktree-local `.build` directories are not migrated or removed
   automatically. Remove them only after confirming no local build is running.
+
+## Linux test allowlist
+
+`GrafttyKitTests` compiles only the files listed in its `sources: isLinux ? [...]`
+allowlist on Linux. `scripts/check-linux-test-allowlist.py` (CI `verify-specs`) fails
+on a new test file that is neither listed there nor wrapped, after its imports, in a
+whole-file `#if os(macOS)` / `#if canImport(AppKit)`; list portable tests, guard
+Apple-only ones.
 
 ## Always run /code-review xhigh --fix before opening a PR
 

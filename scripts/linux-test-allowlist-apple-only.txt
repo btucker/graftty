@@ -1,8 +1,9 @@
-# Apple-only test files grandfathered by scripts/check-linux-test-allowlist.py.
+# Test files grandfathered by scripts/check-linux-test-allowlist.py.
 #
 # These files were neither in a Linux `sources:` allowlist in Package.swift nor
 # guarded by a file-level `#if os(macOS)` / `#if canImport(AppKit)` when the
-# check landed (#529), so they have never compiled on Linux. Do not add new
+# check landed (#529), so they have never compiled on Linux. They are treated
+# as Apple-only, but most were never checked for portability. Do not add new
 # files here: list a portable test in Package.swift, or guard an Apple-only one.
 # Remove an entry when its file is listed, guarded, moved under Apple/ (#477),
 # or deleted; the check fails on stale entries.
