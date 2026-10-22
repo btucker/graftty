@@ -21,6 +21,12 @@ runner_spec.loader.exec_module(mac_runner)
 
 
 class MacRunnerTests(unittest.TestCase):
+    def setUp(self):
+        # Swift/Foundation can pass a blocked SIGTERM mask to this harness on
+        # Linux. Signal fixtures need delivery enabled in their child processes.
+        previous_mask = signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+        self.addCleanup(signal.pthread_sigmask, signal.SIG_SETMASK, previous_mask)
+
     def run_fixture(self, outcome="complete"):
         run_process = subprocess.run
         with tempfile.TemporaryDirectory() as directory:
