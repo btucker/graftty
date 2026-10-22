@@ -51,52 +51,34 @@ struct SSHSubsystemReplyWaiterTests {
     }
 
     @Test("cancelling a registered wait aborts and resumes it")
+    @available(macOS 15.0, iOS 18.0, *)
     func cancellationAbortsWait() async throws {
         let deadline = ManualDeadline()
         let events = WaiterEvents()
         let waiter = SSHSubsystemReplyWaiter()
-        let task = Task {
-            try await waiter.wait(
-                scheduleTimeout: { callback in
-                    deadline.schedule(callback)
-                },
-                timeoutError: TestError.timedOut,
-                onAbort: { events.recordAbort() },
-                start: { events.recordStart() }
-            )
-        }
-        await events.waitUntilStarted()
+        let wait = try ManualWait.start(waiter, deadline: deadline, events: events)
 
-        task.cancel()
+        wait.task.cancel()
 
         await #expect(throws: CancellationError.self) {
-            try await task.value
+            try await wait.resumed().get()
         }
         #expect(events.abortCount == 1)
         #expect(deadline.cancelCount == 1)
     }
 
     @Test("deadline aborts and resumes a subsystem reply wait")
+    @available(macOS 15.0, iOS 18.0, *)
     func deadlineAbortsWait() async throws {
         let deadline = ManualDeadline()
         let events = WaiterEvents()
         let waiter = SSHSubsystemReplyWaiter()
-        let task = Task {
-            try await waiter.wait(
-                scheduleTimeout: { callback in
-                    deadline.schedule(callback)
-                },
-                timeoutError: TestError.timedOut,
-                onAbort: { events.recordAbort() },
-                start: { events.recordStart() }
-            )
-        }
-        await events.waitUntilStarted()
+        let wait = try ManualWait.start(waiter, deadline: deadline, events: events)
 
         deadline.fire()
 
         await #expect(throws: TestError.timedOut) {
-            try await task.value
+            try await wait.resumed().get()
         }
         #expect(events.abortCount == 1)
     }
@@ -150,24 +132,15 @@ struct SSHSubsystemReplyWaiterTests {
     }
 
     @Test("a reply cancels its deadline and ignores a late timeout")
+    @available(macOS 15.0, iOS 18.0, *)
     func replyWinsTimeoutRace() async throws {
         let deadline = ManualDeadline()
         let events = WaiterEvents()
         let waiter = SSHSubsystemReplyWaiter()
-        let task = Task {
-            try await waiter.wait(
-                scheduleTimeout: { callback in
-                    deadline.schedule(callback)
-                },
-                timeoutError: TestError.timedOut,
-                onAbort: { events.recordAbort() },
-                start: { events.recordStart() }
-            )
-        }
-        await events.waitUntilStarted()
+        let wait = try ManualWait.start(waiter, deadline: deadline, events: events)
 
         waiter.finish(.success(()))
-        try await task.value
+        try await wait.resumed().get()
         deadline.fire()
 
         #expect(events.abortCount == 0)
@@ -203,6 +176,44 @@ private final class ManualDeadline: @unchecked Sendable {
     func fire() {
         let callback = lock.withLock { self.callback }
         callback?()
+    }
+}
+
+/// A wait started on a test-driven executor. Each step fails the test,
+/// instead of hanging it, when a broken waiter never starts or never resumes
+/// its caller.
+@available(macOS 15.0, iOS 18.0, *)
+private struct ManualWait {
+    let executor: ManualTaskExecutor
+    let task: Task<Void, Error>
+    private let finished: OrderLog
+
+    static func start(
+        _ waiter: SSHSubsystemReplyWaiter,
+        deadline: ManualDeadline,
+        events: WaiterEvents
+    ) throws -> ManualWait {
+        let executor = ManualTaskExecutor()
+        let finished = OrderLog()
+        let task = Task(executorPreference: executor) {
+            defer { finished.append("resumed") }
+            try await waiter.wait(
+                scheduleTimeout: { callback in deadline.schedule(callback) },
+                timeoutError: TestError.timedOut,
+                onAbort: { events.recordAbort() },
+                start: { events.recordStart() }
+            )
+        }
+        executor.runUntilQueueIsEmpty()
+        try #require(events.startCount == 1)
+        return ManualWait(executor: executor, task: task, finished: finished)
+    }
+
+    /// Runs the caller after a trigger and returns how its wait ended.
+    func resumed() async throws -> Result<Void, Error> {
+        executor.runUntilQueueIsEmpty()
+        try #require(finished.entries == ["resumed"])
+        return await task.result
     }
 }
 
@@ -256,11 +267,5 @@ private final class WaiterEvents: @unchecked Sendable {
 
     func recordAbort() {
         lock.withLock { aborts += 1 }
-    }
-
-    func waitUntilStarted() async {
-        while lock.withLock({ starts == 0 }) {
-            await Task.yield()
-        }
     }
 }
