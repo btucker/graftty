@@ -40,28 +40,34 @@ public enum WorktreeState: String, Codable, Sendable {
     /// `.stale` placeholders have lost theirs, and `.deleting` rows are
     /// about to lose theirs; firing fresh subprocesses against any of
     /// them is wasted work at best, racey at worst.
-    public var hasOnDiskWorktree: Bool {
-        switch self {
-        case .closed, .running: return true
-        case .stale, .creating, .deleting: return false
-        }
-    }
+    public var hasOnDiskWorktree: Bool { wireState.hasOnDiskWorktree }
 
     /// True iff the entry is a transient placeholder owned by a flow
     /// (`AddWorktreeFlow` for `.creating`, `DeleteWorktreeFlow` for
     /// `.deleting`). The on-disk path is either not there yet or
     /// about to vanish — every consumer that touches the path or the
     /// row's interactivity gates on this so it doesn't race the flow.
-    public var isInFlight: Bool {
-        self == .creating || self == .deleting
-    }
+    public var isInFlight: Bool { wireState.isInFlight }
 
     /// Cross-platform projection used by shared sidebar accessors
-    /// (e.g. `GhosttyThemeColors.worktreeStateIcon`). The Mac enum and
-    /// the wire enum carry identical cases and raw values; the bridge
-    /// is total via the shared `String` raw values.
-    public var wireState: WorktreeWireState {
-        WorktreeWireState(rawValue: rawValue) ?? .closed
+    /// (e.g. `GhosttyThemeColors.worktreeStateIcon`) and the
+    /// `WorktreePanes` projection.
+    public var wireState: WorktreeWireState { WorktreeWireState(self) }
+}
+
+extension WorktreeWireState {
+    /// The one bridge from the persistence-side `WorktreeState` (whose
+    /// `encode(to:)` coerces `.creating` and `.deleting` to `.closed`) to
+    /// the wire enum. A `switch` rather than a `rawValue` round-trip so a
+    /// future `WorktreeState` case is a compile error here.
+    public init(_ state: WorktreeState) {
+        switch state {
+        case .closed: self = .closed
+        case .running: self = .running
+        case .stale: self = .stale
+        case .creating: self = .creating
+        case .deleting: self = .deleting
+        }
     }
 }
 

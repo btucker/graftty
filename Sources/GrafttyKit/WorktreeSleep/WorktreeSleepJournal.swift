@@ -4,6 +4,7 @@ import Darwin
 import Glibc
 #endif
 import Foundation
+import GrafttyProtocol
 
 /// Uses a stable sidecar inode because atomic journal writes replace theirs.
 /// A stopped helper retains ownership until it exits; no other recoverer may
@@ -35,15 +36,16 @@ public struct WorktreeSleepJournal: Codable, Sendable {
         self.owner = owner; self.processes = processes
     }
 
+    private static func file(at url: URL) -> JSONFileStore<WorktreeSleepJournal> {
+        JSONFileStore(fileURL: url, posixPermissions: 0o600)
+    }
+
     public func save(to url: URL) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(self).write(to: url, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try Self.file(at: url).save(self)
     }
 
     public static func load(from url: URL) -> WorktreeSleepJournal? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(Self.self, from: data)
+        try? file(at: url).load()
     }
 
     /// Returns the unresumed records. Missing/reused identities are removed,

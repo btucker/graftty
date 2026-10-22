@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import CryptoKit
 import GrafttyCommandUI
 import GrafttyHostAgent
 import GrafttyKit
@@ -147,20 +146,6 @@ struct GrafttyApp: App {
     @StateObject private var webController: WebServerController
     @StateObject private var updaterController: UpdaterController
     let services: AppServices
-    /// Same `TrustedPeerStore` instance the coordinator and
-    /// `WebRTCHostAgent` share — `PairedDevicesSection` reads it directly
-    /// (list/remove) since the coordinator doesn't expose it publicly.
-    private let trustedPeerStore: TrustedPeerStore
-    private let hostKey: Curve25519.Signing.PrivateKey?
-    /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
-    /// its live SSH connection into (REMOTE-3.1 revocation, W4). Exposed
-    /// alongside `trustedPeerStore` so `PairedDevicesSection`'s "Remove"
-    /// action can call `registry.revoke(deviceID:)` right after removing
-    /// the peer from `trustedPeerStore` — closing the live connection
-    /// immediately rather than waiting for the peer's next userauth
-    /// attempt to fail.
-    private let sshConnectionRegistry: SSHConnectionRegistry
-
     /// Observable proxy for per-pane port bindings. Mutated by the
     /// `PortScanner` `onChange` callback; injected into the SwiftUI
     /// environment so `SidebarView` can render port chips on each row.
@@ -252,23 +237,6 @@ struct GrafttyApp: App {
         )
         _webController = StateObject(wrappedValue: webController)
         _updaterController = StateObject(wrappedValue: UpdaterController())
-
-        // Load identity before startup creates the inbound host pool. The dedicated
-        // paired-access listener authenticates v2 offers with the device keys
-        // before passing them to the pool, whose agents open SSH sessions over the
-        // resulting DataChannel → zmx attach.
-        let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
-        let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
-        self.trustedPeerStore = trustedPeerStore
-        let sshConnectionRegistry = SSHConnectionRegistry()
-        self.sshConnectionRegistry = sshConnectionRegistry
-
-        do {
-            self.hostKey = try hostIdentityStore.loadOrGenerateAndPersist()
-        } catch {
-            self.hostKey = nil
-            NSLog("[Graftty] failed to load remote host identity: \(error)")
-        }
     }
 
     /// If another Graftty process with our `CFBundleIdentifier` is
@@ -456,8 +424,8 @@ struct GrafttyApp: App {
                     .tabItem { Label("General", systemImage: "gear") }
                 WebSettingsPane(
                     pairingCoordinator: services.hostPairingCoordinator,
-                    trustedPeerStore: trustedPeerStore,
-                    sshConnectionRegistry: sshConnectionRegistry
+                    trustedPeerStore: services.trustedPeerStore,
+                    sshConnectionRegistry: services.sshConnectionRegistry
                 )
                     .environmentObject(webController)
                     .tabItem { Label("Web Access", systemImage: "network") }
@@ -1332,41 +1300,22 @@ struct GrafttyApp: App {
                     defaultBranch: defaultBranch
                 )
                 for wt in SidebarHostNavigation.displayedWorktrees(in: repo) {
-                    let stats = wt.state.hasOnDiskWorktree
-                        ? panesStatsStore.stats[wt.path]
-                        : nil
-                    out.append(WorktreePanes(
-                        path: wt.path,
-                        displayName: labels[wt.id] ?? "",
-                        repoDisplayName: repo.displayName,
-                        repositoryID: repo.path,
-                        displayBranch: wt.displayBranch,
-                        state: WorktreeWireState(wt.state),
-                        isMainCheckout: wt.path == repo.path,
-                        prBadge: panesPRStore.infos[wt.path].map(PRBadge.init(from:)),
-                        stats: stats?.toWire(),
-                        attentionText: wt.attention?.text,
-                        attentionSource: wt.attention?.source,
-                        attentionTimestamp: wt.attention?.timestamp,
-                        layout: (wt.state == .running ? wt.splitTree.root : nil)
-                            .map {
-                                paneLayoutNode(
-                                    from: $0,
-                                    paneSessions: wt.paneSessions,
-                                    titles: terminalManager.displayTitles,
-                                    paneAttention: wt.paneAttention,
-                                    liveness: panesClaudeRegistry.livenessBySession
-                                )
-                            },
+                    let running = wt.state == .running
+                    out.append(WorktreePanes(entry: wt, repo: repo, inputs: WorktreeRowInputs(
                         origin: localWorktreeOrigin,
-                        sidebar: SidebarHostNavigation.metadata(for: wt, projectID: projectID,
-                            folders: ancestry[wt.id]?.map(\.name) ?? [], repositoryPath: repo.path, folderIDs: ancestry[wt.id]?.map(\.id)),
-                        ports: wt.state == .running ? panesPortBindings.ports(for: wt.splitTree.allLeaves) : [],
-                        portBindings: wt.state == .running ? Dictionary(uniqueKeysWithValues: wt.splitTree.allLeaves.compactMap { slot in
+                        projectID: projectID,
+                        displayName: labels[wt.id] ?? "",
+                        folders: ancestry[wt.id],
+                        prBadge: panesPRStore.infos[wt.path].map(PRBadge.init(from:)),
+                        stats: panesStatsStore.stats[wt.path]?.toWire(),
+                        paneTitles: terminalManager.displayTitles,
+                        liveness: panesClaudeRegistry.livenessBySession,
+                        ports: running ? panesPortBindings.ports(for: wt.splitTree.allLeaves) : [],
+                        portBindings: running ? Dictionary(uniqueKeysWithValues: wt.splitTree.allLeaves.compactMap { slot in
                             guard let session = wt.paneSessions[slot], let bindings = panesPortBindings.bindings[slot], !bindings.isEmpty else { return nil }
                             return (ZmxLauncher.sessionName(for: session), bindings)
                         }) : nil
-                    ))
+                    )))
                 }
             }
             return out
@@ -1529,14 +1478,12 @@ struct GrafttyApp: App {
         services.hostPairingCoordinator.setStartupError(
             "Paired access is still starting. Try again in a moment."
         )
-        if let hostKey {
+        if let hostKey = services.hostKey() {
             let hostAgentPool = Self.makeHostAgentPool(
                 hostKey: hostKey,
                 appState: appStateBinding,
                 terminalManager: terminalManager,
                 services: services,
-                trustedPeerStore: trustedPeerStore,
-                sshConnectionRegistry: sshConnectionRegistry,
                 buildWorktreePanesSnapshot: buildWorktreePanesSnapshot,
                 localWorktreeOrigin: localWorktreeOrigin,
                 portScanner: portScanner,
@@ -1629,67 +1576,3 @@ struct GrafttyApp: App {
     }
 }
 
-/// Convert the Mac-side `SplitTree.Node` into the wire-format
-/// `PaneLayoutNode`. Leaves carry the ZMX session name, the pane's
-/// current displayed title (or the empty string if no metadata has arrived
-/// yet), and the pane-scoped attention text from the worktree's
-/// `paneAttention`.
-@MainActor
-func paneLayoutNode(
-    from node: SplitTree.Node,
-    paneSessions: [PaneSlotID: PaneSessionID],
-    titles: [PaneSlotID: String],
-    paneAttention: [PaneSlotID: Attention],
-    liveness: [String: AgentLiveness]
-) -> PaneLayoutNode {
-    switch node {
-    case .leaf(let id):
-        let sessionName = paneSessions[id].map(ZmxLauncher.sessionName(for:))
-        return .leaf(
-            sessionName: sessionName ?? "",
-            title: titles[id] ?? "",
-            attentionText: paneAttention[id]?.text,
-            isBusy: AgentLivenessMerge.isPaneBusy(
-                sessionName: sessionName,
-                liveness: liveness),
-            attentionSource: paneAttention[id]?.source,
-            attentionTimestamp: paneAttention[id]?.timestamp
-        )
-    case .split(let s):
-        return .split(
-            direction: s.direction == .horizontal ? .horizontal : .vertical,
-            ratio: s.ratio,
-            left: paneLayoutNode(
-                from: s.left,
-                paneSessions: paneSessions,
-                titles: titles,
-                paneAttention: paneAttention,
-                liveness: liveness
-            ),
-            right: paneLayoutNode(
-                from: s.right,
-                paneSessions: paneSessions,
-                titles: titles,
-                paneAttention: paneAttention,
-                liveness: liveness
-            )
-        )
-    }
-}
-
-extension WorktreeWireState {
-    /// Exhaustive bridge from the persistence-side `WorktreeState` (in
-    /// GrafttyKit, whose `encode(to:)` coerces `.creating` and
-    /// `.deleting` to `.closed`) to the wire enum. A `switch` rather
-    /// than `rawValue` round-trip so a future `WorktreeState` case is a
-    /// compile error here.
-    init(_ state: WorktreeState) {
-        switch state {
-        case .closed: self = .closed
-        case .running: self = .running
-        case .stale: self = .stale
-        case .creating: self = .creating
-        case .deleting: self = .deleting
-        }
-    }
-}

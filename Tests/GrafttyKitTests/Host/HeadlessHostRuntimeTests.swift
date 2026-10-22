@@ -195,6 +195,36 @@ struct HeadlessHostRuntimeTests {
         #expect(saved.worktree(forPath: root.path)?.splitTree.leafCount == 1)
     }
 
+    @Test("@spec REMOTE-22.40: When a headless host publishes a pane that has not reported a title, the application shall send an empty title, as Mac hosts do, so clients apply their own untitled-pane fallback (IOS-4.10) instead of a host-supplied placeholder.")
+    func untitledPanePublishesEmptyTitle() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let session = try await runtime.openWorktree(root.path)
+        let leaves = runtime.snapshot().first?.layout?.leaves ?? []
+        #expect(leaves.map(\.sessionName) == [session])
+        #expect(leaves.map(\.title) == [""])
+        #expect(leaves.map(\.displayTitle) == ["shell"])
+    }
+
+    @Test("@spec REMOTE-22.41: If a headless host worktree has no on-disk checkout, then the application shall omit its cached divergence stats from the published row.")
+    func staleWorktreeOmitsCachedStats() throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gone = root.appendingPathComponent(".worktrees/gone").path
+        let state = AppState(repos: [RepoEntry(path: root.path, displayName: "project", worktrees: [
+            WorktreeEntry(path: root.path, branch: "main"),
+            WorktreeEntry(path: gone, branch: "gone", state: .stale),
+        ])])
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        let stats = WorktreeWireStats(ahead: 2, behind: 0, hasUncommittedChanges: true, baseRef: "origin/main")
+        runtime.worktreeStats = [root.path: stats, gone: stats]
+        let rows = Dictionary(uniqueKeysWithValues: runtime.snapshot().map { ($0.path, $0) })
+        #expect(rows[root.path]?.stats == stats)
+        #expect(rows[gone]?.state == .stale)
+        #expect(rows[gone]?.stats == nil)
+    }
+
     @Test("@spec REMOTE-22.4: If headless pane startup fails, then the application shall preserve the prior persisted layout and return an error.")
     func failedSplitDoesNotPublishPane() async throws {
         let (root, config, state) = try fixture()
@@ -275,7 +305,7 @@ struct HeadlessHostRuntimeTests {
             sessionID: session, paneSessionName: pane, attentionReason: reason, stopHookActive: true))
     }
 
-    @Test("@spec REMOTE-22.40: When a headless host receives an attention-only provider hook, the application shall answer an empty hook output without consulting the team inbox, even for an untracked worktree.")
+    @Test("@spec REMOTE-22.42: When a headless host receives an attention-only provider hook, the application shall answer an empty hook output without consulting the team inbox, even for an untracked worktree.")
     func attentionOnlyHookFastPath() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -285,7 +315,7 @@ struct HeadlessHostRuntimeTests {
         }
     }
 
-    @Test("@spec REMOTE-22.41: When a headless host receives a provider hook for a pane in the caller's worktree, the application shall publish that pane busy from prompt submission through tool use and idle at a stop, a session start, or a blocking attention reason, and shall ignore panes outside the caller's worktree.")
+    @Test("@spec REMOTE-22.43: When a headless host receives a provider hook for a pane in the caller's worktree, the application shall publish that pane busy from prompt submission through tool use and idle at a stop, a session start, or a blocking attention reason, and shall ignore panes outside the caller's worktree.")
     func hookLivenessMatchesMac() async throws {
         let (root, runtime, session) = try await runningRuntime()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -307,7 +337,7 @@ struct HeadlessHostRuntimeTests {
         #expect(busy() == false)
     }
 
-    @Test("@spec REMOTE-22.42: When a headless host renders session-start instructions for the main checkout, the application shall key them by the repository's refreshed default branch, falling back to the saved hint.")
+    @Test("@spec REMOTE-22.44: When a headless host renders session-start instructions for the main checkout, the application shall key them by the repository's refreshed default branch, falling back to the saved hint.")
     func sessionStartUsesRefreshedDefaultBranch() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -327,7 +357,7 @@ struct HeadlessHostRuntimeTests {
         #expect(!output.contains("Instruction files matching no current worktree"), "\(output)")
     }
 
-    @Test("@spec REMOTE-22.43: When a headless host records a provider's stopped turn, the application shall label it with the provider's display name and drop a stop older than that session's recorded progress.")
+    @Test("@spec REMOTE-22.45: When a headless host records a provider's stopped turn, the application shall label it with the provider's display name and drop a stop older than that session's recorded progress.")
     func stoppedTurnMatchesMac() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -348,7 +378,7 @@ struct HeadlessHostRuntimeTests {
         #expect(runtime.state.worktree(forPath: root.path)?.lastAgentStop?.agentName == "Codex")
     }
 
-    @Test("@spec REMOTE-22.44: When a headless host receives provider hooks for a session that raised blocking attention, the application shall keep that attention through PreToolUse and clear it on PostToolUseFailure.")
+    @Test("@spec REMOTE-22.46: When a headless host receives provider hooks for a session that raised blocking attention, the application shall keep that attention through PreToolUse and clear it on PostToolUseFailure.")
     func hookAttentionTransitionsMatchMac() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -362,7 +392,7 @@ struct HeadlessHostRuntimeTests {
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.attention == nil)
     }
 
-    @Test("@spec REMOTE-22.45: When a headless host receives a notification with an auto-clear duration, the application shall store the normalized duration on the attention it persists.")
+    @Test("@spec REMOTE-22.47: When a headless host receives a notification with an auto-clear duration, the application shall store the normalized duration on the attention it persists.")
     func notifyStoresNormalizedAutoClear() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -371,7 +401,7 @@ struct HeadlessHostRuntimeTests {
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.attention?.clearAfter == Attention.clearAfterMaxSeconds)
     }
 
-    @Test("@spec REMOTE-22.46: When a headless host receives a team send or message for a graftty-mac address, the application shall forward it to the paired peer only for a tracked caller.")
+    @Test("@spec REMOTE-22.48: When a headless host receives a team send or message for a graftty-mac address, the application shall forward it to the paired peer only for a tracked caller.")
     func remoteTeamMessagesForward() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -391,7 +421,7 @@ struct HeadlessHostRuntimeTests {
         #expect(forwarded.count == 2)
     }
 
-    @Test("@spec REMOTE-22.47: When a headless host receives a provider hook without a caller agent ID, the application shall resolve the agent from the provider session's presence record before delivering its targeted messages.")
+    @Test("@spec REMOTE-22.49: When a headless host receives a provider hook without a caller agent ID, the application shall resolve the agent from the provider session's presence record before delivering its targeted messages.")
     func hookResolvesAgentFromPresence() async throws {
         let (root, config, initial) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }

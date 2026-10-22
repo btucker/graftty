@@ -128,6 +128,14 @@ worktree cannot replace test or run artifacts while a command is executing.
 - Existing worktree-local `.build` directories are not migrated or removed
   automatically. Remove them only after confirming no local build is running.
 
+## Linux test allowlist
+
+`GrafttyKitTests` compiles only the files listed in its `sources: isLinux ? [...]`
+allowlist on Linux. `scripts/check-linux-test-allowlist.py` (CI `verify-specs`) fails
+on a new test file that is neither listed there nor wrapped, after its imports, in a
+whole-file `#if os(macOS)` / `#if canImport(AppKit)`; list portable tests, guard
+Apple-only ones.
+
 ## Always run /code-review xhigh --fix before opening a PR
 
 Before opening a PR, run `/code-review xhigh --fix` to review the changed code for correctness bugs plus reuse, quality, and efficiency cleanups, and apply the findings to the working tree. This catches bugs, dead code, duplicated helpers, and over-complicated branches that are easier to clean up before review than after.

@@ -100,6 +100,7 @@
     "PERSIST.2": "Save Triggers",
     "PERSIST.3": "Restore on Launch",
     "PERSIST.4": "Non-Persisted State",
+    "PERSIST.5": "JSON File Stores",
     "PWD.1": "User-Initiated Move",
     "PWD.2": "Reassignment",
     "PWD.3": "Position Memory",

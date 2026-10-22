@@ -318,32 +318,17 @@ public final class HeadlessHostRuntime {
     }
 
     public func snapshot() -> [WorktreePanes] {
-        state.repos.flatMap { repo in
-            SidebarHostNavigation.displayedWorktrees(in: repo).map { worktree in
-                WorktreePanes(path: worktree.path, displayName: worktree.displayName(amongSiblingPaths: repo.worktrees.map(\.path)),
-                    repoDisplayName: repo.displayName, repositoryID: repo.path, displayBranch: worktree.displayBranch,
-                    state: worktree.state.wireState, isMainCheckout: worktree.path == repo.path, prBadge: nil, stats: worktreeStats[worktree.path],
-                    attentionText: worktree.attention?.text, attentionSource: worktree.attention?.source,
-                    attentionTimestamp: worktree.attention?.timestamp,
-                    layout: worktree.state == .running ? worktree.splitTree.root.flatMap { layout($0, worktree: worktree) } : nil,
-                    origin: origin, sidebar: SidebarHostNavigation.metadata(for: worktree, projectID: repo.path,
-                        folders: [], repositoryPath: repo.path), portBindings: wirePortBindings(for: worktree))
+        let liveness = agentLiveness.livenessBySession
+        return state.repos.flatMap { repo in
+            let siblingPaths = repo.worktrees.map(\.path)
+            return SidebarHostNavigation.displayedWorktrees(in: repo).map { worktree in
+                WorktreePanes(entry: worktree, repo: repo, inputs: WorktreeRowInputs(
+                    origin: origin, projectID: repo.path,
+                    displayName: worktree.displayName(amongSiblingPaths: siblingPaths),
+                    stats: worktreeStats[worktree.path],
+                    paneTitles: worktree.paneTitleMetadata.compactMapValues(\.title), liveness: liveness,
+                    portBindings: wirePortBindings(for: worktree)))
             }
-        }
-    }
-
-    private func layout(_ node: SplitTree.Node, worktree: WorktreeEntry) -> PaneLayoutNode? {
-        switch node {
-        case .leaf(let slot):
-            guard let session = worktree.paneSessions[slot] else { return nil }
-            let name = launcher.sessionName(for: session)
-            let attention = worktree.paneAttention[slot]
-            return .leaf(sessionName: name, title: worktree.paneTitleMetadata[slot]?.title ?? "shell",
-                attentionText: attention?.text, isBusy: agentLiveness.livenessBySession[name] == .busy, attentionSource: attention?.source,
-                attentionTimestamp: attention?.timestamp)
-        case .split(let split):
-            guard let left = layout(split.left, worktree: worktree), let right = layout(split.right, worktree: worktree) else { return nil }
-            return .split(direction: split.direction == .horizontal ? .horizontal : .vertical, ratio: split.ratio, left: left, right: right)
         }
     }
 }

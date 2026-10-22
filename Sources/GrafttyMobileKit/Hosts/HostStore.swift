@@ -22,19 +22,30 @@ public final class HostStore {
         case io(String)
     }
 
-    public private(set) var hosts: [Host] = []
+    public var hosts: [Host] { list.elements }
 
     /// Distinguishes "loaded, zero hosts" from "load not yet completed",
     /// so the picker can suppress its empty-state copy during the brief
     /// pre-load window.
-    public private(set) var hasLoaded: Bool = false
+    public var hasLoaded: Bool { list.hasLoaded }
 
-    private let storeURL: URL
+    private let list: ObservableListStore<Host>
 
     public init(storeURL: URL = HostStore.defaultStoreURL()) {
-        self.storeURL = storeURL
         // No I/O here. `init` runs at `@State` construction on the iOS
         // launch path; eager file read would block first-frame commit.
+        list = ObservableListStore(
+            // `hosts.json` has always used Foundation's default `Date` coding.
+            file: JSONFileStore(fileURL: storeURL, outputFormatting: [.prettyPrinted, .sortedKeys]),
+            corruptFile: .discard,
+            // Protocol v2 deliberately invalidates every prior pairing while
+            // preserving manual/unpaired host records.
+            isLoadable: {
+                $0.remoteDeviceID == nil
+                    || $0.pairingProtocolVersion == RemoteAccessProtocol.version
+            },
+            areInIncreasingOrder: { ($0.lastUsedAt ?? $0.addedAt) > ($1.lastUsedAt ?? $1.addedAt) }
+        )
     }
 
     /// Pure URL composition — safe to evaluate at `@State` default-init
@@ -53,23 +64,14 @@ public final class HostStore {
     /// Idempotent. Call from a SwiftUI `.task` so the JSON read runs
     /// after the first frame commits.
     public func loadIfNeeded() async {
-        guard !hasLoaded else { return }
-        let url = storeURL
-        let loaded = await Task.detached(priority: .userInitiated) {
-            HostStore.readSync(from: url)
-        }.value
-        guard !hasLoaded else { return }
-        hosts = sorted(loaded)
-        hasLoaded = true
+        await list.loadIfNeeded()
     }
 
     /// Sync fallback for mutations that race ahead of the async load.
     /// Without it, the mutation would build `next` from an empty `hosts`
     /// and clobber the persisted file. No-op when already loaded.
     private func ensureLoaded() {
-        guard !hasLoaded else { return }
-        hosts = sorted(HostStore.readSync(from: storeURL))
-        hasLoaded = true
+        list.ensureLoaded()
     }
 
     /// Adds or merges `host` and returns the canonical persisted row.
@@ -180,39 +182,13 @@ public final class HostStore {
         try write([])
     }
 
-    private func write(_ list: [Host]) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    private func write(_ next: [Host]) throws {
         do {
-            let data = try encoder.encode(list)
             // Lazy mkdir keeps `defaultStoreURL()` pure on the launch path.
-            try FileManager.default.createDirectory(
-                at: storeURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try data.write(to: storeURL, options: [.atomic])
-            hosts = sorted(list)
+            try list.write(next)
         } catch {
             throw StoreError.io("\(error)")
         }
-    }
-
-    nonisolated private static func readSync(from url: URL) -> [Host] {
-        // `Data(contentsOf:)` returns nil through `try?` for a missing
-        // file, so a `fileExists` pre-check would just be a wasted stat.
-        guard let data = try? Data(contentsOf: url),
-              let list = try? JSONDecoder().decode([Host].self, from: data)
-        else { return [] }
-        // Protocol v2 deliberately invalidates every prior pairing while
-        // preserving manual/unpaired host records.
-        return list.filter {
-            $0.remoteDeviceID == nil
-                || $0.pairingProtocolVersion == RemoteAccessProtocol.version
-        }
-    }
-
-    private func sorted(_ list: [Host]) -> [Host] {
-        list.sorted { ($0.lastUsedAt ?? $0.addedAt) > ($1.lastUsedAt ?? $1.addedAt) }
     }
 }
 #endif
