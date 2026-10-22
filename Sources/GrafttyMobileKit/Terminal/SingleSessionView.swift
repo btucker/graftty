@@ -845,24 +845,17 @@ struct SingleSessionView: View {
     private func observeAttention() async {
         guard isFullScreen, isPaneFocused, let coordinator,
               LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
-        while !Task.isCancelled {
-            do {
-                let rows = try await coordinator.worktreePanes(for: step.host)
-                let snapshot = await coordinator.navigationSnapshot(for: step.host, matching: rows)
-                guard !Task.isCancelled else { return }
-                let projects: [SidebarProject]
-                if case let .snapshot(snapshotRows, metadata)? = snapshot, snapshotRows == rows {
-                    projects = metadata?.projects ?? SidebarProjection.projects(rows)
-                } else { projects = SidebarProjection.projects(rows) }
-                sidebarNavigation?.reconcile(worktrees: rows, projects: projects)
-                recentPaneActions?.history.reconcile(hostID: step.host.id, worktrees: rows, projects: projects)
-                attentionWorktrees = rows
-                recordRecentVisit()
-            } catch {
+        for await update in coordinator.worktreeUpdates(for: step.host) {
+            guard case let .frame(.snapshot(rows, metadata)) = update else {
                 // Do not present a stale count while the host is unreachable.
                 attentionWorktrees = []
+                continue
             }
-            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            let projects = metadata?.projects ?? SidebarProjection.projects(rows)
+            sidebarNavigation?.reconcile(worktrees: rows, projects: projects)
+            recentPaneActions?.history.reconcile(hostID: step.host.id, worktrees: rows, projects: projects)
+            attentionWorktrees = rows
+            recordRecentVisit()
         }
     }
 

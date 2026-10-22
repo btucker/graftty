@@ -486,6 +486,28 @@ public final class RemoteConnectionCoordinator {
         }
     }
 
+    /// Every applied worktree frame for `host`, across reconnects, without
+    /// polling (IOS-4.51). Each subscription goes through
+    /// `worktreePanes(for:)`, so it shares that path's connection dedup,
+    /// failure cooldown and first-snapshot wait.
+    public func worktreeUpdates(for host: Host) -> AsyncStream<RemoteWorktreeUpdate> {
+        RemoteWorktreeUpdates.stream(
+            subscribe: { [weak self] in
+                guard let self else { throw ConnectionError.unavailable }
+                return try await self.subscribedFrames(for: host)
+            },
+            retryDelay: { try await Task.sleep(for: Self.worktreeUpdateRetryDelay) }
+        )
+    }
+
+    private static let worktreeUpdateRetryDelay: Duration = .seconds(1)
+
+    private func subscribedFrames(for host: Host) async throws -> AsyncStream<PanesStateMessage> {
+        _ = try await worktreePanes(for: host)
+        guard let store = panesStores[host.id] else { throw ConnectionError.paneChannelClosed }
+        return store.frameUpdates()
+    }
+
     private nonisolated static func milliseconds(
         _ duration: Duration
     ) -> Int64 {
