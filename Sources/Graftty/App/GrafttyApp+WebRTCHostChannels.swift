@@ -695,9 +695,9 @@ extension GrafttyApp {
     /// callbacks every agent in it shares: panes-state subscriptions, pane
     /// control, worktree management, and the Chrome tab broker.
     ///
-    /// `panesStateSubscribe` / `panesStateV2Subscribe`: poll
-    /// `buildWorktreePanesSnapshot` through `PanesStatePolling`. A pub-sub
-    /// hook is left as a post-R6 follow-up.
+    /// `panesStateSubscribe` / `panesStateV2Subscribe`: poll their snapshots
+    /// (local panes, plus relayed remote panes for V2) through
+    /// `PanesStatePolling`. A pub-sub hook is left as a post-R6 follow-up.
     ///
     /// `paneControlMutator`: maps session-name targets to `PaneSlotID`
     /// via `TerminalManager.paneID(forSessionName:)` and dispatches to

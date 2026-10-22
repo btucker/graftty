@@ -12,40 +12,63 @@ struct PanesStatePollingTests {
 
     @Test("Sends the initial snapshot, then only snapshots that changed, and stops reading after cancel")
     func sendsInitialThenChangesOnly() async throws {
-        let source = await SnapshotSource([Self.a, Self.a, Self.b, Self.b, Self.c])
+        // The test changes the snapshot only after checking what was sent,
+        // so a slow scheduler cannot let a later snapshot through early.
+        let source = await SnapshotSource(Self.a)
         let received = Received()
         let subscription = await PanesStatePolling.subscribe(
             interval: .milliseconds(5),
             snapshot: { source.next() },
             onChange: { await received.append($0) }
         )
+        defer { subscription.cancel() }
         #expect(await received.messages == [Self.a])
 
-        let deadline = ContinuousClock.now + .seconds(5)
-        while await received.messages.count < 3, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        // An unchanged snapshot is read again but not sent again.
+        try await waitUntil { await source.reads >= 3 }
+        #expect(await received.messages == [Self.a])
+
+        await source.set(Self.b)
+        try await waitUntil { await received.messages.count >= 2 }
+        let readsAfterB = await source.reads
+        try await waitUntil { await source.reads >= readsAfterB + 2 }
+        #expect(await received.messages == [Self.a, Self.b])
+
+        await source.set(Self.c)
+        try await waitUntil { await received.messages.count >= 3 }
         #expect(await received.messages == [Self.a, Self.b, Self.c])
 
         subscription.cancel()
-        try await Task.sleep(for: .milliseconds(30))
-        let readsAfterCancel = await source.reads
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(await source.reads == readsAfterCancel)
+        let readsAtCancel = await source.reads
+        try await Task.sleep(for: .milliseconds(100))
+        // A read already waiting for the main actor may still finish.
+        #expect(await source.reads <= readsAtCancel + 1)
+    }
+
+    private func waitUntil(_ condition: () async -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !(await condition()) {
+            guard ContinuousClock.now < deadline else {
+                Issue.record("Timed out waiting for the polling loop")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
     }
 }
 
 @MainActor
 private final class SnapshotSource {
-    private var remaining: [PanesStateMessage]
+    private var current: PanesStateMessage
     private(set) var reads = 0
 
-    init(_ messages: [PanesStateMessage]) { remaining = messages }
+    init(_ initial: PanesStateMessage) { current = initial }
 
-    /// Returns the queued snapshots in order, then repeats the last one.
+    func set(_ message: PanesStateMessage) { current = message }
+
     func next() -> PanesStateMessage {
         reads += 1
-        return remaining.count > 1 ? remaining.removeFirst() : remaining[0]
+        return current
     }
 }
 
