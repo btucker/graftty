@@ -1320,7 +1320,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TECH-6.3** When CI partitions Swift tests, the workflow shall select every discovered non-ownership test exactly once, preserve the separate ownership corpus gate, and reject an empty discovery result.
 
-**TECH-6.4** When an iOS CI runner executes multiple integration batches, the workflow shall preserve separate test processes and result bundles, reuse its simulator, execute later batches after a test failure, and retain the failure status.
+**TECH-6.4** When an iOS CI runner executes multiple test batches, the workflow shall preserve separate test processes and result bundles, reuse its simulator, execute later batches after a test failure, and retain the failure status.
 
 ## ZMX — zmx Session Backing
 

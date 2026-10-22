@@ -9,6 +9,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Temporary warm-cache experiment: one immutable snapshot per input set on
+  # this PR, rather than one snapshot per commit. Remove after measurement.
+  CI_COMPILED_CACHE_EXPERIMENT: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 516 && 'pr516-v1' || '' }}
+
 jobs:
   linux-build-and-test:
     uses: ./.github/workflows/linux.yml
@@ -97,7 +102,7 @@ jobs:
             .build/build.db
             .build/debug.yaml
             .build/workspace-state.json
-          key: macos-build-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
+          key: macos-build-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-${{ env.CI_COMPILED_CACHE_EXPERIMENT || github.sha }}
           restore-keys: |
             macos-build-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-
 
@@ -124,9 +129,9 @@ jobs:
         run: swift build --manifest-cache none -Xcc "$GRAFTTY_RENDERER_CONTEXT" --build-tests --disable-automatic-resolution -Xswiftc -warnings-as-errors
 
       - name: Save compiled SwiftPM build
-        # Refresh successful main builds; PRs consume the rolling main cache
-        # without filling the repository quota with branch snapshots.
-        if: github.ref == 'refs/heads/main' && steps.swift-build-cache.outputs.cache-hit != 'true'
+        # Main writes rolling snapshots. This PR writes one fixed experiment
+        # snapshot per input set so warm builds can be measured before merging.
+        if: (github.ref == 'refs/heads/main' || env.CI_COMPILED_CACHE_EXPERIMENT != '') && steps.swift-build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -165,11 +170,13 @@ jobs:
   ios-test-shards:
     name: ios-test (${{ matrix.shard }})
     runs-on: macos-26
-    timeout-minutes: 40
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
-        shard: [unit, integration]
+        # Compare one build/boot/runner with the previous [unit, integration]
+        # layout while retaining all four test processes and selections.
+        shard: [all]
     steps:
       - uses: actions/checkout@v4
 
@@ -189,8 +196,8 @@ jobs:
         working-directory: Apps/GrafttyMobile
         run: xcodegen generate
 
-      # Each runner builds and tests directly: no second scheduling queue or
-      # exact-cache handoff. Both compile the same complete test bundle.
+      # Build and boot once for unit tests and all three integration groups.
+      # Each group still runs in a separate xcodebuild process.
       - name: Cache iOS SwiftPM dependencies
         uses: actions/cache@v4
         with:
@@ -202,7 +209,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .derivedData
-          key: ios-build-v4-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
+          key: ios-build-v4-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-${{ env.CI_COMPILED_CACHE_EXPERIMENT || github.sha }}
           restore-keys: |
             ios-build-v4-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-
 
@@ -230,8 +237,9 @@ jobs:
             build-for-testing
 
       - name: Save iOS compiled build
-        # One writer, after a successful build; tests always execute afterwards.
-        if: github.ref == 'refs/heads/main' && matrix.shard == 'unit' && steps.ios-build-cache.outputs.cache-hit != 'true'
+        # The all/unit runner writes after a successful build; tests always run.
+        # Integration never writes if the two-runner layout is restored.
+        if: (github.ref == 'refs/heads/main' || env.CI_COMPILED_CACHE_EXPERIMENT != '') && matrix.shard != 'integration' && steps.ios-build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: .derivedData
@@ -246,7 +254,7 @@ jobs:
           xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 
       - name: Test GrafttyMobile shard without rebuilding
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           SHARD_NAME: ${{ matrix.shard }}
         run: |

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Check test selection against inventories, including overlapping suite names."""
 import re
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -85,6 +87,26 @@ class MacPlanTests(unittest.TestCase):
 
 
 class IOSPlanTests(unittest.TestCase):
+    def test_combined_cli_preserves_all_four_processes_and_selects_each_test_once(self):
+        result = subprocess.run([sys.executable, "-B", str(Path(test_plan.__file__)), "all"],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        batches = [line.split() for line in result.stdout.splitlines()]
+        self.assertEqual(batches, [test_plan.ios_arguments("unit")] + [
+            ["-only-testing:" + suite for suite in group]
+            for group in test_plan.IOS_INTEGRATION_GROUPS
+        ])
+        tests = [suite + "/fixture()" for suite in test_plan.IOS_INTEGRATION_SUITES]
+        tests += ["GrafttyMobileKitTests/NewSuite/test()",
+                  "GrafttyMobileBrowserTests/RootViewTests/test()",
+                  "GrafttyRemoteClientTests/SSHAuthLoopbackTestsExtra/test()"]
+        for test in tests:
+            selections = []
+            for batch in batches:
+                matches = any(test.startswith(argument.split(":", 1)[1] + "/") for argument in batch)
+                selections.append(not matches if batch[0].startswith("-skip-testing:") else matches)
+            self.assertEqual(sum(selections), 1, test)
+
     def test_complement_covers_existing_and_new_suites_once(self):
         tests = [suite + "/fixture()" for suite in test_plan.IOS_INTEGRATION_SUITES]
         tests += ["GrafttyMobileKitTests/NewSuite/newTest()",

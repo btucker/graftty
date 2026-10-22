@@ -105,10 +105,10 @@ def ios_arguments(group):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("group", choices=("unit", "integration"))
+    parser.add_argument("group", choices=("unit", "integration", "all"))
     args = parser.parse_args()
-    if args.group == "unit":
-        print(" ".join(ios_arguments(args.group)))
-    else:
+    if args.group in ("unit", "all"):
+        print(" ".join(ios_arguments("unit")))
+    if args.group in ("integration", "all"):
         for group in IOS_INTEGRATION_GROUPS:
             print(" ".join("-only-testing:" + suite for suite in group))

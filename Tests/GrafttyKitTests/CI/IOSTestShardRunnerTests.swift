@@ -3,16 +3,17 @@ import Testing
 
 @Suite("@spec TECH-6.1: If an iOS CI test shard loses access to its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.")
 struct IOSTestShardRunnerTests {
-    @Test("@spec TECH-6.4: When an iOS CI runner executes multiple integration batches, the workflow shall preserve separate test processes and result bundles, reuse its simulator, execute later batches after a test failure, and retain the failure status.")
+    @Test("@spec TECH-6.4: When an iOS CI runner executes multiple test batches, the workflow shall preserve separate test processes and result bundles, reuse its simulator, execute later batches after a test failure, and retain the failure status.")
     func preservesProcessBoundariesAndFailuresAcrossBatches() throws {
+        // Unit tests and the three integration groups share one simulator.
         for firstExit in [Int32(0), 65] {
             let result = try runFixture(firstExitCode: firstExit, removeSimulator: false,
-                testArguments: "-only-testing:FirstTests\n-only-testing:SecondTests")
+                testArguments: "-skip-testing:IntegrationTests\n-only-testing:FirstTests\n-only-testing:SecondTests\n-only-testing:ThirdTests")
             #expect(result.exitCode == firstExit)
-            #expect(result.xcodebuildAttempts == 2)
+            #expect(result.xcodebuildAttempts == 4)
             #expect(result.simulatorsCreated == 1)
             #expect(result.simulatorsRemaining == 0)
-            #expect(result.resultBundles == ["batch-1-attempt-1.xcresult", "batch-2-attempt-1.xcresult"])
+            #expect(result.resultBundles == (1...4).map { "batch-\($0)-attempt-1.xcresult" })
         }
     }
 
