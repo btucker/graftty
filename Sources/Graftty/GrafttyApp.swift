@@ -1417,8 +1417,8 @@ struct GrafttyApp: App {
         services.hostPairingCoordinator.setStartupError(
             "Paired access is still starting. Try again in a moment."
         )
-        if let hostKey = services.hostKey() {
-            let hostAgentPool = Self.makeHostAgentPool(
+        let hostAgentPool = services.hostKey().map { hostKey in
+            Self.makeHostAgentPool(
                 hostKey: hostKey,
                 appState: appStateBinding,
                 terminalManager: terminalManager,
@@ -1429,39 +1429,22 @@ struct GrafttyApp: App {
                 zmxBinary: zmxBinary,
                 zmxDir: zmxDir
             )
-            services.hostAgentPool = hostAgentPool
-            Task { @MainActor in
-                do {
-                    try await services.startRemoteMacAccessServices(
-                        hostAgentPool: hostAgentPool
-                    )
-                    services.hostPairingCoordinator.setStartupError(nil)
-                } catch {
-                    services.hostPairingCoordinator.setStartupError(
-                        Self.remoteAccessStartupMessage(for: error)
-                    )
-                    NSLog(
-                        "[Graftty] failed to start LAN remote access services: %@",
-                        String(describing: error)
-                    )
-                }
-            }
-        } else {
-            Task { @MainActor in
-                do {
-                    try await services.startRemoteMacAccessServices(
-                        hostAgentPool: nil
-                    )
-                    services.hostPairingCoordinator.setStartupError(nil)
-                } catch {
-                    services.hostPairingCoordinator.setStartupError(
-                        Self.remoteAccessStartupMessage(for: error)
-                    )
-                    NSLog(
-                        "[Graftty] failed to start LAN remote access services: %@",
-                        String(describing: error)
-                    )
-                }
+        }
+        services.hostAgentPool = hostAgentPool
+        Task { @MainActor in
+            do {
+                try await services.startRemoteMacAccessServices(
+                    hostAgentPool: hostAgentPool
+                )
+                services.hostPairingCoordinator.setStartupError(nil)
+            } catch {
+                services.hostPairingCoordinator.setStartupError(
+                    Self.remoteAccessStartupMessage(for: error)
+                )
+                NSLog(
+                    "[Graftty] failed to start LAN remote access services: %@",
+                    String(describing: error)
+                )
             }
         }
 
