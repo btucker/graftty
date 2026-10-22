@@ -1014,6 +1014,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-2.2** When a state save fails (full disk, read-only `$HOME`, permissions clash, or any other `FileManager` / `Data.write` throw), the application shall log the error via `NSLog` so it surfaces in Console.app, rather than silently discarding every subsequent persisted mutation. Analogue of `ATTN-2.7` for the `AppState.save(to:)` path. `AppState.save(to:)` shall continue to throw so the caller can surface or recover; the spec pins only that the app-level caller stops using `try?` to mask it.
 
+**PERSIST-2.3** When `AppState` changes, the application shall coalesce the changes into one `state.json` write that runs off the main thread no later than the save delay after the first unsaved change.
+
+**PERSIST-2.4** The application shall write `state.json` snapshots in the order they were taken, so a write already in flight can never land after a newer snapshot.
+
+**PERSIST-2.5** When a request launches an agent whose CLI hooks read `state.json`, the application shall write every marked state change to disk before replying.
+
+**PERSIST-2.6** When the application terminates, it shall synchronously write the newest state after any in-flight write completes, so quitting never loses the last change.
+
+**PERSIST-2.7** While no window is open, when a control-socket request changes `AppState`, the application shall still save the change within the save delay.
+
+**PERSIST-2.8** When `AppState` is marked for saving, the application shall notify the registered change observer on every mark, whether or not a window is open.
+
 ### PERSIST-3.x — Restore on Launch
 
 **PERSIST-3.1** When the application launches with an existing `state.json`, it shall restore the sidebar with all saved repositories and worktrees.

@@ -452,20 +452,6 @@ struct GrafttyApp: App {
         }
     }
 
-    /// Window-scoped `.onChange` handles normal UI mutations. Background
-    /// services also call this directly because they remain active after the
-    /// last window closes and therefore cannot rely on a live view observer.
-    static func persistAppState(_ state: AppState) {
-        do {
-            try state.save(to: AppState.defaultDirectory)
-        } catch {
-            // Silently dropping this error means a full disk, read-only
-            // `$HOME`, or permissions clash silently stops persistence.
-            // STATE-6.2 / PERSIST-2.2.
-            NSLog("[Graftty] AppState.save failed: %@", String(describing: error))
-        }
-    }
-
     /// @spec URL-2.1: When the macOS app opens a `graftty://open` URL
     /// that resolves to a tracked worktree, the application shall select
     /// that worktree, focus the resolved pane when one is present and the
@@ -929,50 +915,50 @@ struct GrafttyApp: App {
 
         let attentionHandoff = AttentionFileHandoff()
         let attentionObserver = AttentionFileHandoffObserver(handoff: attentionHandoff)
+        let attentionDrain = AttentionHandoffDrain(
+            handoff: attentionHandoff,
+            apply: { activity in
+                switch activity {
+                case .progress(let event):
+                    guard let index = binding.wrappedValue.indices(forWorktreePath: event.worktree) else { return }
+                    if let input = event.userInput {
+                        binding.wrappedValue.repos[index.repo].worktrees[index.worktree].recordUserInput(input)
+                    }
+                    Self.clearAgentAttention(
+                        callerPath: event.worktree,
+                        callerAgentID: event.agentID,
+                        runtime: event.runtime,
+                        sessionID: event.sessionID,
+                        progressedAt: event.progressedAt,
+                        appState: binding
+                    )
+                case .stop(let event):
+                    guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
+                    if let pane = event.paneSessionName,
+                       binding.wrappedValue.worktree(forPath: event.worktree)?
+                        .paneSlot(forSessionName: pane) != nil {
+                        services.claudeSessionRegistry.recordHook(
+                            runtime: event.runtime, event: .stop,
+                            sessionID: event.sessionID ?? event.agentID,
+                            paneSessionName: pane, attentionReason: nil
+                        )
+                    }
+                    Self.recordStoppedTurn(
+                        callerPath: event.worktree, runtime: event.runtime,
+                        callerAgentID: event.agentID, sessionID: event.sessionID,
+                        paneSessionName: event.paneSessionName, recap: event.recap,
+                        stoppedAt: event.stoppedAt, appState: binding,
+                        terminalManager: tm
+                    )
+                }
+            },
+            // One off-main write per batch; files are deleted only after it
+            // lands (REMOTE-23.10).
+            persist: { try await Self.persistAppStateNow(binding.wrappedValue) }
+        )
         do {
             try attentionObserver.start {
-                Task { @MainActor in
-                    do {
-                        try attentionHandoff.consumeActivities { activity in
-                            switch activity {
-                            case .progress(let event):
-                                guard let index = binding.wrappedValue.indices(forWorktreePath: event.worktree) else { return }
-                                if let input = event.userInput {
-                                    binding.wrappedValue.repos[index.repo].worktrees[index.worktree].recordUserInput(input)
-                                }
-                                Self.clearAgentAttention(
-                                    callerPath: event.worktree,
-                                    callerAgentID: event.agentID,
-                                    runtime: event.runtime,
-                                    sessionID: event.sessionID,
-                                    progressedAt: event.progressedAt,
-                                    appState: binding
-                                )
-                            case .stop(let event):
-                                guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
-                                if let pane = event.paneSessionName,
-                                   binding.wrappedValue.worktree(forPath: event.worktree)?
-                                    .paneSlot(forSessionName: pane) != nil {
-                                    services.claudeSessionRegistry.recordHook(
-                                        runtime: event.runtime, event: .stop,
-                                        sessionID: event.sessionID ?? event.agentID,
-                                        paneSessionName: pane, attentionReason: nil
-                                    )
-                                }
-                                Self.recordStoppedTurn(
-                                    callerPath: event.worktree, runtime: event.runtime,
-                                    callerAgentID: event.agentID, sessionID: event.sessionID,
-                                    paneSessionName: event.paneSessionName, recap: event.recap,
-                                    stoppedAt: event.stoppedAt, appState: binding,
-                                    terminalManager: tm
-                                )
-                            }
-                            try binding.wrappedValue.save(to: AppState.defaultDirectory)
-                        }
-                    } catch {
-                        NSLog("[Graftty] Attention file handoff failed: %@", String(describing: error))
-                    }
-                }
+                Task { @MainActor in await attentionDrain.drain() }
             }
             services.attentionFileObserver = attentionObserver
         } catch {
@@ -1469,7 +1455,7 @@ struct GrafttyApp: App {
                 // main window (and its `.onChange` observer) is closed.
                 stateBinding.wrappedValue.capturePaneTitleMetadata(tm.paneTitleMetadata)
                 tm.autoSleep.shutdown()
-                Self.persistAppState(stateBinding.wrappedValue)
+                try? Self.persistAppStateSynchronously(stateBinding.wrappedValue)
                 appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
                 appServices.prStatusStore.stop()

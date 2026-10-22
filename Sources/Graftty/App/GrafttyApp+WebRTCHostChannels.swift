@@ -40,6 +40,30 @@ import GrafttyRemoteClient
 }
 
 extension GrafttyApp {
+    /// A paired device's worktree order change (LAYOUT-2.153). The order is
+    /// saved before it is applied, so a `persistence-failed` reply leaves the
+    /// host unchanged. Synchronous so save and apply share one main-actor
+    /// turn: a suspended save would let a newer local order change land and
+    /// then be overwritten by this older request.
+    @MainActor
+    static func applyRemoteWorktreeOrder(
+        _ mode: WorktreeOrderMode,
+        repositoryID: String,
+        appState: Binding<AppState>
+    ) -> WorktreeManagementResponse {
+        var candidate = appState.wrappedValue
+        guard SidebarHostNavigation.setWorktreeOrder(mode, in: &candidate, repositoryID: repositoryID) else {
+            return .error(code: "repository-unavailable", message: "The repository is no longer available for sorting.", forceAllowed: false, shortStatus: nil)
+        }
+        do {
+            try persistAppStateSynchronously(candidate)
+        } catch {
+            return .error(code: "persistence-failed", message: error.localizedDescription, forceAllowed: false, shortStatus: nil)
+        }
+        appState.wrappedValue = candidate
+        return .ok
+    }
+
     /// Builds the paired-device `PaneControlChannelHandler` mutator. Relayed
     /// panes forward to their owning Mac; local targets map session names to
     /// `PaneSlotID`s and drive the same pane-layout statics as the sidebar.
@@ -380,17 +404,7 @@ extension GrafttyApp {
                 }
             case let .setWorktreeOrder(repositoryID, mode):
                 return await MainActor.run {
-                    var candidate = appStateBinding.wrappedValue
-                    guard SidebarHostNavigation.setWorktreeOrder(mode, in: &candidate, repositoryID: repositoryID) else {
-                        return .error(code: "repository-unavailable", message: "The repository is no longer available for sorting.", forceAllowed: false, shortStatus: nil)
-                    }
-                    do {
-                        try candidate.save(to: AppState.defaultDirectory)
-                        appStateBinding.wrappedValue = candidate
-                        return .ok
-                    } catch {
-                        return .error(code: "persistence-failed", message: error.localizedDescription, forceAllowed: false, shortStatus: nil)
-                    }
+                    GrafttyApp.applyRemoteWorktreeOrder(mode, repositoryID: repositoryID, appState: appStateBinding)
                 }
             case let .moveWorktree(repositoryID, worktreeID, relativeTo, after):
                 return await MainActor.run {

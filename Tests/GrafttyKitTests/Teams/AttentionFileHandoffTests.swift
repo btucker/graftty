@@ -31,6 +31,21 @@ struct AttentionFileHandoffTests {
         #expect(try handoff.consumeActivities { _ in } == 1)
     }
 
+    @Test func removeReportsAnEventFileItCannotDeleteAndStillDeletesTheRest() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        try handoff.progress(worktree: "/mine", agentID: "codex-mine", runtime: .codex, sessionID: nil)
+        let handled = try handoff.takeActivities { _ in }
+        // A path below a regular file cannot be removed, even by root.
+        let undeletable = try #require(handled.first).appendingPathComponent("child.json")
+
+        #expect(throws: (any Error).self, "an undeletable event would be replayed every scan with no log") {
+            try handoff.remove([undeletable] + handled)
+        }
+        #expect(try handoff.takeActivities { _ in }.isEmpty)
+    }
+
     @Test("@spec AGENT-3.23: When a staged recap lacks an emoji, the Stop hook shall request one correction, preserve the recap if no correction arrives, and accept a corrected report without another continuation.")
     func legacyRecapRequestsEmojiOnce() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("emoji-retry-\(UUID())")
