@@ -18,9 +18,10 @@ final class HostMaintenance: WorktreeMonitorDelegate {
             while !Task.isCancelled {
                 guard let runtime = self?.runtime else { return }
                 let active = runtime.state.repos.flatMap(\.worktrees).filter { $0.state == .running }.count
-                let sample = await sampler.sample(diskPath: runtime.configuration.stateDirectory.path,
+                var sample = await sampler.sample(diskPath: runtime.configuration.stateDirectory.path,
                     activeWorktrees: active, pendingOperations: runtime.busyPaths.count)
                 guard !Task.isCancelled else { return }
+                sample.pendingPlacements = runtime.placements.pendingCount
                 runtime.hostResources = sample
                 try? await Task.sleep(for: .seconds(5))
             }

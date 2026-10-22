@@ -195,6 +195,21 @@ final class RemoteMacsModel: ObservableObject {
         connectionStates[identity] ?? .offline
     }
 
+    func place(on host: RemoteMacConnectionSummary.ID, request: HostPlacementRequest) async -> ResponseMessage {
+        await loadSavedRemotes()
+        let identity = RemoteMacIdentity(id: host.deviceID, fingerprint: host.fingerprint)
+        guard savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == identity }), connectionState(for: identity) == .connected else {
+            return .error("Placement host identity is unavailable or disconnected.")
+        }
+        do {
+            switch try await sendWorktreeManagement(identity: identity, request: .placement(request)) {
+            case .placement(let record): return .placement(record)
+            case .error(_, let message, _, _): return .error(message)
+            default: return .error("Host returned an unexpected placement response.")
+            }
+        } catch { return .error("Placement reply unavailable; query the same operation UUID before retrying. \(error)") }
+    }
+
     func remoteMacConnectionSummaries() async
         -> [RemoteMacConnectionSummary] {
         await loadSavedRemotes()
@@ -893,6 +908,7 @@ final class RemoteMacsModel: ObservableObject {
         _ request: WorktreeManagementRequest
     ) async -> WorktreeManagementResponse? {
         switch request {
+        case .placement: return nil // Admission belongs to the directly authenticated parent.
         case .worktreeAgentCompletions(let worktreeID):
             guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
             let response = await forwardManagement(identity: route.identity,

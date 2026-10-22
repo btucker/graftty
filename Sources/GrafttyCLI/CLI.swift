@@ -236,6 +236,8 @@ struct PaneList: ParsableCommand {
         case .worktreeCreate, .worktreeCreateRetry:
             CLIEnv.printError("Unexpected worktree_create response for list")
             throw ExitCode(1)
+        case .placement:
+            throw ValidationError("Unexpected placement response")
         case .remoteHosts:
             throw ValidationError("Unexpected host list response")
         case .linuxSetupIdentity:
@@ -669,6 +671,8 @@ enum CLIEnv {
         case .worktreeCreate, .worktreeCreateRetry:
             printError("Unexpected worktree_create response")
             throw ExitCode(1)
+        case .placement:
+            throw ValidationError("Unexpected placement response")
         case .remoteHosts:
             throw ValidationError("Unexpected host list response")
         case .linuxSetupIdentity:

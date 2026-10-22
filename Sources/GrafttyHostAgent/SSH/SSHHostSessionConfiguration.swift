@@ -18,6 +18,7 @@ struct SSHHostSessionConfiguration: Sendable {
     let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
     let paneControlMutator: PaneControlChannelHandler.Mutator
     let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator
+    var authenticatedPlacementMutator: AuthenticatedPlacementMutator? = nil
     var chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil
     var chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { _ in }
     let ownershipStore: SessionDisplayOwnershipStore
@@ -72,7 +73,7 @@ struct SSHHostSessionConfiguration: Sendable {
                         panesStateV2Subscribe: panesStateV2Subscribe,
                         paneControlMutator: paneControlMutator,
                         worktreeManagementMutator: { request in
-                            await peerBox.manage(request, using: worktreeManagementMutator)
+                            await peerBox.manage(request, using: worktreeManagementMutator, placement: authenticatedPlacementMutator)
                         },
                         chromeTabMutator: chromeTabMutator.map { mutator -> ChromeTabChannelHandler.Mutator in
                             { @Sendable request, deviceID, viewerID in
@@ -143,7 +144,17 @@ final class AuthenticatedPeerBox: @unchecked Sendable {
     /// Port and sign-in taps grant narrow approval after resolving a live worktree listener.
     func manage(_ request: WorktreeManagementRequest,
                 using mutator: WorktreeManagementChannelHandler.Mutator,
+                placement: AuthenticatedPlacementMutator? = nil,
                 approvals: BrowserTunnelApprovalStore = .shared) async -> WorktreeManagementResponse {
+        if case .placement(let placementRequest) = request {
+            guard let peer, peer.capabilities.worktreeManagement == .allowed else {
+                return .error(code: "placement-forbidden", message: "Placement requires authenticated worktree-management permission.", forceAllowed: false, shortStatus: nil)
+            }
+            guard let placement else {
+                return .error(code: "placement-unavailable", message: "This host does not support placement admission.", forceAllowed: false, shortStatus: nil)
+            }
+            return await placement(placementRequest, .init(deviceID: peer.id, fingerprint: peer.fingerprint))
+        }
         guard case .openResource(_, let resource) = request else { return await mutator(request) }
         if case .authenticate(let url) = resource {
             guard let peer, peer.capabilities.portTunnel != .disabled else {

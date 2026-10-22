@@ -101,6 +101,7 @@ final class HostService {
                 return engine
             }, panesStateSubscribe: subscribe, panesStateV2Subscribe: subscribe,
             paneControlMutator: { await runtime.control($0) }, worktreeManagementMutator: { await runtime.manage($0) },
+            authenticatedPlacementMutator: { await runtime.place($0, owner: $1) },
             displayOwnershipStore: ownership)
         socket = SocketServer(socketPath: configuration.socketPath)
         socket.onAsyncRequest = { await runtime.handle($0) }

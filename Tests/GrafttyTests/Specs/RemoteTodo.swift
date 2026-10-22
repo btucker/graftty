@@ -43,11 +43,6 @@ struct RemoteTodo {
     func remote_24_7() async throws { }
 
     @Test("""
-@spec REMOTE-24.8: When concurrent or retried placement requests are accepted, the application shall reserve capacity and reuse operation identities to avoid duplicate allocations.
-""", .disabled("not yet implemented"))
-    func remote_24_8() async throws { }
-
-    @Test("""
 @spec REMOTE-24.9: When an AWS instance starts, the application shall verify trusted Graftty connectivity and project readiness before reporting the requested worktree ready.
 """, .disabled("not yet implemented"))
     func remote_24_9() async throws { }

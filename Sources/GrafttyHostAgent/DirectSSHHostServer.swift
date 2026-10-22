@@ -9,6 +9,8 @@ import GrafttyProtocol
 import NIOCore
 import NIOPosix
 
+public typealias AuthenticatedPlacementMutator = @Sendable (HostPlacementRequest, RemoteMacConnectionSummary.ID) async -> WorktreeManagementResponse
+
 /// Accepts Graftty SSH sessions directly over TCP. This is separate from OpenSSH.
 public actor DirectSSHHostServer {
     public static let defaultPort = 8801
@@ -33,6 +35,7 @@ public actor DirectSSHHostServer {
         panesStateV2Subscribe: PanesStateChannelHandler.Subscribe? = nil,
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
         worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator? = nil,
+        authenticatedPlacementMutator: AuthenticatedPlacementMutator? = nil,
         chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil,
         chromeTabOnDisconnect: @escaping ChromeTabChannelHandler.OnDisconnect = { _ in },
         displayOwnershipStore: SessionDisplayOwnershipStore,
@@ -50,6 +53,7 @@ public actor DirectSSHHostServer {
             worktreeManagementMutator: worktreeManagementMutator ?? { _ in
                 .error(code: "unavailable", message: "worktree management is unavailable", forceAllowed: false, shortStatus: nil)
             },
+            authenticatedPlacementMutator: authenticatedPlacementMutator,
             chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
             ownershipStore: displayOwnershipStore,
             ownershipBroadcaster: DisplayOwnershipBroadcaster(store: displayOwnershipStore),
@@ -66,6 +70,7 @@ public actor DirectSSHHostServer {
             streamFactory: c.streamFactory, pagedFactory: c.pagedFactory,
             panesStateSubscribe: c.panesStateSubscribe, panesStateV2Subscribe: c.panesStateV2Subscribe,
             paneControlMutator: c.paneControlMutator, worktreeManagementMutator: c.worktreeManagementMutator,
+            authenticatedPlacementMutator: c.authenticatedPlacementMutator,
             chromeTabMutator: c.chromeTabMutator, chromeTabOnDisconnect: c.chromeTabOnDisconnect,
             ownershipStore: c.ownershipStore, ownershipBroadcaster: c.ownershipBroadcaster,
             teamHandler: handler, teamOnConnect: onConnect, teamOnDisconnect: onDisconnect

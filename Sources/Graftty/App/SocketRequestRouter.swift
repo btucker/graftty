@@ -251,7 +251,7 @@ extension SocketRequestRouter {
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
              .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability, .worktreePinnedRemovalCapability,
              .worktreePinCapability, .setWorktreePinned,
-             .worktreeRemoveStatus, .listRemoteHosts, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree,
+             .worktreeRemoveStatus, .remotePlacement, .listRemoteHosts, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree,
              .attentionReport, .linuxSetupIdentity, .completeLinuxSetup:
             // Request-style messages are answered by `handleRequest` via
             // SocketServer.onAsyncRequest; they are no-ops on the
@@ -356,6 +356,8 @@ extension SocketRequestRouter {
                 return .error(error.localizedDescription)
             }
 
+        case .remotePlacement(let host, let request):
+            return await remoteMacsModel.place(on: host, request: request)
         case .listRemoteHosts:
             return .remoteHosts(await remoteMacsModel.remoteMacConnectionSummaries())
         case .reconnectRemoteMac(let target):

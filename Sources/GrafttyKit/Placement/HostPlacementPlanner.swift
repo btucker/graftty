@@ -1,16 +1,6 @@
 import Foundation
 import GrafttyProtocol
 
-public struct HostPlacementDemand: Codable, Sendable, Equatable {
-    public let architecture: String
-    public let cpus: Double
-    public let memoryBytes: Int64
-    public let diskBytes: Int64
-    public init(architecture: String, cpus: Double, memoryBytes: Int64, diskBytes: Int64) {
-        self.architecture = architecture; self.cpus = cpus; self.memoryBytes = memoryBytes; self.diskBytes = diskBytes
-    }
-}
-
 public struct HostPlacementPolicy: Codable, Sendable {
     public var maximumCPUUtilization = 0.8
     public var memoryHeadroomBytes: Int64 = 512 * 1024 * 1024

@@ -23,6 +23,7 @@ public final class HeadlessHostRuntime {
     var projectIcons: [UUID: HostProjectIcon] = [:]
     var projectIconLoads: [UUID: HostProjectIconLoad] = [:]
     var busyPaths: Set<String> = []
+    let placements: HostPlacementLedger
     var creations: [String: WorktreeCreateStatus] = [:]
     var removals: [String: WorktreeRemoveStatus] = [:]
     var busyAgents: Set<String> = []
@@ -38,6 +39,7 @@ public final class HeadlessHostRuntime {
     public init(configuration: HostConfiguration, terminals: (any HostTerminalDriver)? = nil,
                 initialState: AppState? = nil, portScanner: PortScanner? = nil,
                 agentSetup: HostAgentSetup? = nil) throws {
+        placements = try HostPlacementLedger(fileURL: configuration.stateDirectory.appendingPathComponent("placements.json"))
         self.configuration = configuration
         self.portScanner = portScanner ?? PortScanner()
         self.agentSetup = agentSetup ?? HostAgentSetup(configuration: configuration)
@@ -259,6 +261,7 @@ public final class HeadlessHostRuntime {
         for session in worktree.paneSessions.values { try? await terminals.kill(launcher.sessionName(for: session)) }
         state.removeWorktree(atPath: path)
         try save()
+        try placements.releaseDeletedWorktree(path)
         await refreshPortBindings()
     }
 

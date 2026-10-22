@@ -58,6 +58,47 @@ struct HeadlessHostRuntimeTests {
         return (root, configuration, state)
     }
 
+    @Test("@spec REMOTE-24.17: When a host admits a placement, the application shall persist the parent-bound operation before creating its worktree, return the retained result on retries, and expose uncertain creation without starting it again.", arguments: [false, true])
+    func admittedWorktreeCreationIsIdempotent(failStart: Bool) async throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid",
+            "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let terminals = HostTerminalFake(); terminals.failStart = failStart
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals)
+        _ = try await runtime.registerRepository(root.path)
+        runtime.hostResources = .init(sampledAt: Date().timeIntervalSince1970, architecture: "arm64", operatingSystem: "linux",
+            cpuCount: 8, cpuUtilization: 0.1, memoryTotalBytes: 16 << 30, memoryAvailableBytes: 12 << 30,
+            diskPath: root.path, diskAvailableBytes: 100 << 30, activeWorktrees: 0, pendingWorktreeOperations: 0)
+        let owner = RemoteMacConnectionSummary.ID(deviceID: .init(value: "parent"), fingerprint: try .init(rawBytes: Data(repeating: 1, count: 32)))
+        let id = UUID()
+        let intent = HostPlacementIntent(repositoryID: root.path, worktreeName: "placed", branchName: "placed",
+            demand: .init(architecture: "arm64", cpus: 2, memoryBytes: 1 << 30, diskBytes: 1 << 20))
+        terminals.duringStart = {
+            let retry = await runtime.place(.create(operationID: id, intent: intent), owner: owner)
+            guard case .placement(let record) = retry else { Issue.record("Missing pending placement"); return }
+            #expect(record.state == .preparing)
+        }
+        let response = await runtime.place(.create(operationID: id, intent: intent), owner: owner)
+        guard case .placement(let record) = response else { Issue.record("Admission failed: \(response)"); return }
+        #expect(record.state == (failStart ? .outcomeUnknown : .created))
+        #expect(record.worktreeID == (failStart ? nil : intent.worktreePath))
+        #expect(terminals.starts.count == (failStart ? 0 : 1))
+        #expect(await runtime.place(.create(operationID: id, intent: intent), owner: owner) == response)
+        #expect(await runtime.place(.status(operationID: id), owner: owner) == response)
+        let restored = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake())
+        #expect(await restored.place(.create(operationID: id, intent: intent), owner: owner) == response)
+        #expect(terminals.starts.count == (failStart ? 0 : 1))
+        let stranger = RemoteMacConnectionSummary.ID(deviceID: owner.deviceID, fingerprint: try .init(rawBytes: Data(repeating: 2, count: 32)))
+        guard case .error = await runtime.place(.status(operationID: id), owner: stranger) else { Issue.record("Foreign peer read operation"); return }
+        try await runtime.deleteWorktree(intent.worktreePath)
+        guard case .placement(let deleted) = await runtime.place(.create(operationID: id, intent: intent), owner: owner) else {
+            Issue.record("Missing tombstone"); return
+        }
+        #expect(deleted.state == .released)
+    }
+
     @Test func userPromptHandoffPersistsAndPublishesHistory() throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }

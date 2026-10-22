@@ -48,6 +48,40 @@ struct DirectSSHLoopbackTests {
         func cleanup() { try? FileManager.default.removeItem(at: directory) }
     }
 
+    @Test("@spec REMOTE-24.16: When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and require worktree-management permission.", .timeLimit(.minutes(1)), arguments: [true, false])
+    func placementUsesAuthenticatedIdentity(allowed: Bool) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let peer = try f.peer(key: f.clientKey, managementAllowed: allowed)
+        try f.store.add(peer)
+        let expected = RemoteMacConnectionSummary.ID(deviceID: peer.id, fingerprint: peer.fingerprint)
+        let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
+            streamFactory: { _ in DirectEchoTerminalStream() },
+            panesStateSubscribe: { _ in .init(cancel: {}) }, paneControlMutator: { _ in .ok },
+            authenticatedPlacementMutator: { _, owner in
+                #expect(allowed)
+                #expect(owner == expected)
+                return .error(code: "test-identity", message: "authenticated", forceAllowed: false, shortStatus: nil)
+            }, displayOwnershipStore: SessionDisplayOwnershipStore())
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            if allowed {
+                let channel = try await client.makeWorktreeManagementClient()
+                try await channel.open()
+                let response = try await channel.send(.placement(.status(operationID: UUID())))
+                #expect(response == .error(code: "test-identity", message: "authenticated", forceAllowed: false, shortStatus: nil))
+            } else {
+                await #expect(throws: (any Error).self) {
+                    let channel = try await client.makeWorktreeManagementClient()
+                    try await channel.open()
+                    _ = try await channel.send(.placement(.status(operationID: UUID())))
+                }
+            }
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
     #if canImport(Network)
     @Test("@spec CHROME-3.3: When a paired client requests a protected Chrome port through direct-tcpip, the application shall refuse the connection and shall restore ordinary listener access after protection ends.", .timeLimit(.minutes(1)))
     func ownedChromePortIsDeniedAtTCPChannelOpen() async throws {

@@ -2,8 +2,32 @@ import Foundation
 import Testing
 @testable import GrafttyCLI
 import GrafttyKit
+import GrafttyProtocol
 
 struct ProviderCLITests {
+    @Test("@spec REMOTE-24.18: When an agent creates or queries a remote placement, the CLI shall require a stable operation UUID and an unambiguous connected paired host and send its pinned identity with the request.")
+    func placementCommandsRequireStableOperationIdentity() throws {
+        let id = UUID().uuidString
+        _ = try GrafttyCLI.parseAsRoot(["remote", "placement", "create", "--host", "linux", "--operation-id", id,
+            "--repository", "/project", "--name", "task", "--architecture", "arm64", "--json"])
+        _ = try GrafttyCLI.parseAsRoot(["remote", "placement", "status", "--host", "linux", "--operation-id", id, "--json"])
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(["remote", "placement", "status", "--host", "linux", "--operation-id", "bad"]) }
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(["remote", "placement", "create", "--host", "linux", "--repository", "/project", "--name", "task", "--architecture", "arm64"]) }
+    }
+
+    @Test func placementTargetPinsFingerprintAndRejectsAmbiguityAndOfflineHosts() throws {
+        let fingerprint = try RemoteIdentityFingerprint(rawBytes: Data(repeating: 3, count: 32))
+        func host(_ id: String, state: RemoteMacConnectionSummary.State = .connected) -> RemoteMacConnectionSummary {
+            .init(deviceID: .init(value: id), fingerprint: fingerprint, label: "linux", lastKnownHost: nil, state: state)
+        }
+        let selected = try RemotePlacementTarget.resolve("one", hosts: [host("one"), host("two")])
+        #expect(selected == host("one").id)
+        #expect(throws: (any Error).self) { try RemotePlacementTarget.resolve("linux", hosts: [host("one"), host("two")]) }
+        #expect(throws: (any Error).self) { try RemotePlacementTarget.resolve("one", hosts: [host("one", state: .offline)]) }
+        let request = NotificationMessage.remotePlacement(host: selected, request: .status(operationID: UUID()))
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: JSONEncoder().encode(request)) == request)
+    }
+
     @Test func placementPlanCommandIsRegistered() throws {
         _ = try GrafttyCLI.parseAsRoot(["remote", "plan", "--architecture", "arm64", "--cpus", "2", "--memory-mib", "4096", "--disk-mib", "8192", "--json"])
     }

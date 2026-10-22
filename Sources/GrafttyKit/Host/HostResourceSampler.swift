@@ -34,7 +34,7 @@ public actor HostResourceSampler {
             pendingWorktreeOperations: pendingOperations)
     }
 
-    private static func availableDiskBytes(at path: String) -> Int64? {
+    nonisolated static func availableDiskBytes(at path: String) -> Int64? {
         var info = statvfs()
         guard statvfs(path, &info) == 0 else { return nil }
         let (bytes, overflow) = UInt64(info.f_bavail).multipliedReportingOverflow(by: UInt64(info.f_frsize))

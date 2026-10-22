@@ -3422,6 +3422,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-24.15** When an agent requests a read-only placement plan, the CLI shall rank connected compatible hosts using fresh measured CPU, memory, and disk headroom, explain rejections and unknown reservation state, and require admission before starting work.
 
+**REMOTE-24.16** When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and require worktree-management permission.
+
+**REMOTE-24.17** When a host admits a placement, the application shall persist the parent-bound operation before creating its worktree, return the retained result on retries, and expose uncertain creation without starting it again.
+
+**REMOTE-24.18** When an agent creates or queries a remote placement, the CLI shall require a stable operation UUID and an unambiguous connected paired host and send its pinned identity with the request.
+
 ### REMOTE-25.x — Dev Container environments
 
 **REMOTE-25.1** When preparing a remote project environment, the application shall use its selected Dev Container configuration through the existing Dev Container CLI.

@@ -90,6 +90,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case clear(path: String, paneSessionName: String? = nil)
     case listPanes(path: String)
     case listRemoteHosts
+    case remotePlacement(host: RemoteMacConnectionSummary.ID, request: HostPlacementRequest)
     case reconnectRemoteMac(target: String)
     case reconnectRemoteClient(target: String)
     case remoteWorktree(target: String, request: RemoteWorktreeRequest)
@@ -203,7 +204,7 @@ extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case targets
         case type, path, text, clearAfter, direction, command, index, lines
-        case target, request, result
+        case target, request, result, host
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
         case messageID = "message_id"
@@ -269,6 +270,10 @@ extension NotificationMessage: Codable {
         case .listPanes(let path):
             try container.encode("list_panes", forKey: .type)
             try container.encode(path, forKey: .path)
+        case .remotePlacement(let host, let request):
+            try container.encode("remote_placement", forKey: .type)
+            try container.encode(host, forKey: .host)
+            try container.encode(request, forKey: .request)
         case .listRemoteHosts:
             try container.encode("list_remote_hosts", forKey: .type)
         case .reconnectRemoteMac(let target):
@@ -482,6 +487,8 @@ extension NotificationMessage: Codable {
         case "list_panes":
             let path = try container.decode(String.self, forKey: .path)
             self = .listPanes(path: path)
+        case "remote_placement":
+            self = .remotePlacement(host: try container.decode(RemoteMacConnectionSummary.ID.self, forKey: .host), request: try container.decode(HostPlacementRequest.self, forKey: .request))
         case "list_remote_hosts":
             self = .listRemoteHosts
         case "reconnect_remote_mac":
@@ -948,6 +955,7 @@ public enum ResponseMessage: Sendable, Equatable {
         "Control socket is busy; retry the command."
 
     case linuxSetupIdentity(LinuxHostTrustRequest)
+    case placement(HostPlacementRecord)
     case remoteHosts([RemoteMacConnectionSummary])
     case ok
     case error(String)
@@ -964,7 +972,7 @@ public enum ResponseMessage: Sendable, Equatable {
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, code, message, panes, output, messages, text, operation, identity, hosts
+        case type, code, message, panes, output, messages, text, operation, identity, hosts, placement
         case operationID = "operation_id"
         case teamName = "team_name"
         case members
@@ -976,6 +984,9 @@ extension ResponseMessage: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .placement(let record):
+            try container.encode("placement", forKey: .type)
+            try container.encode(record, forKey: .placement)
         case .linuxSetupIdentity(let identity):
             try container.encode("linux_setup_identity", forKey: .type)
             try container.encode(identity, forKey: .identity)
@@ -1026,6 +1037,8 @@ extension ResponseMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
+        case "placement":
+            self = .placement(try container.decode(HostPlacementRecord.self, forKey: .placement))
         case "linux_setup_identity":
             self = .linuxSetupIdentity(try container.decode(LinuxHostTrustRequest.self, forKey: .identity))
         case "remote_hosts":
