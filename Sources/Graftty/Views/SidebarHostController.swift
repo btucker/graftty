@@ -162,13 +162,34 @@ func sidebarLocalWorktrees(state: AppState, owner: WorktreeOrigin,
                           titles: [PaneSlotID: String], liveness: [String: AgentLiveness], prBadges: [String: PRBadge] = [:],
                           defaultBranch: (RepoEntry) -> String? = { $0.defaultBranchHint }) -> [WorktreePanes] {
     state.repos.flatMap { repo in
-        let ancestry = SidebarHostNavigation.folderAncestry(in: repo)
-        let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
-                                               defaultBranch: defaultBranch(repo))
-        return SidebarHostNavigation.displayedWorktrees(in: repo).map { wt in
-            sidebarLocalWorktree(wt, repo: repo, owner: owner, displayName: labels[wt.id] ?? "",
-                                 titles: titles, liveness: liveness, prBadge: prBadges[wt.path], folders: ancestry[wt.id])
-        }
+        sidebarLocalWorktrees(SidebarHostNavigation.displayedWorktrees(in: repo), in: repo, owner: owner,
+                              titles: titles, liveness: liveness, prBadge: { prBadges[$0] }, defaultBranch: defaultBranch)
+    }
+}
+
+/// The row `sidebarLocalWorktrees` would produce for `path`. Labels depend
+/// on siblings, so only the owning repository is projected.
+@MainActor
+func sidebarLocalWorktree(atPath path: String, state: AppState, owner: WorktreeOrigin,
+                          titles: [PaneSlotID: String], liveness: [String: AgentLiveness], prBadge: PRBadge?,
+                          defaultBranch: (RepoEntry) -> String? = { $0.defaultBranchHint }) -> WorktreePanes? {
+    guard let repo = state.repo(forWorktreePath: path) else { return nil }
+    return sidebarLocalWorktrees(repo.worktrees.filter { $0.path == path }, in: repo, owner: owner,
+                                 titles: titles, liveness: liveness, prBadge: { _ in prBadge }, defaultBranch: defaultBranch).first
+}
+
+/// Projects `worktrees` of `repo`. Labels and folder ancestry depend on
+/// every sibling, so they always come from the whole repository.
+@MainActor
+private func sidebarLocalWorktrees(_ worktrees: [WorktreeEntry], in repo: RepoEntry, owner: WorktreeOrigin,
+                                   titles: [PaneSlotID: String], liveness: [String: AgentLiveness],
+                                   prBadge: (String) -> PRBadge?, defaultBranch: (RepoEntry) -> String?) -> [WorktreePanes] {
+    let ancestry = SidebarHostNavigation.folderAncestry(in: repo)
+    let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
+                                           defaultBranch: defaultBranch(repo))
+    return worktrees.map { wt in
+        sidebarLocalWorktree(wt, repo: repo, owner: owner, displayName: labels[wt.id] ?? "",
+                             titles: titles, liveness: liveness, prBadge: prBadge(wt.path), folders: ancestry[wt.id])
     }
 }
 
