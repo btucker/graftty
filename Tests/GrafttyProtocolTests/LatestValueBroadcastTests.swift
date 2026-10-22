@@ -85,6 +85,32 @@ struct LatestValueBroadcastTests {
         #expect(await second.next() == nil)
     }
 
+    /// A publish that reaches `latest` before finish() must also reach every
+    /// observer, or an observer ends on an older value than `latest`. A wide
+    /// payload makes each delivery slow enough for a racing finish() to
+    /// overtake it, and the race repeats so that it lands.
+    @Test func publishRacingFinishReachesEveryObserverOrNone() async {
+        var staleObservers = 0
+        for _ in 0..<1_000 {
+            let broadcast = LatestValueBroadcast<WideFrame>()
+            broadcast.publish(WideFrame(id: 1))
+            var observers: [AsyncStream<WideFrame>.AsyncIterator] = []
+            for _ in 0..<64 {
+                var observer = broadcast.updates().makeAsyncIterator()
+                _ = await observer.next()
+                observers.append(observer)
+            }
+            DispatchQueue.concurrentPerform(iterations: 2) { lane in
+                if lane == 0 { broadcast.publish(WideFrame(id: 2)) } else { broadcast.finish() }
+            }
+            let expected: Int? = broadcast.latest?.id == 2 ? 2 : nil
+            for index in observers.indices where await observers[index].next()?.id != expected {
+                staleObservers += 1
+            }
+        }
+        #expect(staleObservers == 0)
+    }
+
     @Test func finishEndsCurrentAndFutureObservers() async {
         let broadcast = LatestValueBroadcast<Int>()
         broadcast.publish(1)
@@ -126,31 +152,53 @@ struct LatestValueBroadcastTests {
         #expect(await updates.next() == nil)
     }
 
-    /// A reference payload's deinit may read the broadcast (or end an
-    /// observer). Releasing a displaced payload while the broadcast holds its
-    /// lock would deadlock; a synchronous deadlock cannot be cancelled, so
-    /// publishing runs on a queue under a bounded wait. On a deadlock the
-    /// broadcast and observer are leaked: releasing either would take the
-    /// stuck lock and hang the test process.
-    @Test(arguments: [false, true])
-    func releasingAReplacedPayloadMayReadTheBroadcast(withObserver: Bool) {
+    /// A reference payload's deinit may use the broadcast: read it, publish
+    /// again, or finish it, which ends its observers. Releasing a replaced
+    /// payload while the broadcast holds its lock would deadlock; a
+    /// synchronous deadlock cannot be cancelled, so publishing runs on a
+    /// queue under a bounded wait. A stuck publisher keeps the fixture alive,
+    /// so the test never releases a broadcast whose lock is held.
+    @Test(arguments: [false, true], PayloadReleaseAction.allCases)
+    func releasingAReplacedPayloadMayUseTheBroadcast(withObserver: Bool, action: PayloadReleaseAction) {
         let fixture = ReentrantFixture(withObserver: withObserver)
-        let readsBroadcast: @Sendable () -> Void = { [weak broadcast = fixture.broadcast] in
-            _ = broadcast?.latest
+        let usesBroadcast: @Sendable () -> Void = { [weak broadcast = fixture.broadcast] in
+            guard let broadcast else { return }
+            switch action {
+            case .read: _ = broadcast.latest
+            case .publish: broadcast.publish(Payload(onRelease: {}))
+            case .finish: broadcast.finish()
+            }
         }
         let published = DispatchSemaphore(value: 0)
         DispatchQueue.global().async {
-            fixture.broadcast.publish(Payload(onRelease: readsBroadcast))
+            fixture.broadcast.publish(Payload(onRelease: usesBroadcast))
             fixture.broadcast.publish(Payload(onRelease: {}))
             published.signal()
         }
-        let outcome = published.wait(timeout: .now() + 5)
-        #expect(outcome == .success)
-        if outcome != .success { _ = Unmanaged.passRetained(fixture) }
+        #expect(published.wait(timeout: .now() + 5) == .success)
     }
 }
 
-private final class ReentrantFixture: @unchecked Sendable {
+enum PayloadReleaseAction: CaseIterable, Sendable {
+    case read, publish, finish
+}
+
+private typealias Eight<T> = (T, T, T, T, T, T, T, T)
+
+/// 4 KiB, so delivering one into an observer's buffer takes measurable time.
+private struct WideFrame: Sendable {
+    let id: Int
+    private let padding: Eight<Eight<Eight<Int>>>
+
+    init(id: Int) {
+        self.id = id
+        let words = (0, 0, 0, 0, 0, 0, 0, 0)
+        let rows = (words, words, words, words, words, words, words, words)
+        padding = (rows, rows, rows, rows, rows, rows, rows, rows)
+    }
+}
+
+private final class ReentrantFixture: Sendable {
     let broadcast = LatestValueBroadcast<Payload>()
     let observer: AsyncStream<Payload>?
     init(withObserver: Bool) { observer = withObserver ? broadcast.updates() : nil }
