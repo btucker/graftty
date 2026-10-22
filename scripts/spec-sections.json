@@ -184,6 +184,7 @@
     "REMOTE.8": "SSH session layer",
     "REMOTE.12": "Mac-to-Mac Remote Access",
     "REMOTE.14": "Shared project navigation",
+    "REMOTE.24": "Mac remote worktree viewer",
     "PROJECT.3": "Project icons and navigation preferences",
     "TEAM.10": "Codex Wrapper App-Server Routing",
     "TEAM.11": "Idle Delivery",
