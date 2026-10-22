@@ -505,16 +505,7 @@ public final class RemoteConnectionCoordinator {
         guard let connection = await connection(for: host) else {
             throw ConnectionError.unavailable
         }
-        return try await sendWorktreeManagement(request, over: connection)
-    }
-
-    private func sendWorktreeManagement(
-        _ request: WorktreeManagementRequest,
-        over connection: RemoteHostConnection
-    ) async throws -> WorktreeManagementResponse {
-        let client = try await connection.openWorktreeManagementChannel()
-        defer { client.close() }
-        return try await client.send(request)
+        return try await connection.sendWorktreeManagement(request)
     }
 
     public func presentation(for host: Host) async
@@ -528,9 +519,8 @@ public final class RemoteConnectionCoordinator {
            cached.connectionIdentity == connectionIdentity {
             return cached.value
         }
-        guard let response = try? await sendWorktreeManagement(
-            .hostPresentation,
-            over: connection
+        guard let response = try? await connection.sendWorktreeManagement(
+            .hostPresentation
         ), case .hostPresentation(let presentation) = response else {
             return nil
         }
@@ -657,8 +647,7 @@ public final class RemoteConnectionCoordinator {
         localDeviceID = clientDeviceID
         let connection = connectionFactory(clientKey, pinnedHost.fingerprint)
         let connectionIdentity = ObjectIdentifier(connection)
-        await connection.setOnStateChange { [weak self] state in
-            guard state.isTerminal else { return }
+        await connection.observeTerminalState { [weak self] _ in
             Task { await self?.evict(hostID: host.id, connectionIdentity: connectionIdentity) }
         }
 

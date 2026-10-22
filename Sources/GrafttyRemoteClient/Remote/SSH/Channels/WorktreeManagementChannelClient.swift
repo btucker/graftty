@@ -87,35 +87,3 @@ public protocol WorktreeManagementChannelDriver: Sendable {
 }
 
 extension WorktreeManagementChannelClient: WorktreeManagementChannelDriver {}
-
-/// Queues worktree-management RPCs in order on one channel driver.
-public final class WorktreeManagementClient: Sendable {
-    private let rpc: SerialRPCClient<WorktreeManagementRequest, WorktreeManagementResponse>
-
-    public init(driver: any WorktreeManagementChannelDriver) {
-        rpc = SerialRPCClient(
-            policy: .init(
-                closedError: WorktreeManagementChannelClient.ClientError.channelClosed,
-                queueLimit: nil,
-                closesOnCallerCancellation: false
-            ),
-            open: { try await driver.open() },
-            send: { try await driver.send($0) },
-            close: { driver.close() }
-        )
-    }
-
-    public func open() async throws {
-        try await rpc.open()
-    }
-
-    public func send(
-        _ request: WorktreeManagementRequest
-    ) async throws -> WorktreeManagementResponse {
-        try await rpc.send(request)
-    }
-
-    public func close() async {
-        await rpc.close()
-    }
-}

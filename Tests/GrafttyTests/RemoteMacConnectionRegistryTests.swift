@@ -281,7 +281,7 @@ struct RemoteMacConnectionRegistryTests {
         )
         let entry = try await registry.connect(to: try makeRemoteMac())
 
-        _ = try await entry.openTerminalSession(sessionName: "main")
+        _ = try await registry.openTerminalSession(identity: entry.identity, sessionName: "main")
 
         #expect(await connection.openedTerminalSessions == ["main"])
     }
@@ -560,7 +560,7 @@ struct RemoteMacConnectionRegistryTests {
         connectionFactory: @escaping RemoteMacConnectionRegistry.HostConnectionFactory = { _, _ in
             FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
         },
-        directConnectionFactory: @escaping RemoteMacConnectionRegistry.HostConnectionFactory = { _, _ in
+        directConnectionFactory: @escaping RemoteMacConnectionRegistry.DirectHostConnectionFactory = { _, _ in
             FakeRemoteMacHostConnection(offerSDP: "unused")
         },
         paneEnvironmentBuilder: @escaping RemoteMacConnectionRegistry.PaneEnvironmentBuilder = { remoteHost, onSnapshot, onClosed in
@@ -784,13 +784,13 @@ private actor OfferGate {
 
 private final class RemoteMacConnectionSequence: @unchecked Sendable {
     private let lock = NSLock()
-    private var connections: [any RemoteMacHostConnection]
+    private var connections: [FakeRemoteMacHostConnection]
 
-    init(_ connections: [any RemoteMacHostConnection]) {
+    init(_ connections: [FakeRemoteMacHostConnection]) {
         self.connections = connections
     }
 
-    func next() -> any RemoteMacHostConnection {
+    func next() -> FakeRemoteMacHostConnection {
         lock.withLock { connections.removeFirst() }
     }
 }
@@ -851,7 +851,7 @@ private final class RemoteMacConnectionStateRecorder: @unchecked Sendable {
     }
 }
 
-private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
+private actor FakeRemoteMacHostConnection: RemoteHostLinkFake, DirectHostLink {
     private let offerSDP: String
     private let offerGate: OfferGate?
     private let snapshotEmitter: RemoteMacSnapshotEmitter?
@@ -862,7 +862,7 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     private var appliedAnswerStorage: [String] = []
     private var openedTerminalSessionStorage: [String] = []
     private var closeCallCount = 0
-    private var state: RemoteHostConnection.State = .connected
+    private var currentState: RemoteHostConnection.State = .connected
     private var stateHandler: (@Sendable (RemoteHostConnection.State) -> Void)?
 
     init(
@@ -890,22 +890,22 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
         stateHandler = handler
     }
 
-    func currentState() -> RemoteHostConnection.State {
-        state
+    var state: RemoteHostConnection.State {
+        currentState
     }
 
     func transition(to newState: RemoteHostConnection.State) {
-        state = newState
+        currentState = newState
         stateHandler?(newState)
     }
 
     func setStateWithoutNotification(_ newState: RemoteHostConnection.State) {
-        state = newState
+        currentState = newState
     }
 
-    func connectDirect(endpoint: DirectSSHEndpoint) {
-        directEndpoints.append(endpoint)
-        state = .connected
+    func connect(host: String, port: Int) throws {
+        directEndpoints.append(try DirectSSHEndpoint(host: host, port: port))
+        currentState = .connected
     }
 
     func createOfferSDP() async throws -> String {
@@ -930,14 +930,14 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
         FakePaneControlDriver()
     }
 
-    func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable {
+    func openTerminalClient(sessionName: String, preferPaged _: Bool) -> any WebSocketClient & Sendable {
         openedTerminalSessionStorage.append(sessionName)
         return FakeWebSocketClient()
     }
 
     func close() async {
         closeCallCount += 1
-        state = .closed
+        currentState = .closed
         stateHandler?(.closed)
     }
 }

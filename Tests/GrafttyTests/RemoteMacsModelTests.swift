@@ -2027,14 +2027,14 @@ private actor RemoteMacsModelConnectGate {
 
 @MainActor
 private final class RemoteMacsModelConnectionSequence {
-    private var connections: [any RemoteMacHostConnection]
+    private var connections: [any WebRTCHostLink]
     private(set) var issuedCount = 0
 
-    init(_ connections: [any RemoteMacHostConnection]) {
+    init(_ connections: [any WebRTCHostLink]) {
         self.connections = connections
     }
 
-    func next() -> any RemoteMacHostConnection {
+    func next() -> any WebRTCHostLink {
         issuedCount += 1
         return connections.removeFirst()
     }
@@ -2052,7 +2052,7 @@ private actor RemoteMacsModelConnectionStates {
     }
 }
 
-private struct RemoteMacsModelTestConnection: RemoteMacHostConnection {
+private struct RemoteMacsModelTestConnection: RemoteHostLinkFake {
     let closeGate: RemoteMacsModelConnectGate?
     let stateGate: RemoteMacsModelConnectGate?
     let states: RemoteMacsModelConnectionStates?
@@ -2067,16 +2067,14 @@ private struct RemoteMacsModelTestConnection: RemoteMacHostConnection {
         self.states = states
     }
 
-    func currentState() async -> RemoteHostConnection.State {
-        await stateGate?.waitAfterFirstCall()
-        return await states?.next() ?? .connected
-    }
+    func setOnStateChange(_ handler: (@Sendable (RemoteHostConnection.State) -> Void)?) {}
 
-    func createOfferSDP() async throws -> String {
-        "v=0\n"
+    var state: RemoteHostConnection.State {
+        get async {
+            await stateGate?.waitAfterFirstCall()
+            return await states?.next() ?? .connected
+        }
     }
-
-    func applyAnswerSDP(_ sdp: String) async throws {}
 
     func makePanesStateDriver(originAware _: Bool) -> any PanesStateSubscriptionDriver {
         RemoteMacsModelTestPanesStateDriver()
@@ -2086,7 +2084,7 @@ private struct RemoteMacsModelTestConnection: RemoteMacHostConnection {
         RemoteMacsModelTestPaneControlDriver()
     }
 
-    func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable {
+    func openTerminalClient(sessionName: String, preferPaged: Bool) -> any WebSocketClient & Sendable {
         RemoteMacsModelTestWebSocketClient()
     }
 
@@ -2095,11 +2093,11 @@ private struct RemoteMacsModelTestConnection: RemoteMacHostConnection {
     }
 }
 
-private struct RemoteMacsModelRecordingConnection: RemoteMacHostConnection {
+private struct RemoteMacsModelRecordingConnection: RemoteHostLinkFake {
     let managementRecorder: RemoteMacsModelManagementRecorder
 
-    func createOfferSDP() async throws -> String { "v=0\n" }
-    func applyAnswerSDP(_ sdp: String) async throws {}
+    var state: RemoteHostConnection.State { .connected }
+    func setOnStateChange(_ handler: (@Sendable (RemoteHostConnection.State) -> Void)?) {}
 
     func makePanesStateDriver(originAware _: Bool) -> any PanesStateSubscriptionDriver {
         RemoteMacsModelTestPanesStateDriver()
@@ -2115,8 +2113,7 @@ private struct RemoteMacsModelRecordingConnection: RemoteMacHostConnection {
         managementRecorder
     }
 
-    func openTerminalSession(sessionName: String) async throws
-        -> any WebSocketClient & Sendable {
+    func openTerminalClient(sessionName: String, preferPaged: Bool) -> any WebSocketClient & Sendable {
         RemoteMacsModelTestWebSocketClient()
     }
 
