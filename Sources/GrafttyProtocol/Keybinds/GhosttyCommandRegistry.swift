@@ -8,12 +8,7 @@ public enum GhosttyCommandKind: Sendable, Hashable {
     case unsupported
 }
 
-public enum GhosttySplitDirection: String, Sendable, Hashable, Codable {
-    case left
-    case right
-    case up
-    case down
-}
+public typealias GhosttySplitDirection = PaneSplitDirection
 
 public enum GhosttyPaneFocusDirection: String, Sendable, Hashable, Codable {
     case left
