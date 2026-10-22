@@ -242,6 +242,28 @@ public struct AppState: Codable, Sendable, Equatable {
         return nil
     }
 
+    /// Applies `body` to every worktree at `path`.
+    public mutating func mutateWorktrees(atPath path: String, _ body: (inout WorktreeEntry) -> Void) {
+        for repoIdx in repos.indices {
+            for wtIdx in repos[repoIdx].worktrees.indices where repos[repoIdx].worktrees[wtIdx].path == path {
+                body(&repos[repoIdx].worktrees[wtIdx])
+            }
+        }
+    }
+
+    /// Applies `body` to the first worktree whose split tree contains
+    /// `leaf`. Returns `false` when no worktree owns the pane.
+    @discardableResult
+    public mutating func mutateWorktree(containing leaf: PaneSlotID, _ body: (inout WorktreeEntry) -> Void) -> Bool {
+        for repoIdx in repos.indices {
+            for wtIdx in repos[repoIdx].worktrees.indices where repos[repoIdx].worktrees[wtIdx].splitTree.containsLeaf(leaf) {
+                body(&repos[repoIdx].worktrees[wtIdx])
+                return true
+            }
+        }
+        return false
+    }
+
     /// Target worktree path for fixed forward/reverse worktree navigation.
     /// Worktrees requesting attention (any
     /// `AttentionSource`, worktree- or pane-scoped), excluding the current
