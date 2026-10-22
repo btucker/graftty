@@ -3472,6 +3472,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-26.12** When a delegated Git receive hook validates a push, the application shall recheck the authenticated assignment and every proposed ref before Git updates any ref, and reject deletions and non-commit targets.
 
+**REMOTE-26.13** When preparing a delegated Git receiver, the parent shall authenticate its scope before creating storage, isolate each assignment generation in a bare repository, and require its own receive hook without inheriting caller Git configuration.
+
 ### REMOTE-27.x — Native session replication and restore
 
 **REMOTE-27.1** While a delegated host is reachable, the application shall regularly copy worktree-associated native Claude and Codex session data to the recorded parent, excluding authentication files.
