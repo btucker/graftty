@@ -1,0 +1,200 @@
+import ArgumentParser
+import Foundation
+import GrafttyKit
+import GrafttyProtocol
+
+struct Provider: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Save compute preferences and compare AWS Spot offers",
+        discussion: "Preferences are local to this user. These commands do not require Graftty to be running and do not launch or terminate instances.",
+        subcommands: [ProviderConfigure.self, ProviderShow.self, ProviderList.self, ProviderRemove.self, ProviderOffers.self])
+}
+
+struct ProviderConfigure: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "configure", abstract: "Update saved AWS preferences",
+        discussion: """
+        Examples:
+          graftty provider configure aws --profile development --region us-east-1
+          graftty provider configure aws --instance-types t4g.large,t4g.xlarge --preferred-instance-type t4g.xlarge
+          graftty provider configure aws --clear preferred-instance-type
+
+        Unspecified settings are preserved. Lists replace their saved values.
+        --clear accepts comma-separated setting names. Profile names reference
+        existing AWS configuration; Graftty never reads or copies credentials.
+        No preferred instance type or instance pool is supplied by default.
+        """)
+    @Argument(help: "Compute provider: aws") var provider: String
+    @Option(help: "Existing AWS CLI profile name") var profile: String?
+    @Option(name: [.customLong("region"), .customLong("regions")], help: "Comma-separated AWS regions") var regions: String?
+    @Option(help: "Comma-separated allowed instance types") var instanceTypes: String?
+    @Option(help: "Preferred type within the pool; breaks equal-price ties") var preferredInstanceType: String?
+    @Option(help: "Comma-separated allowed Availability Zones; unset means all in selected regions") var availabilityZones: String?
+    @Option(help: "Purchase market: spot") var market: String?
+    @Option(help: "Saved maximum instance count for future provisioning") var maxInstances: Int?
+    @Option(help: "Saved hourly compute budget in USD; offers above it are excluded") var maxHourlyUsd: String?
+    @Option(help: "Burstable CPU credit mode: standard or unlimited") var creditMode: String?
+    @Option(help: "Comma-separated setting names to clear") var clear: String?
+    @Flag(help: "Print saved preferences as JSON") var json = false
+
+    private var changedNames: Set<String> {
+        var names = Set<String>()
+        if profile != nil { names.insert("profile") }
+        if regions != nil { names.insert("region") }
+        if instanceTypes != nil { names.insert("instance-types") }
+        if preferredInstanceType != nil { names.insert("preferred-instance-type") }
+        if availabilityZones != nil { names.insert("availability-zones") }
+        if market != nil { names.insert("market") }
+        if maxInstances != nil { names.insert("max-instances") }
+        if maxHourlyUsd != nil { names.insert("max-hourly-usd") }
+        if creditMode != nil { names.insert("credit-mode") }
+        return names
+    }
+
+    func validate() throws {
+        try ProviderOutput.validate(provider)
+        let cleared = try clear.map(Self.list) ?? []
+        let supported: Set<String> = ["profile", "region", "instance-types", "preferred-instance-type", "availability-zones", "market", "max-instances", "max-hourly-usd", "credit-mode"]
+        guard Set(cleared).isSubset(of: supported) else { throw ValidationError("Unknown setting in --clear. Use: " + supported.sorted().joined(separator: ", ")) }
+        guard changedNames.isDisjoint(with: cleared) else { throw ValidationError("Cannot set and clear the same setting.") }
+        guard !changedNames.isEmpty || !cleared.isEmpty else { throw ValidationError("Supply a setting to update or --clear. Use provider show aws to inspect preferences.") }
+        // Validate independent values before any file IO. Membership of a
+        // preferred type is checked against the merged configuration at save.
+        var values = AWSProviderPreferences()
+        try applyValues(to: &values)
+        values.preferredInstanceType = nil
+        try values.validate()
+        if let preferredInstanceType {
+            let preference = AWSProviderPreferences(instanceTypes: [preferredInstanceType], preferredInstanceType: preferredInstanceType)
+            try preference.validate()
+        }
+    }
+
+    func apply(to store: AWSProviderStore) throws -> AWSProviderPreferences {
+        try validate()
+        return try store.update { value in
+            for name in try clear.map(Self.list) ?? [] {
+                switch name {
+                case "profile": value.profile = nil
+                case "region": value.regions = []
+                case "instance-types": value.instanceTypes = []
+                case "preferred-instance-type": value.preferredInstanceType = nil
+                case "availability-zones": value.availabilityZones = []
+                case "market": value.market = "spot"
+                case "max-instances": value.maxInstances = nil
+                case "max-hourly-usd": value.maxHourlyUSD = nil
+                case "credit-mode": value.creditMode = nil
+                default: break // validate() rejected unknown names.
+                }
+            }
+            try applyValues(to: &value)
+        }
+    }
+
+    private func applyValues(to value: inout AWSProviderPreferences) throws {
+        if let profile { value.profile = profile }
+        if let regions { value.regions = try Self.list(regions) }
+        if let instanceTypes { value.instanceTypes = try Self.list(instanceTypes) }
+        if let preferredInstanceType { value.preferredInstanceType = preferredInstanceType }
+        if let availabilityZones { value.availabilityZones = try Self.list(availabilityZones) }
+        if let market { value.market = market }
+        if let maxInstances { value.maxInstances = maxInstances }
+        if let maxHourlyUsd { value.maxHourlyUSD = try AWSProviderPreferences.positiveAmount(maxHourlyUsd) }
+        if let creditMode { value.creditMode = creditMode }
+    }
+
+    private static func list(_ text: String) throws -> [String] {
+        let values = text.split(separator: ",", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+        guard !values.contains(""), Set(values).count == values.count else {
+            throw ValidationError("Lists must contain distinct non-empty values; use --clear to remove a setting.")
+        }
+        return values
+    }
+
+    func run() throws { try ProviderOutput.preferences(apply(to: AWSProviderStore()), json: json) }
+}
+
+struct ProviderShow: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "show", abstract: "Show saved provider preferences")
+    @Argument(help: "Compute provider: aws") var provider: String
+    @Flag(help: "Print JSON") var json = false
+    func validate() throws { try ProviderOutput.validate(provider) }
+    func preferences(in store: AWSProviderStore) throws -> AWSProviderPreferences {
+        try validate()
+        guard let value = try store.load() else { throw ValidationError("aws is not configured. Run graftty provider configure aws.") }
+        return value
+    }
+    func run() throws { try ProviderOutput.preferences(preferences(in: AWSProviderStore()), json: json) }
+}
+
+struct ProviderList: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "list", abstract: "List configured compute providers")
+    @Flag(help: "Print JSON") var json = false
+    func run() throws {
+        let names = try AWSProviderStore().load() == nil ? [] : ["aws"]
+        if json { try ProviderOutput.json(names) }
+        else { print(names.isEmpty ? "No compute providers configured." : names.joined(separator: "\n")) }
+    }
+}
+
+struct ProviderRemove: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "remove", abstract: "Remove saved preferences; does not terminate instances")
+    @Argument(help: "Compute provider: aws") var provider: String
+    func validate() throws { try ProviderOutput.validate(provider) }
+    func remove(from store: AWSProviderStore) throws { try validate(); try store.remove() }
+    func run() throws { try remove(from: AWSProviderStore()); print("Removed aws preferences. Instances were not changed.") }
+}
+
+struct ProviderOffers: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "offers", abstract: "Compare current AWS Spot rates without allocating instances",
+        discussion: "Queries the configured profile, regions, and instance pool through AWS CLI v2. Rates do not guarantee capacity or include storage, network, or surplus CPU credit charges. Preferred types break equal-price ties.")
+    @Argument(help: "Compute provider: aws") var provider: String
+    @Option(help: "Required workload architecture: arm64 or x86_64") var architecture: String
+    @Option(help: "Minimum vCPU count") var minCpus = 1
+    @Option(help: "Minimum memory in MiB") var minMemoryMib = 1
+    @Flag(help: "Print observations, filters, and limitations as JSON") var json = false
+    func validate() throws {
+        try ProviderOutput.validate(provider)
+        try requirements.validate()
+    }
+    private var requirements: AWSOfferRequirements {
+        .init(architecture: architecture, minCPUs: minCpus, minMemoryMiB: minMemoryMib)
+    }
+    func run() async throws {
+        guard let preferences = try AWSProviderStore().load() else { throw ValidationError("Configure aws before querying offers.") }
+        let report = try await AWSProviderDiscovery().offers(preferences: preferences, requirements: requirements)
+        if json { try ProviderOutput.json(report); return }
+        print("TYPE\tREGION\tZONE\tVCPU\tMEMORY_MIB\tUSD/H\tPREFERRED\tBURSTABLE")
+        for offer in report.offers {
+            print("\(offer.instanceType)\t\(offer.region)\t\(offer.availabilityZone)\t\(offer.cpus)\t\(offer.memoryMiB)\t\(offer.hourlyUSD)\t\(offer.preferred)\t\(offer.burstable)")
+        }
+        if report.offers.isEmpty { print("No matching priced offers.") }
+        if !report.excludedInstanceTypes.isEmpty { print("Unavailable or incompatible types: " + report.excludedInstanceTypes.joined(separator: ", ")) }
+        if !report.unpricedInstanceTypes.isEmpty { print("No price observed in selected zones: " + report.unpricedInstanceTypes.joined(separator: ", ")) }
+        if report.overBudgetOfferCount > 0 { print("Offers above hourly limit: \(report.overBudgetOfferCount)") }
+        for limitation in report.limitations { print(limitation) }
+    }
+}
+
+private enum ProviderOutput {
+    static func validate(_ provider: String) throws {
+        guard provider == "aws" else { throw ValidationError("Unknown compute provider '\(provider)'. Supported provider: aws.") }
+    }
+    static func json<T: Encodable>(_ value: T) throws {
+        let encoder = JSONEncoder.iso8601()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        print(String(decoding: try encoder.encode(value), as: UTF8.self))
+    }
+    static func preferences(_ value: AWSProviderPreferences, json asJSON: Bool) throws {
+        if asJSON { try json(value); return }
+        print("Provider: aws")
+        print("Profile: \(value.profile ?? "unset")")
+        print("Regions: \(value.regions.joined(separator: ", "))")
+        print("Instance types: \(value.instanceTypes.joined(separator: ", "))")
+        print("Preferred instance type: \(value.preferredInstanceType ?? "unset")")
+        print("Availability Zones: \(value.availabilityZones.isEmpty ? "all in selected regions" : value.availabilityZones.joined(separator: ", "))")
+        print("Market: \(value.market)")
+        print("Maximum instances: \(value.maxInstances.map(String.init) ?? "unset")")
+        print("Maximum hourly compute USD: \(value.maxHourlyUSD.map { "\($0)" } ?? "unset")")
+        print("CPU credit mode: \(value.creditMode ?? "unset")")
+    }
+}
