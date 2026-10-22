@@ -487,6 +487,28 @@ struct AgentPluginInstallerTests {
         #expect(try fm.contentsOfDirectory(atPath: prepared.path).sorted() == ["claude", "codex"])
     }
 
+    @Test("@spec REMOTE-28.1: When an agent uses the project-setup skill, the skill shall guide creation or repair of version-controlled Dev Container configuration, verification of project commands, and documentation of resource and authentication prerequisites without embedding credentials.")
+    func projectSetupSkillSurvivesIndependentProviderCaching() throws {
+        let fm = FileManager.default
+        let temporary = fm.temporaryDirectory.appendingPathComponent("graftty-project-setup-\(UUID())")
+        defer { try? fm.removeItem(at: temporary) }
+        let prepared = temporary.appendingPathComponent("prepared")
+        _ = try AgentPluginInstaller().prepare(destinationRoot: prepared)
+        var skills: [Data] = []
+        for provider in ["codex", "claude"] {
+            let cached = temporary.appendingPathComponent("cached-\(provider)")
+            try fm.copyItem(at: prepared.appendingPathComponent("\(provider)/plugins/graftty"), to: cached)
+            let file = cached.appendingPathComponent("skills/project-setup/SKILL.md")
+            #expect(try fm.attributesOfItem(atPath: file.path)[.type] as? FileAttributeType == .typeRegular)
+            skills.append(try Data(contentsOf: file))
+        }
+        try fm.removeItem(at: prepared)
+        #expect(skills.count == 2 && !skills[0].isEmpty && skills[0] == skills[1])
+        for provider in ["codex", "claude"] {
+            try SkillMarkdown.validateLinks(in: temporary.appendingPathComponent("cached-\(provider)"))
+        }
+    }
+
     /// Read the named skill's entrypoint and references from each prepared
     /// provider, asserting that every Markdown resource is a regular file.
     private func preparedSkillTexts(named skill: String) throws -> [String] {

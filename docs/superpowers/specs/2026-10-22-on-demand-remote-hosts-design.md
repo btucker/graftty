@@ -43,9 +43,9 @@ The host checks fresh CPU and memory measurements, probes the destination filesy
 
 The consumer records receipt time, rejects future timestamps beyond five seconds, expires observations after thirty seconds, and clears them on disconnect. Replayed timestamps do not refresh receipt time. Legacy hosts and malformed optional telemetry do not break pane snapshots. EC2 inventory and paired-host observations are still separate; linking them requires trusted instance enrollment, not tag matching. The desktop Mac host does not yet publish resource samples; the new sampler runs in the headless Linux host.
 
-`max-instances` and `credit-mode` are saved for future provisioning. `max-hourly-usd` currently filters individual offers; fleet spending enforcement requires the placement controller. This slice does not launch instances. Instance enrollment, automatic placement and provisioning, Dev Container setup, parent replication, interruption handling, and skills remain backlog work.
+`max-instances` and `credit-mode` are saved for future provisioning. `max-hourly-usd` currently filters individual offers; fleet spending enforcement requires the placement controller. This slice does not launch instances. Instance enrollment, automatic placement and provisioning, Dev Container runtime preparation, parent replication, interruption handling, and the remote-host skill remain backlog work. The project-setup skill is bundled for both Claude and Codex; it guides version-controlled Dev Container setup, resource and authentication requirements, and verification across worktrees.
 
-The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.8`, and `REMOTE-24.10` through `REMOTE-24.18`. The remaining disabled inventory entries still describe future behavior.
+The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.8`, and `REMOTE-24.10` through `REMOTE-24.18`, plus `REMOTE-28.1`. The remaining disabled inventory entries still describe future behavior.
 
 ## Agreed direction
 

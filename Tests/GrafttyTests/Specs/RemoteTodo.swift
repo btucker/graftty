@@ -146,11 +146,6 @@ struct RemoteTodo {
     // MARK: - REMOTE-28.x — Remote development skills
 
     @Test("""
-@spec REMOTE-28.1: When an agent uses the project-setup skill, the skill shall guide creation or repair of version-controlled Dev Container configuration, verification of project commands, and documentation of resource and authentication prerequisites without embedding credentials.
-""", .disabled("not yet implemented"))
-    func remote_28_1() async throws { }
-
-    @Test("""
 @spec REMOTE-28.2: When an agent uses the remote-host skill, the skill shall explain its recorded parent and direct or parent-mediated publication workflow without treating skill instructions as authentication or authorization enforcement.
 """, .disabled("not yet implemented"))
     func remote_28_2() async throws { }
