@@ -4130,6 +4130,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERF-1.14** When the stats, remote-branch, and PR polling cadences align in a twelve-repository workspace, the application shall run at most four background subprocess pipelines in aggregate rather than allowing each poller to consume an independent concurrency budget.
 
+**PERF-1.15** When the main window resolves the selected local worktree's context, the application shall project only that worktree's repository and produce the same row as the full sidebar projection.
+
 ## PORTS — PORTS
 
 ### PORTS-1.x

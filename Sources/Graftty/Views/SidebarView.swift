@@ -133,11 +133,7 @@ struct SidebarView: View {
             liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) },
             defaultBranch: { remoteBranchStore.resolvedDefaultBranch(forRepoAt: $0.path, hint: $0.defaultBranchHint) })
     }
-    private var activity: [SidebarActivityItem] {
-        SidebarProjection.activity(localWorktrees + remoteMacsModel.promotedWorktreesForRelay())
-    }
-    private var activityCounts: SidebarActivityCounts {
-        let rows = localWorktrees + remoteMacsModel.promotedWorktreesForRelay()
+    private func activityCounts(_ rows: [WorktreePanes]) -> SidebarActivityCounts {
         let pending = rows.flatMap { navigation.worktreeContext($0).pending }
         let working = SidebarProjection.activity(rows).filter(\.isBusy).map { item in
             var item = item
@@ -147,9 +143,8 @@ struct SidebarView: View {
         return SidebarActivityCounts(items: pending + working)
     }
 
-    private var pendingNavigationRows: [WorktreePanes] {
-        let local = Dictionary(localWorktrees.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
-        let promoted = remoteMacsModel.promotedWorktreesForRelay()
+    private func pendingNavigationRows(local projectedLocal: [WorktreePanes], promoted: [WorktreePanes]) -> [WorktreePanes] {
+        let local = Dictionary(projectedLocal.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         let remote = displayedRemoteRows
         func localRows(_ nodes: [SidebarWorktreeNode]) -> [WorktreePanes] {
             nodes.flatMap { node in
@@ -221,9 +216,9 @@ struct SidebarView: View {
         return opened
     }
 
-    @ViewBuilder private var pendingNavigationButton: some View {
+    @ViewBuilder private func pendingNavigationButton(local: [WorktreePanes], promoted: [WorktreePanes]) -> some View {
         let projectFilter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
-        let rows = pendingNavigationRows.filter { $0.state.hasOnDiskWorktree && (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter) }
+        let rows = pendingNavigationRows(local: local, promoted: promoted).filter { $0.state.hasOnDiskWorktree && (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter) }
         let count = rows.filter { !navigation.worktreeContext($0).pending.isEmpty }.count
         if count > 0 {
             Button("\(count) pending") {
@@ -335,12 +330,15 @@ struct SidebarView: View {
             Button("Remove Repository") { onRemoveRepo(repo) }
         })
     }
-    private func remoteSection(projectFilter: String?, query: String = "", section: SidebarWorktreeSection = .all) -> some View {
-        let promoted = remoteMacsModel.promotedWorktreesForRelay()
-        let contexts = Dictionary(promoted.map {
+    /// Relayed-row contexts for `remoteSection`, keyed as its lookup expects.
+    private func relayedRowContexts(_ promoted: [WorktreePanes]) -> [String: SidebarWorktreeContext] {
+        Dictionary(promoted.map {
             ((($0.sidebar?.id ?? $0.path) + "\u{0}" + SidebarProjection.projectID($0)), navigation.worktreeContext($0))
         }, uniquingKeysWith: { first, _ in first })
-        return RemoteMacsSection(model: remoteMacsModel, expansion: $remoteSectionExpansion, worktreePanesByRemote: displayedRemoteRows,
+    }
+    private func remoteSection(contexts: [String: SidebarWorktreeContext], projectFilter: String?, query: String = "",
+                               section: SidebarWorktreeSection = .all) -> some View {
+        RemoteMacsSection(model: remoteMacsModel, expansion: $remoteSectionExpansion, worktreePanesByRemote: displayedRemoteRows,
                           selectedRemoteIdentity: selectedRemoteIdentity, selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                           selectedRemotePaneSessionName: selectedRemotePaneSessionName, theme: theme,
                           onSelectRemoteMac: onSelectRemoteMac, onSelectRemoteWorktree: onSelectRemoteWorktree,
@@ -394,7 +392,11 @@ struct SidebarView: View {
         // Explicit dependency: the titles live on TerminalManager, while this
         // lightweight observable scopes invalidation to the sidebar.
         let _ = paneTitleInvalidations.generation
-        let counts = activityCounts
+        // Project local and relayed rows once; every section below shares them.
+        let local = localWorktrees
+        let promoted = remoteMacsModel.promotedWorktreesForRelay()
+        let counts = activityCounts(local + promoted)
+        let promotedContexts = relayedRowContexts(promoted)
         // Read native chrome height before expanding underneath it.
         GeometryReader { titleBarGeometry in
         GeometryReader { _ in
@@ -424,7 +426,7 @@ struct SidebarView: View {
                     ScrollViewReader { proxy in
                         SidebarWorktreeViewport {
                             if navigation.query.isEmpty {
-                                worktreeRows(section: .pinned, activityCounts: counts)
+                                worktreeRows(section: .pinned, activityCounts: counts, remoteContexts: promotedContexts)
                                     .padding(.horizontal, showsProjectRail ? 6 : 10)
                             }
                         } controls: {
@@ -432,18 +434,18 @@ struct SidebarView: View {
                                 VStack(spacing: 0) {
                                     SidebarWorktreeDivider().frame(height: 1).allowsHitTesting(false)
                                     selectedProjectAddWorktreeHeader
-                                    pendingNavigationButton
+                                    pendingNavigationButton(local: local, promoted: promoted)
                                         .padding(.horizontal, showsProjectRail ? 6 : 10)
                                 }
                             }
                         } content: {
                             if showsProjectRail {
                                 ProjectWorktreeColumn(onDoubleClickEmptySpace: addWorktreeToSelectedProject) {
-                                    worktreeRows(section: .tasks, activityCounts: counts)
+                                    worktreeRows(section: .tasks, activityCounts: counts, remoteContexts: promotedContexts)
                                 }
                                 .emptySpaceMenu(selectedProjectEmptySpaceMenu)
                             } else {
-                                List { worktreeRows(section: .tasks, activityCounts: counts) }.listStyle(.sidebar)
+                                List { worktreeRows(section: .tasks, activityCounts: counts, remoteContexts: promotedContexts) }.listStyle(.sidebar)
                             }
                         }
                         .onChange(of: navigation.selectedProjectID) { _, _ in
@@ -559,15 +561,16 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private func worktreeRows(section: SidebarWorktreeSection, activityCounts counts: SidebarActivityCounts) -> some View {
+    private func worktreeRows(section: SidebarWorktreeSection, activityCounts counts: SidebarActivityCounts,
+                              remoteContexts: [String: SidebarWorktreeContext]) -> some View {
         if navigation.query.isEmpty {
             let filter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
             ForEach(orderedSidebarRepos.filter { filter == nil || localProjectID($0) == filter }) { repo in
                 repoSection(repo, attentionCounts: counts, section: section)
             }
-            remoteSection(projectFilter: filter, section: section)
+            remoteSection(contexts: remoteContexts, projectFilter: filter, section: section)
         } else {
-            remoteSection(projectFilter: nil, query: navigation.query)
+            remoteSection(contexts: remoteContexts, projectFilter: nil, query: navigation.query)
             ForEach(appState.repos) { repo in
                 let labels = SidebarWorktreeLabel.texts(for: repo.worktrees, inRepoAtPath: repo.path,
                     defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint))

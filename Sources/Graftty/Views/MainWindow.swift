@@ -662,10 +662,10 @@ struct MainWindow: View {
     private var selectedContext: SidebarWorktreeContext? {
         if let remote = selectedRemoteWorktreeSnapshot { return sidebarNavigation.worktreeContext(remote) }
         guard selectedRemoteIdentity == nil, let path = selectedWorktree?.path else { return nil }
-        let rows = sidebarLocalWorktrees(state: appState, owner: iconStore.owner, titles: terminalManager.displayTitles,
-            liveness: claudeSessionRegistry.livenessBySession, prBadges: prStatusStore.infos.mapValues { PRBadge(from: $0) },
+        return sidebarLocalWorktree(atPath: path, state: appState, owner: iconStore.owner, titles: terminalManager.displayTitles,
+            liveness: claudeSessionRegistry.livenessBySession, prBadge: prStatusStore.infos[path].map { PRBadge(from: $0) },
             defaultBranch: { remoteBranchStore.resolvedDefaultBranch(forRepoAt: $0.path, hint: $0.defaultBranchHint) })
-        return rows.first(where: { $0.path == path }).map { sidebarNavigation.worktreeContext($0) }
+            .map { sidebarNavigation.worktreeContext($0) }
     }
 
     /// Computed command handler surfaced to `GrafttyApp.commands` via
