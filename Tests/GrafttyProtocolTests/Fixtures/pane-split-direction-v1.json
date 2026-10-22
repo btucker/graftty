@@ -1,0 +1,58 @@
+{
+  "ghostty" : [
+    "left",
+    "right",
+    "up",
+    "down"
+  ],
+  "paneControl" : [
+    {
+      "direction" : "horizontal",
+      "target" : "s",
+      "type" : "split"
+    },
+    {
+      "amount" : 3,
+      "direction" : "horizontal",
+      "target" : "s",
+      "type" : "resize",
+      "viewportExtent" : 900
+    },
+    {
+      "direction" : "vertical",
+      "target" : "s",
+      "type" : "split"
+    },
+    {
+      "amount" : 3,
+      "direction" : "vertical",
+      "target" : "s",
+      "type" : "resize",
+      "viewportExtent" : 900
+    },
+    {
+      "direction" : "left",
+      "target" : "s",
+      "type" : "split"
+    },
+    {
+      "amount" : 3,
+      "direction" : "left",
+      "target" : "s",
+      "type" : "resize",
+      "viewportExtent" : 900
+    },
+    {
+      "direction" : "up",
+      "target" : "s",
+      "type" : "split"
+    },
+    {
+      "amount" : 3,
+      "direction" : "up",
+      "target" : "s",
+      "type" : "resize",
+      "viewportExtent" : 900
+    }
+  ]
+}

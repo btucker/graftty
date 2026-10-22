@@ -14,12 +14,7 @@ public enum PaneControlRequest: Sendable, Equatable {
         viewportExtent: UInt32? = nil
     )
 
-    public enum SplitDirection: String, Sendable, CaseIterable {
-        case right
-        case down
-        case left
-        case up
-    }
+    public typealias SplitDirection = PaneSplitDirection
 }
 
 public extension PaneControlRequest {
@@ -128,51 +123,36 @@ public struct PaneCloseProjection: Sendable, Equatable {
     }
 }
 
-extension PaneControlRequest.SplitDirection: Codable {
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.singleValueContainer()
-        let raw = try c.decode(String.self)
-        switch raw {
-        case "right":
-            self = .right
-        case "down":
-            self = .down
-        case "left":
-            self = .left
-        case "up":
-            self = .up
-        case "horizontal":
-            self = .right
-        case "vertical":
-            self = .down
-        default:
-            throw DecodingError.dataCorruptedError(
-                in: c,
-                debugDescription: "unknown PaneControlRequest.SplitDirection: \(raw)"
-            )
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var c = encoder.singleValueContainer()
-        // Hosts running released builds only decode the legacy
-        // horizontal/vertical tokens, so right/down must keep encoding as
-        // those for splits to work against not-yet-upgraded hosts. left/up
-        // never existed on the old wire and use their semantic tokens.
-        switch self {
-        case .right:
-            try c.encode("horizontal")
-        case .down:
-            try c.encode("vertical")
-        case .left, .up:
-            try c.encode(rawValue)
-        }
-    }
-}
-
 extension PaneControlRequest: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, target, direction, source, amount, viewportExtent
+    }
+
+    /// Hosts running released builds only decode the legacy
+    /// horizontal/vertical tokens, so right/down must keep encoding as
+    /// those for splits to work against not-yet-upgraded hosts. left/up
+    /// never existed on the old wire and use their semantic tokens.
+    private static func wireToken(_ direction: SplitDirection) -> String {
+        switch direction {
+        case .right: "horizontal"
+        case .down: "vertical"
+        case .left, .up: direction.rawValue
+        }
+    }
+
+    private static func decodeDirection(from c: KeyedDecodingContainer<CodingKeys>) throws -> SplitDirection {
+        let raw = try c.decode(String.self, forKey: .direction)
+        switch raw {
+        case "horizontal": return .right
+        case "vertical": return .down
+        default:
+            guard let direction = SplitDirection(rawValue: raw) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .direction, in: c,
+                    debugDescription: "unknown PaneControlRequest.SplitDirection: \(raw)")
+            }
+            return direction
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -181,7 +161,7 @@ extension PaneControlRequest: Codable {
         case .split(let target, let direction):
             try c.encode("split", forKey: .type)
             try c.encode(target, forKey: .target)
-            try c.encode(direction, forKey: .direction)
+            try c.encode(Self.wireToken(direction), forKey: .direction)
         case .close(let target):
             try c.encode("close", forKey: .type)
             try c.encode(target, forKey: .target)
@@ -195,7 +175,7 @@ extension PaneControlRequest: Codable {
         case let .resize(target, direction, amount, viewportExtent):
             try c.encode("resize", forKey: .type)
             try c.encode(target, forKey: .target)
-            try c.encode(direction, forKey: .direction)
+            try c.encode(Self.wireToken(direction), forKey: .direction)
             try c.encode(amount, forKey: .amount)
             try c.encodeIfPresent(
                 viewportExtent,
@@ -211,7 +191,7 @@ extension PaneControlRequest: Codable {
         case "split":
             self = .split(
                 target: try c.decode(String.self, forKey: .target),
-                direction: try c.decode(SplitDirection.self, forKey: .direction)
+                direction: try Self.decodeDirection(from: c)
             )
         case "close":
             self = .close(target: try c.decode(String.self, forKey: .target))
@@ -225,7 +205,7 @@ extension PaneControlRequest: Codable {
         case "resize":
             self = .resize(
                 target: try c.decode(String.self, forKey: .target),
-                direction: try c.decode(SplitDirection.self, forKey: .direction),
+                direction: try Self.decodeDirection(from: c),
                 amount: try c.decode(UInt16.self, forKey: .amount),
                 viewportExtent: try c.decodeIfPresent(
                     UInt32.self,

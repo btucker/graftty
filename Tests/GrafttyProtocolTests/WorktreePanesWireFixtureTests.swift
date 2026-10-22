@@ -10,9 +10,7 @@ import Testing
 @Suite("WorktreePanes wire fixture")
 struct WorktreePanesWireFixtureTests {
     private func fixture() throws -> Data {
-        let url = try #require(Bundle.module.url(
-            forResource: "worktree-panes-v1", withExtension: "json", subdirectory: "Fixtures"))
-        return try Data(contentsOf: url)
+        try WireFixture.data("worktree-panes-v1")
     }
 
     @Test
