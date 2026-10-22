@@ -63,9 +63,10 @@ struct TeamReplyResolverTests {
         for fallback in [false, true] {
             #expect(throws: (any Error).self) {
                 let request = try TeamReplyResolver(inbox: inbox).resolve(callerWorktree: "/repo", callerAgentID: "claude-012345abcdef", messageID: message.id, fallback: fallback, text: "result", priority: .normal, repos: [repo], teamsEnabled: true)
-                guard case .teamSend(let caller, let agent, let recipient, let text, let priority) = request else {
+                guard case .teamSend(let send) = request else {
                     Issue.record("Expected a send"); return
                 }
+                let (caller, agent, recipient, text, priority) = (send.callerWorktree, send.callerAgentID, send.recipient, send.text, send.priority)
                 _ = try handler.send(callerWorktree: caller, callerAgentID: agent, recipient: recipient, text: text, priority: priority, repos: [repo], teamsEnabled: true)
             }
         }
@@ -81,9 +82,10 @@ struct TeamReplyResolverTests {
         let handler = TeamInboxRequestHandler(inbox: inbox, dispatcher: TeamEventDispatcher(inbox: inbox, preferencesProvider: { TeamEventRoutingPreferences() }, templateProvider: { "" }))
         #expect(throws: (any Error).self) {
             let request = try TeamReplyResolver(inbox: inbox).resolve(callerWorktree: "/repo", callerAgentID: "claude-012345abcdef", messageID: message.id, fallback: false, text: "result", priority: .normal, repos: [repo], teamsEnabled: true)
-            guard case .teamSend(let caller, let agent, let recipient, let text, let priority) = request else {
+            guard case .teamSend(let send) = request else {
                 Issue.record("Expected a send"); return
             }
+            let (caller, agent, recipient, text, priority) = (send.callerWorktree, send.callerAgentID, send.recipient, send.text, send.priority)
             _ = try handler.send(callerWorktree: caller, callerAgentID: agent, recipient: recipient, text: text, priority: priority, repos: [repo], teamsEnabled: true)
         }
         #expect(try inbox.messages(teamID: "/repo").map(\.id) == [message.id])

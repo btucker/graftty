@@ -214,10 +214,10 @@ struct NotificationMessageTests {
         )
         let encoded = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: encoded)
-        guard case let .teamHook(_, _, _, _, _, paneSessionName, _, _, _) = decoded else {
+        guard case .teamHook(let request) = decoded else {
             Issue.record("expected .teamHook"); return
         }
-        #expect(paneSessionName == "graftty-abc12345")
+        #expect(request.paneSessionName == "graftty-abc12345")
     }
 
     @Test("Old .teamHook payload (no pane_session_name, no caller_agent_id) decodes the optional fields as nil.")
@@ -231,14 +231,12 @@ struct NotificationMessageTests {
         }
         """
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: oldJSON.data(using: .utf8)!)
-        guard case let .teamHook(
-            _, callerAgentID, _, _, _, paneSessionName, attentionReason, _, _
-        ) = decoded else {
+        guard case .teamHook(let request) = decoded else {
             Issue.record("expected .teamHook"); return
         }
-        #expect(callerAgentID == nil)
-        #expect(paneSessionName == nil)
-        #expect(attentionReason == nil)
+        #expect(request.callerAgentID == nil)
+        #expect(request.paneSessionName == nil)
+        #expect(request.attentionReason == nil)
     }
 
     @Test func teamInboxRoundTripsDiagnosticFilters() throws {

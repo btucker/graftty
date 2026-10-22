@@ -85,10 +85,11 @@ struct CrossRepositoryMessagingTests {
             messageID: row.id, fallback: fallback, text: "received", priority: .normal,
             repos: repos, teamsEnabled: true
         )
-        guard case .teamSend(let caller, let agent, let recipient, let text, let priority) = request else {
+        guard case .teamSend(let send) = request else {
             Issue.record("Expected a send request")
             return
         }
+        let (caller, agent, recipient, text, priority) = (send.callerWorktree, send.callerAgentID, send.recipient, send.text, send.priority)
         #expect(recipient == "/source#\(fallback ? "codex" : "codex-abcdef012345")")
         let record = TeamPresenceRecord(
             teamID: "/source", worktree: "/source", runtime: .codex,

@@ -112,45 +112,16 @@ public enum NotificationMessage: Sendable, Equatable {
     case closePane(path: String, index: Int)
     case showPane(path: String, index: Int, lines: Int)
     case sendPane(path: String, index: Int, text: String, pressEnter: Bool)
-    case teamSend(
-        callerWorktree: String,
-        callerAgentID: String? = nil,
-        recipient: String,
-        text: String,
-        priority: TeamInboxPriority
-    )
-    case teamReply(
-        callerWorktree: String,
-        callerAgentID: String? = nil,
-        messageID: String,
-        text: String,
-        priority: TeamInboxPriority,
-        fallback: Bool = false
-    )
+    case teamSend(TeamSendRequest)
+    case teamReply(TeamReplyRequest)
     case teamBroadcast(
         callerWorktree: String,
         callerAgentID: String? = nil,
         text: String,
         priority: TeamInboxPriority
     )
-    case teamHook(
-        callerWorktree: String,
-        callerAgentID: String? = nil,
-        runtime: TeamHookRuntime,
-        event: TeamHookEvent,
-        sessionID: String?,
-        paneSessionName: String?,
-        attentionReason: AgentHookAttentionReason? = nil,
-        stopHookActive: Bool = false,
-        providerSleepActivity: ProviderSleepActivity? = nil
-    )
-    case providerActivity(
-        callerWorktree: String,
-        runtime: TeamHookRuntime,
-        sessionID: String?,
-        paneSessionName: String?,
-        activity: ProviderSleepActivity
-    )
+    case teamHook(TeamHookRequest)
+    case providerActivity(ProviderActivityRequest)
     case attentionReport(callerWorktree: String, callerAgentID: String, recap: AttentionRecap)
     case teamInbox(TeamInboxPageRequest)
     case teamInboxAdvance(
@@ -187,10 +158,41 @@ public enum NotificationMessage: Sendable, Equatable {
 public extension NotificationMessage {
     var providerSleepActivity: ProviderSleepActivity? {
         switch self {
-        case .teamHook(_, _, _, _, _, _, _, _, let activity): return activity
-        case .providerActivity(_, _, _, _, let activity): return activity
+        case .teamHook(let request): return request.providerSleepActivity
+        case .providerActivity(let request): return request.activity
         default: return nil
         }
+    }
+
+    // Labeled constructors for the payload cases, so call sites read like
+    // the other cases.
+    static func teamSend(callerWorktree: String, callerAgentID: String? = nil, recipient: String, text: String,
+                         priority: TeamInboxPriority) -> Self {
+        .teamSend(TeamSendRequest(callerWorktree: callerWorktree, callerAgentID: callerAgentID,
+                                  recipient: recipient, text: text, priority: priority))
+    }
+
+    static func teamReply(callerWorktree: String, callerAgentID: String? = nil, messageID: String, text: String,
+                          priority: TeamInboxPriority, fallback: Bool = false) -> Self {
+        .teamReply(TeamReplyRequest(callerWorktree: callerWorktree, callerAgentID: callerAgentID,
+                                    messageID: messageID, text: text, priority: priority, fallback: fallback))
+    }
+
+    static func teamHook(callerWorktree: String, callerAgentID: String? = nil, runtime: TeamHookRuntime,
+                         event: TeamHookEvent, sessionID: String?, paneSessionName: String?,
+                         attentionReason: AgentHookAttentionReason? = nil, stopHookActive: Bool = false,
+                         providerSleepActivity: ProviderSleepActivity? = nil) -> Self {
+        .teamHook(TeamHookRequest(callerWorktree: callerWorktree, callerAgentID: callerAgentID, runtime: runtime,
+                                  event: event, sessionID: sessionID, paneSessionName: paneSessionName,
+                                  attentionReason: attentionReason, stopHookActive: stopHookActive,
+                                  providerSleepActivity: providerSleepActivity))
+    }
+
+    static func providerActivity(callerWorktree: String, runtime: TeamHookRuntime, sessionID: String?,
+                                 paneSessionName: String?, activity: ProviderSleepActivity) -> Self {
+        .providerActivity(ProviderActivityRequest(callerWorktree: callerWorktree, runtime: runtime,
+                                                  sessionID: sessionID, paneSessionName: paneSessionName,
+                                                  activity: activity))
     }
 
     /// @spec ATTN-2.20: When the application receives a one-way `notify` or `clear` socket message, it shall dispatch the notification without registering or waiting on a response handler, so notification bursts cannot consume request-client capacity.
@@ -211,9 +213,7 @@ extension NotificationMessage: Codable {
         case target, request, result
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
-        case messageID = "message_id"
-        case fallback
-        case recipient, priority, runtime, event, worktree, repo, member, unread, all, limit, consuming
+        case recipient, priority, worktree, repo, member, unread, all, limit, consuming
         case beforeID = "before_id"
         case afterID = "after_id"
         case snapshotThroughID = "snapshot_through_id"
@@ -229,11 +229,7 @@ extension NotificationMessage: Codable {
         case agentRuntime = "agent_runtime"
         case agentPrompt = "agent_prompt"
         case existing
-        case sessionID = "session_id"
         case paneSessionName = "pane_session_name"
-        case attentionReason = "attention_reason"
-        case stopHookActive = "stop_hook_active"
-        case providerSleepActivity = "provider_sleep_activity"
         case recap
         case pressEnter = "press_enter"
     }
@@ -308,55 +304,24 @@ extension NotificationMessage: Codable {
             try container.encode(index, forKey: .index)
             try container.encode(text, forKey: .text)
             try container.encode(pressEnter, forKey: .pressEnter)
-        case .teamSend(let path, let callerAgentID, let recipient, let text, let priority):
+        case .teamSend(let request):
             try container.encode("team_send", forKey: .type)
-            try container.encode(path, forKey: .callerWorktree)
-            try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
-            try container.encode(recipient, forKey: .recipient)
-            try container.encode(text, forKey: .text)
-            try container.encode(priority, forKey: .priority)
-        case .teamReply(let path, let callerAgentID, let messageID, let text, let priority, let fallback):
+            try request.encode(to: encoder)
+        case .teamReply(let request):
             try container.encode("team_reply", forKey: .type)
-            try container.encode(path, forKey: .callerWorktree)
-            try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
-            try container.encode(messageID, forKey: .messageID)
-            try container.encode(text, forKey: .text)
-            try container.encode(priority, forKey: .priority)
-            try container.encode(fallback, forKey: .fallback)
+            try request.encode(to: encoder)
         case .teamBroadcast(let path, let callerAgentID, let text, let priority):
             try container.encode("team_broadcast", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
             try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
             try container.encode(text, forKey: .text)
             try container.encode(priority, forKey: .priority)
-        case .teamHook(
-            let path,
-            let callerAgentID,
-            let runtime,
-            let event,
-            let sessionID,
-            let paneSessionName,
-            let attentionReason,
-            let stopHookActive,
-            let providerSleepActivity
-        ):
+        case .teamHook(let request):
             try container.encode("team_hook", forKey: .type)
-            try container.encode(path, forKey: .callerWorktree)
-            try container.encodeIfPresent(callerAgentID, forKey: .callerAgentID)
-            try container.encode(runtime, forKey: .runtime)
-            try container.encode(event, forKey: .event)
-            try container.encodeIfPresent(sessionID, forKey: .sessionID)
-            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
-            try container.encodeIfPresent(attentionReason, forKey: .attentionReason)
-            try container.encode(stopHookActive, forKey: .stopHookActive)
-            try container.encodeIfPresent(providerSleepActivity, forKey: .providerSleepActivity)
-        case .providerActivity(let path, let runtime, let sessionID, let paneSessionName, let activity):
+            try request.encode(to: encoder)
+        case .providerActivity(let request):
             try container.encode("provider_activity", forKey: .type)
-            try container.encode(path, forKey: .callerWorktree)
-            try container.encode(runtime, forKey: .runtime)
-            try container.encodeIfPresent(sessionID, forKey: .sessionID)
-            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
-            try container.encode(activity, forKey: .providerSleepActivity)
+            try request.encode(to: encoder)
         case .attentionReport(let path, let callerAgentID, let recap):
             try container.encode("attention_report", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
@@ -524,27 +489,9 @@ extension NotificationMessage: Codable {
                 priority: .normal
             )
         case "team_send":
-            let path = try container.decode(String.self, forKey: .callerWorktree)
-            let callerAgentID = try container.decodeIfPresent(String.self, forKey: .callerAgentID)
-            let recipient = try container.decode(String.self, forKey: .recipient)
-            let text = try container.decode(String.self, forKey: .text)
-            let priority = try container.decode(TeamInboxPriority.self, forKey: .priority)
-            self = .teamSend(
-                callerWorktree: path,
-                callerAgentID: callerAgentID,
-                recipient: recipient,
-                text: text,
-                priority: priority
-            )
+            self = .teamSend(try TeamSendRequest(from: decoder))
         case "team_reply":
-            self = .teamReply(
-                callerWorktree: try container.decode(String.self, forKey: .callerWorktree),
-                callerAgentID: try container.decodeIfPresent(String.self, forKey: .callerAgentID),
-                messageID: try container.decode(String.self, forKey: .messageID),
-                text: try container.decode(String.self, forKey: .text),
-                priority: try container.decode(TeamInboxPriority.self, forKey: .priority),
-                fallback: try container.decodeIfPresent(Bool.self, forKey: .fallback) ?? false
-            )
+            self = .teamReply(try TeamReplyRequest(from: decoder))
         case "team_broadcast":
             let path = try container.decode(String.self, forKey: .callerWorktree)
             let callerAgentID = try container.decodeIfPresent(String.self, forKey: .callerAgentID)
@@ -557,31 +504,9 @@ extension NotificationMessage: Codable {
                 priority: priority
             )
         case "team_hook":
-            let path = try container.decode(String.self, forKey: .callerWorktree)
-            let callerAgentID = try container.decodeIfPresent(String.self, forKey: .callerAgentID)
-            let runtime = try container.decode(TeamHookRuntime.self, forKey: .runtime)
-            let event = try container.decode(TeamHookEvent.self, forKey: .event)
-            let sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
-            let paneSessionName = try container.decodeIfPresent(String.self, forKey: .paneSessionName)
-            let attentionReason = try container.decodeIfPresent(
-                AgentHookAttentionReason.self,
-                forKey: .attentionReason
-            )
-            let stopHookActive = try container.decodeIfPresent(Bool.self, forKey: .stopHookActive) ?? false
-            self = .teamHook(callerWorktree: path, callerAgentID: callerAgentID,
-                             runtime: runtime, event: event,
-                             sessionID: sessionID, paneSessionName: paneSessionName,
-                             attentionReason: attentionReason,
-                             stopHookActive: stopHookActive,
-                             providerSleepActivity: try container.decodeIfPresent(ProviderSleepActivity.self, forKey: .providerSleepActivity))
+            self = .teamHook(try TeamHookRequest(from: decoder))
         case "provider_activity":
-            self = .providerActivity(
-                callerWorktree: try container.decode(String.self, forKey: .callerWorktree),
-                runtime: try container.decode(TeamHookRuntime.self, forKey: .runtime),
-                sessionID: try container.decodeIfPresent(String.self, forKey: .sessionID),
-                paneSessionName: try container.decodeIfPresent(String.self, forKey: .paneSessionName),
-                activity: (try? container.decode(ProviderSleepActivity.self, forKey: .providerSleepActivity)) ?? .unknown
-            )
+            self = .providerActivity(try ProviderActivityRequest(from: decoder))
         case "attention_report":
             self = .attentionReport(
                 callerWorktree: try container.decode(String.self, forKey: .callerWorktree),

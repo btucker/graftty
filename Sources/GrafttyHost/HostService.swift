@@ -133,14 +133,18 @@ final class HostService {
             }
         }
         runtime.remoteTeamSender = { [weak self] message in
-            guard let self, case .teamSend(let path, let agent, let recipient, let text, let priority) = message,
-                  let address = RemoteTeamAddress(rawValue: recipient), let session = self.peers[address.deviceID] else {
+            guard let self, case .teamSend(let send) = message,
+                  let address = RemoteTeamAddress(rawValue: send.recipient),
+                  let session = self.peers[address.deviceID] else {
                 return .error("remote team connection is unavailable")
             }
-            guard runtime.state.worktree(forPath: path) != nil else { return .error("caller is not registered") }
+            guard runtime.state.worktree(forPath: send.callerWorktree) != nil else {
+                return .error("caller is not registered")
+            }
             do {
-                let request = RemoteTeamRequest.send(senderWorktree: path, senderAgentID: agent,
-                    recipientWorktree: address.worktreePath, recipientSuffix: address.suffix, text: text, priority: priority)
+                let request = RemoteTeamRequest.send(senderWorktree: send.callerWorktree,
+                    senderAgentID: send.callerAgentID, recipientWorktree: address.worktreePath,
+                    recipientSuffix: address.suffix, text: send.text, priority: send.priority)
                 let bytes = try await session.send(JSONEncoder().encode(request))
                 let response = try JSONDecoder().decode(RemoteTeamResponse.self, from: bytes)
                 if case .error(let error) = response { return .error(error) }

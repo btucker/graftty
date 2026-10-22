@@ -30,9 +30,10 @@ struct RemoteTeamReplyRoutingTests {
             let response = RemoteTeamService(inbox: inboxA, agentRecords: { [parentRecord] }, agentReachability: { _ in true }).handle(request, from: macB, repos: repos, teamsEnabled: true)
             return try JSONEncoder().encode(response)
         }
-        guard case .teamSend(let worktree, let agent, let recipient, let text, let priority) = reply else {
+        guard case .teamSend(let send) = reply else {
             Issue.record("Expected resolved send"); return
         }
+        let (worktree, agent, recipient, text, priority) = (send.callerWorktree, send.callerAgentID, send.recipient, send.text, send.priority)
         #expect(await router.send(callerWorktree: worktree, callerAgentID: agent, recipient: recipient, text: text, priority: priority) == .ok)
         let delivered = try #require(inboxA.messages(teamID: "/repo").first)
         #expect(delivered.to.agentID == parent.rawValue)
