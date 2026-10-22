@@ -24,8 +24,9 @@ enum TeamDeliveryOutcome: Sendable {
 protocol TeamDeliveryTransport: Sendable {
     var runtime: TeamHookRuntime { get }
 
-    /// Presence-only gate checked before the worktree is woken, so a
-    /// transport fanned for every arrival skips worktrees it can never serve.
+    /// Presence-only gate checked before the worktree is woken or an
+    /// unreadable inbox is logged, so a transport fanned for every arrival
+    /// skips worktrees it can never serve.
     func mayServe(_ records: [TeamPresenceRecord]) -> Bool
 
     /// The outcome logged when no pending row resolves to a reachable agent
@@ -131,14 +132,16 @@ actor TeamDeliveryPipeline<Transport: TeamDeliveryTransport> {
                 recipientWorktree: worktree
             )
         } catch {
-            logger.log(team: team, worktree: worktree, .init(outcome: "error_inbox_read"))
+            // Every transport is fanned for every arrival; only one that may
+            // serve this worktree reports its unreadable inbox.
+            if transport.mayServe(worktreeRecords(team: team, worktree: worktree)) {
+                logger.log(team: team, worktree: worktree, .init(outcome: "error_inbox_read"))
+            }
             return false
         }
         guard !allUnread.isEmpty else { return false }
 
-        let records = presenceRecords().filter {
-            $0.teamID == team && $0.worktree == worktree
-        }
+        let records = worktreeRecords(team: team, worktree: worktree)
         guard transport.mayServe(records) else { return false }
         guard wakeBeforeDelivery(worktree) else { return false }
 
@@ -189,11 +192,16 @@ actor TeamDeliveryPipeline<Transport: TeamDeliveryTransport> {
                 try inbox.acknowledgeMessages(teamID: team, worktree: worktree, messageIDs: ids)
             } catch {
                 entry.outcome = "error_watermark_write"
+                entry.detail["error"] = String(describing: error)
                 logger.log(team: team, worktree: worktree, entry)
                 return false
             }
             logger.log(team: team, worktree: worktree, entry)
             return true
         }
+    }
+
+    private func worktreeRecords(team: String, worktree: String) -> [TeamPresenceRecord] {
+        presenceRecords().filter { $0.teamID == team && $0.worktree == worktree }
     }
 }
