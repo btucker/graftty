@@ -29,6 +29,27 @@ struct WorktreePanesStoreTests {
         #expect(await store.navigationSnapshot(matching: []) == .snapshot([]))
     }
 
+    @Test("@spec REMOTE-6.13: When a panes-state frame is applied, the client store shall publish its worktree rows and sidebar metadata together as one frame to every observer, and shall end those observations when the channel closes or the client unsubscribes.")
+    func framesPublishAppliedSnapshotsUntilClose() async throws {
+        let driver = MetadataChannelDriver()
+        let store = WorktreePanesStore(driver: driver)
+        var frames = store.frames.updates().makeAsyncIterator()
+        let sidebar = SidebarSnapshot(projects: [.init(id: "p", repositoryID: "/repo", name: "Project")])
+        driver.sidebarSnapshot = sidebar
+        let rows = makeWorktrees(count: 2)
+        await store.applySnapshot(rows)
+        #expect(await frames.next() == .snapshot(rows, sidebar: sidebar))
+        await store.markClosed(reason: "network-error")
+        #expect(await frames.next() == nil)
+
+        let unsubscribed = WorktreePanesStore(driver: FakeChannelDriver())
+        await unsubscribed.applySnapshot(rows)
+        var late = unsubscribed.frames.updates().makeAsyncIterator()
+        #expect(await late.next() == .snapshot(rows))
+        await unsubscribed.unsubscribe()
+        #expect(await late.next() == nil)
+    }
+
     @Test func subscribeOpensDriverAndUpdatesState() async throws {
         let driver = FakeChannelDriver()
         let store = WorktreePanesStore(driver: driver)
