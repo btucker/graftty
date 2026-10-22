@@ -7,16 +7,20 @@ import Testing
 
 @Suite("RemoteHostDialer signed negotiation")
 struct RemoteHostDialerTests {
-    @Test("negotiate applies the signed answer before stamping the refreshed pin")
+    @Test("negotiate checkpoints after each network step and stamps the pin only after applying the answer")
     func negotiateAppliesAnswerThenRefreshesPin() async throws {
         let fixture = try DialerFixture()
-        let link = ScriptedWebRTCLink()
         let events = EventLog()
+        let link = ScriptedWebRTCLink(events: events)
+        let transport = fixture.transport()
         let connectedAt = Date(timeIntervalSince1970: 1_800_000_100)
 
         let refreshed = try await RemoteHostDialer.negotiate(
             link,
-            signaling: SignalingClient(transport: fixture.transport()),
+            signaling: SignalingClient(transport: { request, body in
+                events.append("signal \(request.url?.path ?? "")")
+                return try await transport(request, body)
+            }),
             pinnedHost: fixture.pinnedHost,
             routes: [fixture.lanRoute],
             clientKey: fixture.clientKey,
@@ -30,7 +34,12 @@ struct RemoteHostDialerTests {
         )
 
         #expect(await link.appliedAnswers == ["v=0\nanswer\n"])
-        #expect(events.values == ["checkpoint", "checkpoint", "checkpoint", "now"])
+        #expect(events.values == [
+            "offer", "checkpoint",
+            "signal /v2/rtc/challenge", "signal /v2/rtc/offer", "checkpoint",
+            "apply", "checkpoint",
+            "now",
+        ])
         #expect(refreshed.routes == [fixture.lanRoute, fixture.tailRoute])
         #expect(refreshed.lastSuccessfulRoute == fixture.lanRoute)
         #expect(refreshed.lastConnectedAt == connectedAt)
@@ -40,14 +49,14 @@ struct RemoteHostDialerTests {
     @Test("a checkpoint that throws after the offer stops before any signaling request")
     func throwingCheckpointStopsBeforeSignaling() async throws {
         let fixture = try DialerFixture()
-        let link = ScriptedWebRTCLink()
-        let requests = EventLog()
+        let events = EventLog()
+        let link = ScriptedWebRTCLink(events: events)
 
         await #expect(throws: CancellationError.self) {
             _ = try await RemoteHostDialer.negotiate(
                 link,
                 signaling: SignalingClient(transport: { request, _ in
-                    requests.append(request.url?.absoluteString ?? "")
+                    events.append("signal \(request.url?.path ?? "")")
                     throw URLError(.cannotConnectToHost)
                 }),
                 pinnedHost: fixture.pinnedHost,
@@ -56,11 +65,14 @@ struct RemoteHostDialerTests {
                 clientDeviceID: fixture.clientDeviceID,
                 replacingExistingConnection: false,
                 connectedAt: { Date() },
-                checkpoint: { throw CancellationError() }
+                checkpoint: {
+                    events.append("checkpoint")
+                    throw CancellationError()
+                }
             )
         }
 
-        #expect(requests.values.isEmpty)
+        #expect(events.values == ["offer", "checkpoint"])
         #expect(await link.appliedAnswers.isEmpty)
     }
 
@@ -181,12 +193,23 @@ private struct LinkUnused: Error {}
 
 /// Answers only the SDP steps; every channel is unused by negotiation.
 private actor ScriptedWebRTCLink: WebRTCHostLink {
+    private let events: EventLog?
     private(set) var appliedAnswers: [String] = []
+
+    init(events: EventLog? = nil) {
+        self.events = events
+    }
 
     var state: RemoteHostConnectionState { .connected }
     func setOnStateChange(_ handler: (@Sendable (RemoteHostConnectionState) -> Void)?) {}
-    func createOfferSDP() -> String { "v=0\noffer\n" }
-    func applyAnswerSDP(_ sdp: String) { appliedAnswers.append(sdp) }
+    func createOfferSDP() -> String {
+        events?.append("offer")
+        return "v=0\noffer\n"
+    }
+    func applyAnswerSDP(_ sdp: String) {
+        events?.append("apply")
+        appliedAnswers.append(sdp)
+    }
     func makePanesStateDriver(originAware: Bool) throws -> any PanesStateSubscriptionDriver { throw LinkUnused() }
     func makePaneControlDriver() throws -> any PaneControlChannelDriver { throw LinkUnused() }
     func makeWorktreeManagementDriver() throws -> any WorktreeManagementChannelDriver { throw LinkUnused() }
