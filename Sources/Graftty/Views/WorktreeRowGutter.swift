@@ -1,5 +1,6 @@
 import SwiftUI
 import GrafttyKit
+import GrafttyCommandUI
 
 /// Trailing divergence indicator on each sidebar worktree row showing
 /// ahead/behind commits vs. the origin default branch, with a `+` suffix
@@ -16,30 +17,21 @@ struct WorktreeRowGutter: View {
 
     var body: some View {
         if let stats, !stats.isEmpty {
-            commitsText(stats)
-                .font(.system(size: 10, design: .monospaced))
-                .help(tooltip(stats))
+            // `↑X[+] ↓Y`, shared with the mobile worktree row.
+            SidebarDivergenceGutter(
+                ahead: stats.ahead,
+                behind: stats.behind,
+                hasUncommittedChanges: stats.hasUncommittedChanges,
+                aheadColor: Self.aheadColor(theme)
+            )
+            .help(tooltip(stats))
         }
     }
 
-    /// `↑X[+] ↓Y` as a concatenated `Text` so the two tokens share a
-    /// single text run (native baseline/kerning, no HStack gap) while
-    /// each carries its own color. Ahead side is shown as `↑0+` when
-    /// uncommitted changes exist even if ahead is zero — so the dirty
-    /// indicator never disappears.
-    private func commitsText(_ s: WorktreeStats) -> Text {
-        let aheadShown = s.ahead > 0 || s.hasUncommittedChanges
-        let behindShown = s.behind > 0
-        let ahead = Text("↑\(s.ahead)\(s.hasUncommittedChanges ? "+" : "")")
-            .foregroundColor(theme.foreground.opacity(0.55))
-        let behind = Text("↓\(s.behind)")
-            .foregroundColor(.red)
-        switch (aheadShown, behindShown) {
-        case (true, true): return ahead + Text(" ") + behind
-        case (true, false): return ahead
-        case (false, true): return behind
-        case (false, false): return Text("")
-        }
+    /// The Mac dims the ahead count to 55% of the foreground; mobile uses
+    /// the sidebar's 45% secondary text.
+    static func aheadColor(_ theme: GhosttyTheme) -> Color {
+        theme.foreground.opacity(0.55)
     }
 
     /// Hover tooltip detail: the committed-diff line counts, optionally

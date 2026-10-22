@@ -10,6 +10,14 @@ import UIKit
 @Suite("Mobile worktree reports")
 @MainActor
 struct MobileAttentionPaneTests {
+    /// Pins mobile's per-platform parameters to the shared sidebar row views
+    /// (the Mac's are pinned in PaneTitleRowPortsTests).
+    @Test("Mobile divergence ahead colour is the 45% sidebar secondary text, or system secondary without a theme")
+    func mobileDivergenceAheadColor() {
+        #expect(DivergenceGutter.aheadColor(.fallback) == GhosttyThemeColors.fallback.sidebarSecondaryText)
+        #expect(DivergenceGutter.aheadColor(nil) == .secondary)
+    }
+
     @Test("@spec IOS-9.14: While a mobile worktree identity is displayed at a narrow width, the application shall keep its name on one line and retain space for the information button and Git divergence.", arguments: [320.0, 393.0, 540.0])
     func longNamesDoNotInflateRows(width: Double) {
         func size(name: String) -> CGSize {

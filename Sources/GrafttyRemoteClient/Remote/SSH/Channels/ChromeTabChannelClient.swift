@@ -31,7 +31,7 @@ public final class ChromeTabChannelClient: @unchecked Sendable {
                 timedOut: ClientError.timedOut
             ),
             busy: ClientError.busy,
-            decode: { try JSONDecoder().decode(ChromeTabResponse.self, from: $0) }
+            decode: { try JSONDecoder.shared.decode(ChromeTabResponse.self, from: $0) }
         )
     }
 
@@ -40,7 +40,7 @@ public final class ChromeTabChannelClient: @unchecked Sendable {
     }
 
     public func send(_ request: ChromeTabRequest) async throws -> ChromeTabResponse {
-        let body = try JSONEncoder().encode(request)
+        let body = try JSONEncoder.shared.encode(request)
         guard body.count <= ChromeTabRequest.maximumRequestBytes else { throw ClientError.channelClosed }
         return try await rpc.send(encoded: body)
     }

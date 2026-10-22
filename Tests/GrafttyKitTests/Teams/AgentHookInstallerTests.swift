@@ -178,8 +178,8 @@ struct AgentHookInstallerTests {
         #expect(repaired.contains("team register --runtime codex"))
     }
 
-    @Test func wrapperSearchSkipsGeneratedBinDirectory() {
-        let script = AgentHookInstaller.codexWrapperScript(
+    @Test func wrapperSearchSkipsGeneratedBinDirectory() throws {
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/app/hooks/bin",
             grafttyCLIPath: "/app/graftty",
             codexHomeDirectory: "/app/hooks/codex-home"
@@ -191,8 +191,8 @@ struct AgentHookInstallerTests {
         #expect(!script.contains(#"exec "$real_binary" "$@""#))
     }
 
-    @Test func wrapperQuotesShellPathsWithoutExpansion() {
-        let script = AgentHookInstaller.codexWrapperScript(
+    @Test func wrapperQuotesShellPathsWithoutExpansion() throws {
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/tmp/has $dollar/it's/bin",
             grafttyCLIPath: "/app/graftty",
             codexHomeDirectory: "/tmp/has $dollar/it's/codex-home"
@@ -234,8 +234,8 @@ struct AgentHookInstallerTests {
     }
 
     @Test("Every wrapper launch replaces an inherited identity with a new runtime-prefixed ID.")
-    func wrapperMintsValidCanonicalAgentID() {
-        let script = AgentHookInstaller.codexWrapperScript(
+    func wrapperMintsValidCanonicalAgentID() throws {
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/app/hooks/bin",
             grafttyCLIPath: "/app/graftty",
             codexHomeDirectory: "/app/hooks/codex-home"

@@ -468,28 +468,22 @@ public final class RemoteConnectionCoordinator {
         }
 
         onProgress?(.waitingForSnapshot)
-        let deadline = Date().addingTimeInterval(10)
-        while !Task.isCancelled {
-            if case .closed = await store.connectionState {
-                await discardPanesStore(store, hostID: host.id)
-                throw ConnectionError.paneChannelClosed
+        switch try await store.waitForFirstSnapshot(timeout: .seconds(10)) {
+        case .closed:
+            await discardPanesStore(store, hostID: host.id)
+            throw ConnectionError.paneChannelClosed
+        case .timedOut:
+            await discardPanesStore(store, hostID: host.id)
+            throw ConnectionError.paneSnapshotTimedOut
+        case .received:
+            if onProgress != nil {
+                let snapshotFinished = clock.now
+                Self.logger.info(
+                    "worktree load host=\(host.id, privacy: .public) stage=first-snapshot duration_ms=\(Self.milliseconds(channelFinished.duration(to: snapshotFinished)), privacy: .public) total_ms=\(Self.milliseconds(loadStarted.duration(to: snapshotFinished)), privacy: .public)"
+                )
             }
-            if await store.hasReceivedSnapshot {
-                if onProgress != nil {
-                    let snapshotFinished = clock.now
-                    Self.logger.info(
-                        "worktree load host=\(host.id, privacy: .public) stage=first-snapshot duration_ms=\(Self.milliseconds(channelFinished.duration(to: snapshotFinished)), privacy: .public) total_ms=\(Self.milliseconds(loadStarted.duration(to: snapshotFinished)), privacy: .public)"
-                    )
-                }
-                return await store.current
-            }
-            if Date() >= deadline {
-                await discardPanesStore(store, hostID: host.id)
-                throw ConnectionError.paneSnapshotTimedOut
-            }
-            try await Task.sleep(for: .milliseconds(25))
+            return await store.current
         }
-        throw CancellationError()
     }
 
     private nonisolated static func milliseconds(

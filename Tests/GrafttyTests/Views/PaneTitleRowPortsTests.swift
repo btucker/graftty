@@ -167,4 +167,12 @@ struct PaneTitleRowPortsTests {
             .sizeThatFits(in: CGSize(width: containerWidth, height: 1000))
         #expect(preferred.width <= containerWidth + 0.5)
     }
+
+    /// The shared sidebar row views take per-platform parameters; pin the
+    /// Mac's so a one-value drift fails here rather than only visually.
+    @Test("Mac passes baseline alignment and a 55% ahead colour to the shared row views")
+    func macSharedRowParameters() {
+        #expect(PaneTitleRow.titleAlignment == .firstTextBaseline)
+        #expect(WorktreeRowGutter.aheadColor(.fallback) == GhosttyTheme.fallback.foreground.opacity(0.55))
+    }
 }

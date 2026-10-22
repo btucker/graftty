@@ -195,6 +195,9 @@ final class ManualReplyDeadline: @unchecked Sendable {
         }
     }
 
+    /// Whether a scheduled deadline is still waiting to fire.
+    var isArmed: Bool { lock.withLock { !pending.isEmpty } }
+
     /// Suspends until a deadline is armed.
     func waitUntilArmed() async {
         while lock.withLock({ pending.isEmpty }) { await Task.yield() }
