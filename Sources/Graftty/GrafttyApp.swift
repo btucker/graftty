@@ -215,24 +215,15 @@ struct GrafttyApp: App {
         )
         services = appServices
 
-        // Web access server — reconstruct the same zmx paths that `startup()`
-        // computes so the WebServerController's child `zmx attach` invocations
-        // hit the same ZMX_DIR as panes spawned from the app UI. Keeping the
-        // path derivation here (rather than routing it through AppServices)
-        // keeps the controller's lifetime tied to the SwiftUI App via
-        // @StateObject, which is what Settings scene re-entry expects.
-        let appSupport = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let zmxDir = appSupport
-            .appendingPathComponent("Graftty", isDirectory: true)
-            .appendingPathComponent("zmx", isDirectory: true)
-        let zmxExe = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/zmx")
+        // Web access server. It uses the same `ZmxPaths` as `startup()` so its
+        // child `zmx attach` invocations hit the same ZMX_DIR as panes spawned
+        // from the app UI. Building it here (rather than in AppServices) keeps
+        // the controller's lifetime tied to the SwiftUI App via @StateObject,
+        // which is what Settings scene re-entry expects.
         let webController = WebServerController(
             settings: WebAccessSettings.shared,
-            zmxExecutable: zmxExe,
-            zmxDir: zmxDir,
+            zmxExecutable: ZmxPaths.executable,
+            zmxDir: ZmxPaths.directory,
             displayOwnershipStore: appServices.displayOwnershipStore
         )
         _webController = StateObject(wrappedValue: webController)
@@ -520,14 +511,8 @@ struct GrafttyApp: App {
     }
 
     private func startup() {
-        let zmxBinary = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/zmx")
-        let appSupport = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let zmxDir = appSupport
-            .appendingPathComponent("Graftty", isDirectory: true)
-            .appendingPathComponent("zmx", isDirectory: true)
+        let zmxBinary = ZmxPaths.executable
+        let zmxDir = ZmxPaths.directory
         try? FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
         let zmxLauncher = ZmxLauncher(executable: zmxBinary, zmxDir: zmxDir)
         terminalManager.zmxLauncher = zmxLauncher
@@ -852,7 +837,7 @@ struct GrafttyApp: App {
             async let remote = remoteTeamRouter.members()
             let local = await OffMainIO.run {
                 AgentCompletionCatalog.local(repos: repos,
-                    records: (try? TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).listAll()) ?? [],
+                    records: AppServices.presenceRecords(),
                     isReachable: TeamAgentReachability.isReachable)
             }
             update?(AgentCompletionCatalog.contextualized(local, worktreePath: currentWorktreePath, repos: repos))
@@ -897,11 +882,11 @@ struct GrafttyApp: App {
                     return try JSONEncoder().encode(response)
                 }
                 let repos = binding.wrappedValue.repos
-                let enabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+                let enabled = AppServices.teamsEnabled
                 let handler = RemoteTeamService(
                     inbox: teamInbox,
                     agentRecords: {
-                        (try? TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).listAll()) ?? []
+                        AppServices.presenceRecords()
                     },
                     agentReachability: { TeamAgentReachability.isReachable($0) }
                 )

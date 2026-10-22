@@ -9,7 +9,7 @@ struct GitWorktreePruneTests {
     /// against a repo with an orphaned `.git/worktrees/<name>` entry
     /// (directory gone, admin dir still present) removes the admin dir.
     /// The UI-glue half (calling this from `performDeleteWorktree`'s
-    /// missing-directory branch and then `finishWorktreeRemoval`) is
+    /// missing-directory branch and then `DeleteWorktreeFlow.finishRemoval`) is
     /// verified manually against the running app, matching the
     /// convention used for `performDeleteWorktree`'s other branches.
     @Test("""

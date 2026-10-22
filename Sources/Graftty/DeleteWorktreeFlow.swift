@@ -139,9 +139,8 @@ enum DeleteWorktreeFlow {
         appState.wrappedValue.repos[r].worktrees[w].state = prior
     }
 
-    /// Post-remove teardown. Identical ordering to the previous
-    /// `MainWindow.finishWorktreeRemoval`: surface teardown for running
-    /// and stale worktrees, per-path cache clears BEFORE the model entry drops
+    /// Post-remove teardown: surface teardown for running and stale
+    /// worktrees, per-path cache clears BEFORE the model entry drops
     /// (GIT-4.10), then the `removeWorktree` mutation, then the
     /// TEAM-5.3 `left` event whose repo lookup must use the original
     /// `repoPath` because the worktree is gone from AppState by now.
@@ -167,7 +166,7 @@ enum DeleteWorktreeFlow {
                 leaverBranch: leaverBranch,
                 leaverPath: wt.path,
                 reason: .removed,
-                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+                teamsEnabled: AppServices.teamsEnabled,
                 dispatcher: teamEventDispatcher
             )
         }

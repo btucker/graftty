@@ -3146,33 +3146,6 @@ struct MainWindow: View {
         }
     }
 
-    /// Post-remove teardown: destroy live surfaces, clear per-path caches
-    /// (GIT-4.10 ordering: BEFORE removing the model entry, so orphan
-    /// cache entries don't bleed into a future same-path re-add), drop
-    /// the entry, then fire TEAM-5.3 `left`. The TEAM-5.3 lookup uses
-    /// `repoPath` rather than `wt.path` because the worktree is gone
-    /// from `appState` by the time the lookup runs.
-    @MainActor
-    private func finishWorktreeRemoval(worktree wt: WorktreeEntry, repoPath: String) {
-        if wt.state == .running {
-            terminalManager.destroySurfaces(terminalIDs: wt.splitTree.allLeaves)
-        }
-        prStatusStore.clear(worktreePath: wt.path)
-        statsStore.clear(worktreePath: wt.path)
-        let leaverBranch = wt.branch
-        appState.removeWorktree(atPath: wt.path)
-        if let repo = appState.repo(forWorktreePath: repoPath) {
-            TeamMembershipEvents.fireLeft(
-                repo: repo,
-                leaverBranch: leaverBranch,
-                leaverPath: wt.path,
-                reason: .removed,
-                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-                dispatcher: teamEventDispatcher
-            )
-        }
-    }
-
     private func movePane(_ terminalID: PaneSlotID, to newPWD: String) {
         PaneCommands.reassignPaneByPWD(
             appState: $appState,

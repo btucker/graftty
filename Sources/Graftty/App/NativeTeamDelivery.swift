@@ -119,7 +119,7 @@ final class NativeTeamDelivery {
                 await TeamPresenceMonitor.sweep(storage: presenceStorage)
             }
             refreshDeliveryLiveness(records: records)
-            let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            let teamsEnabled = AppServices.teamsEnabled
             await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
                 inbox: services.teamInbox,
                 records: records,
@@ -157,7 +157,7 @@ final class NativeTeamDelivery {
                 [self, weak codexAppServerDeliveryService, weak claudePeerDeliveryService] messages in
                 Task { @MainActor in
                     refreshDeliveryLiveness()
-                    guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else {
+                    guard AppServices.teamsEnabled else {
                         await deliveryState.markSeen(messages)
                         return
                     }
@@ -223,7 +223,7 @@ final class NativeTeamDelivery {
                     deliveries: GrafttyApp.nativeDeliveries(
                         codex: codexAppServerDeliveryService,
                         claude: claudePeerDeliveryService,
-                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+                        enabled: AppServices.teamsEnabled
                     )
                 )
             }
@@ -255,7 +255,7 @@ final class NativeTeamDelivery {
                 deliveries: GrafttyApp.nativeDeliveries(
                     codex: codexAppServerDeliveryService,
                     claude: claudePeerDeliveryService,
-                    enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+                    enabled: AppServices.teamsEnabled
                 )
             )
         }

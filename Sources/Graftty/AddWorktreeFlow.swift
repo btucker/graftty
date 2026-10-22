@@ -265,7 +265,7 @@ enum AddWorktreeFlow {
         TeamMembershipEvents.fireJoined(
             repo: appState.wrappedValue.repos[repoIdx],
             joinerWorktreePath: worktreePath,
-            teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+            teamsEnabled: AppServices.teamsEnabled,
             dispatcher: teamEventDispatcher
         )
 
