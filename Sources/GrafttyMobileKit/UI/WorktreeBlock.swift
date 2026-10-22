@@ -110,9 +110,12 @@ struct WorktreeBlock: View {
             }
             MobileWorktreeReportTarget(onOpen: { onSelectPane(leaf) }, onReport: onReport) {
                 VStack(alignment: .leading, spacing: 4) {
-                    PaneTitleRow(leaf: leaf, theme: theme, attentionStyle: style,
+                    SidebarPaneTitleRow(title: leaf.title,
                         isFocusedPane: leaf.sessionName == focusedPaneId, isActiveWorktree: isActive,
-                        attentionCount: context.pending.filter { $0.paneID == leaf.sessionName || ($0.paneID == nil && index == 0) }.count)
+                        isBusy: leaf.isBusy, attentionStyle: style,
+                        attentionCount: context.pending.filter { $0.paneID == leaf.sessionName || ($0.paneID == nil && index == 0) }.count,
+                        theme: theme)
+                        .padding(.leading, SidebarPaneLayout.markerLeading)
                     if isQuestionPane {
                         SidebarWorktreeQuestion(context: context)
                             .padding(.leading, SidebarPaneLayout.markerLeading + SidebarPaneLayout.markerSpacing)
@@ -264,139 +267,24 @@ struct WorktreeRowContent: View {
     }
 }
 
-/// Pane child row: `↳` glyph + caption-sized title. When the pane has
-/// a shell-integration ping (or the caller has attached the
-/// worktree-scoped `attentionText` here per IPAD-1.14), an attention
-/// capsule renders to the *right* of the title — not in place of it —
-/// truncating the title to make room (LAYOUT-2.30).
-private struct PaneTitleRow: View {
-    let leaf: PaneLayoutNode.Leaf
-    let theme: GhosttyThemeColors?
-    /// The attention capsule this pane row should display (agent-stop icon,
-    /// or notify/✓! text), or nil. Normally derived from `leaf`, but the
-    /// first pane in a worktree also inherits the worktree-scoped ping as a
-    /// fallback so "needs input" always lives on a pane row.
-    let attentionStyle: AttentionCapsuleStyle?
-    /// True when this leaf is the currently-focused pane. Drives the
-    /// brightest bucket on `theme.paneArrow` and `theme.paneTitle`
-    /// (IPAD-1.16), and bolds the arrow + title — matching the Mac
-    /// sidebar's focused-pane treatment.
-    let isFocusedPane: Bool
-    /// True when this leaf's worktree is the active one. Drives the
-    /// middle bucket on the brightness ladders so non-focused panes
-    /// inside the active worktree still read brighter than panes in
-    /// other worktrees.
-    let isActiveWorktree: Bool
-    var attentionCount: Int = 0
-
-    var body: some View {
-        // Busy style applies only when no capsule is shown — a needs-input
-        // ping (claude waiting) supersedes "working". Shared with the Mac
-        // row via PaneTitleBusyStyle so the precedence rule can't drift.
-        let busyStyle = PaneTitleBusyStyle.applies(
-            isBusy: leaf.isBusy, hasAttentionCapsule: attentionStyle != nil)
-        // LAYOUT-2.31: the agent "needs input" state colors the title red
-        // (alongside the red icon) so it's scannable.
-        let isNeedsInput: Bool = {
-            if case .needsInput = attentionStyle { return true }
-            return false
-        }()
-        HStack(spacing: SidebarPaneLayout.markerSpacing) {
-            SidebarPaneMarker(
-                attentionCount: attentionCount,
-                isFocused: isFocusedPane,
-                arrowColor: theme?.paneArrow(
-                    isFocusedPane: isFocusedPane,
-                    isActiveWorktree: isActiveWorktree
-                ) ?? .secondary
-            )
-            // LAYOUT-2.30: title (truncates) then pill (intrinsic width).
-            // AGENT-2.2: a busy pane renders its title in italic. Apply it
-            // at the Text level (Text.italic()) so it composes with the
-            // focused pane's `.semibold`; the View-level `.italic(_:)`
-            // modifier is dropped when a Text-level fontWeight is set.
-            let titleBase = Text(leaf.displayTitle)
-                .font(.caption)
-                .fontWeight(isFocusedPane ? .semibold : .regular)
-            (busyStyle ? titleBase.italic() : titleBase)
-                .foregroundStyle(isNeedsInput ? AnyShapeStyle(.red) : themedOrSecondary(theme?.paneTitle(
-                    isFocusedPane: isFocusedPane,
-                    isActiveWorktree: isActiveWorktree,
-                    // Use the raw title (not displayTitle, which falls back
-                    // to a non-empty "shell"): an unset title should hit the
-                    // dimmer placeholder bucket, matching the Mac sidebar.
-                    hasTitle: !leaf.title.isEmpty
-                )))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .layoutPriority(0)
-            if let attentionStyle {
-                AttentionCapsule(style: attentionStyle)
-                    .layoutPriority(1)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, SidebarPaneLayout.markerLeading)
-    }
-}
-
-/// Red status pill — worktree row uses it for CLI `graftty notify`
-/// pings; pane row uses it for shell-integration pings.
-private struct AttentionCapsule: View {
-    let style: AttentionCapsuleStyle
-
-    var body: some View {
-        switch style {
-        case let .needsInput(label):
-            // Agent "needs input" is a bare red icon (no pill); text kept
-            // for accessibility.
-            Image(systemName: AttentionCapsuleStyle.needsInputSymbol)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(.red)
-                .accessibilityLabel(label)
-        case let .text(text):
-            Text(text)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(Color.red)
-                .foregroundStyle(.white)
-                .clipShape(Capsule())
-        }
-    }
-}
-
-/// Trailing `↑X[+] ↓Y` indicator. Ahead side gets a `+` suffix when
-/// there are uncommitted changes so a clean-but-dirty branch still
-/// surfaces; behind side renders in red.
-private struct DivergenceGutter: View {
+/// Trailing `↑X[+] ↓Y`, shared with the Mac worktree row. Without a theme
+/// (compact) the ahead side stays on the system secondary color.
+struct DivergenceGutter: View {
     let stats: WorktreeWireStats?
     let theme: GhosttyThemeColors?
 
-    var body: some View {
-        if let stats, !stats.isEmpty {
-            commitsText(stats)
-                .font(.system(size: 10, design: .monospaced))
-        }
+    /// Mobile uses the sidebar's 45% secondary text (the Mac uses 55% of
+    /// the foreground).
+    static func aheadColor(_ theme: GhosttyThemeColors?) -> Color {
+        theme?.sidebarSecondaryText ?? .secondary
     }
 
-    private func commitsText(_ s: WorktreeWireStats) -> Text {
-        let aheadShown = s.ahead > 0 || s.hasUncommittedChanges
-        let behindShown = s.behind > 0
-        // Themed dim when available; nil leaves it on the system label
-        // color which the surrounding default-foreground tree already
-        // dims for `.foregroundColor(.secondary)` on the compact path.
-        let ahead = Text("↑\(s.ahead)\(s.hasUncommittedChanges ? "+" : "")")
-            .foregroundColor(theme?.sidebarSecondaryText ?? .secondary)
-        let behind = Text("↓\(s.behind)")
-            .foregroundColor(.red)
-        if aheadShown && behindShown { return ahead + Text(" ") + behind }
-        if aheadShown { return ahead }
-        return behind
+    var body: some View {
+        if let stats, !stats.isEmpty {
+            SidebarDivergenceGutter(ahead: stats.ahead, behind: stats.behind,
+                hasUncommittedChanges: stats.hasUncommittedChanges,
+                aheadColor: Self.aheadColor(theme))
+        }
     }
 }
 #endif

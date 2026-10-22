@@ -599,7 +599,7 @@ struct IPadRootLayoutSelectionTests {
 """)
     func ipad_1_16_activeWorktreeHighlightAndFocusedPaneEmphasis() {
         // Construct WorktreeListContent with selection state set; the
-        // visual rendering is wired in WorktreeBlock/PaneTitleRow.
+        // visual rendering is wired in WorktreeBlock/SidebarPaneTitleRow.
         // Smoke-check the parameter pass-through here so a future
         // signature drift surfaces in this test rather than visually.
         let view = WorktreeListContent(
