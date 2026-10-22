@@ -60,6 +60,8 @@ final class SocketRequestRouter {
         self.remoteTeamRouter = remoteTeamRouter
     }
 
+    private var parentServerPublicKey: () -> String? = { nil }
+
     convenience init(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
@@ -80,6 +82,7 @@ final class SocketRequestRouter {
             remoteMacsModel: services.remoteMacsModel,
             remoteTeamRouter: services.remoteTeamRouter
         )
+        parentServerPublicKey = { [weak services] in services?.hostKey()?.publicKey.rawRepresentation.base64EncodedString() }
     }
 
     /// Fire-and-forget path (`SocketServer.onMessage`).
@@ -118,7 +121,7 @@ final class SocketRequestRouter {
     /// Pane dispatch with this router's collaborators, without the
     /// pre-routing `handleRequest` applies first.
     func handlePaneRequest(_ message: NotificationMessage) async -> ResponseMessage? {
-        await Self.handlePaneRequest(
+        let response = await Self.handlePaneRequest(
             message,
             appState: appState,
             terminalManager: terminalManager,
@@ -133,6 +136,11 @@ final class SocketRequestRouter {
             agentRegistry: agentRegistry,
             remoteMacsModel: remoteMacsModel
         )
+        if case .linuxSetupIdentity(let identity) = response {
+            return .linuxSetupIdentity(.init(deviceID: identity.deviceID, displayName: identity.displayName,
+                publicKey: identity.publicKey, serverPublicKey: parentServerPublicKey()))
+        }
+        return response
     }
 }
 

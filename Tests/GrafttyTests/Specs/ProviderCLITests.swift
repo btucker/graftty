@@ -52,6 +52,23 @@ struct ProviderCLITests {
         #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(["provider", "hosts", "aws-dev"]) }
     }
 
+    @Test("@spec REMOTE-26.21: When enrolling an existing AWS instance through the CLI, the application shall require an explicit account, instance, operation UUID, and development-user paths and use the running parent's public identity.")
+    func enrollmentRequiresExplicitTargetAndOperation() throws {
+        let args = ["provider", "enroll", "aws", "--profile", "development", "--region", "us-east-1",
+            "--account-id", "123456789012", "--instance-id", "i-0123456789abcdef0", "--operation-id", UUID().uuidString,
+            "--user", "ubuntu", "--host-executable", "/home/ubuntu/.local/bin/graftty-host", "--host-state-directory", "/home/ubuntu/.local/share/graftty"]
+        _ = try GrafttyCLI.parseAsRoot(args)
+        for option in ["--account-id", "--instance-id", "--operation-id", "--user", "--host-executable", "--host-state-directory"] {
+            var missing = args
+            let index = try #require(missing.firstIndex(of: option))
+            missing.removeSubrange(index...index + 1)
+            #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(missing) }
+        }
+        var root = args
+        root[try #require(root.firstIndex(of: "--user")) + 1] = "root"
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(root) }
+    }
+
     @Test func providerCommandsAreRegistered() throws {
         _ = try GrafttyCLI.parseAsRoot([
             "provider", "configure", "aws", "--profile", "development", "--region", "us-east-1",

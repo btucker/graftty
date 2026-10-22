@@ -105,11 +105,20 @@ struct GitReceiveCLITests {
         defer { try? FileManager.default.removeItem(at: root) }
         let workerKey = Curve25519.Signing.PrivateKey(), parentKey = Curve25519.Signing.PrivateKey()
         let trusted = TrustedPeerStore(directory: root.appendingPathComponent("trust"))
-        let worker = TrustedPeer(id: .init(value: "worker"), kind: .linux,
-            publicKey: try .init(rawRepresentation: workerKey.publicKey.rawRepresentation), displayName: "worker",
-            capabilities: .init(terminalControl: .disabled, portTunnel: .disabled, screenView: .disabled,
-                                screenControl: .disabled, worktreeManagement: .disabled, replication: .allowed), pairedAt: Date(), lastSeenAt: nil)
-        try trusted.add(worker)
+        let operation = UUID()
+        let parent = LinuxHostTrustRequest(deviceID: "parent", displayName: "Mac",
+            publicKey: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation.base64EncodedString(),
+            serverPublicKey: parentKey.publicKey.rawRepresentation.base64EncodedString())
+        let host = LinuxHostIdentity(deviceID: "worker", displayName: "Worker",
+            publicKey: workerKey.publicKey.rawRepresentation.base64EncodedString(), port: 8801)
+        // Only the AWS command runner is a fixture. Enrollment persistence,
+        // trust installation, SSH proof of possession, and scoped receive are real.
+        _ = try await AWSHostEnrollment(directory: root.appendingPathComponent("enrollment"), peers: trusted,
+            executor: ReceiveEnrollmentExecutor(response: .init(operationID: operation, parent: parent, identity: host)))
+            .enroll(operationID: operation, target: .init(profile: "test", accountID: "123456789012", region: "us-east-1",
+                instanceID: "i-0123456789abcdef0", user: "ubuntu", executable: "/usr/local/bin/graftty-host",
+                stateDirectory: "/home/ubuntu/.local/share/graftty"), parent: parent)
+        let worker = try #require(try trusted.get(id: .init(value: host.deviceID)))
         let identity = RemoteMacConnectionSummary.ID(deviceID: worker.id, fingerprint: worker.fingerprint)
         let authority = GitDelegationStore(directory: root.appendingPathComponent("authority"))
         let delegation = GitDelegation(id: UUID(), generation: 1, repositoryID: UUID(), host: identity,
@@ -204,6 +213,27 @@ struct GitReceiveCLITests {
             }
         }
         throw NSError(domain: "GitReceiveCLITests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Build graftty-cli beside its test bundle"])
+    }
+}
+private struct ReceiveEnrollmentExecutor: CLIExecutor {
+    let response: ProviderHostEnrollmentResponse
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        let commandID = "11111111-2222-3333-4444-555555555555"
+        let instance = "i-0123456789abcdef0"
+        let value: [String: Any]
+        if args.starts(with: ["sts", "get-caller-identity"]) {
+            value = ["Account": "123456789012"]
+        } else if args.contains("send-command") {
+            value = ["Command": ["CommandId": commandID, "InstanceIds": [instance], "DocumentName": "AWS-RunShellScript"]]
+        } else {
+            #expect(args.contains("get-command-invocation"))
+            value = ["CommandId": commandID, "InstanceId": instance, "DocumentName": "AWS-RunShellScript", "Status": "Success",
+                "ResponseCode": 0, "StandardErrorContent": "", "StandardOutputContent": String(decoding: try JSONEncoder().encode(response), as: UTF8.self)]
+        }
+        return .init(stdout: String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self), stderr: "", exitCode: 0)
+    }
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        try await run(command: command, args: args, at: directory)
     }
 }
 #endif

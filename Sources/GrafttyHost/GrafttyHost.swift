@@ -6,7 +6,7 @@ import GrafttyKit
 struct GrafttyHostCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "graftty-host",
         abstract: "Persistent Graftty terminal and worktree host.",
-        subcommands: [Serve.self, TrustClient.self, Status.self, Project.self, Setup.self, Pair.self])
+        subcommands: [Serve.self, TrustClient.self, EnrollParent.self, Status.self, Project.self, Setup.self, Pair.self])
 }
 
 struct HostOptions: ParsableArguments {
@@ -76,6 +76,25 @@ struct TrustClient: AsyncParsableCommand {
               let data = Data(base64Encoded: request.publicKey) else { throw ValidationError("invalid trust request") }
         try HostService.trust(request, publicKeyData: data, configuration: config)
         try printJSON(HostService.identity(configuration: config))
+    }
+}
+
+struct EnrollParent: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "enroll-parent",
+        abstract: "Exchange public identities over an authenticated provider administration channel.")
+    @OptionGroup var paths: HostOptions
+    @Flag var stdin = false
+    func validate() throws {
+        guard stdin else { throw ValidationError("enroll-parent requires --stdin") }
+    }
+    mutating func run() async throws {
+        var bytes = Data()
+        while let chunk = try FileHandle.standardInput.read(upToCount: 4096), !chunk.isEmpty {
+            bytes.append(chunk)
+            guard bytes.count <= 8192 else { throw ValidationError("enrollment request exceeds 8 KiB") }
+        }
+        let request = try JSONDecoder().decode(ProviderHostEnrollmentRequest.self, from: bytes)
+        try printJSON(ProviderHostEnrollment.accept(request, configuration: paths.resolved()))
     }
 }
 

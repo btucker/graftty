@@ -3488,6 +3488,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-26.20** When enrolling an AWS host, the parent shall bind the host's locally generated public identity to the recorded account, region, instance, and pending launch operation through authenticated provider command results before accepting SSH-authenticated callbacks, and shall reject unsolicited or changed-key enrollment without copying private keys.
 
+**REMOTE-26.21** When enrolling an existing AWS instance through the CLI, the application shall require an explicit account, instance, operation UUID, and development-user paths and use the running parent's public identity.
+
 ### REMOTE-27.x — Native session replication and restore
 
 **REMOTE-27.1** While a delegated host is reachable, the application shall regularly copy worktree-associated native Claude and Codex session data to the recorded parent, excluding authentication files.

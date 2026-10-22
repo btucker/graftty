@@ -131,11 +131,6 @@ struct RemoteTodo {
 """, .disabled("deferred: parent sleep recovery"))
     func remote_26_19() async throws { }
 
-    @Test("""
-@spec REMOTE-26.20: When enrolling an AWS host, the parent shall bind the host's locally generated public identity to the recorded account, region, instance, and pending launch operation through authenticated provider command results before accepting SSH-authenticated callbacks, and shall reject unsolicited or changed-key enrollment without copying private keys.
-""", .disabled("not yet implemented"))
-    func remote_26_20() async throws { }
-
     // MARK: - REMOTE-27.x — Native session replication and restore
 
     @Test("""

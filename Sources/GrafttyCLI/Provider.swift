@@ -6,8 +6,8 @@ import GrafttyProtocol
 struct Provider: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Save compute preferences, inspect hosts, and compare AWS Spot offers",
-        discussion: "Preferences are local to this user. These commands do not require Graftty to be running and do not launch or terminate instances.",
-        subcommands: [ProviderConfigure.self, ProviderShow.self, ProviderList.self, ProviderRemove.self, ProviderOffers.self, ProviderHosts.self])
+        discussion: "Preferences are local to this user. Discovery and preference commands work without Graftty running. Enrollment uses the running parent app. These commands do not launch or terminate instances.",
+        subcommands: [ProviderConfigure.self, ProviderShow.self, ProviderList.self, ProviderRemove.self, ProviderOffers.self, ProviderHosts.self, ProviderEnroll.self])
 }
 
 struct ProviderConfigure: ParsableCommand {
@@ -203,6 +203,56 @@ struct ProviderHosts: AsyncParsableCommand {
         if report.hosts.isEmpty { lines.append("No matching instances in configured regions.") }
         lines.append(contentsOf: report.limitations)
         return lines.joined(separator: "\n")
+    }
+}
+
+struct ProviderEnroll: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "enroll", abstract: "Enroll an explicit AWS instance through Systems Manager",
+        discussion: """
+        Requires SSM Agent, an instance role permitting Systems Manager, and a
+        prepared graftty-host installation owned by the development user.
+        Uses the running Mac app's public identities. Saves the target and SSM
+        command for retries; reuse the same operation UUID and options.
+        Grants the worker replication access only. This does not start its
+        phone-home service, launch an instance, or authorize repository refs.
+        """)
+    @Argument(help: "Compute provider: aws") var provider: String
+    @Option(help: "Existing AWS CLI profile") var profile: String
+    @Option(help: "AWS region containing the instance") var region: String
+    @Option(help: "Expected 12-digit AWS account ID") var accountId: String
+    @Option(help: "Exact EC2 instance ID") var instanceId: String
+    @Option(help: "Stable provisioning/enrollment operation UUID; reuse on retry") var operationId: String
+    @Option(help: "Non-root development user that runs graftty-host") var user: String
+    @Option(help: "Absolute graftty-host executable path on the instance") var hostExecutable: String
+    @Option(help: "Absolute graftty-host state directory on the instance") var hostStateDirectory: String
+    @Flag(help: "Print the enrolled public identity as JSON") var json = false
+
+    private var target: AWSHostEnrollmentTarget {
+        .init(profile: profile, accountID: accountId, region: region, instanceID: instanceId, user: user,
+              executable: hostExecutable, stateDirectory: hostStateDirectory)
+    }
+    func validate() throws {
+        try ProviderOutput.validate(provider)
+        guard UUID(uuidString: operationId) != nil else { throw ValidationError("--operation-id must be a UUID") }
+        try target.validate()
+    }
+    func run() async throws {
+        #if os(macOS)
+        guard let operation = UUID(uuidString: operationId) else { throw ValidationError("--operation-id must be a UUID") }
+        let parent: LinuxHostTrustRequest
+        switch try CLIEnv.sendRequest(.linuxSetupIdentity) {
+        case .linuxSetupIdentity(let identity): parent = identity
+        case .error(let error): throw ValidationError(error)
+        default: throw ValidationError("Update and relaunch Graftty to enroll an AWS host.")
+        }
+        guard parent.serverPublicKey != nil else { throw ValidationError("Update and relaunch Graftty to provide the parent's server public key.") }
+        let identity = try await AWSHostEnrollment(peers: TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory))
+            .enroll(operationID: operation, target: target, parent: parent)
+        if json { try ProviderOutput.json(identity) }
+        else { print("Enrolled \(instanceId) as \(identity.deviceID) with replication access. Operation: \(operation.uuidString)") }
+        #else
+        throw ValidationError("Run provider enroll on the parent Mac with Graftty running.")
+        #endif
     }
 }
 

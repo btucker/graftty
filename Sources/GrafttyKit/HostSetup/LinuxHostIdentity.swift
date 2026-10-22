@@ -7,10 +7,15 @@ public struct LinuxHostTrustRequest: Codable, Sendable, Equatable {
     public let displayName: String
     public let publicKey: String
 
-    public init(deviceID: String, displayName: String, publicKey: String) {
+    /// Optional server identity for worker-initiated connections to this parent.
+    /// Older OpenSSH setup only needed the client key above.
+    public let serverPublicKey: String?
+
+    public init(deviceID: String, displayName: String, publicKey: String, serverPublicKey: String? = nil) {
         self.deviceID = deviceID
         self.displayName = displayName
         self.publicKey = publicKey
+        self.serverPublicKey = serverPublicKey
     }
 
     public func validate() throws {
