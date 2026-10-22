@@ -3,8 +3,8 @@ import Foundation
 /// Resolves a worktree's team for `team register` / `team unregister` /
 /// `team hook`. Presence ownership and inbox delivery use the canonical
 /// worktree path; the member name is display-only compatibility metadata.
-/// Returns nil when the worktree is not tracked and team-enabled so the
-/// wrapper-driven CLI calls can no-op cleanly.
+/// Returns nil when the path is not a tracked, team-enabled worktree so
+/// the wrapper-driven CLI calls can no-op cleanly.
 public enum TeamPresenceResolution {
     public struct Resolved {
         public let team: TeamView
@@ -57,49 +57,5 @@ public enum TeamPresenceResolution {
             paneSessionName: paneSessionName
         )
         return prior
-    }
-}
-
-/// The agent identity `graftty attention report` files a recap under.
-public enum AttentionReportIdentity {
-    public struct UnmanagedAgent {
-        public let agentID: String
-        public let sessionID: String
-        public let runtime: TeamHookRuntime
-    }
-
-    public static func unmanagedAgent(environment: [String: String]) -> UnmanagedAgent? {
-        let session: (TeamHookRuntime, String)?
-        if let id = environment["CODEX_SESSION_ID"] ?? environment["CODEX_THREAD_ID"], !id.isEmpty {
-            session = (.codex, id)
-        } else if let id = environment["CLAUDE_SESSION_ID"], !id.isEmpty {
-            session = (.claude, id)
-        } else {
-            session = nil
-        }
-        guard let (runtime, sessionID) = session else { return nil }
-        return UnmanagedAgent(
-            agentID: TeamAgentIdentity(runtime: runtime, nativeSessionID: sessionID).rawValue,
-            sessionID: sessionID,
-            runtime: runtime
-        )
-    }
-
-    public static func currentAgentID(worktreePath: String) -> String? {
-        let environment = ProcessInfo.processInfo.environment
-        if let explicit = environment["GRAFTTY_AGENT_ID"]
-            .flatMap(TeamAgentIdentity.init(rawValue:)) {
-            return explicit.rawValue
-        }
-        let records = (try? TeamPresenceStorage(
-            rootDirectory: TeamPresenceStorage.defaultRoot()
-        ).listAll()) ?? []
-        return TeamCallerAgentIdentityResolver.resolve(
-            explicitAgentID: nil,
-            worktree: worktreePath,
-            paneSessionName: TeamRegisterPaneResolver.paneSessionName(env: environment),
-            records: records,
-            isReachable: TeamAgentReachability.isReachable
-        )
     }
 }

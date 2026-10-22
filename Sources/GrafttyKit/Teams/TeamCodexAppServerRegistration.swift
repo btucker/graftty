@@ -3,7 +3,7 @@ import Foundation
 /// Maps a Node `codex.js` launcher to the platform-native Codex executable
 /// that delivery should spawn; any other path is returned unchanged.
 public enum CodexDeliveryBinaryResolver {
-    public static var targetTriple: String {
+    static var targetTriple: String {
         #if os(macOS)
         #if arch(arm64)
         return "aarch64-apple-darwin"
@@ -25,7 +25,7 @@ public enum CodexDeliveryBinaryResolver {
         #endif
     }
 
-    public static var platformPackageName: String {
+    private static var platformPackageName: String {
         #if os(macOS)
         #if arch(arm64)
         return "@openai/codex-darwin-arm64"
@@ -47,7 +47,7 @@ public enum CodexDeliveryBinaryResolver {
         #endif
     }
 
-    public static var platformPackageDirectoryName: String {
+    static var platformPackageDirectoryName: String {
         platformPackageName.split(separator: "/").last.map(String.init) ?? ""
     }
 

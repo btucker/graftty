@@ -28,6 +28,7 @@ struct TeamPresenceResolutionTests {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-presence-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
         let storage = TeamPresenceStorage(rootDirectory: dir)
         let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
         try storage.write(.init(
@@ -56,17 +57,5 @@ struct TeamPresenceResolutionTests {
             runtime: .codex,
             paneSessionName: "graftty-aaaaaaaa"
         ) == nil)
-    }
-
-    @Test("@spec AGENT-3.20: When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from its native session ID.")
-    func codexNativeSessionProvidesFallbackIdentity() {
-        let environment = ["CODEX_SESSION_ID": "thread-1"]
-        let expected = TeamAgentIdentity(runtime: .codex, nativeSessionID: "thread-1").rawValue
-        #expect(AttentionReportIdentity.unmanagedAgent(
-            environment: environment
-        )?.agentID == expected)
-        #expect(AttentionReportIdentity.unmanagedAgent(
-            environment: environment
-        )?.sessionID == "thread-1")
     }
 }

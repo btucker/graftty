@@ -4,7 +4,7 @@ import Testing
 import GrafttyKit
 @testable import GrafttyCLI
 
-@Suite("Attention report CLI identity")
+@Suite("Attention report CLI recap validation")
 struct AttentionReportCLITests {
     @Test("@spec AGENT-3.22: When a new Attention report omits its task-specific emoji, the CLI shall reject it with an actionable error before staging it, while older saved recaps remain decodable.")
     func newReportsRequireEmoji() throws {
