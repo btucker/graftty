@@ -2078,10 +2078,7 @@ private struct RemoteMacsModelTestConnection: RemoteMacHostConnection {
 
     func applyAnswerSDP(_ sdp: String) async throws {}
 
-    func makePanesStateDriver(
-        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
-        onClosed: @escaping @Sendable (String) async -> Void
-    ) async throws -> any PanesStateChannelDriver {
+    func makePanesStateDriver(originAware _: Bool) -> any PanesStateSubscriptionDriver {
         RemoteMacsModelTestPanesStateDriver()
     }
 
@@ -2104,10 +2101,7 @@ private struct RemoteMacsModelRecordingConnection: RemoteMacHostConnection {
     func createOfferSDP() async throws -> String { "v=0\n" }
     func applyAnswerSDP(_ sdp: String) async throws {}
 
-    func makePanesStateDriver(
-        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
-        onClosed: @escaping @Sendable (String) async -> Void
-    ) async throws -> any PanesStateChannelDriver {
+    func makePanesStateDriver(originAware _: Bool) -> any PanesStateSubscriptionDriver {
         RemoteMacsModelTestPanesStateDriver()
     }
 
@@ -2232,9 +2226,13 @@ private final class SidebarSnapshotSequenceDriver: PanesStateChannelDriver, Side
     func close() {}
 }
 
-private struct RemoteMacsModelTestPanesStateDriver: PanesStateChannelDriver {
+private struct RemoteMacsModelTestPanesStateDriver: PanesStateSubscriptionDriver {
     func open() async throws {}
     func close() {}
+    func setCallbacks(
+        onSnapshot _: @escaping PanesStateChannelClient.OnSnapshot,
+        onClosed _: @escaping PanesStateChannelClient.OnClosed
+    ) {}
 }
 
 private struct RemoteMacsModelTestPaneControlDriver: PaneControlChannelDriver {

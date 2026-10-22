@@ -433,7 +433,7 @@ struct RemoteMacConnectionRegistryTests {
     func panesStateClosureDuringSetupFailsConnection() async throws {
         let connection = FakeRemoteMacHostConnection(
             offerSDP: "v=0\noffer\n",
-            closePanesDuringDriverCreationReason: "closed-during-open"
+            closePanesDuringOpenReason: "closed-during-open"
         )
         let registry = makeRegistry(
             signalingTransport: { request, _ in
@@ -795,15 +795,16 @@ private final class RemoteMacConnectionSequence: @unchecked Sendable {
     }
 }
 
-private actor RemoteMacSnapshotEmitter {
+private final class RemoteMacSnapshotEmitter: @unchecked Sendable {
+    private let lock = NSLock()
     private var onSnapshot: (@Sendable ([WorktreePanes]) async -> Void)?
 
     func install(_ onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void) {
-        self.onSnapshot = onSnapshot
+        lock.withLock { self.onSnapshot = onSnapshot }
     }
 
     func emit(_ snapshot: [WorktreePanes]) async {
-        await onSnapshot?(snapshot)
+        await lock.withLock { onSnapshot }?(snapshot)
     }
 }
 
@@ -820,15 +821,16 @@ private final class RemoteMacSnapshotRecorder: @unchecked Sendable {
     }
 }
 
-private actor RemoteMacPaneCloseEmitter {
+private final class RemoteMacPaneCloseEmitter: @unchecked Sendable {
+    private let lock = NSLock()
     private var onClosed: (@Sendable (String) async -> Void)?
 
     func install(_ onClosed: @escaping @Sendable (String) async -> Void) {
-        self.onClosed = onClosed
+        lock.withLock { self.onClosed = onClosed }
     }
 
     func emit(_ reason: String) async {
-        await onClosed?(reason)
+        await lock.withLock { onClosed }?(reason)
     }
 }
 
@@ -854,7 +856,7 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     private let offerGate: OfferGate?
     private let snapshotEmitter: RemoteMacSnapshotEmitter?
     private let paneCloseEmitter: RemoteMacPaneCloseEmitter?
-    private let closePanesDuringDriverCreationReason: String?
+    private let closePanesDuringOpenReason: String?
     private var createOfferCalls = 0
     private(set) var directEndpoints: [DirectSSHEndpoint] = []
     private var appliedAnswerStorage: [String] = []
@@ -868,14 +870,13 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
         offerGate: OfferGate? = nil,
         snapshotEmitter: RemoteMacSnapshotEmitter? = nil,
         paneCloseEmitter: RemoteMacPaneCloseEmitter? = nil,
-        closePanesDuringDriverCreationReason: String? = nil
+        closePanesDuringOpenReason: String? = nil
     ) {
         self.offerSDP = offerSDP
         self.offerGate = offerGate
         self.snapshotEmitter = snapshotEmitter
         self.paneCloseEmitter = paneCloseEmitter
-        self.closePanesDuringDriverCreationReason =
-            closePanesDuringDriverCreationReason
+        self.closePanesDuringOpenReason = closePanesDuringOpenReason
     }
 
     var createOfferCallCount: Int { createOfferCalls }
@@ -917,16 +918,12 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
         appliedAnswerStorage.append(sdp)
     }
 
-    func makePanesStateDriver(
-        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
-        onClosed: @escaping @Sendable (String) async -> Void
-    ) async throws -> any PanesStateChannelDriver {
-        await snapshotEmitter?.install(onSnapshot)
-        await paneCloseEmitter?.install(onClosed)
-        if let closePanesDuringDriverCreationReason {
-            await onClosed(closePanesDuringDriverCreationReason)
-        }
-        return FakePanesStateDriver()
+    func makePanesStateDriver(originAware _: Bool) -> any PanesStateSubscriptionDriver {
+        FakePanesStateDriver(
+            snapshotEmitter: snapshotEmitter,
+            paneCloseEmitter: paneCloseEmitter,
+            closeDuringOpenReason: closePanesDuringOpenReason
+        )
     }
 
     func makePaneControlDriver() async throws -> any PaneControlChannelDriver {
@@ -945,8 +942,38 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     }
 }
 
-private final class FakePanesStateDriver: PanesStateChannelDriver, @unchecked Sendable {
-    func open() async throws {}
+private final class FakePanesStateDriver: PanesStateSubscriptionDriver, @unchecked Sendable {
+    private let lock = NSLock()
+    private let snapshotEmitter: RemoteMacSnapshotEmitter?
+    private let paneCloseEmitter: RemoteMacPaneCloseEmitter?
+    private let closeDuringOpenReason: String?
+    private var onClosed: PanesStateChannelClient.OnClosed = { _ in }
+
+    init(
+        snapshotEmitter: RemoteMacSnapshotEmitter?,
+        paneCloseEmitter: RemoteMacPaneCloseEmitter?,
+        closeDuringOpenReason: String?
+    ) {
+        self.snapshotEmitter = snapshotEmitter
+        self.paneCloseEmitter = paneCloseEmitter
+        self.closeDuringOpenReason = closeDuringOpenReason
+    }
+
+    func setCallbacks(
+        onSnapshot: @escaping PanesStateChannelClient.OnSnapshot,
+        onClosed: @escaping PanesStateChannelClient.OnClosed
+    ) {
+        snapshotEmitter?.install(onSnapshot)
+        paneCloseEmitter?.install(onClosed)
+        lock.withLock { self.onClosed = onClosed }
+    }
+
+    func open() async throws {
+        if let closeDuringOpenReason {
+            await lock.withLock { onClosed }(closeDuringOpenReason)
+        }
+    }
+
     func close() {}
 }
 
