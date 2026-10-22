@@ -54,7 +54,9 @@ struct LinuxHostPackagingTests {
     func installerBehavior() throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["python3", repository.appendingPathComponent("scripts/linux/test-packaging.py").path]
+        // ZmxBuildTests and PackagingBuildTests run under their own specs.
+        process.arguments = ["python3", repository.appendingPathComponent("scripts/linux/test-packaging.py").path,
+                             "InstallerTests", "LibraryTests"]
         try process.run()
         process.waitUntilExit()
         #expect(process.terminationStatus == 0)
