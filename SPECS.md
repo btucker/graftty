@@ -2562,7 +2562,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.13** When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree, unpinning, and explicitly removing a pinned worktree, and explain role instruction files and retention after PR or MR resolution.
 
-**TEAM-4.14** `graftty team msg <address> <text>` shall remain accepted as a hidden alias of `team send` that sends a normal-priority `team_send` request, and `graftty team --help` shall not list it.
+**TEAM-4.14** When `graftty team msg <address> <text>` is invoked, the CLI shall send a normal-priority `team_send` request as a hidden alias of `team send` that `graftty team --help` does not list.
 
 ### TEAM-5.x — `team_*` Inbox Events
 

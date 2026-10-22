@@ -1,7 +1,7 @@
 import Testing
 @testable import GrafttyCLI
 
-@Suite("@spec TEAM-4.14: `graftty team msg <address> <text>` shall remain accepted as a hidden alias of `team send` that sends a normal-priority `team_send` request, and `graftty team --help` shall not list it.")
+@Suite("@spec TEAM-4.14: When `graftty team msg <address> <text>` is invoked, the CLI shall send a normal-priority `team_send` request as a hidden alias of `team send` that `graftty team --help` does not list.")
 struct TeamMsgAliasCLITests {
     @Test func msgStillParses() throws {
         let command = try GrafttyCLI.parseAsRoot(["team", "msg", "/r/b", "hi"])
