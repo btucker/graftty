@@ -181,8 +181,8 @@ extension GrafttyApp {
 
         // STATE-2.12: resume auto-clear timers for any persisted attention
         // that carried a `clearAfter`. The timer is in-memory only when
-        // first set (handleNotification / setAttentionForTerminal schedule
-        // a `DispatchQueue.main.asyncAfter`), so a force-quit mid-window
+        // first set (ControlRequestCore / setAttentionForTerminal schedule
+        // an in-process timer), so a force-quit mid-window
         // leaves the attention stuck in state.json with no live timer.
         // Without this resume step, the badge persists until the user
         // clicks the worktree (STATE-2.4).

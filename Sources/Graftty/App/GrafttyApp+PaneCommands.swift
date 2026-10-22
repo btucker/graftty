@@ -178,7 +178,7 @@ extension GrafttyApp {
     ) {
         // Pin a single Date so the stored attention AND the closure
         // share the same generation token (same shape as the
-        // worktree-scoped fix in handleNotification). The closure
+        // worktree-scoped `AttentionAutoClear` in ControlRequestCore). The closure
         // checks current timestamp == captured before clearing, so a
         // newer ping or an explicit clear that lands between the
         // schedule and the fire can't be wiped.

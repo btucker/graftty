@@ -3372,6 +3372,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.41** If a headless host worktree has no on-disk checkout, then the application shall omit its cached divergence stats from the published row.
 
+**REMOTE-22.42** When a headless host receives an attention-only provider hook, the application shall answer an empty hook output without consulting the team inbox, even for an untracked worktree.
+
+**REMOTE-22.43** When a headless host receives a provider hook for a pane in the caller's worktree, the application shall publish that pane busy from prompt submission through tool use and idle at a stop, a session start, or a blocking attention reason, and shall ignore panes outside the caller's worktree.
+
+**REMOTE-22.44** When a headless host renders session-start instructions for the main checkout, the application shall key them by the repository's refreshed default branch, falling back to the saved hint.
+
+**REMOTE-22.45** When a headless host records a provider's stopped turn, the application shall label it with the provider's display name and drop a stop older than that session's recorded progress.
+
+**REMOTE-22.46** When a headless host receives provider hooks for a session that raised blocking attention, the application shall keep that attention through PreToolUse and clear it on PostToolUseFailure.
+
+**REMOTE-22.47** When a headless host receives a notification with an auto-clear duration, the application shall store the normalized duration on the attention it persists.
+
+**REMOTE-22.48** When a headless host receives a team send or message for a graftty-mac address, the application shall forward it to the paired peer only for a tracked caller.
+
+**REMOTE-22.49** When a headless host receives a provider hook without a caller agent ID, the application shall resolve the agent from the provider session's presence record before delivering its targeted messages.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.
