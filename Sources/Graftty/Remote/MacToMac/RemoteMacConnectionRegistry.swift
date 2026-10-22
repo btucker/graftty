@@ -437,8 +437,8 @@ final class RemoteMacConnectionRegistry {
 
         var paneEnvironment: RemoteMacPaneEnvironment?
         do {
-            var refreshedPinnedHost: PinnedHost?
             guard let pinnedHost = pinnedHostProvider(remoteMac.id) else { throw ConnectionError.notConnected(identity) }
+            let refreshedPinnedHost: PinnedHost
             switch dialLink {
             case .direct(let direct):
                 guard pinnedHost.fingerprint == identity.fingerprint else { throw ConnectionError.notConnected(identity) }
@@ -449,9 +449,6 @@ final class RemoteMacConnectionRegistry {
                 refreshed.lastConnectedAt = now()
                 refreshedPinnedHost = refreshed
             case .webRTC(let webRTC):
-                let offerSDP = try await webRTC.createOfferSDP()
-                try ensureCurrentAttempt(attemptID, identity: identity)
-                let answerSDP: String
                 var routes: [RemoteConnectionRoute] = []
                 if let lastSuccessful = remoteMac.lastSuccessfulRoute {
                     routes.append(lastSuccessful)
@@ -461,26 +458,18 @@ final class RemoteMacConnectionRegistry {
                 if routes.isEmpty {
                     routes.append(RemoteConnectionRoute(kind: .lan, baseURL: try requiredBaseURL(remoteMac, identity: identity)))
                 }
-                let exchange = try await signalingClient.authenticatedExchange(
+                refreshedPinnedHost = try await RemoteHostDialer.negotiate(
+                    webRTC,
+                    signaling: signalingClient,
+                    pinnedHost: pinnedHost,
                     routes: routes,
-                    hostDeviceID: remoteMac.id,
-                    hostPublicKey: pinnedHost.publicKey,
-                    clientDeviceID: clientDeviceID,
                     clientKey: clientKey,
-                    sdp: offerSDP,
-                    replacesExistingConnection: replacingExistingHostConnection,
-                    wakeOnLAN: pinnedHost.wakeOnLAN
-                )
-                var refreshed = pinnedHost
-                refreshed.routes = exchange.answer.routes
-                refreshed.lastSuccessfulRoute = exchange.route
-                refreshed.wakeOnLAN = exchange.wakeOnLAN
-                refreshed.lastConnectedAt = now()
-                refreshedPinnedHost = refreshed
-                answerSDP = exchange.answer.sdp
-                try ensureCurrentAttempt(attemptID, identity: identity)
-                try await webRTC.applyAnswerSDP(answerSDP)
-                try ensureCurrentAttempt(attemptID, identity: identity)
+                    clientDeviceID: clientDeviceID,
+                    replacingExistingConnection: replacingExistingHostConnection,
+                    connectedAt: now
+                ) {
+                    try ensureCurrentAttempt(attemptID, identity: identity)
+                }
             }
             let environment = await paneEnvironmentBuilder(
                 connection,
@@ -504,13 +493,8 @@ final class RemoteMacConnectionRegistry {
             guard !environment.isEmpty else {
                 throw ConnectionError.paneEnvironmentUnavailable(identity)
             }
-            if let refreshedPinnedHost {
-                do {
-                    try pinnedHostUpdater?(refreshedPinnedHost)
-                } catch PinnedHostStore.Error.notFound {
-                    // Trust was revoked while negotiation was in flight.
-                    throw PinnedHostStore.Error.notFound
-                } catch {
+            if let pinnedHostUpdater {
+                try RemoteHostDialer.persistRefreshedPin(refreshedPinnedHost, using: pinnedHostUpdater) { error in
                     NSLog(
                         "[Graftty] connected to remote Mac, but could not persist route metadata: %@",
                         String(describing: error)

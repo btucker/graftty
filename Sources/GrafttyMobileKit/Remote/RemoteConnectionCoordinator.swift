@@ -2,7 +2,6 @@
 import CryptoKit
 import Foundation
 import GrafttyProtocol
-import WebRTC
 import os
 
 public enum RemoteWorktreeLoadStage: Sendable, Equatable {
@@ -616,8 +615,9 @@ public final class RemoteConnectionCoordinator {
     }
 
     /// Full negotiation body: build the connection, wire the terminal-state
-    /// observer BEFORE `createOffer()` (so no drop between construction and
-    /// observation), exchange SDP via `signaling`, register, then
+    /// observer BEFORE `RemoteHostDialer.negotiate` creates the offer (so
+    /// no drop between construction and observation), exchange SDP via
+    /// `signaling`, register, then
     /// re-verify the connection is still alive post-registration. Any
     /// failure — including a `503`/busy signaling response, or the
     /// connection having died in the gap between registering and
@@ -652,34 +652,17 @@ public final class RemoteConnectionCoordinator {
         }
 
         do {
-            let offer = try await connection.createOffer()
-            let exchange = try await signaling.authenticatedExchange(
+            let refreshedPin = try await RemoteHostDialer.negotiate(
+                connection,
+                signaling: signaling,
+                pinnedHost: pinnedHost,
                 routes: routes,
-                hostDeviceID: pinnedHost.id,
-                hostPublicKey: pinnedHost.publicKey,
-                clientDeviceID: clientDeviceID,
                 clientKey: clientKey,
-                sdp: offer.sdp,
-                replacesExistingConnection: replacingExistingConnection,
-                wakeOnLAN: pinnedHost.wakeOnLAN
+                clientDeviceID: clientDeviceID,
+                replacingExistingConnection: replacingExistingConnection,
+                connectedAt: now
             )
-            try await connection.applyAnswer(
-                RTCSessionDescription(
-                    type: .answer,
-                    sdp: exchange.answer.sdp
-                )
-            )
-            var refreshedPin = pinnedHost
-            refreshedPin.routes = exchange.answer.routes
-            refreshedPin.lastSuccessfulRoute = exchange.route
-            refreshedPin.wakeOnLAN = exchange.wakeOnLAN
-            refreshedPin.lastConnectedAt = now()
-            do {
-                try pinnedHostStore.update(refreshedPin)
-            } catch PinnedHostStore.Error.notFound {
-                // Trust was revoked while negotiation was in flight.
-                throw PinnedHostStore.Error.notFound
-            } catch {
+            try RemoteHostDialer.persistRefreshedPin(refreshedPin, using: pinnedHostStore.update) { error in
                 Self.logger.warning(
                     "connected to host \(host.id, privacy: .public), but could not persist route metadata: \(String(describing: error), privacy: .public)"
                 )
@@ -720,7 +703,7 @@ public final class RemoteConnectionCoordinator {
         // path instead of `invalidatedAttempts`. What THIS check guards
         // against is different — a connection that went terminal on its
         // own (ICE failed, DataChannel closed) in the gap between
-        // `applyAnswer` succeeding and this line, independent of any
+        // the dialer applying the answer and this line, independent of any
         // `invalidate` call.
         let state = await connection.state
         if state.isTerminal {
