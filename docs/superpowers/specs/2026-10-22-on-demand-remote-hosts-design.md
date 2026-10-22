@@ -49,7 +49,11 @@ The Dev Container CLI adapter now resolves selected JSONC configuration, runs im
 
 Relative worktrees require compatible Git versions on the host and inside the container. The optional container shell does not yet provide Graftty agent integration, independent agent login automation, or durable native session mounts. Tests use a fake container CLI and real temporary Git repositories; the local Docker daemon was unavailable for a live container smoke test.
 
-The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.8`, and `REMOTE-24.10` through `REMOTE-24.19`, plus `REMOTE-25.1`, `REMOTE-25.6`, `REMOTE-25.7`, and `REMOTE-28.1`. The remaining disabled inventory entries still describe future behavior.
+The parent-side Git delegation store persists the expected device and key fingerprint, repository ID, remote worktree, exact branch refs, assignment generation, and expiry. It reloads under a process lock on every access, rejects an entire request if any ref is unauthorized, and retains revocation across restarts. Reassignment advances the generation by one; changed retries and older generations fail. Ref and path comparisons preserve their UTF-8 bytes. This authorization component is tested locally; it is not yet connected to a Git transfer endpoint or origin publication.
+
+Dev Container subprocesses opt into cancellation so host shutdown can terminate a running CLI command. Other CLI callers retain their existing completion behavior. A canceled Docker command can leave resources on the daemon; the placement remains uncertain and its operation labels support later inspection and cleanup.
+
+The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.8`, and `REMOTE-24.10` through `REMOTE-24.19`, plus `REMOTE-25.1`, `REMOTE-25.6`, `REMOTE-25.7`, `REMOTE-26.10`, `REMOTE-26.11`, and `REMOTE-28.1`. The remaining disabled inventory entries still describe future behavior.
 
 ## Agreed direction
 

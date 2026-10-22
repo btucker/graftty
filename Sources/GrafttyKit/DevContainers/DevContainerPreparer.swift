@@ -11,7 +11,7 @@ import Crypto
 public actor DevContainerPreparer {
     private let executor: any CLIExecutor
     private var preparing: Set<String> = []
-    public init(executor: any CLIExecutor = CLIRunner()) { self.executor = executor }
+    public init(executor: any CLIExecutor = CLIRunner(terminatesOnCancellation: true)) { self.executor = executor }
 
     public func checkRelativeWorktreeSupport(at workspace: String) async throws {
         for command in ["read-configuration", "up", "exec"] {

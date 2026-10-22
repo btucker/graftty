@@ -6,6 +6,26 @@ import Foundation
 struct CLIRunnerTests {
     let runner = CLIRunner()
 
+    @Test("@spec CLI-1.4: When a CLI runner explicitly enables cancellation, the application shall terminate its subprocess and propagate cancellation instead of waiting for the command timeout.")
+    func optInCancellationStopsAnAlreadyRunningCommand() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("cli-cancel-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appendingPathComponent("started")
+        let runner = CLIRunner(terminatesOnCancellation: true)
+        let task = Task {
+            try await runner.run(command: "/bin/sh", args: ["-c", "printf ready > \"$1\"; exec sleep 30", "test", marker.path],
+                                 at: root.path, timeout: .seconds(5))
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        task.cancel()
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+    }
+
     @Test func echoesStdout() async throws {
         let output = try await runner.run(command: "echo", args: ["hello"], at: NSTemporaryDirectory())
         #expect(output.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "hello")

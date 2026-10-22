@@ -5,7 +5,8 @@ import Foundation
 /// Prepends common install directories so Finder-launched apps can find
 /// Homebrew-installed tools like `gh` and `glab`.
 public struct CLIRunner: CLIExecutor {
-    public init() {}
+    private let terminatesOnCancellation: Bool
+    public init(terminatesOnCancellation: Bool = false) { self.terminatesOnCancellation = terminatesOnCancellation }
 
     public func run(
         command: String,
@@ -91,8 +92,11 @@ public struct CLIRunner: CLIExecutor {
                 arguments: [command] + args,
                 directory: directory,
                 timeout: timeout,
-                timeoutLabel: command
+                timeoutLabel: command,
+                terminatesOnCancellation: terminatesOnCancellation
             ))
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let error as CLIError {
             throw error
         } catch {
