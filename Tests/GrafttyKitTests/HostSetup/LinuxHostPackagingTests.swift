@@ -97,12 +97,36 @@ struct LinuxHostPackagingTests {
 
     @Test("@spec DIST-4.3: When CI or a release builds Linux artifacts, the workflows shall build and verify x86_64 and aarch64 archives on Ubuntu 24.04 before release upload.")
     func architectureWorkflowAndReleaseHandoff() throws {
-        let workflow = try String(contentsOf: repository.appendingPathComponent(".github/workflows/linux.yml"), encoding: .utf8)
-        let release = try String(contentsOf: repository.appendingPathComponent(".github/workflows/release.yml"), encoding: .utf8)
+        let workflow = try repositoryText(".github/workflows/linux.yml")
+        let release = try repositoryText(".github/workflows/release.yml")
         #expect(workflow.contains("runner: ubuntu-24.04\n"))
         #expect(workflow.contains("runner: ubuntu-24.04-arm\n"))
         #expect(workflow.contains("scripts/linux/smoke-test.sh"))
         #expect(release.contains("needs: [release, linux-build]"))
         #expect(release.contains("linux-artifacts/*.tar.gz.sha256"))
+    }
+
+    @Test("@spec DIST-4.9: When the Linux smoke test installs Git inside the fresh container, the script shall run every apt-get command under a kill-backed timeout with apt retries and a per-connection timeout shorter than that bound, and shall print the apt output with the exit status on failure, so a mirror stall fails fast with a diagnostic instead of consuming the job timeout in silence.")
+    func smokeTestBoundsAptStep() throws {
+        let lines = try repositoryText("scripts/linux/smoke-test.sh")
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("#") }
+        let aptCommands = lines.filter { $0.contains("apt-get ") }
+        #expect(!aptCommands.isEmpty)
+        for command in aptCommands {
+            #expect(command.hasPrefix("apt_bounded apt-get "), "unbounded apt command: \(command)")
+        }
+        let bound = try #require(lines.first { $0.hasPrefix("timeout ") })
+        #expect(bound.contains(" -k "))
+        #expect(bound.contains(" \"$@\" "))
+        #expect(bound.contains("Acquire::Retries="))
+        #expect(bound.contains("Acquire::http::Timeout="))
+        #expect(bound.contains("</dev/null"))
+        #expect(lines.contains("cat /tmp/apt.log >&2"))
+    }
+
+    private func repositoryText(_ relativePath: String) throws -> String {
+        try String(contentsOf: repository.appendingPathComponent(relativePath), encoding: .utf8)
     }
 }

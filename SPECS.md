@@ -1514,6 +1514,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-4.8** When a Linux zmx build restores compiled artifacts, the release scripts shall execute the unit tests again, retain format validation and ReleaseSafe compilation, and isolate cache entries by architecture and build inputs.
 
+**DIST-4.9** When the Linux smoke test installs Git inside the fresh container, the script shall run every apt-get command under a kill-backed timeout with apt retries and a per-connection timeout shorter than that bound, and shall print the apt output with the exit status on failure, so a mirror stall fails fast with a diagnostic instead of consuming the job timeout in silence.
+
 ## WEB — Web Access
 
 ### WEB-1.x — Binding
