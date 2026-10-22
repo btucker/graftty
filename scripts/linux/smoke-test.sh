@@ -29,12 +29,13 @@ graftty-host setup --json --runtime-directory /tmp/graftty-socket
 # timeout defaults to 120 s, so it is lowered well below the outer bound;
 # otherwise timeout(1) would kill apt before its retries could ever run.
 apt_timeout=120
+apt_log="${apt_log:-/tmp/apt.log}"
 apt_bounded() {
     local status=0
-    timeout -k 10 "$apt_timeout" "$@" -o Acquire::Retries=3 -o Acquire::http::Timeout=20 </dev/null >/tmp/apt.log 2>&1 || status=$?
+    timeout -k 10 "$apt_timeout" "$@" -o Acquire::Retries=3 -o Acquire::http::Timeout=20 </dev/null >"$apt_log" 2>&1 || status=$?
     if (( status != 0 )); then
         echo "apt step failed (exit $status; 124 = timed out after $apt_timeout s): $*" >&2
-        cat /tmp/apt.log >&2
+        cat "$apt_log" >&2
         return "$status"
     fi
 }
