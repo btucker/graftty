@@ -36,7 +36,6 @@ public actor DirectSSHHostConnection {
         setState(.connecting)
         let key = clientKey
         let fingerprint = expectedHostFingerprint
-        var connectingChannel: Channel?
         do {
             let channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
                 .connectTimeout(.seconds(10))
@@ -54,9 +53,10 @@ public actor DirectSSHHostConnection {
                         try channel.pipeline.syncOperations.addHandler(DirectSSHAuthenticationHandler(waiter: waiter, handlerBox: DirectSSHHandlerBox(handler)))
                     }
                 }.connect(host: host, port: port).get()
-            connectingChannel = channel
-            guard !state.isTerminal else { throw CancellationError() }
+            // Owned before the terminal check so `disposeTransport()` below
+            // closes it if `close()` ran during the dial.
             self.channel = channel
+            guard !state.isTerminal else { throw CancellationError() }
             let authentication = try await channel.pipeline.handler(type: DirectSSHAuthenticationHandler.self).get()
             handlerBox = authentication.handlerBox
             channel.closeFuture.whenComplete { [weak self] _ in Task { await self?.transportClosed() } }
@@ -67,9 +67,6 @@ public actor DirectSSHHostConnection {
             setState(.connected)
         } catch {
             setState(.failed(reason: String(describing: error)))
-            // `disposeTransport()`, here or in a concurrent `close()`, owns
-            // waiting for the channel; don't await a second close of it.
-            connectingChannel?.close(promise: nil)
             await disposeTransport()
             throw error
         }

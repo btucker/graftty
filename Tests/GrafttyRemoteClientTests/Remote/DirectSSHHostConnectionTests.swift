@@ -11,7 +11,7 @@ import Testing
 @testable import GrafttyRemoteClient
 
 struct DirectSSHHostConnectionTests {
-    @Test("@spec REMOTE-20.15: When a direct SSH connection dials its host, the application shall run the connection on NIO's shared event loop group rather than starting an event-loop thread per connection.")
+    @Test("@spec REMOTE-20.15: When a direct SSH connection dials its host, the application shall run the connection on NIO's shared event loop group rather than starting an event-loop thread per connection.", .timeLimit(.minutes(1)))
     func dialsOnSharedEventLoopGroup() async throws {
         let host = try await SilentSSHHost.start()
         let (connection, dial) = host.dial()
@@ -25,7 +25,7 @@ struct DirectSSHHostConnectionTests {
         try await host.stop()
     }
 
-    @Test("@spec REMOTE-20.16: If a direct SSH connection is closed while it is still waiting for authentication, then the pending connect shall fail and return rather than wait forever.")
+    @Test("@spec REMOTE-20.16: If a direct SSH connection is closed while it is still waiting for authentication, then the pending connect shall fail and return rather than wait forever.", .timeLimit(.minutes(1)))
     func closeDuringAuthenticationEndsConnect() async throws {
         let host = try await SilentSSHHost.start()
         let (connection, dial) = host.dial()
