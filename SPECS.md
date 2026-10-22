@@ -1254,7 +1254,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONFIG-2.6** The application shall resolve GrafttyKit's SwiftPM resource bundle from the packaged `.app` layout (`Contents/Resources/`), falling back to `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not trap on SwiftPM's generated accessor (which probes only the `.app` root and the compiling machine's `.build` path — neither present once shipped).
 
-**CONFIG-2.7** If GrafttyKit's resource bundle uses either SwiftPM's flat layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's build system, then the application shall locate the bundled web client assets, agent plugin payload, and vendored ghostty runtime resources.
+**CONFIG-2.7** If GrafttyKit's resource bundle uses either SwiftPM's flat layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's build system, then the application shall locate the bundled web client assets, agent plugin payload, Codex wrapper template, and vendored ghostty runtime resources.
 
 ## DIVERGE — Worktree Divergence Indicator
 
@@ -3931,6 +3931,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.56** When Graftty materializes a provider team skill, the skill shall direct agents to use STE-inspired controlled English with direct requests, one instruction per sentence, consistent technical terms, conditions before actions, and factual results that distinguish passed, failed, pending, and not-run checks.
 
 **AGENT-6.57** When `graftty pane add --agent` launches an agent with an initial task, the application shall save that task as a durable runtime-addressed inbox row only if no live agent of the same runtime already owns automatic delivery in the worktree and no initial task for that runtime is still pending there, so an existing implementer never receives or supersedes the added agent's task.
+
+**AGENT-6.58** When Graftty renders the Codex launch wrapper from its bundled shell template, the application shall substitute every placeholder in one pass, never expand placeholder text inside a substituted value, and fail when the template and the supplied values disagree.
 
 ## CLI — CLI
 
