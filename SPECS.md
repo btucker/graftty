@@ -918,6 +918,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.28** When a pane added with `graftty pane add --agent` is destroyed, the application shall delete that pane's staged agent prompt file and withdraw its pending durable initial task, so a pane closed before its agent starts leaves no task behind for the next agent of that runtime.
 
+**ATTN-1.29** If the application answers a CLI request with a response of a different type, then the CLI shall print `Unexpected <type> response for <command>` naming the wire type it received, and exit with code 1.
+
 ### ATTN-2.x — Communication Protocol
 
 **ATTN-2.1** The application shall listen on a Unix domain socket at `~/Library/Application Support/Graftty/graftty.sock`.

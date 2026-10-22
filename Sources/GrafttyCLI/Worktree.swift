@@ -185,58 +185,48 @@ struct WorktreeAdd: ParsableCommand {
     ) throws {
         var response = initialResponse
         while true {
-            switch response {
-            case .worktreeCreate(let operation):
-                switch operation.state {
-                case .pending:
-                    if !wait {
-                        let path = WorktreeAgentLaunchCommand.shellLiteral(operation.worktreePath)
-                        let address = WorktreeAgentLaunchCommand.shellLiteral(operation.messageAddress)
-                        writeLine("pending operation=\(operation.operationID)  worktree=\(path)  address=\(address)")
-                        if let agent {
-                            writeLine("agent=\(agent)  launch=after-worktree-ready  message-with=graftty team send --stdin \(address)")
-                            writeLine("handoff=pending  parent-action=pause delegated scope and confirm child reachability with graftty team list --json")
-                        }
-                        return
-                    }
-                    guard Date() < deadline else {
-                        CLIEnv.printError(
-                            "timed out waiting for worktree creation; operation \(operation.operationID) may still finish"
-                        )
-                        throw ExitCode(1)
-                    }
-                    sleep(0.1)
-                    if let sendStatus {
-                        response = try sendStatus(operation.operationID)
-                    } else {
-                        response = try Self.sendRequestRetryingTimeout(
-                            statusRequest(operationID: operation.operationID),
-                            operationID: operation.operationID,
-                            deadline: deadline
-                        )
-                    }
-                case .ready:
-                    for line in Self.successOutputLines(
-                        worktreePath: operation.worktreePath,
-                        messageAddress: operation.messageAddress,
-                        agent: agent
-                    ) {
-                        writeLine(line)
+            let operation = try CLIEnv.expect(response, for: "worktree add") {
+                if case .worktreeCreate(let operation) = $0 { operation } else { nil }
+            }
+            switch operation.state {
+            case .pending:
+                if !wait {
+                    let path = WorktreeAgentLaunchCommand.shellLiteral(operation.worktreePath)
+                    let address = WorktreeAgentLaunchCommand.shellLiteral(operation.messageAddress)
+                    writeLine("pending operation=\(operation.operationID)  worktree=\(path)  address=\(address)")
+                    if let agent {
+                        writeLine("agent=\(agent)  launch=after-worktree-ready  message-with=graftty team send --stdin \(address)")
+                        writeLine("handoff=pending  parent-action=pause delegated scope and confirm child reachability with graftty team list --json")
                     }
                     return
-                case .failed:
-                    CLIEnv.printError(operation.error ?? "worktree creation failed")
+                }
+                guard Date() < deadline else {
+                    CLIEnv.printError(
+                        "timed out waiting for worktree creation; operation \(operation.operationID) may still finish"
+                    )
                     throw ExitCode(1)
                 }
-            case .error(let message):
-                CLIEnv.printError(message)
-                throw ExitCode(1)
-            case .serverBusy:
-                CLIEnv.printError(ResponseMessage.serverBusyMessage)
-                throw ExitCode(1)
-            case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
-                 .teamInbox, .worktreeRemove, .worktreeCreateRetry:
-                CLIEnv.printError("Unexpected response for worktree add")
+                sleep(0.1)
+                if let sendStatus {
+                    response = try sendStatus(operation.operationID)
+                } else {
+                    response = try Self.sendRequestRetryingTimeout(
+                        statusRequest(operationID: operation.operationID),
+                        operationID: operation.operationID,
+                        deadline: deadline
+                    )
+                }
+            case .ready:
+                for line in Self.successOutputLines(
+                    worktreePath: operation.worktreePath,
+                    messageAddress: operation.messageAddress,
+                    agent: agent
+                ) {
+                    writeLine(line)
+                }
+                return
+            case .failed:
+                CLIEnv.printError(operation.error ?? "worktree creation failed")
                 throw ExitCode(1)
             }
         }
@@ -477,39 +467,29 @@ struct WorktreeRemove: ParsableCommand {
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
 
         while true {
-            switch response {
-            case .worktreeRemove(let operation):
-                switch operation.state {
-                case .pending:
-                    guard Date() < deadline else {
-                        CLIEnv.printError(
-                            "timed out waiting for worktree removal; operation \(operation.operationID) may still finish"
-                        )
-                        throw ExitCode(1)
-                    }
-                    Thread.sleep(forTimeInterval: 0.1)
-                    response = try CLIEnv.sendRequest(
-                        .worktreeRemoveStatus(operationID: operation.operationID)
+            let operation = try CLIEnv.expect(response, for: "worktree remove") {
+                if case .worktreeRemove(let operation) = $0 { operation } else { nil }
+            }
+            switch operation.state {
+            case .pending:
+                guard Date() < deadline else {
+                    CLIEnv.printError(
+                        "timed out waiting for worktree removal; operation \(operation.operationID) may still finish"
                     )
-                case .removed:
-                    let path = WorktreeAgentLaunchCommand.shellLiteral(
-                        operation.worktreePath
-                    )
-                    print("removed worktree=\(path)  branch-preserved=true")
-                    return
-                case .failed:
-                    CLIEnv.printError(Self.failureMessage(operation))
                     throw ExitCode(1)
                 }
-            case .error(let message):
-                CLIEnv.printError(message)
-                throw ExitCode(1)
-            case .serverBusy:
-                CLIEnv.printError(ResponseMessage.serverBusyMessage)
-                throw ExitCode(1)
-            case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
-                 .teamInbox, .worktreeCreate, .worktreeCreateRetry:
-                CLIEnv.printError("Unexpected response for worktree remove")
+                Thread.sleep(forTimeInterval: 0.1)
+                response = try CLIEnv.sendRequest(
+                    .worktreeRemoveStatus(operationID: operation.operationID)
+                )
+            case .removed:
+                let path = WorktreeAgentLaunchCommand.shellLiteral(
+                    operation.worktreePath
+                )
+                print("removed worktree=\(path)  branch-preserved=true")
+                return
+            case .failed:
+                CLIEnv.printError(Self.failureMessage(operation))
                 throw ExitCode(1)
             }
         }

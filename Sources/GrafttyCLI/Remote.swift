@@ -36,7 +36,7 @@ struct RemoteReconnectClient: ParsableCommand {
     }
 
     func run() throws {
-        try CLIEnv.expectOk(CLIEnv.sendRequest(.reconnectRemoteClient(target: target)))
+        try CLIEnv.expectOk(CLIEnv.sendRequest(.reconnectRemoteClient(target: target)), for: "remote reconnect-client")
         print("Reconnect requested from \(target). Check that Mac's Remote Hosts sidebar for status.")
     }
 }
@@ -66,7 +66,7 @@ struct RemoteReconnect: ParsableCommand {
     }
 
     func run() throws {
-        try CLIEnv.expectOk(CLIEnv.sendRequest(.reconnectRemoteMac(target: target)))
+        try CLIEnv.expectOk(CLIEnv.sendRequest(.reconnectRemoteMac(target: target)), for: "remote reconnect")
         print("Reconnect requested for \(target). Check the Remote Hosts sidebar for status.")
     }
 }

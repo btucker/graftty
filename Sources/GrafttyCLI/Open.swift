@@ -17,7 +17,7 @@ struct Open: ParsableCommand {
         let worktree = try Self.worktreePath(environment: environment, resolve: CLIEnv.resolveWorktree)
         try CLIEnv.expectOk(CLIEnv.sendRequest(Self.request(
             path: worktree, target: path, environment: environment
-        )))
+        )), for: "open")
         // Enqueue acknowledgment is not browser or authentication completion.
     }
 
