@@ -695,15 +695,9 @@ extension GrafttyApp {
     /// callbacks every agent in it shares: panes-state subscriptions, pane
     /// control, worktree management, and the Chrome tab broker.
     ///
-    /// `panesStateSubscribe`: emits initial snapshot, then polls
-    /// `buildWorktreePanesSnapshot` on a 1Hz cadence and re-emits when
-    /// the snapshot differs from the previously-sent one. Polling
-    /// (rather than a pub-sub source) is intentional — AppState is a
-    /// SwiftUI `@State` value type with no Combine/AsyncStream publisher,
-    /// and the `/ws` HTTP path the desktop sidebar/web client uses is
-    /// itself poll-based, so the SSH transport doesn't promise tighter
-    /// freshness than the HTTP transport already provides. A pub-sub
-    /// hook is left as a post-R6 follow-up.
+    /// `panesStateSubscribe` / `panesStateV2Subscribe`: poll their snapshots
+    /// (local panes, plus relayed remote panes for V2) through
+    /// `PanesStatePolling`. A pub-sub hook is left as a post-R6 follow-up.
     ///
     /// `paneControlMutator`: maps session-name targets to `PaneSlotID`
     /// via `TerminalManager.paneID(forSessionName:)` and dispatches to
@@ -724,36 +718,15 @@ extension GrafttyApp {
         let trustedPeerStore = services.trustedPeerStore
         let sshConnectionRegistry = services.sshConnectionRegistry
         let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { onChange in
-            // Initial snapshot fires synchronously so the first frame
-            // hits the wire before the polling loop's first sleep.
-            let snapshot: @MainActor () -> PanesStateMessage = {
+            await PanesStatePolling.subscribe(snapshot: {
                 let projects = SidebarHostController.shared.localProjects(appStateBinding.wrappedValue.repos, owner: localWorktreeOrigin)
                 let navigation = SidebarSnapshot(projects: (appStateBinding.wrappedValue.sidebarNavigation?.order ?? .init()).sorted(projects))
                 return .snapshot(buildWorktreePanesSnapshot(), sidebar: navigation)
-            }
-            let initial = await MainActor.run { snapshot() }
-            await onChange(initial)
-
-            let task = Task {
-                var last = initial
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(1))
-                    if Task.isCancelled { return }
-                    let next = await MainActor.run { snapshot() }
-                    if next != last {
-                        last = next
-                        await onChange(next)
-                    }
-                }
-            }
-            return PanesStateChannelHandler.Cancellable {
-                task.cancel()
-            }
+            }, onChange: onChange)
         }
 
-        let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe = {
-            onChange in
-            let snapshot: @MainActor () async -> PanesStateMessage = {
+        let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe = { onChange in
+            await PanesStatePolling.subscribe(snapshot: {
                 let remote = await services.remoteMacsModel.sidebarRelaySnapshot()
                 let navigation = SidebarHostController.shared.snapshot(state: appStateBinding, owner: localWorktreeOrigin, remote: remote.projects,
                     authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(services.remoteMacsModel.savedRemoteMacs.map(\.id)))
@@ -765,25 +738,7 @@ extension GrafttyApp {
                     return a == b ? $0.offset < $1.offset : a < b
                 }.map(\.element)
                 return .snapshot(sorted, sidebar: navigation)
-            }
-            let initial = await snapshot()
-            await onChange(initial)
-
-            let task = Task {
-                var last = initial
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(1))
-                    if Task.isCancelled { return }
-                    let next = await snapshot()
-                    if next != last {
-                        last = next
-                        await onChange(next)
-                    }
-                }
-            }
-            return PanesStateChannelHandler.Cancellable {
-                task.cancel()
-            }
+            }, onChange: onChange)
         }
 
         let paneControlMutator: PaneControlChannelHandler.Mutator = Self.makePaneControlMutator(
@@ -843,19 +798,13 @@ extension GrafttyApp {
                             alias: sessionName
                         )
                     }
-                    let (workingDirectoryPath, spawnConfiguration) = await MainActor.run {
-                        (terminalManager.worktreePath(forSessionName: sessionName),
-                         terminalManager.remoteSpawnConfiguration(forSessionName: sessionName))
-                    }
-                    let workingDirectory = workingDirectoryPath.map {
-                        URL(fileURLWithPath: $0, isDirectory: true)
-                    }
+                    let launch = await Self.remoteLaunch(forSessionName: sessionName, terminalManager: terminalManager)
                     let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
                         zmxExecutable: zmxExe,
                         zmxDir: zmxDir,
                         sessionName: sessionName,
-                        workingDirectory: workingDirectory,
-                        spawnConfiguration: spawnConfiguration
+                        workingDirectory: launch.workingDirectory,
+                        spawnConfiguration: launch.spawnConfiguration
                     ))
                     engine.attachmentRegistry = registry
                     try engine.start()
@@ -865,10 +814,7 @@ extension GrafttyApp {
                     if sessionName.hasPrefix("relay-pane-") {
                         return try await remoteMacsModel.openRelayedPagedTerminal(alias: sessionName)
                     }
-                    let (path, spawnConfiguration) = await MainActor.run {
-                        (terminalManager.worktreePath(forSessionName: sessionName),
-                         terminalManager.remoteSpawnConfiguration(forSessionName: sessionName))
-                    }
+                    let launch = await Self.remoteLaunch(forSessionName: sessionName, terminalManager: terminalManager)
                     // Paging attaches only to existing daemons. A newly
                     // created mobile pane must first spawn its shell.
                     var bootstrap: ZmxAttachEngine?
@@ -877,8 +823,8 @@ extension GrafttyApp {
                     if !FileManager.default.fileExists(atPath: socket) {
                         let session = ZmxAttachEngine(config: .init(
                             zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
-                            workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) },
-                            spawnConfiguration: spawnConfiguration
+                            workingDirectory: launch.workingDirectory,
+                            spawnConfiguration: launch.spawnConfiguration
                         ))
                         // Discard bootstrap output. The paged channel will
                         // obtain its own checkpoint once the daemon exists.
@@ -892,7 +838,7 @@ extension GrafttyApp {
                     }
                     let engine = PagedZmxAttachEngine(config: .init(
                         zmxExecutable: zmxExe, zmxDir: zmxDir, sessionName: sessionName,
-                        workingDirectory: path.map { URL(fileURLWithPath: $0, isDirectory: true) }
+                        workingDirectory: launch.workingDirectory
                     ))
                     engine.attachmentRegistry = registry
                     try await engine.start()
@@ -926,5 +872,17 @@ extension GrafttyApp {
             return hostAgent
         })
         return hostAgentPool
+    }
+
+    /// What a remote attach needs if it creates the zmx daemon before any
+    /// Mac renderer: the pane's worktree as the shell's working directory,
+    /// and the pane's spawn configuration.
+    @MainActor
+    private static func remoteLaunch(
+        forSessionName sessionName: String,
+        terminalManager: TerminalManager
+    ) -> (workingDirectory: URL?, spawnConfiguration: ZmxSpawnConfiguration?) {
+        (terminalManager.worktreePath(forSessionName: sessionName).map { URL(fileURLWithPath: $0, isDirectory: true) },
+         terminalManager.remoteSpawnConfiguration(forSessionName: sessionName))
     }
 }
