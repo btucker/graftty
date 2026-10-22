@@ -113,9 +113,8 @@ public struct WorktreeListContent: View {
     public let remoteConnectionProvider: RemoteConnectionProvider?
     public let remoteSnapshotProvider: RemoteWorktreeSnapshotProvider?
     public let onSelect: (WorktreePanes) -> Void
-    public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
+    public let onSelectPane: (WorktreePanes, PaneLayoutNode.Leaf) -> Void
     private let onSelectWorktreeDetail: ((WorktreePanes) -> Void)?
-    private let onSelectPaneWithWorktree: ((WorktreePanes, PaneLayoutNode.Leaf) -> Void)?
     public let onListChanged: ([WorktreePanes]) -> Void
     public let externalRefreshToken: Int
 
@@ -125,57 +124,14 @@ public struct WorktreeListContent: View {
         theme: GhosttyThemeColors? = nil,
         selectedWorktreePath: String? = nil,
         focusedPaneId: String? = nil,
-        includeRemoteWorktrees: Bool = false,
         isReadyToLoad: Bool = true,
-        remoteConnectionProvider: RemoteConnectionProvider? = nil,
-        remoteSnapshotProvider: RemoteWorktreeSnapshotProvider? = nil,
+        remote: RemoteWorktreeProviders = RemoteWorktreeProviders(),
         onSelect: @escaping (WorktreePanes) -> Void,
-        onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void,
+        onSelectPane: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void,
         onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in },
         externalRefreshToken: Int = 0,
         navigation: SidebarNavigationState? = nil,
         navigationWindowWidth: Double = 1100,
-        remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil,
-        project: SidebarProject? = nil
-    ) {
-        self.host = host
-        self.isSidebar = isSidebar
-        self.project = project
-        self.theme = theme
-        self.selectedWorktreePath = selectedWorktreePath
-        self.focusedPaneId = focusedPaneId
-        self.includeRemoteWorktrees = includeRemoteWorktrees
-        self.isReadyToLoad = isReadyToLoad
-        self.remoteConnectionProvider = remoteConnectionProvider
-        self.remoteSnapshotProvider = remoteSnapshotProvider
-        self.onSelect = onSelect
-        self.onSelectPane = onSelectPane
-        self.onSelectWorktreeDetail = nil
-        self.onSelectPaneWithWorktree = nil
-        self.onListChanged = onListChanged
-        self.externalRefreshToken = externalRefreshToken
-        self.navigation = navigation ?? SidebarNavigationState(prefix: "sidebar.mobile", collapsed: true)
-        self.navigationWindowWidth = navigationWindowWidth
-        self.remoteSidebarProvider = remoteSidebarProvider
-    }
-
-    init(
-        host: Host,
-        isSidebar: Bool = false,
-        theme: GhosttyThemeColors? = nil,
-        selectedWorktreePath: String? = nil,
-        focusedPaneId: String? = nil,
-        includeRemoteWorktrees: Bool = false,
-        isReadyToLoad: Bool = true,
-        remoteConnectionProvider: RemoteConnectionProvider? = nil,
-        remoteSnapshotProvider: RemoteWorktreeSnapshotProvider? = nil,
-        onSelect: @escaping (WorktreePanes) -> Void,
-        onSelectPaneWithWorktree: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void,
-        onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in },
-        externalRefreshToken: Int = 0,
-        navigation: SidebarNavigationState? = nil,
-        navigationWindowWidth: Double = 1100,
-        remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil,
         project: SidebarProject? = nil,
         onSelectWorktreeDetail: ((WorktreePanes) -> Void)? = nil
     ) {
@@ -185,19 +141,18 @@ public struct WorktreeListContent: View {
         self.theme = theme
         self.selectedWorktreePath = selectedWorktreePath
         self.focusedPaneId = focusedPaneId
-        self.includeRemoteWorktrees = includeRemoteWorktrees
+        self.includeRemoteWorktrees = remote.includeRemoteWorktrees
         self.isReadyToLoad = isReadyToLoad
-        self.remoteConnectionProvider = remoteConnectionProvider
-        self.remoteSnapshotProvider = remoteSnapshotProvider
+        self.remoteConnectionProvider = remote.connection
+        self.remoteSnapshotProvider = remote.snapshot
         self.onSelect = onSelect
-        self.onSelectPane = { _ in }
+        self.onSelectPane = onSelectPane
         self.onSelectWorktreeDetail = onSelectWorktreeDetail
-        self.onSelectPaneWithWorktree = onSelectPaneWithWorktree
         self.onListChanged = onListChanged
         self.externalRefreshToken = externalRefreshToken
         self.navigation = navigation ?? SidebarNavigationState(prefix: "sidebar.mobile", collapsed: true)
         self.navigationWindowWidth = navigationWindowWidth
-        self.remoteSidebarProvider = remoteSidebarProvider
+        self.remoteSidebarProvider = remote.sidebar
     }
 
     private struct PendingWorktreeRouteKey: Hashable {
@@ -761,12 +716,19 @@ public struct WorktreeListContent: View {
                 let response = try await RelayedWorktreeManagementClient.send(.open(worktreeID: target.path), using: provider)
                 guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { return false }
                 guard response == .ok else { showErrorToast("Couldn't open the worktree."); return false }
-                for _ in 0..<12 {
+                func checkCurrent() throws {
+                    guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { throw CancellationError() }
+                }
+                func fetch() async throws -> [WorktreePanes] {
                     let list = try await fetchWorktrees(host: host, remoteSnapshotProvider: remoteSnapshotProvider, includeRemoteWorktrees: includeRemoteWorktrees)
-                    guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { return false }
+                    try checkCurrent()
                     applyLoadedList(list)
-                    if let running = list.first(where: { $0.path == target.path && $0.layout != nil }) { target = running; break }
-                    try await Task.sleep(for: .milliseconds(250))
+                    return list
+                }
+                let path = target.path
+                if let running = try await WorktreeLayoutAwait.poll(rows: try await fetch(), fetch: fetch, checkCurrent: checkCurrent,
+                        ready: { rows in rows.first { $0.path == path && $0.layout != nil } }) {
+                    target = running
                 }
             }
             guard presentedHostID == requestHostID, generation == selectionIntentGeneration, target.layout != nil else { return false }
@@ -784,7 +746,7 @@ public struct WorktreeListContent: View {
                 .first(where: { $0.id == item.projectID })?.supportsWorktreeEditing == true
             guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { return false }
             if let leaf {
-                if let onSelectPaneWithWorktree { onSelectPaneWithWorktree(target, leaf) } else { onSelectPane(leaf) }
+                onSelectPane(target, leaf)
             } else if let onSelectWorktreeDetail { onSelectWorktreeDetail(target) }
             else { onSelect(target) }
             // The visit has occurred. A delayed acknowledgement must not consume
@@ -805,7 +767,9 @@ public struct WorktreeListContent: View {
             }
             return true
         } catch {
-            guard presentedHostID == requestHostID else { return false }
+            // A newer selection supersedes silently; a connection-layer
+            // cancellation still reports the failure.
+            guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { return false }
             showErrorToast("Couldn't open this request on the owning Mac.")
             return false
         }
@@ -893,11 +857,7 @@ public struct WorktreeListContent: View {
                                                 rememberWorktree(wt)
                                                 acknowledgeViewedPane(wt, leaf: leaf)
                                                 selectionIntentGeneration &+= 1
-                                                if let onSelectPaneWithWorktree {
-                                                    onSelectPaneWithWorktree(wt, leaf)
-                                                } else {
-                                                    onSelectPane(leaf)
-                                                }
+                                                onSelectPane(wt, leaf)
                                             },
                                             onReport: { showReport(wt) }
                                         )
@@ -1325,28 +1285,25 @@ public struct WorktreeListContent: View {
                 return
             }
 
-            for attempt in 0..<12 {
+            func checkCurrent() throws {
+                guard !Task.isCancelled, selectionIsCurrent() else { throw CancellationError() }
+            }
+            func fetch() async throws -> [WorktreePanes] {
                 let list = try await fetchWorktrees(
                     host: selectionHost,
                     remoteSnapshotProvider: remoteSnapshotProvider,
                     includeRemoteWorktrees: includeRemoteWorktrees
                 )
-                guard !Task.isCancelled, selectionIsCurrent() else { return }
+                try checkCurrent()
                 state = .loaded(list)
                 onListChanged(list)
-                if let opened = list.first(where: {
-                    $0.path == worktree.path
-                        && $0.state == .running
-                        && $0.layout != nil
-                }) {
-                    if selectionIsCurrent() {
-                        onSelect(opened)
-                        recordViewedStop(opened)
-                    }
-                    return
-                }
-                guard attempt < 11 else { break }
-                try await Task.sleep(for: .milliseconds(250))
+                return list
+            }
+            if let opened = try await WorktreeLayoutAwait.poll(rows: try await fetch(), fetch: fetch, checkCurrent: checkCurrent,
+                    ready: { rows in rows.first { $0.path == worktree.path && $0.state == .running && $0.layout != nil } }) {
+                onSelect(opened)
+                recordViewedStop(opened)
+                return
             }
             showErrorToast("The worktree started, but its panes are not ready.")
         } catch is CancellationError {

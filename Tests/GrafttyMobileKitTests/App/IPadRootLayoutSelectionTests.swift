@@ -74,7 +74,7 @@ struct IPadRootLayoutSelectionTests {
         let view = WorktreeListContent(
             host: sampleHost(),
             onSelect: { _ in },
-            onSelectPane: { _ in },
+            onSelectPane: { _, _ in },
             onListChanged: { _ in }
         )
         _ = view
@@ -277,14 +277,14 @@ struct IPadRootLayoutSelectionTests {
             host: sampleHost(),
             theme: GhosttyThemeColors.fallback,
             onSelect: { _ in },
-            onSelectPane: { _ in }
+            onSelectPane: { _, _ in }
         )
         #expect(themed.theme == GhosttyThemeColors.fallback)
 
         let untyped = WorktreeListContent(
             host: sampleHost(),
             onSelect: { _ in },
-            onSelectPane: { _ in }
+            onSelectPane: { _, _ in }
         )
         #expect(untyped.theme == nil)
     }
@@ -608,7 +608,7 @@ struct IPadRootLayoutSelectionTests {
             selectedWorktreePath: "/repo/feat",
             focusedPaneId: "session-xyz",
             onSelect: { _ in },
-            onSelectPane: { _ in }
+            onSelectPane: { _, _ in }
         )
         #expect(view.selectedWorktreePath == "/repo/feat")
         #expect(view.focusedPaneId == "session-xyz")

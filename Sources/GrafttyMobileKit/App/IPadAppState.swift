@@ -115,6 +115,19 @@ public final class IPadAppState {
         focusRequestCount &+= 1
     }
 
+    /// Writes the selected host, worktree and pane together; pane moves
+    /// within the selected worktree write `focusedPaneId` alone. Only a
+    /// regular-width selection requests terminal focus: its detail column
+    /// consumes `pendingFocusRequests`, while a compact terminal focuses
+    /// itself and never consumes them, so a compact request would linger and
+    /// summon the keyboard after a later regular-width transition (IPAD-8.10).
+    func select(hostID: UUID?, worktreePath: String?, paneID: String?, requestsTerminalFocus: Bool = false) {
+        selectedHostId = hostID
+        selectedWorktreePath = worktreePath
+        focusedPaneId = paneID
+        if requestsTerminalFocus { requestActiveTerminal() }
+    }
+
     private enum Keys {
         static let selectedHostId = "iPadAppState.selectedHostId"
         static let sidebarWidth = "iPadAppState.sidebarWidth"

@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyCommandUI
 import GrafttyProtocol
 
 struct MobileStopNotificationRoute: Codable, Equatable, Sendable {
@@ -35,7 +36,7 @@ enum MobileNotificationActivation {
     @MainActor static func resolve(_ route: MobileStopNotificationRoute,
         fetch: () async throws -> [WorktreePanes], reopen: (String) async throws -> Void,
         isCurrent: () -> Bool,
-        pause: () async throws -> Void = { try await Task.sleep(for: .milliseconds(250)) }
+        pause: () async throws -> Void = WorktreeLayoutAwait.pauseBetweenSnapshots
     ) async throws -> Target {
         func checkCurrent() throws {
             try Task.checkCancellation()
@@ -51,20 +52,16 @@ enum MobileNotificationActivation {
             try checkCurrent()
             rows = try await fetch()
         }
-        for attempt in 0..<12 {
-            try checkCurrent()
+        let target = try await WorktreeLayoutAwait.poll(rows: rows, fetch: fetch, checkCurrent: checkCurrent,
+                                                        pause: pause) { rows -> Target? in
             guard let row = rows.first(where: route.matches), row.state.hasOnDiskWorktree
             else { throw Failure.worktreeUnavailable }
-            if row.state == .running, row.layout?.leaves.isEmpty == false {
-                guard let pane = route.pane(in: row) else { throw Failure.paneUnavailable }
-                return .init(rows: rows, worktree: row, pane: pane)
-            }
-            guard attempt < 11 else { throw Failure.notReady }
-            try await pause()
-            try checkCurrent()
-            rows = try await fetch()
+            guard row.state == .running, row.layout?.leaves.isEmpty == false else { return nil }
+            guard let pane = route.pane(in: row) else { throw Failure.paneUnavailable }
+            return .init(rows: rows, worktree: row, pane: pane)
         }
-        throw Failure.notReady
+        guard let target else { throw Failure.notReady }
+        return target
     }
 }
 

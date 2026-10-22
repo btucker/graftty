@@ -21,8 +21,8 @@ struct WorktreeListContentTests {
         let rows = [sampleWorktree(path: "/repo/first")]
         let controller = UIHostingController(rootView: WorktreeListContent(
             host: sampleHost(), isSidebar: true,
-            remoteSnapshotProvider: { _, _ in rows },
-            onSelect: { _ in }, onSelectPane: { _ in }, navigation: navigation
+            remote: RemoteWorktreeProviders(snapshot: { _, _ in rows }),
+            onSelect: { _ in }, onSelectPane: { _, _ in }, navigation: navigation
         ).defaultAppStorage(defaults).environment(\.horizontalSizeClass, .compact))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 500, height: 700))
         window.rootViewController = controller
@@ -55,9 +55,9 @@ struct WorktreeListContentTests {
         let project = SidebarProject(id: "repo", repositoryID: "repo", name: "Repo")
         let step = ProjectStep(host: sampleHost(), project: project)
         let root = WorktreePickerView(host: step.host, coordinator: RemoteConnectionCoordinator(),
-            onSelect: { _ in }, onSelectPane: { _ in })
+            onSelect: { _ in }, onSelectPane: { _, _ in })
         let destination = WorktreePickerView(host: step.host, coordinator: root.coordinator,
-            onSelect: { _ in }, onSelectPane: { _ in }, project: step.project)
+            onSelect: { _ in }, onSelectPane: { _, _ in }, project: step.project)
         #expect(root.project == nil)
         #expect(destination.project?.id == "repo")
         let navigation = SidebarNavigationState(prefix: "project-route-\(UUID())")
@@ -107,7 +107,7 @@ struct WorktreeListContentTests {
         let view = WorktreeListContent(
             host: h,
             onSelect: { _ in },
-            onSelectPane: { _ in }
+            onSelectPane: { _, _ in }
         )
         #expect(view.host.id == h.id)
         #expect(view.externalRefreshToken == 0)
@@ -121,7 +121,7 @@ struct WorktreeListContentTests {
         let view = WorktreeListContent(
             host: sampleHost(),
             onSelect: { _ in },
-            onSelectPane: { _ in },
+            onSelectPane: { _, _ in },
             onListChanged: { list in received = list },
             externalRefreshToken: 3
         )
@@ -203,7 +203,7 @@ struct WorktreeListContentTests {
             host: h,
             coordinator: coordinator,
             onSelect: { _ in },
-            onSelectPane: { _ in }
+            onSelectPane: { _, _ in }
         )
         let requiredCoordinator: RemoteConnectionCoordinator =
             wrapper.coordinator

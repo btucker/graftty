@@ -58,7 +58,7 @@ struct RootViewSizeClassTests {
             sidebar: .init(id: "stable-target", projectID: "other-project"))
         state.selectedHostId = UUID()
         state.selectedWorktreePath = "/old"
-        RootView.applyRecentPaneTarget(.init(rows: [row], worktree: row, pane: row.layout!.leaves[1]), host: host, to: state)
+        RootView.applyActivationTarget(.init(rows: [row], worktree: row, pane: row.layout!.leaves[1]), host: host, to: state)
         let selection = try #require(RootView.compactSelection(appState: state, hosts: [host]))
         #expect(selection.host.id == host.id)
         #expect(selection.worktree?.path == row.path)

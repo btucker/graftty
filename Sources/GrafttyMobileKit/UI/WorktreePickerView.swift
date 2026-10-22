@@ -14,9 +14,8 @@ public struct WorktreePickerView: View {
     public let theme: GhosttyThemeColors?
     public let coordinator: RemoteConnectionCoordinator
     public let onSelect: (WorktreePanes) -> Void
-    public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
+    public let onSelectPane: (WorktreePanes, PaneLayoutNode.Leaf) -> Void
     private let onSelectWorktreeDetail: ((WorktreePanes) -> Void)?
-    private let onSelectPaneWithWorktree: ((WorktreePanes, PaneLayoutNode.Leaf) -> Void)?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -25,27 +24,7 @@ public struct WorktreePickerView: View {
         theme: GhosttyThemeColors? = nil,
         coordinator: RemoteConnectionCoordinator,
         onSelect: @escaping (WorktreePanes) -> Void,
-        onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void,
-        navigation: SidebarNavigationState? = nil,
-        project: SidebarProject? = nil
-    ) {
-        self.navigation = navigation
-        self.host = host
-        self.project = project
-        self.theme = theme
-        self.coordinator = coordinator
-        self.onSelect = onSelect
-        self.onSelectPane = onSelectPane
-        self.onSelectWorktreeDetail = nil
-        self.onSelectPaneWithWorktree = nil
-    }
-
-    init(
-        host: Host,
-        theme: GhosttyThemeColors? = nil,
-        coordinator: RemoteConnectionCoordinator,
-        onSelect: @escaping (WorktreePanes) -> Void,
-        onSelectPaneWithWorktree: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void,
+        onSelectPane: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void,
         navigation: SidebarNavigationState? = nil,
         project: SidebarProject? = nil,
         onSelectWorktreeDetail: ((WorktreePanes) -> Void)? = nil
@@ -56,42 +35,22 @@ public struct WorktreePickerView: View {
         self.theme = theme
         self.coordinator = coordinator
         self.onSelect = onSelect
-        self.onSelectPane = { _ in }
+        self.onSelectPane = onSelectPane
         self.onSelectWorktreeDetail = onSelectWorktreeDetail
-        self.onSelectPaneWithWorktree = onSelectPaneWithWorktree
     }
 
     public var body: some View {
         WorktreeListContent(
             host: host,
             theme: theme,
-            includeRemoteWorktrees: coordinator.isPaired(host),
             isReadyToLoad: LiveSessionReadiness.isActive(
                 scene: scenePhase,
                 gateUnlocked: gate.isUnlocked
             ),
-            remoteConnectionProvider: makeRemoteConnectionProvider(
-                coordinator: coordinator,
-                host: host,
-                sessionName: "worktree-management"
-            ),
-            remoteSnapshotProvider: makeRemoteWorktreeSnapshotProvider(
-                coordinator: coordinator,
-                host: host
-            ),
+            remote: RemoteWorktreeProviders(coordinator: coordinator, host: host),
             onSelect: onSelect,
-            onSelectPaneWithWorktree: { worktree, leaf in
-                if let onSelectPaneWithWorktree {
-                    onSelectPaneWithWorktree(worktree, leaf)
-                } else {
-                    onSelectPane(leaf)
-                }
-            },
+            onSelectPane: onSelectPane,
             navigation: navigation,
-            remoteSidebarProvider: { rows in
-                guard coordinator.isPaired(host) else { return .snapshot(rows) }
-                return await coordinator.navigationSnapshot(for: host, matching: rows)
-            },
             project: project,
             onSelectWorktreeDetail: onSelectWorktreeDetail
         )

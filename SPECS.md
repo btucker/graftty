@@ -2462,6 +2462,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-8.9** When a terminal pane remounts with zero pending focus requests (all prior requests already honored and consumed), the application shall not call becomeFirstResponder, so a keyboard the user dismissed is not re-summoned by idle-snapshot swaps or other view recreations.
 
+**IPAD-8.10** When a worktree or pane is selected at compact width, from the compact picker or a worktree context link, the application shall not add a terminal focus request to the shared app state, because only the regular-width detail column consumes those requests.
+
 ### IPAD-9.x
 
 **IPAD-9.1** When iPad selects or refreshes a paired Mac, it shall consume the host-resolved Ghostty keybindings from the authenticated `hostPresentation` response, decode raw action-name keys for forward compatibility, and expose only known `GhosttyAction` chords through `GhosttyKeybindBridge`.
