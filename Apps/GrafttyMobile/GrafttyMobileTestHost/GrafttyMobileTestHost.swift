@@ -390,7 +390,7 @@ private final class RecentPaneFixtureModel {
     }
 
     private func select(_ target: MobileNotificationActivation.Target) {
-        RootView.applyRecentPaneTarget(target, host: host, to: state)
+        RootView.applyActivationTarget(target, host: host, to: state)
         state.recentPanes.record(hostID: host.id, hostLabel: host.label, worktree: target.worktree, sessionName: target.pane.sessionName)
         path = RootView.compactSelection(appState: state, hosts: [host], showsProjectRail: false)!.path
     }

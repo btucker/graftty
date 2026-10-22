@@ -121,23 +121,13 @@ public struct IPadRootLayout: View {
                             theme: appState.theme,
                             selectedWorktreePath: appState.selectedWorktreePath,
                             focusedPaneId: appState.focusedPaneId,
-                            includeRemoteWorktrees: coordinator.isPaired(host),
                             isReadyToLoad: LiveSessionReadiness.isActive(
                                 scene: scenePhase,
                                 gateUnlocked: gate.isUnlocked
                             ),
-                            remoteConnectionProvider: makeRemoteConnectionProvider(
-                                coordinator: coordinator,
-                                host: host,
-                                sessionName: "worktree-management"
-                            ),
-                            remoteSnapshotProvider:
-                                makeRemoteWorktreeSnapshotProvider(
-                                    coordinator: coordinator,
-                                    host: host
-                                ),
+                            remote: RemoteWorktreeProviders(coordinator: coordinator, host: host),
                             onSelect: { wt in selectWorktree(wt) },
-                            onSelectPaneWithWorktree: { worktree, leaf in
+                            onSelectPane: { worktree, leaf in
                                 selectWorktree(worktree)
                                 selectPane(leaf)
                             },
@@ -152,11 +142,7 @@ public struct IPadRootLayout: View {
                             },
                             externalRefreshToken: worktreeListRefreshToken,
                             navigation: appState.sidebarNavigation,
-                            navigationWindowWidth: appState.navigationWindowWidth,
-                            remoteSidebarProvider: { rows in
-                                guard coordinator.isPaired(host) else { return .snapshot(rows) }
-                                return await coordinator.navigationSnapshot(for: host, matching: rows)
-                            }
+                            navigationWindowWidth: appState.navigationWindowWidth
                         )
                     } else {
                         Spacer()
@@ -276,9 +262,7 @@ public struct IPadRootLayout: View {
     }
 
     static func applyHostSwitch(appState: IPadAppState, to newHostId: UUID) {
-        appState.selectedHostId = newHostId
-        appState.selectedWorktreePath = nil
-        appState.focusedPaneId = nil
+        appState.select(hostID: newHostId, worktreePath: nil, paneID: nil)
         appState.latestWorktrees = []
         appState.worktreePickerProject = nil
         appState.anyWorktreeHasAttention = false
@@ -290,8 +274,7 @@ public struct IPadRootLayout: View {
         // Clear a stale selection whose path vanished server-side.
         if let path = appState.selectedWorktreePath,
            !list.contains(where: { $0.path == path }) {
-            appState.selectedWorktreePath = nil
-            appState.focusedPaneId = nil
+            appState.select(hostID: appState.selectedHostId, worktreePath: nil, paneID: nil)
         }
         // IPAD-1.17: the selected worktree is still present, but its focused
         // pane was closed/renamed on the host — fall back to the first leaf
@@ -319,24 +302,21 @@ public struct IPadRootLayout: View {
 
     static func applyWorktreeSelection(appState: IPadAppState, worktree: WorktreePanes) {
         guard !worktree.state.isInFlight else { return }
-        appState.selectedWorktreePath = worktree.path
-        appState.focusedPaneId = worktree.layout?.leaves.first?.sessionName
-        appState.requestActiveTerminal()
+        appState.select(hostID: appState.selectedHostId, worktreePath: worktree.path,
+                        paneID: worktree.layout?.leaves.first?.sessionName, requestsTerminalFocus: true)
     }
 
     static func applyPaneSelection(appState: IPadAppState, leaf: PaneLayoutNode.Leaf) {
-        if let worktree = appState.latestWorktrees.first(where: { wt in
+        let worktree = appState.latestWorktrees.first { wt in
             wt.layout?.leaves.contains { $0.sessionName == leaf.sessionName } ?? false
-        }) {
-            appState.selectedWorktreePath = worktree.path
         }
-        appState.focusedPaneId = leaf.sessionName
-        appState.requestActiveTerminal()
+        appState.select(hostID: appState.selectedHostId,
+                        worktreePath: worktree?.path ?? appState.selectedWorktreePath,
+                        paneID: leaf.sessionName, requestsTerminalFocus: true)
     }
 
     static func applyBackToWorktrees(appState: IPadAppState) {
-        appState.selectedWorktreePath = nil
-        appState.focusedPaneId = nil
+        appState.select(hostID: appState.selectedHostId, worktreePath: nil, paneID: nil)
         appState.columnVisibility = .all
     }
 

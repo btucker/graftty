@@ -197,6 +197,45 @@ func makeRemoteWorktreeSnapshotProvider(
     }
 }
 
+/// The remote I/O a worktree list needs for one host. The compact picker and
+/// the iPad sidebar both build it from the shared coordinator, so the two
+/// surfaces cannot wire a host differently.
+public struct RemoteWorktreeProviders {
+    public var includeRemoteWorktrees: Bool
+    public var connection: RemoteConnectionProvider?
+    public var snapshot: RemoteWorktreeSnapshotProvider?
+    public var sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)?
+
+    public init(
+        includeRemoteWorktrees: Bool = false,
+        connection: RemoteConnectionProvider? = nil,
+        snapshot: RemoteWorktreeSnapshotProvider? = nil,
+        sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil
+    ) {
+        self.includeRemoteWorktrees = includeRemoteWorktrees
+        self.connection = connection
+        self.snapshot = snapshot
+        self.sidebar = sidebar
+    }
+
+    @MainActor
+    init(coordinator: RemoteConnectionCoordinator, host: Host) {
+        self.init(
+            includeRemoteWorktrees: coordinator.isPaired(host),
+            connection: makeRemoteConnectionProvider(
+                coordinator: coordinator,
+                host: host,
+                sessionName: "worktree-management"
+            ),
+            snapshot: makeRemoteWorktreeSnapshotProvider(coordinator: coordinator, host: host),
+            sidebar: { rows in
+                guard coordinator.isPaired(host) else { return .snapshot(rows) }
+                return await coordinator.navigationSnapshot(for: host, matching: rows)
+            }
+        )
+    }
+}
+
 // MARK: - PaneEnvironment
 
 /// Bundles the iPad-only pane-control façade riding the per-host
