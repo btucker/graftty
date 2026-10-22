@@ -106,21 +106,24 @@ struct SSHSubsystemReplyWaiterTests {
     }
 
     @Test("@spec REMOTE-11.24: When an SSH reply deadline or cancellation wins, the client shall run its abort action before resuming the waiting caller, so a caller can never act on a channel that is about to be torn down.", arguments: AbortTrigger.allCases)
+    @available(macOS 15.0, iOS 18.0, *)
     func abortRunsBeforeTheCallerResumes(trigger: AbortTrigger) async throws {
         let deadline = ManualDeadline()
         let events = WaiterEvents()
         let order = OrderLog()
         let waiter = SSHSubsystemReplyWaiter()
-        let task = Task {
+        // The caller prefers an executor this test drains by hand, so resuming
+        // its continuation enqueues a job there synchronously. `onAbort` can
+        // then see, with no spinning and no clock, whether the caller was
+        // already resumed.
+        let executor = ManualTaskExecutor()
+        let task = Task(executorPreference: executor) {
             do {
                 try await waiter.wait(
                     scheduleTimeout: { callback in deadline.schedule(callback) },
                     timeoutError: TestError.timedOut,
                     onAbort: {
-                        // Give an already-resumed caller every chance to
-                        // record itself first; bounded, with no clock.
-                        for _ in 0..<10_000 where !order.contains("resumed") { sched_yield() }
-                        order.append("aborted")
+                        order.append(executor.pendingJobCount == 0 ? "aborted" : "aborted-after-resume")
                     },
                     start: { events.recordStart() }
                 )
@@ -128,15 +131,22 @@ struct SSHSubsystemReplyWaiterTests {
                 order.append("resumed")
             }
         }
-        await events.waitUntilStarted()
+        executor.runUntilQueueIsEmpty()
+        try #require(events.startCount == 1)
 
         switch trigger {
         case .deadline: deadline.fire()
         case .cancellation: task.cancel()
         }
-        await task.value
+        // The resume must route through `executor`, or `onAbort` could not
+        // tell whether the caller was already resumed.
+        #expect(executor.pendingJobCount == 1)
+        executor.runUntilQueueIsEmpty()
 
         #expect(order.entries == ["aborted", "resumed"])
+        // A caller that never resumed would hang `task.value`.
+        try #require(order.entries.last == "resumed")
+        await task.value
     }
 
     @Test("a reply cancels its deadline and ignores a late timeout")
@@ -196,12 +206,34 @@ private final class ManualDeadline: @unchecked Sendable {
     }
 }
 
+/// A task executor whose jobs run only when the test drains them, mirroring
+/// NIOTestUtils' package-scoped `ManualTaskExecutor`.
+@available(macOS 15.0, iOS 18.0, *)
+private final class ManualTaskExecutor: TaskExecutor, @unchecked Sendable {
+    private let lock = NSLock()
+    private var jobs: [UnownedJob] = []
+
+    var pendingJobCount: Int { lock.withLock { jobs.count } }
+
+    func enqueue(_ job: consuming ExecutorJob) {
+        let unownedJob = UnownedJob(job)
+        lock.withLock { jobs.append(unownedJob) }
+    }
+
+    /// Synchronously runs queued jobs, including any they enqueue, until none
+    /// remain. Each task preferring this executor is then suspended or done.
+    func runUntilQueueIsEmpty() {
+        while let job = lock.withLock({ jobs.isEmpty ? nil : jobs.removeFirst() }) {
+            job.runSynchronously(on: asUnownedTaskExecutor())
+        }
+    }
+}
+
 private final class OrderLog: @unchecked Sendable {
     private let lock = NSLock()
     private var log: [String] = []
 
     var entries: [String] { lock.withLock { log } }
-    func contains(_ entry: String) -> Bool { lock.withLock { log.contains(entry) } }
     func append(_ entry: String) { lock.withLock { log.append(entry) } }
 }
 
