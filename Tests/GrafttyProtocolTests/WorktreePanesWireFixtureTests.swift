@@ -29,6 +29,22 @@ struct WorktreePanesWireFixtureTests {
         #expect(current != nil)
         #expect(current == released)
     }
+
+    @Test("""
+    @spec REMOTE-13.30: If a worktree snapshot carries an attention source or timestamp without attention text, \
+    then the application shall treat the worktree as having no worktree-scoped attention.
+    """)
+    func attentionSourceWithoutTextIsNoAttention() throws {
+        let orphan = #"""
+        {"path":"/r","displayName":"r","repoDisplayName":"r","attentionSource":"agentStop","attentionTimestamp":5}
+        """#
+        let row = try JSONDecoder().decode(WorktreePanes.self, from: Data(orphan.utf8))
+        #expect(row.attentionSource == nil)
+        #expect(row.attentionTimestamp == nil)
+        #expect(row.attention == nil)
+        let reencoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(row)) as? [String: Any]
+        #expect(reencoded?.keys.contains { $0.hasPrefix("attention") } == false)
+    }
 }
 
 enum WorktreePanesWireFixture {

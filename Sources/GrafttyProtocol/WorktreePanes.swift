@@ -141,18 +141,22 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     public let prBadge: PRBadge?
     /// Divergence stats vs. the worktree's upstream refs.
     public let stats: WorktreeWireStats?
-    /// Worktree-scoped attention text (the body of `graftty notify`).
-    /// Rendered as a red capsule next to the branch label. nil when
-    /// there is no active worktree-scoped ping.
-    public let attentionText: String?
+    /// Worktree-scoped attention (the body of `graftty notify` or an agent
+    /// stop), rendered as a red capsule next to the branch label. nil when
+    /// there is no active worktree-scoped ping. On the wire it stays the flat
+    /// `attentionText` / `attentionSource` / `attentionTimestamp` keys; a
+    /// source or timestamp without text is no attention (`REMOTE-13.30`).
+    public let attention: SidebarAttentionOccurrence?
+    /// Worktree-scoped attention text; nil when there is no active ping.
+    public var attentionText: String? { attention?.text }
     /// Source of worktree-scoped attention. Optional for compatibility with
     /// older hosts; consumers conservatively treat a missing source as a
     /// user notification.
-    public let attentionSource: AttentionSource?
+    public var attentionSource: AttentionSource? { attention?.source }
     /// Timestamp of the active attention occurrence. New hosts include this
     /// so a repeated notification with identical text is still observable;
     /// nil preserves compatibility with snapshots from older hosts.
-    public let attentionTimestamp: Date?
+    public var attentionTimestamp: Date? { attention?.timestamp }
     /// nil when the worktree has no panes currently running. Published
     /// snapshots send it only for `.running` rows; the Mac sidebar's own
     /// local rows keep a stopped worktree's saved layout.
@@ -196,9 +200,9 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.isMainCheckout = isMainCheckout
         self.prBadge = prBadge
         self.stats = stats
-        self.attentionText = attentionText
-        self.attentionSource = attentionSource
-        self.attentionTimestamp = attentionTimestamp
+        self.attention = attentionText.map {
+            SidebarAttentionOccurrence(timestamp: attentionTimestamp, text: $0, source: attentionSource)
+        }
         self.layout = layout
         self.origin = origin
         self.route = route
@@ -254,18 +258,37 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.isMainCheckout = try c.decodeIfPresent(Bool.self, forKey: .isMainCheckout) ?? false
         self.prBadge = try c.decodeIfPresent(PRBadge.self, forKey: .prBadge)
         self.stats = try c.decodeIfPresent(WorktreeWireStats.self, forKey: .stats)
-        self.attentionText = try c.decodeIfPresent(String.self, forKey: .attentionText)
-        self.attentionSource = try c.decodeIfPresent(
-            AttentionSource.self,
-            forKey: .attentionSource
-        )
-        self.attentionTimestamp = try c.decodeIfPresent(
-            Date.self,
-            forKey: .attentionTimestamp
-        )
+        self.attention = try c.decodeIfPresent(String.self, forKey: .attentionText).map {
+            SidebarAttentionOccurrence(
+                timestamp: try c.decodeIfPresent(Date.self, forKey: .attentionTimestamp),
+                text: $0,
+                source: try c.decodeIfPresent(AttentionSource.self, forKey: .attentionSource))
+        }
         self.layout = try c.decodeIfPresent(PaneLayoutNode.self, forKey: .layout)
         self.origin = try c.decodeIfPresent(WorktreeOrigin.self, forKey: .origin)
         self.route = try c.decodeIfPresent(WorktreeRoute.self, forKey: .route)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(path, forKey: .path)
+        try c.encode(displayName, forKey: .displayName)
+        try c.encode(repoDisplayName, forKey: .repoDisplayName)
+        try c.encodeIfPresent(repositoryID, forKey: .repositoryID)
+        try c.encode(displayBranch, forKey: .displayBranch)
+        try c.encode(state, forKey: .state)
+        try c.encode(isMainCheckout, forKey: .isMainCheckout)
+        try c.encodeIfPresent(prBadge, forKey: .prBadge)
+        try c.encodeIfPresent(stats, forKey: .stats)
+        try c.encodeIfPresent(attention?.text, forKey: .attentionText)
+        try c.encodeIfPresent(attention?.source, forKey: .attentionSource)
+        try c.encodeIfPresent(attention?.timestamp, forKey: .attentionTimestamp)
+        try c.encodeIfPresent(layout, forKey: .layout)
+        try c.encodeIfPresent(origin, forKey: .origin)
+        try c.encodeIfPresent(route, forKey: .route)
+        try c.encodeIfPresent(sidebar, forKey: .sidebar)
+        try c.encode(ports, forKey: .ports)
+        try c.encodeIfPresent(portBindings, forKey: .portBindings)
     }
 }
 

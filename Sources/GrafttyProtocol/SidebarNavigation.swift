@@ -481,10 +481,13 @@ public enum SidebarProjection {
                     projectName: wt.repoDisplayName, worktreeName: wt.displayName, title: stop.title,
                     occurrence: stop.occurrence, isBusy: false, agentStop: stop, worktreeEmoji: wt.effectiveEmoji))
             }
-            if let text = wt.attentionText {
+            if var occurrence = wt.attention {
+                if let exact = wt.sidebar?.attentionTimestamps?["worktree"] {
+                    occurrence.timestamp = Date(timeIntervalSinceReferenceDate: exact)
+                }
                 items.append(.init(id: stable, projectID: projectID, worktreeID: wt.path, paneID: nil,
-                                   projectName: wt.repoDisplayName, worktreeName: wt.displayName, title: text,
-                                   occurrence: .init(timestamp: wt.sidebar?.attentionTimestamps?["worktree"].map(Date.init(timeIntervalSinceReferenceDate:)) ?? wt.attentionTimestamp, text: text, source: wt.attentionSource), isBusy: false, worktreeEmoji: wt.effectiveEmoji))
+                                   projectName: wt.repoDisplayName, worktreeName: wt.displayName, title: occurrence.text,
+                                   occurrence: occurrence, isBusy: false, worktreeEmoji: wt.effectiveEmoji))
             }
             for leaf in wt.layout?.leaves ?? [] where leaf.attentionText != nil || leaf.isBusy {
                 items.append(.init(id: "\(stable):\(wt.sidebar?.paneIDs?[leaf.sessionName] ?? leaf.sessionName)", projectID: projectID, worktreeID: wt.path,
