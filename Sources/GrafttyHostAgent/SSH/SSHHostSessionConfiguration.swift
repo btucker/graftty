@@ -19,6 +19,7 @@ struct SSHHostSessionConfiguration: Sendable {
     let paneControlMutator: PaneControlChannelHandler.Mutator
     let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator
     var authenticatedPlacementMutator: AuthenticatedPlacementMutator? = nil
+    var gitControl: AuthenticatedGitControl? = nil
     var chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil
     var chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { _ in }
     let ownershipStore: SessionDisplayOwnershipStore
@@ -90,6 +91,22 @@ struct SSHHostSessionConfiguration: Sendable {
                         deviceIDProvider: { peerBox.deviceID },
                         worktreeManagementAllowed: { peerBox.worktreeManagementAllowed },
                         displayKindProvider: { peerBox.displayKind },
+                        gitControlHandler: gitControl.map { callbacks -> TeamChannelHandler.Handler in
+                            { deviceID, bytes in
+                                guard !Task.isCancelled, let identity = peerBox.gitControlIdentity, identity.deviceID == deviceID else { return Data() }
+                                return await callbacks.handler(identity, bytes)
+                            }
+                        },
+                        gitControlOnConnect: { deviceID, session in
+                            guard let callbacks = gitControl, let identity = peerBox.gitControlIdentity, identity.deviceID == deviceID else {
+                                await session.close(); return
+                            }
+                            await callbacks.onConnect(identity, session)
+                        },
+                        gitControlOnDisconnect: { deviceID, sessionID in
+                            guard let callbacks = gitControl, let peer = peerBox.peer, peer.id == deviceID else { return }
+                            await callbacks.onDisconnect(.init(deviceID: peer.id, fingerprint: peer.fingerprint), sessionID)
+                        },
                         teamHandler: teamHandler,
                         teamOnConnect: teamOnConnect,
                         teamOnDisconnect: teamOnDisconnect,
@@ -129,6 +146,11 @@ final class AuthenticatedPeerBox: @unchecked Sendable {
         default:
             return .mac
         }
+    }
+
+    var gitControlIdentity: RemoteMacConnectionSummary.ID? {
+        guard let peer, peer.capabilities.worktreeManagement == .allowed, peer.kind == .mac || peer.kind == .linux else { return nil }
+        return .init(deviceID: peer.id, fingerprint: peer.fingerprint)
     }
 
     var teamAllowed: Bool {

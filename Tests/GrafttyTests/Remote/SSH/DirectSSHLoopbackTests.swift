@@ -82,6 +82,41 @@ struct DirectSSHLoopbackTests {
         await client.close(); await server.close()
     }
 
+    @Test("@spec REMOTE-26.14: When a peer opens the Git control subsystem, the host shall require worktree-management permission, derive the device and key fingerprint from SSH authentication, and keep bidirectional requests on that authenticated connection.", .timeLimit(.minutes(1)), arguments: [true, false], [true, false])
+    func gitControlUsesAuthenticatedIdentity(allowed: Bool, configured: Bool) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let peer = try f.peer(key: f.clientKey, managementAllowed: allowed)
+        try f.store.add(peer)
+        let expected = RemoteMacConnectionSummary.ID(deviceID: peer.id, fingerprint: peer.fingerprint)
+        let server = f.server()
+        if configured { await server.setGitControl(.init(handler: { identity, bytes in
+            #expect(allowed && configured && identity == expected)
+            return bytes
+        }, onConnect: { identity, session in
+            #expect(allowed && configured && identity == expected)
+            do { #expect(try await session.send(Data("reverse request".utf8)) == Data("reverse reply".utf8)) }
+            catch { Issue.record(error) }
+        })) }
+        // Updating team callbacks must retain the independently configured Git subsystem.
+        await server.setTeamMessaging(handler: { _, bytes in bytes }, onConnect: { _, _ in }, onDisconnect: { _, _ in })
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            let channel = try await client.makeGitControlClient(handler: { bytes in
+                #expect(allowed && configured && bytes == Data("reverse request".utf8))
+                return Data("reverse reply".utf8)
+            })
+            if allowed && configured {
+                try await channel.open()
+                let claimedIdentity = Data(#"{"deviceID":"forged-host","fingerprint":"forged-key"}"#.utf8)
+                #expect(try await channel.send(claimedIdentity) == claimedIdentity)
+            } else { await #expect(throws: (any Error).self) { try await channel.open() } }
+            channel.close()
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
     #if canImport(Network)
     @Test("@spec CHROME-3.3: When a paired client requests a protected Chrome port through direct-tcpip, the application shall refuse the connection and shall restore ordinary listener access after protection ends.", .timeLimit(.minutes(1)))
     func ownedChromePortIsDeniedAtTCPChannelOpen() async throws {

@@ -56,6 +56,9 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     /// Authenticated transport kind. The control envelope's kind remains
     /// caller-controlled and must not decide ownership eligibility.
     private let displayKindProvider: @Sendable () -> DisplayClientKind
+    private let gitControlHandler: TeamChannelHandler.Handler?
+    private let gitControlOnConnect: TeamChannelHandler.OnConnect
+    private let gitControlOnDisconnect: TeamChannelHandler.OnDisconnect
     private let teamHandler: TeamChannelHandler.Handler?
     private let teamOnConnect: TeamChannelHandler.OnConnect
     private let teamOnDisconnect: TeamChannelHandler.OnDisconnect
@@ -78,6 +81,9 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         deviceIDProvider: @escaping @Sendable () -> RemoteDeviceID?,
         worktreeManagementAllowed: @escaping @Sendable () -> Bool = { true },
         displayKindProvider: @escaping @Sendable () -> DisplayClientKind = { .ios },
+        gitControlHandler: TeamChannelHandler.Handler? = nil,
+        gitControlOnConnect: @escaping TeamChannelHandler.OnConnect = { _, _ in },
+        gitControlOnDisconnect: @escaping TeamChannelHandler.OnDisconnect = { _, _ in },
         teamHandler: TeamChannelHandler.Handler? = nil,
         teamOnConnect: @escaping TeamChannelHandler.OnConnect = { _, _ in },
         teamOnDisconnect: @escaping TeamChannelHandler.OnDisconnect = { _, _ in },
@@ -87,6 +93,9 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     ) {
         self.bulkChannels = bulkChannels
         self.isBulkTransport = isBulkTransport
+        self.gitControlHandler = gitControlHandler
+        self.gitControlOnConnect = gitControlOnConnect
+        self.gitControlOnDisconnect = gitControlOnDisconnect
         self.teamHandler = teamHandler
         self.teamOnConnect = teamOnConnect
         self.teamOnDisconnect = teamOnDisconnect
@@ -241,6 +250,12 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     }
 
     private static let framedSubsystems: [String: SubsystemSpec] = [
+        SSHChannelTypeNames.gitControl: SubsystemSpec(maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes) { dispatcher in
+            guard dispatcher.teamAllowed(), dispatcher.worktreeManagementAllowed(),
+                  let deviceID = dispatcher.deviceIDProvider(), let handler = dispatcher.gitControlHandler else { return nil }
+            return TeamChannelHandler(deviceID: deviceID, handler: handler,
+                onConnect: dispatcher.gitControlOnConnect, onDisconnect: dispatcher.gitControlOnDisconnect)
+        },
         SSHChannelTypeNames.chromeTabs: SubsystemSpec(
             maximumBufferSize: ChromeTabRequest.maximumRequestBytes + 4
         ) { dispatcher in

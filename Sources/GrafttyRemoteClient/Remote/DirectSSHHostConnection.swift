@@ -99,6 +99,12 @@ public actor DirectSSHHostConnection {
         let (channel, handler) = try connectedTransport()
         return WorktreeManagementChannelClient(parentChannel: channel, parentHandler: handler.handler)
     }
+    public func makeGitControlClient(handler: @escaping TeamRPCSession.Handler,
+                                     onClose: @escaping @Sendable () async -> Void = {}) throws -> TeamChannelClient {
+        let (channel, ssh) = try connectedTransport()
+        return TeamChannelClient(parentChannel: channel, parentHandler: ssh.handler,
+            subsystemName: SSHChannelTypeNames.gitControl, handler: handler, onClose: onClose)
+    }
     public func makeTeamClient(handler: @escaping @Sendable (Data) async -> Data,
                                onClose: @escaping @Sendable () async -> Void) throws -> TeamChannelClient {
         let (channel, ssh) = try connectedTransport()

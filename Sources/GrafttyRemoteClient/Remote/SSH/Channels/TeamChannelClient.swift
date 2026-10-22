@@ -4,12 +4,14 @@ import NIOConcurrencyHelpers
 import NIOCore
 import NIOSSH
 
-/// One duplex team RPC session on an already authenticated SSH connection.
+/// One duplex RPC session on an already authenticated SSH connection.
+/// Team and Git control use distinct subsystem names and callbacks.
 public final class TeamChannelClient: @unchecked Sendable {
     public enum ClientError: Error, Sendable {
         case channelClosed, subsystemRejected, timedOut, alreadyOpened
     }
 
+    private let subsystemName: String
     private let parentChannel: Channel
     private let parentHandler: NIOSSHHandler
     private let handler: TeamRPCSession.Handler
@@ -25,10 +27,12 @@ public final class TeamChannelClient: @unchecked Sendable {
     public init(
         parentChannel: Channel,
         parentHandler: NIOSSHHandler,
+        subsystemName: String = SSHChannelTypeNames.team,
         handler: @escaping TeamRPCSession.Handler,
         onClose: @escaping @Sendable () async -> Void = {},
         openTimeout: Duration = .seconds(30)
     ) {
+        self.subsystemName = subsystemName
         self.parentChannel = parentChannel
         self.parentHandler = parentHandler
         self.handler = handler
@@ -114,7 +118,7 @@ public final class TeamChannelClient: @unchecked Sendable {
             child.close(promise: nil)
             return
         }
-        child.triggerUserOutboundEvent(SSHChannelRequestEvent.SubsystemRequest(subsystem: SSHChannelTypeNames.team, wantReply: true))
+        child.triggerUserOutboundEvent(SSHChannelRequestEvent.SubsystemRequest(subsystem: subsystemName, wantReply: true))
             .whenFailure { [waiter] in waiter.finish(.failure($0)) }
     }
 
