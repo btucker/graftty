@@ -39,17 +39,21 @@ public final class ZmxLauncher: Sendable {
         self.zmxDir = zmxDir
     }
 
-    /// Convenience init that defaults `zmxDir` to
-    /// `~/Library/Application Support/Graftty/zmx/`. Used by tests that
-    /// don't care about the dir.
-    public convenience init(executable: URL) {
+    /// The app's `ZMX_DIR`: `~/Library/Application Support/Graftty/zmx/`.
+    /// The app and the CLI both derive it here so they agree on where
+    /// sessions and their logs live.
+    public static var defaultZmxDir: URL {
         let appSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let dir = appSupport
+        return appSupport
             .appendingPathComponent("Graftty", isDirectory: true)
             .appendingPathComponent("zmx", isDirectory: true)
-        self.init(executable: executable, zmxDir: dir)
+    }
+
+    /// Convenience init that defaults `zmxDir` to `defaultZmxDir`.
+    public convenience init(executable: URL) {
+        self.init(executable: executable, zmxDir: Self.defaultZmxDir)
     }
 
     /// True when the binary at `executable` exists and is executable by
