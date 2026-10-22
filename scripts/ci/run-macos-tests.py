@@ -9,6 +9,32 @@ import subprocess
 from test_plan import mac_filters, verify_swift_results, verify_xctest_results
 
 
+def swift_testing_runner():
+    """Use the installed SwiftPM runner without reloading the graph per batch.
+
+    CI already built these products in its dedicated directory. Keep discovery
+    through SwiftPM and retain its macOS runtime library search paths.
+    """
+    products = Path(".build/debug").resolve(strict=True)
+    binary = (products / "GrafttyPackageTests.xctest/Contents/MacOS/GrafttyPackageTests").resolve(strict=True)
+    swift = Path(subprocess.check_output(["xcrun", "--find", "swift"], text=True).strip())
+    helper = swift.parent.parent / "libexec/swift/pm/swiftpm-testing-helper"
+    if not helper.is_file() or not os.access(helper, os.X_OK):
+        raise FileNotFoundError(f"SwiftPM test helper is unavailable: {helper}")
+    platform = Path(subprocess.check_output(
+        ["xcrun", "--sdk", "macosx", "--show-sdk-platform-path"], text=True).strip())
+    environment = []
+    for key, paths in (("DYLD_FRAMEWORK_PATH", (platform / "Developer/Library/Frameworks",
+                                               platform / "Developer/Library/PrivateFrameworks")),
+                       ("DYLD_LIBRARY_PATH", (products, platform / "Developer/usr/lib"))):
+        value = ":".join(filter(None, (os.environ.get(key), *(str(path) for path in paths))))
+        environment.append(f"{key}={value}")
+    # /usr/bin/script strips inherited DYLD_* under SIP. Set these in its
+    # child, after creating the PTY, as SwiftPM does before starting the helper.
+    return ["/usr/bin/env", *environment, str(helper), "--test-bundle-path", str(binary),
+            "--testing-library", "swift-testing"]
+
+
 def main():
     swift = ["swift", "test", "-Xcc", os.environ["GRAFTTY_RENDERER_CONTEXT"], "--skip-build"]
     inventory = subprocess.check_output(
@@ -27,11 +53,12 @@ def main():
     (evidence / "test-plan.json").write_text(json.dumps(
         {"discoveredSwiftTests": inventory, "swiftFilters": filters,
          "discoveredXCTests": xctest_inventory, "xctestTargets": targets}, indent=2) + "\n")
+    testing_runner = swift_testing_runner()
     with open(os.devnull) as stdin:
         for index, pattern in enumerate(filters, 1):
             print(f"::group::Swift Testing batch {index}/{len(filters)}", flush=True)
-            subprocess.run(["/usr/bin/script", "-q", str(evidence / f"swift-{index}.log"), *swift,
-                            "--disable-xctest", "--no-parallel", "--filter", pattern,
+            subprocess.run(["/usr/bin/script", "-q", str(evidence / f"swift-{index}.log"), *testing_runner,
+                            "--no-parallel", "--filter", pattern,
                             "--xunit-output", str(evidence / f"swift-{index}.xml")],
                            stdin=stdin, check=True)
             print("::endgroup::", flush=True)
