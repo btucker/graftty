@@ -75,6 +75,34 @@ struct WorktreeBriefTests {
         #expect(brief.history.count == 3)
     }
 
+    @Test func legacyPurposeChangesKeepTheirAuthoredCheckpointAndIgnoreReplays() {
+        var brief = WorktreeBrief(recap: .init(title: "Context", context: "Remember the work", completed: "Started", next: "Explore"), at: start)
+        let recap = AttentionRecap(title: "Notifications", context: "Deliver agent stops", completed: "Chose push delivery", next: "Implement",
+                                   purposeChanged: true, checkpoint: "Push chosen")
+        brief.update(recap, at: start.addingTimeInterval(10))
+        #expect(brief.history.count == 1)
+        #expect(brief.history.first?.title == "Push chosen")
+        #expect(brief.history.first?.completed == "Chose push delivery")
+        let history = brief.history
+        brief.update(recap, at: start.addingTimeInterval(20))
+        #expect(brief.history == history)
+    }
+
+    @Test func updatingSavedLegacyCheckpointPreservesItsDecisions() throws {
+        let recap = AttentionRecap(title: "Context", completed: "Picked a layout", next: "Build", checkpoint: "Layout chosen")
+        let brief = WorktreeBrief(recap: recap, at: start)
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(brief)) as? [String: Any])
+        var snapshots = try #require(object["history"] as? [[String: Any]])
+        snapshots[0]["decisions"] = ["Keep source text"]
+        object["history"] = snapshots
+        var restored = try JSONDecoder().decode(WorktreeBrief.self, from: JSONSerialization.data(withJSONObject: object))
+        restored.update(.init(title: "Context", completed: "Built the chosen layout", next: "Verify", checkpoint: "Layout chosen"),
+                        at: start.addingTimeInterval(10))
+        #expect(restored.history.count == 1)
+        #expect(restored.history.first?.completed == "Built the chosen layout")
+        #expect(restored.history.first?.decisions == ["Keep source text"])
+    }
+
     @Test func routineUpdatesDoNotRewriteHistoryAndExplicitEntriesStayBounded() {
         var brief = WorktreeBrief(recap: .init(title: "Context", completed: "Started", next: "Explore"), at: start)
         for index in 0..<40 {

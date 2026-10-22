@@ -84,6 +84,7 @@ public struct SidebarSnapshot: Codable, Sendable, Equatable {
 /// @spec AGENT-3.18: When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.
 public struct AttentionRecap: Codable, Sendable, Hashable {
     /// A change worth remembering, authored separately from the current status.
+    /// @spec CONTEXT-23: When a report includes an explicit history entry, the application shall retain its headline and optional detail independently of the current brief, suppress consecutive identical entries without moving their timestamps, and preserve distinct entries and entries separated by user input.
     public struct HistoryEntry: Codable, Sendable, Hashable {
         public var headline: String
         public var detail: String?

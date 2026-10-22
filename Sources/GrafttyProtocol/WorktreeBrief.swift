@@ -56,14 +56,14 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
             heading = entry.headline
             detail = entry.detail ?? ""
             isExplicit = true
-        } else if purposeChanged {
-            heading = title
-            detail = context ?? ""
-            isExplicit = true
         } else if let checkpoint = recap.checkpoint {
             heading = checkpoint
             detail = recap.completed
             isExplicit = false
+        } else if purposeChanged {
+            heading = title
+            detail = context ?? ""
+            isExplicit = true
         } else {
             return
         }
@@ -76,7 +76,6 @@ public struct WorktreeBrief: Codable, Sendable, Hashable {
             if !isExplicit {
                 history[history.count - 1].timestamp = timestamp
                 history[history.count - 1].completed = detail
-                history[history.count - 1].decisions = []
                 return
             }
         }
