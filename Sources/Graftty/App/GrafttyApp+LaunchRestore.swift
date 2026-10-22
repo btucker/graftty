@@ -199,36 +199,25 @@ extension GrafttyApp {
 
                 if let attention = wt.attention,
                    let remaining = AttentionResumePolicy.remainingTime(for: attention, now: now) {
-                    let stamp = attention.timestamp
-                    let appStateBinding = $appState
-                    DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
-                        for ri in appStateBinding.wrappedValue.repos.indices {
-                            for wi in appStateBinding.wrappedValue.repos[ri].worktrees.indices {
-                                if appStateBinding.wrappedValue.repos[ri].worktrees[wi].path == path {
-                                    appStateBinding.wrappedValue.repos[ri].worktrees[wi]
-                                        .clearAttentionIfTimestamp(stamp)
-                                }
-                            }
-                        }
-                    }
+                    AttentionAutoClear.schedule(
+                        after: remaining,
+                        appState: $appState,
+                        worktreePath: path,
+                        stamp: attention.timestamp
+                    )
                 }
 
                 for (terminalID, attention) in wt.paneAttention {
                     guard let remaining = AttentionResumePolicy.remainingTime(for: attention, now: now) else {
                         continue
                     }
-                    let stamp = attention.timestamp
-                    let appStateBinding = $appState
-                    DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
-                        for ri in appStateBinding.wrappedValue.repos.indices {
-                            for wi in appStateBinding.wrappedValue.repos[ri].worktrees.indices {
-                                if appStateBinding.wrappedValue.repos[ri].worktrees[wi].path == path {
-                                    appStateBinding.wrappedValue.repos[ri].worktrees[wi]
-                                        .clearPaneAttentionIfTimestamp(stamp, for: terminalID)
-                                }
-                            }
-                        }
-                    }
+                    AttentionAutoClear.schedule(
+                        after: remaining,
+                        appState: $appState,
+                        worktreePath: path,
+                        pane: terminalID,
+                        stamp: attention.timestamp
+                    )
                 }
             }
         }

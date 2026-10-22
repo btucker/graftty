@@ -21,7 +21,6 @@ enum WorktreeStartResult: Equatable {
 enum PaneCommands {
     /// Shared closed-to-running transition used by local sidebar selection
     /// and authenticated remote-open requests.
-    @MainActor
     static func startWorktree(
         path: String,
         appState: Binding<AppState>,
@@ -93,7 +92,6 @@ enum PaneCommands {
 
     /// Shared split implementation used by local commands and authenticated
     /// pane-control requests. Remote callers can suppress host focus changes.
-    @MainActor
     @discardableResult
     static func splitPane(
         appState: Binding<AppState>,
@@ -173,7 +171,6 @@ enum PaneCommands {
     /// every sibling pane in the sidebar. No-op if the terminal isn't
     /// in any worktree (e.g., it was just destroyed). Auto-clears after
     /// `clearAfter` seconds.
-    @MainActor
     static func setAttentionForTerminal(
         appState: Binding<AppState>,
         terminalID: PaneSlotID,
@@ -188,36 +185,28 @@ enum PaneCommands {
         // newer ping or an explicit clear that lands between the
         // schedule and the fire can't be wiped.
         let stamp = Date()
-        for repoIdx in appState.wrappedValue.repos.indices {
-            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
-                if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                    .splitTree.containsLeaf(terminalID) {
-                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                        .setAttention(
-                            Attention(text: text, timestamp: stamp, clearAfter: clearAfter, source: source),
-                            pane: terminalID
-                        )
-                    let path = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path
-                    DispatchQueue.main.asyncAfter(deadline: .now() + clearAfter) {
-                        for ri in appState.wrappedValue.repos.indices {
-                            for wi in appState.wrappedValue.repos[ri].worktrees.indices {
-                                if appState.wrappedValue.repos[ri].worktrees[wi].path == path {
-                                    appState.wrappedValue.repos[ri].worktrees[wi]
-                                        .clearPaneAttentionIfTimestamp(stamp, for: terminalID)
-                                }
-                            }
-                        }
-                    }
-                    return
-                }
-            }
+        var path: String?
+        appState.wrappedValue.mutateWorktree(containing: terminalID) { worktree in
+            worktree.setAttention(
+                Attention(text: text, timestamp: stamp, clearAfter: clearAfter, source: source),
+                pane: terminalID
+            )
+            path = worktree.path
+        }
+        if let path {
+            AttentionAutoClear.schedule(
+                after: clearAfter,
+                appState: appState,
+                worktreePath: path,
+                pane: terminalID,
+                stamp: stamp
+            )
         }
     }
 
     /// Move a pane to the worktree whose path is the longest prefix of
     /// `newPWD`. No-op when `newPWD` matches no worktree, or matches the
     /// pane's current home.
-    @MainActor
     static func reassignPaneByPWD(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
@@ -385,7 +374,6 @@ enum PaneCommands {
     /// direction the keypress is ignored — matching upstream Ghostty and
     /// terminal multiplexers like tmux, which leave focus put rather than
     /// wrapping to an unrelated pane.
-    @MainActor
     static func navigatePane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
@@ -422,7 +410,6 @@ enum PaneCommands {
     /// items promise. Kept separate from the spatial `navigatePane` so
     /// TERM-7.3 (arrow-key spatial nav) doesn't silently change the
     /// round-robin semantics shared by fixed and host tab-action chords.
-    @MainActor
     static func navigatePaneInTreeOrder(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
@@ -452,32 +439,26 @@ enum PaneCommands {
         }
     }
 
-    @MainActor
     static func toggleZoom(appState: Binding<AppState>, on terminalID: PaneSlotID) {
-        mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
-            var copy = wt
-            copy.splitTree = wt.splitTree.togglingZoom(at: terminalID)
-            return copy
+        appState.wrappedValue.mutateWorktree(containing: terminalID) { wt in
+            wt.splitTree = wt.splitTree.togglingZoom(at: terminalID)
         }
     }
 
-    @MainActor
     static func equalizeSplits(
         appState: Binding<AppState>,
         around terminalID: PaneSlotID,
         preserveZoom: Bool = false
     ) {
-        mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
-            var copy = wt
-            copy.splitTree = wt.splitTree.equalizing()
-            if preserveZoom, let zoomed = wt.splitTree.zoomed {
-                copy.splitTree = copy.splitTree.withZoom(zoomed)
+        appState.wrappedValue.mutateWorktree(containing: terminalID) { wt in
+            let zoomed = wt.splitTree.zoomed
+            wt.splitTree = wt.splitTree.equalizing()
+            if preserveZoom, let zoomed {
+                wt.splitTree = wt.splitTree.withZoom(zoomed)
             }
-            return copy
         }
     }
 
-    @MainActor
     @discardableResult
     static func resizeSplit(
         appState: Binding<AppState>,
@@ -496,44 +477,24 @@ enum PaneCommands {
             ?? NSApp.keyWindow?.contentView?.bounds
             ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
         var didResize = false
-        mutateWorktreeContaining(appState: appState, leaf: target) { wt in
-            var copy = wt
+        appState.wrappedValue.mutateWorktree(containing: target) { wt in
             do {
-                copy.splitTree = try wt.splitTree.resizing(
+                let zoomed = wt.splitTree.zoomed
+                wt.splitTree = try wt.splitTree.resizing(
                     target: target,
                     direction: direction,
                     pixels: pixels,
                     ancestorBounds: bounds
                 )
-                if preserveZoom, let zoomed = wt.splitTree.zoomed {
-                    copy.splitTree = copy.splitTree.withZoom(zoomed)
+                if preserveZoom, let zoomed {
+                    wt.splitTree = wt.splitTree.withZoom(zoomed)
                 }
                 didResize = true
             } catch {
                 // No matching orientation ancestor — silent no-op, matches Ghostty.
             }
-            return copy
         }
         return didResize
-    }
-
-    /// Find the worktree that owns `leaf` and apply `transform` to it.
-    /// Idempotent and safe for callers that don't know which worktree owns a pane.
-    @MainActor
-    private static func mutateWorktreeContaining(
-        appState: Binding<AppState>,
-        leaf: PaneSlotID,
-        transform: (WorktreeEntry) -> WorktreeEntry
-    ) {
-        for repoIdx in appState.wrappedValue.repos.indices {
-            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
-                if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree.containsLeaf(leaf) {
-                    let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx] = transform(wt)
-                    return
-                }
-            }
-        }
     }
 
     /// Shared close-pane implementation used by Cmd+W and libghostty's
@@ -548,7 +509,6 @@ enum PaneCommands {
     /// user-initiated closes clean up phantom leaves (surface creation
     /// failed, `TERM-5.8`) while keeping the `TERM-5.7` Stop-cascade guard
     /// for libghostty-initiated callbacks.
-    @MainActor
     static func closePane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
@@ -630,7 +590,6 @@ enum PaneCommands {
     /// pure decision function in GrafttyKit, and — if the decision is
     /// `.type(command)` — types the command into the pane via
     /// `SurfaceHandle.typeText` followed by `\r` to trigger execution.
-    @MainActor
     static func maybeRunDefaultCommand(
         terminalManager: TerminalManager,
         terminalID: PaneSlotID
