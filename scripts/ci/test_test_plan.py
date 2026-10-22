@@ -4,6 +4,8 @@ import importlib.util
 import json
 import os
 import re
+import select
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -59,19 +61,24 @@ class MacRunnerTests(unittest.TestCase):
                         "DYLD_LIBRARY_PATH": ":".join(("caller-libraries", str((root / ".build/debug").resolve()),
                                                       str(platform / "Developer/usr/lib"))),
                     }
-                    self.assertEqual({key: command[command.index("/usr/bin/env") + index + 1].split("=", 1)[1]
-                                      for index, key in enumerate(expected_environment)}, expected_environment)
+                    self.assertEqual(json.loads(command[command.index("--swift-testing-batch") + 1]),
+                                     expected_environment)
                     if outcome == "pty":
                         # Cross the real macOS PTY boundary: SIP strips DYLD_*
                         # passed only in the environment of /usr/bin/script.
                         probe = root / "runtime-environment.json"
-                        code = ("import json,os,pathlib; pathlib.Path(" + repr(str(probe)) + ").write_text("
-                                "json.dumps({key:os.environ.get(key) for key in "
-                                "['DYLD_FRAMEWORK_PATH','DYLD_LIBRARY_PATH']}))")
+                        code = ("import json,os,pathlib,select; "
+                                "poll=select.poll(); poll.register(0,select.POLLIN); "
+                                "result={key:os.environ.get(key) for key in "
+                                "['DYLD_FRAMEWORK_PATH','DYLD_LIBRARY_PATH']}; "
+                                "result['tty']=[os.isatty(fd) for fd in range(3)]; "
+                                "result['stdinHangup']=bool(poll.poll(10000)[0][1] & select.POLLHUP); "
+                                "pathlib.Path(" + repr(str(probe)) + ").write_text(json.dumps(result))")
                         run_process([*command[:command.index(str(helper))], sys.executable, "-c", code],
                                     stdin=subprocess.DEVNULL,
                                     capture_output=True, check=True)
-                        self.assertEqual(json.loads(probe.read_text()), expected_environment)
+                        self.assertEqual(json.loads(probe.read_text()), {
+                            **expected_environment, "tty": [False, False, False], "stdinHangup": True})
                     if outcome == "failed":
                         raise subprocess.CalledProcessError(1, command)
                     xml = Path(command[command.index("--xunit-output") + 1])
@@ -118,8 +125,45 @@ class MacRunnerTests(unittest.TestCase):
             self.run_fixture("missing-helper")
 
     @unittest.skipUnless(sys.platform == "darwin", "Requires macOS PTY and SIP behavior")
-    def test_runtime_paths_survive_the_real_pty_boundary(self):
+    def test_runtime_paths_and_swiftpm_streams_survive_the_real_pty_boundary(self):
         self.run_fixture("pty")
+
+    def test_batch_streams_raw_output_and_preserves_failure_and_signal_status(self):
+        runner = str(Path(mac_runner.__file__).resolve())
+        for code, expected_status in [("raise SystemExit(7)", 7),
+                                      ("import signal; os.kill(os.getpid(),signal.SIGTERM)", 143)]:
+            with self.subTest(code=code):
+                result = subprocess.run([sys.executable, runner, "--swift-testing-batch", "{}",
+                                         sys.executable, "-c",
+                                         "import os; os.write(1,b'out\\xff'); os.write(2,b'err\\xfe'); " + code],
+                                        capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, expected_status)
+                self.assertEqual(result.stdout, b"out\xfferr\xfe")
+
+    def test_terminating_launcher_reaps_its_running_helper(self):
+        runner = str(Path(mac_runner.__file__).resolve())
+        process = subprocess.Popen([sys.executable, runner, "--swift-testing-batch", "{}",
+                                    sys.executable, "-c",
+                                    "import os,signal; print(os.getpid(),flush=True); signal.pause()"],
+                                   stdout=subprocess.PIPE)
+        helper_pid = None
+        try:
+            self.assertTrue(select.select([process.stdout], [], [], 10)[0], "Helper did not start")
+            helper_pid = int(process.stdout.readline())
+            process.terminate()
+            self.assertEqual(process.wait(timeout=10), 143)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(helper_pid, 0)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            process.stdout.close()
+            if helper_pid is not None:
+                try:
+                    os.kill(helper_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 class MacPlanTests(unittest.TestCase):

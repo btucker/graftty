@@ -4,7 +4,9 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
+import sys
 
 from test_plan import mac_filters, verify_swift_results, verify_xctest_results
 
@@ -23,16 +25,41 @@ def swift_testing_runner():
         raise FileNotFoundError(f"SwiftPM test helper is unavailable: {helper}")
     platform = Path(subprocess.check_output(
         ["xcrun", "--sdk", "macosx", "--show-sdk-platform-path"], text=True).strip())
-    environment = []
+    environment = {}
     for key, paths in (("DYLD_FRAMEWORK_PATH", (platform / "Developer/Library/Frameworks",
                                                platform / "Developer/Library/PrivateFrameworks")),
                        ("DYLD_LIBRARY_PATH", (products, platform / "Developer/usr/lib"))):
         value = ":".join(filter(None, (os.environ.get(key), *(str(path) for path in paths))))
-        environment.append(f"{key}={value}")
+        environment[key] = value
     # /usr/bin/script strips inherited DYLD_* under SIP. Set these in its
     # child, after creating the PTY, as SwiftPM does before starting the helper.
-    return ["/usr/bin/env", *environment, str(helper), "--test-bundle-path", str(binary),
-            "--testing-library", "swift-testing"]
+    return [sys.executable, str(Path(__file__).resolve()), "--swift-testing-batch", json.dumps(environment),
+            str(helper), "--test-bundle-path", str(binary), "--testing-library", "swift-testing"]
+
+
+def run_swift_testing_batch(command, environment):
+    """Keep SwiftPM's closed stdin and captured output inside the PTY."""
+    def terminate(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    process = None
+    previous_sigterm = signal.signal(signal.SIGTERM, terminate)
+    try:
+        process = subprocess.Popen(command, env={**os.environ, **environment},
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        process.stdin.close()
+        while chunk := process.stdout.read1(65536):
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+        status = process.wait()
+        return status if status >= 0 else 128 - status
+    finally:
+        if process is not None:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            process.stdout.close()
+        signal.signal(signal.SIGTERM, previous_sigterm)
 
 
 def main():
@@ -76,4 +103,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--swift-testing-batch"]:
+        sys.exit(run_swift_testing_batch(sys.argv[3:], json.loads(sys.argv[2])))
     main()
