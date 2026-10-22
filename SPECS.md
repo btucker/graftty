@@ -3926,6 +3926,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.57** When `graftty pane add --agent` launches an agent with an initial task, the application shall save that task as a durable runtime-addressed inbox row only if no live agent of the same runtime already owns automatic delivery in the worktree and no initial task for that runtime is still pending there, so an existing implementer never receives or supersedes the added agent's task.
 
+**AGENT-6.58** When Graftty renders the Codex launch wrapper from its bundled shell template, the application shall substitute every placeholder in one pass, never expand placeholder text inside a substituted value, and fail when the template and the supplied values disagree.
+
 ## CLI — CLI
 
 ### CLI-1.x
