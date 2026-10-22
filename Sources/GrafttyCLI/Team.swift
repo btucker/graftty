@@ -688,7 +688,8 @@ struct TeamInbox: ParsableCommand {
 struct TeamMsg: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "msg",
-        abstract: "Send a message to a worktree, provider, or exact canonical agent"
+        abstract: "Hidden alias of `team send` without --stdin or --urgent.",
+        shouldDisplay: false
     )
 
     @Argument(help: "Worktree name/path, <path>#<runtime>, or <path>#<agent-id>")
@@ -699,18 +700,17 @@ struct TeamMsg: ParsableCommand {
 
     func run() throws {
         let worktreePath = try CLIEnv.resolveWorktree()
-        let response = try CLIEnv.sendRequest(
-            .teamSend(
-                callerWorktree: worktreePath,
-                callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
-                recipient: address,
-                text: text,
-                priority: .normal
-            )
-        )
+        let response = try CLIEnv.sendRequest(request(
+            callerWorktree: worktreePath,
+            callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath)
+        ))
         try CLIEnv.expectOk(response)
     }
 
+    func request(callerWorktree: String, callerAgentID: String?) -> NotificationMessage {
+        .teamSend(callerWorktree: callerWorktree, callerAgentID: callerAgentID, recipient: address, text: text,
+                  priority: .normal)
+    }
 }
 
 struct TeamList: ParsableCommand {

@@ -968,6 +968,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-2.25** The control-socket protocol shall keep every request and response type tag and field key stable across releases, and shall keep decoding the optional fields that older peers omit, so an older running application keeps serving a newer CLI.
 
+**ATTN-2.26** When the application receives a legacy `team_message` request, it shall handle it as a normal-priority `team_send` with no caller agent ID.
+
 ### ATTN-3.x — Error Handling
 
 **ATTN-3.1** If the application is not running, then the CLI shall print "Graftty is not running" and exit with code 1.
@@ -2559,6 +2561,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-4.12** When a sender addresses a tracked local worktree by canonical path with an optional runtime or exact agent suffix, the application shall accept recipients across repositories, store the message in the recipient repository's inbox, preserve the sender's team display name and reply identity, and permit replies across repositories, while keeping short member names scoped to the caller's team and rejecting unavailable exact agents without enqueuing.
 
 **TEAM-4.13** When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree, unpinning, and explicitly removing a pinned worktree, and explain role instruction files and retention after PR or MR resolution.
+
+**TEAM-4.14** `graftty team msg <address> <text>` shall remain accepted as a hidden alias of `team send` that sends a normal-priority `team_send` request, and `graftty team --help` shall not list it.
 
 ### TEAM-5.x — `team_*` Inbox Events
 

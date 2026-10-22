@@ -138,24 +138,24 @@ struct ControlRequestCoreTests {
         let address = "graftty-mac://device/Users/peer/api"
         #expect(await ControlRequestCore.handleRequest(.teamSend(callerWorktree: "/repo", callerAgentID: "codex-a",
             recipient: address, text: "hello", priority: .urgent), platform: platform) == .ok)
-        #expect(await ControlRequestCore.handleRequest(.teamMessage(callerWorktree: "/repo", recipient: address,
-            text: "hi"), platform: platform) == .ok)
+        #expect(await ControlRequestCore.handleRequest(.teamSend(callerWorktree: "/repo", recipient: address,
+            text: "hi", priority: .normal), platform: platform) == .ok)
         let routing = try #require(platform.routing)
         #expect(routing.sends.map(\.text) == ["hello", "hi"])
         #expect(routing.sends.map(\.agent) == ["codex-a", nil])
         #expect(routing.sends.map(\.priority) == [.urgent, .normal])
 
-        #expect(await ControlRequestCore.handleRequest(.teamMessage(callerWorktree: "/untracked", recipient: address,
-            text: "x"), platform: platform) == .error(TeamInboxRequestError.callerNotTracked.description))
+        #expect(await ControlRequestCore.handleRequest(.teamSend(callerWorktree: "/untracked", recipient: address,
+            text: "x", priority: .normal), platform: platform) == .error(TeamInboxRequestError.callerNotTracked.description))
         #expect(routing.sends.count == 2)
         platform.teamsEnabled = false
-        #expect(await ControlRequestCore.handleRequest(.teamMessage(callerWorktree: "/repo", recipient: address,
-            text: "x"), platform: platform) == .error(TeamInboxRequestError.teamModeDisabled.description))
+        #expect(await ControlRequestCore.handleRequest(.teamSend(callerWorktree: "/repo", recipient: address,
+            text: "x", priority: .normal), platform: platform) == .error(TeamInboxRequestError.teamModeDisabled.description))
         #expect(routing.sends.count == 2)
         platform.teamsEnabled = true
         platform.routing = nil
-        #expect(await ControlRequestCore.handleRequest(.teamMessage(callerWorktree: "/repo", recipient: address,
-            text: "x"), platform: platform) == .error("remote team connection is unavailable"))
+        #expect(await ControlRequestCore.handleRequest(.teamSend(callerWorktree: "/repo", recipient: address,
+            text: "x", priority: .normal), platform: platform) == .error("remote team connection is unavailable"))
         #expect(routing.sends.count == 2)
     }
 
