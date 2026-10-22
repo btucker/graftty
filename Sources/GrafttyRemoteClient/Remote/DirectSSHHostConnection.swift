@@ -21,7 +21,6 @@ public actor DirectSSHHostConnection {
     private let expectedHostFingerprint: RemoteIdentityFingerprint
     private var channel: Channel?
     private var handlerBox: DirectSSHHandlerBox?
-    private var group: MultiThreadedEventLoopGroup?
     private var onStateChange: (@Sendable (State) -> Void)?
 
     public init(clientKey: Curve25519.Signing.PrivateKey, expectedHostFingerprint: RemoteIdentityFingerprint) {
@@ -35,13 +34,11 @@ public actor DirectSSHHostConnection {
         guard !host.isEmpty, (1...65535).contains(port) else { throw ConnectionError.invalidEndpoint }
         try Task.checkCancellation()
         setState(.connecting)
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        self.group = group
         let key = clientKey
         let fingerprint = expectedHostFingerprint
         var connectingChannel: Channel?
         do {
-            let channel = try await ClientBootstrap(group: group)
+            let channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
                 .connectTimeout(.seconds(10))
                 .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
                 .channelInitializer { channel in
@@ -70,8 +67,8 @@ public actor DirectSSHHostConnection {
             setState(.connected)
         } catch {
             setState(.failed(reason: String(describing: error)))
-            // A concurrent `close()` may already have shut this group down, and
-            // a close future on a shut-down loop never completes. Don't await it.
+            // `disposeTransport()`, here or in a concurrent `close()`, owns
+            // waiting for the channel; don't await a second close of it.
             connectingChannel?.close(promise: nil)
             await disposeTransport()
             throw error
@@ -155,9 +152,7 @@ public actor DirectSSHHostConnection {
     }
     private func disposeTransport() async {
         let channel = channel; self.channel = nil; handlerBox = nil
-        let group = group; self.group = nil
         try? await channel?.close().get()
-        try? await group?.shutdownGracefully()
     }
     /// The event loop serving the SSH transport, once TCP is connected.
     var transportEventLoopForTesting: (any EventLoop)? { channel?.eventLoop }
