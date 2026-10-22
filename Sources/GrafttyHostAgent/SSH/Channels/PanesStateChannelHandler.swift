@@ -88,7 +88,7 @@ public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked S
         Task { [storeCancellable] in
             let cancellable = await subscribe { snapshot in
                 guard
-                    let body = try? JSONEncoder().encode(snapshot)
+                    let body = try? JSONEncoder.shared.encode(snapshot)
                 else { return }
                 let buf = allocator.buffer(bytes: body)
                 // Marshal back to the event loop before writing — NIO requires

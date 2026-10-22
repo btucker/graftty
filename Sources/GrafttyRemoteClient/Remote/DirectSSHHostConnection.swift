@@ -21,7 +21,6 @@ public actor DirectSSHHostConnection {
     private let expectedHostFingerprint: RemoteIdentityFingerprint
     private var channel: Channel?
     private var handlerBox: DirectSSHHandlerBox?
-    private var group: MultiThreadedEventLoopGroup?
     private var onStateChange: (@Sendable (State) -> Void)?
 
     public init(clientKey: Curve25519.Signing.PrivateKey, expectedHostFingerprint: RemoteIdentityFingerprint) {
@@ -35,13 +34,10 @@ public actor DirectSSHHostConnection {
         guard !host.isEmpty, (1...65535).contains(port) else { throw ConnectionError.invalidEndpoint }
         try Task.checkCancellation()
         setState(.connecting)
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        self.group = group
         let key = clientKey
         let fingerprint = expectedHostFingerprint
-        var connectingChannel: Channel?
         do {
-            let channel = try await ClientBootstrap(group: group)
+            let channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
                 .connectTimeout(.seconds(10))
                 .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
                 .channelInitializer { channel in
@@ -57,9 +53,10 @@ public actor DirectSSHHostConnection {
                         try channel.pipeline.syncOperations.addHandler(DirectSSHAuthenticationHandler(waiter: waiter, handlerBox: DirectSSHHandlerBox(handler)))
                     }
                 }.connect(host: host, port: port).get()
-            connectingChannel = channel
-            guard !state.isTerminal else { throw CancellationError() }
+            // Owned before the terminal check so `disposeTransport()` below
+            // closes it if `close()` ran during the dial.
             self.channel = channel
+            guard !state.isTerminal else { throw CancellationError() }
             let authentication = try await channel.pipeline.handler(type: DirectSSHAuthenticationHandler.self).get()
             handlerBox = authentication.handlerBox
             channel.closeFuture.whenComplete { [weak self] _ in Task { await self?.transportClosed() } }
@@ -70,7 +67,6 @@ public actor DirectSSHHostConnection {
             setState(.connected)
         } catch {
             setState(.failed(reason: String(describing: error)))
-            try? await connectingChannel?.close().get()
             await disposeTransport()
             throw error
         }
@@ -153,10 +149,10 @@ public actor DirectSSHHostConnection {
     }
     private func disposeTransport() async {
         let channel = channel; self.channel = nil; handlerBox = nil
-        let group = group; self.group = nil
         try? await channel?.close().get()
-        try? await group?.shutdownGracefully()
     }
+    /// The event loop serving the SSH transport, once TCP is connected.
+    var transportEventLoopForTesting: (any EventLoop)? { channel?.eventLoop }
     private func connectedTransport() throws -> (Channel, DirectSSHHandlerBox) {
         guard state == .connected, let channel, channel.isActive, let handlerBox else { throw ConnectionError.notConnected }
         return (channel, handlerBox)
