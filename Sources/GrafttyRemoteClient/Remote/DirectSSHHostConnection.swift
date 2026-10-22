@@ -70,7 +70,9 @@ public actor DirectSSHHostConnection {
             setState(.connected)
         } catch {
             setState(.failed(reason: String(describing: error)))
-            try? await connectingChannel?.close().get()
+            // A concurrent `close()` may already have shut this group down, and
+            // a close future on a shut-down loop never completes. Don't await it.
+            connectingChannel?.close(promise: nil)
             await disposeTransport()
             throw error
         }
@@ -157,6 +159,8 @@ public actor DirectSSHHostConnection {
         try? await channel?.close().get()
         try? await group?.shutdownGracefully()
     }
+    /// The event loop serving the SSH transport, once TCP is connected.
+    var transportEventLoopForTesting: (any EventLoop)? { channel?.eventLoop }
     private func connectedTransport() throws -> (Channel, DirectSSHHandlerBox) {
         guard state == .connected, let channel, channel.isActive, let handlerBox else { throw ConnectionError.notConnected }
         return (channel, handlerBox)
