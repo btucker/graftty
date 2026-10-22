@@ -25,7 +25,10 @@ public final class HeadlessHostRuntime {
     var busyPaths: Set<String> = []
     var creations: [String: WorktreeCreateStatus] = [:]
     var removals: [String: WorktreeRemoveStatus] = [:]
-    var busyAgents: Set<String> = []
+    /// Provider hook busy/idle state per pane session, fed by the shared
+    /// control core. The headless host does not poll `claude agents`.
+    let agentLiveness = ClaudeSessionRegistry()
+    lazy var controlPlatform = HeadlessControlPlatform(runtime: self)
     var deliveryTask: Task<Void, Never>?
     public var remoteTeamSender: (@MainActor @Sendable (NotificationMessage) async -> ResponseMessage)?
     var maintenance: HostMaintenance?
@@ -315,7 +318,7 @@ public final class HeadlessHostRuntime {
     }
 
     public func snapshot() -> [WorktreePanes] {
-        let liveness = Dictionary(uniqueKeysWithValues: busyAgents.map { ($0, AgentLiveness.busy) })
+        let liveness = agentLiveness.livenessBySession
         return state.repos.flatMap { repo in
             let siblingPaths = repo.worktrees.map(\.path)
             return SidebarHostNavigation.displayedWorktrees(in: repo).map { worktree in

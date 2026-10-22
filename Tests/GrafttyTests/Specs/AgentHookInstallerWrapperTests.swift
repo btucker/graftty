@@ -6,8 +6,8 @@ import Darwin
 @Suite("AgentHookInstaller — wrapper script shapes", .serialized)
 struct AgentHookInstallerWrapperTests {
     @Test("Codex wrapper sets CODEX_HOME and runs sync-codex-home before launch.")
-    func codexWrapperSetsCodexHome() {
-        let script = AgentHookInstaller.codexWrapperScript(
+    func codexWrapperSetsCodexHome() throws {
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
@@ -306,7 +306,7 @@ struct AgentHookInstallerWrapperTests {
 
     @Test("Codex wrapper starts an app-server, registers metadata, runs remote TUI, and cleans up.")
     func codexWrapperStartsAppServerAndRegistersMetadata() throws {
-        let script = AgentHookInstaller.codexWrapperScript(
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
@@ -356,8 +356,8 @@ struct AgentHookInstallerWrapperTests {
     @Test("""
     @spec TEAM-10.14: When the installed Codex command is a Node shim, the application shall launch its app-server from the native executable so the tracked PID belongs to the server itself.
     """)
-    func codexWrapperResolvesNativeBinaryForAppServer() {
-        let script = AgentHookInstaller.codexWrapperScript(
+    func codexWrapperResolvesNativeBinaryForAppServer() throws {
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
@@ -370,8 +370,8 @@ struct AgentHookInstallerWrapperTests {
     }
 
     @Test("@spec TEAM-PRESENCE-1.3: When the graftty wrapper launches an agent runtime, the wrapper shall register a PID whose lifetime covers the foreground runtime process, not the short-lived registration helper PID.")
-    func wrapperRegistersRuntimeLifetimePIDBeforeLaunch() {
-        let script = AgentHookInstaller.codexWrapperScript(
+    func wrapperRegistersRuntimeLifetimePIDBeforeLaunch() throws {
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
@@ -391,8 +391,8 @@ struct AgentHookInstallerWrapperTests {
     }
 
     @Test("Wrapper launches the runtime in the foreground.")
-    func wrapperLaunchesRuntimeInForeground() {
-        let script = AgentHookInstaller.codexWrapperScript(
+    func wrapperLaunchesRuntimeInForeground() throws {
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"

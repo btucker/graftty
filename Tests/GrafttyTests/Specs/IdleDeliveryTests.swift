@@ -738,14 +738,14 @@ struct AttentionOnlyTeamHookTests {
     /// presence records or resolving team context on every Codex tool call.
     @Test("Codex PostToolUse is answered as an attention-only hook; Claude PostToolUse still delivers.")
     func codexPostToolUseIsAttentionOnly() {
-        #expect(GrafttyApp.isAttentionOnlyTeamHook(runtime: .codex, event: .postToolUse))
-        #expect(!GrafttyApp.isAttentionOnlyTeamHook(runtime: .claude, event: .postToolUse))
+        #expect(ControlRequestCore.isAttentionOnlyTeamHook(runtime: .codex, event: .postToolUse))
+        #expect(!ControlRequestCore.isAttentionOnlyTeamHook(runtime: .claude, event: .postToolUse))
         for runtime in [TeamHookRuntime.codex, .claude] {
             for event in [TeamHookEvent.preToolUse, .permissionRequest, .userPromptSubmit, .postToolUseFailure] {
-                #expect(GrafttyApp.isAttentionOnlyTeamHook(runtime: runtime, event: event))
+                #expect(ControlRequestCore.isAttentionOnlyTeamHook(runtime: runtime, event: event))
             }
-            #expect(!GrafttyApp.isAttentionOnlyTeamHook(runtime: runtime, event: .sessionStart))
-            #expect(!GrafttyApp.isAttentionOnlyTeamHook(runtime: runtime, event: .stop))
+            #expect(!ControlRequestCore.isAttentionOnlyTeamHook(runtime: runtime, event: .sessionStart))
+            #expect(!ControlRequestCore.isAttentionOnlyTeamHook(runtime: runtime, event: .stop))
         }
     }
 }

@@ -560,13 +560,13 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let channelData = unwrapInboundIn(data)
         guard case let .byteBuffer(buf) = channelData.data else { return }
-        var view = buf
-        guard let bytes = view.readBytes(length: view.readableBytes) else { return }
+        // One owned copy: queued output must not pin NIOSSH's packet storage.
+        let bytes = Data(buf.readableBytesView)
         switch channelData.type {
         case .stdErr:
-            ingestControlBytes(Data(bytes), context: context)
+            ingestControlBytes(bytes, context: context)
         default:
-            owner.deliverInboundBinary(Data(bytes))
+            owner.deliverInboundBinary(bytes)
         }
     }
 

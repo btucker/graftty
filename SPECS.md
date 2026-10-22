@@ -1254,7 +1254,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONFIG-2.6** The application shall resolve GrafttyKit's SwiftPM resource bundle from the packaged `.app` layout (`Contents/Resources/`), falling back to `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not trap on SwiftPM's generated accessor (which probes only the `.app` root and the compiling machine's `.build` path — neither present once shipped).
 
-**CONFIG-2.7** If GrafttyKit's resource bundle uses either SwiftPM's flat layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's build system, then the application shall locate the bundled web client assets, agent plugin payload, and vendored ghostty runtime resources.
+**CONFIG-2.7** If GrafttyKit's resource bundle uses either SwiftPM's flat layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's build system, then the application shall locate the bundled web client assets, agent plugin payload, Codex wrapper template, and vendored ghostty runtime resources.
 
 ## DIVERGE — Worktree Divergence Indicator
 
@@ -2968,6 +2968,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-6.6** While a panes-state channel is open, the client shall keep delivering snapshots and report the close even after its owner releases it.
 
+**REMOTE-6.7** While a client waits for the first panes-state snapshot, it shall resume as soon as a snapshot or channel close is applied, report a close ahead of a snapshot, and report a timeout only when the deadline fires first.
+
 ### REMOTE-7.x — pane_control Channel
 
 **REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability. (Enforced at userauth: a peer with `terminalControl: .disabled` is rejected.)
@@ -3234,6 +3236,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-20.14** When a Linux TCP tunnel receives EOF with forwarded writes pending, the application shall finish those writes before closing the destination.
 
+**REMOTE-20.15** When a direct SSH connection dials its host, the application shall run the connection on NIO's shared event loop group rather than starting an event-loop thread per connection.
+
+**REMOTE-20.16** If a direct SSH connection is closed while it is still waiting for authentication, then the pending connect shall fail and return rather than wait forever.
+
 ### REMOTE-21.x
 
 **REMOTE-21.1** When Linux setup receives an OpenSSH alias or user destination, the application shall preserve that destination and quote remote arguments without accepting SSH option injection.
@@ -3371,6 +3377,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-22.40** When a headless host publishes a pane that has not reported a title, the application shall send an empty title, as Mac hosts do, so clients apply their own untitled-pane fallback (IOS-4.10) instead of a host-supplied placeholder.
 
 **REMOTE-22.41** If a headless host worktree has no on-disk checkout, then the application shall omit its cached divergence stats from the published row.
+
+**REMOTE-22.42** When a headless host receives an attention-only provider hook, the application shall answer an empty hook output without consulting the team inbox, even for an untracked worktree.
+
+**REMOTE-22.43** When a headless host receives a provider hook for a pane in the caller's worktree, the application shall publish that pane busy from prompt submission through tool use and idle at a stop, a session start, or a blocking attention reason, and shall ignore panes outside the caller's worktree.
+
+**REMOTE-22.44** When a headless host renders session-start instructions for the main checkout, the application shall key them by the repository's refreshed default branch, falling back to the saved hint.
+
+**REMOTE-22.45** When a headless host records a provider's stopped turn, the application shall label it with the provider's display name and drop a stop older than that session's recorded progress.
+
+**REMOTE-22.46** When a headless host receives provider hooks for a session that raised blocking attention, the application shall keep that attention through PreToolUse and clear it on PostToolUseFailure.
+
+**REMOTE-22.47** When a headless host receives a notification with an auto-clear duration, the application shall store the normalized duration on the attention it persists.
+
+**REMOTE-22.48** When a headless host receives a team send or message for a graftty-mac address, the application shall forward it to the paired peer only for a tracked caller.
+
+**REMOTE-22.49** When a headless host receives a provider hook without a caller agent ID, the application shall resolve the agent from the provider session's presence record before delivering its targeted messages.
 
 ### REMOTE-23.x
 
@@ -3931,6 +3953,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.56** When Graftty materializes a provider team skill, the skill shall direct agents to use STE-inspired controlled English with direct requests, one instruction per sentence, consistent technical terms, conditions before actions, and factual results that distinguish passed, failed, pending, and not-run checks.
 
 **AGENT-6.57** When `graftty pane add --agent` launches an agent with an initial task, the application shall save that task as a durable runtime-addressed inbox row only if no live agent of the same runtime already owns automatic delivery in the worktree and no initial task for that runtime is still pending there, so an existing implementer never receives or supersedes the added agent's task.
+
+**AGENT-6.58** When Graftty renders the Codex launch wrapper from its bundled shell template, the application shall substitute every placeholder in one pass, never expand placeholder text inside a substituted value, and fail when the template and the supplied values disagree.
 
 ## CLI — CLI
 

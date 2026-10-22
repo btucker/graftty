@@ -183,6 +183,7 @@ let package = Package(
                 .copy("Web/Resources"),
                 .copy("AgentPlugins"),
                 .copy("HostSetup/Resources/linux-install.sh"),
+                .copy("Teams/Resources/codex-wrapper.sh"),
                 // Vendored ghostty runtime resources (CONFIG-2.5) — see
                 // GhosttyResources/ghostty/PROVENANCE.md. `ghostty` and
                 // `terminfo` land at the bundle root as siblings, mirroring
@@ -301,8 +302,8 @@ let package = Package(
                            .product(name: "NIOEmbedded", package: "swift-nio")] + cryptoDependencies,
             sources: isLinux ? ["Ports/PortBindingTests.swift", "Ports/LsofOutputParserTests.swift", "Ports/PortScannerTests.swift", "Ports/ProcessTreeWalkerTests.swift", "Ports/LinuxProcSocketScannerTests.swift", "Host/HeadlessHostPortTests.swift", "Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "Model/WorktreePanesProjectionTests.swift", "Host/HostAgentEnvironmentTests.swift", "HostSetup/LinuxHostAgentInstallTests.swift", "HostSetup/LinuxHostSetupTests.swift", "HostSetup/LinuxHostSetupExecutionTests.swift", "HostSetup/LinuxHostPackagingTests.swift", "HostSetup/LinuxHostMaintenanceTests.swift",
                 "CI/CITestPlanningTests.swift",
-                "Support/MutableBox.swift", "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift", "Web/WebSocketOutputTests.swift",
-                "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamInboxParseCacheTests.swift", "Teams/TeamPresenceStorageTests.swift",
+                "Support/MutableBox.swift", "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Notification/ControlRequestCoreTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift", "Web/WebSocketOutputTests.swift",
+                "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamInboxParseCacheTests.swift", "Teams/CodexWrapperTemplateTests.swift", "Teams/LegacyCodexWrapperScript.swift", "Teams/TeamPresenceStorageTests.swift",
                 "Teams/AttentionFileHandoffTests.swift", "Remote/MacToMac/GrafttyBonjourServiceTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift",
                 "Persistence/JSONStoreCompatibilityTests.swift"] : nil,
             resources: [

@@ -23,7 +23,7 @@ public final class ChromeTabChannelHandler: ChannelInboundHandler, @unchecked Se
     public func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let bytes = Data(unwrapInboundIn(data).readableBytesView)
         guard task == nil, context.channel.isWritable, bytes.count <= ChromeTabRequest.maximumRequestBytes,
-              let request = try? JSONDecoder().decode(ChromeTabRequest.self, from: bytes) else {
+              let request = try? JSONDecoder.shared.decode(ChromeTabRequest.self, from: bytes) else {
             context.close(promise: nil); return
         }
         let channel = context.channel

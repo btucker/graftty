@@ -55,7 +55,7 @@ public final class WorktreeManagementChannelClient: @unchecked Sendable {
                 timedOut: ClientError.timedOut
             ),
             busy: ClientError.busy,
-            decode: { try JSONDecoder().decode(WorktreeManagementResponse.self, from: $0) }
+            decode: { try JSONDecoder.shared.decode(WorktreeManagementResponse.self, from: $0) }
         )
     }
 
