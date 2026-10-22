@@ -188,29 +188,22 @@ enum PaneCommands {
         // newer ping or an explicit clear that lands between the
         // schedule and the fire can't be wiped.
         let stamp = Date()
-        for repoIdx in appState.wrappedValue.repos.indices {
-            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
-                if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                    .splitTree.containsLeaf(terminalID) {
-                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                        .setAttention(
-                            Attention(text: text, timestamp: stamp, clearAfter: clearAfter, source: source),
-                            pane: terminalID
-                        )
-                    let path = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path
-                    DispatchQueue.main.asyncAfter(deadline: .now() + clearAfter) {
-                        for ri in appState.wrappedValue.repos.indices {
-                            for wi in appState.wrappedValue.repos[ri].worktrees.indices {
-                                if appState.wrappedValue.repos[ri].worktrees[wi].path == path {
-                                    appState.wrappedValue.repos[ri].worktrees[wi]
-                                        .clearPaneAttentionIfTimestamp(stamp, for: terminalID)
-                                }
-                            }
-                        }
-                    }
-                    return
-                }
-            }
+        var path: String?
+        appState.wrappedValue.mutateWorktree(containing: terminalID) { worktree in
+            worktree.setAttention(
+                Attention(text: text, timestamp: stamp, clearAfter: clearAfter, source: source),
+                pane: terminalID
+            )
+            path = worktree.path
+        }
+        if let path {
+            AttentionAutoClear.schedule(
+                after: clearAfter,
+                appState: appState,
+                worktreePath: path,
+                pane: terminalID,
+                stamp: stamp
+            )
         }
     }
 
@@ -454,10 +447,8 @@ enum PaneCommands {
 
     @MainActor
     static func toggleZoom(appState: Binding<AppState>, on terminalID: PaneSlotID) {
-        mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
-            var copy = wt
-            copy.splitTree = wt.splitTree.togglingZoom(at: terminalID)
-            return copy
+        appState.wrappedValue.mutateWorktree(containing: terminalID) { wt in
+            wt.splitTree = wt.splitTree.togglingZoom(at: terminalID)
         }
     }
 
@@ -467,13 +458,12 @@ enum PaneCommands {
         around terminalID: PaneSlotID,
         preserveZoom: Bool = false
     ) {
-        mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
-            var copy = wt
-            copy.splitTree = wt.splitTree.equalizing()
-            if preserveZoom, let zoomed = wt.splitTree.zoomed {
-                copy.splitTree = copy.splitTree.withZoom(zoomed)
+        appState.wrappedValue.mutateWorktree(containing: terminalID) { wt in
+            let zoomed = wt.splitTree.zoomed
+            wt.splitTree = wt.splitTree.equalizing()
+            if preserveZoom, let zoomed {
+                wt.splitTree = wt.splitTree.withZoom(zoomed)
             }
-            return copy
         }
     }
 
@@ -496,44 +486,24 @@ enum PaneCommands {
             ?? NSApp.keyWindow?.contentView?.bounds
             ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
         var didResize = false
-        mutateWorktreeContaining(appState: appState, leaf: target) { wt in
-            var copy = wt
+        appState.wrappedValue.mutateWorktree(containing: target) { wt in
             do {
-                copy.splitTree = try wt.splitTree.resizing(
+                let zoomed = wt.splitTree.zoomed
+                wt.splitTree = try wt.splitTree.resizing(
                     target: target,
                     direction: direction,
                     pixels: pixels,
                     ancestorBounds: bounds
                 )
-                if preserveZoom, let zoomed = wt.splitTree.zoomed {
-                    copy.splitTree = copy.splitTree.withZoom(zoomed)
+                if preserveZoom, let zoomed {
+                    wt.splitTree = wt.splitTree.withZoom(zoomed)
                 }
                 didResize = true
             } catch {
                 // No matching orientation ancestor — silent no-op, matches Ghostty.
             }
-            return copy
         }
         return didResize
-    }
-
-    /// Find the worktree that owns `leaf` and apply `transform` to it.
-    /// Idempotent and safe for callers that don't know which worktree owns a pane.
-    @MainActor
-    private static func mutateWorktreeContaining(
-        appState: Binding<AppState>,
-        leaf: PaneSlotID,
-        transform: (WorktreeEntry) -> WorktreeEntry
-    ) {
-        for repoIdx in appState.wrappedValue.repos.indices {
-            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
-                if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree.containsLeaf(leaf) {
-                    let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx] = transform(wt)
-                    return
-                }
-            }
-        }
     }
 
     /// Shared close-pane implementation used by Cmd+W and libghostty's

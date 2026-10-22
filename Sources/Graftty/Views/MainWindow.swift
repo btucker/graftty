@@ -818,13 +818,7 @@ struct MainWindow: View {
     @discardableResult
     private func selectPane(_ worktreePath: String, _ terminalID: PaneSlotID, acknowledging: Bool) -> Bool {
         guard selectWorktree(worktreePath, acknowledging: acknowledging) else { return false }
-        for repoIdx in appState.repos.indices {
-            for wtIdx in appState.repos[repoIdx].worktrees.indices {
-                if appState.repos[repoIdx].worktrees[wtIdx].path == worktreePath {
-                    appState.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = terminalID
-                }
-            }
-        }
+        appState.mutateWorktrees(atPath: worktreePath) { $0.focusedPaneSlotID = terminalID }
         terminalManager.setFocus(terminalID)
         makePaneFirstResponder(
             terminalID,
@@ -931,14 +925,10 @@ struct MainWindow: View {
             }
         }
 
-        for repoIdx in appState.repos.indices {
-            for wtIdx in appState.repos[repoIdx].worktrees.indices {
-                if appState.repos[repoIdx].worktrees[wtIdx].path == path {
-                    // STATE-2.4: viewing clears notifications at both scopes
-                    // while preserving stopped-agent requests.
-                    if acknowledging { appState.repos[repoIdx].worktrees[wtIdx].viewAttention() }
-                }
-            }
+        // STATE-2.4: viewing clears notifications at both scopes while
+        // preserving stopped-agent requests.
+        if acknowledging {
+            appState.mutateWorktrees(atPath: path) { $0.viewAttention() }
         }
 
         if previousPath != path, let previousPath {
