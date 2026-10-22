@@ -15,6 +15,61 @@ import UIKit
 @Suite(.serialized)
 @MainActor
 struct RemoteBrowserButtonTests {
+    /// The host picker reads `\.remoteConnectionCoordinator`. Without one it
+    /// trusts the saved device ID and calls an unpinned host paired; with
+    /// RootView's coordinator the missing pin asks the user to pair again.
+    @Test("RootView provides its coordinator to the views it hosts", .timeLimit(.minutes(1)))
+    func rootViewProvidesItsCoordinator() async throws {
+        let suiteName = "root-coordinator-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostStore(storeURL: directory.appendingPathComponent("hosts.json"))
+        try store.add(Host(label: "Unpinned Mac", baseURL: URL(string: "https://fixture.invalid")!,
+                           remoteDeviceID: .generate()))
+        let gate = BiometricGate(authenticator: BrowserUnlockAuthenticator())
+        gate.applicationWillEnterForeground()
+        await gate.authenticateOnActivation()
+        let root = RootView(hostStore: store, gate: gate, notifications: MobileAgentNotifications(defaults: defaults),
+            appState: IPadAppState(defaults: defaults), notificationIO: .init(fetch: { _ in [] }, reopen: { _, _ in }))
+        let controller = UIHostingController(rootView: root
+            .environment(\.horizontalSizeClass, .compact)
+            .environment(\.scenePhase, .inactive)
+            .environment(\.accessibilityEnabled, true))
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+
+        func labels() -> [String] {
+            controller.view.layoutIfNeeded()
+            var result: [String] = [], pending: [NSObject] = [controller.view], seen: Set<ObjectIdentifier> = []
+            while let object = pending.popLast(), seen.count < 4096 {
+                guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
+                if let label = object.accessibilityLabel { result.append(label) }
+                if let view = object as? UIView { pending.append(contentsOf: view.subviews) }
+                pending.append(contentsOf: (object.accessibilityElements ?? []).compactMap { $0 as? NSObject })
+                pending.append(contentsOf: (object.automationElements ?? []).compactMap { $0 as? NSObject })
+                for index in 0..<max(0, min(object.accessibilityElementCount(), 128)) {
+                    if let child = object.accessibilityElement(at: index) as? NSObject { pending.append(child) }
+                }
+            }
+            return result
+        }
+        // The row's pairing label is computed synchronously; yielding lets
+        // SwiftUI commit the hosted tree without a wall-clock wait.
+        for _ in 0..<50 where !labels().contains(where: { $0.contains("Unpinned Mac") }) {
+            await Task.yield()
+        }
+        let row = try #require(labels().first { $0.contains("Unpinned Mac") }, "\(labels())")
+        #expect(row.contains("Pair again to connect"), "\(row)")
+    }
+
     // Mount RootView in the hosted, serialized UIKit target. The unhosted
     // model-test runner has no application scene for a real window lifecycle.
     @Test(arguments: [false, true])
@@ -154,7 +209,6 @@ struct RemoteBrowserButtonTests {
         window.frame = scene.coordinateSpace.bounds
         let host = UIHostingController(rootView: IPadDetailColumn(
             host: Host(label: "Mac", baseURL: URL(string: "https://mac.local")!), appState: state,
-            coordinator: RemoteConnectionCoordinator(connectionsAllowedInitially: false),
             paneEnvironment: .empty,
             ghosttyCommandContext: .init(keybindingSet: .loading, perform: { _ in }, isEnabled: { _ in false }),
             onSelectPane: { _ in Issue.record("Opening context must not select a pane") }, onBackToWorktrees: {})

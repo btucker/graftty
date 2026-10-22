@@ -666,13 +666,14 @@ private struct AgentPreviewFixtureView: View {
                 .navigationDestination(for: UUID.self) { _ in
                     SingleSessionView(step: SessionStep(host: fixture.host, worktreePath: fixture.worktree,
                         sessionName: fixture.client.sessionName, title: "Preview terminal"), navigationPath: .constant(NavigationPath()),
-                        isFullScreen: !fixture.embedded, showsProjectRail: false, coordinator: fixture.coordinator,
+                        isFullScreen: !fixture.embedded, showsProjectRail: false,
                         isEmbeddedPane: fixture.embedded, onBackToWorktrees: { fixture.path.removeAll() },
                         retainedPanes: fixture.pool, initialClient: fixture.client, initialController: fixture.controller,
                         previewManagementTransport: fixture.management)
                 }
         }
         .environment(\.biometricGate, fixture.gate)
+        .environment(\.remoteConnectionCoordinator, fixture.coordinator)
         .environment(\.scenePhase, .active)
     }
 }

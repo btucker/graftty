@@ -23,13 +23,10 @@ public struct IPadRootLayout: View {
 
     @Bindable public var hostStore: HostStore
     @Bindable public var appState: IPadAppState
-    /// Shared with the compact path's `SingleSessionView` at the
-    /// `RootView` level so a host negotiated from either surface is
-    /// cached for the other (W3 Task 3).
-    public let coordinator: RemoteConnectionCoordinator
     @Bindable public var nearbyMacBrowser: NearbyMacBrowser
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
+    @Environment(\.remoteConnectionCoordinator) private var coordinator
     @State private var paneEnvironment: PaneEnvironment = .empty
     @State private var worktreeListRefreshToken: Int = 0
     @State private var explicitSelectionGeneration: UInt64 = 0
@@ -87,12 +84,10 @@ public struct IPadRootLayout: View {
     public init(
         hostStore: HostStore,
         appState: IPadAppState,
-        coordinator: RemoteConnectionCoordinator,
         nearbyMacBrowser: NearbyMacBrowser = NearbyMacBrowser()
     ) {
         self.hostStore = hostStore
         self.appState = appState
-        self.coordinator = coordinator
         self.nearbyMacBrowser = nearbyMacBrowser
     }
 
@@ -161,8 +156,7 @@ public struct IPadRootLayout: View {
                             selectedHost: selectedHost,
                             hostStore: hostStore,
                             appState: appState,
-                            browser: nearbyMacBrowser,
-                            coordinator: coordinator
+                            browser: nearbyMacBrowser
                         )
                     }
                 }
@@ -185,7 +179,6 @@ public struct IPadRootLayout: View {
                 IPadDetailColumn(
                     host: selectedHost,
                     appState: appState,
-                    coordinator: coordinator,
                     paneEnvironment: paneEnvironment,
                     ghosttyCommandContext: ghosttyCommandContext,
                     onSelectPane: { sessionName in
@@ -1161,7 +1154,7 @@ public struct IPadRootLayout: View {
         }
         let capturedHostID = host.id
         keybindingSet = Self.keybindingSetForStartingHostRefresh()
-        let presentation = await coordinator.presentation(for: host)
+        let presentation = await coordinator?.presentation(for: host)
         let text = presentation?.ghosttyConfig
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
@@ -1186,7 +1179,7 @@ public struct IPadRootLayout: View {
 
         await closeAndClearPaneEnvironment()
         let capturedHostID = host.id
-        let remoteHost = await coordinator.connection(for: host)
+        let remoteHost = await coordinator?.connection(for: host)
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         let environment = await buildPaneEnvironment(remoteHost: remoteHost)
@@ -1235,7 +1228,7 @@ private struct HostMenu: View {
     @Bindable var hostStore: HostStore
     @Bindable var appState: IPadAppState
     @Bindable var browser: NearbyMacBrowser
-    let coordinator: RemoteConnectionCoordinator
+    @Environment(\.remoteConnectionCoordinator) private var coordinator
 
     @State private var showingAddHost = false
 
@@ -1243,8 +1236,10 @@ private struct HostMenu: View {
         Menu {
             // Saved hosts with a checkmark on the currently-selected
             // one; tapping fires the standard host switch (clears
-            // worktree selection + focused pane).
-            ForEach(hostStore.hosts.filter { coordinator.isPaired($0) }) {
+            // worktree selection + focused pane). Filtered once: each
+            // `isPaired` reads the pinned-host store from disk.
+            let pairedHosts = hostStore.hosts.filter { coordinator?.isPaired($0) == true }
+            ForEach(pairedHosts) {
                 host in
                 Button {
                     IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
@@ -1256,7 +1251,7 @@ private struct HostMenu: View {
                     }
                 }
             }
-            if hostStore.hosts.contains(where: { coordinator.isPaired($0) }) {
+            if !pairedHosts.isEmpty {
                 Divider()
             }
             Button {
@@ -1322,7 +1317,6 @@ struct IPadTerminalDetailChrome: ViewModifier {
 struct IPadDetailColumn: View {
     let host: Host?
     @Bindable var appState: IPadAppState
-    let coordinator: RemoteConnectionCoordinator
     /// Still needed after the toolbar splits moved onto
     /// `ghosttyCommandContext`: `shouldShowSplitControls` gates the toolbar
     /// group on `paneControlClient` availability.
@@ -1413,7 +1407,6 @@ struct IPadDetailColumn: View {
             MultiPaneDetailView(
                 host: host,
                 worktree: worktree,
-                coordinator: coordinator,
                 theme: appState.theme,
                 focusedPaneId: appState.focusedPaneId,
                 pendingFocusRequests: appState.pendingFocusRequests,

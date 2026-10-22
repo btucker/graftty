@@ -352,7 +352,6 @@ struct IPadRootLayoutSelectionTests {
             step: step,
             navigationPath: .constant(NavigationPath()),
             isFullScreen: false,
-            coordinator: nil,
             externalPendingFocusRequests: 3
         )
 

@@ -8,7 +8,7 @@ public struct HostPickerView: View {
     @Bindable var browser: NearbyMacBrowser
     @State private var showingAdd = false
     @State private var forgetError: String?
-    public let coordinator: RemoteConnectionCoordinator?
+    @Environment(\.remoteConnectionCoordinator) private var coordinator
 
     /// When non-nil, tapping a saved-host row fires this callback instead of
     /// using `NavigationLink(value: host)`. Lets the iPad host-switcher
@@ -18,12 +18,10 @@ public struct HostPickerView: View {
     public init(
         store: HostStore,
         browser: NearbyMacBrowser = NearbyMacBrowser(),
-        coordinator: RemoteConnectionCoordinator? = nil,
         onSelect: ((Host) -> Void)? = nil
     ) {
         self.store = store
         self.browser = browser
-        self.coordinator = coordinator
         self.onSelect = onSelect
     }
 
