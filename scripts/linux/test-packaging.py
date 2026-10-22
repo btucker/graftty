@@ -146,7 +146,7 @@ class ZmxBuildTests(unittest.TestCase):
         shutil.copy(ROOT / "build-zmx.sh", scripts / "build-zmx.sh")
         pins = self.repo / "scripts/zmx"
         pins.mkdir()
-        for name in ("ZIG_VERSION", "UPSTREAM_COMMIT", "graftty.patch", "paging.patch"):
+        for name in ("ZIG_VERSION", "UPSTREAM_COMMIT", "graftty.patch", "paging.patch", "always-run-tests.patch"):
             shutil.copy(ROOT.parent / "zmx" / name, pins / name)
         self.tools = self.repo / "tools"
         self.tools.mkdir()
@@ -155,13 +155,16 @@ class ZmxBuildTests(unittest.TestCase):
                     "GRAFTTY_TEST_ZMX_CALLS": str(self.calls),
                     "GRAFTTY_TEST_ZIG_VERSION": (pins / "ZIG_VERSION").read_text().strip()}
         self.output = self.repo / "out/zmx"
+        write_flock(self.tools / "flock")
         self.executable("git", r"""
-import sys
+import os, sys
 from pathlib import Path
 if sys.argv[1] == 'clone':
     root = Path(sys.argv[-1])
     root.mkdir()
     (root / 'build.zig.zon').write_text('.version = "0.7.0",\n')
+if 'checkout' in sys.argv and os.environ['GRAFTTY_TEST_ZMX_FAILURE'] == 'checkout':
+    sys.exit(47)
 """)
         self.executable("sleep", "pass\n")
         self.executable("zig", r"""
@@ -182,12 +185,12 @@ elif args[0] == 'build':
                        'test': '1/1 example.test...FAIL'}
         print(diagnostics[mode], file=sys.stderr)
         sys.exit(42)
-    if mode == 'permanent' or step not in previous:
+    if mode == 'permanent' or (mode == 'transient' and step not in previous):
         print('build.zig.zon:14:20: error: HTTP response read failure: ConnectionResetByPeer', file=sys.stderr)
         sys.exit(43)
     if step == 'release':
         output = Path(args[args.index('--prefix') + 1]) / 'bin/zmx'
-        output.parent.mkdir(parents=True)
+        output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text('#!/bin/sh\nexit 0\n')
 """)
 
@@ -229,6 +232,41 @@ elif args[0] == 'build':
         result = self.run_build("compiler-http")
         self.assertEqual(result.returncode, 42, result.stderr)
         self.assertEqual(self.calls.read_text().splitlines(), ["test"])
+        self.assertFalse(self.output.exists())
+
+    def test_failed_source_preparation_can_be_retried(self):
+        self.env["GRAFTTY_ZMX_CACHE_DIR"] = str(self.repo / "cache")
+        failed = self.run_build("checkout")
+        self.assertEqual(failed.returncode, 47, failed.stderr)
+        result = self.run_build("success")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), ["test", "release"])
+
+    def test_warm_cache_preserves_test_execution(self):
+        cache = self.repo / "cache"
+        self.env["GRAFTTY_ZMX_CACHE_DIR"] = str(cache)
+        for _ in range(2):
+            result = self.run_build("success")
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), ["test", "release", "test", "release"])
+        self.assertEqual(len(list(cache.glob("*/source/.graftty-prepared"))), 1)
+        self.assertTrue(self.output.exists())
+
+    def test_changed_build_inputs_get_a_new_source_tree(self):
+        self.env["GRAFTTY_ZMX_CACHE_DIR"] = str(self.repo / "cache")
+        self.assertEqual(self.run_build("success").returncode, 0)
+        patch = self.repo / "scripts/zmx/paging.patch"
+        patch.write_text(patch.read_text() + "\n")
+        self.assertEqual(self.run_build("success").returncode, 0)
+        self.assertEqual(len(list((self.repo / "cache").glob("*/source/.graftty-prepared"))), 2)
+
+    def test_warm_cache_does_not_hide_a_test_failure(self):
+        self.env["GRAFTTY_ZMX_CACHE_DIR"] = str(self.repo / "cache")
+        self.assertEqual(self.run_build("success").returncode, 0)
+        self.output.unlink()
+        result = self.run_build("test")
+        self.assertEqual(result.returncode, 42, result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), ["test", "release", "test"])
         self.assertFalse(self.output.exists())
 
 class InstallerTests(unittest.TestCase):

@@ -1350,6 +1350,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TECH-6.2** While an iOS CI shard discovers its simulator destination, the workflow shall allow 60 seconds for discovery on both the first attempt and its bounded recovery attempt.
 
+**TECH-6.3** When CI partitions Swift tests, the workflow shall select every discovered non-ownership test exactly once, preserve the separate ownership corpus gate, and reject an empty discovery result.
+
+**TECH-6.4** When an iOS CI runner executes multiple test batches, the workflow shall preserve separate test processes and result bundles, reuse its simulator, execute later batches after a test failure, and retain the failure status.
+
 ## ZMX — zmx Session Backing
 
 ### ZMX-1.x — Bundling
@@ -1501,6 +1505,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **DIST-4.6** When Linux installers run concurrently for the same user, the installer shall serialize release and service changes through completion or rollback so a failed install cannot remove a successful replacement.
 
 **DIST-4.7** If Linux zmx builds encounter a transient dependency download failure, then the release scripts shall retry at most three times, preserve exhausted failures, and stop immediately for compiler or test failures.
+
+**DIST-4.8** When a Linux zmx build restores compiled artifacts, the release scripts shall execute the unit tests again, retain format validation and ReleaseSafe compilation, and isolate cache entries by architecture and build inputs.
 
 ## WEB — Web Access
 
