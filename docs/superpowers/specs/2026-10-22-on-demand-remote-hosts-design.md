@@ -174,7 +174,15 @@ Persist native agent session data outside disposable container writable layers. 
 
 Requirements: `REMOTE-26.1` through `REMOTE-26.4`.
 
-The parent regularly fetches committed work from delegated hosts. A remote agent can also explicitly push its work to the parent. Both operations retain ordinary Git objects and refs. They do not require a PR, an MR, or publication to `origin`.
+The host phones home to each recorded parent at startup and restores the connection after a disconnect. It retains the parent's public identity and connection information with the delegation. The connection authenticates both devices against their enrolled public keys; an address or instance tag never establishes trust. Enrollment must not copy a private key. Multiple worktrees for one parent share a connection, while worktrees for different parents keep their authority separate.
+
+Phone-home must work from Linux through the parent's usual NAT or firewall without requiring the Mac to expose an SSH port. The existing WebRTC implementation is Apple-only; Linux connectivity and rendezvous are explicit implementation work. Rendezvous or a relay locates and carries the connection but cannot authorize a peer or read the authenticated SSH stream. Dialing direction does not determine which device may request a Git transfer.
+
+The host retries unavailable parents with bounded exponential backoff and jitter, and attempts reconnect promptly after a network change or interruption warning. Reconnects recheck current pairing and delegation authority. Revoked identities and obsolete generations cannot resume transfers. A reconnect reconciles receipts before retrying an operation whose outcome is unknown.
+
+The connection carries readiness and load reports, Git and native-session transfer requests, acknowledgements, and Spot interruption notifications. The parent may also fetch committed work, and a remote agent may explicitly push to the parent. Both operations retain ordinary Git objects and refs. They do not require a PR, an MR, or publication to `origin`.
+
+An offline or sleeping Mac cannot acknowledge new backups. The host retains unacknowledged work locally while it survives and reports the last acknowledged Git commit and session progress separately. Connection establishment alone never means work is saved. A Spot deadline bounds retries; parent-offline durability requires a separately chosen durable destination.
 
 Proposed transport is a dedicated Git subsystem over the existing authenticated SSH connection. It works with SSH over WebRTC and direct SSH. A Git remote helper can bridge standard Git traffic to the Graftty connection; Git performs object negotiation and transfer. [Git remote helpers](https://git-scm.com/docs/gitremote-helpers)
 
@@ -309,7 +317,7 @@ These components do not yet provide compute-provider registration, capacity plac
 
 These are implementation slices, not permission to omit Spot recovery from the first AWS release.
 
-1. Define parent delegation, authenticated Git fetch and receive, and origin publication results. Test impersonation, unauthorized refs, reconnects, duplicate requests, and exact-commit publication.
+1. Define parent delegation, host-initiated phone-home, authenticated Git fetch and receive, and origin publication results. Implement Linux connectivity to a Mac behind NAT. Test startup, sleeping parents, network changes, impersonation, unauthorized refs, reconnects, duplicate requests, and exact-commit publication.
 2. Build provider preferences and read-only host/price discovery. Test per-user persistence, preference clearing, architecture filtering, price freshness, and spending limits.
 3. Add placement reservations, AWS lifecycle operations, and Dev Container preparation. Test concurrent placement, ambiguous launch outcomes, incompatible images, and two projects sharing one host.
 4. Implement native session adapters and both skills. Prove actual Claude and Codex resume on another host using supported versions, including different filesystem paths.

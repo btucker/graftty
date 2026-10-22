@@ -3476,6 +3476,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-26.14** When a peer opens the Git control subsystem, the host shall require worktree-management permission, derive the device and key fingerprint from SSH authentication, and keep bidirectional requests on that authenticated connection.
 
+**REMOTE-26.15** When a delegated host starts or loses its parent connection, the host shall initiate and retry an authenticated connection to each recorded parent without copying private keys or requiring the Mac to expose an SSH port.
+
+**REMOTE-26.16** While a parent is unreachable, the host shall retain unacknowledged work locally while it survives, retry with bounded backoff, and report Git and session progress as saved only after their respective parent acknowledgements.
+
 ### REMOTE-27.x — Native session replication and restore
 
 **REMOTE-27.1** While a delegated host is reachable, the application shall regularly copy worktree-associated native Claude and Codex session data to the recorded parent, excluding authentication files.

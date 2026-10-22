@@ -116,6 +116,16 @@ struct RemoteTodo {
 """, .disabled("not yet implemented"))
     func remote_26_9() async throws { }
 
+    @Test("""
+@spec REMOTE-26.15: When a delegated host starts or loses its parent connection, the host shall initiate and retry an authenticated connection to each recorded parent without copying private keys or requiring the Mac to expose an SSH port.
+""", .disabled("not yet implemented"))
+    func remote_26_15() async throws { }
+
+    @Test("""
+@spec REMOTE-26.16: While a parent is unreachable, the host shall retain unacknowledged work locally while it survives, retry with bounded backoff, and report Git and session progress as saved only after their respective parent acknowledgements.
+""", .disabled("not yet implemented"))
+    func remote_26_16() async throws { }
+
     // MARK: - REMOTE-27.x — Native session replication and restore
 
     @Test("""
