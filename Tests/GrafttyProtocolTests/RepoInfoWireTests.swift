@@ -3,8 +3,9 @@ import Testing
 @testable import GrafttyProtocol
 
 /// `Fixtures/repo-info-v1.json` was encoded by `WebServer.RepoInfo` before
-/// the type moved to GrafttyProtocol (#484). Web, Mobile (`ReposFetcher`) and
-/// relaying Macs read `GET /repos`, so the shared type must keep its shape.
+/// the type moved to GrafttyProtocol (#484). The web client and Mobile
+/// (`ReposFetcher`) read `GET /repos`, including repositories relayed from
+/// other Macs, so the shared type must keep its shape.
 @Suite("RepoInfo wire fixture")
 struct RepoInfoWireTests {
     static let expected = [
@@ -26,9 +27,7 @@ struct RepoInfoWireTests {
     ]
 
     private func fixture() throws -> Data {
-        let url = try #require(Bundle.module.url(
-            forResource: "repo-info-v1", withExtension: "json", subdirectory: "Fixtures"))
-        return try Data(contentsOf: url)
+        try WireFixture.data("repo-info-v1")
     }
 
     @Test

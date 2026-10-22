@@ -21,9 +21,7 @@ struct PaneSplitDirectionWireTests {
         ghostty: [.left, .right, .up, .down])
 
     private func fixture() throws -> Data {
-        let url = try #require(Bundle.module.url(
-            forResource: "pane-split-direction-v1", withExtension: "json", subdirectory: "Fixtures"))
-        return try Data(contentsOf: url)
+        try WireFixture.data("pane-split-direction-v1")
     }
 
     @Test
