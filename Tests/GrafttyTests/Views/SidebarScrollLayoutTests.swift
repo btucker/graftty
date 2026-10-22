@@ -18,6 +18,8 @@ private final class SidebarScrollHarness: ObservableObject {
     let prs = PRStatusStore()
     let registry = ClaudeSessionRegistry()
     let branches = RemoteBranchStore()
+    /// Published on every `state` change, as GrafttyApp does for AppState.
+    let changes = AppStateChanges()
     let web: WebServerController
 
     init(pinnedCount: Int) throws {
@@ -42,7 +44,7 @@ private struct HostedSidebarScrollView: View {
                 paneTitleInvalidations: PaneTitleInvalidationSource(), voiceDictation: harness.voice,
                 selectedVoicePaneID: nil, theme: .fallback, statsStore: harness.stats, prStatusStore: harness.prs,
                 claudeSessionRegistry: harness.registry, remoteBranchStore: harness.branches,
-                remoteMacsModel: harness.remotes, selectedRemoteIdentity: nil, selectedRemoteWorktreePath: nil,
+                remoteMacsModel: harness.remotes, appStateChanges: harness.changes, selectedRemoteIdentity: nil, selectedRemoteWorktreePath: nil,
                 selectedRemotePaneSessionName: nil, onSelect: {
                     harness.selections.append($0)
                     harness.state.selectedWorktreePath = $0
@@ -54,6 +56,7 @@ private struct HostedSidebarScrollView: View {
                 onAddWorktree: { _, _, _ in nil }, pendingAddWorktree: .constant(nil))
                 .environmentObject(harness.web)
                 .environmentObject(PortBindingsModel())
+                .onChange(of: harness.state) { _, _ in harness.changes.publish() }
                 .navigationSplitViewColumnWidth(min: 300, ideal: 440, max: 540)
         } detail: { Color.clear }
     }

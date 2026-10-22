@@ -4150,6 +4150,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERF-1.15** When the main window resolves the selected local worktree's context, the application shall project only that worktree's repository and produce the same row as the full sidebar projection.
 
+**PERF-1.16** When an observer subscribes to application state changes, the application shall rebuild once immediately and then once per burst of changes published while a rebuild is in progress, instead of rebuilding on a fixed interval.
+
+**PERF-1.17** While no application state change is published, the application shall still rebuild observed snapshots on each safety-net tick so a change source that was not wired cannot leave a viewer stale indefinitely.
+
+**PERF-1.18** When a store that sidebar and panes-state snapshots read changes, the application shall publish an application state change.
+
+**PERF-1.19** While application state changes keep arriving, the application shall rebuild observed snapshots no more often than once per second.
+
+**PERF-1.20** When a sidebar refresh re-resolves a project icon that has not changed, the application shall not publish a project icon change.
+
 ## PORTS — PORTS
 
 ### PORTS-1.x

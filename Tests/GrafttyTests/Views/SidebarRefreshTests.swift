@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import Testing
 import GrafttyKit
@@ -58,5 +59,18 @@ struct SidebarRefreshTests {
         controller.refreshIcons([repo])
         #expect(controller.project(for: repo, owner: owner).accentHex == nil)
         #expect(controller.project(for: repo, owner: owner).iconRevision == nil)
+    }
+
+    @Test("@spec PERF-1.20: When a sidebar refresh re-resolves a project icon that has not changed, the application shall not publish a project icon change.")
+    func unchangedInitialsIconDoesNotPublish() {
+        var repo = RepoEntry(path: "/repo", displayName: "Project", worktrees: [])
+        repo.iconOverride = .initials("PR")
+        let controller = SidebarHostController()
+        controller.refreshIcons([repo])
+        var published = 0
+        let subscription = controller.objectWillChange.sink { published += 1 }
+        defer { subscription.cancel() }
+        controller.refreshIcons([repo], force: true)
+        #expect(published == 0)
     }
 }
