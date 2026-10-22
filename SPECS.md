@@ -3486,6 +3486,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-26.19** When a delegated host cannot reach its parent and an authorized wake path is available, the host shall attempt Wake-on-LAN and retry authenticated connection within the remaining operation deadline, without treating a sent wake packet as a receipt or delaying transfers to other reachable parents.
 
+**REMOTE-26.20** When enrolling an AWS host, the parent shall bind the host's locally generated public identity to the recorded account, region, instance, and pending launch operation through authenticated provider command results before accepting SSH-authenticated callbacks, and shall reject unsolicited or changed-key enrollment without copying private keys.
+
 ### REMOTE-27.x — Native session replication and restore
 
 **REMOTE-27.1** While a delegated host is reachable, the application shall regularly copy worktree-associated native Claude and Codex session data to the recorded parent, excluding authentication files.

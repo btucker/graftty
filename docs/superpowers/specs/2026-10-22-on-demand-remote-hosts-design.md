@@ -194,7 +194,7 @@ The host retries unavailable parents with bounded exponential backoff and jitter
 
 The connection carries readiness and load reports, Git and native-session transfer requests, acknowledgements, and Spot interruption notifications. The parent may also fetch committed work, and a remote agent may explicitly push to the parent. Both operations retain ordinary Git objects and refs. They do not require a PR, an MR, or publication to `origin`.
 
-When the parent is unreachable, attempt to wake it before concluding that it will remain unavailable. Reuse Graftty's signed wake advertisements and bounded connection retries. The existing sender broadcasts only on a matching local IPv4 subnet; an AWS worker cannot use that path directly to reach the Mac's LAN. Remote wake requires a reachable, awake LAN peer or a configured router/wake proxy. Any peer-assisted wake request must authenticate the requester and restrict the target to the recorded parent. Wake relay support is additional work, not an existing capability. A routed VPN alone does not carry the local wake broadcast. [Tailscale's remote wake architecture](https://tailscale.com/blog/wake-on-lan-tailscale-upsnap)
+Parent sleep and wake recovery is deferred. The following wake behavior is a future extension, not a prerequisite for the first release. When the parent is unreachable, attempt to wake it before concluding that it will remain unavailable. Reuse Graftty's signed wake advertisements and bounded connection retries. The existing sender broadcasts only on a matching local IPv4 subnet; an AWS worker cannot use that path directly to reach the Mac's LAN. Remote wake requires a reachable, awake LAN peer or a configured router/wake proxy. Any peer-assisted wake request must authenticate the requester and restrict the target to the recorded parent. Wake relay support is additional work, not an existing capability. A routed VPN alone does not carry the local wake broadcast. [Tailscale's remote wake architecture](https://tailscale.com/blog/wake-on-lan-tailscale-upsnap)
 
 A sent wake packet does not prove that the Mac woke or received work. Authenticate the restored connection and wait for Git and session receipts. Wake and connection attempts share the Spot interruption deadline and must not delay transfers to other reachable parents. If the parent remains unreachable, retain unacknowledged work locally while the host survives and report the last acknowledged Git commit and session progress separately. Parent-offline durability still requires a separately chosen durable destination.
 
@@ -215,7 +215,20 @@ A missing credential or unavailable direct route can trigger the fallback. A non
 
 ## The parent verifies the source of incoming work
 
-Requirements: `REMOTE-26.5` through `REMOTE-26.9`.
+Requirements: `REMOTE-26.5` through `REMOTE-26.9`, and `REMOTE-26.20`.
+
+Reuse existing implementations at each boundary. The Dev Container CLI owns project configuration, container creation, Features, and lifecycle commands. It already runs through Graftty's adapter. Host authentication comes from the connection layer; the documented remote Dev Container workflows use SSH or Remote Tunnels underneath the environment setup. Graftty should not create another container engine or authentication protocol. [Dev Container CLI](https://containers.dev/supporting#dev-container-cli), [remote Dev Container connections](https://code.visualstudio.com/remote/advancedcontainers/develop-remote-host)
+
+For AWS, use Systems Manager Run Command through the installed AWS CLI as the proposed initial trust channel:
+
+1. Record the launch operation, AWS account, region, and exact EC2 instance ID returned by AWS. Keep enrollment pending until the provider identity and host key are bound.
+2. Target that exact instance with `aws ssm send-command`, rather than selecting by tags. The host generates its Graftty identity key locally. The command exchanges public identities and the enrollment operation ID; private keys stay on their originating machines.
+3. Retrieve the result with `aws ssm get-command-invocation` for the recorded command and instance IDs in the same account and region. Require successful execution and a complete, bounded identity response for that pending operation. Persist the instance-to-public-key binding before accepting callbacks. A retry must return the same key; changed keys require explicit re-enrollment.
+4. Authenticate phone-home through the existing SSH implementation. The host proves possession of the enrolled private key as part of the fresh SSH handshake, and verifies the parent's enrolled server key. The parent derives sender identity from that handshake, then checks each operation against its active delegation.
+
+AWS provides the authenticated management path and command targeting; Graftty records the resulting binding. This approach requires SSM Agent, connectivity to Systems Manager, and an appropriately scoped instance role or supported Systems Manager management configuration. It uses the Mac's existing AWS CLI authentication and does not copy those credentials to the worker. If these prerequisites are missing, report the setup requirement rather than trusting the first callback. SSM enrollment remains unimplemented. [Run Command targeting](https://docs.aws.amazon.com/cli/latest/reference/ssm/send-command.html), [command results](https://docs.aws.amazon.com/cli/latest/reference/ssm/get-command-invocation.html), [instance permissions](https://docs.aws.amazon.com/systems-manager/latest/userguide/setup-instance-permissions.html)
+
+An instance ID in a request, an IP address, or a signed EC2 instance identity document by itself does not bind the current connection to the worker's Graftty key. The identity document describes instance attributes; accepting a copy as a login credential would omit proof of possession for this connection. Keep the provider-mediated enrollment and standard SSH key authentication. [EC2 identity document fields](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-identity-documents.html)
 
 Before delegation, the parent records the repository identity, delegated worktree ID, expected remote device identity and public-key fingerprint, permitted refs, and current assignment generation. Instance IDs and labels help locate a host but do not authenticate it.
 
@@ -351,5 +364,5 @@ Before implementation, promote the relevant disabled inventory entries into fail
 - Session adapter version support, related files, stable-read boundaries, and path remapping.
 - Parent-offline durability and whether users can select another durable destination.
 - Native agent authentication on new hosts without copying existing credentials.
-- Secure initial identity enrollment for provisioned EC2 instances, without trusting an address or instance label alone.
+- Exact SSM launch-template prerequisites and least-privilege IAM permissions for provider-mediated public-key enrollment.
 - Parent reassignment when the initiating Mac is permanently unavailable, and lifecycle policy for idle machines.
