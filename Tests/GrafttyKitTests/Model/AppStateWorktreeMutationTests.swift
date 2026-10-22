@@ -18,8 +18,9 @@ struct AppStateWorktreeMutationTests {
             [WorktreeEntry(path: "/a", branch: "a2")],
         ])
 
-        appState.mutateWorktrees(atPath: "/a") { $0.branch += "!" }
+        let found = appState.mutateWorktrees(atPath: "/a") { $0.branch += "!" }
 
+        #expect(found)
         #expect(appState.repos[0].worktrees.map(\.branch) == ["a!", "b"])
         #expect(appState.repos[1].worktrees.map(\.branch) == ["a2!"])
     }
@@ -28,8 +29,9 @@ struct AppStateWorktreeMutationTests {
         var appState = state([[WorktreeEntry(path: "/a", branch: "a")]])
         let before = appState
 
-        appState.mutateWorktrees(atPath: "/missing") { $0.branch = "changed" }
+        let found = appState.mutateWorktrees(atPath: "/missing") { $0.branch = "changed" }
 
+        #expect(!found)
         #expect(appState == before)
     }
 

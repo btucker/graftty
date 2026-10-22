@@ -21,7 +21,6 @@ enum WorktreeStartResult: Equatable {
 enum PaneCommands {
     /// Shared closed-to-running transition used by local sidebar selection
     /// and authenticated remote-open requests.
-    @MainActor
     static func startWorktree(
         path: String,
         appState: Binding<AppState>,
@@ -93,7 +92,6 @@ enum PaneCommands {
 
     /// Shared split implementation used by local commands and authenticated
     /// pane-control requests. Remote callers can suppress host focus changes.
-    @MainActor
     @discardableResult
     static func splitPane(
         appState: Binding<AppState>,
@@ -173,7 +171,6 @@ enum PaneCommands {
     /// every sibling pane in the sidebar. No-op if the terminal isn't
     /// in any worktree (e.g., it was just destroyed). Auto-clears after
     /// `clearAfter` seconds.
-    @MainActor
     static func setAttentionForTerminal(
         appState: Binding<AppState>,
         terminalID: PaneSlotID,
@@ -210,7 +207,6 @@ enum PaneCommands {
     /// Move a pane to the worktree whose path is the longest prefix of
     /// `newPWD`. No-op when `newPWD` matches no worktree, or matches the
     /// pane's current home.
-    @MainActor
     static func reassignPaneByPWD(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
@@ -378,7 +374,6 @@ enum PaneCommands {
     /// direction the keypress is ignored — matching upstream Ghostty and
     /// terminal multiplexers like tmux, which leave focus put rather than
     /// wrapping to an unrelated pane.
-    @MainActor
     static func navigatePane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
@@ -415,7 +410,6 @@ enum PaneCommands {
     /// items promise. Kept separate from the spatial `navigatePane` so
     /// TERM-7.3 (arrow-key spatial nav) doesn't silently change the
     /// round-robin semantics shared by fixed and host tab-action chords.
-    @MainActor
     static func navigatePaneInTreeOrder(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
@@ -445,14 +439,12 @@ enum PaneCommands {
         }
     }
 
-    @MainActor
     static func toggleZoom(appState: Binding<AppState>, on terminalID: PaneSlotID) {
         appState.wrappedValue.mutateWorktree(containing: terminalID) { wt in
             wt.splitTree = wt.splitTree.togglingZoom(at: terminalID)
         }
     }
 
-    @MainActor
     static func equalizeSplits(
         appState: Binding<AppState>,
         around terminalID: PaneSlotID,
@@ -467,7 +459,6 @@ enum PaneCommands {
         }
     }
 
-    @MainActor
     @discardableResult
     static func resizeSplit(
         appState: Binding<AppState>,
@@ -518,7 +509,6 @@ enum PaneCommands {
     /// user-initiated closes clean up phantom leaves (surface creation
     /// failed, `TERM-5.8`) while keeping the `TERM-5.7` Stop-cascade guard
     /// for libghostty-initiated callbacks.
-    @MainActor
     static func closePane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
@@ -600,7 +590,6 @@ enum PaneCommands {
     /// pure decision function in GrafttyKit, and — if the decision is
     /// `.type(command)` — types the command into the pane via
     /// `SurfaceHandle.typeText` followed by `\r` to trigger execution.
-    @MainActor
     static func maybeRunDefaultCommand(
         terminalManager: TerminalManager,
         terminalID: PaneSlotID
