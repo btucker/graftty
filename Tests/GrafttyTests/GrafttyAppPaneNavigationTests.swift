@@ -25,7 +25,7 @@ struct GrafttyAppPaneNavigationTests {
         let binding = Binding(get: { state }, set: { state = $0 })
         let manager = TerminalManager(socketPath: "/tmp/graftty-pane-navigation-test.sock")
 
-        GrafttyApp.navigatePaneInTreeOrder(
+        PaneCommands.navigatePaneInTreeOrder(
             appState: binding,
             terminalManager: manager,
             from: second,
@@ -33,7 +33,7 @@ struct GrafttyAppPaneNavigationTests {
         )
         #expect(state.repos[0].worktrees[0].focusedPaneSlotID == first)
 
-        GrafttyApp.navigatePaneInTreeOrder(
+        PaneCommands.navigatePaneInTreeOrder(
             appState: binding,
             terminalManager: manager,
             from: first,
@@ -55,7 +55,7 @@ struct GrafttyAppPaneNavigationTests {
         let binding = Binding(get: { state }, set: { state = $0 })
         let manager = TerminalManager(socketPath: "/tmp/graftty-pane-navigation-test.sock")
 
-        GrafttyApp.navigatePaneInTreeOrder(
+        PaneCommands.navigatePaneInTreeOrder(
             appState: binding,
             terminalManager: manager,
             from: only,

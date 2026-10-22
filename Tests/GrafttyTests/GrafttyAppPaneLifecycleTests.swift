@@ -51,7 +51,7 @@ struct GrafttyAppPaneLifecycleTests {
         ))
         manager.insertSurfaceForTesting(handle, for: pane)
 
-        let result = GrafttyApp.startWorktree(
+        let result = PaneCommands.startWorktree(
             path: worktree.path,
             appState: binding,
             terminalManager: manager,
@@ -106,7 +106,7 @@ struct GrafttyAppPaneLifecycleTests {
         ))
         manager.insertSurfaceForTesting(handle, for: pane)
 
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: worktree.path,
             appState: binding,
             terminalManager: manager
@@ -154,7 +154,7 @@ struct GrafttyAppPaneLifecycleTests {
             socketPath: "/tmp/graftty-multi-pane-open-test.sock"
         )
 
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: worktree.path,
             appState: binding,
             terminalManager: manager
@@ -193,7 +193,7 @@ struct GrafttyAppPaneLifecycleTests {
             socketPath: "/tmp/graftty-multi-pane-fallback-test.sock"
         )
 
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: fallbackWorktree.path,
             appState: fallbackBinding,
             terminalManager: fallbackManager
@@ -279,17 +279,17 @@ struct GrafttyAppPaneLifecycleTests {
         )
         let manager = TerminalManager(socketPath: "/tmp/graftty-open-test.sock")
 
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: running.path,
             appState: binding,
             terminalManager: manager
         ) == .alreadyRunning)
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: stale.path,
             appState: binding,
             terminalManager: manager
         ) == .unavailable)
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: "/repo/missing",
             appState: binding,
             terminalManager: manager
@@ -447,7 +447,7 @@ struct GrafttyAppPaneLifecycleTests {
             worktreePath: source.path
         )
 
-        GrafttyApp.reassignPaneByPWD(
+        PaneCommands.reassignPaneByPWD(
             appState: binding,
             terminalManager: manager,
             terminalID: slot,
@@ -513,7 +513,7 @@ struct GrafttyAppPaneLifecycleTests {
         manager.markFirstPane(moving)
         manager.markFirstPane(targetPrimary)
 
-        GrafttyApp.reassignPaneByPWD(
+        PaneCommands.reassignPaneByPWD(
             appState: binding,
             terminalManager: manager,
             terminalID: moving,

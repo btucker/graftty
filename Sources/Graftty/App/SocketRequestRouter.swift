@@ -654,7 +654,7 @@ extension SocketRequestRouter {
         // ATTN-1.25: hand the command to surface creation, which runs it
         // once the shell is ready; typing after the split could arrive first.
         guard let targetID = appState.wrappedValue.worktree(forPath: path)?.firstPane,
-              let newPaneID = GrafttyApp.splitPane(
+              let newPaneID = PaneCommands.splitPane(
                   appState: appState,
                   terminalManager: terminalManager,
                   targetID: targetID,
@@ -708,7 +708,7 @@ extension SocketRequestRouter {
         guard let targetID = wt.splitTree.leaf(atPaneID: index) else {
             return .error("no pane with id \(index) in this worktree")
         }
-        GrafttyApp.closePane(
+        PaneCommands.closePane(
             appState: appState,
             terminalManager: terminalManager,
             targetID: targetID,
