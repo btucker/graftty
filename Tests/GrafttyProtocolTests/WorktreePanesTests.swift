@@ -218,4 +218,31 @@ struct WorktreePanesTests {
                 .isEmpty
         )
     }
+
+    @Test
+    func withReplacesOnlyNamedFieldsAndKeepsTheRest() throws {
+        let row = WorktreePanes(
+            path: "/repo", displayName: "main", repoDisplayName: "Repo", repositoryID: "/repo",
+            displayBranch: "main", state: .running, isMainCheckout: true, prBadge: nil,
+            stats: WorktreeWireStats(ahead: 1, behind: 0, hasUncommittedChanges: true, baseRef: "origin/main"),
+            attentionText: "hi", attentionSource: .agentStop, attentionTimestamp: Date(timeIntervalSinceReferenceDate: 3),
+            layout: .leaf(sessionName: "s", title: "t", attentionText: nil, isBusy: false, attentionSource: nil),
+            origin: WorktreeOrigin(deviceID: RemoteDeviceID(value: "a"), deviceLabel: "A", relayDepth: 0),
+            sidebar: SidebarWorktreeMetadata(id: "p:/repo", projectID: "p"),
+            ports: [], portBindings: ["s": []])
+        #expect(row.with() == row)
+        let relayed = row.with(path: "alias", repositoryID: "repo-alias",
+                               route: WorktreeRoute(repositoryID: "repo-alias", worktreeID: "alias"))
+        #expect(relayed.path == "alias")
+        #expect(relayed.repositoryID == "repo-alias")
+        #expect(relayed.route == WorktreeRoute(repositoryID: "repo-alias", worktreeID: "alias"))
+        let restored = WorktreePanes(
+            path: row.path, displayName: relayed.displayName, repoDisplayName: relayed.repoDisplayName,
+            repositoryID: row.repositoryID, displayBranch: relayed.displayBranch, state: relayed.state,
+            isMainCheckout: relayed.isMainCheckout, prBadge: relayed.prBadge, stats: relayed.stats,
+            attentionText: relayed.attentionText, attentionSource: relayed.attentionSource,
+            attentionTimestamp: relayed.attentionTimestamp, layout: relayed.layout, origin: relayed.origin,
+            sidebar: relayed.sidebar, ports: relayed.ports, portBindings: relayed.portBindings)
+        #expect(restored == row)
+    }
 }

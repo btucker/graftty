@@ -153,8 +153,9 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// so a repeated notification with identical text is still observable;
     /// nil preserves compatibility with snapshots from older hosts.
     public let attentionTimestamp: Date?
-    /// nil when the worktree has no panes currently running. Always
-    /// nil for worktrees in `.closed`, `.stale`, or `.creating`.
+    /// nil when the worktree has no panes currently running. Published
+    /// snapshots send it only for `.running` rows; the Mac sidebar's own
+    /// local rows keep a stopped worktree's saved layout.
     public let layout: PaneLayoutNode?
     /// nil for legacy snapshots. New origin-aware snapshots identify their
     /// owning Mac explicitly, including local rows (`relayDepth == 0`).
@@ -204,6 +205,26 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         self.sidebar = sidebar
         self.ports = ports
         self.portBindings = portBindings
+    }
+
+    /// Copy with the relay/presentation fields replaced; nil keeps the
+    /// current value. Lets relays and report ordering rewrite identity
+    /// without re-listing every field.
+    public func with(
+        path: String? = nil,
+        repositoryID: String? = nil,
+        layout: PaneLayoutNode? = nil,
+        origin: WorktreeOrigin? = nil,
+        route: WorktreeRoute? = nil,
+        sidebar: SidebarWorktreeMetadata? = nil
+    ) -> WorktreePanes {
+        WorktreePanes(
+            path: path ?? self.path, displayName: displayName, repoDisplayName: repoDisplayName,
+            repositoryID: repositoryID ?? self.repositoryID, displayBranch: displayBranch, state: state,
+            isMainCheckout: isMainCheckout, prBadge: prBadge, stats: stats,
+            attentionText: attentionText, attentionSource: attentionSource, attentionTimestamp: attentionTimestamp,
+            layout: layout ?? self.layout, origin: origin ?? self.origin, route: route ?? self.route,
+            sidebar: sidebar ?? self.sidebar, ports: ports, portBindings: portBindings)
     }
 
     /// Custom decode preserves readability when an older server
