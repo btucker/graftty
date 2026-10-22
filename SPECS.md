@@ -3444,7 +3444,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-25.6** When creating a worktree for the upstream Dev Container common-directory mount, the application shall request relative Git metadata without rewriting existing worktrees and shall report unsupported Git versions as a creation failure.
 
-**REMOTE-25.7** When a parent requests Dev Container placement, the host shall prepare the selected configuration before pane startup, retain its container identity for later panes, and stop and remove that container when deleting the worktree.
+**REMOTE-25.7** When a parent requests Dev Container placement, the host shall prepare the selected configuration before pane startup, retain its container identity for later panes, stop and remove that container when deleting the worktree, and restart it if Git refuses deletion even when the caller cancels.
 
 ### REMOTE-26.x — Git replication and authenticated parent publication
 

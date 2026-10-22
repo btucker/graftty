@@ -282,7 +282,13 @@ public final class HeadlessHostRuntime {
         catch {
             let deletionError = error
             if restartContainer, let containerID {
-                do { try await devContainers.restartAfterRejectedDeletion(containerID: containerID) }
+                do {
+                    // Restore the environment even if the requesting channel was
+                    // canceled. This compensation still uses the Docker timeout.
+                    try await Task { [devContainers] in
+                        try await devContainers.restartAfterRejectedDeletion(containerID: containerID)
+                    }.value
+                }
                 catch { throw HostRuntimeError.invalid("Worktree deletion failed: \(deletionError). Container restart also failed: \(error)") }
             }
             throw error

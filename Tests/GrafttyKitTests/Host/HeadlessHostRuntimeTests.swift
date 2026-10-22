@@ -51,10 +51,15 @@ private actor HostDevContainerFake: CLIExecutor {
     let failure: String?
     init(failure: String? = nil) { self.failure = failure }
     var calls: [[String]] = []
+    var successfulRestarts = 0
+    private var nextStop: (@Sendable () throws -> Void)?
+    func onNextStop(_ callback: @escaping @Sendable () throws -> Void) { nextStop = callback }
     private var nextHelp: (@Sendable () async -> Void)?
     func onNextHelp(_ callback: @escaping @Sendable () async -> Void) { nextHelp = callback }
     func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
         calls.append([command] + args)
+        if command == "docker", args.first == "stop", let callback = nextStop { nextStop = nil; try callback() }
+        if command == "docker", args.first == "start" { try Task.checkCancellation(); successfulRestarts += 1 }
         if args.contains("--help"), let callback = nextHelp { nextHelp = nil; await callback() }
         if (command == "devcontainer" && !args.contains("--help") && args.first == failure) || (command == "docker" && args.first == "rm" && failure == "cleanup") {
             throw CLIError.nonZeroExit(command: command, exitCode: 1, stderr: "simulated failure")
@@ -181,7 +186,7 @@ struct HeadlessHostRuntimeTests {
         #expect(deleted.state == .released)
     }
 
-    @Test("@spec REMOTE-25.7: When a parent requests Dev Container placement, the host shall prepare the selected configuration before pane startup, retain its container identity for later panes, and stop and remove that container when deleting the worktree.", arguments: [Optional<String>.none, "compatibility", "up", "exec", "cleanup"])
+    @Test("@spec REMOTE-25.7: When a parent requests Dev Container placement, the host shall prepare the selected configuration before pane startup, retain its container identity for later panes, stop and remove that container when deleting the worktree, and restart it if Git refuses deletion even when the caller cancels.", arguments: [Optional<String>.none, "compatibility", "up", "exec", "cleanup", "cancel-delete"])
     func devContainerPlacementRetainsEnvironmentAndCleansUp(failure: String?) async throws {
         let (root, config, _) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -255,6 +260,19 @@ struct HeadlessHostRuntimeTests {
         #expect(await !executor.calls.contains { $0.starts(with: ["docker", "stop"]) })
         #expect(await !executor.calls.contains { $0.starts(with: ["docker", "rm"]) })
         try original.write(to: dirtyFile)
+        if failure == "cancel-delete" {
+            await executor.onNextStop {
+                // A writer dirties the worktree after preflight but before Git removal.
+                try Data("changed during stop".utf8).write(to: dirtyFile)
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+            let deletion = Task { try await runtime.deleteWorktree(intent.worktreePath) }
+            await #expect(throws: (any Error).self) { try await deletion.value }
+            #expect(await executor.successfulRestarts == 1)
+            #expect(runtime.state.worktree(forPath: intent.worktreePath) != nil)
+            #expect(FileManager.default.fileExists(atPath: intent.worktreePath))
+            return
+        }
         if failure == "cleanup" {
             await #expect(throws: (any Error).self) { try await runtime.deleteWorktree(intent.worktreePath) }
             #expect(runtime.state.worktree(forPath: intent.worktreePath) == nil)
