@@ -166,7 +166,7 @@ final class RemoteMacConnectionRegistry {
         }
         self.clientDeviceID = Self.defaultClientDeviceID()
         self.pinnedHostProvider = { try? pinnedHostStore.get(id: $0) }
-        self.pinnedHostUpdater = { try pinnedHostStore.update($0) }
+        self.pinnedHostUpdater = { try pinnedHostStore.refreshConnectionMetadata($0) }
         self.signalingClient = SignalingClient()
         self.connectionFactory = { clientKey, expectedHostFingerprint in
             RemoteHostConnection(clientKey: clientKey, expectedHostFingerprint: expectedHostFingerprint)

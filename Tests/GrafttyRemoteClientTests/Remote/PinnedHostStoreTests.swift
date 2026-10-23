@@ -52,7 +52,7 @@ struct PinnedHostStoreTests {
             signingKey: Curve25519.Signing.PrivateKey()
         )
 
-        try RemoteHostDialer.persistRefreshedPin(refreshed, using: store.update) { _ in Issue.record("unexpected write failure") }
+        try RemoteHostDialer.persistRefreshedPin(refreshed, using: store.refreshConnectionMetadata) { _ in Issue.record("unexpected write failure") }
 
         var expected = repaired
         expected.routes = refreshed.routes
@@ -75,13 +75,13 @@ struct PinnedHostStoreTests {
         )
         try store.add(original)
         try store.upsertAfterPairing(repaired)
-        #expect(throws: (any Swift.Error).self) {
-            try RemoteHostDialer.persistRefreshedPin(original, using: store.update) { _ in Issue.record("trust change must fail the dial") }
+        #expect(throws: PinnedHostStore.Error.identityChanged) {
+            try RemoteHostDialer.persistRefreshedPin(original, using: store.refreshConnectionMetadata) { _ in Issue.record("trust change must fail the dial") }
         }
         #expect(try store.get(id: original.id) == repaired)
         try store.remove(id: original.id)
         #expect(throws: PinnedHostStore.Error.notFound) {
-            try RemoteHostDialer.persistRefreshedPin(original, using: store.update) { _ in Issue.record("revocation must fail the dial") }
+            try RemoteHostDialer.persistRefreshedPin(original, using: store.refreshConnectionMetadata) { _ in Issue.record("revocation must fail the dial") }
         }
         #expect(try store.get(id: original.id) == nil)
     }
