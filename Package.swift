@@ -125,15 +125,12 @@ let linuxKitExclusions = ["Updater", "Editor", "Model/PNGThumbnail.swift",
 // moved under `Apple/`; do not add to it. scripts/check-linux-test-allowlist.py
 // checks both.
 let linuxPendingKitTests = [
-    "CLI/CLIRunnerTests.swift",
+    "CLI/CLIRunnerTests.swift", // #666: GNU env not-found message
     "Git/WorktreeMonitorTests.swift",
     "Hosting/GitOriginHostTests.swift",
     "Notification/SocketIOReadAllTests.swift",
     "Notification/SocketIntegrationTests.swift",
     "Notification/SocketServerBufferCapTests.swift",
-    // @MainActor XCTestCase classes crash Linux XCTest discovery.
-    "PRStatus/PRStatusStoreAbsenceTransitionTests.swift",
-    "PRStatus/PRStatusStoreTransitionTests.swift",
     "Remote/HostPairingServerTests.swift",
     "Remote/MacToMac/LANRemoteAccessServerTests.swift",
     "Remote/PagedZmxAttachEngineTests.swift",
@@ -141,8 +138,7 @@ let linuxPendingKitTests = [
     "SidebarHostNavigationTests.swift",
     "Stats/WorktreeStatsStoreLocalGitTimeoutTests.swift",
     "Support/BlockedFIFOTestSupport.swift",
-    "Teams/AgentPluginInstallerTests.swift",
-    "Teams/ClaudePeerDeliveryServiceTests.swift",
+    "Teams/AgentPluginInstallerTests.swift", // #667: Codex TOML parse differs on Linux
     "Teams/ClaudePeerMessagingTests.swift",
     "Teams/ClaudePeerReplyBridgeTests.swift",
     "Teams/ClaudePeerSessionRegistryTests.swift",
@@ -159,7 +155,7 @@ let linuxPendingKitTests = [
     "Web/WebTLSContextProviderTests.swift",
     "Web/WebTestTLSHelpers.swift",
     "WorktreeSleep/ShellSleepActivityTests.swift",
-    "Zmx/ZmxLauncherTests.swift",
+    "Zmx/ZmxLauncherTests.swift", // #653: Linux zmx path case
     "Zmx/ZmxNativeHostManagedIntegrationTests.swift",
     "Zmx/ZmxResizePropagationTests.swift",
     "Zmx/ZmxSurvivalIntegrationTests.swift",

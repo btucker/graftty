@@ -782,7 +782,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-4.13** When the user confirms Delete Worktree on a worktree whose directory no longer exists on disk, the application shall run `git worktree prune --expire=now`, drop the worktree entry from the sidebar without prompting the user with a Force Delete alert, and tear down any running terminal surfaces for the entry.
 
-**GIT-4.15** When `DeleteWorktreeFlow.delete` runs and the early `notFound` / `mainCheckoutRejected` / non-git-repo gates pass, the application shall transition the worktree entry to `.deleting` state synchronously before awaiting `git worktree remove`, so the sidebar row renders a spinner while git runs. On flow failure (forceable or final), the application shall restore the entry's prior state before surfacing the error alert; on success the entry is removed entirely. Mirrors `GIT-5.4` on the symmetric delete path so a long-running `git worktree remove` (which can take seconds when the worktree contains many untracked files or holds a slow lock) produces visible feedback rather than a frozen row.
+**GIT-4.15** When `DeleteWorktreeFlow.delete` runs and the early `notFound` / `mainCheckoutRejected` / in-flight / non-git-repo gates pass, the application shall transition the worktree entry to `.deleting` state synchronously before awaiting `git worktree remove`, so the sidebar row renders a spinner while git runs. On flow failure (forceable or final), the application shall restore the entry's prior state before surfacing the error alert; on success the entry is removed entirely. Mirrors `GIT-5.4` on the symmetric delete path so a long-running `git worktree remove` (which can take seconds when the worktree contains many untracked files or holds a slow lock) produces visible feedback rather than a frozen row.
 
 **GIT-4.16** While a worktree entry is in the `.deleting` state, the sidebar row shall render a `ProgressView` in place of its type icon (`house` / `arrow.triangle.branch` / `arrow.triangle.pull`), shall present an empty right-click context menu (Stop, Delete Worktree, Open in Finder would all either error or race the in-flight remove), shall reject same-repo pane drops (the target worktree is about to disappear), and shall ignore selection clicks — the user keeps their previous worktree focused until the entry is removed or restored. Mirrors `GIT-5.5` for the symmetric delete-in-flight indicator.
 
@@ -793,6 +793,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-4.19** When the user invokes a delete-flow confirmation dialog (GIT-4.2 Delete Worktree, GIT-4.4 force-delete recovery, GIT-4.11 final failure, or the GIT-3.6 Remove Repository menu item), the application shall present it as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than `NSAlert.runModal()`. Otherwise the nested-event-loop `runModal()` freezes libghostty's PTY callbacks for every embedded terminal pane while the dialog awaits a click.
 
 **GIT-4.20** When Delete Worktree is invoked on an unselected local sidebar worktree, the application shall present confirmation on that row's owning window after menu tracking ends and delete the requested path without changing selection first.
+
+**GIT-4.21** If the user confirms Delete Worktree or Force Delete for a worktree whose creation or removal is already in progress, then the application shall refuse the deletion with a single-button error alert, without running Git or changing the worktree's row.
 
 ### GIT-5.x — Creating a Worktree
 
@@ -1689,6 +1691,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **WEB-7.14** When a web or paired-device client pulls a repository's default branch, the application shall fast-forward the main checkout and then refresh its divergence stats.
 
 **WEB-7.15** When a REST worktree create, delete or default-branch pull finishes, the application shall answer success with 200 and its JSON result, invalid input with 400, an unknown worktree with 404, a Git refusal or conflict with 409, and any other failure with 500, each failure carrying a JSON error message and a delete 409 also carrying whether a forced retry is allowed.
+
+**WEB-7.16** If a web or paired-device client asks to delete a worktree whose creation or removal is still in progress, then the application shall refuse it as a failure that a forced retry cannot resolve, without running Git or changing the worktree's row.
 
 ### WEB-8.x — Web TLS (HTTPS)
 
@@ -4861,3 +4865,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.12** When the native notification fixture validates its private queue, the harness shall compare canonical directory paths independently of URL directory metadata and reject other directories.
 
 **TEST-1.13** When a Quick Look integration run drives both provider TUIs, the test harness shall type unique prompts through the native keyboard, open and dismiss the production preview, capture every action, and fail unless all required retained and transient pane cases finish successfully.
+
+**TEST-1.14** If a loopback test peer's data channel does not open or arrive within its deadline, then the test fixture shall fail the wait with a data-channel-open timeout naming the channel label.

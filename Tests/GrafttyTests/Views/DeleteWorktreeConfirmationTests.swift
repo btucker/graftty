@@ -44,4 +44,44 @@ struct DeleteWorktreeConfirmationTests {
         #expect(state.worktree(forPath: selectedPath) != nil)
         #expect((state.worktree(forPath: targetPath) == nil) == confirm)
     }
+
+    /// The menu hides Delete Worktree for an in-flight row, but the
+    /// confirmation and Force Delete sheets are asynchronous: a web,
+    /// paired-device or CLI removal can start while one is open.
+    @Test("@spec GIT-4.21: If the user confirms Delete Worktree or Force Delete for a worktree whose creation or removal is already in progress, then the application shall refuse the deletion with a single-button error alert, without running Git or changing the worktree's row.",
+          arguments: [WorktreeState.creating, .deleting], [false, true])
+    func confirmedDeletionOfAnInFlightWorktreeIsRefused(state: WorktreeState, force: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-confirmed-in-flight-delete-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init"], at: root.path)
+        var inFlight = WorktreeEntry(path: root.appendingPathComponent(".worktrees/new").path, branch: "new")
+        inFlight.state = state
+        var appState = AppState(repos: [RepoEntry(path: root.path, displayName: "repo", worktrees: [
+            WorktreeEntry(path: root.path, branch: "main"), inFlight,
+        ])])
+        let binding = Binding(get: { appState }, set: { appState = $0 })
+        let inbox = TeamInbox(rootDirectory: root.appendingPathComponent("inbox"))
+
+        let result = await GrafttyApp.$appStatePersisterOverride.withValue(
+            AppStatePersister(directory: root.appendingPathComponent("state"))
+        ) {
+            await DeleteWorktreeFlow.delete(
+                worktreePath: inFlight.path, force: force, appState: binding,
+                terminalManager: TerminalManager(socketPath: root.appendingPathComponent("control.sock").path),
+                statsStore: WorktreeStatsStore(), prStatusStore: PRStatusStore(),
+                teamEventDispatcher: TeamEventDispatcher(inbox: inbox, preferencesProvider: { TeamEventRoutingPreferences() },
+                                                         templateProvider: { "" })
+            )
+        }
+
+        guard case .failure(.gitFailedFinal(let message)) = result else {
+            Issue.record("expected a final refusal, got \(result)")
+            return
+        }
+        #expect(message == WorktreeRemovalError.operationInProgressMessage)
+        #expect(ForceDeleteAlert.gitFailedFinalConfiguration(message: message).secondaryButton == nil)
+        #expect(appState.worktree(forPath: inFlight.path)?.state == state)
+    }
 }

@@ -89,7 +89,10 @@ struct ClaudePeerDeliveryServiceTests {
         #expect(skip?.detail["messageIDs"] == oversized.id)
     }
 
-    @Test("A watermark-commit failure after an accepted send logs error_watermark_write, not error_delivery.")
+    @Test(
+        "A watermark-commit failure after an accepted send logs error_watermark_write, not error_delivery.",
+        .enabled(if: geteuid() != 0, "Root writes to directories regardless of their permission bits.")
+    )
     func watermarkCommitFailureIsNotASendFailure() async throws {
         let fixture = try Fixture()
         let first = try fixture.append(body: "first")
@@ -123,9 +126,9 @@ struct ClaudePeerDeliveryServiceTests {
             teamID: fixture.teamID,
             worktree: fixture.worktree
         )?.lastDeliveredToAnySessionID == first.id)
-        let outcomes = try fixture.deliveryEvents().map { $0.detail["outcome"] }
-        #expect(!outcomes.contains("error_delivery"))
-        let failure = try fixture.deliveryEvents().first {
+        let events = try fixture.deliveryEvents()
+        #expect(!events.contains { $0.detail["outcome"] == "error_delivery" })
+        let failure = events.first {
             $0.detail["outcome"] == "error_watermark_write"
         }
         #expect(failure?.detail["messageIDs"] == second.id)

@@ -26,14 +26,17 @@ _SPEC.loader.exec_module(lint)
 # The three Linux membership shapes Package.swift uses: an exclude list with a
 # pending-files constant (GrafttyKitTests since #477), a `sources:` allowlist
 # (GrafttyKitTests before #477, #526), and a Linux-only target with a fixed
-# `sources:` list under a `path:` override (GrafttyDirectSSHTests).
+# `sources:` list under a `path:` override (GrafttyDirectSSHTests). Test
+# targets with default membership (GrafttyHostTests) still build on Linux;
+# `appleTargets` are filtered out of the Linux build.
 FIXTURE_PACKAGE = """
 let linuxPendingKitTests = [
     "Web/PendingTests.swift", // not ported yet
 ]
+let appleTargets: Set<String> = ["MacAppTests"]
 
 let package = Package(
-    targets: [
+    targets: ([
         .target(
             name: "GrafttyProtocol",
             exclude: isLinux ? ["UI"] : [],
@@ -60,7 +63,11 @@ let package = Package(
                 "Teams/TeamInboxTests.swift"] : nil,
             swiftSettings: strictWarnings
         ),
-    ] + (isLinux ? [
+        .testTarget(
+            name: "MacAppTests",
+            dependencies: ["MacApp"]
+        ),
+    ] as [Target]).filter { !isLinux || !appleTargets.contains($0.name) } + (isLinux ? [
         .testTarget(
             name: "GrafttyDirectSSHTests",
             path: "Tests/GrafttyTests/Remote/SSH",
@@ -236,7 +243,7 @@ class CheckTreeTests(unittest.TestCase):
         write(self.root, f"{legacy}/Apple/ThumbnailTests.swift")
         write(self.root, "Tests/GrafttyTests/Remote/SSH/DirectSSHLoopbackTests.swift")
         write(self.root, "Tests/GrafttyTests/Remote/SSH/MacOnlySSHTests.swift")
-        # A target without Linux membership is never inspected.
+        # A target without Linux membership has no allowlist to check.
         write(self.root, "Tests/GrafttyHostTests/AnythingTests.swift")
 
     def tearDown(self) -> None:
@@ -291,6 +298,69 @@ class CheckTreeTests(unittest.TestCase):
         write(self.root, "Tests/GrafttyKitTests/Mac/OnlyTests.swift", GUARDED)
         self.edit_package('"Web/PendingTests.swift",', '"Web/PendingTests.swift", "Mac",')
         self.assert_one_problem("Tests/GrafttyKitTests/Mac", "every Swift file in it")
+
+    def test_main_actor_xctest_on_linux_fails(self) -> None:
+        for body in ("import XCTest\n@MainActor\nfinal class FooTests: XCTestCase {}\n",
+                     "import XCTest\n@MainActor @available(macOS 13.0, *) final class FooTests: XCTestCase { func testFoo() {} }\n",
+                     "import XCTest\nfinal class FooTests: XCTestCase {\n    @MainActor func testBar() {}\n}\n",
+                     "import XCTest\nfinal class FooTests: XCTestCase {\n    @MainActor final func testBar() {}\n}\n",
+                     "import XCTest\nfinal class FooTests: XCTestCase {}\nextension FooTests {\n    @available(macOS 13, *) @MainActor func testBar() {}\n}\n",
+                     "import XCTest\nfinal class FooTests: XCTestCase {}\n@MainActor extension FooTests {\n    func testBar() {}\n}\n",
+                     'import XCTest\nfinal class FooTests: XCTestCase {\n    let fixture = #"a " } // example"#\n    @MainActor func testBar() {}\n}\n',
+                     'import XCTest\nfinal class FooTests: XCTestCase {\n    let fixture = #"a \\#"# } // example"#\n    @MainActor func testBar() {}\n}\n',
+                     'import XCTest\nfinal class FooTests: XCTestCase {\n    let fixture = ##"""\n    } """# /*\n    """##\n    @MainActor func testBar() {}\n}\n'):
+            with self.subTest(body=body):
+                write(self.root, "Tests/GrafttyKitTests/Teams/FooTests.swift", body)
+                self.assert_one_problem("Teams/FooTests.swift", "@MainActor XCTestCase")
+
+    def test_main_actor_xctest_in_every_linux_test_target_fails(self) -> None:
+        body = "import XCTest\n@MainActor final class FooTests: XCTestCase { func testFoo() {} }\n"
+        for rel in ("Tests/GrafttyHostTests/AnythingTests.swift",
+                    "Tests/GrafttyTests/Remote/SSH/DirectSSHLoopbackTests.swift"):
+            with self.subTest(rel=rel):
+                original = (self.root / rel).read_text()
+                write(self.root, rel, body)
+                self.assert_one_problem(rel, "@MainActor XCTestCase")
+                write(self.root, rel, original)
+
+    def test_main_actor_xctest_in_fixed_source_directory_fails(self) -> None:
+        self.edit_package('sources: ["DirectSSHLoopbackTests.swift"]', 'sources: ["DirectSSHLoopbackTests.swift", "Portable"]')
+        body = "import XCTest\n@MainActor final class FooTests: XCTestCase { func testFoo() {} }\n"
+        write(self.root, "Tests/GrafttyTests/Remote/SSH/Portable/FooTests.swift", body)
+        write(self.root, "Tests/GrafttyTests/Remote/SSH/Unlisted/FooTests.swift", body)
+        self.assert_one_problem("Remote/SSH/Portable/FooTests.swift", "@MainActor XCTestCase")
+
+    def test_main_actor_xctest_in_always_excluded_directory_passes(self) -> None:
+        self.edit_package('dependencies: ["GrafttyHost"],', 'dependencies: ["GrafttyHost"],\n            exclude: ["Fixtures"],')
+        write(self.root, "Tests/GrafttyHostTests/Fixtures/Sample.swift",
+              "import XCTest\n@MainActor final class Sample: XCTestCase { func testFoo() {} }\n")
+        self.assertEqual(self.problems(), [])
+
+    def test_main_actor_xctest_outside_linux_build_passes(self) -> None:
+        body = "import XCTest\n@MainActor final class FooTests: XCTestCase { func testFoo() {} }\n"
+        write(self.root, "Tests/MacAppTests/FooTests.swift", body)
+        write(self.root, "Tests/GrafttyTests/Remote/SSH/MacOnlySSHTests.swift", body)
+        self.assertEqual(self.problems(), [])
+
+    def test_main_actor_swift_testing_and_non_test_code_passes(self) -> None:
+        write(self.root, "Tests/GrafttyKitTests/Teams/FooTests.swift",
+              "import Testing\nstruct FooTests { @Test @MainActor func testFoo() {} }\n")
+        write(self.root, "Tests/GrafttyKitTests/Teams/BarTests.swift",
+              'import XCTest\nfinal class BarTests: XCTestCase {\n    let brace = "{"\n'
+              '    func testBar() async { Task { @MainActor in } }\n}\n'
+              "struct Helper { @MainActor func testable() {} }\n")
+        write(self.root, "Tests/GrafttyKitTests/Teams/NestedTests.swift",
+              "import XCTest\nfinal class NestedTests: XCTestCase {\n    struct Helper {\n"
+              "        @MainActor func testValue() {}\n    }\n    func testFoo() {}\n}\n"
+              "@MainActor extension NestedTests {\n    nonisolated func testBar() {}\n    func helper() {}\n}\n")
+        self.assertEqual(self.problems(), [])
+
+    def test_main_actor_xctest_kept_off_linux_passes(self) -> None:
+        body = "import XCTest\n@MainActor\nfinal class FooTests: XCTestCase {}\n"
+        write(self.root, "Tests/GrafttyKitTests/Apple/FooTests.swift", body)
+        write(self.root, "Tests/GrafttyKitTests/Web/PendingTests.swift", body)
+        write(self.root, "Tests/GrafttyKitTests/Teams/CommentedTests.swift", "import XCTest\n// @MainActor\nfinal class CommentedTests: XCTestCase {}\n")
+        self.assertEqual(self.problems(), [])
 
     def test_source_target_exclude_resolves_under_sources(self) -> None:
         (self.root / "Sources/GrafttyProtocol/UI/View.swift").unlink()

@@ -91,6 +91,10 @@ public enum WorktreeRemovalError: Error, Equatable, Sendable {
     /// `worktreePath` resolved to the repo's main checkout, which
     /// `git worktree remove` refuses by design.
     case mainCheckoutRejected
+
+    /// Why `DeleteWorktreeFlow` and `graftty worktree remove` refuse a row
+    /// whose creation or removal is still running.
+    public static let operationInProgressMessage = "a worktree operation is already in progress"
 }
 
 public extension AppState {
