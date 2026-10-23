@@ -461,8 +461,8 @@ struct CodexHomeMirrorTests {
         // suite can saturate the cooperative pool, so both the rebuild and
         // the release run on GCD. A release that waited on a cooperative
         // thread could land late or never.
-        let elapsed = try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<Duration, any Error>) in
+        let (elapsed, releasedFirst) = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<(Duration, Bool), any Error>) in
             DispatchQueue.global().async {
                 let startedAt = ContinuousClock.now
                 try? Data().write(to: started, options: .atomic)
@@ -471,7 +471,10 @@ struct CodexHomeMirrorTests {
                 }
                 continuation.resume(with: Result {
                     try mirror.rebuild()
-                    return ContinuousClock.now - startedAt
+                    return (
+                        ContinuousClock.now - startedAt,
+                        FileManager.default.fileExists(atPath: release.path)
+                    )
                 })
             }
         }
@@ -480,6 +483,9 @@ struct CodexHomeMirrorTests {
         // 0 means the release freed the lock; 3 or 4 means the holder gave
         // up waiting, so the lock was freed by its deadline instead.
         #expect(holder.terminationStatus == 0)
+        // rebuild() returned only after the release, so it waited for the
+        // holder rather than skipping the lock.
+        #expect(releasedFirst)
         #expect(FileManager.default.fileExists(
             atPath: dst.appendingPathComponent(".graftty-mirror-version").path
         ))
