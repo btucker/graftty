@@ -2,6 +2,7 @@ import Testing
 import GrafttyProtocol
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 /// The `hostByRepo` cache was keyed off the raw `detectHost` return
 /// value, where nil conflated two cases: "repo genuinely has no
@@ -11,8 +12,6 @@ import Foundation
 /// session). This test pins the distinction.
 @Suite("PRStatusStore — hostByRepo cache-poisoning")
 struct PRStatusStoreHostCacheTests {
-
-    enum StubError: Error { case boom }
 
     @MainActor
     @Test("""
@@ -49,7 +48,7 @@ struct PRStatusStoreHostCacheTests {
             fetcherFor: { _ in ReturningFetcher(info: nil) },
             detectHost: { _ in
                 let n = callLog.incrementAndGet()
-                if n == 1 { throw StubError.boom }
+                if n == 1 { throw StubError() }
                 return origin
             }
         )

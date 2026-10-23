@@ -264,6 +264,19 @@ let package = Package(
             dependencies: ["AppcastUpdater"],
             swiftSettings: strictWarnings
         ),
+        // Shared test scaffolding (#477). Foundation-only so any test target
+        // can link it; Kit-dependent doubles live in GrafttyKitTestSupport.
+        .target(
+            name: "GrafttyTestSupport",
+            path: "Tests/GrafttyTestSupport",
+            swiftSettings: strictWarnings
+        ),
+        .target(
+            name: "GrafttyKitTestSupport",
+            dependencies: ["GrafttyKit"],
+            path: "Tests/GrafttyKitTestSupport",
+            swiftSettings: strictWarnings
+        ),
         .testTarget(
             name: "GrafttyTunnelTests",
             dependencies: ["GrafttyTunnel", .product(name: "NIOCore", package: "swift-nio"),
@@ -278,7 +291,7 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyProtocolTests",
-            dependencies: ["GrafttyProtocol"] + cryptoDependencies,
+            dependencies: ["GrafttyProtocol", "GrafttyTestSupport"] + cryptoDependencies,
             exclude: isLinux ? ["UI", "WorktreePanesTests.swift"] : [],
             resources: [.copy("Fixtures")],
             swiftSettings: strictWarnings
@@ -298,11 +311,11 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyKitTests",
-            dependencies: ["GrafttyKit", "GrafttyProtocol",
+            dependencies: ["GrafttyKit", "GrafttyProtocol", "GrafttyTestSupport", "GrafttyKitTestSupport",
                            .product(name: "NIOEmbedded", package: "swift-nio")] + cryptoDependencies,
             sources: isLinux ? ["Ports/PortBindingTests.swift", "Ports/LsofOutputParserTests.swift", "Ports/PortScannerTests.swift", "Ports/ProcessTreeWalkerTests.swift", "Ports/LinuxProcSocketScannerTests.swift", "Host/HeadlessHostPortTests.swift", "Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "Model/WorktreePanesProjectionTests.swift", "Model/AppStateWorktreeMutationTests.swift", "Model/AppStatePersisterTests.swift", "Host/HostAgentEnvironmentTests.swift", "HostSetup/LinuxHostAgentInstallTests.swift", "HostSetup/LinuxHostSetupTests.swift", "HostSetup/LinuxHostSetupExecutionTests.swift", "HostSetup/LinuxHostPackagingTests.swift", "HostSetup/LinuxHostMaintenanceTests.swift",
                 "CI/CITestPlanningTests.swift",
-                "Support/MutableBox.swift", "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Notification/ControlRequestCoreTests.swift", "Notification/ControlSocketWireFixtureTests.swift", "Notification/ControlCapabilityTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift", "Web/WebSocketOutputTests.swift",
+                "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Notification/ControlRequestCoreTests.swift", "Notification/ControlSocketWireFixtureTests.swift", "Notification/ControlCapabilityTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift", "Web/WebSocketOutputTests.swift",
                 "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamInboxParseCacheTests.swift", "Teams/CodexWrapperTemplateTests.swift", "Teams/LegacyCodexWrapperScript.swift", "Teams/TeamDeliveryPipelineTests.swift", "Teams/TeamPresenceStorageTests.swift", "Teams/TeamCodexAppServerRegistrationTests.swift", "Teams/TeamPresenceResolutionTests.swift", "Teams/AttentionReportIdentityTests.swift",
                 "Teams/AttentionFileHandoffTests.swift", "Remote/MacToMac/GrafttyBonjourServiceTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift",
                 "Persistence/JSONStoreCompatibilityTests.swift"] : nil,
@@ -343,7 +356,7 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyTests",
-            dependencies: ["Graftty", "GrafttyCLI"],
+            dependencies: ["Graftty", "GrafttyCLI", "GrafttyTestSupport", "GrafttyKitTestSupport"],
             swiftSettings: strictWarnings
         ),
         .testTarget(

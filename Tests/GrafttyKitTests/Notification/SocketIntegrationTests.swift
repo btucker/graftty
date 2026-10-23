@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 // `.serialized` because `slowRequestHandlerClosesClientFDAtTimeout` and
 // `stopDoesNotWaitForCallbackAndSuppressesQueuedHandler` both deliberately

@@ -2,6 +2,8 @@ import Testing
 import GrafttyProtocol
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
+import GrafttyTestSupport
 
 /// Reproduces the "PR status only updates when I click between
 /// worktrees" symptom at the in-flight gate: a `gh pr list`
@@ -36,7 +38,7 @@ struct PRStatusStoreInFlightRecoveryTests {
         // First fetch hangs on a never-signaled AsyncStream. Models
         // a `gh pr list` subprocess stuck awaiting an HTTP response.
         let hang = AsyncStream<Void>.makeStream()
-        let hangIterator = Box(hang.stream.makeAsyncIterator())
+        let hangIterator = MutableBox(hang.stream.makeAsyncIterator())
 
         let fetcher = HangingFetcher(
             callCount: callCount,
@@ -93,12 +95,12 @@ struct PRStatusStoreInFlightRecoveryTests {
 /// PRInfo as the snapshot for branch "feat".
 private actor HangingFetcher: PRFetcher {
     private let callCount: SyncCounter
-    private let hangIterator: Box<AsyncStream<Void>.Iterator>
+    private let hangIterator: MutableBox<AsyncStream<Void>.Iterator>
     private let fresh: PRInfo
 
     init(
         callCount: SyncCounter,
-        hangIterator: Box<AsyncStream<Void>.Iterator>,
+        hangIterator: MutableBox<AsyncStream<Void>.Iterator>,
         fresh: PRInfo
     ) {
         self.callCount = callCount
@@ -117,13 +119,6 @@ private actor HangingFetcher: PRFetcher {
         }
         return RepoPRSnapshot(prsByBranch: ["feat": fresh])
     }
-}
-
-/// Swift 6 doesn't let an AsyncStream.Iterator cross actor
-/// boundaries directly — wrap in a Sendable box.
-private final class Box<T>: @unchecked Sendable {
-    var value: T
-    init(_ value: T) { self.value = value }
 }
 
 private final class SyncCounter: @unchecked Sendable {

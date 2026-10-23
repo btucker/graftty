@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("WebSession")
 struct WebSessionTests {
@@ -79,7 +80,7 @@ struct WebSessionTests {
     @spec WEB-4.4: When a WebSocket connects, the application shall spawn one child `zmx attach --replay-grid <session>` whose PTY it owns, using the session naming and ZMX_DIR rules.
     """)
     func startSpawnsZmxAttachForSession() throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "web-session")
+        let dir = try makeTempDir(prefix: "web-session")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeFakeZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -112,7 +113,7 @@ struct WebSessionTests {
     @spec WEB-4.5: When a WebSocket closes, the application shall send SIGTERM to the associated `zmx attach` child, leaving the zmx daemon alive.
     """)
     func closeSendsSIGTERMToAttachChild() throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "web-session")
+        let dir = try makeTempDir(prefix: "web-session")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeFakeZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -138,7 +139,7 @@ struct WebSessionTests {
     @spec WEB-4.10: When the WebSocket bridge spawns a `zmx attach` child to back a mobile-client session, the application shall propagate the same shell-integration env (`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERMINFO` when ghostty-terminfo is available, and `ZDOTDIR` pointing at Ghostty's zsh shell-integration when the user's shell is zsh) that host-managed native panes use (per `ZMX-6.3` / `ZMX-6.5`). Without this, the WS attach can win the create-session race against the Mac surface's attach (which is slow because it follows `git worktree add` + discovery) and spawn the daemon's user shell with no shell integration — silencing the first-PWD trigger (so the host pane never types the user's default command) and leaving the shell without truecolor.
     """)
     func startPropagatesTerminalCapabilitiesAndZshIntegrationEnv() throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "web-session")
+        let dir = try makeTempDir(prefix: "web-session")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeEnvCapturingZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -199,7 +200,7 @@ struct WebSessionTests {
 
     @Test("WebSession shall register with the RemoteAttachmentRegistry on successful start and deregister exactly once on close (TERM-11.5).")
     func registersAttachOnStartAndDetachOnClose() throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "web-session-registry")
+        let dir = try makeTempDir(prefix: "web-session-registry")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeFakeZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -254,7 +255,7 @@ struct WebSessionTests {
     }
 
     @Test func attachProcessStartsInConfiguredWorktreeDirectory() throws {
-        let root = try PTYFixtureTestSupport.makeTempDir(prefix: "web-session-cwd")
+        let root = try makeTempDir(prefix: "web-session-cwd")
         let worktree = root.appendingPathComponent("repo/.worktrees/feature", isDirectory: true)
         let zmxDir = root.appendingPathComponent("zmx", isDirectory: true)
         let fakeZmx = root.appendingPathComponent("zmx-fake")

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("Pane add agent launch")
 struct PaneAgentLaunchTests {
@@ -17,7 +18,7 @@ struct PaneAgentLaunchTests {
         let worktree = "/repo/.worktrees/alice"
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
 
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let inbox = TeamInbox(rootDirectory: root)
         try WorktreeAgentLaunchCommand.saveInitialPrompt(
@@ -69,7 +70,7 @@ struct PaneAgentLaunchTests {
     func pendingImplementerTaskBlocksDurableRow() throws {
         let worktree = "/repo/.worktrees/alice"
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let inbox = TeamInbox(rootDirectory: root)
         // `worktree add --agent claude` saved this; the implementer has not
@@ -92,7 +93,7 @@ struct PaneAgentLaunchTests {
     func implementerRegisteringDuringCheckKeepsAddedTaskOut() throws {
         let worktree = "/repo/.worktrees/alice"
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let inbox = TeamInbox(rootDirectory: root)
         try WorktreeAgentLaunchCommand.saveInitialPrompt(
@@ -126,7 +127,7 @@ struct PaneAgentLaunchTests {
     func withdrawnTaskLeavesNoPendingRow() throws {
         let worktree = "/repo/.worktrees/alice"
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let inbox = TeamInbox(rootDirectory: root)
         // The split failed after the save, so no agent will run this task.
@@ -139,12 +140,6 @@ struct PaneAgentLaunchTests {
         #expect(try inbox.worktreePendingMessages(teamID: repo.path, recipientWorktree: worktree).isEmpty)
     }
 
-    private static func temporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-pane-agent-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
 }
 
 private struct PaneAgentFakeLiveness: TeamDeliveryLivenessChecking {

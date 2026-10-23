@@ -1,6 +1,7 @@
 import XCTest
 @testable import Graftty
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 final class TeamActivityLogViewModelTests: XCTestCase {
     /// @spec TEAM-7.3: While the Team Activity Log window is open for
@@ -9,7 +10,7 @@ final class TeamActivityLogViewModelTests: XCTestCase {
     /// rows land in the inbox.
     @MainActor
     func testInitialEmptyThenObserverEmitsLoadsMessages() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let inbox = TeamInbox(rootDirectory: root)
         let viewModel = TeamActivityLogViewModel(
             rootDirectory: root,
@@ -44,7 +45,7 @@ final class TeamActivityLogViewModelTests: XCTestCase {
     /// target is the team's `messages.jsonl` file.
     @MainActor
     func testWindowExposesMessagesFileURLForReveal() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let window = TeamActivityLogWindow(
             rootDirectory: root,
             teamID: "team-7-6",
@@ -55,10 +56,4 @@ final class TeamActivityLogViewModelTests: XCTestCase {
         XCTAssertEqual(window.messagesFileURL.lastPathComponent, "messages.jsonl")
     }
 
-    private static func temporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("activityLogVM-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
 }

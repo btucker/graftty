@@ -3,15 +3,10 @@ import Foundation
 import CryptoKit
 @testable import GrafttyKit
 import GrafttyProtocol
+import GrafttyTestSupport
 
 @Suite("HostIdentityStore Tests")
 struct HostIdentityStoreTests {
-
-    func makeTempDir() throws -> URL {
-        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
 
     // MARK: - REMOTE-1.1 (promoted from RemoteTodo.swift)
 

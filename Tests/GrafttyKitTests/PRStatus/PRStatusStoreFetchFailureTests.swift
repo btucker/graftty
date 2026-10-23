@@ -2,6 +2,8 @@ import Testing
 import GrafttyProtocol
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
+import GrafttyTestSupport
 
 /// When a PR fetch fails (network hiccup, gh auth expired, rate
 /// limit), the cached PR info must stay in place rather than
@@ -18,8 +20,6 @@ PRStatusStore — fetch-failure cache preservation
 """)
 struct PRStatusStoreFetchFailureTests {
 
-    enum StubError: Error { case failed }
-
     /// Scripted fetcher whose response flips to "throw" after the
     /// first success, so the test can observe what happens to
     /// cached info across one failure without modeling the retry
@@ -35,7 +35,7 @@ struct PRStatusStoreFetchFailureTests {
         ) async throws -> RepoPRSnapshot {
             switch mode {
             case .ok(let snap): return snap
-            case .throwing: throw StubError.failed
+            case .throwing: throw StubError()
             }
         }
     }

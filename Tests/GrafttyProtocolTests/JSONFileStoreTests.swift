@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyProtocol
+import GrafttyTestSupport
 
 @Suite("JSONFileStore")
 struct JSONFileStoreTests {
@@ -10,12 +11,6 @@ struct JSONFileStoreTests {
     }
 
     private let record = Record(name: "a/b", at: Date(timeIntervalSince1970: 1_700_000_000))
-
-    private func makeTempDir() throws -> URL {
-        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
 
     @Test("@spec PERSIST-5.1: When a JSONFileStore loads a file that does not exist, the application shall return nil without creating the file, its directory, or a corrupt-file backup.")
     func missingFileLoadsNil() throws {

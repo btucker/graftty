@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 /// Unit coverage for the per-key slot bookkeeping shared by the polling
 /// stores. Every test drives an injected clock, so abandonment and cadence

@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("GitWorktreeStats — parsers")
 struct GitWorktreeStatsParserTests {

@@ -2,6 +2,7 @@ import Testing
 import GrafttyProtocol
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 /// A pausable repo fetcher: each `fetch` parks on a continuation
 /// the test releases explicitly. Lets us force an in-flight fetch

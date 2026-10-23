@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 @Suite("RemoteBranchStore")
 struct RemoteBranchStoreTests {
@@ -64,7 +65,7 @@ struct RemoteBranchStoreTests {
     """)
     func pollingBatchesAndRotatesAcrossRepositories() async throws {
         let lister = ConcurrencyRecordingRemoteBranchLister(delay: .milliseconds(100))
-        let ticker = CapturingTicker()
+        let ticker = ManualTicker(clearsTickOnStop: false)
         let store = RemoteBranchStore(list: lister.list)
         let repos = (0..<12).map {
             RepoEntry(path: "/repo-\($0)", displayName: "repo-\($0)", worktrees: [])
@@ -95,7 +96,7 @@ struct RemoteBranchStoreTests {
         let store = RemoteBranchStore(
             list: RemoteBranchStore.makeDefaultList(executor: executor)
         )
-        let ticker = CapturingTicker()
+        let ticker = ManualTicker(clearsTickOnStop: false)
         let repos = (0..<5).map {
             RepoEntry(path: "/repo-\($0)", displayName: "repo-\($0)", worktrees: [])
         }
@@ -520,7 +521,7 @@ struct RemoteBranchStoreTests {
             "/a": .success(["main"]),
             "/b": .success(["feature"]),
         ])
-        let ticker = CapturingTicker()
+        let ticker = ManualTicker(clearsTickOnStop: false)
         let store = RemoteBranchStore(list: lister.list)
         let repos = [
             RepoEntry(path: "/a", displayName: "a", worktrees: []),
@@ -541,7 +542,7 @@ struct RemoteBranchStoreTests {
         let lister = RecordingRemoteBranchLister(results: [
             "/repo": .success(["main"]),
         ])
-        let ticker = CapturingTicker()
+        let ticker = ManualTicker(clearsTickOnStop: false)
         let store = RemoteBranchStore(list: lister.list)
 
         store.start(
@@ -562,8 +563,8 @@ struct RemoteBranchStoreTests {
             "/old": .success(["old"]),
             "/new": .success(["new"]),
         ])
-        let firstTicker = CapturingTicker()
-        let secondTicker = CapturingTicker()
+        let firstTicker = ManualTicker(clearsTickOnStop: false)
+        let secondTicker = ManualTicker(clearsTickOnStop: false)
         let store = RemoteBranchStore(list: lister.list)
 
         store.start(
@@ -588,7 +589,7 @@ struct RemoteBranchStoreTests {
 
     @MainActor
     @Test func pulseForwardsToActiveTickerAndDoesNothingAfterStop() {
-        let ticker = CapturingTicker()
+        let ticker = ManualTicker(clearsTickOnStop: false)
         let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot() })
 
         store.start(ticker: ticker, getRepos: { [] })
@@ -741,29 +742,6 @@ private final class CombinedRefScanExecutor: CLIExecutor, @unchecked Sendable {
                 directory: directory
             ))
         }
-    }
-}
-
-@MainActor
-private final class CapturingTicker: PollingTickerLike {
-    private var onTick: (@MainActor () async -> Void)?
-    private(set) var stopCallCount = 0
-    private(set) var pulseCallCount = 0
-
-    func start(onTick: @MainActor @escaping () async -> Void) {
-        self.onTick = onTick
-    }
-
-    func stop() {
-        stopCallCount += 1
-    }
-
-    func pulse() {
-        pulseCallCount += 1
-    }
-
-    func fire() async {
-        await onTick?()
     }
 }
 

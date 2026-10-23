@@ -1,15 +1,9 @@
 import Foundation
+import GrafttyTestSupport
 
 /// Shared fixture helpers for integration tests that need a real git
 /// worktree + a bare "origin" remote on disk. Test files that reference
 /// these get them for free at file scope — no @Suite-local reimpls.
-
-func makeTempDir(prefix: String = "graftty") throws -> URL {
-    let dir = FileManager.default.temporaryDirectory
-        .appendingPathComponent("\(prefix)-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    return dir
-}
 
 @discardableResult
 func shellInRepo(_ command: String, at dir: URL) throws -> Int32 {

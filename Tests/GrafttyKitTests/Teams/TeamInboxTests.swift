@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("TeamInbox")
 struct TeamInboxTests {
@@ -38,7 +39,7 @@ struct TeamInboxTests {
 
     @Test func appendPointToPointMessageRoundTrips() throws {
         let inbox = TeamInbox(
-            rootDirectory: try temporaryDirectory(),
+            rootDirectory: try makeTempDir(),
             idGenerator: IncrementingIDGenerator(prefix: "m").next,
             now: { Date(timeIntervalSince1970: 1_800) }
         )
@@ -64,7 +65,7 @@ struct TeamInboxTests {
 
     @Test func broadcastWritesOneMessagePerRecipientWithSharedBatchID() throws {
         let inbox = TeamInbox(
-            rootDirectory: try temporaryDirectory(),
+            rootDirectory: try makeTempDir(),
             idGenerator: IncrementingIDGenerator(prefix: "b").next,
             now: { Date(timeIntervalSince1970: 2_000) }
         )
@@ -91,7 +92,7 @@ struct TeamInboxTests {
 
     @Test func unreadFiltersByRecipientPriorityAndCursor() throws {
         let inbox = TeamInbox(
-            rootDirectory: try temporaryDirectory(),
+            rootDirectory: try makeTempDir(),
             idGenerator: IncrementingIDGenerator(prefix: "u").next,
             now: { Date(timeIntervalSince1970: 3_000) }
         )
@@ -116,7 +117,7 @@ struct TeamInboxTests {
     @Test func unreadCursorFollowsAppendOrderForArbitraryIDs() throws {
         let ids = FixedIDGenerator(["z-later-sort", "a-earlier-sort"])
         let inbox = TeamInbox(
-            rootDirectory: try temporaryDirectory(),
+            rootDirectory: try makeTempDir(),
             idGenerator: ids.next,
             now: { Date(timeIntervalSince1970: 3_100) }
         )
@@ -136,7 +137,7 @@ struct TeamInboxTests {
     }
 
     @Test func cursorAndWorktreeWatermarkRoundTrip() throws {
-        let inbox = TeamInbox(rootDirectory: try temporaryDirectory())
+        let inbox = TeamInbox(rootDirectory: try makeTempDir())
         let cursor = TeamInboxCursor(
             sessionID: "codex:feature-auth:1",
             worktree: "/repo/acme/.worktrees/feature-auth",
@@ -170,7 +171,7 @@ struct TeamInboxTests {
     @Test("Pending gaps stay bounded to unresolved rows while the delivery watermark advances.")
     func pendingGapsDoNotAccumulateDeliveredRows() throws {
         let inbox = TeamInbox(
-            rootDirectory: try temporaryDirectory(),
+            rootDirectory: try makeTempDir(),
             idGenerator: IncrementingIDGenerator(prefix: "m").next
         )
         let sender = TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil)
@@ -238,7 +239,7 @@ struct TeamInboxTests {
 
     @Test func compareAndAdvanceWorktreeWatermarkRefusesToRegress() throws {
         let inbox = TeamInbox(
-            rootDirectory: try temporaryDirectory(),
+            rootDirectory: try makeTempDir(),
             idGenerator: IncrementingIDGenerator(prefix: "m").next,
             now: { Date(timeIntervalSince1970: 4_000) }
         )
@@ -267,7 +268,7 @@ struct TeamInboxTests {
 
     @Test func writeWorktreeWatermarkRefusesToRegress() throws {
         let inbox = TeamInbox(
-            rootDirectory: try temporaryDirectory(),
+            rootDirectory: try makeTempDir(),
             idGenerator: IncrementingIDGenerator(prefix: "m").next,
             now: { Date(timeIntervalSince1970: 4_050) }
         )
@@ -294,7 +295,7 @@ struct TeamInboxTests {
 
     @Test func compareAndAdvanceWorktreeWatermarkAdvancesWhenNewer() throws {
         let inbox = TeamInbox(
-            rootDirectory: try temporaryDirectory(),
+            rootDirectory: try makeTempDir(),
             idGenerator: IncrementingIDGenerator(prefix: "m").next,
             now: { Date(timeIntervalSince1970: 4_100) }
         )
@@ -323,7 +324,7 @@ struct TeamInboxTests {
 
     @Test("@spec TEAM-11.6: If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.")
     func watermarkLockAcquisitionIsBounded() throws {
-        let root = try temporaryDirectory()
+        let root = try makeTempDir()
         let worktree = "/repo/acme/.worktrees/feature-auth"
         let holder = try TeamTestFixtures.holdWatermarkLock(
             root: root,
@@ -345,12 +346,6 @@ struct TeamInboxTests {
         #expect(Date().timeIntervalSince(start) < 5)
     }
 
-    private func temporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("GrafttyTeamInboxTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
 }
 
 private final class IncrementingIDGenerator {

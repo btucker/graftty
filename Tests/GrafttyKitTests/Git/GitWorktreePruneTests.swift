@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("GitWorktreePrune Tests", .serialized)
 struct GitWorktreePruneTests {

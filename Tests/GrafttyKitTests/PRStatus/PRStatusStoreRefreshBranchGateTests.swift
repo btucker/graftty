@@ -2,6 +2,7 @@ import Testing
 import GrafttyProtocol
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 /// Refresh paths must skip git sentinel branches (`(detached)` etc.)
 /// and must avoid host detection / fetch when no remote branch

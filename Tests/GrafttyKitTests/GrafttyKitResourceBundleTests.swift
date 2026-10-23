@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("""
 @spec CONFIG-2.6: The application shall resolve GrafttyKit's SwiftPM resource \

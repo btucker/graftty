@@ -2,16 +2,10 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 import GrafttyProtocol
+import GrafttyTestSupport
 
 @Suite("AppState Tests")
 struct AppStateTests {
-
-    func makeTempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-test-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
 
     @Test func emptyStateHasNoRepos() {
         let state = AppState()

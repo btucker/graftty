@@ -2,6 +2,7 @@ import Testing
 import GrafttyProtocol
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 /// A `pulse()` is an explicit "refresh now" signal — window focus, the
 /// add-worktree BranchPicker opening, or a newly-pushed remote branch.

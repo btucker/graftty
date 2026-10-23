@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import Graftty
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 @Suite("@spec PROJECT-1.0: Each repository entry shall record whether its on-disk path is tracked by git.")
 struct RepoEntryIsGitTrackedTests {
@@ -134,7 +135,7 @@ struct NonGitPollingGateTests {
             await counter.bump(repoPath: repoPath)
             return RemoteBranchSnapshot()
         }
-        let ticker = ManualPollingTicker()
+        let ticker = ManualTicker()
         let repos: [RepoEntry] = [
             RepoEntry(path: "/tmp/git-ok", displayName: "git", isGitTracked: true),
             RepoEntry(path: "/tmp/non-git", displayName: "ng", isGitTracked: false),
@@ -155,15 +156,6 @@ private actor ListCallCounter {
 }
 
 // Test-only manual ticker. Mirrors `PollingTickerLike` shape from GrafttyKit.
-@MainActor
-private final class ManualPollingTicker: PollingTickerLike {
-    private var onTick: (@MainActor () async -> Void)?
-    func start(onTick: @MainActor @escaping () async -> Void) { self.onTick = onTick }
-    func stop() { onTick = nil }
-    func pulse() {}
-    func fire() async { await onTick?() }
-}
-
 @Suite("@spec PROJECT-2.1: When the Open on GitHub…/Open on GitLab… context-menu item is chosen, the application shall open https://<host>/<owner>/<repo> in the default browser.")
 struct HostingOriginWebURLTests {
     @Test("github.com origin composes the canonical project URL")

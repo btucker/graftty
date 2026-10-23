@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import Darwin
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("AgentHookInstaller — wrapper script shapes", .serialized)
 struct AgentHookInstallerWrapperTests {
@@ -409,7 +410,7 @@ struct AgentHookInstallerWrapperTests {
 
     @Test("Generated wrapper registers its own PID while the runtime is running.")
     func wrapperRegistersOwnPIDWhileRuntimeIsRunning() throws {
-        let root = try makeTempDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
         let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
@@ -491,7 +492,7 @@ struct AgentHookInstallerWrapperTests {
 
     @Test("Generated Codex wrapper preserves terminal stdin for the runtime child.")
     func codexWrapperRuntimeChildKeepsTerminalStdin() throws {
-        let root = try makeTempDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
         let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
@@ -632,7 +633,7 @@ struct AgentHookInstallerWrapperTests {
 
     @Test("Generated wrapper preserves runtime exit status after cleanup.")
     func wrapperPreservesRuntimeExitStatusAfterCleanup() throws {
-        let root = try makeTempDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
         let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
@@ -675,13 +676,6 @@ struct AgentHookInstallerWrapperTests {
         #expect(process.terminationStatus == 37)
     }
 
-    private func makeTempDirectory() throws -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("graftty-wrapper-signal-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
     private func writeExecutable(_ contents: String, to url: URL) throws {
         try Data(contents.utf8).write(to: url, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: url.path)
@@ -697,7 +691,7 @@ struct AgentHookInstallerWrapperTests {
     private func runCodexWrapperClassifier(
         _ arguments: [String]
     ) throws -> (terminationStatus: Int32, mode: String, forwardedArgs: [String]) {
-        let root = try makeTempDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
         let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
@@ -774,7 +768,7 @@ struct AgentHookInstallerWrapperTests {
         wasBlockedByManagedHomeLock: Bool,
         retainedServerLogs: [String]
     ) {
-        let root = try makeTempDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         // Keep Unix socket paths below sockaddr_un's length limit.
         let socketRoot = URL(fileURLWithPath: "/private/tmp/gw-\(UUID().uuidString)")

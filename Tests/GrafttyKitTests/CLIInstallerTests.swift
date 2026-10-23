@@ -1,16 +1,10 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("CLIInstaller Tests")
 struct CLIInstallerTests {
-
-    func makeTempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-cli-installer-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
 
     @Test func writableParentPlansDirectSymlink() throws {
         let dir = try makeTempDir()

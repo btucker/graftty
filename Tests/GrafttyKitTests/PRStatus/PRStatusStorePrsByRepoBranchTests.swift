@@ -2,6 +2,7 @@ import Testing
 import GrafttyProtocol
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 @Suite("PRStatusStore — prsByRepoBranch second index", .serialized)
 struct PRStatusStorePrsByRepoBranchTests {
