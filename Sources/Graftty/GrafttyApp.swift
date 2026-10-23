@@ -826,6 +826,7 @@ struct GrafttyApp: App {
         }
         let teamInbox = services.teamInbox
         let remoteTeamRouter = services.remoteTeamRouter
+        let worktreeManagement = WorktreeManagement(appState: binding, terminalManager: tm, services: services)
         tm.agentCompletionLoader = { currentWorktreePath, update in
             let repos = binding.wrappedValue.repos
             async let remote = remoteTeamRouter.members()
@@ -854,7 +855,7 @@ struct GrafttyApp: App {
                 if case .worktree(let operation) = request {
                     let response = await RemoteCLIWorktreeService.handle(
                         operation, from: deviceID, repos: binding.wrappedValue.repos,
-                        platform: WorktreeManagement(appState: binding, terminalManager: tm, services: services))
+                        platform: worktreeManagement)
                     return try JSONEncoder().encode(response)
                 }
                 let repos = binding.wrappedValue.repos
@@ -1317,7 +1318,6 @@ struct GrafttyApp: App {
         // `AddWorktreeFlow` through `WorktreeManagement`, which is
         // `@MainActor`: every write to appState and every terminal-surface
         // creation happens on the main actor, as from the sidebar's "+".
-        let worktreeManagement = WorktreeManagement(appState: appStateBinding, terminalManager: tm, services: services)
         webController.setWorktreeCreator { req in
             let branch: BranchSelection = req.existing
                 ? .useExisting(name: req.branchName, source: .local)

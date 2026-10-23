@@ -334,7 +334,7 @@ enum AddWorktreeFlow {
         statsStore: WorktreeStatsStore,
         terminalManager: TerminalManager,
         teamEventDispatcher: TeamEventDispatcher,
-        entryPoint: CreationEntryPoint = .web
+        entryPoint: CreationEntryPoint
     ) async -> Swift.Result<Result, FlowError> {
         // Both phases save their own changes (#604).
         let worktreePath: String
