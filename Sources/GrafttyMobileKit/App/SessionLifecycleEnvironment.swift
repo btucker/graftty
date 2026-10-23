@@ -218,17 +218,21 @@ public struct RemoteWorktreeProviders {
     public var connection: RemoteConnectionProvider?
     public var snapshot: RemoteWorktreeSnapshotProvider?
     public var sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)?
+    /// Pushed frames for the host, so the list never polls (IOS-4.52).
+    public var updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)?
 
     public init(
         includeRemoteWorktrees: Bool = false,
         connection: RemoteConnectionProvider? = nil,
         snapshot: RemoteWorktreeSnapshotProvider? = nil,
-        sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil
+        sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil,
+        updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)? = nil
     ) {
         self.includeRemoteWorktrees = includeRemoteWorktrees
         self.connection = connection
         self.snapshot = snapshot
         self.sidebar = sidebar
+        self.updates = updates
     }
 
     @MainActor
@@ -245,7 +249,8 @@ public struct RemoteWorktreeProviders {
             sidebar: { rows in
                 guard coordinator.isPaired(host) else { return .snapshot(rows) }
                 return await coordinator.navigationSnapshot(for: host, matching: rows)
-            }
+            },
+            updates: coordinator.isPaired(host) ? { coordinator.worktreeUpdates(for: host) } : nil
         )
     }
 }
