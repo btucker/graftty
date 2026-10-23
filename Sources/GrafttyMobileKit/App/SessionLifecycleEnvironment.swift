@@ -79,8 +79,8 @@ extension SessionClient {
 
     /// One-stop factory for the terminal transport + `SessionClient`
     /// pair. Both `SingleSessionView` (initial / re-dial) and
-    /// `WorktreeDetailView` (preview pool) need the same triplet — URL
-    /// composition + WS construction + SessionClient binding.
+    /// `WorktreeDetailView` (preview pool) need the same pair — the
+    /// authenticated terminal dial + SessionClient binding.
     ///
     /// `remoteConnectionProvider`, when non-nil, is invoked FRESH on
     /// EVERY dial — not just the first. `SessionClient`'s internal
@@ -130,8 +130,9 @@ extension SessionClient {
 
     /// One dial of `live`'s transport: the authenticated terminal
     /// subsystem on `remoteHost`, or a fail-closed error when no paired
-    /// connection is available (IOS-4.28).
-    static func dialTransport(
+    /// connection is available (IOS-4.28). `nonisolated` so the
+    /// `@Sendable` factory's dials stay off the main actor.
+    nonisolated static func dialTransport(
         sessionName: String,
         role: Role,
         remoteHost: RemoteHostConnection?
