@@ -49,6 +49,13 @@ enum DeleteWorktreeFlow {
         if wt.path == repoPath {
             return .failure(.mainCheckoutRejected)
         }
+        // WEB-7.16 / GIT-4.21: a web or paired-device client, or a sidebar
+        // sheet confirmed after another removal began, can reach a row whose
+        // creation or removal is still running. A `.creating` row has no
+        // directory yet, so GIT-4.13 would prune it as vanished.
+        guard !wt.state.isInFlight else {
+            return .failure(.gitFailedFinal(WorktreeRemovalError.operationInProgressMessage))
+        }
         guard appState.wrappedValue.repos[repoIdx].isGitTracked else {
             return .failure(.gitFailedFinal("not a git repository"))
         }

@@ -81,17 +81,11 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
         )
     }
 
-    /// Removes a linked worktree (`DeleteWorktreeFlow`). Confirmation is the
-    /// caller's job. A row whose creation or removal is still running is
-    /// refused (WEB-7.16): the sidebar and `graftty worktree remove` gate on
-    /// it themselves, but a web or paired-device client may not, and a
-    /// `.creating` row has no directory yet, so the flow would prune it as
-    /// vanished and leave the new worktree untracked.
+    /// Removes a linked worktree (`DeleteWorktreeFlow`, which refuses a row
+    /// whose creation or removal is still running, WEB-7.16). Confirmation
+    /// is the caller's job.
     func delete(worktreePath: String, force: Bool) async -> Result<WorktreeRemovalOutcome, WorktreeRemovalError> {
-        if appState.wrappedValue.worktree(forPath: worktreePath)?.state.isInFlight == true {
-            return .failure(.gitFailedFinal("a worktree operation is already in progress"))
-        }
-        return await DeleteWorktreeFlow.delete(
+        await DeleteWorktreeFlow.delete(
             worktreePath: worktreePath,
             force: force,
             appState: appState,

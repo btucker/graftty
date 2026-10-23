@@ -164,7 +164,7 @@ struct GitTodo {
     func git_4_11() async throws { }
 
     @Test("""
-@spec GIT-4.15: When `DeleteWorktreeFlow.delete` runs and the early `notFound` / `mainCheckoutRejected` / non-git-repo gates pass, the application shall transition the worktree entry to `.deleting` state synchronously before awaiting `git worktree remove`, so the sidebar row renders a spinner while git runs. On flow failure (forceable or final), the application shall restore the entry's prior state before surfacing the error alert; on success the entry is removed entirely. Mirrors `GIT-5.4` on the symmetric delete path so a long-running `git worktree remove` (which can take seconds when the worktree contains many untracked files or holds a slow lock) produces visible feedback rather than a frozen row.
+@spec GIT-4.15: When `DeleteWorktreeFlow.delete` runs and the early `notFound` / `mainCheckoutRejected` / in-flight / non-git-repo gates pass, the application shall transition the worktree entry to `.deleting` state synchronously before awaiting `git worktree remove`, so the sidebar row renders a spinner while git runs. On flow failure (forceable or final), the application shall restore the entry's prior state before surfacing the error alert; on success the entry is removed entirely. Mirrors `GIT-5.4` on the symmetric delete path so a long-running `git worktree remove` (which can take seconds when the worktree contains many untracked files or holds a slow lock) produces visible feedback rather than a frozen row.
 """, .disabled("structural — verified by manual smoke testing and unit tests for GIT-4.17 / GIT-4.18"))
     func git_4_15() async throws { }
 

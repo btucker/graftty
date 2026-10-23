@@ -80,7 +80,7 @@ public enum CLIWorktreeRemovalRequestHandler {
             return "worktree is pinned; rerun with --pinned to authorize removal; --force does not bypass pin protection"
         }
         guard !worktree.state.isInFlight else {
-            return "a worktree operation is already in progress"
+            return WorktreeRemovalError.operationInProgressMessage
         }
         return nil
     }
