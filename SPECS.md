@@ -4096,6 +4096,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CLI-1.3** If a stopped subprocess, timed out or cancelled, is still running when its kill grace (two seconds by default) elapses after SIGTERM, then the application shall send SIGKILL so the caller is released instead of waiting for a child that ignores SIGTERM.
 
+**CLI-1.4** When a piped subprocess exits, the application shall return its captured output without waiting for a pipe's end-of-file, even when a background child still holds that pipe open.
+
 ## CONTEXT — CONTEXT
 
 ### CONTEXT-1.x

@@ -178,14 +178,9 @@ struct CLIRunnerTests {
     /// `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd,
     /// SIGABRT-ing the whole process; the crash-safe drain returns `nil`.
     @Test func drainChunkReturnsNilOnClosedFDInsteadOfCrashing() throws {
-        let pipe = Pipe()
-        let reader = pipe.fileHandleForReading
-        // Close the fd out from under the handle, mimicking the pipe being
-        // torn down while a readability handler is still scheduled to fire.
-        try reader.close()
-        // `availableData` would raise NSFileHandleOperationException here and
-        // abort the process; the crash-safe drain reports EOF.
-        #expect(Subprocess.drainChunk(from: reader) == nil)
+        // A descriptor torn down under the handler reads as EOF. -1 stands in
+        // for it: a just-closed number could be reused by a parallel test.
+        #expect(Subprocess.drainChunk(fd: -1) == nil)
     }
 
     @Test func drainChunkReturnsBytesThenNilAtEOF() throws {
@@ -194,10 +189,10 @@ struct CLIRunnerTests {
         try pipe.fileHandleForWriting.close() // signal EOF after the payload
         let reader = pipe.fileHandleForReading
 
-        let first = Subprocess.drainChunk(from: reader)
+        let first = Subprocess.drainChunk(fd: reader.fileDescriptor)
         #expect(first.map { String(decoding: $0, as: UTF8.self) } == "hello")
         // Write end closed + payload consumed → next drain is EOF (nil).
-        #expect(Subprocess.drainChunk(from: reader) == nil)
+        #expect(Subprocess.drainChunk(fd: reader.fileDescriptor) == nil)
     }
 
     @Test func pathEnrichmentIncludesHomebrewLocalAndBun() {

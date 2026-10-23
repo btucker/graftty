@@ -82,27 +82,13 @@ enum Subprocess {
         case .pipes:
             // Drain while the child runs: waiting for exit before reading
             // would leave a child that fills the ~64 KB pipe buffer blocked
-            // on write forever. Drain exclusively via readability handlers
-            // and have the termination handler wait for both EOFs; mixing in
-            // a synchronous read raced the handlers and lost stderr.
+            // on write forever. The termination handler then reads what is
+            // left (CLI-1.4); each stream's reads share one lock, so the two
+            // never interleave chunks.
             let stdout = Pipe()
             let stderr = Pipe()
-            stdout.fileHandleForReading.readabilityHandler = { handle in
-                guard let chunk = Self.drainChunk(from: handle) else {
-                    handle.readabilityHandler = nil
-                    buffers.markStdoutEOF()
-                    return
-                }
-                buffers.appendStdout(chunk)
-            }
-            stderr.fileHandleForReading.readabilityHandler = { handle in
-                guard let chunk = Self.drainChunk(from: handle) else {
-                    handle.readabilityHandler = nil
-                    buffers.markStderrEOF()
-                    return
-                }
-                buffers.appendStderr(chunk)
-            }
+            buffers.stdout.attach(stdout.fileHandleForReading)
+            buffers.stderr.attach(stderr.fileHandleForReading)
             pipes = [stdout, stderr]
             process.standardOutput = stdout
             process.standardError = stderr
@@ -134,11 +120,13 @@ enum Subprocess {
                 process.terminationHandler = { process in
                     termination.finish()
                     if waitsForPipeEOF {
-                        // The child is dead, so the kernel closed the write
-                        // side of both pipes; wait (bounded) for each
-                        // readability handler's final EOF before the caller
-                        // snapshots the buffers.
-                        buffers.waitForBothEOFs(timeout: 5.0)
+                        // The child is dead, so everything it wrote is
+                        // already in the pipes. Read it now instead of
+                        // waiting for EOF, which a background child that
+                        // inherited a pipe, or a readability callback queued
+                        // behind a busy dispatch pool, can hold back (CLI-1.4).
+                        buffers.stdout.finish()
+                        buffers.stderr.finish()
                     }
                     continuation.resume(returning: process.terminationStatus)
                 }
@@ -170,27 +158,48 @@ enum Subprocess {
                 stderr: try Data(contentsOf: files.stderr),
                 status: status)
         }
-        return SubprocessOutput(stdout: buffers.stdoutData, stderr: buffers.stderrData, status: status)
+        return SubprocessOutput(stdout: buffers.stdout.data, stderr: buffers.stderr.data, status: status)
     }
 
-    /// Crash-safe single-chunk drain of a pipe read handle. Returns the bytes
-    /// read, or `nil` at EOF / when the fd has been closed out from under the
-    /// readability handler during process+pipe teardown.
+    /// Crash-safe single-chunk drain of a pipe's read descriptor. Returns the
+    /// bytes one `read` returns, or `nil` at EOF or on a closed descriptor.
     ///
-    /// `NSFileHandle.availableData` (and `readData(ofLength:)`) raise an
-    /// *uncatchable* `NSFileHandleOperationException` ("Bad file descriptor")
-    /// when the fd is already closed — under concurrent load the per-stream EOF
-    /// wait in `terminationHandler` can lapse (the global queue that runs the
-    /// readability handlers is starved for tens of seconds), the continuation
-    /// resumes, the `Pipe` deallocates and closes the fd, and the still-queued
-    /// readability handler then fires `availableData` against the freed fd —
-    /// SIGABRT-ing the whole process. `read(upToCount:)` surfaces the same
-    /// EBADF as a *catchable* Swift error, so a closed fd reads as EOF. CLI-1.1.
-    static func drainChunk(from handle: FileHandle) -> Data? {
-        guard let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty else {
+    /// One POSIX `read` returns what the pipe holds now. `FileHandle`'s
+    /// `read(upToCount:)` keeps reading until it fills the count or reaches
+    /// EOF, so a background child holding the pipe open blocked the callback,
+    /// and the output behind it, until that child exited (CLI-1.4).
+    /// `FileHandle` reads raise an *uncatchable* `NSFileHandleOperationException`
+    /// ("Bad file descriptor") when the fd is already closed (CLI-1.1); a raw
+    /// `read` reports EBADF as -1, which reads as EOF here.
+    static func drainChunk(fd: Int32) -> Data? {
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+            if count > 0 { return Data(buffer[0..<count]) }
+            if count < 0, errno == EINTR { continue }
             return nil
         }
-        return chunk
+    }
+
+    /// Everything `fd` can return right now, up to EOF. The descriptor is
+    /// switched to non-blocking first, so a pipe whose writer is still open
+    /// ends the read instead of blocking. A closed descriptor reads as empty.
+    static func readWithoutBlocking(_ fd: Int32) -> Data {
+        let flags = fcntl(fd, F_GETFL)
+        guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0 else { return Data() }
+        var result = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+            if count > 0 {
+                result.append(contentsOf: buffer[0..<count])
+            } else if count < 0, errno == EINTR {
+                continue
+            } else {
+                // 0 is EOF; EAGAIN means the pipe is empty but still open.
+                return result
+            }
+        }
     }
 
     /// `Duration` → seconds as a `Double`, for `DispatchQueue.asyncAfter`
@@ -269,64 +278,60 @@ final class SubprocessTermination: @unchecked Sendable {
     }
 }
 
-/// Thread-safe byte accumulator for pipe drain handlers, with explicit
-/// per-stream EOF signalling so a synchronous waiter (the process
-/// terminationHandler) can block until both readabilityHandlers have
-/// flushed their last chunk. `readabilityHandler` fires on private
-/// background queues, and `terminationHandler` on another, so without
-/// this synchronization the terminationHandler can snapshot the buffer
-/// before an in-flight readabilityHandler appends — observed empirically
-/// as empty stderr for `/usr/bin/env`'s "command not found" path under
-/// concurrent test load.
-private final class PipeBuffers: @unchecked Sendable {
-    private var _stdout = Data()
-    private var _stderr = Data()
+/// Captured stdout and stderr of one piped subprocess.
+private final class PipeBuffers: Sendable {
+    let stdout = PipeStream()
+    let stderr = PipeStream()
+}
+
+/// One pipe's bytes. `readabilityHandler` fires on private background queues
+/// and `terminationHandler` on another; one lock orders every read of the
+/// pipe, so a chunk read by a late callback can never land after, or be lost
+/// behind, the exit drain. Reads use the descriptor captured while the pipe
+/// was open: `FileHandle.fileDescriptor` raises an uncatchable exception once
+/// teardown has closed the handle (CLI-1.1), and no read happens after
+/// `finish`, before the `Pipe` can be released.
+private final class PipeStream: @unchecked Sendable {
     private let lock = NSLock()
-    private let condition = NSCondition()
-    private var stdoutEOF = false
-    private var stderrEOF = false
+    private var bytes = Data()
+    private var fd: Int32 = -1
+    private var handle: FileHandle?
+    private var finished = false
 
-    var stdoutData: Data {
-        lock.lock(); defer { lock.unlock() }
-        return _stdout
-    }
+    var data: Data { lock.withLock { bytes } }
 
-    var stderrData: Data {
-        lock.lock(); defer { lock.unlock() }
-        return _stderr
-    }
-
-    func appendStdout(_ chunk: Data) {
-        lock.lock(); defer { lock.unlock() }
-        _stdout.append(chunk)
-    }
-
-    func appendStderr(_ chunk: Data) {
-        lock.lock(); defer { lock.unlock() }
-        _stderr.append(chunk)
-    }
-
-    func markStdoutEOF() {
-        condition.lock(); defer { condition.unlock() }
-        stdoutEOF = true
-        condition.broadcast()
-    }
-
-    func markStderrEOF() {
-        condition.lock(); defer { condition.unlock() }
-        stderrEOF = true
-        condition.broadcast()
-    }
-
-    /// Block until both pipes' readabilityHandler have signalled EOF,
-    /// or `timeout` elapses. Returns true on EOF, false on timeout.
-    @discardableResult
-    func waitForBothEOFs(timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        condition.lock(); defer { condition.unlock() }
-        while !(stdoutEOF && stderrEOF) {
-            if !condition.wait(until: deadline) { return false }
+    /// Drains `handle` while the child runs, one chunk per callback.
+    func attach(_ handle: FileHandle) {
+        lock.withLock {
+            self.handle = handle
+            fd = handle.fileDescriptor
         }
-        return true
+        handle.readabilityHandler = { [weak self] _ in self?.drainAvailable() }
+    }
+
+    private func drainAvailable() {
+        // The handler is cleared outside the lock: a platform's setter may
+        // wait for an in-flight callback, which could be waiting for it.
+        let atEOF = lock.withLock { () -> FileHandle? in
+            guard !finished else { return nil }
+            guard let chunk = Subprocess.drainChunk(fd: fd) else { return handle }
+            bytes.append(chunk)
+            return nil
+        }
+        atEOF?.readabilityHandler = nil
+    }
+
+    /// After the child exits: stop the callback and read whatever the pipe
+    /// still holds without blocking. A background child that inherited the
+    /// pipe may keep it open; its later writes are not this command's output.
+    func finish() {
+        let drained = lock.withLock { () -> FileHandle? in
+            guard !finished, let handle else { return nil }
+            finished = true
+            bytes.append(Subprocess.readWithoutBlocking(fd))
+            self.handle = nil
+            return handle
+        }
+        drained?.readabilityHandler = nil
     }
 }
