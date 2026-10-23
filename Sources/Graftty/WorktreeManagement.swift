@@ -81,8 +81,9 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
         )
     }
 
-    /// Removes a linked worktree (`DeleteWorktreeFlow`). Confirmation is the
-    /// caller's job.
+    /// Removes a linked worktree (`DeleteWorktreeFlow`, which refuses a row
+    /// whose creation or removal is still running, WEB-7.16). Confirmation
+    /// is the caller's job.
     func delete(worktreePath: String, force: Bool) async -> Result<WorktreeRemovalOutcome, WorktreeRemovalError> {
         await DeleteWorktreeFlow.delete(
             worktreePath: worktreePath,

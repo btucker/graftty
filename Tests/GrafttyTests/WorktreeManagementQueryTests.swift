@@ -5,7 +5,7 @@ import GrafttyKit
 import GrafttyProtocol
 @testable import Graftty
 
-/// Repository listing, session lookup and default-branch pulls through
+/// Repository listing, session lookup, default-branch pulls and deletes through
 /// `WorktreeManagement`, which the web REST routes and the paired-device
 /// envelope share.
 @MainActor
@@ -185,5 +185,35 @@ struct WorktreeManagementQueryTests {
         while stats.stats[clone]?.behind != 0, ContinuousClock.now < refreshed { try await Task.sleep(for: .milliseconds(5)) }
         #expect(computes.value == 2)
         #expect(stats.stats[clone]?.behind == 0)
+    }
+
+    /// Before #640 a web or paired-device delete pruned a row whose creation
+    /// was still running (its directory did not exist yet, so GIT-4.13
+    /// treated it as vanished), leaving the new worktree on disk untracked.
+    @Test("@spec WEB-7.16: If a web or paired-device client asks to delete a worktree whose creation or removal is still in progress, then the application shall refuse it as a failure that a forced retry cannot resolve, without running Git or changing the worktree's row.",
+          arguments: [WorktreeState.creating, .deleting])
+    func deleteRefusesAnInFlightWorktree(state: WorktreeState) async throws {
+        let root = try scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init"], at: root.path)
+        var inFlight = WorktreeEntry(path: root.appendingPathComponent(".worktrees/new").path, branch: "new")
+        inFlight.state = state
+        let box = StateBox(AppState(repos: [RepoEntry(path: root.path, displayName: "repo", worktrees: [
+            WorktreeEntry(path: root.path, branch: "main"), inFlight,
+        ])]))
+
+        let result = await GrafttyApp.$appStatePersisterOverride.withValue(
+            AppStatePersister(directory: root.appendingPathComponent("state"))
+        ) {
+            await service(box, root: root).delete(worktreePath: inFlight.path, force: false)
+        }
+
+        let message = WorktreeRemovalError.operationInProgressMessage
+        #expect(result == .failure(.gitFailedFinal(message)))
+        #expect(box.state.worktree(forPath: inFlight.path)?.state == state)
+        // What each transport now sends for it.
+        #expect(WebServer.DeleteWorktreeOutcome(result) == .gitFailedFinal(message))
+        #expect(WorktreeManagementResponse(removal: result) == .error(
+            code: "git-failed", message: message, forceAllowed: false, shortStatus: nil))
     }
 }
