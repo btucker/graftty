@@ -3570,6 +3570,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-24.14** If a dispatched remote pane mutation has no reply after thirty seconds, then the viewer shall report the timeout, abandon that worktree's queued mutations, release the queue for other Macs, and ignore the expired dispatch's late result.
 
+**REMOTE-24.15** When a snapshot reveals a split-created pane after the split response, the viewer shall focus the created pane unless a newer user intent superseded the split.
+
 ## CHROME — Dedicated Chrome tabs
 
 ### CHROME-1.x — Host profiles and ownership
