@@ -95,7 +95,7 @@ struct SessionReconnectTests {
         factory.nextProvider = { ws }
         let client = SessionClient(
             sessionName: "s",
-            webSocketFactory: factory.make,
+            webSocketFactory: { factory.make() },
             clock: clock,
             backoffSchedule: [1, 2, 4, 8, 16, 30]
         )
@@ -132,7 +132,7 @@ struct SessionReconnectTests {
         factory.nextProvider = { EndedWS() }
         let client = SessionClient(
             sessionName: "s",
-            webSocketFactory: factory.make,
+            webSocketFactory: { factory.make() },
             clock: clock,
             backoffSchedule: [1, 2, 4]
         )
@@ -221,7 +221,9 @@ struct SessionReconnectTests {
     func successfulConnectResetsAttemptCounter() async throws {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
-        var calls = 0
+        // FactoryRecorder.make runs nextProvider under its lock, so this
+        // counter is only ever touched serially despite the Sendable closure.
+        nonisolated(unsafe) var calls = 0
         factory.nextProvider = {
             calls += 1
             return calls == 1 ? FailingWS() : IdleWS()
@@ -261,7 +263,7 @@ struct SessionReconnectTests {
         factory.nextProvider = { FailingWS() }
         let client = SessionClient(
             sessionName: "s",
-            webSocketFactory: factory.make,
+            webSocketFactory: { factory.make() },
             clock: clock,
             backoffSchedule: [30]  // long enough we won't auto-trigger
         )

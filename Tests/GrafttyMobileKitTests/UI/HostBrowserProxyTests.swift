@@ -115,8 +115,7 @@ struct HostBrowserProxyTests {
             let text = String(decoding: request, as: UTF8.self)
             if host == "example.invalid" {
                 #expect(port == 32134)
-                let redirect = "HTTP/1.1 302 Found\r\nLocation: \(callback.absoluteString)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                try await BrowserProxy.send(Data(redirect.utf8), to: socket)
+                try await BrowserProxy.send(Self.redirectResponse(to: callback), to: socket)
             } else {
                 #expect(host == "127.0.0.1" && port == 32135)
                 #expect(text.hasPrefix("GET /callback/mcp?code=test-code&state=test-state HTTP/1.1"))
@@ -136,10 +135,16 @@ struct HostBrowserProxyTests {
         provider.newConnectionHandler = { socket in
             socket.start(queue: queue)
             Task {
-                _ = try await Self.readRequest(from: socket)
-                let response = "HTTP/1.1 302 Found\r\nLocation: \(callback.absoluteString)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                try await BrowserProxy.send(Data(response.utf8), to: socket)
-                socket.cancel()
+                defer { socket.cancel() }
+                // WebKit can open a speculative connection, then close or
+                // reset it without sending HTTP (see servePage). Only a real
+                // request gets the redirect, and only its failure is an issue.
+                guard let request = try? await Self.readRequest(from: socket), !request.isEmpty else { return }
+                do {
+                    try await BrowserProxy.send(Self.redirectResponse(to: callback), to: socket)
+                } catch {
+                    Issue.record("phone-side provider failed to answer: \(error)")
+                }
             }
         }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -188,8 +193,7 @@ struct HostBrowserProxyTests {
             Task {
                 do {
                     _ = try await Self.readRequest(from: socket)
-                    let response = "HTTP/1.1 302 Found\r\nLocation: \(callback.absoluteString)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                    try await BrowserProxy.send(Data(response.utf8), to: socket)
+                    try await BrowserProxy.send(Self.redirectResponse(to: callback), to: socket)
                 } catch { }
                 socket.cancel()
             }
@@ -550,6 +554,11 @@ struct HostBrowserProxyTests {
                 else { continuation.resume(returning: data ?? Data()) }
             }
         }
+    }
+
+    /// A sign-in provider's redirect to its OAuth callback, closing the connection.
+    nonisolated private static func redirectResponse(to callback: URL) -> Data {
+        Data("HTTP/1.1 302 Found\r\nLocation: \(callback.absoluteString)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
     }
 
     private func expectPage(_ expected: String, url: URL, configuration: WKWebViewConfiguration) async throws {
