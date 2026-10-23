@@ -30,6 +30,16 @@ struct AWSHostEnrollmentTests {
         let parameters = try #require(plan.arguments.firstIndex(of: "--parameters"))
         #expect(try JSONDecoder().decode([String: [String]].self, from: Data(plan.arguments[parameters + 1].utf8)) == ["portNumber": ["8801"]])
         #expect(runner.calls.last?.starts(with: ["sts", "get-caller-identity"]) == true)
+        let adapter = AWSHostProvider(enrollment: enrollment)
+        let prepared = try await adapter.prepareConnection(operationID: operation, parent: parent)
+        #expect(prepared.binding == .init(provider: "aws", operationID: operation))
+        #expect(prepared.identity == host)
+        #expect(prepared.transport == .proxy(command: "aws", arguments: plan.arguments))
+        try adapter.authorize(prepared, parent: parent)
+        #expect(throws: (any Error).self) {
+            try adapter.authorize(.init(binding: prepared.binding, target: prepared.target, identity: host,
+                transport: .directSSH(host: "attacker", port: 8801)), parent: parent)
+        }
         let changed = LinuxHostTrustRequest(deviceID: parent.deviceID, displayName: parent.displayName, publicKey: host.publicKey, serverPublicKey: parent.serverPublicKey)
         let count = runner.calls.count
         await #expect(throws: (any Error).self) { _ = try await enrollment.prepareConnection(operationID: operation, parent: changed) }
@@ -38,6 +48,7 @@ struct AWSHostEnrollmentTests {
             executor: EnrollmentExecutor(operation: operation, parent: parent, host: host, fault: "account"), pause: {})
         await #expect(throws: (any Error).self) { _ = try await wrongAccount.prepareConnection(operationID: operation, parent: parent) }
         try peers.remove(id: .init(value: host.deviceID))
+        #expect(throws: (any Error).self) { try adapter.authorize(prepared, parent: parent) }
         await #expect(throws: (any Error).self) { _ = try await enrollment.prepareConnection(operationID: operation, parent: parent) }
         #expect(try peers.list().isEmpty)
     }

@@ -3430,6 +3430,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-24.19** When a placement is admitted, the host shall return its preparing status without waiting for setup, continue independently of the request lifetime, and finish canceling owned jobs before shutdown returns.
 
+**REMOTE-24.20** When connecting through a registered compute provider, the application shall select the adapter by provider identifier, preserve the enrollment operation and pinned host identity, and recheck adapter authorization without requiring AWS-specific identifiers in shared connection code.
+
 ### REMOTE-25.x — Dev Container environments
 
 **REMOTE-25.1** When preparing a remote project environment, the application shall use its selected Dev Container configuration through the existing Dev Container CLI.

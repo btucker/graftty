@@ -85,9 +85,13 @@ Replication permission defaults to disabled for new pairings and legacy records.
 
 Dev Container subprocesses opt into cancellation so host shutdown can terminate a running CLI command. Other CLI callers retain their existing completion behavior. A canceled Docker command can leave resources on the daemon; the placement remains uncertain and its operation labels support later inspection and cleanup.
 
-The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.8`, and `REMOTE-24.10` through `REMOTE-24.19`, plus `REMOTE-25.1`, `REMOTE-25.6`, `REMOTE-25.7`, `REMOTE-26.10` through `REMOTE-26.14`, `REMOTE-26.17`, `REMOTE-26.18`, `REMOTE-26.20` through `REMOTE-26.26`, and `REMOTE-28.1`. The remaining disabled inventory entries still describe future behavior.
+The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.8`, and `REMOTE-24.10` through `REMOTE-24.20`, plus `REMOTE-25.1`, `REMOTE-25.6`, `REMOTE-25.7`, `REMOTE-26.10` through `REMOTE-26.14`, `REMOTE-26.17`, `REMOTE-26.18`, `REMOTE-26.20` through `REMOTE-26.26`, and `REMOTE-28.1`. The remaining disabled inventory entries still describe future behavior.
+
+Connection preparation now uses a provider registry. The AWS adapter owns enrollment lookup, account verification, SSM arguments, and current-trust checks. Shared callers use an opaque provider binding and a pinned SSH identity. Tests exercise a second provider and reject changed bindings, transport substitutions, and revoked trust. This connection contract does not yet cover automatic provisioning or recovery.
 
 ## Agreed direction
+
+The implementation must support additional providers after AWS. Shared placement, parent trust, Git/session replication, recovery, and progress models must depend on provider contracts. AWS CLI pricing, instance lifecycle, IAM/SSM bootstrap, and proxy construction belong to the AWS adapter. Exercise the contract with a fake second provider; AWS instance IDs, regions, and SSM documents must not become shared recovery identifiers.
 
 - Configure the `aws` provider through the CLI using an existing AWS profile. Save each user's provider, region, instance-pool, and preferred-type settings.
 - Compare Spot prices across eligible instance types and Availability Zones. Monitor host load to decide whether new work fits an existing host or needs another instance.

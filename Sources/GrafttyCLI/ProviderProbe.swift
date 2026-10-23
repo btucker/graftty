@@ -45,23 +45,31 @@ struct ProviderProbe: AsyncParsableCommand {
             throw ValidationError("The parent's saved SSH client identity is missing or changed.")
         }
         let enrollment = AWSHostEnrollment(peers: TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory))
-        let plan = try await enrollment.prepareConnection(operationID: operationID, parent: parent)
+        let registry = try HostProviderRegistry(providers: [AWSHostProvider(enrollment: enrollment)])
+        let plan = try await registry.prepareConnection(binding: .init(provider: provider, operationID: operationID), parent: parent)
         let fingerprint = RemoteIdentityFingerprint(of: try RemoteIdentityPublicKey(rawRepresentation: Data(base64Encoded: plan.identity.publicKey)!))
         let connection = DirectSSHHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
         try Task.checkCancellation()
-        let proxy = try DuplexSubprocess(command: "aws", arguments: plan.arguments)
+        var proxy: DuplexSubprocess?
         do {
-            try await connection.connect(input: proxy.output, output: proxy.input)
-            try enrollment.validateConnection(plan, parent: parent)
+            switch plan.transport {
+            case .directSSH(let host, let port):
+                try await connection.connect(host: host, port: port)
+            case .proxy(let command, let arguments):
+                let process = try DuplexSubprocess(command: command, arguments: arguments)
+                proxy = process
+                try await connection.connect(input: process.output, output: process.input)
+            }
+            try registry.authorize(plan, parent: parent)
             let resources = try await connection.resourceObservation()
-            try enrollment.validateConnection(plan, parent: parent)
+            try registry.authorize(plan, parent: parent)
             await connection.close()
-            await proxy.stop()
-            return ProbeResult(instanceID: plan.target.instanceID,
+            await proxy?.stop()
+            return ProbeResult(instanceID: plan.target,
                 host: .init(deviceID: .init(value: plan.identity.deviceID), fingerprint: fingerprint), resources: resources)
         } catch {
             await connection.close()
-            await proxy.stop()
+            await proxy?.stop()
             // AWS/plugin diagnostics may contain session URLs or tokens. Keep
             // them out of CLI output; users can diagnose SSM directly with AWS.
             if error is CancellationError { throw error }

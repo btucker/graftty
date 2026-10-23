@@ -89,7 +89,7 @@ public struct AWSHostEnrollment: Sendable {
         }
     }
 
-    private func connectionPlan(operationID: UUID, parent: LinuxHostTrustRequest) throws -> AWSHostConnectionPlan {
+    func connectionPlan(operationID: UUID, parent: LinuxHostTrustRequest) throws -> AWSHostConnectionPlan {
         try Task.checkCancellation()
         try ProviderHostEnrollment.validate(parent)
         let file = JSONFileStore<Record>(fileURL: directory.appendingPathComponent(operationID.uuidString + ".json"))
