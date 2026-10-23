@@ -19,9 +19,9 @@ public enum ControlRequestCore {
                               now: @escaping @MainActor () -> ContinuousClock.Instant,
                               sleepUntil: @escaping @MainActor (ContinuousClock.Instant) async throws -> Void) -> Bool {
         switch message {
-        case let .providerActivity(path, runtime, sessionID, paneSessionName, activity):
-            platform.providerActivity(path: path, paneSessionName: paneSessionName, sessionID: sessionID,
-                                      activity: activity, runtime: runtime)
+        case .providerActivity(let request):
+            platform.providerActivity(path: request.callerWorktree, paneSessionName: request.paneSessionName,
+                                      sessionID: request.sessionID, activity: request.activity, runtime: request.runtime)
         case .notify(let path, let text, let clearAfter, let paneSessionName):
             let autoClear = platform.state.applyUserNotify(path: path, text: text, clearAfter: clearAfter,
                                                               paneSessionName: paneSessionName)
@@ -58,11 +58,10 @@ public enum ControlRequestCore {
             }
             platform.attentionRecaps.report(recap, worktree: callerPath, agentID: callerAgentID)
             return .ok
-        case .teamSend(let callerPath, let callerAgentID, let recipient, let text, let priority):
-            return await teamSend(callerPath: callerPath, callerAgentID: callerAgentID, recipient: recipient,
-                                  text: text, priority: priority, platform: platform)
-        case .teamReply:
-            return await teamReply(message, platform: platform)
+        case .teamSend(let request):
+            return await teamSend(request, platform: platform)
+        case .teamReply(let request):
+            return await teamReply(request, platform: platform)
         case .teamBroadcast(let callerPath, let callerAgentID, let text, let priority):
             return await teamInboxOperation("failed to write team inbox broadcast", platform: platform) { handler, repos, enabled in
                 _ = try handler.broadcast(callerWorktree: callerPath, callerAgentID: callerAgentID, text: text,
@@ -93,13 +92,14 @@ public enum ControlRequestCore {
             return teamMembers(callerPath: callerPath, worktree: worktree, repo: repo, platform: platform)
         case .teamList(let callerPath):
             return teamMembers(callerPath: callerPath, worktree: nil, repo: nil, platform: platform)
-        case let .teamHook(callerPath, callerAgentID, runtime, event, sessionID, paneSessionName,
-                           attentionReason, stopHookActive, providerSleepActivity):
-            platform.providerActivity(path: callerPath, paneSessionName: paneSessionName, sessionID: sessionID,
-                                      activity: providerSleepActivity ?? .unknown, runtime: runtime)
-            return await teamHook(callerPath: callerPath, callerAgentID: callerAgentID, runtime: runtime,
-                                  event: event, sessionID: sessionID, paneSessionName: paneSessionName,
-                                  attentionReason: attentionReason, stopHookActive: stopHookActive, platform: platform)
+        case .teamHook(let request):
+            platform.providerActivity(path: request.callerWorktree, paneSessionName: request.paneSessionName,
+                                      sessionID: request.sessionID, activity: request.providerSleepActivity ?? .unknown,
+                                      runtime: request.runtime)
+            return await teamHook(callerPath: request.callerWorktree, callerAgentID: request.callerAgentID,
+                                  runtime: request.runtime, event: request.event, sessionID: request.sessionID,
+                                  paneSessionName: request.paneSessionName, attentionReason: request.attentionReason,
+                                  stopHookActive: request.stopHookActive, platform: platform)
         case .listPanes, .addPane, .closePane, .showPane, .sendPane,
              .previewFiles, .previewImage, .offerResource,
              .createWorktree, .worktreeCreateStatus, .removeWorktree, .worktreeRemoveStatus, .setWorktreePinned,
@@ -188,45 +188,38 @@ public enum ControlRequestCore {
 
     /// Sends to a paired Mac when the recipient is a `graftty-mac:` address,
     /// otherwise appends to the local team inbox.
-    private static func teamSend(callerPath: String, callerAgentID: String?, recipient: String, text: String,
-                                 priority: TeamInboxPriority, platform: any ControlTeamPlatform) async -> ResponseMessage {
-        guard recipient.hasPrefix("graftty-mac:") else {
+    private static func teamSend(_ request: TeamSendRequest, platform: any ControlTeamPlatform) async -> ResponseMessage {
+        guard request.recipient.hasPrefix("graftty-mac:") else {
             return await teamInboxOperation("failed to write team inbox message", platform: platform) { handler, repos, enabled in
-                _ = try handler.send(callerWorktree: callerPath, callerAgentID: callerAgentID, recipient: recipient,
-                                     text: text, priority: priority, repos: repos, teamsEnabled: enabled)
+                _ = try handler.send(callerWorktree: request.callerWorktree, callerAgentID: request.callerAgentID,
+                                     recipient: request.recipient, text: request.text, priority: request.priority,
+                                     repos: repos, teamsEnabled: enabled)
                 return .ok
             }
         }
         guard platform.teamsEnabled else { return .error(TeamInboxRequestError.teamModeDisabled.description) }
-        guard platform.state.worktree(forPath: callerPath) != nil else {
+        guard platform.state.worktree(forPath: request.callerWorktree) != nil else {
             return .error(TeamInboxRequestError.callerNotTracked.description)
         }
         guard let routing = platform.remoteTeamRouting else { return .error("remote team connection is unavailable") }
-        return await routing.send(callerWorktree: callerPath, callerAgentID: callerAgentID, recipient: recipient,
-                                  text: text, priority: priority)
+        return await routing.send(callerWorktree: request.callerWorktree, callerAgentID: request.callerAgentID,
+                                  recipient: request.recipient, text: request.text, priority: request.priority)
     }
 
     /// Resolves a reply to its stored sender, then sends it locally or to a paired Mac.
-    public static func teamReply(_ message: NotificationMessage, platform: any ControlTeamPlatform) async -> ResponseMessage {
-        guard case .teamReply(let caller, let agent, let id, let text, let priority, let fallback) = message else {
-            return .error("Expected a team reply")
-        }
+    public static func teamReply(_ reply: TeamReplyRequest, platform: any ControlTeamPlatform) async -> ResponseMessage {
         let inbox = platform.teamInbox
         let repos = platform.state.repos
         let enabled = platform.teamsEnabled
         do {
-            let request = try await OffMainIO.run {
+            let send = try await OffMainIO.run {
                 try TeamReplyResolver(inbox: inbox).resolve(
-                    callerWorktree: caller, callerAgentID: agent, messageID: id,
-                    fallback: fallback, text: text, priority: priority,
-                    repos: repos, teamsEnabled: enabled
+                    callerWorktree: reply.callerWorktree, callerAgentID: reply.callerAgentID,
+                    messageID: reply.messageID, fallback: reply.fallback, text: reply.text,
+                    priority: reply.priority, repos: repos, teamsEnabled: enabled
                 )
             }
-            guard case .teamSend(_, _, let recipient, _, _) = request else {
-                return .error("Invalid reply destination")
-            }
-            return await teamSend(callerPath: caller, callerAgentID: agent, recipient: recipient,
-                                  text: text, priority: priority, platform: platform)
+            return await teamSend(send, platform: platform)
         } catch {
             return .error(String(describing: error))
         }

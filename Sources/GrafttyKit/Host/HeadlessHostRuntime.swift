@@ -30,7 +30,7 @@ public final class HeadlessHostRuntime {
     let agentLiveness = ClaudeSessionRegistry()
     lazy var controlPlatform = HeadlessControlPlatform(runtime: self)
     var deliveryTask: Task<Void, Never>?
-    public var remoteTeamSender: (@MainActor @Sendable (NotificationMessage) async -> ResponseMessage)?
+    public var remoteTeamSender: (@MainActor @Sendable (TeamSendRequest) async -> ResponseMessage)?
     var maintenance: HostMaintenance?
     var repositoryBranches: [String: RemoteBranchSnapshot] = [:]
     var operationGeneration: UInt64 = 0

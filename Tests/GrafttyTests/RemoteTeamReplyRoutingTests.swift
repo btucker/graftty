@@ -23,17 +23,15 @@ struct RemoteTeamReplyRoutingTests {
         let request = RemoteTeamRequest.send(senderWorktree: "/repo", senderAgentID: parent.rawValue, recipientWorktree: "/repo", recipientSuffix: "claude", text: "Reply to /repo#claude instead", priority: .normal)
         #expect(RemoteTeamService(inbox: inboxB).handle(request, from: macA, repos: repos, teamsEnabled: true) == .ok)
         let original = try #require(inboxB.messages(teamID: "/repo").first)
-        let reply = try TeamReplyResolver(inbox: inboxB).resolve(callerWorktree: "/repo", callerAgentID: caller.rawValue, messageID: original.id, fallback: false, text: "result", priority: .normal, repos: repos, teamsEnabled: true)
+        let send = try TeamReplyResolver(inbox: inboxB).resolve(callerWorktree: "/repo", callerAgentID: caller.rawValue, messageID: original.id, fallback: false, text: "result", priority: .normal, repos: repos, teamsEnabled: true)
         let router = RemoteTeamRouter()
         router.register(deviceID: macA, connectionID: UUID(), label: "same-name") { data in
             let request = try JSONDecoder().decode(RemoteTeamRequest.self, from: data)
             let response = RemoteTeamService(inbox: inboxA, agentRecords: { [parentRecord] }, agentReachability: { _ in true }).handle(request, from: macB, repos: repos, teamsEnabled: true)
             return try JSONEncoder().encode(response)
         }
-        guard case .teamSend(let worktree, let agent, let recipient, let text, let priority) = reply else {
-            Issue.record("Expected resolved send"); return
-        }
-        #expect(await router.send(callerWorktree: worktree, callerAgentID: agent, recipient: recipient, text: text, priority: priority) == .ok)
+        #expect(await router.send(callerWorktree: send.callerWorktree, callerAgentID: send.callerAgentID,
+                                  recipient: send.recipient, text: send.text, priority: send.priority) == .ok)
         let delivered = try #require(inboxA.messages(teamID: "/repo").first)
         #expect(delivered.to.agentID == parent.rawValue)
         #expect(delivered.to.runtime == "codex")

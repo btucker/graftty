@@ -58,9 +58,9 @@ final class NativeTeamDelivery {
             }
             guard reachable else { return .error("The replying Claude agent is no longer reachable") }
             return await GrafttyApp.handleTeamReply(
-                .teamReply(callerWorktree: recipient.worktreePath, callerAgentID: recipient.id.rawValue,
-                           messageID: original.id, text: reply.body,
-                           priority: reply.priority == .now ? .urgent : .normal),
+                TeamReplyRequest(callerWorktree: recipient.worktreePath, callerAgentID: recipient.id.rawValue,
+                                 messageID: original.id, text: reply.body,
+                                 priority: reply.priority == .now ? .urgent : .normal),
                 appState: binding, router: remoteTeamRouter, inbox: teamInbox,
                 dispatcher: teamEventDispatcher
             )
