@@ -39,8 +39,9 @@ public struct WorktreeListContent: View {
     @State private var worktreeCreation = MobileWorktreeCreation()
     @State private var loadedHostID: UUID?
     @State private var presentedHostID: UUID?
-    /// Counts applied pushed frames. A pull that started before the count
-    /// changed returns rows no newer than the push, so it is dropped (IOS-4.54).
+    /// Counts applied pushed frames. A pull whose count changed while it was
+    /// in flight is dropped in favour of the pushed rows (IOS-4.54); this can
+    /// also drop a pull that read a newer frame, which the stream then delivers.
     @State private var appliedPushCount: UInt64 = 0
     @State private var remoteMacConnections: [RemoteMacConnectionSummary] = []
     @State private var reconnectingRemoteMacIDs:
@@ -160,6 +161,11 @@ public struct WorktreeListContent: View {
     private struct PendingWorktreeRouteKey: Hashable {
         let item: SidebarActivityItem?
         let loaded: Bool
+    }
+
+    private var displayedRows: [WorktreePanes]? {
+        if case .loaded(let rows) = state { return rows }
+        return nil
     }
 
     private var isLoaded: Bool {
@@ -722,7 +728,10 @@ public struct WorktreeListContent: View {
                     let pushes = appliedPushCount
                     let list = try await fetchWorktrees(host: host, remoteSnapshotProvider: remoteSnapshotProvider, includeRemoteWorktrees: includeRemoteWorktrees)
                     try checkCurrent()
-                    if appliedPushCount == pushes { applyLoadedList(list) }
+                    // A newer push supersedes these rows for display and for
+                    // deciding what to open.
+                    guard appliedPushCount == pushes else { return displayedRows ?? list }
+                    applyLoadedList(list)
                     return list
                 }
                 let path = target.path
@@ -780,11 +789,14 @@ public struct WorktreeListContent: View {
         return snapshotRows == rows
     }
 
-    private func updateNavigationMetadata(_ list: [WorktreePanes], requestHostID: UUID) async {
+    /// `pushes` is the applied-push count the pulled `list` was accepted
+    /// under; a push that lands while the metadata is fetched supersedes it.
+    private func updateNavigationMetadata(_ list: [WorktreePanes], requestHostID: UUID, pushes: UInt64) async {
         let snapshot: PanesStateMessage?
         if let remoteSidebarProvider { snapshot = await remoteSidebarProvider(list) }
         else { snapshot = .snapshot(list) }
-        guard Self.shouldApplyNavigationSnapshot(snapshot, matching: list),
+        guard appliedPushCount == pushes,
+              Self.shouldApplyNavigationSnapshot(snapshot, matching: list),
               case let .snapshot(_, metadata)? = snapshot else { return }
         await applyNavigationMetadata(list, metadata: metadata, requestHostID: requestHostID)
     }
@@ -968,7 +980,7 @@ public struct WorktreeListContent: View {
                 isCancelled: Task.isCancelled
             ), appliedPushCount == pushes else { return }
             applyLoadedList(list)
-            await updateNavigationMetadata(list, requestHostID: requestHostID)
+            await updateNavigationMetadata(list, requestHostID: requestHostID, pushes: pushes)
         } catch is CancellationError {
             return
         } catch WorktreePanesFetcher.FetchError.forbidden {
@@ -1302,10 +1314,9 @@ public struct WorktreeListContent: View {
                     includeRemoteWorktrees: includeRemoteWorktrees
                 )
                 try checkCurrent()
-                if appliedPushCount == pushes {
-                    state = .loaded(list)
-                    onListChanged(list)
-                }
+                guard appliedPushCount == pushes else { return displayedRows ?? list }
+                state = .loaded(list)
+                onListChanged(list)
                 return list
             }
             if let opened = try await WorktreeLayoutAwait.poll(rows: try await fetch(), fetch: fetch, checkCurrent: checkCurrent,

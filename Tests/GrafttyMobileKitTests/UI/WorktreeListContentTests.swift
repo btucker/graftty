@@ -237,6 +237,7 @@ struct WorktreeListContentTests {
         let events = AsyncStream<Event>.makeStream()
         let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
         let load = HeldLoad()
+        let loadReturned = AsyncStream<Void>.makeStream()
         let controller = UIHostingController(rootView: WorktreeListContent(
             host: sampleHost(),
             remote: RemoteWorktreeProviders(
@@ -244,6 +245,7 @@ struct WorktreeListContentTests {
                 snapshot: { _, _ in
                     events.continuation.yield(.fetched)
                     await load.wait()
+                    loadReturned.continuation.yield()
                     return stale
                 },
                 updates: { frames.stream }
@@ -265,8 +267,13 @@ struct WorktreeListContentTests {
         frames.continuation.yield(.frame(.snapshot(frame("b", "c"))))
         try #require(await observed.next() == .published(frame("b", "c")))
 
-        // The load now completes with rows older than the pushed frames.
+        // The load now completes with rows older than the pushed frames. Its
+        // rows are applied (or dropped) in the same main-actor job that
+        // returns them, before this test resumes, so the next published list
+        // shows which happened.
         load.release()
+        var returned = loadReturned.stream.makeAsyncIterator()
+        try #require(await returned.next() != nil)
         frames.continuation.yield(.frame(.snapshot(frame("b", "c", "d"))))
         #expect(await observed.next() == .published(frame("b", "c", "d")))
         frames.continuation.yield(.frame(.snapshot(frame("b", "c", "d", "e"))))
