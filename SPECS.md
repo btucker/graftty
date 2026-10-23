@@ -3466,6 +3466,34 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.49** When a headless host receives a provider hook without a caller agent ID, the application shall resolve the agent from the provider session's presence record before delivering its targeted messages.
 
+**REMOTE-22.50** If a headless host receives a worktree creation request from an untracked caller, with an invalid worktree name, with an agent prompt but no agent runtime, or with an obsolete prompt loader, then the application shall reject it with the Mac app's message before acknowledging an operation.
+
+**REMOTE-22.51** When a headless host receives a worktree creation request with an explicit base, the application shall resolve the base in the caller's worktree before acknowledging the operation, and shall reject a base that does not resolve.
+
+**REMOTE-22.52** When a headless host accepts a worktree creation request, the application shall show a creating row for the destination before acknowledging it, and shall reject a destination that is already tracked or an existing branch that is already checked out.
+
+**REMOTE-22.53** When a headless host creates a new branch without an explicit base, the application shall start it from the branch that origin names as its default rather than from the main checkout's current HEAD, as the Mac app does.
+
+**REMOTE-22.54** If a headless host is polled for a worktree creation or removal that it does not retain, then the application shall answer with the Mac app's unknown-or-expired message, and finished results shall expire after the retention period.
+
+**REMOTE-22.55** When a paired Mac creates or polls a worktree on a headless host, the application shall scope the operation ID to that peer, so another peer can neither poll nor reuse it.
+
+**REMOTE-22.56** When a headless host creates or removes a linked worktree, the application shall send the team's member-joined or member-left event to the main checkout, as the Mac app does.
+
+**REMOTE-22.57** If a headless host receives a worktree removal request for an unknown worktree, the main checkout, a pinned worktree without --pinned, or a worktree whose removal is already pending, then the application shall reject it with the Mac app's message before acknowledging, and shall recheck the pin before Git runs.
+
+**REMOTE-22.58** If Git refuses to remove a headless worktree because of local changes, then the application shall report Git's message with the worktree's `git status --short` output and allow a forced retry.
+
+**REMOTE-22.59** While a headless host removes a worktree, the application shall show it as deleting, and if Git refuses the removal, the application shall restore the worktree's prior state.
+
+**REMOTE-22.60** If a paired client asks a headless host to delete a worktree that is still being created or removed, then the application shall reject the request and leave the row to the operation that owns it.
+
+**REMOTE-22.61** If a headless host cannot save a new worktree's initial agent task, then the application shall reject the creation and drop its creating row from saved state as well as from the live model.
+
+**REMOTE-22.62** When a headless host removes a worktree, the application shall drop the worktree's cached diff statistics, so a worktree created later at the same path starts without them.
+
+**REMOTE-22.63** If Git refuses a headless worktree creation, then the application shall report Git's message as the operation's error, as the Mac app does.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.

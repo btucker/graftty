@@ -75,6 +75,16 @@ public enum GitWorktreeAdd {
         }
     }
 
+    /// Where a new worktree's branch starts, on the Mac and the headless
+    /// host alike. An existing branch is its own start point (nil). A new
+    /// branch starts at an explicit `base`, otherwise at the branch origin
+    /// names as its default, falling back to Git's HEAD when there is none.
+    public static func startPoint(for branch: BranchSelection, base: String?, repoPath: String) async -> String? {
+        guard case .createNew = branch else { return nil }
+        if let base { return base }
+        return await GitOriginDefaultBranch.resolve(repoPath: repoPath)
+    }
+
     /// Freeze a caller-local revision before asynchronous creation is accepted.
     public static func resolveStartPoint(_ startPoint: String, at path: String) async throws -> String {
         let result: CLIOutput

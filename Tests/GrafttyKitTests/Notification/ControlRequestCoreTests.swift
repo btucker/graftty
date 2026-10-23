@@ -19,7 +19,7 @@ struct ControlRequestCoreTests {
     }
 
     @MainActor
-    final class RecordingPlatform: ControlPlatform {
+    final class RecordingPlatform: ControlPlatform, CLIWorktreeCreationPlatform, CLIWorktreeRemovalPlatform {
         let root: URL
         var state: AppState
         let teamInbox: TeamInbox
@@ -66,6 +66,17 @@ struct ControlRequestCoreTests {
             notifications.append(content)
         }
         func hookDeliveryPolicy(presence: [TeamPresenceRecord]) -> TeamHookDeliveryPolicy { TeamHookDeliveryPolicy() }
+        let worktreeCreations = CLIWorktreeCreationStore()
+        let worktreeRemovals = CLIWorktreeRemovalStore()
+        var worktreeCreation: any CLIWorktreeCreationPlatform { self }
+        var worktreeRemoval: any CLIWorktreeRemovalPlatform { self }
+        var agentPromptDirectory: URL { root }
+        func saveStateNow() throws {}
+        func finishWorktreeCreation(_ plan: CLIWorktreeCreationPlan) async -> String? { nil }
+        func wakeWorktree(_ path: String) -> Bool { true }
+        func removeWorktree(_ path: String, force: Bool) async -> Result<WorktreeRemovalOutcome, WorktreeRemovalError> {
+            .success(WorktreeRemovalOutcome(dismissed: false))
+        }
         func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage? {
             platformRequests.append(message)
             return .ok

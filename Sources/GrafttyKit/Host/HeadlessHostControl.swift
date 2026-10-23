@@ -50,6 +50,11 @@ public extension HeadlessHostRuntime {
                 return .created(worktreeID: result.path, paneID: result.session)
             case .open(let path): _ = try await openWorktree(path)
             case .delete(let path, let force):
+                // REMOTE-22.60: a CLI creation's row exists before its Git
+                // task takes the worktree lease.
+                if state.worktree(forPath: path)?.state.isInFlight == true {
+                    throw HostRuntimeError.busy("worktree operation in progress: \(path)")
+                }
                 do { try await deleteWorktree(path, force: force); return .deleted(dismissed: false) }
                 catch let GitWorktreeRemove.Error.gitFailed(_, stderr) {
                     let status = try? await GitRunner.run(args: ["status", "--short"], at: path)
@@ -95,15 +100,15 @@ public extension HeadlessHostRuntime {
         } catch { return .error(code: "host_operation_failed", message: String(describing: error), forceAllowed: false, shortStatus: nil) }
     }
 
-    /// Control-socket entry point. Attention, recap, team, and capability
-    /// messages go through the dispatcher shared with the Mac app; the rest
-    /// reach `hostRequest`.
+    /// Control-socket entry point. Attention, recap, team, capability, and
+    /// worktree create/remove messages go through the dispatcher shared with
+    /// the Mac app; the rest reach `hostRequest`.
     func handle(_ message: NotificationMessage) async -> ResponseMessage {
         if ControlRequestCore.handleMessage(message, platform: controlPlatform) { return .ok }
         return await ControlRequestCore.handleRequest(message, platform: controlPlatform) ?? .ok
     }
 
-    internal func hostRequest(_ message: NotificationMessage, creationOrigin: WorktreeHistory.Origin? = nil) async -> ResponseMessage {
+    internal func hostRequest(_ message: NotificationMessage) async -> ResponseMessage {
         do {
             switch message {
             case .listPanes(let path):
@@ -125,49 +130,6 @@ public extension HeadlessHostRuntime {
                 try await terminals.send(text + (enter ? "\r" : ""), to: paneSession(path, index: index))
             case .showPane(let path, let index, let lines):
                 return .paneShow(try await terminals.show(paneSession(path, index: index), lines: lines))
-            case .createWorktree(let request):
-                guard let repo = state.repo(forWorktreePath: request.callerWorktree) else { throw HostRuntimeError.notFound("caller is not registered") }
-                let id = request.operationID ?? UUID().uuidString
-                if let operation = creations[id] { return .worktreeCreate(operation) }
-                let path = URL(fileURLWithPath: repo.path).appendingPathComponent(".worktrees").appendingPathComponent(request.worktreeName).path
-                let pending = WorktreeCreateStatus(operationID: id, state: .pending, worktreePath: path, messageAddress: path)
-                creations[id] = pending
-                Task {
-                    do {
-                        let exactCommand = WorktreeAgentLaunchCommand.shouldStagePrompt(
-                            agent: request.agentRuntime, command: request.command, prompt: request.agentPrompt) ? nil : request.command
-                        let result = try await createWorktree(repository: repo.path, name: request.worktreeName,
-                            branch: request.branchName, existing: request.existing, base: request.base, command: exactCommand,
-                            agent: request.agentRuntime, prompt: request.agentPrompt, callerPath: request.callerWorktree,
-                            creationOrigin: creationOrigin)
-                        creations[id] = WorktreeCreateStatus(operationID: id, state: .ready, worktreePath: result.path, messageAddress: result.path)
-                    } catch {
-                        creations[id] = WorktreeCreateStatus(operationID: id, state: .failed, worktreePath: path, messageAddress: path, error: String(describing: error))
-                    }
-                }
-                return .worktreeCreate(pending)
-            case .worktreeCreateStatus(let id):
-                guard let operation = creations[id] else { throw HostRuntimeError.notFound("unknown creation operation") }
-                return .worktreeCreate(operation)
-            case .removeWorktree(let path, let force, let pinned):
-                let worktree = try requireWorktree(path)
-                guard !worktree.isPinned || pinned else { throw HostRuntimeError.invalid("unpin the worktree before deleting it") }
-                let id = UUID().uuidString
-                let pending = WorktreeRemoveStatus(operationID: id, state: .pending, worktreePath: path)
-                removals[id] = pending
-                Task {
-                    do {
-                        try await deleteWorktree(path, force: force, allowPinned: pinned)
-                        removals[id] = WorktreeRemoveStatus(operationID: id, state: .removed, worktreePath: path)
-                    } catch {
-                        removals[id] = WorktreeRemoveStatus(operationID: id, state: .failed, worktreePath: path,
-                            error: String(describing: error), forceAllowed: !force && !worktree.isPinned)
-                    }
-                }
-                return .worktreeRemove(pending)
-            case .worktreeRemoveStatus(let id):
-                guard let operation = removals[id] else { throw HostRuntimeError.notFound("unknown removal operation") }
-                return .worktreeRemove(operation)
             case .setWorktreePinned(let path, let pinned):
                 let index = try indices(path)
                 state.repos[index.repo].worktrees[index.worktree].isPinned = pinned
@@ -180,22 +142,8 @@ public extension HeadlessHostRuntime {
 
     func remoteTeam(_ request: RemoteTeamRequest, deviceID: RemoteDeviceID) async -> RemoteTeamResponse {
         if case .worktree(let operation) = request {
-            do {
-                switch operation {
-                case .status(let id):
-                    guard let status = creations[id] else { return .error("unknown creation operation") }
-                    return .worktreeCreate(status)
-                case .create(let creation):
-                    let repo = try await creation.destinationRepository(in: state.repos)
-                    let response = await hostRequest(.createWorktree(callerWorktree: repo.path, worktreeName: creation.worktreeName,
-                        branchName: creation.branchName, existing: creation.existing, base: creation.base,
-                        command: creation.command, agentRuntime: creation.agentRuntime, agentPrompt: creation.agentPrompt,
-                        operationID: creation.operationID), creationOrigin: creation.historyOrigin())
-                    if case .worktreeCreate(let status) = response { return .worktreeCreate(status) }
-                    if case .error(let error) = response { return .error(error) }
-                    return .error("unexpected creation response")
-                }
-            } catch { return .error(String(describing: error)) }
+            return await RemoteCLIWorktreeService.handle(operation, from: deviceID, repos: state.repos,
+                platform: HeadlessWorktreeLifecycle(runtime: self))
         }
         let presence = presence
         return RemoteTeamService(inbox: inbox, agentRecords: { (try? presence.listAll()) ?? [] },

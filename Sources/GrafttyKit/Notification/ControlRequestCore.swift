@@ -2,8 +2,9 @@ import Foundation
 import GrafttyProtocol
 
 /// The control-socket dispatcher shared by the Mac app and the headless
-/// host. It owns attention, recap, team, and capability messages; every
-/// other request goes to `ControlPlatform.handlePlatformRequest`.
+/// host. It owns attention, recap, team, capability, and worktree
+/// create/remove messages; every other request goes to
+/// `ControlPlatform.handlePlatformRequest`.
 @MainActor
 public enum ControlRequestCore {
     /// Fire-and-forget path. Returns false for messages that expect a
@@ -112,9 +113,29 @@ public enum ControlRequestCore {
                 return .error("operation is unavailable on this host")
             }
             return .ok
+        case .createWorktree(let request):
+            return await CLIWorktreeCreationRequestHandler.begin(request, platform: platform.worktreeCreation)
+        case .worktreeCreateStatus(let operationID):
+            guard let status = platform.worktreeCreation.worktreeCreations.status(operationID: operationID) else {
+                return .error("unknown or expired worktree creation operation")
+            }
+            return .worktreeCreate(status)
+        case .removeWorktree(let worktreePath, let force, let pinned):
+            let removal = platform.worktreeRemoval
+            return CLIWorktreeRemovalRequestHandler.begin(
+                worktreePath: worktreePath, force: force, pinned: pinned,
+                state: { removal.state },
+                worktreeRemovals: removal.worktreeRemovals,
+                wakeWorktree: { removal.wakeWorktree($0) },
+                deleteWorktree: { await removal.removeWorktree($0, force: $1) }
+            )
+        case .worktreeRemoveStatus(let operationID):
+            guard let status = platform.worktreeRemoval.worktreeRemovals.status(operationID: operationID) else {
+                return .error("unknown or expired worktree removal operation")
+            }
+            return .worktreeRemove(status)
         case .listPanes, .addPane, .closePane, .showPane, .sendPane,
-             .previewFiles, .previewImage, .offerResource,
-             .createWorktree, .worktreeCreateStatus, .removeWorktree, .worktreeRemoveStatus, .setWorktreePinned,
+             .previewFiles, .previewImage, .offerResource, .setWorktreePinned,
              .remoteWorktree, .reconnectRemoteMac, .reconnectRemoteClient,
              .linuxSetupIdentity, .completeLinuxSetup:
             return await platform.handlePlatformRequest(message)

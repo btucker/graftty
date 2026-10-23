@@ -26,8 +26,12 @@ public protocol ControlPlatform: ControlTeamPlatform {
     func hookDeliveryPolicy(presence: [TeamPresenceRecord]) -> TeamHookDeliveryPolicy
     /// What this host's dispatcher supports, answered by `capabilities`.
     var controlCapabilities: Set<ControlCapability> { get }
-    /// Requests the core does not own: panes, previews, worktree operations,
-    /// and host-specific setup.
+    /// `graftty worktree add` / `remove` effects. Each finishes in the
+    /// background, so it must keep the host alive until it does.
+    var worktreeCreation: any CLIWorktreeCreationPlatform { get }
+    var worktreeRemoval: any CLIWorktreeRemovalPlatform { get }
+    /// Requests the core does not own: panes, previews, pins, and
+    /// host-specific setup.
     func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage?
 }
 

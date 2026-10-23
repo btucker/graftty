@@ -612,8 +612,20 @@ struct HeadlessHostRuntimeTests {
         let terminals = HostTerminalFake()
         let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals,
             initialState: state, agentSetup: setup)
-        _ = try await runtime.createWorktree(repository: root.path, name: provider.rawValue,
-            branch: provider.rawValue, base: "HEAD", agent: provider, prompt: "Setup regression")
+        // Agent launches arrive as `graftty worktree add`; setup runs before Git.
+        guard case .worktreeCreate(var status) = await runtime.handle(.createWorktree(callerWorktree: root.path,
+            worktreeName: provider.rawValue, branchName: provider.rawValue, existing: false, base: "HEAD",
+            command: nil, agentRuntime: provider, agentPrompt: "Setup regression", operationID: nil)) else {
+            Issue.record("worktree creation was rejected")
+            return
+        }
+        let deadline = ContinuousClock.now + .seconds(10)
+        while status.state == .pending, ContinuousClock.now < deadline,
+              case .worktreeCreate(let next) = await runtime.handle(.worktreeCreateStatus(operationID: status.operationID)) {
+            status = next
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(status.state == .ready, "\(status.error ?? "creation did not finish")")
         let hooksURL = config.stateDirectory.appendingPathComponent(
             "agent-plugins/\(provider.rawValue)/plugins/graftty/hooks/hooks.json")
         let document = try JSONSerialization.jsonObject(with: Data(contentsOf: hooksURL))

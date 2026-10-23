@@ -1,10 +1,10 @@
 import Foundation
-import GrafttyKit
+import GrafttyProtocol
 
-enum CLIWorktreeCreationPolicy {
+public enum CLIWorktreeCreationPolicy {
     /// ATTN-1.27: rejects malformed `pane add --agent` requests before a
     /// pane is split.
-    static func paneAddError(
+    public static func paneAddError(
         agentRuntime: TeamHookRuntime?,
         command: String?,
         agentPrompt: String?
@@ -23,7 +23,7 @@ enum CLIWorktreeCreationPolicy {
     /// operation. The app cannot safely recover that path if Git later fails,
     /// so reject that exact loader family before mutating the worktree. The
     /// released base64 command and current structured prompt remain valid.
-    static func obsoletePromptLoaderError(
+    public static func obsoletePromptLoaderError(
         agentRuntime: TeamHookRuntime?,
         command: String?,
         agentPrompt: String?
@@ -42,7 +42,7 @@ enum CLIWorktreeCreationPolicy {
     /// accepting the request. A bare runtime command from an older client is
     /// upgraded to the same bootstrap path; the released client's base64
     /// prompt command remains untouched for wire compatibility.
-    static func shouldStageAgentPrompt(
+    public static func shouldStageAgentPrompt(
         agentRuntime: TeamHookRuntime?,
         command: String?,
         agentPrompt: String?
@@ -55,7 +55,7 @@ enum CLIWorktreeCreationPolicy {
 /// Git/surface work. Terminal results are retained briefly so a lost socket
 /// response can be retried with the same operation ID.
 @MainActor
-final class CLIWorktreeCreationStore {
+public final class CLIWorktreeCreationStore {
     private struct Record {
         var status: WorktreeCreateStatus
         var updatedAt: Date
@@ -67,7 +67,7 @@ final class CLIWorktreeCreationStore {
     private let terminalRetention: TimeInterval
     private let baseResolver: @MainActor (String, String) async throws -> String
 
-    init(
+    public init(
         terminalRetention: TimeInterval = 10 * 60,
         baseResolver: @escaping @MainActor (String, String) async throws -> String = {
             try await GitWorktreeAdd.resolveStartPoint($0, at: $1)
@@ -79,7 +79,7 @@ final class CLIWorktreeCreationStore {
 
     /// Capture explicit refs before acknowledging creation. Concurrent socket
     /// retries must share the same snapshot while Git resolves the ref.
-    func captureBase(_ base: String?, at path: String, operationID: String) async throws -> String? {
+    public func captureBase(_ base: String?, at path: String, operationID: String) async throws -> String? {
         guard let base else { return nil }
         let task: Task<String, Error>
         if let existing = baseCaptures[operationID] {
@@ -91,14 +91,14 @@ final class CLIWorktreeCreationStore {
         return try await task.value
     }
 
-    func discardBaseCapture(operationID: String) {
+    public func discardBaseCapture(operationID: String) {
         baseCaptures.removeValue(forKey: operationID)
     }
 
     /// The app owns this task independently of the requesting socket or CLI.
     /// `createAndLaunch` waits for Git before starting the pane and returns a
     /// failure message, or nil once the backend accepts the launch command.
-    func start(
+    public func start(
         worktreePath: String,
         messageAddress: String,
         stagedPromptFile: URL? = nil,
@@ -120,7 +120,7 @@ final class CLIWorktreeCreationStore {
         return status
     }
 
-    func begin(
+    public func begin(
         worktreePath: String,
         messageAddress: String,
         stagedPromptFile: URL? = nil,
@@ -146,13 +146,13 @@ final class CLIWorktreeCreationStore {
         return status
     }
 
-    func markReady(operationID: String, now: Date = Date()) {
+    public func markReady(operationID: String, now: Date = Date()) {
         // The backend accepted the loader bytes; its shell now owns removal.
         records[operationID]?.stagedPromptFile = nil
         transition(operationID: operationID, state: .ready, error: nil, now: now)
     }
 
-    func markFailed(operationID: String, error: String, now: Date = Date()) {
+    public func markFailed(operationID: String, error: String, now: Date = Date()) {
         if let promptFile = records[operationID]?.stagedPromptFile {
             try? FileManager.default.removeItem(at: promptFile)
             records[operationID]?.stagedPromptFile = nil
@@ -160,7 +160,7 @@ final class CLIWorktreeCreationStore {
         transition(operationID: operationID, state: .failed, error: error, now: now)
     }
 
-    func status(operationID: String, now: Date = Date()) -> WorktreeCreateStatus? {
+    public func status(operationID: String, now: Date = Date()) -> WorktreeCreateStatus? {
         prune(now: now)
         return records[operationID]?.status
     }
