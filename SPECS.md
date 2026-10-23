@@ -966,6 +966,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-2.24** While admitted control-socket request handlers are suspended, the application shall start each additional admitted client's receive and handler deadline independently of those blocked workers so a fast request cannot expire while waiting to begin processing.
 
+**ATTN-2.25** The control-socket protocol shall keep every request and response type tag and field key stable across releases, and shall keep decoding the optional fields that older peers omit, so an older running application keeps serving a newer CLI.
+
 ### ATTN-3.x — Error Handling
 
 **ATTN-3.1** If the application is not running, then the CLI shall print "Graftty is not running" and exit with code 1.
