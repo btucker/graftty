@@ -778,7 +778,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         case notConfigured
         case notConnected
         case notOpen
-        case closed
         case dataChannelOpenTimedOut
     }
 }

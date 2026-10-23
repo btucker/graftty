@@ -8,21 +8,22 @@ import WebRTC
 
 /// Loopback test: construct a `RemoteHostConnection` (offerer, mobile-side)
 /// and a paired in-process answerer using the bundled WebRTC SDK, exchange
-/// SDP + ICE in-process (no signaling endpoint yet), and verify the
-/// connection's terminal-state observability.
+/// SDP + ICE in-process (no signaling endpoint yet), and verify transport
+/// arming, early-candidate buffering, and the connection's terminal-state
+/// observability.
 ///
 /// This is the M1.1 acceptance criterion: SDK integration works, peer
 /// connection negotiates, data channel opens. M1.2 replaces the in-process
 /// SDP swap with an HTTPS signaling endpoint; M1.3 adds Noise before any
 /// channel traffic; M1.4 framing.
-@Suite("WebRTC SDK integration — loopback DataChannel ping-pong (M1.1 foundation).")
+@Suite("WebRTC SDK integration — loopback negotiation and connection state (M1.1 foundation).")
 struct RemoteHostConnectionLoopbackTests {
 
     // MARK: - Task 1 (W3): terminal-state observability
     //
     // These reuse the M1.1 `TestAnswerer` (raw WebRTC, no SSH) rather
     // than a full SSH-speaking peer. That's sufficient here because
-    // `RemoteHostConnection.installSSHHandlerAndResume`'s success path
+    // `RemoteHostConnection.startSSHOverDataChannel`'s success path
     // (the one that sets `.connected`) only waits for the LOCAL
     // DataChannel to reach `.open` and the local SSH handler to be
     // installed — it does not wait for the remote peer to complete a
@@ -254,8 +255,8 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     private let factory: RTCPeerConnectionFactory
     private var peerConnection: RTCPeerConnection?
     private var dataChannel: RTCDataChannel?
-    /// `nonisolated let` so WebRTC's serial-queue callbacks can reach it
-    /// without an actor hop. The delegate class is `@unchecked Sendable`.
+    /// Held `nonisolated` (the class is `@unchecked Sendable`) so `init`
+    /// can install its callbacks without actor isolation.
     private nonisolated let delegate = AnswererDelegate()
     /// Mirror of `RemoteHostConnection.pendingLocalCandidates` — buffer
     /// candidates gathered during `accept` until the test binds a target,
