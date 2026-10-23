@@ -98,6 +98,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case listPanes(path: String)
     case listRemoteHosts
     case mcpBridge(MCPBridgeRequest)
+    case mcpConnection(MCPConnectionRequest)
     case remoteSkills(host: RemoteMacConnectionSummary.ID, request: RemoteSkillTransferRequest)
     case remotePlacement(host: RemoteMacConnectionSummary.ID, request: HostPlacementRequest)
     case reconnectRemoteMac(target: String)
@@ -267,6 +268,9 @@ extension NotificationMessage: Codable {
         case .listPanes(let path):
             try container.encode("list_panes", forKey: .type)
             try container.encode(path, forKey: .path)
+        case .mcpConnection(let request):
+            try container.encode("mcp_connection", forKey: .type)
+            try container.encode(request, forKey: .request)
         case .mcpBridge(let request):
             try container.encode("mcp_bridge", forKey: .type)
             try container.encode(request, forKey: .request)
@@ -435,6 +439,8 @@ extension NotificationMessage: Codable {
         case "list_panes":
             let path = try container.decode(String.self, forKey: .path)
             self = .listPanes(path: path)
+        case "mcp_connection":
+            self = .mcpConnection(try container.decode(MCPConnectionRequest.self, forKey: .request))
         case "mcp_bridge":
             self = .mcpBridge(try container.decode(MCPBridgeRequest.self, forKey: .request))
         case "remote_skills":
@@ -855,6 +861,7 @@ public enum ResponseMessage: Sendable, Equatable {
 
     case linuxSetupIdentity(LinuxHostTrustRequest)
     case mcpProxy(MCPProxyResponse)
+    case mcpConnections([MCPConnectionStatus])
     case agentSkills(RemoteSkillTransferStatus)
     case placement(HostPlacementRecord)
     case remoteHosts([RemoteMacConnectionSummary])
@@ -877,6 +884,7 @@ public extension ResponseMessage {
     /// The `type` tag this response carries on the wire.
     var wireType: String {
         switch self {
+        case .mcpConnections: "mcp_connections"
         case .mcpProxy: "mcp_proxy"
         case .agentSkills: "agent_skills"
         case .placement: "placement"
@@ -899,7 +907,7 @@ public extension ResponseMessage {
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, code, message, panes, output, messages, text, operation, identity, capabilities, hosts, placement, agentSkills, mcpProxy
+        case type, code, message, panes, output, messages, text, operation, identity, capabilities, hosts, placement, agentSkills, mcpProxy, mcpConnections
         case operationID = "operation_id"
         case teamName = "team_name"
         case members
@@ -912,6 +920,8 @@ extension ResponseMessage: Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(wireType, forKey: .type)
         switch self {
+        case .mcpConnections(let statuses):
+            try container.encode(statuses, forKey: .mcpConnections)
         case .mcpProxy(let response):
             try container.encode(response, forKey: .mcpProxy)
         case .agentSkills(let status):
@@ -958,6 +968,8 @@ extension ResponseMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
+        case "mcp_connections":
+            self = .mcpConnections(try container.decode([MCPConnectionStatus].self, forKey: .mcpConnections))
         case "mcp_proxy":
             self = .mcpProxy(try container.decode(MCPProxyResponse.self, forKey: .mcpProxy))
         case "agent_skills":

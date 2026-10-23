@@ -20,6 +20,21 @@ struct DuplexSubprocessTests {
         #expect(errno == ESRCH)
     }
 
+    @Test("@spec REMOTE-30.22: When launching MCP servers or provider proxies, the application shall pass only their standard streams and shall close unrelated inherited file descriptors so child processes cannot retain parent connections.")
+    func childDoesNotInheritUnrelatedDescriptors() async throws {
+        let pipe = Pipe()
+        let inherited = fcntl(pipe.fileHandleForReading.fileDescriptor, F_DUPFD, 100)
+        try #require(inherited >= 100)
+        defer { _ = close(inherited) }
+        try #require(fcntl(inherited, F_SETFD, 0) == 0)
+        let script = "import os,sys\ntry: os.fstat(int(sys.argv[1])); print('inherited')\nexcept OSError: print('closed')"
+        let child = try DuplexSubprocess(executable: URL(fileURLWithPath: "/usr/bin/python3"),
+            arguments: ["-c", script, String(inherited)], environment: [:])
+        let output = try child.output.readToEnd() ?? Data()
+        await child.stop()
+        #expect(String(decoding: output, as: UTF8.self) == "closed\n")
+    }
+
     @Test func diagnosticsAreBoundedAndNoisyChildCannotBlock() async throws {
         let child = try DuplexSubprocess(executable: URL(fileURLWithPath: "/bin/sh"),
             arguments: ["-c", "head -c 131072 /dev/zero >&2; printf ready; cat"], environment: ["PATH": "/usr/bin:/bin"])

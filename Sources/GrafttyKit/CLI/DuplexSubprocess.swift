@@ -78,7 +78,7 @@ public final class DuplexSubprocess: @unchecked Sendable {
         }
     }
 
-    private func stopSynchronously() {
+    fileprivate func stopSynchronously() {
         lifecycle.withLock {
             guard !stopped else { return }
             stopped = true
@@ -96,4 +96,38 @@ public final class DuplexSubprocess: @unchecked Sendable {
     }
 
     deinit { stopSynchronously() }
+}
+
+/// Tracks children without extending their normal lifetime. App termination can
+/// close this scope synchronously even after its async executor stops running.
+public final class DuplexSubprocessScope: @unchecked Sendable {
+    private struct Child { weak var process: DuplexSubprocess? }
+    private let lock = NSLock()
+    private var children: [Child] = []
+    private var closed = false
+    public init() {}
+
+    /// Creation and registration share the shutdown lock, so app termination
+    /// cannot miss a process spawned just before it takes its child snapshot.
+    public func launch(_ create: () throws -> DuplexSubprocess) throws -> DuplexSubprocess {
+        try lock.withLock {
+            guard !closed else { throw CancellationError() }
+            let process = try create()
+            children.removeAll { $0.process == nil }
+            children.append(Child(process: process))
+            return process
+        }
+    }
+
+    public func close() {
+        let processes = lock.withLock {
+            closed = true
+            let live = children.compactMap(\.process)
+            children.removeAll()
+            return live
+        }
+        for process in processes { process.stopSynchronously() }
+    }
+
+    deinit { close() }
 }

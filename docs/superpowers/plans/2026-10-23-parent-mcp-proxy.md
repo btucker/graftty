@@ -6,8 +6,18 @@ that same authenticated connection. No inbound port on the Mac is required.
 
 ## Current path
 
+- `graftty remote mcp start --provider aws --operation-id <enrollment> --policy <file>`
+  saves connection intent in the Mac app. The app connects without a foreground
+  terminal, retries transport failures and restores saved intent on app launch.
+- `graftty remote mcp status --json` reports `connecting`, `connected`, `retrying`,
+  `blocked`, or `stopping`. `connected` means the authenticated transport is ready;
+  each grant and upstream authentication are checked separately.
+- `graftty remote mcp stop --provider aws --operation-id <enrollment>` removes
+  saved intent before acknowledging shutdown. Transport cleanup can finish after
+  the response; a stopping connection cannot be replaced until cleanup completes.
 - `graftty remote mcp connect --provider aws --operation-id <enrollment> --policy <file>`
-  owns a foreground connection to an already enrolled worker. Keep it running.
+  remains available for an explicitly foreground connection. Do not run it alongside
+  an app-owned connection to the same worker; a new parent channel replaces the old one.
 - The worker's private control socket serves `graftty remote mcp bridge --config
   <file>`. Each invocation is an ordinary MCP stdio server for one grant.
 - `graftty remote mcp stage --grants <json-array> --directory <new-directory>
@@ -43,9 +53,9 @@ Container setup verifies the socket mount and executes the packaged bridge's
 help command before reporting `mcpConfigured`. The image must be compatible with
 the packaged Linux runtime, and its remote user must match the host UID. This
 status describes installation; it does not establish current parent connectivity,
-upstream authentication, or model login. The foreground parent connection must
-still be running. Host-service restart recreates endpoints from completed placement
-records; deletion and shutdown remove their sockets and close active sessions.
+upstream authentication, or model login. An app-owned or foreground parent
+connection must still be running. Host-service restart recreates endpoints from
+completed placement records; deletion and shutdown remove their sockets and close active sessions.
 Native profiles remain on the host after container deletion. This does not yet
 provide machine-reboot or replacement-host recovery.
 
@@ -71,6 +81,24 @@ Each SSH channel owns its upstream sessions. Disconnects close them and produce
 an unknown outcome for calls whose replies were lost. Reconnect does not replay
 calls. A bridge acceptance is only transport admission, not tool completion.
 The worker registration handshake completes before the parent reports readiness.
+
+The app saves only provider/enrollment identifiers and the parent-local policy
+path, in a private file. It supports up to 32 saved connections. Each attempt
+uses a fresh MCP broker, rechecks enrollment and parent identity, and closes its
+upstream sessions before another attempt. It borrows the app's interactive SSH or
+WebRTC connection when one already exists for the exact enrolled device and key.
+Otherwise it owns a provider connection. Stopping MCP closes its own channel and
+upstream sessions while leaving a borrowed interactive connection open. Retries
+back off from one to 30 seconds; a connection stable for 30 seconds resets the backoff.
+Local authorization failures produce a sanitized `blocked` status. Correct the
+configuration, then stop/start that connection to retry. Network or provider
+availability failures continue retrying. Policy and identity failures stop MCP on
+that connection; individual grant revocation closes the affected MCP sessions.
+App termination cancels reconnect tasks and synchronously stops tracked MCP and
+provider-tunnel subprocess groups. Process creation and shutdown share a lock so
+termination cannot miss a newly spawned child. Saved intent remains for the next
+launch. The POSIX launcher closes unrelated inherited descriptors on macOS and
+Linux; otherwise an MCP subprocess can keep an SSH socket alive after closure.
 
 Limits are 256 KiB per message, 32 active sessions per parent connection, 64
 outstanding requests in each direction per session, 16 queued writes, 512 KiB of
@@ -105,10 +133,10 @@ worker is also separate.
 
 ## Remaining integration
 
-Persistent app ownership and reconnect, automatic policy/grant creation during
-placement, configuration refresh for existing profiles, HTTP/OAuth adapters, and
+Automatic policy/grant creation during placement, configuration refresh for
+existing profiles, HTTP/OAuth adapters, and
 shared Mac/Mobile readiness UI remain pending.
-The foreground command and native configuration artifacts do not claim full
+The connection service and native configuration artifacts do not claim full
 settings or plugin parity. Git/session replication and Spot recovery remain
 separate unfinished work.
 
@@ -116,8 +144,24 @@ separate unfinished work.
 
 The SSH loopback test uses the SDK's client, a worker bridge, real SSH and a real
 parent subprocess. It verifies unchanged tool discovery, parent execution and
-rejection of a stale assignment generation. Unit tests cover scoped grants,
+rejection of a stale assignment generation. App-owned reconnect tests cover direct
+SSH and subprocess tunnels, a parent-side mutation whose reply is never received
+by the worker, invalidation of old sessions, and provider revocation. A separate
+integration test checks that stopping MCP leaves borrowed interactive channels
+usable. Unit tests cover scoped grants,
 revocation, callbacks, transport failure and request budgets.
+
+The app-owned lifecycle passed 72 focused tests on 2026-10-23, including direct
+SSH and subprocess-tunnel reconnect, lost-reply handling, revocation, borrowed
+interactive connections, CLI routing and subprocess cleanup. A separate probe
+ran the production POSIX launcher under Swift 6.2.3 on Ubuntu 24.04 and verified
+that an unrelated descriptor was closed while stdout remained usable. This was
+a launcher probe, not a full Linux package test run. The app-owned lifecycle has
+not yet been exercised on a new Spot worker; the Spot results below cover the
+earlier proxy and managed-profile paths.
+The subsequent `scripts/swiftpm test --no-parallel` run passed in full, including
+the native sidebar test that failed in the previous managed-mount run. Generated
+specs, Linux test membership, and whitespace checks also passed.
 
 `GRAFTTY_LIVE_AWS_MCP=1` enables the additional disposable-host path in
 `AWSLiveHostTests`, alongside `GRAFTTY_LIVE_AWS_TARGET` and

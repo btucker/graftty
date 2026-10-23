@@ -59,6 +59,7 @@ final class SocketRequestRouter {
         self.remoteTeamRouter = remoteTeamRouter
     }
 
+    var parentMCPConnections: MCPConnectionSupervisor?
     private var parentServerPublicKey: () -> String? = { nil }
 
     convenience init(
@@ -81,6 +82,7 @@ final class SocketRequestRouter {
             remoteMacsModel: services.remoteMacsModel,
             remoteTeamRouter: services.remoteTeamRouter
         )
+        parentMCPConnections = services.parentMCPConnections
         parentServerPublicKey = { [weak services] in services?.hostKey()?.publicKey.rawRepresentation.base64EncodedString() }
     }
 
@@ -101,6 +103,10 @@ final class SocketRequestRouter {
 
     /// Mac-specific dispatch for requests the shared core does not own.
     func handlePaneRequest(_ message: NotificationMessage) async -> ResponseMessage? {
+        if case .mcpConnection(let request) = message {
+            guard let parentMCPConnections else { return .error("Parent MCP service is unavailable") }
+            return await parentMCPConnections.handle(request)
+        }
         let response = await Self.handlePaneRequest(
             message,
             appState: appState,

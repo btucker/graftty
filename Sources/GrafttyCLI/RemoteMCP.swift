@@ -6,7 +6,60 @@ import GrafttyRemoteClient
 
 struct RemoteMCP: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "mcp", abstract: "Use granted MCP servers on the parent without copying credentials",
-        subcommands: [Connect.self, Stage.self, Bridge.self])
+        subcommands: [Start.self, Stop.self, Status.self, Connect.self, Stage.self, Bridge.self])
+
+    struct Start: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Save a parent MCP connection owned by the running Mac app",
+            discussion: "Reconnects while the app runs and restores on app launch. Uses a reviewed parent-local policy. Connected means the authenticated transport is ready; tool and model authentication remain separate.")
+        @Option(help: "Provider identifier") var provider: String = "aws"
+        @Option(help: "Completed provider enrollment UUID") var operationId: String
+        @Option(help: "Parent-local JSON MCP policy file") var policy: String
+        @Flag(help: "Print connection status as JSON") var json = false
+        func validate() throws { _ = try RemoteMCP.operation(operationId) }
+        func run() throws {
+            let file = URL(fileURLWithPath: policy).standardizedFileURL
+            _ = try MCPProxyPolicy.load(from: file)
+            try RemoteMCP.request(.start(.init(provider: provider, operationID: RemoteMCP.operation(operationId), policyPath: file.path)), json: json)
+        }
+    }
+
+    struct Stop: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Remove saved MCP connection intent and close its sessions",
+            discussion: "Stops reconnecting immediately. Status may remain stopping while the transport closes.")
+        @Option(help: "Provider identifier") var provider: String = "aws"
+        @Option(help: "Completed provider enrollment UUID") var operationId: String
+        @Flag(help: "Print connection status as JSON") var json = false
+        func validate() throws { _ = try RemoteMCP.operation(operationId) }
+        func run() throws { try RemoteMCP.request(.stop(provider: provider, operationID: RemoteMCP.operation(operationId)), json: json) }
+    }
+
+    struct Status: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "List app-owned parent MCP connection states")
+        @Flag(help: "Print connection status as JSON") var json = false
+        func run() throws { try RemoteMCP.request(.list, json: json) }
+    }
+
+    private static func operation(_ value: String) throws -> UUID {
+        guard let operation = UUID(uuidString: value) else { throw ValidationError("Invalid enrollment UUID") }
+        return operation
+    }
+
+    private static func request(_ request: MCPConnectionRequest, json: Bool) throws {
+        let response = try CLIEnv.sendRequest(.mcpConnection(request))
+        guard case .mcpConnections(let statuses) = response else {
+            if case .error(let message) = response { throw ValidationError(message) }
+            throw ValidationError("Update and start Graftty on the parent Mac.")
+        }
+        if json {
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            print(String(decoding: try encoder.encode(statuses), as: UTF8.self))
+        } else if statuses.isEmpty { print("No app-owned parent MCP connections.") }
+        else {
+            for status in statuses {
+                print("\(status.configuration.provider) \(status.configuration.operationID.uuidString) \(status.state.rawValue)")
+            }
+        }
+    }
 
     struct Connect: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Keep a parent MCP connection to an enrolled worker open",

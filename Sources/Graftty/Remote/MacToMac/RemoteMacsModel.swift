@@ -191,6 +191,10 @@ final class RemoteMacsModel: ObservableObject {
         savedRemoteMacs = store.remoteMacs
     }
 
+    func mcpConnection(for peer: RemoteMacConnectionSummary.ID) async throws -> (any MCPHostLink)? {
+        try await connectionRegistry.mcpConnection(for: .init(id: peer.deviceID, fingerprint: peer.fingerprint))
+    }
+
     func connectionState(for identity: RemoteMacIdentity) -> RemoteMacConnectionState {
         connectionStates[identity] ?? .offline
     }

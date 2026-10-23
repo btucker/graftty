@@ -3746,6 +3746,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-30.16** When preparing MCP mounts through Dev Container CLI, the application shall preserve project configuration and relative path resolution, supply read-only mounts through a private configuration override, and remove that override after success or failure.
 
+**REMOTE-30.17** When the parent owns an MCP connection, the application shall persist its provider binding and policy path, reuse an identical start, reconnect with fresh sessions after transport loss, and stop reconnecting after explicit removal or shutdown.
+
+**REMOTE-30.18** If an app-owned MCP connection fails local enrollment, parent identity, or policy-file validation, then the application shall retain a sanitized blocked status without retrying, and shall reject conflicting configuration until the saved connection is removed.
+
+**REMOTE-30.19** When the local CLI starts, stops, or lists parent MCP connections, the application shall exchange saved connection intent and sanitized lifecycle status over the control socket.
+
+**REMOTE-30.20** When an app-owned parent MCP transport disconnects, the application shall authenticate a fresh connection, invalidate old worker sessions without replay, and stop reconnecting if provider authorization is revoked.
+
+**REMOTE-30.21** When the parent app terminates, the application shall synchronously stop and reap its tracked MCP and provider proxy process groups and reject subprocess creation after shutdown.
+
+**REMOTE-30.22** When launching MCP servers or provider proxies, the application shall pass only their standard streams and shall close unrelated inherited file descriptors so child processes cannot retain parent connections.
+
+**REMOTE-30.23** While an authenticated interactive connection to the enrolled worker exists, the parent MCP service shall reuse that connection and shall leave its terminal and control channels open when MCP stops.
+
 ### REMOTE-31.x — Provider preferences and placement
 
 **REMOTE-31.1** When a user configures the aws compute provider, the CLI shall persist the selected existing AWS profile and placement preferences without copying AWS credentials.

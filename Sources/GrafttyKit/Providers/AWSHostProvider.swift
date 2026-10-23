@@ -9,7 +9,11 @@ public struct AWSHostProvider: HostProvider {
     }
 
     public func prepareConnection(operationID: UUID, parent: LinuxHostTrustRequest) async throws -> HostProviderConnection {
-        connection(try await enrollment.prepareConnection(operationID: operationID, parent: parent))
+        // Local trust failures are terminal; account/network failures can retry.
+        do { _ = try enrollment.connectionPlan(operationID: operationID, parent: parent) }
+        catch is CancellationError { throw CancellationError() }
+        catch { throw HostProviderConnectionError.authorization }
+        return connection(try await enrollment.prepareConnection(operationID: operationID, parent: parent))
     }
 
     public func authorize(_ candidate: HostProviderConnection, parent: LinuxHostTrustRequest) throws {

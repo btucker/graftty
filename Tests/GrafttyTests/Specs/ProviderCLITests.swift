@@ -5,6 +5,15 @@ import GrafttyKit
 import GrafttyProtocol
 
 struct ProviderCLITests {
+    @Test func persistentMCPCommandsRequireEnrollmentAndParentPolicy() throws {
+        let id = UUID().uuidString
+        _ = try GrafttyCLI.parseAsRoot(["remote", "mcp", "start", "--provider", "aws", "--operation-id", id, "--policy", "/private/policy.json", "--json"])
+        _ = try GrafttyCLI.parseAsRoot(["remote", "mcp", "stop", "--operation-id", id, "--json"])
+        _ = try GrafttyCLI.parseAsRoot(["remote", "mcp", "status", "--json"])
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(["remote", "mcp", "start", "--operation-id", id]) }
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(["remote", "mcp", "stop", "--operation-id", "bad"]) }
+    }
+
     @Test("@spec REMOTE-31.18: When an agent creates or queries a remote placement, the CLI shall require a stable operation UUID and an unambiguous connected paired host and send its pinned identity with the request.")
     func placementCommandsRequireStableOperationIdentity() throws {
         let id = UUID().uuidString

@@ -25,6 +25,14 @@ enum SpawnedProcessGroup {
             rc = posix_spawn_file_actions_adddup2(&actions, standardInput, STDIN_FILENO)
             guard rc == 0 else { throw posixError(rc) }
         }
+        #if !os(Linux)
+        if standardInput == nil, fcntl(STDIN_FILENO, F_GETFD) >= 0 {
+            // Preserve the launcher's existing stdin when no replacement was
+            // supplied; CLOEXEC_DEFAULT otherwise closes unmentioned handles.
+            rc = posix_spawn_file_actions_addinherit_np(&actions, STDIN_FILENO)
+            guard rc == 0 else { throw posixError(rc) }
+        }
+        #endif
 
         if let standardError {
             rc = posix_spawn_file_actions_adddup2(&actions, standardError, STDERR_FILENO)
@@ -42,6 +50,10 @@ enum SpawnedProcessGroup {
         }
 
         #if os(Linux)
+        // glibc's spawn action runs after the stdio dup2 actions. Unlike a
+        // parent-side fd scan, it also closes descriptors opened concurrently.
+        rc = posix_spawn_file_actions_addclosefrom_np(&actions, STDERR_FILENO + 1)
+        guard rc == 0 else { throw posixError(rc) }
         var attrs = posix_spawnattr_t()
         #else
         var attrs: posix_spawnattr_t?
@@ -51,7 +63,12 @@ enum SpawnedProcessGroup {
         defer { posix_spawnattr_destroy(&attrs) }
         rc = posix_spawnattr_setpgroup(&attrs, 0)
         guard rc == 0 else { throw posixError(rc) }
-        rc = posix_spawnattr_setflags(&attrs, Int16(POSIX_SPAWN_SETPGROUP))
+        #if os(Linux)
+        let flags = Int16(POSIX_SPAWN_SETPGROUP)
+        #else
+        let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
+        #endif
+        rc = posix_spawnattr_setflags(&attrs, flags)
         guard rc == 0 else { throw posixError(rc) }
 
         let argvStrings = [executable.path] + args

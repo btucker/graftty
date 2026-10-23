@@ -77,6 +77,7 @@ struct ControlSocketWireFixtureTests {
              #"{"host":{"deviceID":{"value":"worker"},"fingerprint":{"rawBytes":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},"request":{"finish":{"operationID":"00000000-0000-0000-0000-000000000001"}},"type":"remote_skills"}"#),
             (.remotePlacement(host: try host(), request: .status(operationID: operationID)),
              #"{"host":{"deviceID":{"value":"worker"},"fingerprint":{"rawBytes":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},"request":{"status":{"operationID":"00000000-0000-0000-0000-000000000001"}},"type":"remote_placement"}"#),
+            (.mcpConnection(.list), #"{"request":{"list":{}},"type":"mcp_connection"}"#),
             (.linuxSetupIdentity, #"{"type":"linux_setup_identity"}"#),
             (.completeLinuxSetup(try setupResult()),
              #"{"result":{"destination":"alias","identity":{"deviceID":"dev","displayName":"Linux","port":8801,"publicKey":"key"},"openSSH":{"hostname":"h","port":22,"user":"u"},"projectPaths":["/home/u/app"],"toolOutcomes":[{"component":"codex","message":"ok","status":"succeeded"}]},"type":"complete_linux_setup"}"#),
@@ -152,6 +153,7 @@ struct ControlSocketWireFixtureTests {
 
     static func responses() throws -> [(ResponseMessage, String)] {
         [
+            (.mcpConnections([]), #"{"mcpConnections":[],"type":"mcp_connections"}"#),
             (.remoteHosts([]),
              #"{"hosts":[],"type":"remote_hosts"}"#),
             (.agentSkills(skillStatus),
@@ -197,11 +199,11 @@ struct ControlSocketWireFixtureTests {
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability, .worktreeCreateStatus, .removeWorktree,
              .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability, .setWorktreePinned,
-             .worktreeRemoveStatus, .capabilities, .mcpBridge, .remoteSkills, .remotePlacement, .listRemoteHosts: break
+             .worktreeRemoveStatus, .capabilities, .mcpConnection, .mcpBridge, .remoteSkills, .remotePlacement, .listRemoteHosts: break
         }
         switch response {
         case .linuxSetupIdentity, .ok, .error, .serverBusy, .paneList, .paneShow, .teamList, .teamHookOutput,
-             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove, .capabilities, .mcpProxy, .agentSkills, .placement, .remoteHosts: break
+             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove, .capabilities, .mcpConnections, .mcpProxy, .agentSkills, .placement, .remoteHosts: break
         }
     }
 

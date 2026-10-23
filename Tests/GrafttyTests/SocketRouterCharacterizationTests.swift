@@ -241,6 +241,23 @@ struct SocketRouterCharacterizationTests {
         target: "mac", request: .status(operationID: "op")
     )
 
+    @Test func routesParentMCPRequestsToAppOwnedService() async throws {
+        let fixture = try RequestRouter()
+        let (box, _, _) = Self.fixture()
+        let router = fixture.router(for: box)
+        let service = MCPConnectionSupervisor(directory: fixture.directory) { _, ready in
+            await ready(); try await Task.sleep(for: .seconds(30))
+        }
+        router.parentMCPConnections = service
+        let configuration = MCPConnectionConfiguration(provider: "fixture", operationID: UUID(), policyPath: "/policy.json")
+        let response = await router.handleRequest(.mcpConnection(.start(configuration)))
+        guard case .mcpConnections(let statuses) = response else { Issue.record("MCP start was not routed"); return }
+        #expect(statuses.first?.configuration == configuration)
+        _ = await router.handleRequest(.mcpConnection(.stop(provider: "fixture", operationID: configuration.operationID)))
+        await service.shutdown()
+        #expect(await router.handleRequest(.mcpConnection(.list)) == .mcpConnections([]))
+    }
+
     @Test("fire-and-forget messages produce no request response")
     func fireAndForgetMessagesReturnNil() async throws {
         let router = try RequestRouter()
