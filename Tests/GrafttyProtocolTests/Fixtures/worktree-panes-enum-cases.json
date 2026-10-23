@@ -1,0 +1,127 @@
+[
+  {
+    "displayBranch" : "case-0",
+    "displayName" : "case-0",
+    "isMainCheckout" : false,
+    "layout" : {
+      "attentionSource" : "agentStop",
+      "attentionText" : "attention",
+      "kind" : "leaf",
+      "sessionName" : "graftty-0",
+      "title" : ""
+    },
+    "path" : "/repo/case-0",
+    "ports" : [
+
+    ],
+    "prBadge" : {
+      "checks" : "pending",
+      "mergeable" : "mergeable",
+      "number" : 1,
+      "state" : "open",
+      "url" : "https://example.com/pr/1"
+    },
+    "repoDisplayName" : "repo",
+    "state" : "closed"
+  },
+  {
+    "displayBranch" : "case-1",
+    "displayName" : "case-1",
+    "isMainCheckout" : false,
+    "layout" : {
+      "attentionSource" : "userNotify",
+      "attentionText" : "attention",
+      "kind" : "leaf",
+      "sessionName" : "graftty-1",
+      "title" : ""
+    },
+    "path" : "/repo/case-1",
+    "ports" : [
+
+    ],
+    "prBadge" : {
+      "checks" : "success",
+      "mergeable" : "conflicting",
+      "number" : 2,
+      "state" : "merged",
+      "url" : "https://example.com/pr/2"
+    },
+    "repoDisplayName" : "repo",
+    "state" : "running"
+  },
+  {
+    "displayBranch" : "case-2",
+    "displayName" : "case-2",
+    "isMainCheckout" : false,
+    "layout" : {
+      "attentionSource" : "commandFinished",
+      "attentionText" : "attention",
+      "kind" : "leaf",
+      "sessionName" : "graftty-2",
+      "title" : ""
+    },
+    "path" : "/repo/case-2",
+    "ports" : [
+
+    ],
+    "prBadge" : {
+      "checks" : "failure",
+      "mergeable" : "unknown",
+      "number" : 3,
+      "state" : "closed",
+      "url" : "https://example.com/pr/3"
+    },
+    "repoDisplayName" : "repo",
+    "state" : "stale"
+  },
+  {
+    "displayBranch" : "case-3",
+    "displayName" : "case-3",
+    "isMainCheckout" : false,
+    "layout" : {
+      "attentionSource" : "agentStop",
+      "attentionText" : "attention",
+      "kind" : "leaf",
+      "sessionName" : "graftty-3",
+      "title" : ""
+    },
+    "path" : "/repo/case-3",
+    "ports" : [
+
+    ],
+    "prBadge" : {
+      "checks" : "none",
+      "mergeable" : "mergeable",
+      "number" : 4,
+      "state" : "open",
+      "url" : "https://example.com/pr/4"
+    },
+    "repoDisplayName" : "repo",
+    "state" : "creating"
+  },
+  {
+    "displayBranch" : "case-4",
+    "displayName" : "case-4",
+    "isMainCheckout" : false,
+    "layout" : {
+      "attentionSource" : "userNotify",
+      "attentionText" : "attention",
+      "kind" : "leaf",
+      "sessionName" : "graftty-4",
+      "title" : ""
+    },
+    "path" : "/repo/case-4",
+    "ports" : [
+
+    ],
+    "prBadge" : {
+      "checks" : "pending",
+      "mergeable" : "conflicting",
+      "number" : 5,
+      "state" : "merged",
+      "url" : "https://example.com/pr/5"
+    },
+    "repoDisplayName" : "repo",
+    "state" : "deleting"
+  }
+]
