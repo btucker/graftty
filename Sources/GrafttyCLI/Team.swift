@@ -57,7 +57,7 @@ struct TeamSend: ParsableCommand {
                 priority: urgent ? .urgent : .normal
             )
         )
-        try CLIEnv.expectOk(response)
+        try CLIEnv.expectOk(response, for: "team send")
     }
 }
 
@@ -106,7 +106,7 @@ struct TeamReply: ParsableCommand {
             priority: urgent ? .urgent : .normal,
             fallback: fallback
         ))
-        try CLIEnv.expectOk(response)
+        try CLIEnv.expectOk(response, for: "team reply")
     }
 }
 
@@ -136,7 +136,7 @@ struct TeamBroadcast: ParsableCommand {
                 priority: urgent ? .urgent : .normal
             )
         )
-        try CLIEnv.expectOk(response)
+        try CLIEnv.expectOk(response, for: "team broadcast")
     }
 }
 
@@ -160,7 +160,7 @@ struct TeamMembers: ParsableCommand {
         let response = try CLIEnv.sendRequest(
             .teamMembers(callerWorktree: callerWorktree, worktree: worktree, repo: repo)
         )
-        try TeamOutput.printMembers(response, json: json)
+        try TeamOutput.printMembers(response, json: json, command: "team members")
     }
 }
 
@@ -309,8 +309,7 @@ struct TeamHook: ParsableCommand {
                     stageAttentionProgress()
                 }
                 print(Self.unrenderedHookOutput(runtime: runtime, event: event))
-            case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamInbox,
-                .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
+            default:
                 print(Self.unrenderedHookOutput(runtime: runtime, event: event))
             }
         } catch {
@@ -567,45 +566,35 @@ struct TeamInbox: ParsableCommand {
                         : TeamInboxDiagnosticPage.defaultLimit
                 ))
             )
-            switch response {
-            case .teamInbox(let messages, let nextBeforeID, let nextAfterID, let responseSnapshotThroughID):
-                if readMode == .consumeUnread,
-                   !messages.allSatisfy({ Self.isDeliverable($0, to: callerAgentID) }) {
-                    writeError("Team inbox response is not scoped to this agent; update or restart the Graftty app before consuming provider-targeted messages")
-                    throw ExitCode(1)
-                }
-                guard readMode == .history || messages.isEmpty || responseSnapshotThroughID != nil else {
-                    writeError("Team inbox response is missing fixed-snapshot support; update or restart the Graftty app before reading unread messages")
-                    throw ExitCode(1)
-                }
-                pages.append(messages)
-                if snapshotThroughID == nil {
-                    snapshotThroughID = responseSnapshotThroughID
-                }
-                let nextCursor = readMode == .history ? nextBeforeID : nextAfterID
-                guard all, let nextCursor else { break }
-                guard seenCursors.insert(nextCursor).inserted else {
-                    writeError("Team inbox pagination returned a repeated cursor")
-                    throw ExitCode(1)
-                }
-                if readMode == .history {
-                    beforeID = nextCursor
-                } else {
-                    afterID = nextCursor
-                }
-                continue
-            case .error(let msg):
-                writeError(msg)
-                throw ExitCode(1)
-            case .serverBusy:
-                writeError(ResponseMessage.serverBusyMessage)
-                throw ExitCode(1)
-            case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
-                 .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
-                writeError("Unexpected response for team inbox")
+            let (messages, nextBeforeID, nextAfterID, responseSnapshotThroughID) = try CLIEnv.expect(
+                response, for: "team inbox", writeError: writeError
+            ) {
+                if case let .teamInbox(messages, before, after, snapshot) = $0 { (messages, before, after, snapshot) } else { nil }
+            }
+            if readMode == .consumeUnread,
+               !messages.allSatisfy({ Self.isDeliverable($0, to: callerAgentID) }) {
+                writeError("Team inbox response is not scoped to this agent; update or restart the Graftty app before consuming provider-targeted messages")
                 throw ExitCode(1)
             }
-            break
+            guard readMode == .history || messages.isEmpty || responseSnapshotThroughID != nil else {
+                writeError("Team inbox response is missing fixed-snapshot support; update or restart the Graftty app before reading unread messages")
+                throw ExitCode(1)
+            }
+            pages.append(messages)
+            if snapshotThroughID == nil {
+                snapshotThroughID = responseSnapshotThroughID
+            }
+            let nextCursor = readMode == .history ? nextBeforeID : nextAfterID
+            guard all, let nextCursor else { break }
+            guard seenCursors.insert(nextCursor).inserted else {
+                writeError("Team inbox pagination returned a repeated cursor")
+                throw ExitCode(1)
+            }
+            if readMode == .history {
+                beforeID = nextCursor
+            } else {
+                afterID = nextCursor
+            }
         }
 
         let messages = readMode == .history
@@ -648,22 +637,9 @@ struct TeamInbox: ParsableCommand {
             writeError("Failed to advance team inbox: \(error)")
             throw ExitCode(1)
         }
-        switch response {
-        case .ok:
-            return
-        case .error(let message):
+        try CLIEnv.expectOk(response, for: "team inbox") {
             writeError(Self.advanceFailureGuidance)
-            writeError(message)
-            throw ExitCode(1)
-        case .serverBusy:
-            writeError(Self.advanceFailureGuidance)
-            writeError(ResponseMessage.serverBusyMessage)
-            throw ExitCode(1)
-        case .linuxSetupIdentity, .paneList, .paneShow, .teamList, .teamHookOutput,
-             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
-            writeError(Self.advanceFailureGuidance)
-            writeError("Unexpected response while advancing team inbox")
-            throw ExitCode(1)
+            writeError($0)
         }
     }
 
@@ -704,7 +680,7 @@ struct TeamMsg: ParsableCommand {
             callerWorktree: worktreePath,
             callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath)
         ))
-        try CLIEnv.expectOk(response)
+        try CLIEnv.expectOk(response, for: "team msg")
     }
 
     func request(callerWorktree: String, callerAgentID: String?) -> NotificationMessage {
@@ -725,7 +701,7 @@ struct TeamList: ParsableCommand {
     func run() throws {
         let worktreePath = try CLIEnv.resolveWorktree()
         let response = try CLIEnv.sendRequest(.teamList(callerWorktree: worktreePath))
-        try TeamOutput.printMembers(response, json: json)
+        try TeamOutput.printMembers(response, json: json, command: "team list")
     }
 }
 
@@ -1140,39 +1116,27 @@ private enum TeamDiagnosticScope {
 }
 
 private enum TeamOutput {
-    static func printMembers(_ response: ResponseMessage, json: Bool) throws {
-        switch response {
-        case .teamList(let teamName, let members):
-            if json {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.sortedKeys]
-                let data = try encoder.encode(
-                    TeamListDocument(team: teamName, members: members)
-                )
-                print(String(decoding: data, as: UTF8.self))
-            } else {
-                print("team=\(teamName)  members=\(members.count)")
-                for m in members {
-                    print(memberLine(m))
-                    for agent in m.agents {
-                        let label = agent.displayName.map { "  name=\($0)" } ?? ""
-                        print("  agent=\(agent.address)  runtime=\(agent.runtime.rawValue)  reachable=\(agent.isReachable)\(label)")
-                        if let pane = agent.paneSessionName {
-                            print("    pane=\(pane)")
-                        }
-                    }
+    static func printMembers(_ response: ResponseMessage, json: Bool, command: String) throws {
+        let (teamName, members) = try CLIEnv.expect(response, for: command) {
+            if case let .teamList(teamName, members) = $0 { (teamName, members) } else { nil }
+        }
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(TeamListDocument(team: teamName, members: members))
+            print(String(decoding: data, as: UTF8.self))
+            return
+        }
+        print("team=\(teamName)  members=\(members.count)")
+        for m in members {
+            print(memberLine(m))
+            for agent in m.agents {
+                let label = agent.displayName.map { "  name=\($0)" } ?? ""
+                print("  agent=\(agent.address)  runtime=\(agent.runtime.rawValue)  reachable=\(agent.isReachable)\(label)")
+                if let pane = agent.paneSessionName {
+                    print("    pane=\(pane)")
                 }
             }
-        case .error(let msg):
-            CLIEnv.printError(msg)
-            throw ExitCode(1)
-        case .serverBusy:
-            CLIEnv.printError(ResponseMessage.serverBusyMessage)
-            throw ExitCode(1)
-        case .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox,
-             .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
-            CLIEnv.printError("Unexpected response for team members")
-            throw ExitCode(1)
         }
     }
 

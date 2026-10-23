@@ -68,7 +68,7 @@ enum WorktreePinCommand {
         let response = try CLIEnv.sendRequest(
             .setWorktreePinned(worktreePath: path, isPinned: isPinned), using: send, writeError: CLIEnv.printError
         )
-        try CLIEnv.expectOk(response)
+        try CLIEnv.expectOk(response, for: isPinned ? "worktree pin" : "worktree unpin")
         let action = isPinned ? "pinned" : "unpinned"
         writeLine("\(action) worktree=\(WorktreeAgentLaunchCommand.shellLiteral(path))")
     }

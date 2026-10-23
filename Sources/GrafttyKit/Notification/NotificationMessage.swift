@@ -961,6 +961,25 @@ public enum ResponseMessage: Sendable, Equatable {
     case worktreeRemove(WorktreeRemoveStatus)
 }
 
+public extension ResponseMessage {
+    /// The `type` tag this response carries on the wire.
+    var wireType: String {
+        switch self {
+        case .linuxSetupIdentity: "linux_setup_identity"
+        case .ok: "ok"
+        case .error, .serverBusy: "error"
+        case .paneList: "pane_list"
+        case .paneShow: "pane_show"
+        case .teamList: "team_list"
+        case .teamHookOutput: "team_hook_output"
+        case .teamInbox: "team_inbox"
+        case .worktreeCreate: "worktree_create"
+        case .worktreeCreateRetry: "worktree_create_retry"
+        case .worktreeRemove: "worktree_remove"
+        }
+    }
+}
+
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, code, message, panes, output, messages, text, operation, identity
@@ -974,46 +993,36 @@ extension ResponseMessage: Codable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(wireType, forKey: .type)
         switch self {
         case .linuxSetupIdentity(let identity):
-            try container.encode("linux_setup_identity", forKey: .type)
             try container.encode(identity, forKey: .identity)
         case .ok:
-            try container.encode("ok", forKey: .type)
+            break
         case .error(let message):
-            try container.encode("error", forKey: .type)
             try container.encode(message, forKey: .message)
         case .serverBusy:
-            try container.encode("error", forKey: .type)
             try container.encode(Self.serverBusyCode, forKey: .code)
             try container.encode(Self.serverBusyMessage, forKey: .message)
         case .paneList(let panes):
-            try container.encode("pane_list", forKey: .type)
             try container.encode(panes, forKey: .panes)
         case .paneShow(let text):
-            try container.encode("pane_show", forKey: .type)
             try container.encode(text, forKey: .text)
         case .teamList(let teamName, let members):
-            try container.encode("team_list", forKey: .type)
             try container.encode(teamName, forKey: .teamName)
             try container.encode(members, forKey: .members)
         case .teamHookOutput(let output):
-            try container.encode("team_hook_output", forKey: .type)
             try container.encode(output, forKey: .output)
         case .teamInbox(let messages, let nextBeforeID, let nextAfterID, let snapshotThroughID):
-            try container.encode("team_inbox", forKey: .type)
             try container.encode(messages, forKey: .messages)
             try container.encodeIfPresent(nextBeforeID, forKey: .nextBeforeID)
             try container.encodeIfPresent(nextAfterID, forKey: .nextAfterID)
             try container.encodeIfPresent(snapshotThroughID, forKey: .snapshotThroughID)
         case .worktreeCreateRetry(let operationID):
-            try container.encode("worktree_create_retry", forKey: .type)
             try container.encode(operationID, forKey: .operationID)
         case .worktreeCreate(let operation):
-            try container.encode("worktree_create", forKey: .type)
             try container.encode(operation, forKey: .operation)
         case .worktreeRemove(let operation):
-            try container.encode("worktree_remove", forKey: .type)
             try container.encode(operation, forKey: .operation)
         }
     }
