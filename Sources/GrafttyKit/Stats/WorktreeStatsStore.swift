@@ -149,12 +149,19 @@ public final class WorktreeStatsStore {
         _ repoPath: String
     ) async throws -> Void
 
+    /// Tests can retain each complete operation until they explicitly run it.
+    @ObservationIgnored
+    var dispatchWork: (@escaping @MainActor @Sendable () async -> Void) -> Void = { work in
+        Task { await work() }
+    }
+
     public init(
         compute: @escaping ComputeFunction = WorktreeStatsStore.defaultCompute,
         fetch: @escaping FetchFunction = WorktreeStatsStore.defaultFetch,
         backgroundProcessLimiter: BackgroundProcessLimiter = BackgroundProcessLimiter(capacity: 4),
         autoTracking: GitAutoTracking? = nil,
-        computeLocalDefault: @escaping LocalComputeFunction = WorktreeStatsStore.defaultLocalCompute
+        computeLocalDefault: @escaping LocalComputeFunction = WorktreeStatsStore.defaultLocalCompute,
+        now: @escaping () -> Date = Date.init
     ) {
         self.compute = compute
         self.fetch = fetch
@@ -163,10 +170,11 @@ public final class WorktreeStatsStore {
         // a large workspace no longer turns a safety-net tick or event burst
         // into an unbounded group of `git` children competing with terminal
         // input.
-        self.statsScheduler = RepoPollScheduler(limiter: backgroundProcessLimiter)
+        self.statsScheduler = RepoPollScheduler(limiter: backgroundProcessLimiter, now: now)
         self.fetchScheduler = RepoPollScheduler(
             limiter: backgroundProcessLimiter,
-            cadence: Self.repoFetchCadence(failureStreak:)
+            cadence: Self.repoFetchCadence(failureStreak:),
+            now: now
         )
         self.autoTracking = autoTracking ?? GitAutoTracking(backgroundProcessLimiter: backgroundProcessLimiter)
         self.computeLocalDefault = computeLocalDefault
@@ -290,7 +298,7 @@ public final class WorktreeStatsStore {
         }
         let statsScheduler = self.statsScheduler
 
-        Task {
+        dispatchWork {
             // The scheduler skips the compute if clear() or an
             // abandoned-task replacement superseded this generation while
             // it waited for a permit.
@@ -631,7 +639,7 @@ public final class WorktreeStatsStore {
             .map { (path: $0.path, branch: $0.branch) }
         let fetchScheduler = self.fetchScheduler
 
-        Task {
+        dispatchWork {
             // Skipped if a later tick superseded the slot while this fetch
             // waited behind other background work.
             await fetchScheduler.run(repoPath, generation: fetchGeneration) { [weak self] in

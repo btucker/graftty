@@ -128,7 +128,6 @@ let linuxKitExclusions = ["Updater", "Editor", "Model/PNGThumbnail.swift",
 let linuxPendingKitTests = [
     "CLI/CLIRunnerTests.swift", // #666: GNU env not-found message
     "Git/WorktreeMonitorTests.swift", // contentStreamCountForTesting is macOS-only (FSEvents)
-    "Remote/PagedZmxAttachEngineTests.swift", // #672: TERM-12.40 flaky on Linux
     "Remote/ZmxAttachEngineTests.swift", // runs the bundled macOS zmx
     "SidebarHostNavigationTests.swift", // uses ProjectIconDiscovery (ImageIO)
     "Teams/AgentPluginInstallerTests.swift", // #667: Codex TOML parse differs on Linux

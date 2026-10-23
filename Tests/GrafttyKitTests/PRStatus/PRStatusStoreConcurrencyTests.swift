@@ -10,7 +10,8 @@ struct PRStatusStoreConcurrencyTests {
     @spec PERF-1.10: When ordinary PR polling scans more than four repositories, the application shall dispatch at most four repositories per thirty-second tick and rotate fairly so twelve repositories require three ticks rather than twelve host queries at once.
     """)
     func pollingBatchesAndRotatesAcrossRepositories() async throws {
-        let fetcher = ConcurrencyRecordingPRFetcher(delay: .milliseconds(100))
+        let fetcher = RecordingPRFetcher()
+        let work = ManualWorkQueue()
         let origin = HostingOrigin(
             provider: .github,
             host: "github.com",
@@ -20,8 +21,10 @@ struct PRStatusStoreConcurrencyTests {
         let ticker = ManualTicker()
         let store = PRStatusStore(
             fetcherFor: { _ in fetcher },
-            detectHost: { _ in origin }
+            detectHost: { _ in origin },
+            now: { Date(timeIntervalSince1970: 1_000_000) }
         )
+        store.dispatchWork = work.enqueue
         let repos = (0..<12).map { index in
             RepoEntry(
                 path: "/repo-\(index)",
@@ -43,13 +46,13 @@ struct PRStatusStoreConcurrencyTests {
                 store.isInFlightForTesting($0.path)
             }.count
             try #require(dispatchedCount == 4)
-            try await waitUntil(timeout: 3.0) {
-                fetcher.completedCount == expectedCompletedCount
-                    && repos.allSatisfy { !store.isInFlightForTesting($0.path) }
-            }
+            try #require(work.count == 4)
+            await work.runBatch()
+            #expect(fetcher.completedCount == expectedCompletedCount)
+            #expect(repos.allSatisfy { !store.isInFlightForTesting($0.path) })
         }
 
-        #expect(fetcher.maximumConcurrentCount <= 4)
+        #expect(fetcher.branches == Set((0..<12).map { "feature-\($0)" }))
     }
 
     @MainActor
@@ -64,7 +67,8 @@ struct PRStatusStoreConcurrencyTests {
         let ticker = ManualTicker()
         let store = PRStatusStore(
             fetcherFor: { _ in fetcher },
-            detectHost: { _ in origin }
+            detectHost: { _ in origin },
+            now: { Date(timeIntervalSince1970: 1_000_000) }
         )
         let repos = (0..<12).map { index in
             RepoEntry(
@@ -93,18 +97,7 @@ struct PRStatusStoreConcurrencyTests {
         fetcher.resumeAll()
     }
 
-    @MainActor
-    private func waitUntil(
-        timeout: TimeInterval,
-        condition: @escaping @MainActor @Sendable () -> Bool
-    ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return }
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        #expect(condition(), "waitUntil timed out")
-    }
+
 }
 
 private final class BlockingPRFetcher: PRFetcher, @unchecked Sendable {
@@ -152,37 +145,18 @@ private final class BlockingPRFetcher: PRFetcher, @unchecked Sendable {
     }
 }
 
-private final class ConcurrencyRecordingPRFetcher: PRFetcher, @unchecked Sendable {
+private final class RecordingPRFetcher: PRFetcher, @unchecked Sendable {
     private let lock = NSLock()
-    private let delay: Duration
-    private var activeCount = 0
     private var _completedCount = 0
-    private var _maximumConcurrentCount = 0
+    private var _branches: Set<String> = []
 
-    init(delay: Duration) {
-        self.delay = delay
-    }
+    var completedCount: Int { lock.withLock { _completedCount } }
+    var branches: Set<String> { lock.withLock { _branches } }
 
-    var completedCount: Int {
-        lock.withLock { _completedCount }
-    }
-
-    var maximumConcurrentCount: Int {
-        lock.withLock { _maximumConcurrentCount }
-    }
-
-    func fetch(
-        origin: HostingOrigin,
-        branchesOfInterest: Set<String>
-    ) async throws -> RepoPRSnapshot {
+    func fetch(origin: HostingOrigin, branchesOfInterest: Set<String>) async throws -> RepoPRSnapshot {
         lock.withLock {
-            activeCount += 1
-            _maximumConcurrentCount = max(_maximumConcurrentCount, activeCount)
-        }
-        try await Task.sleep(for: delay)
-        lock.withLock {
-            activeCount -= 1
             _completedCount += 1
+            _branches.formUnion(branchesOfInterest)
         }
         return RepoPRSnapshot(prsByBranch: [:])
     }

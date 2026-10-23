@@ -107,18 +107,26 @@ public final class PRStatusStore {
     /// to `TeamEventDispatcher.dispatchRoutableEvent(...)`.
     @ObservationIgnored public var onTransition: (@MainActor (_ event: RoutableEvent, _ worktreePath: String, _ attrs: [String: String]) -> Void)?
 
+    /// Tests can retain each complete operation until they explicitly run it.
+    @ObservationIgnored
+    var dispatchWork: (@escaping @MainActor @Sendable () async -> Void) -> Void = { work in
+        Task { await work() }
+    }
+
     public init(
         executor: CLIExecutor = CLIRunner(),
         fetcherFor: ((HostingProvider) -> PRFetcher?)? = nil,
         detectHost: (@Sendable (String) async throws -> HostingOrigin?)? = nil,
         remoteBranchStore: RemoteBranchStore? = nil,
-        backgroundProcessLimiter: BackgroundProcessLimiter = BackgroundProcessLimiter(capacity: 4)
+        backgroundProcessLimiter: BackgroundProcessLimiter = BackgroundProcessLimiter(capacity: 4),
+        now: @escaping () -> Date = Date.init
     ) {
         self.executor = executor
         self.remoteBranchStore = remoteBranchStore
         self.scheduler = RepoPollScheduler(
             limiter: backgroundProcessLimiter,
-            cadence: Self.cadenceFor(failureStreak:)
+            cadence: Self.cadenceFor(failureStreak:),
+            now: now
         )
         if let fetcherFor {
             self.fetcherFor = fetcherFor
@@ -232,7 +240,7 @@ public final class PRStatusStore {
         let gen = scheduler.claim(repoPath)
         let scheduler = self.scheduler
 
-        Task {
+        dispatchWork {
             // A request may wait behind other pollers in the shared process
             // pool; the scheduler skips it if superseded meanwhile and gives
             // the host query its full abandonment window once it starts.

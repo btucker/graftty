@@ -28,20 +28,36 @@ struct HostAgentEnvironmentTests {
         #expect(failure.exitCode == 7)
     }
 
-    @Test("A failed or slow configured shell falls back to the host PATH", arguments: ["exit 3", "exec /bin/sleep 30"])
-    func probeFailureFallsBack(script: String) async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let shell = root.appendingPathComponent("shell")
-        try Data(("#!/bin/sh\n" + script + "\n").utf8).write(to: shell)
+    @Test("A failed or slow configured shell falls back to the host PATH", arguments: [false, true])
+    func probeFailureFallsBack(slow: Bool) async throws {
+        let child = try SubprocessTestChild()
+        defer { child.finish() }
+        let shell = child.root.appendingPathComponent("shell")
+        let command = slow
+            ? "exec 3< " + LinuxHostScripts.quote(child.root.appendingPathComponent("input").path) +
+                "; echo $$ > " + LinuxHostScripts.quote(child.root.appendingPathComponent("ready").path) +
+                "; read -r line <&3"
+            : "exit 3"
+        try Data(("#!/bin/sh\n" + command + "\n").utf8).write(to: shell)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
-        let start = ContinuousClock.now
-        let loginPath = try await HostAgentEnvironment.loginPath(shellPath: shell.path, home: root.path, timeout: 0.1)
-        #expect(loginPath == nil)
-        #expect(start.duration(to: .now) < .seconds(8))
-        #expect(HostAgentEnvironment.path(inheritedPath: "/usr/bin:/bin", home: root.path, loginPath: loginPath)
-            == "/usr/bin:/bin:" + root.appendingPathComponent(".local/bin").path)
+        let scheduler = ManualSubprocessScheduler()
+        defer { scheduler.finish() }
+        let run = Task {
+            try await HostAgentEnvironment.loginPath(shellPath: shell.path, home: child.root.path,
+                                                     timeout: 0.1, scheduler: scheduler.scheduler)
+        }
+        if slow {
+            try #require(await child.readyPID() != nil)
+            let timeout = try #require(await scheduler.nextAction())
+            #expect(timeout.seconds == 0.1)
+            timeout.run()
+            let result = try await subprocessResult(run)
+            #expect(try result.get() == nil)
+        } else {
+            let result = try await subprocessResult(run)
+            #expect(try result.get() == nil)
+        }
+        #expect(HostAgentEnvironment.path(inheritedPath: "/usr/bin:/bin", home: child.root.path)
+            == "/usr/bin:/bin:" + child.root.appendingPathComponent(".local/bin").path)
     }
-
 }

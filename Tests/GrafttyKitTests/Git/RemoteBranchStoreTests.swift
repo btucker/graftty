@@ -95,8 +95,11 @@ struct RemoteBranchStoreTests {
     func recurringPollBatchesLocalRefScansWithoutNetwork() async throws {
         let executor = CombinedRefScanExecutor()
         let store = RemoteBranchStore(
-            list: RemoteBranchStore.makeDefaultList(executor: executor)
+            list: RemoteBranchStore.makeDefaultList(executor: executor),
+            now: { Date(timeIntervalSince1970: 1_000_000) }
         )
+        let work = ManualWorkQueue()
+        store.dispatchWork = work.enqueue
         let ticker = ManualTicker(clearsTickOnStop: false)
         let repos = (0..<5).map {
             RepoEntry(path: "/repo-\($0)", displayName: "repo-\($0)", worktrees: [])
@@ -104,15 +107,15 @@ struct RemoteBranchStoreTests {
         store.start(ticker: ticker, getRepos: { repos })
 
         await ticker.fire()
-        try await waitUntil(timeout: 1.0) {
-            executor.invocations.count == 4
-                && store.branchesByRepo.count == 4
-        }
+        try #require(work.count == 4)
+        await work.runBatch()
+        #expect(executor.invocations.count == 4)
+        #expect(store.branchesByRepo.count == 4)
         await ticker.fire()
-        try await waitUntil(timeout: 1.0) {
-            executor.invocations.count == 8
-                && store.branchesByRepo.count == 5
-        }
+        try #require(work.count == 4)
+        await work.runBatch()
+        #expect(executor.invocations.count == 8)
+        #expect(store.branchesByRepo.count == 5)
 
         let invocations = executor.invocations
         #expect(Set(invocations.map(\.directory)) == Set(repos.map(\.path)))

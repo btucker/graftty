@@ -11,13 +11,13 @@ enum HostAgentEnvironment {
 
     /// File-backed output prevents profile background jobs holding a pipe open.
     /// Probe once per plugin setup, so changes to profile-managed tools are seen.
-    static func loginPath(shellPath: String, home: String, timeout: TimeInterval = 15) async throws -> String? {
+    static func loginPath(shellPath: String, home: String, timeout: TimeInterval = 15, scheduler: SubprocessScheduler = .dispatch) async throws -> String? {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-agent-env-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: directory) }
         let output = directory.appendingPathComponent("path")
-        let runner = LinuxHostSSHRunner(executable: shellPath, timeout: timeout, directory: home)
+        let runner = LinuxHostSSHRunner(executable: shellPath, timeout: timeout, directory: home, scheduler: scheduler)
         do {
             let result = try await runner.capture(arguments: ["-ilc", "/usr/bin/printenv PATH > " + LinuxHostScripts.quote(output.path)], inputFile: nil)
             guard result.exitCode == 0, let data = try? Data(contentsOf: output),

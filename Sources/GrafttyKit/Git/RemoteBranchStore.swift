@@ -77,12 +77,19 @@ public final class RemoteBranchStore {
     }()
     private nonisolated static let parseLogger = Logger(subsystem: "com.btucker.graftty", category: "RemoteBranchStore")
 
+    /// Tests can retain each complete operation until they explicitly run it.
+    @ObservationIgnored
+    var dispatchWork: (@escaping @MainActor @Sendable () async -> Void) -> Void = { work in
+        Task { await work() }
+    }
+
     public init(
         list: @escaping ListFunction = RemoteBranchStore.defaultList,
-        backgroundProcessLimiter: BackgroundProcessLimiter = BackgroundProcessLimiter(capacity: 4)
+        backgroundProcessLimiter: BackgroundProcessLimiter = BackgroundProcessLimiter(capacity: 4),
+        now: @escaping () -> Date = Date.init
     ) {
         self.list = list
-        self.scheduler = RepoPollScheduler(limiter: backgroundProcessLimiter)
+        self.scheduler = RepoPollScheduler(limiter: backgroundProcessLimiter, now: now)
         scheduler.bind(owner: self)
     }
 
@@ -196,7 +203,7 @@ public final class RemoteBranchStore {
         }
         let list = self.list
         let scheduler = self.scheduler
-        Task { [weak self] in
+        dispatchWork { [weak self] in
             do {
                 let snapshot = try await scheduler.run(repoPath, generation: refreshGeneration) {
                     try await list(repoPath)
