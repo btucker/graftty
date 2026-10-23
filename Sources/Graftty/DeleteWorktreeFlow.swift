@@ -58,7 +58,7 @@ enum DeleteWorktreeFlow {
         prStatusStore: PRStatusStore,
         teamEventDispatcher: TeamEventDispatcher
     ) async -> Swift.Result<Outcome, FlowError> {
-        let before = appState.wrappedValue
+        var before = appState.wrappedValue
         defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         guard let (repoIdx, wtIdx) = appState.wrappedValue.indices(forWorktreePath: worktreePath) else {
             return .failure(.notFound)
@@ -75,6 +75,11 @@ enum DeleteWorktreeFlow {
 
         let priorState = wt.state
         appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .deleting
+        // Mark `.deleting` before awaiting git, as the window's `.onChange`
+        // would, so a windowless removal is saved and published now
+        // (PERF-1.22). The new baseline makes the defer mark a restore too.
+        GrafttyApp.persistAppState(appState.wrappedValue)
+        before = appState.wrappedValue
 
         do {
             try await GitWorktreeRemove.remove(
