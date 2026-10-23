@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import GrafttyKit
 import GrafttyProtocol
 import Observation
 
@@ -69,6 +70,13 @@ final class AppStateChanges {
                 self.publish(onChangeOf: track)
             }
         }
+    }
+
+    /// Publishes on every `persister.markDirty`, not once per coalesced save,
+    /// including marks made with no window open, where
+    /// `.onChange(of: appState)` never runs.
+    func publish(onMarkDirtyOf persister: AppStatePersister) {
+        persister.onMarkDirty = { [weak self] in self?.publish() }
     }
 
     /// Runs `refresh` for the latest revision, then again after `settle`

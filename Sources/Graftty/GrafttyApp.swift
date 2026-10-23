@@ -270,7 +270,6 @@ struct GrafttyApp: App {
                 }
                 .onChange(of: appState) { _, newState in
                     Self.persistAppState(newState)
-                    services.appStateChanges.publish()
                 }
                 .onOpenURL { url in
                     handleDeepLink(url)
@@ -536,9 +535,11 @@ struct GrafttyApp: App {
             }
         }
 
-        // PERF-1.18: the other inputs folded into sidebar and panes-state
-        // snapshots. AppState itself publishes from `.onChange(of: appState)`.
+        // PERF-1.18: every input folded into sidebar and panes-state
+        // snapshots. AppState publishes on each persister mark, from
+        // `.onChange(of: appState)` or a windowless mutator (PERF-1.22).
         let changes = services.appStateChanges
+        changes.publish(onMarkDirtyOf: Self.appStatePersister)
         changes.publish(on: terminalManager.paneTitleInvalidations.$generation.dropFirst())
         changes.publish(on: portBindingsModel.objectWillChange)
         changes.publish(on: services.remoteMacsModel.objectWillChange)

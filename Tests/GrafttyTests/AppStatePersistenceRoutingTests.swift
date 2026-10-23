@@ -326,6 +326,114 @@ struct WindowlessStatePersistenceTests {
     }
 }
 
+@Suite("@spec PERF-1.22: While no window is open, when a control-socket request changes `AppState`, the application shall send the change to panes-state subscribers without waiting for the safety-net tick.", .timeLimit(.minutes(1)))
+@MainActor
+struct WindowlessChangeSignalTests {
+
+    @Test func aWindowlessSocketMutationReachesAPanesStateSubscriber() async throws {
+        let probe = PersistenceProbe()
+        let router = try HeadlessRouter()
+        let linkedPath = repoPath + "/.worktrees/pinned"
+        var state = runningWorktreeState().0
+        var linked = WorktreeEntry(path: linkedPath, branch: "pinned", state: .running)
+        linked.isPinned = true
+        state.repos[0].worktrees.append(linked)
+        let box = StateBox(state)
+        let owner = WorktreeOrigin(deviceID: .init(value: "local"), deviceLabel: "Mac", relayDepth: 0)
+        let changes = AppStateChanges()
+        changes.publish(onMarkDirtyOf: probe.persister)
+
+        let (frames, frame) = AsyncStream<PanesStateMessage>.makeStream()
+        var sent = frames.makeAsyncIterator()
+        // No ticks: only a published change can produce a second frame. The
+        // row projection carries the pin, so the unpin changes the snapshot.
+        let subscription = await changes.subscribePanesState(
+            settle: { _ in }, ticks: AsyncStream { _ in },
+            snapshot: {
+                .snapshot(box.state.repos.flatMap { repo in
+                    repo.worktrees.map { WorktreePanes(entry: $0, repo: repo, inputs: WorktreeRowInputs(
+                        origin: owner, projectID: repo.path, displayName: $0.branch)) }
+                })
+            },
+            onChange: { frame.yield($0) })
+        defer { subscription.cancel() }
+        let initial = await sent.next()
+
+        let response = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            await router.route(.setWorktreePinned(worktreePath: linkedPath, isPinned: false), box)
+        }
+        #expect(response == .ok, "\(String(describing: response))")
+        try #require(changes.currentRevision > 0, "the windowless mutation published no change")
+
+        let next = await sent.next()
+        #expect(next != nil && next != initial)
+    }
+
+    /// A removal awaits `git worktree remove` with the worktree `.deleting`.
+    /// The window's `.onChange` would mark that state; with no window the
+    /// flow must mark it itself, or subscribers see it only on a tick.
+    @Test func aRemovalMarksItsDeletingStateBeforeAwaitingGit() async throws {
+        let (root, box, path) = try await removalFixture(registered: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let probe = PersistenceProbe()
+        var marked: [WorktreeState?] = []
+        probe.persister.onMarkDirty = { marked.append(box.state.worktree(forPath: path)?.state) }
+
+        _ = await remove(path, in: box, root: root, probe: probe)
+
+        #expect(marked.contains(.deleting), "marks: \(marked)")
+        #expect(marked.last == .some(nil), "the removal itself was not marked: \(marked)")
+    }
+
+    /// A failed removal restores the prior state; that restore must be the
+    /// last mark, or `.deleting` is what subscribers and `state.json` keep.
+    @Test func aFailedRemovalMarksTheRestoredStateLast() async throws {
+        let (root, box, path) = try await removalFixture(registered: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let probe = PersistenceProbe()
+        var marked: [WorktreeState?] = []
+        probe.persister.onMarkDirty = { marked.append(box.state.worktree(forPath: path)?.state) }
+
+        let result = await remove(path, in: box, root: root, probe: probe)
+
+        guard case .failure = result else {
+            Issue.record("expected the removal to fail: \(result)")
+            return
+        }
+        #expect(box.state.worktree(forPath: path)?.state == .running)
+        if let last = marked.last { #expect(last == .running, "marks: \(marked)") }
+    }
+
+    /// A git repo with a linked worktree entry at `<root>/linked`.
+    /// `registered: false` leaves the directory missing (removal prunes and
+    /// succeeds); `true` creates a plain directory git refuses to remove.
+    private func removalFixture(registered: Bool) async throws -> (URL, StateBox, String) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-change-signal-remove-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        _ = try await GitRunner.run(args: ["init"], at: root.path)
+        let path = root.appendingPathComponent("linked").path
+        if registered { try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true) }
+        let box = StateBox(AppState(repos: [RepoEntry(path: root.path, displayName: "repo", worktrees: [
+            WorktreeEntry(path: root.path, branch: "main"),
+            WorktreeEntry(path: path, branch: "linked", state: .running),
+        ])]))
+        return (root, box, path)
+    }
+
+    private func remove(_ path: String, in box: StateBox, root: URL, probe: PersistenceProbe)
+        async -> Swift.Result<DeleteWorktreeFlow.Outcome, DeleteWorktreeFlow.FlowError> {
+        let manager = TerminalManager(socketPath: root.appendingPathComponent("control.sock").path)
+        return await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            await DeleteWorktreeFlow.delete(
+                worktreePath: path, force: false, appState: box.binding,
+                terminalManager: manager, statsStore: WorktreeStatsStore(),
+                prStatusStore: PRStatusStore(), teamEventDispatcher: testDispatcher(root)
+            )
+        }
+    }
+}
+
 @Suite("A paired device's worktree order is applied only once it is saved")
 @MainActor
 struct RemoteWorktreeOrderPersistenceTests {

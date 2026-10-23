@@ -4226,6 +4226,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERF-1.21** When a paired device subscribes to panes-state, the application shall send the initial snapshot before the subscription returns, and afterwards re-read the snapshot only when an application state change is published or the safety-net tick fires, sending it only when it differs from the last snapshot sent.
 
+**PERF-1.22** While no window is open, when a control-socket request changes `AppState`, the application shall send the change to panes-state subscribers without waiting for the safety-net tick.
+
 ## PORTS — PORTS
 
 ### PORTS-1.x
