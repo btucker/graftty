@@ -268,7 +268,7 @@ struct ZmxSpawnConfigurationTests {
         if hasTerminfo {
             let terminfoDir = root.appendingPathComponent("terminfo/78")
             try FileManager.default.createDirectory(at: terminfoDir, withIntermediateDirectories: true)
-            FileManager.default.createFile(
+            _ = FileManager.default.createFile(
                 atPath: terminfoDir.appendingPathComponent("xterm-ghostty").path,
                 contents: Data()
             )

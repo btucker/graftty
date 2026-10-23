@@ -117,7 +117,7 @@ struct TailscaleLocalAPIAutoDetectTests {
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         // A plain file at the candidate path is enough for the existence probe.
         let fakeSocket = tmp + "/tailscaled.socket"
-        FileManager.default.createFile(atPath: fakeSocket, contents: nil)
+        _ = FileManager.default.createFile(atPath: fakeSocket, contents: nil)
         // A macsys layout present too; socket should still win.
         try "9999".write(toFile: tmp + "/ipnport", atomically: true, encoding: .utf8)
         try "secret".write(toFile: tmp + "/sameuserproof-9999", atomically: true, encoding: .utf8)

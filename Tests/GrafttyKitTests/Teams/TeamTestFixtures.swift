@@ -43,8 +43,12 @@ enum TeamTestFixtures {
             withIntermediateDirectories: true
         )
 
+        // On Linux, `Process` children inherit the spawning thread's signal
+        // mask, and libdispatch workers block SIGTERM, so `release()`'s
+        // `terminate()` would wait out the 30 s sleep unless it is unblocked.
         let script = [
-            "import fcntl, sys, time",
+            "import fcntl, signal, sys, time",
+            "signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGTERM])",
             "f = open(sys.argv[1], \"w\")",
             "fcntl.lockf(f, fcntl.LOCK_EX)",
             "print(\"locked\", flush=True)",

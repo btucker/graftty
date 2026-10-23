@@ -1,5 +1,8 @@
+import Foundation
 import Testing
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 @testable import GrafttyKit
 
 /// `SurfaceHandle.setFrameSize` used to do `UInt32(max(1, Int(dim)))` —

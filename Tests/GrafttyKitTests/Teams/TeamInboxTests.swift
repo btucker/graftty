@@ -345,6 +345,21 @@ struct TeamInboxTests {
         // The call must give up promptly — this is the whole point.
         #expect(Date().timeIntervalSince(start) < 5)
     }
+
+    @Test("Releasing a watermark lock holder stops its child promptly")
+    func watermarkLockHolderReleasesPromptly() throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let holder = try TeamTestFixtures.holdWatermarkLock(
+            root: root,
+            teamID: "acme",
+            worktree: "/repo/acme/.worktrees/feature-auth"
+        )
+        let start = Date()
+        holder.release()
+        // The child sleeps 30 s; release must not wait that out.
+        #expect(Date().timeIntervalSince(start) < 10)
+    }
 }
 
 private final class IncrementingIDGenerator {
