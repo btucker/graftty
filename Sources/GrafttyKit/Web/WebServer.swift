@@ -588,158 +588,31 @@ public final class WebServer {
             }
         }
 
+        /// Exact-path REST routes; any other path is a bundled asset or the
+        /// SPA index. Each route answers through `answer` (providers) or
+        /// `servePost` (mutations).
+        private static let routes: [String: (HTTPHandler) -> (ChannelHandlerContext, HTTPRequestHead, Data) -> Void] = [
+            "/sessions": { $0.serveSessions },
+            "/agent-completions": { $0.serveAgentCompletions },
+            "/repos": { $0.serveRepos },
+            "/worktrees/panes": { $0.serveWorktreePanes },
+            "/ghostty-config": { $0.serveGhosttyConfig },
+            "/ghostty-keybindings": { $0.serveGhosttyKeybindings },
+            "/worktrees": { $0.serveCreateWorktree },
+            "/repos/default-branch/pull": { $0.servePullDefaultBranch },
+            "/worktrees/delete": { $0.serveDeleteWorktree },
+        ]
+
         func serveStatic(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
             let path = head.uri.split(separator: "?").first.map(String.init) ?? "/"
             // /ws paths are reserved for WebSocket upgrade; never fall through to
             // the SPA index for plain HTTP requests on those paths.
             if path == "/ws" || path.hasPrefix("/ws/") {
-                Self.respond(context: context, status: .notFound, body: Data("not found\n".utf8), contentType: "text/plain; charset=utf-8")
+                Self.respond(context: context, .text("not found\n", status: .notFound))
                 return
             }
-            // WEB-5.4: session list endpoint for the client's minimal picker.
-            if path == "/sessions" {
-                let provider = config.sessionsProvider
-                let promise = context.eventLoop.makePromise(of: [SessionInfo].self)
-                promise.futureResult.whenComplete { result in
-                    let sessions = (try? result.get()) ?? []
-                    Self.respondEncodable(context: context, items: sessions)
-                }
-                Task {
-                    promise.succeed(await provider())
-                }
-                return
-            }
-            // WEB-7.1: repo list for the "Add Worktree" picker.
-            if path == "/agent-completions" {
-                let provider = config.agentCompletionsProvider
-                let promise = context.eventLoop.makePromise(of: [AgentCompletionCandidate].self)
-                promise.futureResult.whenComplete { result in
-                    Self.respondEncodable(context: context, items: (try? result.get()) ?? [])
-                }
-                let worktreeID = URLComponents(string: head.uri)?.queryItems?.first { $0.name == "worktree" }?.value
-                Task { promise.succeed(await provider(worktreeID)) }
-                return
-            }
-            if path == "/repos" {
-                let provider = config.reposProvider
-                let relayedProvider = config.relayedReposProvider
-                let includeRelayed = Self.requestsRemoteWorktrees(head)
-                let promise = context.eventLoop.makePromise(of: [RepoInfo].self)
-                promise.futureResult.whenComplete { result in
-                    let repos = (try? result.get()) ?? []
-                    Self.respondEncodable(context: context, items: repos)
-                }
-                Task {
-                    let local = await provider()
-                    let relayed = includeRelayed
-                        ? await relayedProvider()
-                        : []
-                    promise.succeed(local + relayed)
-                }
-                return
-            }
-            // IOS-4.10: worktrees + split-faithful pane trees for the
-            // mobile client's worktree → pane drilldown.
-            if path == "/worktrees/panes" {
-                let provider = config.worktreePanesProvider
-                let relayedProvider = config.relayedWorktreePanesProvider
-                let includeRelayed = Self.requestsRemoteWorktrees(head)
-                let promise = context.eventLoop.makePromise(of: [WorktreePanes].self)
-                promise.futureResult.whenComplete { result in
-                    let list = (try? result.get()) ?? []
-                    Self.respondEncodable(context: context, items: list)
-                }
-                Task {
-                    let local = await provider()
-                    let relayed = includeRelayed
-                        ? await relayedProvider()
-                        : []
-                    promise.succeed(local + relayed)
-                }
-                return
-            }
-            // IOS-4.7: the Mac's resolved Ghostty config, so a remote
-            // client can render terminals identically to the desktop.
-            if path == "/ghostty-config" {
-                let provider = config.ghosttyConfigProvider
-                let promise = context.eventLoop.makePromise(of: String.self)
-                promise.futureResult.whenComplete { result in
-                    let text = (try? result.get()) ?? ""
-                    Self.respond(
-                        context: context,
-                        status: .ok,
-                        body: Data(text.utf8),
-                        contentType: "text/plain; charset=utf-8"
-                    )
-                }
-                Task { promise.succeed(await provider()) }
-                return
-            }
-            if path == "/ghostty-keybindings" {
-                // WEB-9.10: no provider yet (host still starting up) must
-                // not read as an authoritative empty map — clients cache
-                // 200 responses as host-resolved for the whole session.
-                guard let provider = config.ghosttyKeybindingsProvider else {
-                    Self.respondJSON(
-                        context: context,
-                        status: .serviceUnavailable,
-                        error: "keybindings provider not ready"
-                    )
-                    return
-                }
-                let promise = context.eventLoop.makePromise(of: [GhosttyAction: ShortcutChord].self)
-                promise.futureResult.whenComplete { result in
-                    let chords = (try? result.get()) ?? [:]
-                    Self.respondEncodable(
-                        context: context,
-                        item: GhosttyKeybindingsResponse(chords: chords)
-                    )
-                }
-                Task { promise.succeed(await provider()) }
-                return
-            }
-            // WEB-7.2: create a new worktree. POST-only; other verbs get
-            // 405 to keep caching proxies from surprising the client.
-            if path == "/worktrees" {
-                guard head.method == .POST else {
-                    Self.respondJSON(
-                        context: context,
-                        status: .methodNotAllowed,
-                        error: "only POST is supported"
-                    )
-                    return
-                }
-                handleCreateWorktree(context: context, body: body)
-                return
-            }
-            // WEB-7.12: optional pull of the repo's default checkout
-            // before creating a new branch from the default branch.
-            if path == "/repos/default-branch/pull" {
-                guard head.method == .POST else {
-                    Self.respondJSON(
-                        context: context,
-                        status: .methodNotAllowed,
-                        error: "only POST is supported"
-                    )
-                    return
-                }
-                handlePullDefaultBranch(context: context, body: body)
-                return
-            }
-            // WEB-7.8 / WEB-7.9 / WEB-7.10: delete or dismiss a worktree.
-            // POST-only; body is the same JSON envelope the iOS client
-            // sends. Other verbs get 405 so caching proxies and curl
-            // probes don't surprise the client.
-            if path == "/worktrees/delete" {
-                guard head.method == .POST else {
-                    Self.respondJSON(
-                        context: context,
-                        status: .methodNotAllowed,
-                        error: "only POST is supported"
-                    )
-                    return
-                }
-                handleDeleteWorktree(context: context, body: body)
+            if let route = Self.routes[path] {
+                route(self)(context, head, body)
                 return
             }
             do {
@@ -753,244 +626,154 @@ public final class WebServer {
                     let index = try WebStaticResources.indexHTML()
                     Self.respond(context: context, status: .ok, body: index.data, contentType: index.contentType)
                 } catch {
-                    Self.respond(context: context, status: .notFound, body: Data("not found\n".utf8), contentType: "text/plain; charset=utf-8")
+                    Self.respond(context: context, .text("not found\n", status: .notFound))
                 }
             } catch {
-                Self.respond(context: context, status: .notFound, body: Data("not found\n".utf8), contentType: "text/plain; charset=utf-8")
+                Self.respond(context: context, .text("not found\n", status: .notFound))
             }
         }
 
-        /// Decode the JSON body, invoke the injected `worktreeCreator`,
-        /// and map its `CreateWorktreeOutcome` to an HTTP status +
-        /// `{error|sessionName+worktreePath}` JSON envelope. The handler
-        /// is synchronous-style (no `Task` escaping the handler's scope
-        /// beyond the awaited creator) and schedules the async work on
-        /// the event loop so NIO's handler lifecycle stays predictable.
-        private func handleCreateWorktree(context: ChannelHandlerContext, body: Data) {
-            guard let creator = config.worktreeCreator else {
-                Self.respondJSON(
-                    context: context,
-                    status: .serviceUnavailable,
-                    error: "worktree creation not available"
-                )
-                return
-            }
-            let decoded: CreateWorktreeRequest
-            do {
-                decoded = try JSONDecoder().decode(CreateWorktreeRequest.self, from: body)
-            } catch {
-                Self.respondJSON(
-                    context: context,
-                    status: .badRequest,
-                    error: "invalid JSON body: \(error)"
-                )
-                return
-            }
-            // Reject empty inputs here rather than letting git produce a
-            // cryptic error. The name sanitizer runs client-side, but a
-            // hand-crafted request could still arrive with whitespace
-            // that trims to empty.
-            let wtTrim = decoded.worktreeName.trimmingCharacters(in: .whitespaces)
-            let brTrim = decoded.branchName.trimmingCharacters(in: .whitespaces)
-            if decoded.repoPath.isEmpty || wtTrim.isEmpty || brTrim.isEmpty {
-                Self.respondJSON(
-                    context: context,
-                    status: .badRequest,
-                    error: "repoPath, worktreeName, and branchName are required"
-                )
-                return
-            }
+        /// WEB-5.4: session list for the client's minimal picker.
+        private func serveSessions(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
+            let provider = config.sessionsProvider
+            answer(context, fallback: .json([SessionInfo]())) { .json(await provider()) }
+        }
 
-            let promise = context.eventLoop.makePromise(of: CreateWorktreeOutcome.self)
-            promise.futureResult.whenComplete { result in
-                let outcome = (try? result.get()) ?? .internalFailure("creator dispatch failed")
-                switch outcome {
-                case .success(let resp):
-                    do {
-                        let data = try JSONEncoder().encode(resp)
-                        Self.respond(
-                            context: context,
-                            status: .ok,
-                            body: data,
-                            contentType: "application/json; charset=utf-8"
-                        )
-                    } catch {
-                        Self.respondJSON(
-                            context: context,
-                            status: .internalServerError,
-                            error: "encoding error"
-                        )
-                    }
-                case .invalid(let msg):
-                    Self.respondJSON(context: context, status: .badRequest, error: msg)
-                case .gitFailed(let msg):
-                    Self.respondJSON(context: context, status: .conflict, error: msg)
-                case .conflict(let msg):
-                    Self.respondJSON(context: context, status: .conflict, error: msg)
-                case .internalFailure(let msg):
-                    Self.respondJSON(context: context, status: .internalServerError, error: msg)
-                }
-            }
-            Task {
-                promise.succeed(await creator(decoded))
+        private func serveAgentCompletions(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
+            let provider = config.agentCompletionsProvider
+            let worktreeID = URLComponents(string: head.uri)?.queryItems?.first { $0.name == "worktree" }?.value
+            answer(context, fallback: .json([AgentCompletionCandidate]())) { .json(await provider(worktreeID)) }
+        }
+
+        /// WEB-7.1: repo list for the "Add Worktree" picker. Relayed
+        /// repositories only reach clients that advertise relay support.
+        private func serveRepos(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
+            let provider = config.reposProvider
+            let relayedProvider = config.relayedReposProvider
+            let includeRelayed = Self.requestsRemoteWorktrees(head)
+            answer(context, fallback: .json([RepoInfo]())) {
+                let relayed = includeRelayed ? await relayedProvider() : []
+                return .json(await provider() + relayed)
             }
         }
 
-        /// Decode `{repoPath}`, invoke the injected default-branch
-        /// puller, and map the result to JSON.
-        private func handlePullDefaultBranch(context: ChannelHandlerContext, body: Data) {
-            guard let puller = config.defaultBranchPuller else {
-                Self.respondJSON(
-                    context: context,
-                    status: .serviceUnavailable,
-                    error: "default branch pull not available"
-                )
-                return
-            }
-            let decoded: PullDefaultBranchRequest
-            do {
-                decoded = try JSONDecoder().decode(PullDefaultBranchRequest.self, from: body)
-            } catch {
-                Self.respondJSON(
-                    context: context,
-                    status: .badRequest,
-                    error: "invalid JSON body: \(error)"
-                )
-                return
-            }
-            let trimmedPath = decoded.repoPath.trimmingCharacters(in: .whitespaces)
-            if trimmedPath.isEmpty {
-                Self.respondJSON(
-                    context: context,
-                    status: .badRequest,
-                    error: "repoPath is required"
-                )
-                return
-            }
-
-            let promise = context.eventLoop.makePromise(of: PullDefaultBranchOutcome.self)
-            promise.futureResult.whenComplete { result in
-                let outcome = (try? result.get()) ?? .internalFailure("puller dispatch failed")
-                switch outcome {
-                case .success(let resp):
-                    do {
-                        let data = try JSONEncoder().encode(resp)
-                        Self.respond(
-                            context: context,
-                            status: .ok,
-                            body: data,
-                            contentType: "application/json; charset=utf-8"
-                        )
-                    } catch {
-                        Self.respondJSON(
-                            context: context,
-                            status: .internalServerError,
-                            error: "encoding error"
-                        )
-                    }
-                case .invalid(let msg):
-                    Self.respondJSON(context: context, status: .badRequest, error: msg)
-                case .gitFailed(let msg):
-                    Self.respondJSON(context: context, status: .conflict, error: msg)
-                case .internalFailure(let msg):
-                    Self.respondJSON(context: context, status: .internalServerError, error: msg)
-                }
-            }
-            Task {
-                promise.succeed(await puller(decoded))
+        /// IOS-4.10: worktrees + split-faithful pane trees for the mobile
+        /// client's worktree → pane drilldown.
+        private func serveWorktreePanes(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
+            let provider = config.worktreePanesProvider
+            let relayedProvider = config.relayedWorktreePanesProvider
+            let includeRelayed = Self.requestsRemoteWorktrees(head)
+            answer(context, fallback: .json([WorktreePanes]())) {
+                let relayed = includeRelayed ? await relayedProvider() : []
+                return .json(await provider() + relayed)
             }
         }
 
-        /// Decode the JSON body, invoke the injected `worktreeRemover`,
-        /// and map its `DeleteWorktreeOutcome` to an HTTP status + JSON
-        /// envelope. Same scheduling shape as `handleCreateWorktree`.
-        private func handleDeleteWorktree(context: ChannelHandlerContext, body: Data) {
-            guard let remover = config.worktreeRemover else {
-                Self.respondJSON(
-                    context: context,
-                    status: .serviceUnavailable,
-                    error: "worktree deletion not available"
-                )
-                return
-            }
-            let decoded: WebServer.DeleteWorktreeRequest
-            do {
-                decoded = try JSONDecoder().decode(WebServer.DeleteWorktreeRequest.self, from: body)
-            } catch {
-                Self.respondJSON(
-                    context: context,
-                    status: .badRequest,
-                    error: "invalid JSON body: \(error)"
-                )
-                return
-            }
-            let trimmedPath = decoded.worktreePath.trimmingCharacters(in: .whitespaces)
-            if trimmedPath.isEmpty {
-                Self.respondJSON(
-                    context: context,
-                    status: .badRequest,
-                    error: "worktreePath is required"
-                )
-                return
-            }
+        /// IOS-4.7: the Mac's resolved Ghostty config, so a remote client
+        /// can render terminals identically to the desktop.
+        private func serveGhosttyConfig(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
+            let provider = config.ghosttyConfigProvider
+            answer(context, fallback: .text("")) { .text(await provider()) }
+        }
 
-            let promise = context.eventLoop.makePromise(of: WebServer.DeleteWorktreeOutcome.self)
+        private func serveGhosttyKeybindings(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
+            // WEB-9.10: no provider yet (host still starting up) must not
+            // read as an authoritative empty map — clients cache 200
+            // responses as host-resolved for the whole session.
+            guard let provider = config.ghosttyKeybindingsProvider else {
+                Self.respond(context: context, .error(.serviceUnavailable, "keybindings provider not ready"))
+                return
+            }
+            answer(context, fallback: .json(GhosttyKeybindingsResponse(chords: [:]))) {
+                .json(GhosttyKeybindingsResponse(chords: await provider()))
+            }
+        }
+
+        /// WEB-7.2: create a new worktree.
+        private func serveCreateWorktree(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
+            servePost(context: context, head: head, body: body, handler: config.worktreeCreator,
+                      unavailable: "worktree creation not available",
+                      dispatchFailure: CreateWorktreeOutcome.internalFailure("creator dispatch failed"),
+                      response: \.restResponse) { (request: CreateWorktreeRequest) in
+                // Reject empty inputs here rather than letting git produce a
+                // cryptic error. The name sanitizer runs client-side, but a
+                // hand-crafted request could still arrive with whitespace
+                // that trims to empty.
+                let required = [request.repoPath, request.worktreeName.trimmingCharacters(in: .whitespaces),
+                                request.branchName.trimmingCharacters(in: .whitespaces)]
+                return required.contains(where: \.isEmpty) ? "repoPath, worktreeName, and branchName are required" : nil
+            }
+        }
+
+        /// WEB-7.12: optional pull of the repo's default checkout before
+        /// creating a new branch from the default branch.
+        private func servePullDefaultBranch(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
+            servePost(context: context, head: head, body: body, handler: config.defaultBranchPuller,
+                      unavailable: "default branch pull not available",
+                      dispatchFailure: PullDefaultBranchOutcome.internalFailure("puller dispatch failed"),
+                      response: \.restResponse) { (request: PullDefaultBranchRequest) in
+                request.repoPath.trimmingCharacters(in: .whitespaces).isEmpty ? "repoPath is required" : nil
+            }
+        }
+
+        /// WEB-7.8 / WEB-7.9 / WEB-7.10: delete or dismiss a worktree.
+        private func serveDeleteWorktree(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
+            servePost(context: context, head: head, body: body, handler: config.worktreeRemover,
+                      unavailable: "worktree deletion not available",
+                      dispatchFailure: DeleteWorktreeOutcome.internalFailure("remover dispatch failed"),
+                      response: \.restResponse) { (request: DeleteWorktreeRequest) in
+                request.worktreePath.trimmingCharacters(in: .whitespaces).isEmpty ? "worktreePath is required" : nil
+            }
+        }
+
+        /// A POST-only mutation: 405 for other verbs (so caching proxies and
+        /// curl probes don't surprise the client), 503 before the app wires
+        /// the handler, 400 for a body that does not decode or lacks a
+        /// required field, then the handler's outcome.
+        private func servePost<Request: Decodable & Sendable, Outcome: Sendable>(
+            context: ChannelHandlerContext,
+            head: HTTPRequestHead,
+            body: Data,
+            handler: (@Sendable (Request) async -> Outcome)?,
+            unavailable: String,
+            dispatchFailure: Outcome,
+            response: @escaping @Sendable (Outcome) -> RESTResponse,
+            missingField: (Request) -> String?
+        ) {
+            guard head.method == .POST else {
+                Self.respond(context: context, .error(.methodNotAllowed, "only POST is supported"))
+                return
+            }
+            guard let handler else {
+                Self.respond(context: context, .error(.serviceUnavailable, unavailable))
+                return
+            }
+            let request: Request
+            do {
+                request = try JSONDecoder().decode(Request.self, from: body)
+            } catch {
+                Self.respond(context: context, .error(.badRequest, "invalid JSON body: \(error)"))
+                return
+            }
+            if let message = missingField(request) {
+                Self.respond(context: context, .error(.badRequest, message))
+                return
+            }
+            answer(context, fallback: response(dispatchFailure)) { response(await handler(request)) }
+        }
+
+        /// Produces the answer off the event loop and writes it back on the
+        /// event loop, so NIO's handler lifecycle stays predictable.
+        private func answer(
+            _ context: ChannelHandlerContext,
+            fallback: RESTResponse,
+            _ produce: @escaping @Sendable () async -> RESTResponse
+        ) {
+            let promise = context.eventLoop.makePromise(of: RESTResponse.self)
             promise.futureResult.whenComplete { result in
-                let outcome = (try? result.get()) ?? .internalFailure("remover dispatch failed")
-                switch outcome {
-                case .success(let resp):
-                    do {
-                        let data = try JSONEncoder().encode(resp)
-                        Self.respond(
-                            context: context,
-                            status: .ok,
-                            body: data,
-                            contentType: "application/json; charset=utf-8"
-                        )
-                    } catch {
-                        Self.respondJSON(
-                            context: context,
-                            status: .internalServerError,
-                            error: "encoding error"
-                        )
-                    }
-                case .invalid(let msg):
-                    Self.respondJSON(context: context, status: .badRequest, error: msg)
-                case .notFound(let msg):
-                    Self.respondJSON(context: context, status: .notFound, error: msg)
-                case .gitFailedForceable(let stderr, let shortStatus):
-                    struct ForceableBody: Codable {
-                        let error: String
-                        let forceAllowed: Bool
-                        let shortStatus: String
-                    }
-                    let body = (try? JSONEncoder().encode(ForceableBody(
-                        error: stderr, forceAllowed: true, shortStatus: shortStatus
-                    ))) ?? Data(#"{"error":"unknown","forceAllowed":true}"#.utf8)
-                    Self.respond(
-                        context: context,
-                        status: .conflict,
-                        body: body,
-                        contentType: "application/json; charset=utf-8"
-                    )
-                case .gitFailedFinal(let stderr):
-                    struct FinalBody: Codable { let error: String; let forceAllowed: Bool }
-                    let body = (try? JSONEncoder().encode(FinalBody(
-                        error: stderr, forceAllowed: false
-                    ))) ?? Data(#"{"error":"unknown","forceAllowed":false}"#.utf8)
-                    Self.respond(
-                        context: context,
-                        status: .conflict,
-                        body: body,
-                        contentType: "application/json; charset=utf-8"
-                    )
-                case .internalFailure(let msg):
-                    Self.respondJSON(context: context, status: .internalServerError, error: msg)
-                }
+                Self.respond(context: context, (try? result.get()) ?? fallback)
             }
-            Task {
-                promise.succeed(await remover(decoded))
-            }
+            Task { promise.succeed(await produce()) }
         }
 
         private static func requestsRemoteWorktrees(
@@ -1007,55 +790,6 @@ public final class WebServer {
                     feature.trimmingCharacters(in: .whitespacesAndNewlines)
                         == RemoteWorktreeFeatures.oneHopRelay
                 }
-        }
-
-        /// Encode a concrete array and respond 200 (or 500 on encoding
-        /// failure). Called from the `/sessions` and `/repos` handlers
-        /// once they've resolved their respective providers — kept
-        /// non-generic so there's no runtime-generic dispatch on NIO's
-        /// event loop, which surfaced as an unreachable-test hang on
-        /// CI when the first call site was generic.
-        private static func respondEncodable<T: Encodable>(
-            context: ChannelHandlerContext,
-            items: [T]
-        ) {
-            do {
-                let data = try JSONEncoder().encode(items)
-                Self.respond(
-                    context: context,
-                    status: .ok,
-                    body: data,
-                    contentType: "application/json; charset=utf-8"
-                )
-            } catch {
-                Self.respondJSON(
-                    context: context,
-                    status: .internalServerError,
-                    error: "encoding error"
-                )
-            }
-        }
-
-        private static func respondEncodable<T: Encodable>(
-            context: ChannelHandlerContext,
-            item: T,
-            status: HTTPResponseStatus = .ok
-        ) {
-            do {
-                let data = try JSONEncoder().encode(item)
-                Self.respond(
-                    context: context,
-                    status: status,
-                    body: data,
-                    contentType: "application/json; charset=utf-8"
-                )
-            } catch {
-                Self.respondJSON(
-                    context: context,
-                    status: .internalServerError,
-                    error: "encoding error"
-                )
-            }
         }
 
         /// Respond with `{"error": "<msg>"}`. The client always gets
@@ -1079,6 +813,10 @@ public final class WebServer {
 
         static func respond(context: ChannelHandlerContext, status: HTTPResponseStatus, body: Data, contentType: String) {
             writeHTTPResponse(context: context, status: status, body: body, contentType: contentType)
+        }
+
+        static func respond(context: ChannelHandlerContext, _ response: RESTResponse) {
+            respond(context: context, status: response.status, body: response.body, contentType: response.contentType)
         }
     }
 
