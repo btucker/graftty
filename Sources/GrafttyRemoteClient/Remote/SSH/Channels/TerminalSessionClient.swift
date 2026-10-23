@@ -36,7 +36,7 @@ import NIOSSH
 /// a `.stdErr` frame; `InboundRelay` deframes inbound `.stdErr` bytes and
 /// surfaces each complete envelope's JSON as `WebSocketFrame.text(_:)`,
 /// which `SessionClient.handleTextFrame` consumes unmodified — the same
-/// contract `URLSessionWebSocketClient` provides over `/ws`.
+/// contract the web-control `/ws` transport uses.
 public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public enum ClientError: Error, Sendable {
         case notConnected
@@ -252,8 +252,8 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
             try await child.writeAndFlush(channelData).get()
         case .text(let payload):
             // Route through the same `.stdErr` control carrier `receive()`
-            // surfaces `.text` from — `URLSessionWebSocketClient` treats
-            // `.text` as its native control encoding, so any polymorphic
+            // surfaces `.text` from — the `/ws` transport treats `.text`
+            // as its native control encoding, so any polymorphic
             // caller sending `.text` through this client must land on the
             // control carrier too, not as `.channel` PTY bytes (which
             // would corrupt terminal output on the wire).
@@ -398,7 +398,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     /// internal REMOTE-9 senders (hello/takeControl/ownerResize). Silent
     /// no-op if the channel isn't open yet or the write fails; callers
     /// (`SessionClient`) treat these as fire-and-forget, exactly like
-    /// `URLSessionWebSocketClient`'s `try? await send(.text(...))`.
+    /// the `/ws` transport's fire-and-forget control sends.
     private func sendControlEnvelope(_ envelope: WebControlEnvelope) async {
         try? await sendRawControlFrame(envelope.encoded())
     }
@@ -411,8 +411,8 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     /// `WebSocketClient` conformance surface) so both routes land on the
     /// SAME `.stdErr` control carrier `receive()` reads back from, rather
     /// than `send(.text)` writing `.channel` PTY bytes as it did before —
-    /// asymmetric with `receive()` and with `URLSessionWebSocketClient`,
-    /// where `.text` IS the control encoding.
+    /// asymmetric with `receive()` and with the `/ws` transport, where
+    /// `.text` IS the control encoding.
     private func sendRawControlFrame(_ payload: String) async throws {
         let child = lock.withLock { childChannel }
         guard let child else { throw ClientError.notConnected }

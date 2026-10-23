@@ -249,7 +249,6 @@ struct RemoteConnectionReconnectTests {
         let clock = VirtualClock()
         let backoffSchedule: [TimeInterval] = [1, 2, 4]
         let client = SessionClient.live(
-            baseURL: host.baseURL,
             sessionName: "e2e-session",
             remoteConnectionProvider: makeRemoteConnectionProvider(coordinator: coordinator, host: host, sessionName: "e2e-session"),
             clock: clock,

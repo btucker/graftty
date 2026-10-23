@@ -356,9 +356,9 @@ public final class SessionClient {
 
     /// Single source for the production `backoffSchedule` default — see
     /// `productionClock()`'s doc comment; same duplication concern, same
-    /// fix shape.
+    /// fix shape. Six exponential attempts, 1s doubling to a 30s cap.
     public nonisolated static func productionBackoffSchedule() -> [TimeInterval] {
-        HostController.backoffSchedule(attempts: 6)
+        (0..<6).map { n in min(30, pow(2.0, Double(n))) }
     }
 
     public init(

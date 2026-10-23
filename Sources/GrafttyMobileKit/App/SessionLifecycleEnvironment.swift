@@ -95,9 +95,8 @@ extension SessionClient {
     /// `RemoteHostConnection` (fresh WebRTC + fresh SSH userauth) the
     /// next time the provider is asked. When the provider returns nil
     /// (no coordinator, host unpaired, or negotiation failed) the
-    /// factory fails closed. The legacy `/ws` transport remains available
-    /// only through an explicit test/compatibility opt-in; production device
-    /// pairing never silently downgrades after authentication fails.
+    /// factory fails closed (IOS-4.28): there is no unauthenticated
+    /// fallback transport.
     ///
     /// `clock` / `backoffSchedule` default to `SessionClient`'s own
     /// `productionClock()` / `productionBackoffSchedule()` — the single
@@ -108,34 +107,20 @@ extension SessionClient {
     /// `remoteConnectionProvider` re-consultation logic instead of a
     /// hand-rolled substitute.
     static func live(
-        baseURL: URL,
         sessionName: String,
         role: Role = .fullscreen,
         remoteConnectionProvider: (@Sendable () async -> RemoteHostConnection?)? = nil,
-        allowLegacyWebSocketFallback: Bool =
-            legacyWebSocketFallbackEnabledByDefault,
         clock: any Clock = SessionClient.productionClock(),
         backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule()
     ) -> SessionClient {
         SessionClient(
             sessionName: sessionName,
             webSocketFactory: {
-                if let remoteHost = await remoteConnectionProvider?() {
-                    return try await remoteHost.openTerminalSession(
-                        sessionName: sessionName, preferPaged: MobilePagedTerminalRenderer.isSupported,
-                        background: role == .preview
-                    )
-                }
-                if sessionName.hasPrefix("relay-pane-") {
-                    throw RemoteSessionTransportError
-                        .relayRequiresPairedConnection
-                }
-                guard allowLegacyWebSocketFallback else {
-                    throw RemoteSessionTransportError
-                        .pairedConnectionUnavailable
-                }
-                let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
-                return URLSessionWebSocketClient(url: wsURL)
+                try await dialTransport(
+                    sessionName: sessionName,
+                    role: role,
+                    remoteHost: await remoteConnectionProvider?()
+                )
             },
             clock: clock,
             backoffSchedule: backoffSchedule,
@@ -143,10 +128,24 @@ extension SessionClient {
         )
     }
 
-    /// Security-sensitive production default. Tests that specifically cover
-    /// the retired WebSocket transport must opt in at the call site.
-    public nonisolated static let legacyWebSocketFallbackEnabledByDefault =
-        false
+    /// One dial of `live`'s transport: the authenticated terminal
+    /// subsystem on `remoteHost`, or a fail-closed error when no paired
+    /// connection is available (IOS-4.28).
+    static func dialTransport(
+        sessionName: String,
+        role: Role,
+        remoteHost: RemoteHostConnection?
+    ) async throws -> WebSocketClient {
+        guard let remoteHost else {
+            throw sessionName.hasPrefix("relay-pane-")
+                ? RemoteSessionTransportError.relayRequiresPairedConnection
+                : RemoteSessionTransportError.pairedConnectionUnavailable
+        }
+        return try await remoteHost.openTerminalSession(
+            sessionName: sessionName, preferPaged: MobilePagedTerminalRenderer.isSupported,
+            background: role == .preview
+        )
+    }
 }
 
 enum RemoteSessionTransportError: LocalizedError, Equatable {

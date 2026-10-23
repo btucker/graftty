@@ -11,7 +11,6 @@ import SwiftUI
 /// showing the selected worktree's actual live terminal panes in the same
 /// split tree supplied by the Mac.
 public struct IPadRootLayout: View {
-    public static let paintsTerminalBackgroundBehindSidebar = true
     private var railIsCollapsed: Bool {
         SidebarLayoutPolicy.railCollapsed(preference: appState.sidebarNavigation.railCollapsed, isMobile: true, windowWidth: appState.navigationWindowWidth)
     }
@@ -104,6 +103,8 @@ public struct IPadRootLayout: View {
         // appState so the system's sidebar-toggle button can flip it back
         // to `.all` after a user collapse — without the binding there'd
         // be no way to re-show a hidden sidebar.
+        //
+        // @spec IPAD-1.20: While `IPadRootLayout` is presented, iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
         ZStack {
             appState.theme.background.ignoresSafeArea()
             NavigationSplitView(columnVisibility: Binding(

@@ -139,7 +139,6 @@ public struct WorktreeDetailView: View {
             // than retaining the previous authenticated connection.
             previews = PanePreviewClientPool { [coordinator, host] sessionName in
                 SessionClient.live(
-                    baseURL: host.baseURL,
                     sessionName: sessionName,
                     role: .preview,
                     remoteConnectionProvider: makeRemoteConnectionProvider(coordinator: coordinator, host: host, sessionName: sessionName)

@@ -2,8 +2,7 @@
 import Foundation
 import GrafttyProtocol
 
-/// `GET <baseURL>/worktrees/panes` → `[WorktreePanes]`. Mirrors
-/// `SessionsFetcher`'s error discrimination: 403 is a distinct
+/// `GET <baseURL>/worktrees/panes` → `[WorktreePanes]`. 403 is a distinct
 /// "not-on-tailnet" signal so the UI can link to the Tailscale app;
 /// everything else collapses into opaque http/transport/decode.
 public enum WorktreePanesFetcher {
