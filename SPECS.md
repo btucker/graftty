@@ -3538,6 +3538,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-28.10** When exporting or staging remote skills through the CLI, the application shall require explicit source and destination selections, verify the requested revision before staging, and report staged paths without activating an agent or copying authentication stores.
 
+**REMOTE-28.11** When receiving remote skills, the application shall bind bounded chunks and their retained acknowledgements to the authenticated parent identity and registered repository, reject conflicting retries, and publish only a complete snapshot matching the declared runtime and revision.
+
+**REMOTE-28.12** While receiving remote skill snapshots, the application shall bound active transfers, reserved bytes, chunk size, and retention time, and release incomplete content on cancellation or expiry without activating it.
+
+**REMOTE-28.13** When a peer transfers agent skills over SSH, the host shall derive its device and fingerprint from authentication and recheck current pairing and worktree-management permission before each request.
+
+**REMOTE-28.14** When sending remote skills, the application shall pin the destination identity, resume the same snapshot and operation from a matching retained offset, bound each request, and accept completion only from a matching staged acknowledgement.
+
 ### REMOTE-29.x — AWS Spot evacuation
 
 **REMOTE-29.1** When configuring AWS compute, the application shall support Spot instances in the initial AWS provider implementation.

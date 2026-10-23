@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import GrafttyCLI
 import GrafttyKit
+import GrafttyProtocol
 
 struct RemoteSkillsCLITests {
     @Test("@spec REMOTE-28.10: When exporting or staging remote skills through the CLI, the application shall require explicit source and destination selections, verify the requested revision before staging, and report staged paths without activating an agent or copying authentication stores.")
@@ -28,6 +29,36 @@ struct RemoteSkillsCLITests {
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("store").path))
         #expect(throws: (any Error).self) { try export.run() }
         #expect(try Data(contentsOf: archive) == data)
+    }
+
+    @Test func syncPinsTheDeviceAndFingerprintOnEveryFrame() async throws {
+        let snapshot = RemoteSkillSnapshot(runtime: .codex, files: [])
+        let id = UUID()
+        let host = RemoteMacConnectionSummary.ID(deviceID: .init(value: "worker"), fingerprint: try .init(rawBytes: Data(repeating: 7, count: 32)))
+        let descriptor = RemoteSkillTransferDescriptor(operationID: id, repositoryID: "/repo", runtime: "codex", revision: try snapshot.revision, byteCount: try snapshot.encoded().count)
+        let result = try await RemoteSkillsSync.transfer(snapshot, to: host, repository: "/repo", operationID: id) { message in
+            #expect(try JSONDecoder().decode(NotificationMessage.self, from: JSONEncoder().encode(message)) == message)
+            guard case .remoteSkills(let destination, let request) = message else { throw RemoteSkillError("Wrong routing envelope") }
+            #expect(destination == host)
+            let status: RemoteSkillTransferStatus
+            switch request {
+            case .begin(let declaration):
+                #expect(declaration == descriptor)
+                status = .init(descriptor: descriptor, receivedBytes: 0, phase: .receiving)
+            case .append(_, let offset, let bytes): status = .init(descriptor: descriptor, receivedBytes: offset + bytes.count, phase: .receiving)
+            case .finish: status = .init(descriptor: descriptor, receivedBytes: descriptor.byteCount, phase: .staged)
+            case .abort: throw RemoteSkillError("Unexpected abort")
+            }
+            let response = ResponseMessage.agentSkills(status)
+            #expect(try JSONDecoder().decode(ResponseMessage.self, from: JSONEncoder().encode(response)) == response)
+            return response
+        }
+        #expect(result.phase == .staged)
+    }
+
+    @Test func syncRequiresPinnedHostAndStableOperation() throws {
+        _ = try GrafttyCLI.parseAsRoot(["remote", "skills", "sync", "--host", "linux", "--repository", "/repo", "--input", "/skills.json", "--revision", String(repeating: "0", count: 64), "--operation-id", UUID().uuidString])
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(["remote", "skills", "sync", "--host", "linux", "--input", "/skills.json"]) }
     }
 
     @Test func rejectsMissingSelectionsAndInvalidRuntime() throws {

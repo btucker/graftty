@@ -24,7 +24,7 @@ import GrafttyRemoteClient
     fileprivate
     var targetsRelayedResource: Bool {
         switch self {
-        case .placement, .agentCompletions, .hostPresentation, .listRepositories, .moveProject,
+        case .agentSkills, .placement, .agentCompletions, .hostPresentation, .listRepositories, .moveProject,
              .listRemoteMacConnections, .connectRemoteMac:
             return false
         case .create(let repositoryID, _, _, _),
@@ -315,6 +315,8 @@ extension GrafttyApp {
             }
 
             switch request {
+            case .agentSkills:
+                return .error(code: "skills-unavailable", message: "Skill staging is unavailable on this host.", forceAllowed: false, shortStatus: nil)
             case .placement:
                 return .error(code: "placement-unavailable", message: "Placement admission is unavailable on this host.", forceAllowed: false, shortStatus: nil)
             case .agentCompletions:

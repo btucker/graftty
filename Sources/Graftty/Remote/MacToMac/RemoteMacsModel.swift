@@ -195,6 +195,21 @@ final class RemoteMacsModel: ObservableObject {
         connectionStates[identity] ?? .offline
     }
 
+    func transferSkills(on host: RemoteMacConnectionSummary.ID, request: RemoteSkillTransferRequest) async -> ResponseMessage {
+        await loadSavedRemotes()
+        let identity = RemoteMacIdentity(id: host.deviceID, fingerprint: host.fingerprint)
+        guard savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == identity }), connectionState(for: identity) == .connected else {
+            return .error("Skill destination identity is unavailable or disconnected.")
+        }
+        do {
+            switch try await sendWorktreeManagement(identity: identity, request: .agentSkills(request)) {
+            case .agentSkills(let status): return .agentSkills(status)
+            case .error(_, let message, _, _): return .error(message)
+            default: return .error("Host returned an unexpected skill transfer response; update both hosts.")
+            }
+        } catch { return .error("Skill transfer reply unavailable; retry with the same snapshot and operation UUID. \(error)") }
+    }
+
     func place(on host: RemoteMacConnectionSummary.ID, request: HostPlacementRequest) async -> ResponseMessage {
         await loadSavedRemotes()
         let identity = RemoteMacIdentity(id: host.deviceID, fingerprint: host.fingerprint)
@@ -908,7 +923,7 @@ final class RemoteMacsModel: ObservableObject {
         _ request: WorktreeManagementRequest
     ) async -> WorktreeManagementResponse? {
         switch request {
-        case .placement: return nil // Admission belongs to the directly authenticated parent.
+        case .agentSkills, .placement: return nil // Admission belongs to the directly authenticated parent.
         case .worktreeAgentCompletions(let worktreeID):
             guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
             let response = await forwardManagement(identity: route.identity,

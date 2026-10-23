@@ -1,11 +1,12 @@
 import ArgumentParser
 import Foundation
 import GrafttyKit
+import GrafttyProtocol
 
 struct RemoteSkills: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "skills", abstract: "Export and stage user and project skills for remote agents",
         discussion: "Snapshots contain skill directories and supporting files only. Plugin installation, settings, authentication, automatic transfer, and agent activation are separate. Review the skill content you intend to share; credential filenames and private keys are rejected, but arbitrary secrets embedded in prose cannot be detected reliably.",
-        subcommands: [RemoteSkillsExport.self, RemoteSkillsStage.self])
+        subcommands: [RemoteSkillsExport.self, RemoteSkillsStage.self, RemoteSkillsSync.self])
 }
 
 struct RemoteSkillsExport: ParsableCommand {
@@ -68,5 +69,54 @@ private enum RemoteSkillCLIOutput {
     }
     static func printJSON(_ fields: [String: Any]) throws {
         print(String(decoding: try JSONSerialization.data(withJSONObject: fields, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self))
+    }
+}
+
+struct RemoteSkillsSync: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "sync", abstract: "Transfer and stage a snapshot on an authenticated paired host",
+        discussion: "Requires an updated running parent app, an updated Linux host, and a repository already registered there. Reuse the same snapshot and operation UUID after a lost reply. This stages skills only; it does not activate agent configuration.")
+    @Option(help: "Exact connected host name or device ID") var host: String
+    @Option(help: "Exact registered repository path on the destination") var repository: String
+    @Option(help: "Absolute path to the exported skill snapshot") var input: String
+    @Option(help: "Expected revision from the parent export") var revision: String
+    @Option(name: .customLong("operation-id"), help: "Stable transfer UUID; reuse it with the same snapshot on retries") var operationID: String
+
+    func validate() throws {
+        try RemoteSkillCLIOutput.validatePath(repository)
+        try RemoteSkillCLIOutput.validatePath(input)
+        guard !host.isEmpty, UUID(uuidString: operationID) != nil,
+              revision.count == 64, revision.allSatisfy({ "0123456789abcdef".contains($0) }) else {
+            throw ValidationError("Provide a host, stable operation UUID, and the expected snapshot revision.")
+        }
+    }
+    func run() async throws {
+        let snapshot = try RemoteSkillSnapshot.read(from: URL(fileURLWithPath: input))
+        guard try snapshot.revision == revision else { throw ValidationError("Snapshot does not match the expected revision; nothing was sent.") }
+        guard let id = UUID(uuidString: operationID) else { throw ValidationError("Provide a valid operation UUID.") }
+        let identity = try RemotePlacementTarget.resolve(host, hosts: RemoteHosts.fetch())
+        let result: RemoteSkillTransferStatus
+        do {
+            result = try await Self.transfer(snapshot, to: identity, repository: repository, operationID: id) { try CLIEnv.sendRequest($0) }
+        } catch let error as RemoteSkillError {
+            throw ValidationError(error.description)
+        } catch {
+            throw ValidationError("Skill transfer was not confirmed. Retry the same host, snapshot, and operation UUID; the host may already have staged it. \(error)")
+        }
+        try RemoteSkillCLIOutput.printJSON(["status": result.phase.rawValue, "runtime": result.descriptor.runtime,
+            "revision": result.descriptor.revision, "operationID": result.descriptor.operationID.uuidString,
+            "host": identity.deviceID.value, "repository": repository, "receivedBytes": result.receivedBytes])
+    }
+
+    static func transfer(_ snapshot: RemoteSkillSnapshot, to identity: RemoteMacConnectionSummary.ID,
+                         repository: String, operationID: UUID,
+                         send: @Sendable (NotificationMessage) throws -> ResponseMessage) async throws -> RemoteSkillTransferStatus {
+        try await RemoteSkillTransferSender.transfer(snapshot, repositoryID: repository, operationID: operationID) { request in
+            let response = try send(.remoteSkills(host: identity, request: request))
+            switch response {
+            case .agentSkills(let status): return status
+            case .error(let message): throw RemoteSkillError(message)
+            default: throw RemoteSkillError("Parent app did not return a skill transfer response; update both hosts.")
+            }
+        }
     }
 }

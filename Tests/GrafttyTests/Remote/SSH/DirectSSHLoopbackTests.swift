@@ -184,6 +184,75 @@ struct DirectSSHLoopbackTests {
         await client.close(); await server.close()
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func skillSnapshotTransfersOverActualSSHFrames() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey, managementAllowed: true))
+        let receiver = RemoteSkillTransferReceiver(directory: f.directory.appendingPathComponent("skills"))
+        let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
+            streamFactory: { _ in DirectEchoTerminalStream() }, panesStateSubscribe: { _ in .init(cancel: {}) },
+            paneControlMutator: { _ in .ok }, authenticatedSkillMutator: { request, owner in
+                do { return .agentSkills(try await receiver.handle(request, owner: owner, repositories: ["/repo"])) }
+                catch { return .error(code: "fixture", message: String(describing: error), forceAllowed: false, shortStatus: nil) }
+            }, displayOwnershipStore: SessionDisplayOwnershipStore())
+        // Team setup rebuilds SSH configuration; it must retain the skill callback.
+        await server.setTeamMessaging(handler: { _, _ in Data() }, onConnect: { _, _ in }, onDisconnect: { _, _ in })
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            let channel = try await client.makeWorktreeManagementClient()
+            try await channel.open()
+            let snapshot = RemoteSkillSnapshot(runtime: .claude, files: [.init(scope: .project, path: ".claude/skills/demo/SKILL.md", contents: Data(repeating: 97, count: 700_000))])
+            let id = UUID()
+            let result = try await RemoteSkillTransferSender.transfer(snapshot, repositoryID: "/repo", operationID: id) { request in
+                let response = try await channel.send(.agentSkills(request))
+                guard case .agentSkills(let status) = response else { throw RemoteSkillError("Unexpected SSH fixture response") }
+                return status
+            }
+            #expect(result.phase == .staged)
+            #expect(result.descriptor.revision == (try snapshot.revision))
+            let peer = try f.peer(key: f.clientKey, managementAllowed: true)
+            let parentID = "\(peer.id.value.utf8.count):\(peer.id.value):\(peer.fingerprint.display)"
+            // A second stage verifies every byte in the tree written by the RPC receiver.
+            _ = try RemoteSkillStore(directory: f.directory.appendingPathComponent("skills"))
+                .stage(snapshot, parentID: parentID, projectID: "/repo")
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec REMOTE-28.13: When a peer transfers agent skills over SSH, the host shall derive its device and fingerprint from authentication and recheck current pairing and worktree-management permission before each request.", .timeLimit(.minutes(1)))
+    func skillTransferChecksCurrentAuthenticatedPeer() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let peer = try f.peer(key: f.clientKey, managementAllowed: true)
+        try f.store.add(peer)
+        let expected = RemoteMacConnectionSummary.ID(deviceID: peer.id, fingerprint: peer.fingerprint)
+        let descriptor = RemoteSkillTransferDescriptor(operationID: UUID(), repositoryID: "/repo", runtime: "codex", revision: String(repeating: "0", count: 64), byteCount: 1)
+        let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
+            streamFactory: { _ in DirectEchoTerminalStream() },
+            panesStateSubscribe: { _ in .init(cancel: {}) }, paneControlMutator: { _ in .ok },
+            authenticatedSkillMutator: { request, owner in
+                #expect(owner == expected)
+                #expect(request == .begin(descriptor))
+                return .agentSkills(.init(descriptor: descriptor, receivedBytes: 0, phase: .receiving))
+            }, displayOwnershipStore: SessionDisplayOwnershipStore())
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            let channel = try await client.makeWorktreeManagementClient()
+            try await channel.open()
+            #expect(try await channel.send(.agentSkills(.begin(descriptor))) == .agentSkills(.init(descriptor: descriptor, receivedBytes: 0, phase: .receiving)))
+            // Keep the existing SSH channel open to exercise the per-request
+            // store check rather than relying on connection teardown alone.
+            try f.store.remove(id: peer.id)
+            let rejected = try await channel.send(.agentSkills(.finish(operationID: descriptor.operationID)))
+            guard case .error(let code, _, _, _) = rejected else { Issue.record("Revoked peer reached skill receiver"); await client.close(); await server.close(); return }
+            #expect(code == "skills-forbidden")
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
     @Test("@spec REMOTE-26.14: When a peer opens the Git control subsystem, the host shall require replication permission, derive the device and key fingerprint from SSH authentication, and keep bidirectional requests on that authenticated connection.", .timeLimit(.minutes(1)), arguments: [true, false], [true, false])
     func gitControlUsesAuthenticatedIdentity(allowed: Bool, configured: Bool) async throws {
         let f = Fixture(); defer { f.cleanup() }

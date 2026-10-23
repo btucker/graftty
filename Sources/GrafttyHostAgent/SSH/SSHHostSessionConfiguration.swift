@@ -19,6 +19,7 @@ struct SSHHostSessionConfiguration: Sendable {
     let paneControlMutator: PaneControlChannelHandler.Mutator
     let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator
     var authenticatedPlacementMutator: AuthenticatedPlacementMutator? = nil
+    var authenticatedSkillMutator: AuthenticatedSkillMutator? = nil
     var gitControl: AuthenticatedGitControl? = nil
     var chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil
     var chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { _ in }
@@ -75,7 +76,19 @@ struct SSHHostSessionConfiguration: Sendable {
                         panesStateV2Subscribe: panesStateV2Subscribe,
                         paneControlMutator: paneControlMutator,
                         worktreeManagementMutator: { request in
-                            await peerBox.manage(request, using: worktreeManagementMutator, placement: authenticatedPlacementMutator)
+                            if case .agentSkills(let transfer) = request {
+                                guard !Task.isCancelled, let peer = peerBox.peer,
+                                      peer.capabilities.worktreeManagement == .allowed,
+                                      peer.kind == .mac || peer.kind == .linux,
+                                      SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: trustedPeerStore) else {
+                                    return .error(code: "skills-forbidden", message: "Skill transfer requires current pairing and worktree-management permission.", forceAllowed: false, shortStatus: nil)
+                                }
+                                guard let authenticatedSkillMutator else {
+                                    return .error(code: "skills-unavailable", message: "This host does not support skill transfer.", forceAllowed: false, shortStatus: nil)
+                                }
+                                return await authenticatedSkillMutator(transfer, .init(deviceID: peer.id, fingerprint: peer.fingerprint))
+                            }
+                            return await peerBox.manage(request, using: worktreeManagementMutator, placement: authenticatedPlacementMutator)
                         },
                         chromeTabMutator: chromeTabMutator.map { mutator -> ChromeTabChannelHandler.Mutator in
                             { @Sendable request, deviceID, viewerID in

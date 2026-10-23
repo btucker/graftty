@@ -1,6 +1,6 @@
 # Remote skill provisioning
 
-Skill capture and staging are available for Claude and Codex. Automatic transfer, container mounts, launch integration, full plugin installation, and settings reconciliation remain pending. The CLI reports `staged`, not agent readiness.
+Skill capture, authenticated transfer, and staging are available for Claude and Codex. Automatic provisioning, container mounts, launch integration, full plugin installation, and settings reconciliation remain pending. The CLI reports `staged`, not agent readiness.
 
 ## Capture and stage
 
@@ -13,7 +13,20 @@ graftty remote skills export --runtime codex \
 
 The JSON response reports the content revision, runtime, file count, and export path. The output file is created with mode 0600 and never overwrites an existing file. The export includes supporting files and preserves executable flags. It does not read settings, plugin caches, authentication stores, or session history. Use `--source-home /path/to/home` to select another home explicitly; that option ignores the current process's runtime-home overrides.
 
-After transferring the snapshot over an authenticated connection, stage it on the destination:
+To transfer and stage it through the running parent app's authenticated connection:
+
+```sh
+graftty remote skills sync --host <paired-host-name-or-device-id> \
+  --repository /registered/repository/on/worker \
+  --input /absolute/path/to/new-skills.json --revision <revision-from-export> \
+  --operation-id <stable-uuid>
+```
+
+This requires updated builds of the parent app and Linux host. The CLI resolves the host once and pins its device ID and fingerprint on every request. The SSH receiver rechecks current pairing, key identity, and worktree-management permission before each request. It derives the parent from that authenticated connection and requires the destination repository to remain registered. Skill staging is not relayed through another host and does not grant execution or MCP access.
+
+After a lost reply, rerun with the same host, snapshot, revision, and operation UUID. The receiver returns its retained offset or staged acknowledgement. Conflicting arguments or chunk bytes are rejected. Transfers use chunks of at most 256 KiB, at most two active uploads and 48 MiB reserved bytes, and a five-minute retention window. Expiry and shutdown discard incomplete bytes. A worker restart requires sending the snapshot again; complete content revisions remain on disk. Aborted operations need a new UUID.
+
+For local staging after a separately authenticated transfer, run on the destination:
 
 ```sh
 graftty remote skills stage --input /absolute/path/to/skills.json \
@@ -31,7 +44,7 @@ Each skill must have `SKILL.md`; supporting scripts, references, and assets trav
 
 Known credential filenames, environment files, private-key formats, and Git metadata are rejected inside skill trees. This is not a general secret detector. Arbitrary credentials embedded in instructions or scripts cannot reliably be distinguished from ordinary skill content. Export only skill content intended for the selected worker. No skill is executed during capture or staging.
 
-Snapshots are bounded to 4,096 files, 4 MiB per file, 16 MiB of content, and 24 MiB encoded. Paths and nesting are bounded; traversal, duplicate destinations, and file/directory conflicts are rejected before installation. Capturing a missing workspace fails rather than reporting an empty project. Large snapshots require a bounded bulk transfer; they must not be inserted into the existing 4 MiB team RPC frame.
+Snapshots are bounded to 4,096 files, 4 MiB per file, 16 MiB of content, and 24 MiB encoded. Paths and nesting are bounded; traversal, duplicate destinations, and file/directory conflicts are rejected before installation. Capturing a missing workspace fails rather than reporting an empty project. The sync command divides snapshots into bounded requests on the existing authenticated worktree-management channel; it never inserts a complete snapshot into a control frame.
 
 ## Revision lifecycle
 
@@ -44,6 +57,8 @@ Keep runtime-owned files outside the snapshot. In particular, the installed Code
 ## Validation
 
 `RemoteSkillSnapshotTests`, `RemoteSkillStoreTests`, and `RemoteSkillsCLITests` cover scope and runtime separation, native layouts, supporting files, executable flags, custom homes, deterministic revisions, escaping links, cycles, FIFO rejection, credential artifacts, malformed snapshots, byte limits, parent/project isolation, interrupted staging, tampered revisions, and CLI revision mismatch.
+
+`RemoteSkillTransferTests` verifies peer fingerprint binding, registered repository checks, bounded chunks and quotas, conflicting retries, expiry, abort, runtime/revision mismatch, lost acknowledgements, and resumed offsets. CLI tests verify the destination device and fingerprint on every encoded request. Direct SSH loopback tests transfer a 700 KB payload through actual framed requests and verify the staged bytes; a separate test removes the trusted peer while its channel remains open and verifies that the next request is rejected before the receiver runs.
 
 `RemoteSkillNativeDiscoveryTests` runs opt-in checks against actual staged snapshots. Set `GRAFTTY_TEST_CODEX_BINARY` and/or `GRAFTTY_TEST_CLAUDE_BINARY` to absolute native executable paths, then run `scripts/swiftpm test --filter RemoteSkillNativeDiscoveryTests`. Each probe owns an isolated runtime home and child process group, uses bounded protocol reads, and sends initialization/discovery requests only.
 

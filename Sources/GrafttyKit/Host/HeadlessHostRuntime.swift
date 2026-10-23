@@ -25,6 +25,7 @@ public final class HeadlessHostRuntime {
     var busyPaths: Set<String> = []
     let devContainers: DevContainerPreparer
     let placements: HostPlacementLedger
+    let skillTransfers: RemoteSkillTransferReceiver
     var placementTasks: [UUID: Task<Void, Never>] = [:]
     var isShuttingDown = false
     var creations: [String: WorktreeCreateStatus] = [:]
@@ -43,6 +44,7 @@ public final class HeadlessHostRuntime {
                 initialState: AppState? = nil, portScanner: PortScanner? = nil,
                 agentSetup: HostAgentSetup? = nil, devContainers: DevContainerPreparer = .init()) throws {
         placements = try HostPlacementLedger(fileURL: configuration.stateDirectory.appendingPathComponent("placements.json"))
+        skillTransfers = RemoteSkillTransferReceiver(directory: configuration.stateDirectory.appendingPathComponent("agent-skills"))
         self.devContainers = devContainers
         self.configuration = configuration
         self.portScanner = portScanner ?? PortScanner()
@@ -311,6 +313,7 @@ public final class HeadlessHostRuntime {
 
     public func shutdown() async throws {
         isShuttingDown = true
+        await skillTransfers.discardIncomplete()
         deliveryTask?.cancel(); deliveryTask = nil
         maintenance?.stop(); maintenance = nil
         let jobs = Array(placementTasks.values)
