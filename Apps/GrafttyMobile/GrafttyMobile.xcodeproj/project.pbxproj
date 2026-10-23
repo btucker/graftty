@@ -45,7 +45,6 @@
 		53C7FACAB0E370E5FD3E208C /* TerminalSelectionControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30604C1C39FF21FE6B6A74D5 /* TerminalSelectionControllerTests.swift */; };
 		596A6300E536F68C9F6BE2AC /* PushRelayClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F6F13A9C1E72554119F2EE4 /* PushRelayClientTests.swift */; };
 		5A3524DA3FCE4A004B1570AA /* TerminalBrowserRequestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEA172B6F407F6BA3EACDAB0 /* TerminalBrowserRequestTests.swift */; };
-		5C06DC7F8471DBD194BE4D77 /* DeleteWorktreeClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD13ED88F7628AD90AB80522 /* DeleteWorktreeClientTests.swift */; };
 		5C51050F0E3E12F9DD2BB26B /* MobileWorktreeCreationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9377D70188ACFF721C4E9E7D /* MobileWorktreeCreationTests.swift */; };
 		60223294EC6FFC01F6518F84 /* PairingFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1E7C1FDDDE3B01E21079EA /* PairingFlowTests.swift */; };
 		615CC3FFBC890A81DA17526E /* GrafttyRemoteClient in Frameworks */ = {isa = PBXBuildFile; productRef = 5175113493E833CC64D2763F /* GrafttyRemoteClient */; };
@@ -230,7 +229,6 @@
 		D0E517DBD6A521AB367A54A6 /* GrafttyMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GrafttyMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D2375604B734A298A34CED68 /* MobileWorktreePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileWorktreePresentationTests.swift; sourceTree = "<group>"; };
 		D413CBEB234098C16C875AD8 /* SignalingClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalingClientTests.swift; sourceTree = "<group>"; };
-		DD13ED88F7628AD90AB80522 /* DeleteWorktreeClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteWorktreeClientTests.swift; sourceTree = "<group>"; };
 		DDEDB7E8E23CBF60EAE27AE4 /* ClientPairingSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientPairingSessionTests.swift; sourceTree = "<group>"; };
 		DE2551EB151BA762B2AF7663 /* GhosttyConfigFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyConfigFetcherTests.swift; sourceTree = "<group>"; };
 		DEAFDCA2135A779F886374A3 /* GrafttyMobileTestHost.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GrafttyMobileTestHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -344,7 +342,6 @@
 			children = (
 				1F4055E6D96D1E9CAA59BD55 /* AgentCompletionsFetcherTests.swift */,
 				F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */,
-				DD13ED88F7628AD90AB80522 /* DeleteWorktreeClientTests.swift */,
 				040341B8FB581DF018C96BCC /* FilePreviewDownloadTests.swift */,
 				DE2551EB151BA762B2AF7663 /* GhosttyConfigFetcherTests.swift */,
 				7BD90DFCAF790E3A5A6E4E10 /* GhosttyKeybindingsFetcherTests.swift */,
@@ -846,7 +843,6 @@
 				2E416266017DFF6D47BFED05 /* BiometricGateTests.swift in Sources */,
 				4D8D21035BA80B090DB04260 /* ClockTests.swift in Sources */,
 				0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */,
-				5C06DC7F8471DBD194BE4D77 /* DeleteWorktreeClientTests.swift in Sources */,
 				23013C727DA7ACAAE5DC93B3 /* FilePreviewDownloadTests.swift in Sources */,
 				F1265680A75FBC8FC81FC5E8 /* GhosttyConfigFetcherTests.swift in Sources */,
 				BB7882D5CC303A99F96AA5D9 /* GhosttyKeybindingsFetcherTests.swift in Sources */,

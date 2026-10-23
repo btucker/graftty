@@ -75,7 +75,6 @@ public struct WorktreeListContent: View {
 
     private struct DeleteRequestContext {
         let hostID: UUID
-        let baseURL: URL
         let remoteConnectionProvider: RemoteConnectionProvider?
     }
 
@@ -723,7 +722,7 @@ public struct WorktreeListContent: View {
                 }
                 func fetch() async throws -> [WorktreePanes] {
                     let pushes = appliedPushCount
-                    let list = try await fetchWorktrees(host: host, remoteSnapshotProvider: remoteSnapshotProvider, includeRemoteWorktrees: includeRemoteWorktrees)
+                    let list = try await fetchWorktrees()
                     try checkCurrent()
                     // A newer push supersedes these rows for display and for
                     // deciding what to open.
@@ -965,9 +964,6 @@ public struct WorktreeListContent: View {
         let pushes = appliedPushCount
         do {
             let list = try await fetchWorktrees(
-                host: host,
-                remoteSnapshotProvider: remoteSnapshotProvider,
-                includeRemoteWorktrees: includeRemoteWorktrees,
                 onProgress: onProgress,
                 reconnect: reconnect
             )
@@ -980,17 +976,6 @@ public struct WorktreeListContent: View {
             await updateNavigationMetadata(list, requestHostID: requestHostID, pushes: pushes)
         } catch is CancellationError {
             return
-        } catch WorktreePanesFetcher.FetchError.forbidden {
-            guard shouldApplyLoadFailure(requestHostID: requestHostID) else { return }
-            applyRefreshFailure("Not authorized — is this device on your tailnet?")
-        } catch WorktreePanesFetcher.FetchError.http(let code) {
-            guard shouldApplyLoadFailure(requestHostID: requestHostID) else { return }
-            applyRefreshFailure("HTTP \(code)")
-        } catch WorktreePanesFetcher.FetchError.decode {
-            guard shouldApplyLoadFailure(requestHostID: requestHostID) else { return }
-            applyRefreshFailure(
-                "The server sent a response this version can't read."
-            )
         } catch {
             guard shouldApplyLoadFailure(requestHostID: requestHostID) else { return }
             applyRefreshFailure("Couldn't reach the server.")
@@ -1153,22 +1138,13 @@ public struct WorktreeListContent: View {
     }
 
     private func fetchWorktrees(
-        host: Host,
-        remoteSnapshotProvider: RemoteWorktreeSnapshotProvider?,
-        includeRemoteWorktrees: Bool,
         onProgress: RemoteWorktreeLoadProgress? = nil,
         reconnect: Bool = false
     ) async throws -> [WorktreePanes] {
-        if let remoteSnapshotProvider {
-            return try await remoteSnapshotProvider(onProgress, reconnect)
+        guard let remoteSnapshotProvider else {
+            throw RelayedWorktreeManagementClient.ClientError.pairedConnectionUnavailable
         }
-        if onProgress != nil {
-            loadingStage = .waitingForSnapshot
-        }
-        return try await WorktreePanesFetcher.fetch(
-            baseURL: host.baseURL,
-            includeRemoteWorktrees: includeRemoteWorktrees
-        )
+        return try await remoteSnapshotProvider(onProgress, reconnect)
     }
 
     static func requiresManagementOpen(
@@ -1302,11 +1278,7 @@ public struct WorktreeListContent: View {
             }
             func fetch() async throws -> [WorktreePanes] {
                 let pushes = appliedPushCount
-                let list = try await fetchWorktrees(
-                    host: selectionHost,
-                    remoteSnapshotProvider: remoteSnapshotProvider,
-                    includeRemoteWorktrees: includeRemoteWorktrees
-                )
+                let list = try await fetchWorktrees()
                 try checkCurrent()
                 guard appliedPushCount == pushes else { return displayedRows ?? list }
                 state = .loaded(list)
@@ -1364,28 +1336,24 @@ public struct WorktreeListContent: View {
         isAddSheetPresented = false
         Task {
             do {
-                let response: CreateWorktreeClient.Response
-                if provider != nil {
-                    let result = try await RelayedWorktreeManagementClient.send(
-                        .create(repositoryID: request.repoPath,
-                                worktreeName: request.worktreeName,
-                                branchName: request.branchName,
-                                existingSource: submission.existingSource),
-                        using: provider
-                    )
-                    switch result {
-                    case let .created(worktreeID, paneID):
-                        response = CreateWorktreeClient.Response(sessionName: paneID, worktreePath: worktreeID)
-                    case let .error(_, message, _, _):
-                        throw CreateWorktreeClient.CreateError.serverInternal(message)
-                    default:
-                        throw CreateWorktreeClient.CreateError.serverInternal("The remote Mac returned an unexpected response.")
-                    }
-                } else {
-                    response = try await CreateWorktreeClient.create(baseURL: requestHost.baseURL, body: request)
+                let worktreePath: String
+                let result = try await RelayedWorktreeManagementClient.send(
+                    .create(repositoryID: request.repoPath,
+                            worktreeName: request.worktreeName,
+                            branchName: request.branchName,
+                            existingSource: submission.existingSource),
+                    using: provider
+                )
+                switch result {
+                case let .created(worktreeID, _):
+                    worktreePath = worktreeID
+                case let .error(_, message, _, _):
+                    throw CreateWorktreeClient.CreateError.serverInternal(message)
+                default:
+                    throw CreateWorktreeClient.CreateError.serverInternal("The remote Mac returned an unexpected response.")
                 }
                 guard presentedHostID == requestHost.id else { return }
-                worktreeCreation.complete(id, worktreePath: response.worktreePath)
+                worktreeCreation.complete(id, worktreePath: worktreePath)
                 // A pushed frame may already have delivered the ready layout
                 // while the management response was still in flight.
                 if case .loaded(let list) = state { applyLoadedList(list) }
@@ -1405,94 +1373,67 @@ public struct WorktreeListContent: View {
     /// forceable failure surface the Force Delete confirmation, on
     /// any other failure surface a transient error toast.
     private func performDelete(worktree: WorktreePanes, force: Bool) async {
-        let requestContext = DeleteRequestContext(
-            hostID: host.id,
-            baseURL: host.baseURL,
-            remoteConnectionProvider: remoteConnectionProvider
-        )
-        do {
-            if requestContext.remoteConnectionProvider != nil {
-                let response = try await RelayedWorktreeManagementClient.send(
-                    .delete(worktreeID: worktree.path, force: force),
-                    using: requestContext.remoteConnectionProvider
-                )
-                guard case .deleted = response else {
-                    handleRemoteDeleteResponse(
-                        response,
-                        worktreePath: worktree.path,
-                        requestContext: requestContext
-                    )
-                    return
-                }
-            } else {
-                _ = try await DeleteWorktreeClient.delete(
-                    baseURL: requestContext.baseURL,
-                    body: DeleteWorktreeClient.Request(
-                        worktreePath: worktree.path,
-                        force: force
-                    )
-                )
-            }
-            await refresh()
-        } catch let DeleteWorktreeClient.DeleteError.gitFailedForceable(stderr, status) {
-            pendingForceDelete = PendingForceDelete(
-                worktreePath: worktree.path,
-                stderr: stderr,
-                shortStatus: status,
-                requestContext: requestContext
+        await sendDelete(
+            worktreePath: worktree.path,
+            force: force,
+            requestContext: DeleteRequestContext(
+                hostID: host.id,
+                remoteConnectionProvider: remoteConnectionProvider
             )
-        } catch let error as DeleteWorktreeClient.DeleteError {
-            surfaceDeleteError(error)
-        } catch {
-            showErrorToast("Couldn't reach the server.")
-        }
+        )
     }
 
-    /// User confirmed Force Delete on a 409 forceable response —
-    /// re-issue with `force: true`.
+    /// User confirmed Force Delete on a force-allowed error — re-issue
+    /// with `force: true` against the host the first attempt targeted.
     private func performForceDelete(_ pending: PendingForceDelete) async {
+        await sendDelete(
+            worktreePath: pending.worktreePath,
+            force: true,
+            requestContext: pending.requestContext
+        )
+    }
+
+    private func sendDelete(
+        worktreePath: String,
+        force: Bool,
+        requestContext: DeleteRequestContext
+    ) async {
         do {
-            if pending.requestContext.remoteConnectionProvider != nil {
-                let response = try await RelayedWorktreeManagementClient.send(
-                    .delete(worktreeID: pending.worktreePath, force: true),
-                    using: pending.requestContext.remoteConnectionProvider
+            let response = try await RelayedWorktreeManagementClient.send(
+                .delete(worktreeID: worktreePath, force: force),
+                using: requestContext.remoteConnectionProvider
+            )
+            guard case .deleted = response else {
+                handleRemoteDeleteResponse(
+                    response,
+                    worktreePath: worktreePath,
+                    requestContext: requestContext
                 )
-                guard case .deleted = response else {
-                    handleRemoteDeleteResponse(
-                        response,
-                        worktreePath: pending.worktreePath,
-                        requestContext: pending.requestContext
-                    )
-                    return
-                }
-            } else {
-                _ = try await DeleteWorktreeClient.delete(
-                    baseURL: pending.requestContext.baseURL,
-                    body: DeleteWorktreeClient.Request(
-                        worktreePath: pending.worktreePath,
-                        force: true
-                    )
-                )
+                return
             }
             await refresh()
-        } catch let error as DeleteWorktreeClient.DeleteError {
-            surfaceDeleteError(error)
         } catch {
             showErrorToast("Couldn't reach the server.")
         }
     }
 
-    /// Surface an error after a delete attempt. Toasts the user-facing
-    /// message and re-fetches only when the list actually changed
-    /// server-side (`.notFound` means the row vanished between the
-    /// picker render and the delete request).
-    private func surfaceDeleteError(_ error: DeleteWorktreeClient.DeleteError) {
-        if let msg = error.userMessage {
-            showErrorToast(msg)
+    /// What a non-`.deleted` delete response asks the UI to do.
+    enum DeleteFailure: Equatable {
+        /// Present the Force Delete confirmation (IOS-9.8).
+        case confirmForce(stderr: String, shortStatus: String)
+        /// Present a non-retryable error toast.
+        case toast(String)
+    }
+
+    /// IOS-9.8: a force-allowed error asks for confirmation; any other
+    /// response is a flat, non-retryable toast.
+    static func deleteFailure(for response: WorktreeManagementResponse) -> DeleteFailure {
+        if case let .error(_, message, forceAllowed, shortStatus) = response {
+            return forceAllowed
+                ? .confirmForce(stderr: message, shortStatus: shortStatus ?? "")
+                : .toast(message)
         }
-        if case .notFound = error {
-            Task { await refresh() }
-        }
+        return .toast("The remote Mac returned an unexpected response.")
     }
 
     private func handleRemoteDeleteResponse(
@@ -1500,19 +1441,16 @@ public struct WorktreeListContent: View {
         worktreePath: String,
         requestContext: DeleteRequestContext
     ) {
-        if case let .error(_, message, forceAllowed, shortStatus) = response {
-            if forceAllowed {
-                pendingForceDelete = PendingForceDelete(
-                    worktreePath: worktreePath,
-                    stderr: message,
-                    shortStatus: shortStatus ?? "",
-                    requestContext: requestContext
-                )
-            } else {
-                showErrorToast(message)
-            }
-        } else {
-            showErrorToast("The remote Mac returned an unexpected response.")
+        switch Self.deleteFailure(for: response) {
+        case let .confirmForce(stderr, shortStatus):
+            pendingForceDelete = PendingForceDelete(
+                worktreePath: worktreePath,
+                stderr: stderr,
+                shortStatus: shortStatus,
+                requestContext: requestContext
+            )
+        case let .toast(message):
+            showErrorToast(message)
         }
     }
 
