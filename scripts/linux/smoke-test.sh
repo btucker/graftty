@@ -10,7 +10,7 @@ esac
 docker run --platform "$platform" --rm -i --mount "type=bind,source=$archive,target=/artifact.tar.gz,readonly" ubuntu:24.04 bash -s <<'SMOKE'
 set -euo pipefail
 # The stock Ubuntu image has no Swift installation.
-! command -v swift
+if command -v swift; then echo "smoke image unexpectedly has swift" >&2; exit 1; fi
 mkdir /bundle
 tar -xzf /artifact.tar.gz -C /bundle
 export HOME=/tmp/graftty-user
@@ -24,8 +24,23 @@ export GRAFTTY_STATE_DIR=/tmp/graftty-state
 export GRAFTTY_SOCK=/tmp/graftty-socket/graftty.sock
 graftty-host setup --json --runtime-directory /tmp/graftty-socket
 # Runtime linkage was checked before adding Git for the fixture repository.
-apt-get update >/dev/null
-apt-get install -y --no-install-recommends git >/dev/null
+# Bound apt so a mirror stall fails fast with a diagnostic instead of
+# consuming the job timeout in silence (#571). apt's own per-connection
+# timeout defaults to 120 s, so it is lowered well below the outer bound;
+# otherwise timeout(1) would kill apt before its retries could ever run.
+apt_timeout=120
+apt_log="${apt_log:-/tmp/apt.log}"
+apt_bounded() {
+    local status=0
+    timeout -k 10 "$apt_timeout" "$@" -o Acquire::Retries=3 -o Acquire::http::Timeout=20 </dev/null >"$apt_log" 2>&1 || status=$?
+    if (( status != 0 )); then
+        echo "apt step failed (exit $status; 124 = timed out after $apt_timeout s): $*" >&2
+        cat "$apt_log" >&2
+        return "$status"
+    fi
+}
+apt_bounded apt-get update
+apt_bounded apt-get install -y --no-install-recommends git
 mkdir /tmp/fixture
 git -C /tmp/fixture init -q -b main
 git -C /tmp/fixture -c user.name=Smoke -c user.email=smoke@example.invalid commit -q --allow-empty -m fixture
