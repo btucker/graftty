@@ -30,6 +30,11 @@ final class AppStateChanges {
         max(settleInterval, minimumRebuildInterval - elapsed)
     }
 
+    /// The default `settle` for observers: sleeps out `settleDelay`.
+    nonisolated static let waitToSettle: @Sendable (_ sinceLastRebuild: Duration) async -> Void = {
+        try? await Task.sleep(for: AppStateChanges.settleDelay(sinceLastRebuild: $0))
+    }
+
     private let revisions = LatestValueBroadcast<UInt64>()
     private var revision: UInt64 = 0
     private var cancellables: Set<AnyCancellable> = []
@@ -72,9 +77,7 @@ final class AppStateChanges {
     /// already covering the latest revision is not repeated. Returns when
     /// the calling task is cancelled.
     nonisolated func observe(
-        settle: @escaping @Sendable (_ sinceLastRebuild: Duration) async -> Void = {
-            try? await Task.sleep(for: AppStateChanges.settleDelay(sinceLastRebuild: $0))
-        },
+        settle: @escaping @Sendable (_ sinceLastRebuild: Duration) async -> Void = AppStateChanges.waitToSettle,
         ticks: AsyncStream<Void> = AppStateChanges.ticks(every: AppStateChanges.safetyNetInterval),
         refresh: @escaping @MainActor () async -> Void
     ) async {
