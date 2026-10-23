@@ -19,12 +19,13 @@ private final class PersistenceProbe {
         var parked = false
 
         func record(_ state: AppState) throws {
-            let gate = lock.withLock { gate }
-            if let gate {
+            // `self.` keeps Swift 6.3 from resolving the closure's name to
+            // the local being declared.
+            if let gate = lock.withLock({ self.gate }) {
                 lock.withLock { parked = true }
                 _ = gate.wait(timeout: .now() + lock.withLock { holdLimit })
             }
-            if let failure = lock.withLock({ failure }) { throw failure }
+            if let failure = lock.withLock({ self.failure }) { throw failure }
             lock.withLock { states.append(state) }
         }
     }
