@@ -99,17 +99,17 @@ struct GitDelegationStoreTests {
         }
         #expect(throws: (any Error).self) { try store.install(assignment(generation: 0), at: now) }
         #expect(throws: (any Error).self) { try store.install(assignment(expires: now), at: now) }
-        let assignment = try assignment()
-        try store.install(assignment, at: now)
+        let validAssignment = try assignment()
+        try store.install(validAssignment, at: now)
         let file = root.appendingPathComponent("delegations.json")
         let original = try Data(contentsOf: file)
         for broken in [Data("{bad".utf8), Data("{\"version\":99,\"records\":[]}".utf8)] {
             try broken.write(to: file)
-            #expect(throws: (any Error).self) { try store.authorize(request(assignment), authenticatedPeer: peer(), at: now) }
-            #expect(throws: (any Error).self) { try store.install(assignment, at: now) }
+            #expect(throws: (any Error).self) { try store.authorize(request(validAssignment), authenticatedPeer: peer(), at: now) }
+            #expect(throws: (any Error).self) { try store.install(validAssignment, at: now) }
             #expect(try Data(contentsOf: file) == broken)
         }
         try original.write(to: file)
-        #expect(try store.authorize(request(assignment), authenticatedPeer: peer(), at: now) == assignment)
+        #expect(try store.authorize(request(validAssignment), authenticatedPeer: peer(), at: now) == validAssignment)
     }
 }

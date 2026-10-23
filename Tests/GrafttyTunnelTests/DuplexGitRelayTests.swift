@@ -15,6 +15,10 @@ struct DuplexGitRelayTests {
         let root = URL(fileURLWithPath: "/tmp/graftty-git-relay-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        // The repository's test scripts require Python. Check before launching
+        // receive-pack so a minimal build image fails instead of waiting for a
+        // connector that could never start.
+        _ = try command(["python3", "--version"], root: root)
         let source = root.appendingPathComponent("source")
         let replica = root.appendingPathComponent("replica.git")
         _ = try git(["init", "--initial-branch=main", source.path], root: root)
@@ -67,11 +71,15 @@ struct DuplexGitRelayTests {
 
     private func transfer(group: MultiThreadedEventLoopGroup, root: URL, source: URL, replica: URL, helper: URL) async throws {
         let socket = root.appendingPathComponent("git.sock").path
-        let connected = group.next().makePromise(of: DuplexByteRelay.Endpoint.self)
+        let connected = PendingConnection(loop: group.next())
+        let connectionDeadline = group.next().scheduleTask(in: .seconds(5)) {
+            connected.complete(.failure(GitFailure.connectionTimedOut))
+        }
+        defer { connectionDeadline.cancel() }
         let listener = try await ServerBootstrap(group: group)
             .childChannelOption(ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 32 * 1024))
             .childChannelInitializer { channel in
-                DuplexByteRelay.prepare(channel).map { connected.succeed($0) }
+                DuplexByteRelay.prepare(channel).map { connected.complete(.success($0)) }
             }.bind(unixDomainSocketPath: socket).get()
         defer { listener.close(promise: nil) }
         let receiver = Process()
@@ -104,10 +112,16 @@ struct DuplexGitRelayTests {
         defer { pipe.close(promise: nil) }
         let parent = try await prepared.futureResult.get()
         let sender = Task.detached {
-            try git(["-C", source.path, "-c", "protocol.ext.allow=always", "push", "--porcelain",
-                     "ext::python3 \(helper.path) \(socket)", "HEAD:refs/heads/main"], root: root)
+            do {
+                return try git(["-C", source.path, "-c", "protocol.ext.allow=always", "push", "--porcelain",
+                         "ext::python3 \(helper.path) \(socket)", "HEAD:refs/heads/main"], root: root)
+            } catch {
+                connected.complete(.failure(error))
+                throw error
+            }
         }
-        let worker = try await connected.futureResult.get()
+        let worker = try await connected.promise.futureResult.get()
+        connectionDeadline.cancel()
         do {
             try await DuplexByteRelay.run(worker, parent, deadline: .now.advanced(by: .seconds(20)), authorize: {})
             let result = try await sender.value
@@ -130,9 +144,13 @@ private func environment(root: URL) -> [String: String] {
 }
 
 private func git(_ arguments: [String], root: URL) throws -> Data {
+    try command(["git"] + arguments, root: root)
+}
+
+private func command(_ arguments: [String], root: URL) throws -> Data {
     let process = Process(), output = Pipe()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = ["git"] + arguments
+    process.arguments = arguments
     process.environment = environment(root: root)
     process.standardInput = FileHandle.nullDevice
     process.standardOutput = output
@@ -140,8 +158,24 @@ private func git(_ arguments: [String], root: URL) throws -> Data {
     try process.run()
     let data = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
-    guard process.terminationStatus == 0 else { throw GitFailure.exit(process.terminationStatus) }
+    guard process.terminationStatus == 0 else { throw GitFailure.exit(process.terminationStatus, arguments.first ?? "fixture") }
     return data
 }
 
-private enum GitFailure: Error { case exit(Int32) }
+private enum GitFailure: Error { case exit(Int32, String), connectionTimedOut }
+
+private final class PendingConnection: @unchecked Sendable {
+    let promise: EventLoopPromise<DuplexByteRelay.Endpoint>
+    private let lock = NSLock()
+    private var completed = false
+    init(loop: EventLoop) { promise = loop.makePromise() }
+    func complete(_ result: Result<DuplexByteRelay.Endpoint, any Error>) {
+        let accepted = lock.withLock {
+            guard !completed else { return false }
+            completed = true
+            return true
+        }
+        if accepted { promise.completeWith(result) }
+        else if case .success(let endpoint) = result { endpoint.channel.close(promise: nil) }
+    }
+}
