@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import GrafttyCLI
 import GrafttyKit
@@ -23,11 +24,11 @@ struct ImageCLITests {
         let server = SocketServer(socketPath: socket)
         defer { server.stop() }
         for response in [ResponseMessage.ok, .error("Image rejected")] {
-            var received: NotificationMessage?
-            server.onRequest = { message in received = message; return response }
+            let received = OSAllocatedUnfairLock<NotificationMessage?>(initialState: nil)
+            server.onAsyncRequest = { message in received.withLock { $0 = message }; return response }
             try server.start()
             let result = try await runImage(executable: executable, target: target, socket: socket)
-            #expect(received == .previewFiles(path: "", targets: [target, target + ".html"], paneSessionName: "fixture-pane"))
+            #expect(received.withLock { $0 } == .previewFiles(path: "", targets: [target, target + ".html"], paneSessionName: "fixture-pane"))
             #expect(result.stdout.isEmpty)
             #expect(result.status == (response == .ok ? 0 : 1))
             #expect(response == .ok ? result.stderr.isEmpty : result.stderr.contains("Image rejected"))
