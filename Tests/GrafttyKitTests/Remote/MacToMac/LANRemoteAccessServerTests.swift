@@ -33,7 +33,21 @@ struct LANRemoteAccessServerTests {
     /// #678: glibc's `getaddrinfo` applies `AI_ADDRCONFIG` to `::`, so NIO's
     /// `bind(host:port:)` rejects it on hosts with no global IPv6 address
     /// even where the kernel serves dual-stack (a Docker bridge container).
-    static let resolverRejectsWildcard = (try? SocketAddress.makeAddressResolvingHost("::", port: 0)) == nil
+    static let resolverRejectsWildcard: Bool = {
+        do {
+            _ = try SocketAddress.makeAddressResolvingHost("::", port: 0)
+            return false
+        } catch {
+            return isWildcardResolutionFailure(error)
+        }
+    }()
+
+    /// Only #678's own error counts as known: `UnknownHost` for `::` with
+    /// glibc's `EAI_ADDRFAMILY` (-9). Any other failure is still reported.
+    private static func isWildcardResolutionFailure(_ error: (any Error)?) -> Bool {
+        guard let unknownHost = error as? SocketAddressError.UnknownHost else { return false }
+        return unknownHost.host == "::" && unknownHost.errorCode == -9
+    }
 
     private static let kernelServesDualStack: Bool = {
         let descriptor = socket(AF_INET6, GrafttyPOSIX.streamSocket, 0)
@@ -101,6 +115,8 @@ struct LANRemoteAccessServerTests {
             #expect(Self.canConnectToIPv6Loopback(port: port))
         } when: {
             Self.resolverRejectsWildcard
+        } matching: { issue in
+            Self.isWildcardResolutionFailure(issue.error)
         }
     }
 
@@ -126,6 +142,8 @@ struct LANRemoteAccessServerTests {
             #expect(Self.canConnectToIPv6Loopback(port: port))
         } when: {
             Self.resolverRejectsWildcard
+        } matching: { issue in
+            Self.isWildcardResolutionFailure(issue.error)
         }
     }
 
