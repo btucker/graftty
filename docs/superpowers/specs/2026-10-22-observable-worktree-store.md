@@ -118,7 +118,8 @@ public actor WorktreePanesStore {
   remote Mac's `store.frameUpdates()` instead of re-reading `currentSnapshot` every
   second.
 - **Local rows:** an `AppStateChanges = LatestValueBroadcast<UInt64>`
-  revision counter, published from the existing `.onChange(of: appState)`
+  revision counter, published on every `AppStatePersister` mark (the
+  window's `.onChange(of: appState)` and windowless mutators, PERF-1.22)
   plus the other change points listed in #480. Replay-latest gives each
   new subscriber an immediate first build; newest-only buffering coalesces
   bursts. Debouncing and the safety-net tick that #480 proposes stay with
