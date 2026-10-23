@@ -1544,6 +1544,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-1.14** While web access is enabled and the latest server bring-up attempt failed with a transient dependency error (Tailscale daemon unreachable, MagicDNS name not yet published, or certificate not yet mintable), the application shall automatically retry bring-up with capped exponential backoff until it succeeds or web access is disabled.
 
+**WEB-1.15** While web access is enabled, the application shall query the Tailscale daemon off the main actor, so constructing the web server controller or applying a Web Access settings change returns without waiting for the daemon to respond.
+
 ### WEB-2.x — Authorization
 
 **WEB-2.1** The application shall resolve each incoming peer IP via Tailscale LocalAPI `whois` before serving any content at any path.
