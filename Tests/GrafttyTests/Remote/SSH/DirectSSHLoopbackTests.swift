@@ -644,6 +644,15 @@ struct DirectSSHLoopbackTests {
     }
     #endif
 
+    @Test("@spec REMOTE-20.17: When the direct SSH listener's bind host is a numeric IP address such as `::`, the application shall bind that address without name resolution, so the listener starts on a Linux host with no non-loopback IPv6 address.", .timeLimit(.minutes(1)))
+    func numericWildcardBindSkipsNameResolution() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let server = f.server()
+        let port = try await server.start(host: "::", port: 0)
+        await server.close()
+        #expect(port > 0)
+    }
+
     @Test("@spec REMOTE-20.3: When a paired peer connects over direct SSH, the application shall authenticate and dispatch existing Graftty subsystem channels over TCP.", .timeLimit(.minutes(1)))
     func subsystemRoundTrip() async throws {
         let f = Fixture(); defer { f.cleanup() }

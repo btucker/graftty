@@ -208,16 +208,13 @@ public struct IPadRootLayout: View {
         )) {
             await refreshHostPresentationState()
         }
-        // The layout owns the shared worktree rows, so they stay current
-        // whether or not the sidebar list is on screen. IPAD-1.24 pins the
-        // collapsed-sidebar case; #648 tracks the shown one.
-        .task(id: WorktreeFeedKey(
-            hostID: selectedHost?.id,
-            isReady: LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked),
-            hasUpdates: remote?.providers.updates != nil
-        )) {
-            await observeWorktrees()
-        }
+        // Outside the split view, so the shared rows stay current whether
+        // or not the sidebar list is on screen (IPAD-1.24).
+        .modifier(IPadWorktreeFeed(host: remote?.host, updates: remote?.providers.updates, appState: appState) { list in
+            reconcileMobileCloseProjections(in: list)
+            resolveLegacyMobileSplit(in: list)
+            applyPendingMobileCreatedFocus(in: list)
+        })
         .task(id: PaneEnvironmentRefreshKey(
             hostID: selectedHost?.id,
             isReady: LiveSessionReadiness.isActive(
@@ -266,32 +263,6 @@ public struct IPadRootLayout: View {
 
     private func remoteProviders(for host: Host) -> RemoteWorktreeProviders {
         RemoteWorktreeProviders(coordinator: coordinator, host: host, worktreeUpdates: worktreeUpdates)
-    }
-
-    /// Applies the selected host's pushed frames to the shared worktree rows
-    /// and settles pane mutations waiting on them (IPAD-1.24).
-    private func observeWorktrees() async {
-        guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked),
-              let host = selectedHost,
-              let updates = remoteProviders(for: host).updates?() else { return }
-        // Compare with what this observation applied, not with
-        // `latestWorktrees`: RootView seeds that from activation fetches
-        // without recomputing what derives from it (IPAD-1.25).
-        var applied: [WorktreePanes]?
-        for await update in updates {
-            guard !Task.isCancelled, appState.selectedHostId == host.id else { return }
-            guard case let .frame(.snapshot(list, _)) = update else {
-                // Keep the last rows while the host is unreachable.
-                continue
-            }
-            // A sidebar-only frame repeats the rows (IOS-4.31).
-            guard list != applied else { continue }
-            applied = list
-            Self.onWorktreeListChanged(appState: appState, list: list)
-            reconcileMobileCloseProjections(in: list)
-            resolveLegacyMobileSplit(in: list)
-            applyPendingMobileCreatedFocus(in: list)
-        }
     }
 
     static func onWorktreeListChanged(appState: IPadAppState, list: [WorktreePanes]) {
@@ -1240,12 +1211,6 @@ public struct IPadRootLayout: View {
         paneEnvironment = .empty
         await current.close()
     }
-}
-
-private struct WorktreeFeedKey: Hashable {
-    let hostID: UUID?
-    let isReady: Bool
-    let hasUpdates: Bool
 }
 
 private struct PaneEnvironmentRefreshKey: Hashable {

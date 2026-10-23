@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import Foundation
 import Testing
 @testable import GrafttyKit
@@ -126,15 +130,15 @@ struct ClaudePeerReplyBridgeTests {
         }
         let path = try #require(try await bridge.replySocketPath(message: message(), recipient: recipient()))
         let fd = try connectSocket(path)
-        defer { Darwin.close(fd) }
+        defer { GrafttyPOSIX.close(fd) }
         // The peer keeps its write side open without a complete JSON line.
         var byte: UInt8 = 0x7B
-        #expect(Darwin.write(fd, &byte, 1) == 1)
+        #expect(GrafttyPOSIX.write(fd, &byte, 1) == 1)
         #expect(await socketCloses(fd))
         #expect(await recorder.calls.isEmpty)
 
         let secondFD = try connectSocket(path)
-        defer { Darwin.close(secondFD) }
+        defer { GrafttyPOSIX.close(secondFD) }
         await bridge.close()
         #expect(await socketCloses(secondFD))
         #expect(await recorder.calls.isEmpty)
@@ -149,13 +153,13 @@ struct ClaudePeerReplyBridgeTests {
                 // runs. Allow accept/worker scheduling under the parallel full
                 // suite, and keep this blocking poll off the cooperative pool.
                 var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-                let ready = Darwin.poll(&descriptor, 1, 15_000)
+                let ready = poll(&descriptor, 1, 15_000)
                 guard ready > 0 else {
                     continuation.resume(returning: false)
                     return
                 }
                 var byte: UInt8 = 0
-                let count = Darwin.recv(fd, &byte, 1, MSG_DONTWAIT)
+                let count = GrafttyPOSIX.recv(fd, &byte, 1, Int32(MSG_DONTWAIT))
                 continuation.resume(returning: count == 0 || (count < 0 && errno == ECONNRESET))
             }
         }
@@ -170,7 +174,7 @@ struct ClaudePeerReplyBridgeTests {
     }
 
     private func connectSocket(_ path: String) throws -> Int32 {
-        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = GrafttyPOSIX.socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         guard fd >= 0 else { throw ClaudePeerReplyBridgeError.socketSetupFailed(errno) }
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
@@ -181,12 +185,12 @@ struct ClaudePeerReplyBridgeTests {
         }
         let result = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                GrafttyPOSIX.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
         guard result == 0 else {
             let error = errno
-            Darwin.close(fd)
+            GrafttyPOSIX.close(fd)
             throw ClaudePeerReplyBridgeError.socketSetupFailed(error)
         }
         return fd

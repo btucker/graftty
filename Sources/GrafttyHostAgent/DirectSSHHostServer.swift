@@ -131,7 +131,7 @@ public actor DirectSSHHostServer {
                         try channel.pipeline.syncOperations.addHandler(handler)
                         try channel.pipeline.syncOperations.addHandler(DirectSSHErrorHandler())
                     }
-                }.bind(host: host, port: port).get()
+                }.bind(numericOrResolvedHost: host, port: port).get()
             try Task.checkCancellation()
             guard self.generation == generation else {
                 try? await channel.close().get()

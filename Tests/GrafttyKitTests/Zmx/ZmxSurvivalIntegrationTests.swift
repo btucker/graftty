@@ -1,6 +1,10 @@
 import Testing
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 @testable import GrafttyKit
 
 @Suite("ZmxLauncher — survival contract (integration)")
@@ -75,7 +79,7 @@ struct ZmxSurvivalIntegrationTests {
             guard let data = string.data(using: .utf8) else { return }
             try data.withUnsafeBytes { ptr in
                 guard let base = ptr.baseAddress else { return }
-                let n = Darwin.write(masterFd, base, ptr.count)
+                let n = GrafttyPOSIX.write(masterFd, base, ptr.count)
                 if n < 0 {
                     throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
                 }
@@ -88,7 +92,7 @@ struct ZmxSurvivalIntegrationTests {
             var result = ""
             while true {
                 let n = buf.withUnsafeMutableBytes { ptr in
-                    Darwin.read(masterFd, ptr.baseAddress!, ptr.count)
+                    GrafttyPOSIX.read(masterFd, ptr.baseAddress!, ptr.count)
                 }
                 if n <= 0 { break }
                 result += String(bytes: buf.prefix(n), encoding: .utf8) ?? ""
@@ -109,7 +113,7 @@ struct ZmxSurvivalIntegrationTests {
                 kill(process.processIdentifier, SIGKILL)
                 process.waitUntilExit()
             }
-            Darwin.close(masterFd)
+            GrafttyPOSIX.close(masterFd)
         }
     }
 
@@ -120,6 +124,26 @@ struct ZmxSurvivalIntegrationTests {
         launcher: ZmxLauncher,
         sessionName: String
     ) throws -> PtyAttach {
+        var env = launcher.subprocessEnv(from: ProcessInfo.processInfo.environment)
+        // Force a deterministic shell so prompt-detection and SHELL
+        // expansion behave the same on every dev machine.
+        env["SHELL"] = "/bin/sh"
+        return try spawnShellWithEnv(
+            executable: "/bin/sh",
+            args: ["-c", launcher.attachCommand(sessionName: sessionName)],
+            env: env
+        )
+    }
+
+    /// Spawn an arbitrary executable with the given env on a fresh PTY
+    /// pair. `spawnAttach` uses it for `zmx attach`;
+    /// `innerShellEmitsOsc7AfterCdWhenGhosttyIntegrationPresent` uses it to
+    /// stage the outer shell.
+    static func spawnShellWithEnv(
+        executable: String,
+        args: [String],
+        env: [String: String]
+    ) throws -> PtyAttach {
         // Open a master PTY.
         let master = posix_openpt(O_RDWR | O_NOCTTY)
         guard master >= 0 else {
@@ -127,25 +151,24 @@ struct ZmxSurvivalIntegrationTests {
                           userInfo: [NSLocalizedDescriptionKey: "posix_openpt failed"])
         }
         guard grantpt(master) == 0, unlockpt(master) == 0 else {
-            Darwin.close(master)
+            GrafttyPOSIX.close(master)
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
                           userInfo: [NSLocalizedDescriptionKey: "grantpt/unlockpt failed"])
         }
-        guard let slaveNamePtr = ptsname(master) else {
-            Darwin.close(master)
+        guard let slaveName = GrafttyPOSIX.ptySlavePath(master) else {
+            GrafttyPOSIX.close(master)
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
                           userInfo: [NSLocalizedDescriptionKey: "ptsname failed"])
         }
-        let slaveName = String(cString: slaveNamePtr)
 
         // Set the master fd to non-blocking so readAvailable() doesn't hang.
         let flags = fcntl(master, F_GETFL)
         _ = fcntl(master, F_SETFL, flags | O_NONBLOCK)
 
         // Open the slave side.
-        let slave = Darwin.open(slaveName, O_RDWR | O_NOCTTY)
+        let slave = GrafttyPOSIX.open(slaveName, O_RDWR | O_NOCTTY)
         guard slave >= 0 else {
-            Darwin.close(master)
+            GrafttyPOSIX.close(master)
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
                           userInfo: [NSLocalizedDescriptionKey: "open slave PTY failed: \(slaveName)"])
         }
@@ -155,12 +178,8 @@ struct ZmxSurvivalIntegrationTests {
         let slaveHandle = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", launcher.attachCommand(sessionName: sessionName)]
-        var env = launcher.subprocessEnv(from: ProcessInfo.processInfo.environment)
-        // Force a deterministic shell so prompt-detection and SHELL
-        // expansion behave the same on every dev machine.
-        env["SHELL"] = "/bin/sh"
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = args
         process.environment = env
         process.standardInput = slaveHandle
         process.standardOutput = slaveHandle
@@ -172,7 +191,7 @@ struct ZmxSurvivalIntegrationTests {
         // so EOF on the master correctly signals "child gone." Without this, the
         // master-side reader would never see EOF if the child crashes, since
         // the parent's still-open slave keeps the kernel's pipe alive.
-        Darwin.close(slave)
+        GrafttyPOSIX.close(slave)
 
         return PtyAttach(process: process, masterFd: master)
     }
@@ -312,7 +331,7 @@ struct ZmxSurvivalIntegrationTests {
             )
             defer { try? FileManager.default.removeItem(atPath: fakeHome) }
             for name in [".zshrc", ".zshenv", ".zprofile", ".zlogin"] {
-                FileManager.default.createFile(atPath: "\(fakeHome)/\(name)", contents: nil)
+                _ = FileManager.default.createFile(atPath: "\(fakeHome)/\(name)", contents: nil)
             }
 
             let session = launcher.sessionName(for: UUID())
@@ -354,45 +373,6 @@ struct ZmxSurvivalIntegrationTests {
                 "expected OSC 7 from Ghostty zsh integration inside zmx after cd; got: \(final.suffix(600))"
             )
         }
-    }
-
-    /// Spawn an arbitrary executable with the given env on a fresh PTY
-    /// pair. Sibling of `spawnAttach`, but for executables other than
-    /// `zmx attach` (used to stage the outer shell in
-    /// `innerShellEmitsOsc7AfterCdWhenGhosttyIntegrationPresent`).
-    static func spawnShellWithEnv(
-        executable: String,
-        args: [String],
-        env: [String: String]
-    ) throws -> PtyAttach {
-        let master = posix_openpt(O_RDWR | O_NOCTTY)
-        guard master >= 0,
-              grantpt(master) == 0,
-              unlockpt(master) == 0,
-              let slaveNamePtr = ptsname(master) else {
-            if master >= 0 { Darwin.close(master) }
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-        }
-        let slaveName = String(cString: slaveNamePtr)
-        let flags = fcntl(master, F_GETFL)
-        _ = fcntl(master, F_SETFL, flags | O_NONBLOCK)
-        let slave = Darwin.open(slaveName, O_RDWR | O_NOCTTY)
-        guard slave >= 0 else {
-            Darwin.close(master)
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-        }
-        let slaveHandle = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = args
-        process.environment = env
-        process.standardInput = slaveHandle
-        process.standardOutput = slaveHandle
-        process.standardError = slaveHandle
-        try process.run()
-        Darwin.close(slave)
-        return PtyAttach(process: process, masterFd: master)
     }
 
     @Test func isSessionMissingFlipsAfterKill() throws {

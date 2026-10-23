@@ -2440,7 +2440,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.23** When a host publishes or renders a worktree row, the application shall project it through the one shared WorktreePanes projection, sending a pane layout only for a running worktree unless the Mac sidebar asks to keep a stopped worktree's saved layout, and dropping divergence stats for a worktree without an on-disk checkout.
 
-**IPAD-1.24** While the iPad layout displays a paired host with the sidebar column collapsed, the application shall apply the host's pushed panes-state frames to the shared worktree state, so the collapsed-sidebar attention indicator (IPAD-1.11) stays current without the sidebar list on screen.
+**IPAD-1.24** While the iPad layout displays a paired host, the application shall apply the host's pushed panes-state frames to the shared worktree state from outside the split view's columns, so the collapsed-sidebar attention indicator (IPAD-1.11) stays current without the sidebar list on screen.
 
 **IPAD-1.25** When the iPad layout starts observing a paired host's pushed panes-state frames, the application shall recompute the shared worktree state from the first frame even if its rows equal the rows already stored, such as rows seeded by a notification or recent-pane activation, so the collapsed-sidebar attention indicator (IPAD-1.11) reflects them.
 
@@ -3004,6 +3004,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.21** When the paired-access listener binds a port other than the protocol default, the application shall advertise Tailscale routes on that same port, so every advertised route reaches the listener that answered the exchange.
 
+**REMOTE-2.22** When the LAN remote-access listener's bind host is a numeric IP address, the application shall bind that address without name resolution, so a `::` listener starts on a Linux host with no non-loopback IPv6 address; a host name shall still be resolved.
+
+**REMOTE-2.23** If the LAN remote-access listener's configured port is outside 0–65535, then the application shall fail to start with a thrown error rather than terminate the process.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -3330,6 +3334,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-20.16** If a direct SSH connection is closed while it is still waiting for authentication, then the pending connect shall fail and return rather than wait forever.
 
+**REMOTE-20.17** When the direct SSH listener's bind host is a numeric IP address such as `::`, the application shall bind that address without name resolution, so the listener starts on a Linux host with no non-loopback IPv6 address.
+
 ### REMOTE-21.x
 
 **REMOTE-21.1** When Linux setup receives an OpenSSH alias or user destination, the application shall preserve that destination and quote remote arguments without accepting SSH option injection.
@@ -3563,6 +3569,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-24.12** When a snapshot shows the pane a remote split created before the split response arrives, and no explicit intent intervened, the viewer shall focus the created pane once the response arrives.
 
 **REMOTE-24.13** While remote pane mutations are queued or in flight, the viewer shall publish a change only when its selection, layout, or opening state changes, so queue bookkeeping alone does not re-evaluate the window.
+
+**REMOTE-24.14** If a dispatched remote pane mutation has no reply after thirty seconds, then the viewer shall report the timeout, abandon that worktree's queued mutations, release the queue for other Macs, and ignore the expired dispatch's late result.
 
 ### REMOTE-25.x — Dev Container environments
 

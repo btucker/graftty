@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import Testing
 @testable import GrafttyKit
 
@@ -23,13 +27,13 @@ struct ShellSleepActivityTests {
         _ = fcntl(child.masterFD, F_SETFL, O_NONBLOCK)
         func input(_ text: String) {
             let bytes = Array(text.utf8)
-            #expect(bytes.withUnsafeBytes { Darwin.write(child.masterFD, $0.baseAddress, $0.count) } == bytes.count)
+            #expect(bytes.withUnsafeBytes { GrafttyPOSIX.write(child.masterFD, $0.baseAddress, $0.count) } == bytes.count)
         }
         func waitFor(_ kind: String) throws {
             let deadline = Date().addingTimeInterval(3)
             var buffer = [UInt8](repeating: 0, count: 4096)
             while Date() < deadline {
-                _ = Darwin.read(child.masterFD, &buffer, buffer.count)
+                _ = GrafttyPOSIX.read(child.masterFD, &buffer, buffer.count)
                 if let contents = try? String(contentsOf: state, encoding: .utf8),
                    contents.split(separator: " ").dropFirst().first == Substring(kind) { return }
                 Thread.sleep(forTimeInterval: 0.01)
