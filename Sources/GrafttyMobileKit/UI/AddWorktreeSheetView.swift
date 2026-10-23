@@ -9,11 +9,10 @@ import SwiftUI
 public struct AddWorktreeSheetView: View {
 
     public let host: Host
-    public let includeRemoteWorktrees: Bool
     public let remoteConnectionProvider: RemoteConnectionProvider?
     public struct Submission {
         public let request: CreateWorktreeClient.Request
-        public let repository: ReposFetcher.RepoInfo
+        public let repository: RepoInfo
         public let existingSource: RemoteRepositoryInfo.Branch.Source?
     }
 
@@ -40,12 +39,10 @@ public struct AddWorktreeSheetView: View {
 
     public init(
         host: Host,
-        includeRemoteWorktrees: Bool = false,
         remoteConnectionProvider: RemoteConnectionProvider? = nil,
         onSubmit: @escaping (Submission) -> Void
     ) {
         self.host = host
-        self.includeRemoteWorktrees = includeRemoteWorktrees
         self.remoteConnectionProvider = remoteConnectionProvider
         self.onSubmit = onSubmit
     }
@@ -68,7 +65,7 @@ public struct AddWorktreeSheetView: View {
     static func existingBranchSource(
         repositoryID: String,
         branchName: String,
-        repositories: [ReposFetcher.RepoInfo]
+        repositories: [RepoInfo]
     ) -> RemoteRepositoryInfo.Branch.Source {
         repositories.first(where: { $0.path == repositoryID })?
             .branches?
@@ -78,7 +75,7 @@ public struct AddWorktreeSheetView: View {
 
     private enum ReposState {
         case loading
-        case loaded([ReposFetcher.RepoInfo])
+        case loaded([RepoInfo])
         case error(String)
     }
 
@@ -129,7 +126,7 @@ public struct AddWorktreeSheetView: View {
     }
 
     @ViewBuilder
-    private func form(repos: [ReposFetcher.RepoInfo]) -> some View {
+    private func form(repos: [RepoInfo]) -> some View {
         let targets = targetMacs(in: repos)
         let visibleRepos = repositories(on: selectedTargetID, from: repos)
         Form {
@@ -219,37 +216,36 @@ public struct AddWorktreeSheetView: View {
             && !WorktreeNameSanitizer.trimForSubmit(branchName).isEmpty
     }
 
+    enum RepositoryLoadError: Error, Equatable {
+        case unexpectedResponse
+    }
+
+    /// IOS-9.17: repositories come only from the authenticated paired
+    /// connection; with none, the list fails closed.
+    static func loadRepositories(
+        using provider: RemoteConnectionProvider?
+    ) async throws -> [RepoInfo] {
+        let response = try await RelayedWorktreeManagementClient.send(
+            .listRepositories,
+            using: provider
+        )
+        guard case .repositories(let remoteRepositories) = response else {
+            throw RepositoryLoadError.unexpectedResponse
+        }
+        return remoteRepositories.map {
+            RepoInfo(
+                path: $0.id,
+                displayName: $0.displayName,
+                branches: $0.branches,
+                origin: $0.origin
+            )
+        }
+    }
+
     private func loadRepos() async {
         reposState = .loading
         do {
-            let repos: [ReposFetcher.RepoInfo]
-            if remoteConnectionProvider != nil {
-                let response = try await
-                    RelayedWorktreeManagementClient.send(
-                        .listRepositories,
-                        using: remoteConnectionProvider
-                    )
-                guard case .repositories(let remoteRepositories) = response
-                else {
-                    reposState = .error(
-                        "The paired Mac returned an unexpected response."
-                    )
-                    return
-                }
-                repos = remoteRepositories.map {
-                    ReposFetcher.RepoInfo(
-                        path: $0.id,
-                        displayName: $0.displayName,
-                        branches: $0.branches,
-                        origin: $0.origin
-                    )
-                }
-            } else {
-                repos = try await ReposFetcher.fetch(
-                    baseURL: host.baseURL,
-                    includeRemoteWorktrees: includeRemoteWorktrees
-                )
-            }
+            let repos = try await Self.loadRepositories(using: remoteConnectionProvider)
             reposState = .loaded(repos)
             let selectedRepo = repos.first { $0.path == selectedRepoPath }
             let targets = targetMacs(in: repos)
@@ -264,20 +260,20 @@ public struct AddWorktreeSheetView: View {
                     from: repos
                 ).first?.path
             }
-        } catch let err as ReposFetcher.FetchError {
-            reposState = .error(err.userMessage)
+        } catch RepositoryLoadError.unexpectedResponse {
+            reposState = .error("The paired Mac returned an unexpected response.")
         } catch {
-            reposState = .error(ReposFetcher.FetchError.transport.userMessage)
+            reposState = .error("Couldn't reach the server.")
         }
     }
 
-    private func targetID(for repo: ReposFetcher.RepoInfo) -> String {
+    private func targetID(for repo: RepoInfo) -> String {
         repo.origin.map { "device:\($0.deviceID.value)" }
             ?? "legacy:connected-mac"
     }
 
     private func targetMacs(
-        in repos: [ReposFetcher.RepoInfo]
+        in repos: [RepoInfo]
     ) -> [TargetMac] {
         var seen: Set<String> = []
         let targets = repos.compactMap { repo -> TargetMac? in
@@ -303,8 +299,8 @@ public struct AddWorktreeSheetView: View {
 
     private func repositories(
         on targetID: String?,
-        from repos: [ReposFetcher.RepoInfo]
-    ) -> [ReposFetcher.RepoInfo] {
+        from repos: [RepoInfo]
+    ) -> [RepoInfo] {
         guard let targetID else { return [] }
         return repos.filter { self.targetID(for: $0) == targetID }
     }

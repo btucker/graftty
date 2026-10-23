@@ -7,6 +7,15 @@ import Testing
 @Suite("AddWorktreeSheetView submit policy")
 struct AddWorktreeSheetViewTests {
     @Test("""
+@spec IOS-9.17: If the mobile Add Worktree sheet has no authenticated paired connection, then the application shall fail its repository list closed instead of reading repositories over unauthenticated HTTP.
+""")
+    func repositoryListFailsClosedWithoutPairedConnection() async {
+        await #expect(throws: RelayedWorktreeManagementClient.ClientError.pairedConnectionUnavailable) {
+            _ = try await AddWorktreeSheetView.loadRepositories(using: nil)
+        }
+    }
+
+    @Test("""
 @spec IOS-9.10: While the mobile Add Worktree sheet is valid and not submitting, pressing Return on a hardware keyboard shall submit Create; invalid or already-submitting forms shall ignore Return.
 """)
     func returnSubmitPolicy() {
@@ -61,7 +70,7 @@ struct AddWorktreeSheetViewTests {
             ),
         ]
         let repositories = [
-            ReposFetcher.RepoInfo(
+            RepoInfo(
                 path: "relay-repository-token",
                 displayName: "app",
                 branches: branches

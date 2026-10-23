@@ -2286,6 +2286,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.16** While a mobile worktree row is creating, deleting, or opening, the application shall center its progress indicator beside the primary title without moving the title baseline or enlarging the row.
 
+**IOS-9.17** If the mobile Add Worktree sheet has no authenticated paired connection, then the application shall fail its repository list closed instead of reading repositories over unauthenticated HTTP.
+
 ### IOS-10.x
 
 **IOS-10.1** While `scenePhase` is transiently `.inactive`, the application shall preserve active terminal channels so Control Center, app-switcher transitions, and system interruptions do not cause visible reconnect churn. When the scene enters `.background`, the application shall close terminal channels and suspend every paired host connection while keeping live `TerminalPaneView` instances mounted; when the scene becomes active and unlocked, it shall resume transport through the same `SessionClient` and `InMemoryTerminalSession` so foregrounding does not free and remount Ghostty renderers during a QuartzCore transaction.

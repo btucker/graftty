@@ -393,7 +393,6 @@ public struct WorktreeListContent: View {
         .sheet(isPresented: $isAddSheetPresented) {
             AddWorktreeSheetView(
                 host: host,
-                includeRemoteWorktrees: includeRemoteWorktrees,
                 remoteConnectionProvider: remoteConnectionProvider
             ) { submission in
                 beginCreatingWorktree(submission)
