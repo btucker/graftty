@@ -15,7 +15,7 @@ SocketServer — per-client buffer cap
 struct SocketServerBufferCapTests {
     @Test func clientFloodingOverCapStopsReading() async throws {
         var descriptors = [Int32](repeating: -1, count: 2)
-        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+        try #require(socketpair(AF_UNIX, GrafttyPOSIX.streamSocket, 0, &descriptors) == 0)
         let reader = descriptors[0]
         let writer = descriptors[1]
         defer {

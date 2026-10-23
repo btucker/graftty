@@ -1,6 +1,10 @@
 import Testing
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 @testable import GrafttyKit
 
 /// End-to-end coverage for the native host-managed zmx attach model.
@@ -24,7 +28,7 @@ struct ZmxNativeHostManagedIntegrationTests {
             var output = ""
             while true {
                 let count = bytes.withUnsafeMutableBytes { raw in
-                    Darwin.read(masterFd, raw.baseAddress!, raw.count)
+                    GrafttyPOSIX.read(masterFd, raw.baseAddress!, raw.count)
                 }
                 if count <= 0 { break }
                 output += String(decoding: bytes.prefix(count), as: UTF8.self)
@@ -33,7 +37,7 @@ struct ZmxNativeHostManagedIntegrationTests {
         }
 
         func terminate(signal: Int32 = SIGTERM) {
-            _ = Darwin.kill(pid, signal)
+            _ = kill(pid, signal)
 
             var status: Int32 = 0
             let deadline = Date().addingTimeInterval(2.0)
@@ -44,11 +48,11 @@ struct ZmxNativeHostManagedIntegrationTests {
             }
 
             if waitpid(pid, &status, WNOHANG) == 0 {
-                _ = Darwin.kill(pid, SIGKILL)
+                _ = kill(pid, SIGKILL)
                 _ = waitpid(pid, &status, 0)
             }
 
-            Darwin.close(masterFd)
+            GrafttyPOSIX.close(masterFd)
         }
     }
 

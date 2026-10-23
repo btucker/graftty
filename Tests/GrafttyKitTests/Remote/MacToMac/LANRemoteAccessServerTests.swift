@@ -1,5 +1,13 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import Foundation
 import GrafttyProtocol
 import Testing
@@ -471,12 +479,11 @@ struct LANRemoteAccessServerTests {
     }
 
     private static func canConnectToLocalhost(port: Int) -> Bool {
-        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        let descriptor = socket(AF_INET, GrafttyPOSIX.streamSocket, 0)
         guard descriptor >= 0 else { return false }
         defer { close(descriptor) }
 
         var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = in_port_t(port).bigEndian
         address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
@@ -490,12 +497,11 @@ struct LANRemoteAccessServerTests {
     }
 
     private static func canConnectToIPv6Loopback(port: Int) -> Bool {
-        let descriptor = socket(AF_INET6, SOCK_STREAM, 0)
+        let descriptor = socket(AF_INET6, GrafttyPOSIX.streamSocket, 0)
         guard descriptor >= 0 else { return false }
         defer { close(descriptor) }
 
         var address = sockaddr_in6()
-        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
         address.sin6_family = sa_family_t(AF_INET6)
         address.sin6_port = in_port_t(port).bigEndian
         let parsed = "::1".withCString {
@@ -519,7 +525,7 @@ struct LANRemoteAccessServerTests {
     }
 
     private static func sendRawHTTPRequest(_ request: String, port: Int) throws -> String {
-        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        let descriptor = socket(AF_INET, GrafttyPOSIX.streamSocket, 0)
         guard descriptor >= 0 else {
             throw POSIXError(.init(rawValue: errno) ?? .EIO)
         }
@@ -527,9 +533,9 @@ struct LANRemoteAccessServerTests {
 
         var timeout = timeval(tv_sec: 2, tv_usec: 0)
         setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        _ = GrafttyPOSIX.configureNoSigPipe(descriptor)
 
         var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = in_port_t(port).bigEndian
         address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
@@ -545,7 +551,7 @@ struct LANRemoteAccessServerTests {
 
         let bytes = Array(request.utf8)
         let sent = bytes.withUnsafeBytes { buffer in
-            send(descriptor, buffer.baseAddress, buffer.count, 0)
+            GrafttyPOSIX.send(descriptor, buffer.baseAddress, buffer.count, 0)
         }
         guard sent == bytes.count else {
             throw POSIXError(.init(rawValue: errno) ?? .EIO)

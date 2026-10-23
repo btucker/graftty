@@ -1,6 +1,10 @@
 import Foundation
 import Testing
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 @testable import GrafttyKit
 
 @Suite("WorktreeStatsStore — bounded local Git polling")

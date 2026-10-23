@@ -1,5 +1,10 @@
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import Foundation
+import GrafttyKit
 
 /// Gives subprocess-timeout regression fixtures an independent escape path.
 ///
@@ -22,15 +27,15 @@ enum BlockedFIFOTestSupport {
             }
 
             let descriptor = fifoPath.withCString {
-                Darwin.open($0, O_WRONLY | O_NONBLOCK)
+                GrafttyPOSIX.open($0, O_WRONLY | O_NONBLOCK)
             }
             guard descriptor >= 0 else { return }
-            defer { Darwin.close(descriptor) }
+            defer { GrafttyPOSIX.close(descriptor) }
 
             let headContents = Array("ref: refs/heads/main\n".utf8)
             headContents.withUnsafeBytes { bytes in
                 guard let baseAddress = bytes.baseAddress else { return }
-                _ = Darwin.write(descriptor, baseAddress, bytes.count)
+                _ = GrafttyPOSIX.write(descriptor, baseAddress, bytes.count)
             }
         }
     }

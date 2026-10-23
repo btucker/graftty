@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import GrafttyProtocol
 import Testing
@@ -16,7 +20,7 @@ struct HostPairingServerTests {
         let dir: URL
         let identityStore: HostIdentityStore
         let peerStore: TrustedPeerStore
-        let privateKey: CryptoKit.Curve25519.Signing.PrivateKey
+        let privateKey: Curve25519.Signing.PrivateKey
         let server: HostPairingServer
 
         func cleanup() {
