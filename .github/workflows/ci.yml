@@ -76,11 +76,6 @@ jobs:
     # runner queue. Fork pull requests stay on the hosted image so
     # untrusted code never runs on the self-hosted machine.
     runs-on: ${{ github.event.pull_request.head.repo.fork == true && 'macos-26' || fromJSON('["self-hosted","macOS","ARM64"]') }}
-    env:
-      # Persistent self-hosted hosts keep $HOME between jobs; an interrupted
-      # renderer checkout there would poison every later build with the same
-      # fingerprint. Keep the source cache job-owned.
-      GRAFTTY_GHOSTTY_BUILD_CACHE: ${{ runner.temp }}/ghostty-paging
     steps:
       - uses: actions/checkout@v4
 
@@ -96,6 +91,12 @@ jobs:
         run: scripts/test-swiftpm-shared.sh
 
       - uses: ./.github/actions/paging-renderer
+        env:
+          # Persistent self-hosted hosts keep $HOME between jobs; an interrupted
+          # renderer checkout there would poison every later build with the same
+          # fingerprint. Keep the source cache job-owned (runner.temp is only
+          # available at step level).
+          GRAFTTY_GHOSTTY_BUILD_CACHE: ${{ runner.temp }}/ghostty-paging
 
       - name: Cache SwiftPM dependencies
         uses: actions/cache@v4
@@ -186,11 +187,6 @@ jobs:
   ios-test-shards:
     name: ios-test (${{ matrix.shard }})
     runs-on: ${{ github.event.pull_request.head.repo.fork == true && 'macos-26' || fromJSON('["self-hosted","macOS","ARM64"]') }}
-    env:
-      # Persistent self-hosted hosts keep $HOME between jobs; an interrupted
-      # renderer checkout there would poison every later build with the same
-      # fingerprint. Keep the source cache job-owned.
-      GRAFTTY_GHOSTTY_BUILD_CACHE: ${{ runner.temp }}/ghostty-paging
     timeout-minutes: 50
     strategy:
       fail-fast: false
@@ -209,6 +205,12 @@ jobs:
           echo "id=$( { swift --version; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/paging-renderer
+        env:
+          # Persistent self-hosted hosts keep $HOME between jobs; an interrupted
+          # renderer checkout there would poison every later build with the same
+          # fingerprint. Keep the source cache job-owned (runner.temp is only
+          # available at step level).
+          GRAFTTY_GHOSTTY_BUILD_CACHE: ${{ runner.temp }}/ghostty-paging
 
       - name: Install XcodeGen
         run: brew install xcodegen
