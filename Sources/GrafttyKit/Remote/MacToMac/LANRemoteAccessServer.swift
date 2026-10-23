@@ -78,7 +78,7 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
                 }
             }
         do {
-            state.listener = try bootstrap.bind(host: config.bindHost, port: config.port).wait()
+            state.listener = try bootstrap.bind(numericOrResolvedHost: config.bindHost, port: config.port).wait()
             lock.unlock()
         } catch {
             state.group = nil

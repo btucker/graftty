@@ -3002,6 +3002,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.21** When the paired-access listener binds a port other than the protocol default, the application shall advertise Tailscale routes on that same port, so every advertised route reaches the listener that answered the exchange.
 
+**REMOTE-2.22** When the LAN remote-access listener's bind host is a numeric IP address, the application shall bind that address without name resolution, so a `::` listener starts on a Linux host with no non-loopback IPv6 address; a host name shall still be resolved.
+
+**REMOTE-2.23** If the LAN remote-access listener's configured port is outside 0–65535, then the application shall fail to start with a thrown error rather than terminate the process.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -3327,6 +3331,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-20.15** When a direct SSH connection dials its host, the application shall run the connection on NIO's shared event loop group rather than starting an event-loop thread per connection.
 
 **REMOTE-20.16** If a direct SSH connection is closed while it is still waiting for authentication, then the pending connect shall fail and return rather than wait forever.
+
+**REMOTE-20.17** When the direct SSH listener's bind host is a numeric IP address such as `::`, the application shall bind that address without name resolution, so the listener starts on a Linux host with no non-loopback IPv6 address.
 
 ### REMOTE-21.x
 
