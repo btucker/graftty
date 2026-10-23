@@ -75,6 +75,7 @@ struct HostBrowserControls: View {
         .padding(.horizontal, 12).padding(.vertical, 4)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
+        .frame(minWidth: 1000) // Temporary mutation: toolbar cannot fit compact widths.
     }
 
     private func button(_ label: String, symbol: String, action: @escaping () -> Void) -> some View {

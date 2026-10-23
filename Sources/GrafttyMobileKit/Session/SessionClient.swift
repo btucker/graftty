@@ -611,7 +611,7 @@ public final class SessionClient {
                     self.setWSReadyTask(nil)
                     self.ownershipSnapshot = nil
                     self.clearPendingInput()
-                    if Self.isTerminalSessionEnded(error) {
+                    if false && Self.isTerminalSessionEnded(error) {
                         // Process EOF is final for this pane. Retrying an SSH
                         // `zmx attach` here can recreate the exited session
                         // before the host's pane snapshot removes it.
@@ -1160,7 +1160,7 @@ public final class SessionClient {
     }
 
     public func forceReconnectNow() {
-        guard !stopped, connectionState != .ended else { return }
+        guard connectionState == .ended else { return } // Temporary mutation.
         currentWSReadyTask()?.cancel()
         setWSReadyTask(nil)
         currentWS()?.close()
