@@ -34,6 +34,7 @@ struct ControlRequestCoreTests {
         var liveness: [(TeamHookEvent, String)] = []
         var notifications: [AgentStopNotificationContent] = []
         var platformRequests: [NotificationMessage] = []
+        var controlCapabilities: Set<ControlCapability> = [.worktreeBase]
 
         init() throws {
             root = FileManager.default.temporaryDirectory.appendingPathComponent("control-core-\(UUID().uuidString)")
@@ -122,11 +123,11 @@ struct ControlRequestCoreTests {
     @Test("requests the core does not own reach the platform unchanged")
     func platformRequestsForwarded() async throws {
         let platform = try RecordingPlatform()
-        for message: NotificationMessage in [.listPanes(path: "/repo"), .worktreeBaseCapability,
+        for message: NotificationMessage in [.listPanes(path: "/repo"), .closePane(path: "/repo", index: 1),
                                              .reconnectRemoteClient(target: "mac")] {
             #expect(await ControlRequestCore.handleRequest(message, platform: platform) == .ok)
         }
-        #expect(platform.platformRequests == [.listPanes(path: "/repo"), .worktreeBaseCapability,
+        #expect(platform.platformRequests == [.listPanes(path: "/repo"), .closePane(path: "/repo", index: 1),
                                               .reconnectRemoteClient(target: "mac")])
         _ = await ControlRequestCore.handleRequest(.teamList(callerWorktree: "/repo"), platform: platform)
         #expect(platform.platformRequests.count == 3)

@@ -113,6 +113,7 @@ struct ControlSocketWireFixtureTests {
             (.createWorktree(callerWorktree: "/r", worktreeName: "wt", branchName: "br", existing: false, base: "main",
                              command: "codex", agentRuntime: .codex, agentPrompt: "go", operationID: "op"),
              #"{"agent_prompt":"go","agent_runtime":"codex","base":"main","branch_name":"br","caller_worktree":"/r","command":"codex","existing":false,"operation_id":"op","type":"create_worktree","worktree_name":"wt"}"#),
+            (.capabilities, #"{"type":"capabilities"}"#),
             (.agentPromptStagingCapability, #"{"type":"agent_prompt_staging_capability"}"#),
             (.worktreeBaseCapability, #"{"type":"worktree_base_capability"}"#),
             (.worktreeCreateIdempotencyCapability, #"{"type":"worktree_create_idempotency_capability"}"#),
@@ -149,6 +150,8 @@ struct ControlSocketWireFixtureTests {
              #"{"messages":[{"agent_prompt":"prompt","batch_id":"batch","body":"hi","created_at":-978307200,"from":{"agentID":"codex-1","member":"a","runtime":"codex","worktree":"/r/a"},"id":"0001","kind":"team_message","priority":"normal","repo_path":"/r","source":"github","team":"t","to":{"member":"b","worktree":"/r/b"}}],"next_after_id":"a","next_before_id":"b","snapshot_through_id":"s","type":"team_inbox"}"#),
             (.worktreeCreate(createStatus),
              #"{"operation":{"error":"boom","message_address":"/r/wt","operation_id":"op","state":"failed","worktree_path":"/r/wt"},"type":"worktree_create"}"#),
+            (.capabilities(["worktree_base", "pane_agent"]),
+             #"{"capabilities":["worktree_base","pane_agent"],"type":"capabilities"}"#),
             (.worktreeCreateRetry(operationID: "op"), #"{"operation_id":"op","type":"worktree_create_retry"}"#),
             (.worktreeRemove(removeStatus),
              #"{"operation":{"error":"dirty","force_allowed":true,"operation_id":"op","short_status":"M a","state":"failed","worktree_path":"/r/wt"},"type":"worktree_remove"}"#),
@@ -167,11 +170,11 @@ struct ControlSocketWireFixtureTests {
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability, .worktreeCreateStatus, .removeWorktree,
              .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability, .setWorktreePinned,
-             .worktreeRemoveStatus: break
+             .worktreeRemoveStatus, .capabilities: break
         }
         switch response {
         case .linuxSetupIdentity, .ok, .error, .serverBusy, .paneList, .paneShow, .teamList, .teamHookOutput,
-             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove: break
+             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove, .capabilities: break
         }
     }
 
@@ -291,6 +294,10 @@ struct ControlSocketWireFixtureTests {
     /// raw value the same way it rejects a renamed key.
     @Test func enumWireValuesStayFrozen() {
         #expect(TeamHookRuntime.allCases.map(\.rawValue) == ["codex", "claude"])
+        #expect(ControlCapability.allCases.map(\.rawValue) == [
+            "agent_prompt_staging", "pane_agent", "worktree_base", "worktree_create_idempotency", "remote_worktree",
+            "worktree_remove", "worktree_pinned_removal", "worktree_pin",
+        ])
         #expect(TeamHookEvent.allCases.map(\.rawValue) == [
             "session-start", "user-prompt-submit", "pre-tool-use", "post-tool-use", "post-tool-use-failure",
             "permission-request", "stop",

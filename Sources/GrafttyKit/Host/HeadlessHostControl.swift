@@ -112,7 +112,7 @@ public extension HeadlessHostRuntime {
                     PaneInfo(id: offset + 1, title: worktree.paneTitleMetadata[slot]?.title, focused: worktree.focusedPaneSlotID == slot)
                 })
             case .addPane(let request):
-                // The CLI probes `.paneAgentCapability` first, which this
+                // The CLI checks the pane-agent capability first, which this
                 // host does not advertise; refuse rather than run a plain split.
                 guard request.agentRuntime == nil, request.agentPrompt == nil else { throw HostRuntimeError.invalid("pane add --agent is not supported on this host") }
                 let worktree = try requireWorktree(request.path)
@@ -125,8 +125,6 @@ public extension HeadlessHostRuntime {
                 try await terminals.send(text + (enter ? "\r" : ""), to: paneSession(path, index: index))
             case .showPane(let path, let index, let lines):
                 return .paneShow(try await terminals.show(paneSession(path, index: index), lines: lines))
-            case .agentPromptStagingCapability, .worktreeBaseCapability, .worktreeCreateIdempotencyCapability,
-                 .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability: return .ok
             case .createWorktree(let request):
                 guard let repo = state.repo(forWorktreePath: request.callerWorktree) else { throw HostRuntimeError.notFound("caller is not registered") }
                 let id = request.operationID ?? UUID().uuidString

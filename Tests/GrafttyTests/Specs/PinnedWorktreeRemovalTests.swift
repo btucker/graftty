@@ -45,10 +45,15 @@ struct PinnedWorktreeRemovalTests {
             #expect(throws: (any Error).self) {
                 try command.requirePinnedRemovalSupport(send: { probes.append($0); return .error("unknown message type") })
             }
-            #expect(probes == [.worktreePinnedRemovalCapability])
+            #expect(probes == [.capabilities, .worktreePinnedRemovalCapability])
+            probes = []
+            #expect(throws: (any Error).self) {
+                try command.requirePinnedRemovalSupport(send: { probes.append($0); return .capabilities(["worktree_pin"]) })
+            }
+            #expect(probes == [.capabilities])
             try command.requirePinnedRemovalSupport(send: { request in
-                #expect(request == .worktreePinnedRemovalCapability)
-                return .ok
+                #expect(request == .capabilities)
+                return .capabilities(["worktree_pinned_removal"])
             })
         }
     }

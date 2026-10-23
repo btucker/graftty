@@ -72,6 +72,8 @@ extension SocketRequestRouter: ControlPlatform {
         )
     }
 
+    var controlCapabilities: Set<ControlCapability> { Set(ControlCapability.allCases) }
+
     func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage? {
         await handlePaneRequest(message)
     }

@@ -42,6 +42,12 @@ final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
     }
     func postAgentNotification(_ content: AgentStopNotificationContent, worktreePath: String) {}
     func hookDeliveryPolicy(presence: [TeamPresenceRecord]) -> TeamHookDeliveryPolicy { TeamHookDeliveryPolicy() }
+    /// This host cannot launch an agent in an added pane, and it has no
+    /// paired-Mac transport for remote worktree creation.
+    var controlCapabilities: Set<ControlCapability> {
+        Set(ControlCapability.allCases).subtracting([.paneAgent, .remoteWorktree])
+    }
+
     func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage? {
         await runtime.hostRequest(message)
     }

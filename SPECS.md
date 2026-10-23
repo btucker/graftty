@@ -920,6 +920,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.29** If the application answers a CLI request that expects a response with a response of a different type, then the CLI shall print `Unexpected <type> response for <command>` naming the wire type it received, and exit with code 1. `team hook` keeps its unrendered-output fallback, and `remote setup-linux` keeps its update-the-app error.
 
+**ATTN-1.30** When a CLI command needs app capabilities, the CLI shall check all of them with one `capabilities` request, and if the running app answers that request with anything other than a capability list, then the CLI shall fall back to the single-capability probes that older apps answer.
+
 ### ATTN-2.x — Communication Protocol
 
 **ATTN-2.1** The application shall listen on a Unix domain socket at `~/Library/Application Support/Graftty/graftty.sock`.
@@ -971,6 +973,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **ATTN-2.25** The control-socket protocol shall keep every request and response type tag and field key stable across releases, and shall keep decoding the optional fields that older peers omit, so an older running application keeps serving a newer CLI.
 
 **ATTN-2.26** When the application receives a legacy `team_message` request, it shall handle it as a normal-priority `team_send` with no caller agent ID.
+
+**ATTN-2.27** When the CLI sends `capabilities`, the application shall answer with the name of every control capability its dispatcher supports, and shall answer each older single-capability probe from that same set: `ok` when supported, an error otherwise.
 
 ### ATTN-3.x — Error Handling
 

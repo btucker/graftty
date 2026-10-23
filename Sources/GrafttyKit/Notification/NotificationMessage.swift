@@ -124,6 +124,8 @@ public enum NotificationMessage: Sendable, Equatable {
     case teamMembers(callerWorktree: String?, worktree: String?, repo: String?)
     case teamList(callerWorktree: String)
     case createWorktree(CreateWorktreeRequest)
+    /// Asks which `ControlCapability` values the app supports (ATTN-2.27).
+    case capabilities
     case agentPromptStagingCapability
     case worktreeBaseCapability
     case worktreeCreateIdempotencyCapability
@@ -345,6 +347,8 @@ extension NotificationMessage: Codable {
         case .createWorktree(let request):
             try container.encode("create_worktree", forKey: .type)
             try request.encode(to: encoder)
+        case .capabilities:
+            try container.encode("capabilities", forKey: .type)
         case .agentPromptStagingCapability:
             try container.encode("agent_prompt_staging_capability", forKey: .type)
         case .worktreeBaseCapability:
@@ -518,6 +522,8 @@ extension NotificationMessage: Codable {
             self = .teamList(callerWorktree: path)
         case "create_worktree":
             self = .createWorktree(try CreateWorktreeRequest(from: decoder))
+        case "capabilities":
+            self = .capabilities
         case "agent_prompt_staging_capability":
             self = .agentPromptStagingCapability
         case "worktree_base_capability":
@@ -834,6 +840,8 @@ public enum ResponseMessage: Sendable, Equatable {
     case worktreeCreate(WorktreeCreateStatus)
     case worktreeCreateRetry(operationID: String)
     case worktreeRemove(WorktreeRemoveStatus)
+    /// `ControlCapability` raw values; unknown names from a newer app are kept.
+    case capabilities([String])
 }
 
 public extension ResponseMessage {
@@ -851,13 +859,14 @@ public extension ResponseMessage {
         case .worktreeCreate: "worktree_create"
         case .worktreeCreateRetry: "worktree_create_retry"
         case .worktreeRemove: "worktree_remove"
+        case .capabilities: "capabilities"
         }
     }
 }
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, code, message, panes, output, messages, text, operation, identity
+        case type, code, message, panes, output, messages, text, operation, identity, capabilities
         case operationID = "operation_id"
         case teamName = "team_name"
         case members
@@ -899,6 +908,8 @@ extension ResponseMessage: Codable {
             try container.encode(operation, forKey: .operation)
         case .worktreeRemove(let operation):
             try container.encode(operation, forKey: .operation)
+        case .capabilities(let names):
+            try container.encode(names, forKey: .capabilities)
         }
     }
 
@@ -943,6 +954,8 @@ extension ResponseMessage: Codable {
             self = .worktreeCreate(
                 try container.decode(WorktreeCreateStatus.self, forKey: .operation)
             )
+        case "capabilities":
+            self = .capabilities(try container.decode([String].self, forKey: .capabilities))
         case "worktree_remove":
             self = .worktreeRemove(
                 try container.decode(WorktreeRemoveStatus.self, forKey: .operation)

@@ -263,14 +263,6 @@ extension SocketRequestRouter {
                 path: path, index: index, text: text, pressEnter: pressEnter,
                 appState: appState, terminalManager: terminalManager
             )
-        case .agentPromptStagingCapability, .paneAgentCapability:
-            return .ok
-        case .worktreeBaseCapability:
-            return .ok
-        case .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability:
-            return .ok
-        case .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability:
-            return .ok
         case .setWorktreePinned(let path, let isPinned):
             let response = WorktreePinRequestHandler.handle(
                 worktreePath: path, isPinned: isPinned, state: &appState.wrappedValue

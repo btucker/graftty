@@ -285,12 +285,7 @@ struct PaneAdd: ParsableCommand {
         if agent != nil {
             // An app without this capability would ignore the agent fields
             // and report success for a plain split.
-            try WorktreeCapability.require(
-                .paneAgentCapability,
-                unsupportedMessage: "the running Graftty app does not support pane add --agent; quit and relaunch the updated app, then retry",
-                verificationMessage: "could not verify pane add --agent support; quit and relaunch Graftty, then retry",
-                retryTransportFailuresUntil: Date().addingTimeInterval(5)
-            )
+            try CapabilityProbe.require([.paneAgent], retryTransportFailuresUntil: Date().addingTimeInterval(5))
         }
         let response = try CLIEnv.sendRequest(request(path: path, resolvedPrompt: resolvedPrompt))
         try CLIEnv.expectOk(response, for: "pane add")
