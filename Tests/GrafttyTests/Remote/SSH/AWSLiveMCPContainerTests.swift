@@ -19,10 +19,21 @@ extension AWSLiveHostTests {
         let name = "mcp-" + operation.uuidString.lowercased().prefix(8)
         let scope = MCPProxyScope(grantID: UUID(), generation: 1, repositoryID: UUID(),
             worktreePath: remoteRepository + "/.worktrees/" + name, serverID: "fixture")
-        let policy = MCPProxyPolicy(servers: ["fixture": .stdio(executable: "/usr/bin/python3",
-            arguments: [repository.appendingPathComponent("scripts/linux/mcp-fixture-server.py").path, marker.path, credential.path], environmentKeys: [])],
-            grants: [.init(scope: scope, host: worker, expiresAt: Date().addingTimeInterval(240))])
-        let broker = MCPProxyBroker(peer: worker, authorize: { try policy.authorize($0, peer: $1) })
+        var unselected = scope
+        unselected.grantID = UUID(); unselected.serverID = "other"; unselected.worktreePath += "-other"
+        let server = MCPProxyPolicy.Server.stdio(executable: "/usr/bin/python3",
+            arguments: [repository.appendingPathComponent("scripts/linux/mcp-fixture-server.py").path, marker.path, credential.path], environmentKeys: [])
+        let policy = MCPProxyPolicy(servers: ["fixture": server, "other": server], grants: [scope, unselected].map {
+            .init(scope: $0, host: worker, expiresAt: Date().addingTimeInterval(240))
+        })
+        // The parent grants both scopes. Only the local profile boundary can
+        // reject using the second scope through the first profile's socket.
+        #expect(throws: Never.self) { try policy.authorize(unselected, peer: worker) }
+        let audit = LiveMCPGrantAudit()
+        let broker = MCPProxyBroker(peer: worker, authorize: { scope, peer in
+            audit.record(scope.grantID)
+            return try policy.authorize(scope, peer: peer)
+        })
         let channel = try await connection.makeMCPControlClient(handler: { await broker.handle($0) }, onClose: { await broker.close() })
         let management = try await connection.makeWorktreeManagementClient()
         try await management.open()
@@ -70,13 +81,15 @@ extension AWSLiveHostTests {
             let quote = WorktreeAgentLaunchCommand.shellLiteral
             let command = ["docker", "exec", "-i", "-u", "ubuntu", "-w", environment.remoteWorkspaceFolder,
                 environment.containerID, "env", "HOME=" + home, "GRAFTTY_SOCK=" + MCPProfileMount.containerSocket,
-                "python3", "-", home, MCPProfileMount.containerExecutable, "--installed-profile"].map(quote).joined(separator: " ")
+                "python3", "-", home, MCPProfileMount.containerExecutable, "--installed-profile", "--unselected-scope-json",
+                String(decoding: try JSONEncoder().encode(unselected), as: UTF8.self)].map(quote).joined(separator: " ")
             let script = "set -eu\n" + command + " <<'GRAFTTY_CONTAINER_MCP'\n" + python + "\nGRAFTTY_CONTAINER_MCP\n"
             var output = try await runRemoteProbe(script, target: target, root: root)
             // Native settings and mounted socket survive a container restart.
             output += try await runRemoteProbe("set -eu\ndocker restart " + quote(environment.containerID) + " >/dev/null\n" + script,
                 target: target, root: root)
             #expect(try String(contentsOf: marker, encoding: .utf8) == "parent executed\nparent executed\n")
+            #expect(!audit.contains(unselected.grantID), "An unselected grant reached the parent through the profile socket")
             guard case .deleted = try await management.send(.delete(worktreeID: scope.worktreePath, force: true)) else { throw ProviderError("Managed MCP cleanup failed") }
             let endpoint = "/run/user/1000/graftty/mcp/" + operation.uuidString.lowercased() + "/bridge.sock"
             _ = try await runRemoteProbe("set -eu\ntest ! -e " + quote(endpoint) + "\ntest -f " + quote(home + "/.codex/config.toml") + "\n",
@@ -87,4 +100,12 @@ extension AWSLiveHostTests {
             management.close(); channel.close(); await broker.close()
         } catch { management.close(); channel.close(); await broker.close(); throw error }
     }
+}
+
+/// Records authorization attempts, not tool payloads or credentials.
+private final class LiveMCPGrantAudit: @unchecked Sendable {
+    private let lock = NSLock()
+    private var grants: Set<UUID> = []
+    func record(_ id: UUID) { lock.withLock { _ = grants.insert(id) } }
+    func contains(_ id: UUID) -> Bool { lock.withLock { grants.contains(id) } }
 }

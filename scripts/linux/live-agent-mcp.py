@@ -79,12 +79,22 @@ def main():
                 assert error.errno == 30, 'Mount must be read-only'
             else:
                 raise AssertionError('MCP mount was writable')
-        forbidden = subprocess.run([cli, 'pane', 'list'], env=environment, cwd=workspace,
+        forbidden = subprocess.run([cli, 'remote', 'hosts', '--json'], env=environment, cwd=workspace,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
         assert forbidden.returncode != 0 and b"only serves this profile" in forbidden.stderr
     else:
         (root / '.codex/config.toml').write_bytes((root / 'codex-mcp.toml').read_bytes())
     configuration = next((root / '.graftty-mcp' if installed else root).glob('????????-????-????-????-????????????.json'))
+    if '--unselected-scope-json' in sys.argv[3:]:
+        other = json.loads(configuration.read_text())
+        other['scope'] = json.loads(sys.argv[sys.argv.index('--unselected-scope-json') + 1])
+        other_file = root / 'unselected-grant.json'
+        other_file.write_text(json.dumps(other))
+        denied = subprocess.run([cli, 'remote', 'mcp', 'bridge', '--config', str(other_file)],
+                                input=b'', stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                env=environment, cwd=workspace, timeout=15)
+        assert denied.returncode != 0 and not denied.stdout, 'Another worktree grant crossed the profile socket'
+        print(json.dumps({'unselectedGrant': 'rejected'}), flush=True)
     if '--expect-revoked' in sys.argv[3:]:
         rejected = subprocess.run(
             [cli, 'remote', 'mcp', 'bridge', '--config', str(configuration)],

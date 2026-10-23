@@ -31,14 +31,23 @@ mount the host's general control socket. The endpoint admits only selected grant
 and successfully opened sessions belonging to that profile. General host commands
 are rejected. Native tools still use the original server names.
 
+Dev Container CLI 0.89.0 rejects Docker's `readonly` flag in its `--mount`
+option. The adapter adds these mounts to a private override of the configuration
+returned by upstream `read-configuration`. It retains the original `--config`
+path for relative Dockerfile/feature resolution, preserves project mounts and
+lifecycle settings, and removes the override after preparation. The project file
+is unchanged. See the upstream [argument parser](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/devContainersSpecCLI.ts)
+and [configuration override handling](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/configContainer.ts).
+
 Container setup verifies the socket mount and executes the packaged bridge's
 help command before reporting `mcpConfigured`. The image must be compatible with
 the packaged Linux runtime, and its remote user must match the host UID. This
 status describes installation; it does not establish current parent connectivity,
 upstream authentication, or model login. The foreground parent connection must
-still be running. Host restart recreates endpoints from completed placement
+still be running. Host-service restart recreates endpoints from completed placement
 records; deletion and shutdown remove their sockets and close active sessions.
-Native profiles remain on the host after container deletion.
+Native profiles remain on the host after container deletion. This does not yet
+provide machine-reboot or replacement-host recovery.
 
 The original logical MCP server names remain in native agent configuration. The
 proxy forwards JSON-RPC messages, including notifications, cancellation and
@@ -67,8 +76,9 @@ Limits are 256 KiB per message, 32 active sessions per parent connection, 64
 outstanding requests in each direction per session, 16 queued writes, 512 KiB of
 queued writes and 256 KiB of queued replies. Unanswered requests expire after
 120 seconds independently of other traffic. Idle sessions expire after one hour.
-A channel retains at most 1,024 session identities before requiring a fresh
-connection. Errors omit upstream diagnostics and payloads.
+A parent channel retains at most 1,024 session identities. The worker bridge and
+each profile endpoint also retain up to 1,024 identities for their service
+lifetime; reconnect alone does not reset those bounds. Errors omit upstream diagnostics and payloads.
 
 ## Reused components and compatibility
 
@@ -127,6 +137,27 @@ generation and subsequently revoked grant addresses were rejected. The native
 clients used fresh homes without model credentials; this validates MCP discovery
 and transport, not a model turn or automatic container profile installation.
 
-Focused proxy and SSH tests passed. The full local suite had one Chrome
-navigation timing failure; that test passed in isolation alongside the proxy
-checks. No Chrome product code changed in this work.
+
+Managed-container validation also passed on 2026-10-23 with the same runtime
+versions and an ARM64 m7g.xlarge Spot worker. Set
+`GRAFTTY_LIVE_AWS_MCP_CONTAINER` to a registered disposable fixture repository to
+exercise this path. The fixture used a relative Dockerfile, an existing read-only
+project mount, and a lifecycle command checking that mount. Production placement
+installed both native profiles and scoped bridge files. The test did not stage
+or write their MCP settings itself.
+
+Before and after a container restart, both clients discovered `touch_parent` and
+a bridge call executed on the Mac. The parent credential fixture stayed on the
+Mac. The test verified read-only socket/runtime mounts, rejection of general host
+discovery, a changed generation, and another grant which the parent would have
+authorized. That unselected grant never reached the parent. Deletion removed the
+scoped socket and retained the profile. The successful live run took 46.5 seconds
+and made no model turn. Host-service restart and machine recovery were not part
+of this live test.
+
+The live run caught the CLI mount syntax incompatibility described above. Its
+regression passed with the container/profile suites, and generated-spec and
+Linux-membership checks passed. A complete sequential suite passed before that
+fix. The full rerun after the fix passed all Swift Testing suites but failed
+`SidebarSortNativeTests.testSortTargetsInBothSidebarModes`, which also failed in
+isolation while opening its native menu. That UI code was unchanged.

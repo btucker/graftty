@@ -4,7 +4,7 @@ import GrafttyProtocol
 @testable import GrafttyKit
 
 struct DevContainerMCPTests {
-    @Test(arguments: [false, true])
+    @Test("@spec REMOTE-30.16: When preparing MCP mounts through Dev Container CLI, the application shall preserve project configuration and relative path resolution, supply read-only mounts through a private configuration override, and remove that override after success or failure.", arguments: [false, true])
     func preparesMCPOnlyAfterBridgeCompatibilityCheck(missingRuntime: Bool) async throws {
         let fixture = try SkillFixture(); defer { fixture.remove() }
         try fixture.write("home/.agents/skills/personal/SKILL.md", "personal")
@@ -31,19 +31,37 @@ struct DevContainerMCPTests {
             #expect(FileManager.default.fileExists(atPath: profile + "/.claude/.claude.json"))
             #expect(try JSONDecoder().decode(PreparedDevContainer.self, from: JSONEncoder().encode(prepared)) == prepared)
             let up = try #require(await executor.inner.commands.first { $0.first == "up" })
-            #expect(up.contains("type=bind,source=/scoped/socket,target=/run/graftty-mcp,readonly"))
-            #expect(up.contains("type=bind,source=/host/runtime,target=/opt/graftty-mcp,readonly"))
+            #expect(!up.contains(where: { $0.contains(",readonly") }))
+            #expect(up.contains(CanonicalPath.canonicalize(workspace.path) + "/.devcontainer/devcontainer.json"))
         }
+        let override = try #require(await executor.overrideData)
+        let configuration = try #require(JSONSerialization.jsonObject(with: override) as? [String: Any])
+        #expect(configuration["mounts"] as? [String] == ["type=volume,source=cache,target=/cache", "type=bind,source=/scoped/socket,target=/run/graftty-mcp,readonly", "type=bind,source=/host/runtime,target=/opt/graftty-mcp,readonly"])
+        #expect((configuration["build"] as? [String: String])?["dockerfile"] == "../Dockerfile")
+        #expect(configuration["postCreateCommand"] as? String == "echo project")
+        #expect(configuration["configFilePath"] == nil)
+        let path = try #require(await executor.overridePath)
+        #expect(!FileManager.default.fileExists(atPath: path))
+        #expect(try String(contentsOf: workspace.appendingPathComponent(".devcontainer/devcontainer.json"), encoding: .utf8) == #"{"image":"fixture"}"#)
     }
 }
 
 private actor MCPContainerExecutor: CLIExecutor {
     nonisolated let inner: SkillContainerExecutor
     let missingRuntime: Bool
+    var overrideData: Data?
+    var overridePath: String?
     init(home: URL, workspace: URL, missingRuntime: Bool) {
         inner = SkillContainerExecutor(home: home, workspace: workspace); self.missingRuntime = missingRuntime
     }
     func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        if args.first == "read-configuration" {
+            return .init(stdout: #"{"configuration":{"build":{"dockerfile":"../Dockerfile"},"postCreateCommand":"echo project","mounts":["type=volume,source=cache,target=/cache"],"configFilePath":{"scheme":"file"}}}"#, stderr: "", exitCode: 0)
+        }
+        if args.first == "up", let index = args.firstIndex(of: "--override-config") {
+            overridePath = args[index + 1]
+            overrideData = try Data(contentsOf: URL(fileURLWithPath: args[index + 1]))
+        }
         if args.last?.contains("/opt/graftty-mcp/bin/graftty remote mcp bridge --help") == true {
             return .init(stdout: "", stderr: "", exitCode: missingRuntime ? 127 : 0)
         }

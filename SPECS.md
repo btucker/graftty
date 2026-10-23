@@ -3744,6 +3744,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-30.15** When a managed MCP endpoint stops, the application shall remove its socket while retaining the mount directory, and shall recreate the endpoint only from host-supplied assignment configuration.
 
+**REMOTE-30.16** When preparing MCP mounts through Dev Container CLI, the application shall preserve project configuration and relative path resolution, supply read-only mounts through a private configuration override, and remove that override after success or failure.
+
 ### REMOTE-31.x — Provider preferences and placement
 
 **REMOTE-31.1** When a user configures the aws compute provider, the CLI shall persist the selected existing AWS profile and placement preferences without copying AWS credentials.

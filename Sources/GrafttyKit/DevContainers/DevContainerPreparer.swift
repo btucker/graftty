@@ -64,7 +64,25 @@ public actor DevContainerPreparer {
         let workspaceLabel = "graftty.workspace=" + SHA256.hash(data: Data(workspace.utf8)).map { String(format: "%02x", $0) }.joined()
         let profileMount = try skills.isEmpty && mcp == nil ? nil : profileDirectory.map { try DevContainerProfileMount(directory: $0, operationID: operationID) }
         defer { profileMount?.removeProbe() }
-        let mounts = (profileMount.map { ["--mount", $0.argument] } ?? []) + (mcp?.mountArguments ?? [])
+        // CLI --mount only accepts type/source/target/external. Its normal
+        // configuration mounts accept Docker's readonly flag. Keep --config
+        // pointing at the project so relative Dockerfiles/features keep their base.
+        let overrideDirectory = mcp.map { _ in FileManager.default.temporaryDirectory.appendingPathComponent("graftty-container-" + UUID().uuidString) }
+        defer { if let overrideDirectory { try? FileManager.default.removeItem(at: overrideDirectory) } }
+        if let mcp, let overrideDirectory {
+            var augmented = configuration
+            guard configuration["mounts"] == nil || configuration["mounts"] is [Any] else {
+                throw DevContainerPreparationError(stage: "configuration", message: "Container mounts must be an array")
+            }
+            augmented.removeValue(forKey: "configFilePath")
+            augmented["mounts"] = (configuration["mounts"] as? [Any] ?? []) + mcp.mounts
+            try FileManager.default.createDirectory(at: overrideDirectory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            let override = overrideDirectory.appendingPathComponent("devcontainer.json")
+            try JSONSerialization.data(withJSONObject: augmented).write(to: override, options: .withoutOverwriting)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: override.path)
+            common += ["--override-config", override.path]
+        }
+        let mounts = profileMount.map { ["--mount", $0.argument] } ?? []
         let up = try await run(["up"] + common + ["--id-label", label, "--id-label", workspaceLabel] + mounts, at: workspace, stage: "lifecycle", timeout: .seconds(1800))
         let output = try json(up.stdout, stage: "lifecycle")
         guard output["outcome"] as? String == "success", let containerID = output["containerId"] as? String,

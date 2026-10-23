@@ -7,9 +7,9 @@ public struct MCPProfileMount: Sendable {
     public let configurations: [MCPBridgeConfiguration]
     public static let containerSocket = "/run/graftty-mcp/bridge.sock"
     public static let containerExecutable = "/opt/graftty-mcp/bin/graftty"
-    public var mountArguments: [String] {
-        ["--mount", "type=bind,source=\(directory),target=/run/graftty-mcp,readonly",
-         "--mount", "type=bind,source=\(runtime),target=/opt/graftty-mcp,readonly"]
+    public var mounts: [String] {
+        ["type=bind,source=\(directory),target=/run/graftty-mcp,readonly",
+         "type=bind,source=\(runtime),target=/opt/graftty-mcp,readonly"]
     }
     public init(directory: String, runtime: String, configurations: [MCPBridgeConfiguration]) {
         self.directory = directory; self.runtime = runtime; self.configurations = configurations

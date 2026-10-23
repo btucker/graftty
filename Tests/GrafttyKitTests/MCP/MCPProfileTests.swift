@@ -75,7 +75,7 @@ import GrafttyProtocol
             fingerprint: RemoteIdentityFingerprint(of: try RemoteIdentityPublicKey(rawRepresentation: Data(repeating: 7, count: 32))))
         let scope = MCPProxyScope(grantID: UUID(), generation: 1, repositoryID: UUID(), worktreePath: fixture.root.path, serverID: "fixture")
         let setup = MCPProfileMount(directory: "/private/profile-socket", runtime: "/opt/host-runtime", configurations: [.init(parent: parent, scope: scope)])
-        #expect(setup.mountArguments == ["--mount", "type=bind,source=/private/profile-socket,target=/run/graftty-mcp,readonly", "--mount", "type=bind,source=/opt/host-runtime,target=/opt/graftty-mcp,readonly"])
+        #expect(setup.mounts == [ "type=bind,source=/private/profile-socket,target=/run/graftty-mcp,readonly", "type=bind,source=/opt/host-runtime,target=/opt/graftty-mcp,readonly"])
         let home = fixture.root.appendingPathComponent("home").path
         let script = try setup.installationScript(home: home)
         let runner = CLIRunner()
