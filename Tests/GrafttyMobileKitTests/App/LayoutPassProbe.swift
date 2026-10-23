@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import CoreFoundation
+import GrafttyCommandUI
 import GrafttyProtocol
 import SwiftUI
 import Testing
@@ -45,6 +46,9 @@ final class SplitLayoutFixture {
         store = HostStore(storeURL: storeURL)
         let host = try store.add(Host(label: "mac", baseURL: URL(string: "http://127.0.0.1:9")!))
         state = IPadAppState(defaults: defaults)
+        // SidebarNavigationState has its own defaults injection; AppStorage's
+        // environment and IPadAppState's defaults do not replace that store.
+        state.sidebarNavigation = SidebarNavigationState(prefix: "sidebar.mobile", defaults: defaults, collapsed: true)
         state.select(hostID: hasHost ? host.id : nil, worktreePath: nil, paneID: nil)
         state.columnVisibility = sidebarShown ? .all : .detailOnly
         notifications = MobileAgentNotifications(defaults: defaults)
