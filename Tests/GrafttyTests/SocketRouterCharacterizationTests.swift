@@ -309,8 +309,7 @@ struct SocketRouterCharacterizationTests {
             == .error("Unknown or disconnected viewing Mac 'mac'. Connected clients: none"))
         #expect(await router.route(Self.remoteWorktreeStatus, box)
             == .error("Unknown or disconnected Mac 'mac'. Connected Macs: none"))
-        // The reply handler rejects an unknown message whether or not team
-        // mode is enabled; only the error text depends on that setting.
+        // The shared core's reply handler rejects an unknown message.
         guard case .error(let replyError)? = await router.route(
             .teamReply(callerWorktree: Self.worktreePath, messageID: "m", text: "t", priority: .normal), box
         ) else {

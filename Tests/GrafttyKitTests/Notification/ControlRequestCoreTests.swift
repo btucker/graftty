@@ -132,7 +132,7 @@ struct ControlRequestCoreTests {
         #expect(platform.platformRequests.count == 3)
     }
 
-    @Test("graftty-mac sends forward through remote routing after team-mode and caller checks")
+    @Test("graftty-mac sends forward through remote routing after caller checks")
     func remoteForwarding() async throws {
         let platform = try RecordingPlatform()
         let address = "graftty-mac://device/Users/peer/api"

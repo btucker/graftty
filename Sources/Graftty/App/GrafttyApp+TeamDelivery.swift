@@ -91,13 +91,6 @@ extension GrafttyApp {
         }
     }
 
-    nonisolated static func nativeDeliveries(
-        codex: CodexAppServerDeliveryService,
-        claude: ClaudePeerDeliveryService
-    ) -> [any CodexAppServerDeliveryTrigger] {
-        [codex, claude]
-    }
-
     nonisolated static func retryNativeDeliveryForPresenceWorktrees(
         inbox: TeamInbox,
         records: [TeamPresenceRecord],

@@ -2556,7 +2556,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-2.x — Team Identity & Membership
 
-**TEAM-2.1** While agent teams are enabled, the application shall provide team identity and inbox delivery for every tracked repository, including a single worktree that communicates with a remote Mac.
+**TEAM-2.1** The application shall provide team identity and inbox delivery for every tracked repository, including a single worktree that communicates with a remote Mac.
 
 **TEAM-2.2** A team's *member name* for a given worktree shall be `WorktreeNameSanitizer(worktree.branch)`, the same sanitization rule used for new worktree names per `GIT-5.1`.
 

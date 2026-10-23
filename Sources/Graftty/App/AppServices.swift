@@ -217,7 +217,7 @@ final class AppServices {
 
         // Route PRStatusStore transitions through the inbox dispatcher.
         // `appStateProvider` is set later in startup() once @State is live;
-        // before that point the guard below is a no-op.
+        // before that point the dispatch sees no repos and is a no-op.
         self.prStatusStore.onTransition = { [weak self] routable, subjectWorktreePath, attrs in
             guard let self else { return }
             let appState = self.appStateProvider?() ?? AppState()
