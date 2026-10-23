@@ -299,12 +299,8 @@ struct GrafttyApp: App {
 
             CommandGroup(after: .newItem) {
                 // "Add Repository..." keeps its hardcoded Cmd+Shift+O —
-                // it's an Graftty-specific action with no Ghostty equivalent.
-                Button("Add Repository...") {
-                    // MainWindow handles the file picker via its own button.
-                    // This menu item is a placeholder for the standard shortcut.
-                }
-                .keyboardShortcut("o", modifiers: [.command, .shift])
+                // it's a Graftty-specific action with no Ghostty equivalent.
+                AddRepositoryCommandButton()
 
                 AddWorktreeCommandButton()
 

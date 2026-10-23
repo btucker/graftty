@@ -328,6 +328,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-3.5** If the user adds a repository that is already in the sidebar, then the application shall not create a duplicate and shall select the existing entry.
 
+**LAYOUT-3.6** When the user chooses File → Add Repository… or presses ⇧⌘O, the application shall run the focused window's Add Repository action, and shall disable the command while no window publishes one.
+
 ### LAYOUT-4.x — Removing & Relocating Repositories
 
 **LAYOUT-4.1** When the user right-clicks a repository header row in the sidebar, the application shall display a context menu containing a "Remove Repository" action.

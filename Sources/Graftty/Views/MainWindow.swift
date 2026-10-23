@@ -401,6 +401,7 @@ struct MainWindow: View {
             }
         }
         .focusedSceneValue(\.addWorktreeAction, addWorktreeAction)
+        .focusedSceneValue(\.addRepositoryAction, addRepository)
         .focusedSceneValue(\.worktreeNavAction, worktreeNavAction)
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
