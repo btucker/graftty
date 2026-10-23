@@ -17,6 +17,19 @@ struct SessionReconnectTests {
         func close() {}
     }
 
+    /// Fails its first receive only once the test finishes `release`, so a
+    /// test controls when the terminal channel fails instead of racing it.
+    final class GatedFailingWS: WebSocketClient, @unchecked Sendable {
+        private let release: AsyncStream<Void>
+        init(release: AsyncStream<Void>) { self.release = release }
+        func send(_ frame: WebSocketFrame) async throws {}
+        func receive() async throws -> WebSocketFrame {
+            for await _ in release {}
+            throw URLError(.networkConnectionLost)
+        }
+        func close() {}
+    }
+
     final class IdleWS: WebSocketClient, @unchecked Sendable {
         func send(_ frame: WebSocketFrame) async throws {}
         func receive() async throws -> WebSocketFrame {
@@ -72,7 +85,8 @@ struct SessionReconnectTests {
     func receiveErrorTransitionsToReconnecting() async throws {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
-        factory.nextProvider = { FailingWS() }
+        let failure = AsyncStream<Void>.makeStream()
+        factory.nextProvider = { GatedFailingWS(release: failure.stream) }
         let client = SessionClient(
             sessionName: "s",
             webSocketFactory: factory.make,
@@ -84,6 +98,7 @@ struct SessionReconnectTests {
         await quiesce()
         #expect(client.connectionState == .reconnecting(attempt: 1))
         #expect(factory.creations == 1)
+        failure.continuation.finish()
     }
 
     @Test("""
