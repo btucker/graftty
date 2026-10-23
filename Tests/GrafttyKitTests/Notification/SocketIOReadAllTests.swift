@@ -17,7 +17,7 @@ struct SocketIOReadAllTests {
     private static func makePair() -> (Int32, Int32) {
         var fds: [Int32] = [0, 0]
         let r = fds.withUnsafeMutableBufferPointer { buf in
-            Darwin.socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
+            socketpair(AF_UNIX, GrafttyPOSIX.streamSocket, 0, buf.baseAddress)
         }
         precondition(r == 0, "socketpair failed: errno=\(errno)")
         return (fds[0], fds[1])
@@ -40,7 +40,7 @@ struct SocketIOReadAllTests {
         try block.withUnsafeBufferPointer { p in
             try SocketIO.writeAll(fd: a, bytes: p.baseAddress!, count: p.count)
         }
-        _ = shutdown(a, SHUT_WR)
+        _ = shutdown(a, Int32(SHUT_WR))
 
         let buffer = SocketIO.readAll(fd: b, cap: cap)
         #expect(buffer.count == cap, "readAll must cap at \(cap); got \(buffer.count)")
@@ -60,7 +60,7 @@ struct SocketIOReadAllTests {
         try block.withUnsafeBufferPointer { p in
             try SocketIO.writeAll(fd: a, bytes: p.baseAddress!, count: p.count)
         }
-        _ = shutdown(a, SHUT_WR)
+        _ = shutdown(a, Int32(SHUT_WR))
 
         let result = SocketIO.readCapped(fd: b, cap: cap)
         #expect(result.data.count == cap)
@@ -76,7 +76,7 @@ struct SocketIOReadAllTests {
         try block.withUnsafeBufferPointer { p in
             try SocketIO.writeAll(fd: a, bytes: p.baseAddress!, count: p.count)
         }
-        _ = shutdown(a, SHUT_WR)
+        _ = shutdown(a, Int32(SHUT_WR))
 
         let result = SocketIO.readCapped(fd: b, cap: cap)
         #expect(result.data.count == cap)
@@ -91,7 +91,7 @@ struct SocketIOReadAllTests {
         try payload.withUnsafeBufferPointer { buf in
             try SocketIO.writeAll(fd: a, bytes: buf.baseAddress!, count: buf.count)
         }
-        _ = shutdown(a, SHUT_WR)
+        _ = shutdown(a, Int32(SHUT_WR))
 
         let buffer = SocketIO.readAll(fd: b, cap: 10 * 1024)
         #expect(buffer.count == 100, "readAll should stop at EOF, not wait for cap; got \(buffer.count)")
@@ -100,7 +100,7 @@ struct SocketIOReadAllTests {
     @Test func readAllReturnsEmptyWhenPeerClosesImmediately() {
         let (a, b) = Self.makePair()
         defer { close(a); close(b) }
-        _ = shutdown(a, SHUT_WR)  // writer closes its half without sending anything
+        _ = shutdown(a, Int32(SHUT_WR))  // writer closes its half without sending anything
 
         let buffer = SocketIO.readAll(fd: b, cap: 1024)
         #expect(buffer.isEmpty, "readAll on EOF-only peer returns empty; got \(buffer.count) bytes")

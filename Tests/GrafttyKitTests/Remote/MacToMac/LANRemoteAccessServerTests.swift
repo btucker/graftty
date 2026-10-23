@@ -1,13 +1,78 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import GrafttyProtocol
+import NIOCore
 import Testing
 
 @testable import GrafttyKit
 
 @Suite("LANRemoteAccessServer", .serialized)
 struct LANRemoteAccessServerTests {
+    /// Runs a test that binds the `::` wildcard only where the kernel serves
+    /// a dual-stack listener. The probe uses raw sockets and literal
+    /// addresses, never a resolver or `LANRemoteAccessServer`, so a failure
+    /// in the server's own `::` bind fails these tests instead of skipping
+    /// them. Linux containers with IPv6 disabled lack dual-stack.
+    static let requiresDualStack = ConditionTrait.enabled(
+        if: kernelServesDualStack,
+        "The kernel cannot serve a dual-stack :: listener here."
+    )
+
+    /// #678: glibc's `getaddrinfo` applies `AI_ADDRCONFIG` to `::`, so NIO's
+    /// `bind(host:port:)` rejects it on hosts with no global IPv6 address
+    /// even where the kernel serves dual-stack (a Docker bridge container).
+    static let resolverRejectsWildcard: Bool = {
+        do {
+            _ = try SocketAddress.makeAddressResolvingHost("::", port: 0)
+            return false
+        } catch {
+            return isWildcardResolutionFailure(error)
+        }
+    }()
+
+    /// Only #678's own error counts as known: `UnknownHost` for `::` with
+    /// glibc's `EAI_ADDRFAMILY` (-9). Any other failure is still reported.
+    private static func isWildcardResolutionFailure(_ error: (any Error)?) -> Bool {
+        guard let unknownHost = error as? SocketAddressError.UnknownHost else { return false }
+        return unknownHost.host == "::" && unknownHost.errorCode == -9
+    }
+
+    private static let kernelServesDualStack: Bool = {
+        let descriptor = socket(AF_INET6, GrafttyPOSIX.streamSocket, 0)
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+        var v6Only: Int32 = 0
+        guard setsockopt(descriptor, Int32(IPPROTO_IPV6), IPV6_V6ONLY, &v6Only, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+            return false
+        }
+
+        var address = sockaddr_in6()
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_addr = in6addr_any
+        var length = socklen_t(MemoryLayout<sockaddr_in6>.size)
+        let listening = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                bind(descriptor, sockaddrPointer, length) == 0
+                    && listen(descriptor, 2) == 0
+                    && getsockname(descriptor, sockaddrPointer, &length) == 0
+            }
+        }
+        guard listening else { return false }
+        let port = Int(UInt16(bigEndian: address.sin6_port))
+        return canConnectToLocalhost(port: port) && canConnectToIPv6Loopback(port: port)
+    }()
 
     @Test("server starts on an ephemeral localhost port and reports the actual listener port")
     func startsAndReportsActualPort() throws {
@@ -36,37 +101,50 @@ struct LANRemoteAccessServerTests {
     HTTP listener on port 8800 for LAN and Tailscale-IP routes. \
     Browser Web Access shall remain an independent HTTPS service and shall not \
     be used for native signaling.
-    """)
+    """, Self.requiresDualStack)
     func wildcardListenerIsDualStack() throws {
-        let server = Self.makeServer(
-            config: .init(port: 0, bindHost: "::")
-        )
-        try server.start()
-        defer { server.stop() }
-        let port = try #require(server.listeningPort)
+        try withKnownIssue("#678: glibc rejects :: without a global IPv6 address") {
+            let server = Self.makeServer(
+                config: .init(port: 0, bindHost: "::")
+            )
+            try server.start()
+            defer { server.stop() }
+            let port = try #require(server.listeningPort)
 
-        #expect(Self.canConnectToLocalhost(port: port))
-        #expect(Self.canConnectToIPv6Loopback(port: port))
+            #expect(Self.canConnectToLocalhost(port: port))
+            #expect(Self.canConnectToIPv6Loopback(port: port))
+        } when: {
+            Self.resolverRejectsWildcard
+        } matching: { issue in
+            Self.isWildcardResolutionFailure(issue.error)
+        }
     }
 
-    @Test("a stopped stable listener can be rebound on the same port")
+    @Test("a stopped stable listener can be rebound on the same port", Self.requiresDualStack)
     func stoppedListenerCanRebindSamePort() throws {
-        let first = Self.makeServer(
-            config: .init(port: 0, bindHost: "::")
-        )
-        try first.start()
-        let port = try #require(first.listeningPort)
-        first.stop()
+        try withKnownIssue("#678: glibc rejects :: without a global IPv6 address") {
+            let first = Self.makeServer(
+                config: .init(port: 0, bindHost: "::")
+            )
+            try first.start()
+            defer { first.stop() }
+            let port = try #require(first.listeningPort)
+            first.stop()
 
-        let rebound = Self.makeServer(
-            config: .init(port: port, bindHost: "::")
-        )
-        try rebound.start()
-        defer { rebound.stop() }
+            let rebound = Self.makeServer(
+                config: .init(port: port, bindHost: "::")
+            )
+            try rebound.start()
+            defer { rebound.stop() }
 
-        #expect(rebound.listeningPort == port)
-        #expect(Self.canConnectToLocalhost(port: port))
-        #expect(Self.canConnectToIPv6Loopback(port: port))
+            #expect(rebound.listeningPort == port)
+            #expect(Self.canConnectToLocalhost(port: port))
+            #expect(Self.canConnectToIPv6Loopback(port: port))
+        } when: {
+            Self.resolverRejectsWildcard
+        } matching: { issue in
+            Self.isWildcardResolutionFailure(issue.error)
+        }
     }
 
     @Test("POST /v2/pairing/begin returns JSON through a real socket")
@@ -319,13 +397,20 @@ struct LANRemoteAccessServerTests {
             return
         }
 
+        // A raw socket rather than URLSession: on Linux, cancelling a
+        // FoundationNetworking upload while the server closes its connection
+        // deadlocks inside `Task.cancel()`. The socket also lets the test see
+        // the server close the in-flight child channel.
         let body = try JSONEncoder.iso8601().encode(PairingAwaitOutcomeRequest(nonce: payload.nonce))
-        let requestTask = Task {
-            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v2/pairing/await-outcome")!)
-            request.httpMethod = "POST"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            _ = try? await URLSession.shared.upload(for: request, from: body)
-        }
+        let client = try Self.connectAndSendRawHTTPRequest("""
+        POST /v2/pairing/await-outcome HTTP/1.1\r
+        Host: 127.0.0.1:\(port)\r
+        Content-Type: application/json\r
+        Content-Length: \(body.count)\r
+        \r
+        \(String(decoding: body, as: UTF8.self))
+        """, port: port)
+        defer { close(client) }
 
         let waiterRegistered = await Self.waitUntil(timeout: 1.0) {
             await fixture.server.pendingWaiterCount == 1
@@ -334,17 +419,16 @@ struct LANRemoteAccessServerTests {
         let start = Date()
         server.stop()
         let elapsed = Date().timeIntervalSince(start)
-        requestTask.cancel()
         let waiterRemoved = await Self.waitUntil(timeout: 1.0) {
             await fixture.server.pendingWaiterCount == 0
         }
         if !waiterRemoved {
             await fixture.server.cancel()
         }
-        _ = await requestTask.result
 
         #expect(elapsed < 1.0)
         #expect(waiterRemoved)
+        #expect(Self.readRawHTTPResponse(from: client).peerClosed)
         #expect(server.listeningPort == nil)
         #expect(Self.canConnectToLocalhost(port: port) == false)
     }
@@ -471,12 +555,11 @@ struct LANRemoteAccessServerTests {
     }
 
     private static func canConnectToLocalhost(port: Int) -> Bool {
-        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        let descriptor = socket(AF_INET, GrafttyPOSIX.streamSocket, 0)
         guard descriptor >= 0 else { return false }
         defer { close(descriptor) }
 
         var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = in_port_t(port).bigEndian
         address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
@@ -490,12 +573,11 @@ struct LANRemoteAccessServerTests {
     }
 
     private static func canConnectToIPv6Loopback(port: Int) -> Bool {
-        let descriptor = socket(AF_INET6, SOCK_STREAM, 0)
+        let descriptor = socket(AF_INET6, GrafttyPOSIX.streamSocket, 0)
         guard descriptor >= 0 else { return false }
         defer { close(descriptor) }
 
         var address = sockaddr_in6()
-        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
         address.sin6_family = sa_family_t(AF_INET6)
         address.sin6_port = in_port_t(port).bigEndian
         let parsed = "::1".withCString {
@@ -519,17 +601,24 @@ struct LANRemoteAccessServerTests {
     }
 
     private static func sendRawHTTPRequest(_ request: String, port: Int) throws -> String {
-        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        let descriptor = try connectAndSendRawHTTPRequest(request, port: port)
+        defer { close(descriptor) }
+        return readRawHTTPResponse(from: descriptor).response
+    }
+
+    /// Connects to 127.0.0.1, sends `request`, and returns the open socket,
+    /// whose reads time out after 2 s. The caller closes it.
+    private static func connectAndSendRawHTTPRequest(_ request: String, port: Int) throws -> Int32 {
+        let descriptor = socket(AF_INET, GrafttyPOSIX.streamSocket, 0)
         guard descriptor >= 0 else {
             throw POSIXError(.init(rawValue: errno) ?? .EIO)
         }
-        defer { close(descriptor) }
 
         var timeout = timeval(tv_sec: 2, tv_usec: 0)
         setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        _ = GrafttyPOSIX.configureNoSigPipe(descriptor)
 
         var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = in_port_t(port).bigEndian
         address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
@@ -540,17 +629,25 @@ struct LANRemoteAccessServerTests {
             }
         }
         guard connectResult == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            let error = POSIXError(.init(rawValue: errno) ?? .EIO)
+            close(descriptor)
+            throw error
         }
 
         let bytes = Array(request.utf8)
         let sent = bytes.withUnsafeBytes { buffer in
-            send(descriptor, buffer.baseAddress, buffer.count, 0)
+            GrafttyPOSIX.send(descriptor, buffer.baseAddress, buffer.count, 0)
         }
         guard sent == bytes.count else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            let error = POSIXError(.init(rawValue: errno) ?? .EIO)
+            close(descriptor)
+            throw error
         }
+        return descriptor
+    }
 
+    /// Reads until the peer closes (`peerClosed`) or the read times out.
+    private static func readRawHTTPResponse(from descriptor: Int32) -> (response: String, peerClosed: Bool) {
         var response = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
@@ -558,10 +655,9 @@ struct LANRemoteAccessServerTests {
             if received > 0 {
                 response.append(buffer, count: received)
             } else {
-                break
+                return (String(data: response, encoding: .utf8) ?? "", received == 0)
             }
         }
-        return String(data: response, encoding: .utf8) ?? ""
     }
 
     private static func httpResponseCount(in response: String) -> Int {

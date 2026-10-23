@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import Testing
 import GrafttyProtocol
 @testable import GrafttyKit
@@ -98,36 +102,34 @@ private final class FakePagedDaemon: @unchecked Sendable {
     var error: String? { lock.withLock { failure } }
 
     init(body: @escaping @Sendable (Int32) throws -> Void) throws {
-        directory = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("paged-\(UUID().uuidString)")
+        directory = URL(fileURLWithPath: "/tmp").appendingPathComponent("paged-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-        descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        descriptor = GrafttyPOSIX.socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         guard descriptor >= 0 else { throw PagedZmxAttachEngine.Error.socket(errno) }
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
-        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
         let path = Array(directory.appendingPathComponent("session").path.utf8) + [0]
         withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: path) }
         let result = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { GrafttyPOSIX.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
         guard result == 0, listen(descriptor, 1) == 0 else { throw PagedZmxAttachEngine.Error.socket(errno) }
         let fd = descriptor
         Thread.detachNewThread { [self] in
             defer { done.signal() }
-            let client = Darwin.accept(fd, nil, nil)
+            let client = GrafttyPOSIX.accept(fd, nil, nil)
             guard client >= 0 else { return }
-            defer { Darwin.close(client) }
+            defer { GrafttyPOSIX.close(client) }
             var timeout = timeval(tv_sec: 3, tv_usec: 0)
             _ = setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
-            var noSignal: Int32 = 1
-            _ = setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout.size(ofValue: noSignal)))
+            _ = GrafttyPOSIX.configureNoSigPipe(client)
             do { try body(client) }
             catch { lock.withLock { failure = String(describing: error) } }
         }
     }
     func finish() {
-        _ = shutdown(descriptor, SHUT_RDWR)
-        Darwin.close(descriptor)
+        _ = shutdown(descriptor, Int32(SHUT_RDWR))
+        GrafttyPOSIX.close(descriptor)
         _ = done.wait(timeout: .now() + 4)
         try? FileManager.default.removeItem(at: directory)
     }
@@ -154,7 +156,7 @@ private final class FakePagedDaemon: @unchecked Sendable {
         var data = Data(count: count)
         var offset = 0
         while offset < count {
-            let n = data.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress!.advanced(by: offset), count - offset) }
+            let n = data.withUnsafeMutableBytes { GrafttyPOSIX.read(fd, $0.baseAddress!.advanced(by: offset), count - offset) }
             guard n > 0 else { throw PagedZmxAttachEngine.Error.closed }
             offset += n
         }
@@ -402,7 +404,7 @@ extension PagedZmxAttachEngineTests {
             var bytesRead = 0
             var buffer = [UInt8](repeating: 0, count: 64 * 1024)
             while true {
-                let count = Darwin.read(fd, &buffer, buffer.count)
+                let count = GrafttyPOSIX.read(fd, &buffer, buffer.count)
                 if count == 0 { break }
                 guard count > 0 else { throw PagedZmxAttachEngine.Error.socket(errno) }
                 bytesRead += count
@@ -440,7 +442,7 @@ extension PagedZmxAttachEngineTests {
             let (tag, _) = try FakePagedDaemon.receive(fd)
             #expect(tag == 23)
             var byte: UInt8 = 0
-            #expect(Darwin.read(fd, &byte, 1) == 0)
+            #expect(GrafttyPOSIX.read(fd, &byte, 1) == 0)
         }
         defer { daemon.finish() }
         let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"), zmxDir: daemon.directory, sessionName: "session"))

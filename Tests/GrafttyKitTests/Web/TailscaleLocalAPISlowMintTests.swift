@@ -1,6 +1,10 @@
 import Testing
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 @testable import GrafttyKit
 
 @Suite("TailscaleLocalAPI — slow cert mint")
@@ -55,7 +59,7 @@ struct TailscaleLocalAPISlowMintTests {
 private enum DelayedFakeLocalAPI {
 
     static func start(responseFrame: Data, delaySeconds: TimeInterval) throws -> Int {
-        let listenFD = socket(AF_INET, SOCK_STREAM, 0)
+        let listenFD = socket(AF_INET, GrafttyPOSIX.streamSocket, 0)
         guard listenFD >= 0 else { throw POSIXError(.EIO) }
 
         var enable: Int32 = 1
@@ -69,7 +73,7 @@ private enum DelayedFakeLocalAPI {
 
         let bindResult = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                Darwin.bind(listenFD, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+                GrafttyPOSIX.bind(listenFD, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
         guard bindResult == 0 else { close(listenFD); throw POSIXError(.EIO) }
@@ -96,7 +100,7 @@ private enum DelayedFakeLocalAPI {
             var collected = Data()
             while true {
                 let n = buf.withUnsafeMutableBufferPointer { bp in
-                    Darwin.recv(clientFD, bp.baseAddress, bp.count, 0)
+                    GrafttyPOSIX.recv(clientFD, bp.baseAddress, bp.count, 0)
                 }
                 if n <= 0 { break }
                 collected.append(contentsOf: buf[0..<n])
@@ -106,7 +110,7 @@ private enum DelayedFakeLocalAPI {
             Thread.sleep(forTimeInterval: delaySeconds)
 
             responseFrame.withUnsafeBytes { ptr in
-                _ = Darwin.send(clientFD, ptr.baseAddress, ptr.count, 0)
+                _ = GrafttyPOSIX.send(clientFD, ptr.baseAddress, ptr.count, 0)
             }
         }
 

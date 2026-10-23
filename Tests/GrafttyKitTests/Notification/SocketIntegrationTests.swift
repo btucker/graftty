@@ -30,21 +30,9 @@ struct SocketIntegrationTests {
         defer { server.stop() }
 
         // Connect as client
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        #expect(fd >= 0)
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        socketPath.withCString { ptr in
-            withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
-                pathPtr.withMemoryRebound(to: CChar.self, capacity: 104) { dest in _ = strlcpy(dest, ptr, 104) }
-            }
-        }
-        let connectResult = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-        }
-        #expect(connectResult == 0)
+        let fd = try Self.connectSocket(to: socketPath)
         let msg = #"{"type":"notify","path":"/tmp/wt","text":"test"}"# + "\n"
-        msg.withCString { ptr in _ = Darwin.write(fd, ptr, strlen(ptr)) }
+        msg.withCString { ptr in _ = GrafttyPOSIX.write(fd, ptr, strlen(ptr)) }
         close(fd)
 
         let received = try await expectMessage(from: messages)
@@ -80,14 +68,13 @@ struct SocketIntegrationTests {
         // previous instance. Make it slightly unusual (non-empty,
         // non-socket) so any accidental "only delete if it looks like
         // a socket" logic would also get caught.
-        FileManager.default.createFile(
+        _ = FileManager.default.createFile(
             atPath: socketPath,
             contents: Data("stale contents".utf8),
             attributes: nil
         )
         #expect(FileManager.default.fileExists(atPath: socketPath))
-        let preInode = (try? FileManager.default.attributesOfItem(atPath: socketPath)[.systemFileNumber] as? UInt64) ?? 0
-        #expect(preInode != 0)
+        #expect((try? FileManager.default.attributesOfItem(atPath: socketPath)[.type]) as? FileAttributeType == .typeRegular)
 
         let (messages, messageContinuation) = AsyncStream.makeStream(of: NotificationMessage.self)
         defer { messageContinuation.finish() }
@@ -99,31 +86,18 @@ struct SocketIntegrationTests {
         defer { server.stop() }
 
         // Verify the file at socketPath is now a socket (post-unlink,
-        // post-bind) and is a different inode than the stale one.
+        // post-bind). The stale file was a regular file, so the type change
+        // proves replacement; the inode number can't, because Linux may hand
+        // the freed number straight to the new socket.
         let postAttrs = try? FileManager.default.attributesOfItem(atPath: socketPath)
         #expect(postAttrs?[.type] as? FileAttributeType == .typeSocket)
-        let postInode = (postAttrs?[.systemFileNumber] as? UInt64) ?? 0
-        #expect(postInode != 0)
-        #expect(postInode != preInode)
 
         // End-to-end: a client can connect and the server receives the
         // message. This catches regressions where start() appears to
         // succeed but the server isn't actually listening.
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        #expect(fd >= 0)
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        socketPath.withCString { ptr in
-            withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
-                pathPtr.withMemoryRebound(to: CChar.self, capacity: 104) { dest in _ = strlcpy(dest, ptr, 104) }
-            }
-        }
-        let connectResult = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-        }
-        #expect(connectResult == 0)
+        let fd = try Self.connectSocket(to: socketPath)
         let msg = #"{"type":"notify","path":"/tmp/wt","text":"after-crash"}"# + "\n"
-        msg.withCString { ptr in _ = Darwin.write(fd, ptr, strlen(ptr)) }
+        msg.withCString { ptr in _ = GrafttyPOSIX.write(fd, ptr, strlen(ptr)) }
         close(fd)
 
         let received = try await expectMessage(from: messages)
@@ -575,7 +549,7 @@ struct SocketIntegrationTests {
             socklen_t(MemoryLayout<timeval>.size)
         )
         var byte: UInt8 = 0
-        #expect(Darwin.read(silentFD, &byte, 1) == 0)
+        #expect(GrafttyPOSIX.read(silentFD, &byte, 1) == 0)
         await withCheckedContinuation { continuation in
             DispatchQueue.main.async {
                 continuation.resume()
@@ -714,14 +688,16 @@ struct SocketIntegrationTests {
         try server.start()
         defer { server.stop() }
 
-        let firstRequest = Task.detached {
-            try Self.sendRequest(
+        // Both clients block until the test body opens the gate, so they must
+        // not hold cooperative-pool threads the body needs to run.
+        let firstRequest = Task {
+            try await Self.sendRequestOnThread(
                 socketPath: socketPath,
                 json: #"{"type":"team_message","caller_worktree":"/tmp/one","recipient":"peer","text":"one"}"#
             )
         }
-        let secondRequest = Task.detached {
-            try Self.sendRequest(
+        let secondRequest = Task {
+            try await Self.sendRequestOnThread(
                 socketPath: socketPath,
                 json: #"{"type":"team_message","caller_worktree":"/tmp/two","recipient":"peer","text":"two"}"#
             )
@@ -868,23 +844,13 @@ struct SocketIntegrationTests {
         try server.start()
         defer { server.stop() }
 
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        socketPath.withCString { ptr in
-            withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
-                pathPtr.withMemoryRebound(to: CChar.self, capacity: 104) { dest in _ = strlcpy(dest, ptr, 104) }
-            }
-        }
-        _ = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-        }
+        let fd = try Self.connectSocket(to: socketPath)
         let msg = #"{"type":"notify","path":"/tmp/wt","text":"hi"}"# + "\n"
-        msg.withCString { ptr in _ = Darwin.write(fd, ptr, strlen(ptr)) }
-        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
+        msg.withCString { ptr in _ = GrafttyPOSIX.write(fd, ptr, strlen(ptr)) }
+        _ = GrafttyPOSIX.shutdown(fd, Int32(SHUT_WR))
 
         var buffer = [UInt8](repeating: 0, count: 1024)
-        let bytesRead = Darwin.read(fd, &buffer, 1024)
+        let bytesRead = GrafttyPOSIX.read(fd, &buffer, 1024)
         close(fd)
         // Server closes without writing anything; read returns 0 (EOF).
         #expect(bytesRead == 0)
@@ -997,7 +963,7 @@ struct SocketIntegrationTests {
     """)
     func acceptedClientSocketIOIsBounded() throws {
         var sockets: [Int32] = [-1, -1]
-        #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0)
+        #expect(socketpair(AF_UNIX, GrafttyPOSIX.streamSocket, 0, &sockets) == 0)
         defer {
             close(sockets[0])
             close(sockets[1])
@@ -1093,25 +1059,15 @@ struct SocketIntegrationTests {
         defer { server.stop() }
         try await Task.sleep(for: .milliseconds(100))
 
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = try Self.connectSocket(to: socketPath)
         defer { close(fd) }
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        socketPath.withCString { ptr in
-            withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
-                pathPtr.withMemoryRebound(to: CChar.self, capacity: 104) { dest in _ = strlcpy(dest, ptr, 104) }
-            }
-        }
-        _ = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-        }
         // Client-side read timeout of 3s — if server doesn't close
         // within that, we'd see EAGAIN (-1) rather than EOF (0).
         var rcvTimeout = timeval(tv_sec: 3, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcvTimeout, socklen_t(MemoryLayout<timeval>.size))
 
         let msg = #"{"type":"team_list","caller_worktree":"/tmp/wt"}"# + "\n"
-        msg.withCString { ptr in _ = Darwin.write(fd, ptr, strlen(ptr)) }
+        msg.withCString { ptr in _ = GrafttyPOSIX.write(fd, ptr, strlen(ptr)) }
         // Half-close write side so the server's read loop exits
         // immediately (EOF) rather than waiting out its 2s
         // SO_RCVTIMEO (cycle 131 ATTN-2.9). Keep read side open so
@@ -1121,7 +1077,7 @@ struct SocketIntegrationTests {
 
         let start = Date()
         var buf = [UInt8](repeating: 0, count: 1024)
-        let n = Darwin.read(fd, &buf, 1024)
+        let n = GrafttyPOSIX.read(fd, &buf, 1024)
         let elapsed = Date().timeIntervalSince(start)
 
         // EOF = 0 means server closed the fd. Pre-fix: wait the full
@@ -1163,28 +1119,12 @@ struct SocketIntegrationTests {
         try server.start()
         defer { server.stop() }
 
-        func connectClient() -> Int32 {
-            let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-            var addr = sockaddr_un()
-            addr.sun_family = sa_family_t(AF_UNIX)
-            socketPath.withCString { ptr in
-                withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
-                    pathPtr.withMemoryRebound(to: CChar.self, capacity: 104) { dest in _ = strlcpy(dest, ptr, 104) }
-                }
-            }
-            let rc = withUnsafePointer(to: &addr) { ptr in
-                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-            }
-            #expect(rc == 0)
-            return fd
-        }
-
         // Connection #1: silent — connect but neither write nor close
         // until test teardown. Pre-fix, this pins the serial queue on
         // `handleClient`'s blocking `read()` forever.
         let clock = ContinuousClock()
         let silentConnectedAt = clock.now
-        let silentFD = connectClient()
+        let silentFD = try Self.connectSocket(to: socketPath)
         defer { close(silentFD) }
         var rcvTimeout = timeval(tv_sec: 3, tv_usec: 0)
         setsockopt(
@@ -1198,19 +1138,19 @@ struct SocketIntegrationTests {
         try await Task.sleep(for: .milliseconds(100))
 
         // Connection #2: valid — write one message and close.
-        let activeFD = connectClient()
+        let activeFD = try Self.connectSocket(to: socketPath)
         let msg = #"{"type":"notify","path":"/tmp/wt","text":"test"}"# + "\n"
-        msg.withCString { ptr in _ = Darwin.write(activeFD, ptr, strlen(ptr)) }
+        msg.withCString { ptr in _ = GrafttyPOSIX.write(activeFD, ptr, strlen(ptr)) }
         close(activeFD)
 
         try await expectSignal(from: events)
         var peekByte: UInt8 = 0
         errno = 0
-        let peekResult = Darwin.recv(
+        let peekResult = GrafttyPOSIX.recv(
             silentFD,
             &peekByte,
             1,
-            Int32(MSG_PEEK | MSG_DONTWAIT)
+            Int32(MSG_PEEK) | Int32(MSG_DONTWAIT)
         )
         let peekErrno = errno
         #expect(
@@ -1223,7 +1163,7 @@ struct SocketIntegrationTests {
         // per-client deadline. The production value is pinned above; using a
         // one-second override keeps this behavioral check fast and precise.
         var buffer = [UInt8](repeating: 0, count: 1)
-        let bytesRead = Darwin.read(silentFD, &buffer, buffer.count)
+        let bytesRead = GrafttyPOSIX.read(silentFD, &buffer, buffer.count)
         let silentLifetime = silentConnectedAt.duration(to: clock.now)
         #expect(bytesRead == 0, "silent connection must close at its read deadline")
         #expect(
@@ -1255,6 +1195,22 @@ struct SocketIntegrationTests {
             throw POSIXError(.ECONNRESET)
         }
         return response
+    }
+
+    /// Runs a blocking `sendRequest` on its own thread. A blocking read inside
+    /// a task parks a cooperative-pool thread; on a two-core host two parked
+    /// clients exhaust the pool until the server's request timeout frees them.
+    private static func sendRequestOnThread(
+        socketPath: String,
+        json: String
+    ) async throws -> ResponseMessage {
+        try await withCheckedThrowingContinuation { continuation in
+            Thread.detachNewThread {
+                continuation.resume(with: Result {
+                    try sendRequest(socketPath: socketPath, json: json)
+                })
+            }
+        }
     }
 
     private static func sendRequests(
@@ -1300,13 +1256,23 @@ struct SocketIntegrationTests {
         )
 
         let payload = jsonLines.joined(separator: "\n") + "\n"
-        try SocketIO.writeAll(fd: fd, string: payload)
-        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
-        return SocketIO.readAll(fd: fd, cap: 1 * 1024 * 1024)
+        // Like `SocketClient`, read even after a failed write: the server can
+        // send its busy response and close before the request is written.
+        let writeError: Error?
+        do {
+            try SocketIO.writeAll(fd: fd, string: payload)
+            writeError = nil
+        } catch {
+            writeError = error
+        }
+        _ = GrafttyPOSIX.shutdown(fd, Int32(SHUT_WR))
+        let response = SocketIO.readAll(fd: fd, cap: 1 * 1024 * 1024)
+        if let writeError, response.isEmpty { throw writeError }
+        return response
     }
 
     private static func connectSocket(to socketPath: String) throws -> Int32 {
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         guard fd >= 0 else { throw POSIXError(.ENOTSOCK) }
 
         var addr = sockaddr_un()
@@ -1323,7 +1289,7 @@ struct SocketIntegrationTests {
         }
         let connected = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-                Darwin.connect(
+                GrafttyPOSIX.connect(
                     fd,
                     socketAddress,
                     socklen_t(MemoryLayout<sockaddr_un>.size)
@@ -1335,14 +1301,7 @@ struct SocketIntegrationTests {
             throw POSIXError(.ECONNREFUSED)
         }
 
-        var noSigPipe: Int32 = 1
-        _ = setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_NOSIGPIPE,
-            &noSigPipe,
-            socklen_t(MemoryLayout<Int32>.size)
-        )
+        _ = GrafttyPOSIX.configureNoSigPipe(fd)
         return fd
     }
 
