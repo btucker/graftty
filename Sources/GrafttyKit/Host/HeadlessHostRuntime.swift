@@ -194,6 +194,7 @@ public final class HeadlessHostRuntime {
         agent: TeamHookRuntime? = nil, prompt: String? = nil, callerPath: String? = nil,
         creationOrigin: WorktreeHistory.Origin? = nil, relativeGitPaths: Bool = false,
         prepareEnvironment: (@MainActor @Sendable (String) async throws -> Void)? = nil) async throws -> (path: String, session: String) {
+        guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
         guard let repo = state.repos.first(where: { $0.path == repository }) else { throw HostRuntimeError.notFound("repository is not registered") }
         if let error = WorktreeCreationInput.validationError(worktreeName: name, branchName: branch, existing: existing, base: base) {
             throw HostRuntimeError.invalid(error)
@@ -218,6 +219,7 @@ public final class HeadlessHostRuntime {
         try acquire(path)
         defer { busyPaths.remove(path) }
         if let agent { try await agentSetup.ensure(agent) }
+        guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
         let launch = try WorktreeAgentLaunchCommand.prepare(agent: agent, prompt: prompt, exactCommand: command,
             promptDirectory: configuration.stateDirectory.appendingPathComponent("agent-launch-prompts"))
         do {

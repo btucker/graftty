@@ -1,6 +1,15 @@
 import Foundation
 import GrafttyProtocol
 
+/// An evacuation operation, not a Git checkpoint or a receipt of saved work.
+public struct HostDrainRecord: Codable, Sendable, Equatable {
+    public let operationID: UUID
+    public let notice: HostInterruptionNotice
+    public let startedAt: Date
+    public var deadline: Date
+    public let placements: [HostPlacementRecord]
+}
+
 /// The host state lease guarantees one runtime per directory. Main-actor isolation
 /// serializes admission; the durable intent is written before any asynchronous work.
 @MainActor
@@ -8,10 +17,12 @@ public final class HostPlacementLedger {
     private struct Document: Codable {
         var version = 1
         var records: [HostPlacementRecord] = []
+        var drain: HostDrainRecord?
     }
     private let file: JSONFileStore<Document>
     private var document: Document
     public var pendingCount: Int { document.records.filter { $0.state == .preparing || $0.state == .outcomeUnknown }.count }
+    public var drain: HostDrainRecord? { document.drain }
 
     public init(fileURL: URL) throws {
         file = JSONFileStore(fileURL: fileURL, outputFormatting: [.sortedKeys], posixPermissions: 0o600)
@@ -32,8 +43,27 @@ public final class HostPlacementLedger {
             }
         }
         document = loaded
+        if let drain = loaded.drain {
+            try drain.notice.validate()
+            guard drain.startedAt.timeIntervalSince1970.isFinite, drain.deadline.timeIntervalSince1970.isFinite,
+                  drain.deadline <= drain.notice.deadline else { throw HostRuntimeError.invalid("Invalid drain state") }
+        }
         // Persist recovery before serving any new admission. Never discard unreadable state.
         if loaded.records.contains(where: { $0.state == .outcomeUnknown }) { try file.save(loaded) }
+    }
+
+    @discardableResult
+    public func beginDrain(_ notice: HostInterruptionNotice, at now: Date = Date()) throws -> HostDrainRecord {
+        try notice.validate()
+        guard now.timeIntervalSince1970.isFinite else { throw HostRuntimeError.invalid("Invalid drain timestamp") }
+        var drain = document.drain ?? HostDrainRecord(operationID: UUID(), notice: notice, startedAt: now,
+            deadline: notice.deadline, placements: document.records.filter { $0.state != .released })
+        drain.deadline = min(drain.deadline, notice.deadline)
+        // Refuse new work even if the disk cannot persist the interruption.
+        // Repeated notices retry the same write without creating a new operation.
+        document.drain = drain
+        try file.save(document)
+        return drain
     }
 
     public func status(operationID: UUID, owner: RemoteMacConnectionSummary.ID) throws -> HostPlacementRecord? {
@@ -48,6 +78,7 @@ public final class HostPlacementLedger {
             guard prior.intent == intent else { throw HostRuntimeError.invalid("Placement operation arguments cannot change on retry") }
             return prior
         }
+        guard document.drain == nil else { throw HostRuntimeError.busy("Host is draining for interruption") }
         try Self.validate(intent)
         guard document.records.count < 10000 else { throw HostRuntimeError.busy("Placement history limit reached") }
         let claims = document.records.filter { $0.state != .released }

@@ -97,6 +97,32 @@ struct HeadlessHostRuntimeTests {
         throw HostRuntimeError.busy("Placement did not finish")
     }
 
+    @Test func drainRejectsDirectAndAdmittedWorktreeCreation() async throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid", "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals)
+        _ = try await runtime.registerRepository(root.path)
+        runtime.hostResources = .init(sampledAt: Date().timeIntervalSince1970, diskPath: root.path)
+        try runtime.beginDrain(.init(provider: "test-cloud", eventID: "notice", action: .terminate, deadline: Date().addingTimeInterval(120)))
+        #expect(runtime.hostResources?.acceptingPlacements == false)
+        await #expect(throws: (any Error).self) {
+            _ = try await runtime.createWorktree(repository: root.path, name: "direct", branch: "direct")
+        }
+        let owner = RemoteMacConnectionSummary.ID(deviceID: .init(value: "parent"), fingerprint: try .init(rawBytes: Data(repeating: 1, count: 32)))
+        let intent = HostPlacementIntent(repositoryID: root.path, worktreeName: "admitted", branchName: "admitted",
+            demand: .init(architecture: "arm64", cpus: 1, memoryBytes: 1 << 30, diskBytes: 1 << 20))
+        guard case .error = await runtime.place(.create(operationID: UUID(), intent: intent), owner: owner) else {
+            Issue.record("Draining host admitted new work"); return
+        }
+        #expect(terminals.starts.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".worktrees/direct").path))
+        #expect(!FileManager.default.fileExists(atPath: intent.worktreePath))
+        try await runtime.shutdown()
+    }
+
     @Test("@spec REMOTE-24.19: When a placement is admitted, the host shall return its preparing status without waiting for setup, continue independently of the request lifetime, and finish canceling owned jobs before shutdown returns.", arguments: [false, true])
     func placementOutlivesRequestButNotShutdown(stop: Bool) async throws {
         let (root, config, _) = try fixture()

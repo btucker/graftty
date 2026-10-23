@@ -16,15 +16,17 @@ public struct HostResourceSnapshot: Codable, Sendable, Hashable {
     public var activeWorktrees: Int
     public var pendingWorktreeOperations: Int?
     public var pendingPlacements: Int?
+    public var acceptingPlacements: Bool?
 
     public init(sampledAt: Double, architecture: String? = nil, operatingSystem: String? = nil, cpuCount: Int? = nil, cpuUtilization: Double? = nil,
                 memoryTotalBytes: Int64? = nil, memoryAvailableBytes: Int64? = nil,
                 diskPath: String, diskAvailableBytes: Int64? = nil, activeWorktrees: Int = 0,
-                pendingWorktreeOperations: Int? = nil, pendingPlacements: Int? = nil) {
+                pendingWorktreeOperations: Int? = nil, pendingPlacements: Int? = nil, acceptingPlacements: Bool? = nil) {
         self.sampledAt = sampledAt; self.architecture = architecture; self.operatingSystem = operatingSystem; self.cpuCount = cpuCount; self.cpuUtilization = cpuUtilization
         self.memoryTotalBytes = memoryTotalBytes; self.memoryAvailableBytes = memoryAvailableBytes
         self.diskPath = diskPath; self.diskAvailableBytes = diskAvailableBytes; self.activeWorktrees = activeWorktrees
         self.pendingWorktreeOperations = pendingWorktreeOperations; self.pendingPlacements = pendingPlacements
+        self.acceptingPlacements = acceptingPlacements
     }
 
     public var isValid: Bool {

@@ -22,6 +22,7 @@ final class HostMaintenance: WorktreeMonitorDelegate {
                     activeWorktrees: active, pendingOperations: runtime.busyPaths.count)
                 guard !Task.isCancelled else { return }
                 sample.pendingPlacements = runtime.placements.pendingCount
+                sample.acceptingPlacements = runtime.drain == nil
                 runtime.hostResources = sample
                 try? await Task.sleep(for: .seconds(5))
             }

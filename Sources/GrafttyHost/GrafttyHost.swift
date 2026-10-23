@@ -30,6 +30,7 @@ struct Serve: AsyncParsableCommand {
     @Option var sshPort: Int = 8801
     @Option(help: "Path to zmx executable.") var zmx: String?
     @Option(help: "Shell for new panes.") var shell: String?
+    @Option(help: "Compute provider interruption monitor: aws.") var computeProvider: String?
     @Flag(help: "Enable pairing HTTP routes. Trust still requires local confirmation.") var enablePairing = false
 
     mutating func run() async throws {
@@ -37,6 +38,7 @@ struct Serve: AsyncParsableCommand {
         config.bindAddress = bindAddress; config.httpPort = httpPort; config.sshPort = sshPort
         if let zmx { config.zmxExecutable = URL(fileURLWithPath: zmx) }
         if let shell { config.shell = shell }
+        if let computeProvider { config.computeProvider = computeProvider }
         let service = try await HostService(configuration: config, enablePairing: enablePairing)
         try await service.run()
     }

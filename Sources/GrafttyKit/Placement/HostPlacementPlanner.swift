@@ -91,6 +91,7 @@ public enum HostPlacementPlanner {
         else if sample?.isValid != true { reasons.append("invalidTelemetry") }
         else if host.resourceObservation?.isFresh(at: now, maximumAge: policy.maximumTelemetryAge) != true { reasons.append("staleTelemetry") }
         else if let sample {
+            if sample.acceptingPlacements == false { reasons.append("hostDraining") }
             if sample.operatingSystem == nil || sample.architecture == nil { reasons.append("unknownPlatform") }
             else {
                 if sample.operatingSystem != "linux" { reasons.append("operatingSystemMismatch") }

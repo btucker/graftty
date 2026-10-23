@@ -305,7 +305,7 @@ let package = Package(
                 "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamInboxParseCacheTests.swift", "Teams/TeamPresenceStorageTests.swift",
                 "Teams/AttentionFileHandoffTests.swift", "Remote/MacToMac/GrafttyBonjourServiceTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift",
                 "Persistence/JSONStoreCompatibilityTests.swift", "CLI/DuplexSubprocessTests.swift", "Providers/AWSProviderTests.swift", "Providers/AWSHostEnrollmentTests.swift",
-                "Providers/HostProviderRegistryTests.swift", "Providers/AWSHostInventoryTests.swift", "Placement/HostPlacementPlannerTests.swift", "Placement/HostPlacementLedgerTests.swift", "DevContainers/DevContainerPreparerTests.swift", "Replication/GitDelegationStoreTests.swift", "Replication/GitReceiveHookTests.swift", "Replication/GitReceiveBrokerTests.swift"] : nil,
+                "Providers/HostProviderRegistryTests.swift", "Providers/AWSInterruptionSourceTests.swift", "Providers/AWSHostInventoryTests.swift", "Placement/HostPlacementPlannerTests.swift", "Placement/HostPlacementLedgerTests.swift", "DevContainers/DevContainerPreparerTests.swift", "Replication/GitDelegationStoreTests.swift", "Replication/GitReceiveHookTests.swift", "Replication/GitReceiveBrokerTests.swift"] : nil,
             resources: [
                 .process("Hosting/Fixtures"),
                 .copy("Web/Fixtures"),

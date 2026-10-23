@@ -40,6 +40,44 @@ struct HostPlacementLedgerTests {
         }
     }
 
+    @Test("@spec REMOTE-29.9: When a host begins draining for a provider interruption, it shall durably retain one operation and its managed placements, reject new admission across restarts, preserve existing retries, and never extend the earliest observed deadline.")
+    func drainPersistsAdmissionBarrierAndEarliestDeadline() throws {
+        let url = file(); defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let ledger = try HostPlacementLedger(fileURL: url)
+        let id = UUID()
+        let admitted = try ledger.admit(operationID: id, owner: owner(), intent: intent(), sample: sample(), at: now)
+        let notice = HostInterruptionNotice(provider: "test-cloud", eventID: "notice-1", action: .terminate, deadline: now.addingTimeInterval(120))
+        let drain = try ledger.beginDrain(notice, at: now)
+        #expect(drain.placements == [admitted])
+        #expect(try ledger.admit(operationID: id, owner: owner(), intent: intent(), sample: nil, at: now) == admitted)
+        #expect(throws: (any Error).self) {
+            _ = try ledger.admit(operationID: UUID(), owner: owner(), intent: intent("new"), sample: sample(), at: now)
+        }
+        let restored = try HostPlacementLedger(fileURL: url)
+        #expect(restored.drain == drain)
+        let later = HostInterruptionNotice(provider: "test-cloud", eventID: "notice-2", action: .stop, deadline: now.addingTimeInterval(180))
+        #expect(try restored.beginDrain(later, at: now).deadline == notice.deadline)
+        let earlier = HostInterruptionNotice(provider: "test-cloud", eventID: "notice-3", action: .stop, deadline: now.addingTimeInterval(30))
+        let updated = try restored.beginDrain(earlier, at: now)
+        #expect(updated.operationID == drain.operationID)
+        #expect(updated.deadline == earlier.deadline)
+        #expect(throws: (any Error).self) {
+            _ = try restored.admit(operationID: UUID(), owner: owner(), intent: intent("after-restart"), sample: sample(), at: now)
+        }
+    }
+
+    @Test func drainPersistenceFailureStillRejectsAdmissionInMemory() throws {
+        let url = file(); defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let ledger = try HostPlacementLedger(fileURL: url)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let notice = HostInterruptionNotice(provider: "test-cloud", eventID: "notice", action: .stop, deadline: now)
+        #expect(throws: (any Error).self) { try ledger.beginDrain(notice, at: now) }
+        #expect(ledger.drain != nil)
+        #expect(throws: (any Error).self) {
+            _ = try ledger.admit(operationID: UUID(), owner: owner(), intent: intent(), sample: sample(), at: now)
+        }
+    }
+
     @Test func identityAndIntentCannotBeReplacedOnRetry() throws {
         let url = file(); defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let ledger = try HostPlacementLedger(fileURL: url); let id = UUID()

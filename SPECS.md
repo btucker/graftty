@@ -3536,6 +3536,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-29.7** When repeated Spot warnings arrive, the host shall join the existing drain operation and bound retries and transfer concurrency by the remaining interruption deadline.
 
+**REMOTE-29.8** When the AWS interruption adapter polls instance metadata, it shall use IMDSv2 without redirects or proxies, distinguish an absent notice from failed observation, and translate valid action deadlines into provider-independent interruption notices.
+
+**REMOTE-29.9** When a host begins draining for a provider interruption, it shall durably retain one operation and its managed placements, reject new admission across restarts, preserve existing retries, and never extend the earliest observed deadline.
+
 ## CHROME — Dedicated Chrome tabs
 
 ### CHROME-1.x — Host profiles and ownership

@@ -168,11 +168,6 @@ struct RemoteTodo {
     func remote_29_1() async throws { }
 
     @Test("""
-@spec REMOTE-29.2: While a managed Spot host runs, the host service shall monitor interruption notices independently of agent turns and initiate evacuation using the reported deadline.
-""", .disabled("not yet implemented"))
-    func remote_29_2() async throws { }
-
-    @Test("""
 @spec REMOTE-29.3: When a Spot interruption notice is detected, the host shall immediately stop accepting new placements and start one drain operation covering every managed worktree and its associated sessions.
 """, .disabled("not yet implemented"))
     func remote_29_3() async throws { }

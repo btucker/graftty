@@ -2,6 +2,14 @@ import Foundation
 import GrafttyProtocol
 
 public extension HeadlessHostRuntime {
+    var drain: HostDrainRecord? { placements.drain }
+
+    @discardableResult
+    func beginDrain(_ notice: HostInterruptionNotice) throws -> HostDrainRecord {
+        defer { hostResources?.acceptingPlacements = false }
+        return try placements.beginDrain(notice)
+    }
+
     func place(_ request: HostPlacementRequest, owner: RemoteMacConnectionSummary.ID) async -> WorktreeManagementResponse {
         do {
             switch request {

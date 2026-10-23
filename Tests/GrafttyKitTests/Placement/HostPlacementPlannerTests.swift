@@ -27,9 +27,10 @@ struct HostPlacementPlannerTests {
         var busy = sample(); busy.cpuUtilization = 0.9
         var preparing = sample(); preparing.pendingWorktreeOperations = 1
         var pending = sample(); pending.pendingPlacements = 1
+        var draining = sample(); draining.acceptingPlacements = false
         let plan = try HostPlacementPlanner.plan(hosts: [
             host("offline", state: .offline), host("stale", sample: stale), host("arch", sample: wrongArch),
-            host("os", sample: wrongOS), host("busy", sample: busy), host("preparing", sample: preparing), host("pending", sample: pending)
+            host("os", sample: wrongOS), host("busy", sample: busy), host("preparing", sample: preparing), host("pending", sample: pending), host("draining", sample: draining)
         ], demand: demand, at: now)
         #expect(plan.candidates.isEmpty)
         #expect(plan.selectedHost == nil)
@@ -42,6 +43,7 @@ struct HostPlacementPlannerTests {
         #expect(reasons["busy"]?.contains("insufficientCPUHeadroom") == true)
         #expect(reasons["preparing"]?.contains("worktreeOperationInProgress") == true)
         #expect(reasons["pending"]?.contains("placementsPending") == true)
+        #expect(reasons["draining"]?.contains("hostDraining") == true)
     }
 
     @Test func missingMetricsDoNotBecomeZeroAndPreventPrematureExpansion() throws {
