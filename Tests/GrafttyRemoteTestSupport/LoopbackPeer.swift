@@ -4,8 +4,9 @@ import GrafttyRemoteClient
 import GrafttyTunnel
 import WebRTC
 
-public enum LoopbackPeerError: Error {
+public enum LoopbackPeerError: Error, Equatable {
     case dataChannelNeverOpened
+    case dataChannelOpenTimedOut(label: String)
 }
 
 /// An in-process WebRTC peer for loopback tests: plays the far side of a
@@ -27,7 +28,9 @@ public actor LoopbackPeer: WebRTCIceCandidateReceiver {
 
     private let role: Role
     private let inbound: InboundChannels
-    private let factory: RTCPeerConnectionFactory
+    /// Created on first negotiation, so a peer that never negotiates starts
+    /// no native WebRTC threads.
+    private lazy var factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
     private var peerConnection: RTCPeerConnection?
     private var dataChannels: [String: RTCDataChannel] = [:]
     /// Inbound channels arrive with the lossless inbox the delegate attached
@@ -40,18 +43,19 @@ public actor LoopbackPeer: WebRTCIceCandidateReceiver {
 
     private var gatheringContinuation: CheckedContinuation<Void, Never>?
     private var gatheringTimeoutTask: Task<Void, Never>?
-    private var openContinuations: [String: CheckedContinuation<RTCDataChannel, Error>] = [:]
+    private var openWaits: [String: PendingWait<RTCDataChannel>] = [:]
     private var resolvedOpenDataChannels: [String: RTCDataChannel] = [:]
     private var openTrackers: [String: OpenTrackerDelegate] = [:]
-    private var arrivalContinuations: [String: CheckedContinuation<(RTCDataChannel, DataChannelInbox), Error>] = [:]
+    private var arrivalWaits: [String: PendingWait<(RTCDataChannel, DataChannelInbox)>] = [:]
 
     private static let gatheringTimeout: Duration = .seconds(5)
     public static let defaultLabel = "graftty-ssh"
+    /// Matches `RemoteHostConnection`'s own data-channel open deadline.
+    public static let defaultOpenTimeout: Duration = .seconds(30)
 
     public init(role: Role, inbound: InboundChannels = .trackOpen) {
         self.role = role
         self.inbound = inbound
-        self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         pcDelegate.onIceCandidate = { [weak self] candidate in
             Task { await self?.routeLocalIceCandidate(candidate) }
         }
@@ -122,11 +126,17 @@ public actor LoopbackPeer: WebRTCIceCandidateReceiver {
     }
 
     /// Blocks until the channel with `label` reaches `.open`, then returns
-    /// it. An inbound channel is tracked only with `inbound: .trackOpen`.
-    public func openedDataChannel(label: String = defaultLabel) async throws -> RTCDataChannel {
+    /// it, or throws `.dataChannelOpenTimedOut` after `timeout`. An inbound
+    /// channel is tracked only with `inbound: .trackOpen`.
+    public func openedDataChannel(
+        label: String = defaultLabel,
+        timeout: Duration = defaultOpenTimeout
+    ) async throws -> RTCDataChannel {
         if let dc = resolvedOpenDataChannels[label] { return dc }
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCDataChannel, Error>) in
-            self.openContinuations[label] = continuation
+            self.openWaits[label] = PendingWait(continuation: continuation, timeout: timeout) { [weak self] in
+                await self?.expireOpenWait(label)
+            }
         }
     }
 
@@ -135,12 +145,28 @@ public actor LoopbackPeer: WebRTCIceCandidateReceiver {
     /// the inbox synchronously). Callers wrap the pair in
     /// `SSHNIOTransport(dataChannel:inbox:)`; bytes the peer sent in the
     /// meantime replay from the inbox. Opposite `RemoteHostConnection`,
-    /// pass `GrafttyWebRTC.dataChannelLabel`.
-    public func arrivedDataChannel(label: String = defaultLabel) async throws -> (RTCDataChannel, DataChannelInbox) {
+    /// pass `GrafttyWebRTC.dataChannelLabel`. Throws
+    /// `.dataChannelOpenTimedOut` if nothing arrives within `timeout`.
+    public func arrivedDataChannel(
+        label: String = defaultLabel,
+        timeout: Duration = defaultOpenTimeout
+    ) async throws -> (RTCDataChannel, DataChannelInbox) {
         if let dc = dataChannels[label], let inbox = inboxes[label] { return (dc, inbox) }
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(RTCDataChannel, DataChannelInbox), Error>) in
-            self.arrivalContinuations[label] = continuation
+            self.arrivalWaits[label] = PendingWait(continuation: continuation, timeout: timeout) { [weak self] in
+                await self?.expireArrivalWait(label)
+            }
         }
+    }
+
+    private func expireOpenWait(_ label: String) {
+        openWaits.removeValue(forKey: label)?
+            .resume(with: .failure(LoopbackPeerError.dataChannelOpenTimedOut(label: label)))
+    }
+
+    private func expireArrivalWait(_ label: String) {
+        arrivalWaits.removeValue(forKey: label)?
+            .resume(with: .failure(LoopbackPeerError.dataChannelOpenTimedOut(label: label)))
     }
 
     public func bindIceCandidates(to peer: WebRTCIceCandidateReceiver) {
@@ -174,7 +200,7 @@ public actor LoopbackPeer: WebRTCIceCandidateReceiver {
     private func adoptInboundDataChannel(_ dc: RTCDataChannel, inbox: DataChannelInbox) {
         dataChannels[dc.label] = dc
         inboxes[dc.label] = inbox
-        arrivalContinuations.removeValue(forKey: dc.label)?.resume(returning: (dc, inbox))
+        arrivalWaits.removeValue(forKey: dc.label)?.resume(with: .success((dc, inbox)))
         if inbound == .trackOpen {
             installOpenTracker(on: dc)
         }
@@ -195,9 +221,7 @@ public actor LoopbackPeer: WebRTCIceCandidateReceiver {
     private func handleDataChannelOpen(_ dc: RTCDataChannel) {
         guard resolvedOpenDataChannels[dc.label] == nil else { return }
         resolvedOpenDataChannels[dc.label] = dc
-        if let continuation = openContinuations.removeValue(forKey: dc.label) {
-            continuation.resume(returning: dc)
-        }
+        openWaits.removeValue(forKey: dc.label)?.resume(with: .success(dc))
         openTrackers[dc.label] = nil
     }
 
@@ -230,20 +254,45 @@ public actor LoopbackPeer: WebRTCIceCandidateReceiver {
 
     public func close() {
         handleIceGatheringComplete()
-        for pending in openContinuations.values {
-            pending.resume(throwing: LoopbackPeerError.dataChannelNeverOpened)
+        for pending in openWaits.values {
+            pending.resume(with: .failure(LoopbackPeerError.dataChannelNeverOpened))
         }
-        openContinuations.removeAll()
-        for pending in arrivalContinuations.values {
-            pending.resume(throwing: LoopbackPeerError.dataChannelNeverOpened)
+        openWaits.removeAll()
+        for pending in arrivalWaits.values {
+            pending.resume(with: .failure(LoopbackPeerError.dataChannelNeverOpened))
         }
-        arrivalContinuations.removeAll()
+        arrivalWaits.removeAll()
         for channel in dataChannels.values { channel.close() }
         dataChannels.removeAll()
         inboxes.removeAll()
         peerConnection?.close()
         iceCandidateTarget = nil
         pendingLocalCandidates.removeAll()
+    }
+}
+
+/// A caller parked in `openedDataChannel` or `arrivedDataChannel`, paired
+/// with its deadline. Every resolution (the channel event, the deadline, or
+/// `close()`) goes through `resume(with:)`, which also retires the deadline.
+private struct PendingWait<Value> {
+    private let continuation: CheckedContinuation<Value, Error>
+    private let deadline: Task<Void, Never>
+
+    init(
+        continuation: CheckedContinuation<Value, Error>,
+        timeout: Duration,
+        onExpiry: @escaping @Sendable () async -> Void
+    ) {
+        self.continuation = continuation
+        self.deadline = Task {
+            guard (try? await Task.sleep(for: timeout)) != nil else { return }
+            await onExpiry()
+        }
+    }
+
+    func resume(with result: Result<Value, Error>) {
+        deadline.cancel()
+        continuation.resume(with: result)
     }
 }
 

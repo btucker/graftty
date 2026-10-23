@@ -45,5 +45,30 @@ struct LoopbackPeerTests {
         await client.close()
         await answerer.close()
     }
+
+    /// A blocked network (for example a host firewall holding self-addressed
+    /// UDP) never opens the channel; the wait must end in a named error.
+    /// `.timeLimit` cannot end it: a never-resumed continuation ignores
+    /// cancellation and would hang the test process. A bare peer needs no
+    /// native WebRTC threads, so this runs in ordinary macOS `swift test`.
+    @Test(
+        "@spec TEST-1.14: If a loopback test peer's data channel does not open or arrive within its deadline, then the test fixture shall fail the wait with a data-channel-open timeout naming the channel label.",
+        .timeLimit(.minutes(1)),
+        arguments: WaitKind.allCases
+    )
+    func waitForUnopenedChannelFailsAtItsDeadline(_ kind: WaitKind) async throws {
+        let peer = LoopbackPeer(role: .answerer)
+        let started = ContinuousClock.now
+        await #expect(throws: LoopbackPeerError.dataChannelOpenTimedOut(label: "never-opens")) {
+            switch kind {
+            case .opened: _ = try await peer.openedDataChannel(label: "never-opens", timeout: .milliseconds(200))
+            case .arrived: _ = try await peer.arrivedDataChannel(label: "never-opens", timeout: .milliseconds(200))
+            }
+        }
+        #expect(ContinuousClock.now - started < .seconds(10))
+        await peer.close()
+    }
+
+    enum WaitKind: Sendable, CaseIterable { case opened, arrived }
 }
 #endif
