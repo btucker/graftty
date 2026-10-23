@@ -135,30 +135,8 @@ struct WorktreeAdd: ParsableCommand {
             deadline,
             Date().addingTimeInterval(5)
         )
-        try requireRemoteCreationSupport(deadline: capabilityDeadline)
-        try WorktreeCapability.require(
-            .worktreeCreateIdempotencyCapability,
-            unsupportedMessage: "the running Graftty app does not support safe worktree-create retries; quit and relaunch the updated app, then retry",
-            verificationMessage: "could not verify safe worktree-create retries; quit and relaunch Graftty, then retry",
-            retryTransportFailuresUntil: capabilityDeadline
-        )
+        try CapabilityProbe.require(requiredCapabilities, retryTransportFailuresUntil: capabilityDeadline)
         let agentRuntime = agent.flatMap { TeamHookRuntime(rawValue: $0) }
-        if agentRuntime != nil {
-            try WorktreeCapability.require(
-                .agentPromptStagingCapability,
-                unsupportedMessage: "the running Graftty app does not support safe agent prompt staging; quit and relaunch the updated app, then retry",
-                verificationMessage: "could not verify agent prompt staging support; quit and relaunch Graftty, then retry",
-                retryTransportFailuresUntil: capabilityDeadline
-            )
-        }
-        if base != nil {
-            try WorktreeCapability.require(
-                .worktreeBaseCapability,
-                unsupportedMessage: "the running Graftty app does not support worktree --base; quit and relaunch the updated app, then retry",
-                verificationMessage: "could not verify worktree --base support; quit and relaunch Graftty, then retry",
-                retryTransportFailuresUntil: capabilityDeadline
-            )
-        }
         let callerWorktree = project == nil ? try CLIEnv.resolveWorktree() : ""
         let operationID = UUID().uuidString.lowercased()
         let response = try Self.sendRequestRetryingTimeout(
@@ -232,17 +210,14 @@ struct WorktreeAdd: ParsableCommand {
         }
     }
 
-    func requireRemoteCreationSupport(
-        deadline: Date,
-        send: (NotificationMessage) throws -> ResponseMessage = { try SocketClient.sendExpectingResponse($0) }
-    ) throws {
-        guard remote != nil else { return }
-        try WorktreeCapability.require(
-            .remoteWorktreeCapability,
-            unsupportedMessage: "the running Graftty app does not support remote worktree creation; quit and relaunch the updated app, then retry",
-            verificationMessage: "could not verify remote worktree creation support; quit and relaunch the updated Graftty app, then retry",
-            retryTransportFailuresUntil: deadline,
-            send: send)
+    /// What this invocation needs from the running app, in the order their
+    /// errors are reported.
+    var requiredCapabilities: [ControlCapability] {
+        var needed: [ControlCapability] = remote == nil ? [] : [.remoteWorktree]
+        needed.append(.worktreeCreateIdempotency)
+        if agent != nil { needed.append(.agentPromptStaging) }
+        if base != nil { needed.append(.worktreeBase) }
+        return needed
     }
 
     static func successOutputLines(
@@ -504,12 +479,7 @@ struct WorktreeRemove: ParsableCommand {
     ) throws {
         // Probe for the guard even without --pinned: an older app could
         // otherwise remove a pinned row using the legacy removal request.
-        try WorktreeCapability.require(
-            .worktreePinnedRemovalCapability,
-            unsupportedMessage: "the running Graftty app does not support safe pinned-worktree removal; quit and relaunch the updated app, then retry",
-            verificationMessage: "could not verify pinned-worktree removal protection; quit and relaunch Graftty, then retry",
-            send: send
-        )
+        try CapabilityProbe.require([.worktreePinnedRemoval], send: send)
     }
 
     static func resolveTarget(
@@ -579,11 +549,12 @@ enum AgentLaunchFlags {
     }
 }
 
-enum WorktreeCapability {
+/// Checks that the running app supports what a command is about to rely on.
+/// ATTN-1.30: one `capabilities` request covers every needed capability; an
+/// app that predates it gets the single-capability probes it does answer.
+enum CapabilityProbe {
     static func require(
-        _ request: NotificationMessage,
-        unsupportedMessage: String,
-        verificationMessage: String,
+        _ needed: [ControlCapability],
         retryTransportFailuresUntil deadline: Date? = nil,
         send: (NotificationMessage) throws -> ResponseMessage = {
             try SocketClient.sendExpectingResponse($0)
@@ -591,12 +562,54 @@ enum WorktreeCapability {
         now: () -> Date = Date.init,
         sleep: (TimeInterval) -> Void = Thread.sleep(forTimeInterval:)
     ) throws {
+        guard let first = needed.first else { return }
+        let response = try exchange(.capabilities, verificationMessage: first.verificationMessage,
+                                    retryingCloseWithoutResponse: false,
+                                    deadline: deadline, send: send, now: now, sleep: sleep)
+        if case .capabilities(let names)? = response {
+            let advertised = Set(names)
+            if let missing = needed.first(where: { !advertised.contains($0.rawValue) }) {
+                CLIEnv.printError(missing.unsupportedMessage)
+                throw ExitCode(1)
+            }
+            return
+        }
+        // Apps before ATTN-2.27 drop the unknown request without answering.
+        for capability in needed {
+            switch try exchange(capability.legacyProbe, verificationMessage: capability.verificationMessage,
+                                retryingCloseWithoutResponse: true,
+                                deadline: deadline, send: send, now: now, sleep: sleep) {
+            case .ok?:
+                continue
+            case .error?:
+                CLIEnv.printError(capability.unsupportedMessage)
+            default:
+                CLIEnv.printError(capability.verificationMessage)
+            }
+            throw ExitCode(1)
+        }
+    }
+
+    /// Sends `request`, retrying transient transport failures until
+    /// `deadline`. Returns nil for a close without a response when
+    /// `retryingCloseWithoutResponse` is false, which is how an app that
+    /// predates the request answers it.
+    private static func exchange(
+        _ request: NotificationMessage,
+        verificationMessage: String,
+        retryingCloseWithoutResponse: Bool,
+        deadline: Date?,
+        send: (NotificationMessage) throws -> ResponseMessage,
+        now: () -> Date,
+        sleep: (TimeInterval) -> Void
+    ) throws -> ResponseMessage? {
         while true {
-            let response: ResponseMessage
             do {
-                response = try send(request)
+                return try send(request)
             } catch let error as CLIError {
                 switch error {
+                case .socketClosedWithoutResponse where !retryingCloseWithoutResponse:
+                    return nil
                 case .socketTimeout, .socketClosedWithoutResponse,
                      .socketError:
                     if let deadline, now() < deadline {
@@ -619,16 +632,50 @@ enum WorktreeCapability {
                 CLIEnv.printError(verificationMessage)
                 throw ExitCode(1)
             }
+        }
+    }
+}
 
-            switch response {
-            case .ok:
-                return
-            case .error:
-                CLIEnv.printError(unsupportedMessage)
-            default:
-                CLIEnv.printError(verificationMessage)
-            }
-            throw ExitCode(1)
+extension ControlCapability {
+    var unsupportedMessage: String {
+        switch self {
+        case .agentPromptStaging:
+            "the running Graftty app does not support safe agent prompt staging; quit and relaunch the updated app, then retry"
+        case .paneAgent:
+            "the running Graftty app does not support pane add --agent; quit and relaunch the updated app, then retry"
+        case .worktreeBase:
+            "the running Graftty app does not support worktree --base; quit and relaunch the updated app, then retry"
+        case .worktreeCreateIdempotency:
+            "the running Graftty app does not support safe worktree-create retries; quit and relaunch the updated app, then retry"
+        case .remoteWorktree:
+            "the running Graftty app does not support remote worktree creation; quit and relaunch the updated app, then retry"
+        case .worktreeRemove:
+            "the running Graftty app does not support worktree remove; quit and relaunch the updated app, then retry"
+        case .worktreePinnedRemoval:
+            "the running Graftty app does not support safe pinned-worktree removal; quit and relaunch the updated app, then retry"
+        case .worktreePin:
+            "the running Graftty app does not support worktree pinning; relaunch the updated app, then retry"
+        }
+    }
+
+    var verificationMessage: String {
+        switch self {
+        case .agentPromptStaging:
+            "could not verify agent prompt staging support; quit and relaunch Graftty, then retry"
+        case .paneAgent:
+            "could not verify pane add --agent support; quit and relaunch Graftty, then retry"
+        case .worktreeBase:
+            "could not verify worktree --base support; quit and relaunch Graftty, then retry"
+        case .worktreeCreateIdempotency:
+            "could not verify safe worktree-create retries; quit and relaunch Graftty, then retry"
+        case .remoteWorktree:
+            "could not verify remote worktree creation support; quit and relaunch the updated Graftty app, then retry"
+        case .worktreeRemove:
+            "could not verify worktree remove support; quit and relaunch Graftty, then retry"
+        case .worktreePinnedRemoval:
+            "could not verify pinned-worktree removal protection; quit and relaunch Graftty, then retry"
+        case .worktreePin:
+            "could not verify worktree pinning support; relaunch the updated Graftty app, then retry"
         }
     }
 }

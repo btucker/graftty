@@ -2,8 +2,8 @@ import Foundation
 import GrafttyProtocol
 
 /// The control-socket dispatcher shared by the Mac app and the headless
-/// host. It owns attention, recap, and team messages; every other request
-/// goes to `ControlPlatform.handlePlatformRequest`.
+/// host. It owns attention, recap, team, and capability messages; every
+/// other request goes to `ControlPlatform.handlePlatformRequest`.
 @MainActor
 public enum ControlRequestCore {
     /// Fire-and-forget path. Returns false for messages that expect a
@@ -100,12 +100,21 @@ public enum ControlRequestCore {
                                   runtime: request.runtime, event: request.event, sessionID: request.sessionID,
                                   paneSessionName: request.paneSessionName, attentionReason: request.attentionReason,
                                   stopHookActive: request.stopHookActive, platform: platform)
+        case .capabilities:
+            // ATTN-2.27
+            let supported = platform.controlCapabilities
+            return .capabilities(ControlCapability.allCases.filter(supported.contains).map(\.rawValue))
+        case .agentPromptStagingCapability, .paneAgentCapability, .worktreeBaseCapability,
+             .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability, .worktreeRemoveCapability,
+             .worktreePinnedRemovalCapability, .worktreePinCapability:
+            guard let capability = ControlCapability(legacyProbe: message),
+                  platform.controlCapabilities.contains(capability) else {
+                return .error("operation is unavailable on this host")
+            }
+            return .ok
         case .listPanes, .addPane, .closePane, .showPane, .sendPane,
              .previewFiles, .previewImage, .offerResource,
              .createWorktree, .worktreeCreateStatus, .removeWorktree, .worktreeRemoveStatus, .setWorktreePinned,
-             .agentPromptStagingCapability, .paneAgentCapability, .worktreeBaseCapability, .worktreeCreateIdempotencyCapability,
-             .remoteWorktreeCapability, .worktreeRemoveCapability, .worktreePinnedRemovalCapability,
-             .worktreePinCapability,
              .remoteWorktree, .reconnectRemoteMac, .reconnectRemoteClient,
              .linuxSetupIdentity, .completeLinuxSetup:
             return await platform.handlePlatformRequest(message)

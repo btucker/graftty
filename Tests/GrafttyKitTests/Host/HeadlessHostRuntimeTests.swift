@@ -401,6 +401,19 @@ struct HeadlessHostRuntimeTests {
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.attention?.clearAfter == Attention.clearAfterMaxSeconds)
     }
 
+    @Test("The headless host advertises every control capability except pane agents and remote worktrees")
+    func headlessCapabilities() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
+        #expect(await runtime.handle(.capabilities) == .capabilities([
+            "agent_prompt_staging", "worktree_base", "worktree_create_idempotency", "worktree_remove",
+            "worktree_pinned_removal", "worktree_pin",
+        ]))
+        #expect(await runtime.handle(.paneAgentCapability) == .error("operation is unavailable on this host"))
+        #expect(await runtime.handle(.remoteWorktreeCapability) == .error("operation is unavailable on this host"))
+    }
+
     @Test("@spec REMOTE-22.48: When a headless host receives a team send or message for a graftty-mac address, the application shall forward it to the paired peer only for a tracked caller.")
     func remoteTeamMessagesForward() async throws {
         let (root, config, state) = try fixture()

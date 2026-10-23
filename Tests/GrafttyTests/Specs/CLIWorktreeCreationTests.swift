@@ -219,25 +219,20 @@ struct CLIWorktreeCreationTests {
     @Test("@spec AGENT-5.16: When remote worktree creation is requested, the CLI shall verify local app support before sending the mutation and shall bound compatibility-probe retries separately from the worktree creation timeout.")
     func remoteCreationCapabilityIsRequired() throws {
         let command = try WorktreeAdd.parse(["fix", "--remote", "Studio"])
-        let expected = try JSONDecoder().decode(NotificationMessage.self, from: Data(
-            #"{"type":"remote_worktree_capability"}"#.utf8))
-        try command.requireRemoteCreationSupport(deadline: .distantPast, send: { request in
-            #expect(request == expected)
-            return .ok
-        })
-        var attempts = 0
-        #expect(throws: ExitCode.self) {
-            try command.requireRemoteCreationSupport(deadline: .distantPast, send: { _ in
-                attempts += 1
+        #expect(command.requiredCapabilities.first == .remoteWorktree)
+        #expect(try WorktreeAdd.parse(["fix"]).requiredCapabilities.contains(.remoteWorktree) == false)
+        var probes: [NotificationMessage] = []
+        #expect(throws: ExitCode(1)) {
+            try CapabilityProbe.require(command.requiredCapabilities, retryTransportFailuresUntil: .distantPast,
+                                        send: { request in
+                probes.append(request)
                 throw CLIError.socketClosedWithoutResponse
             })
         }
-        #expect(attempts == 1)
-        let local = try WorktreeAdd.parse(["fix"])
-        try local.requireRemoteCreationSupport(deadline: .distantPast, send: { _ in
-            Issue.record("Local worktree creation probed remote support")
-            return .error("unsupported")
-        })
+        // An app that drops `capabilities` still gets the remote probe, and a
+        // past deadline stops it after one attempt so it never consumes the
+        // creation timeout.
+        #expect(probes == [.capabilities, .remoteWorktreeCapability])
     }
 
     @Test("Retry responses for a different operation remain terminal")
@@ -346,15 +341,13 @@ struct CLIWorktreeCreationTests {
     func capabilityProbeRetriesTransientTransportErrors() throws {
         for transportError in [CLIError.socketTimeout, .socketBusy] {
             var attempts = 0
-            try WorktreeCapability.require(
-                .worktreeCreateIdempotencyCapability,
-                unsupportedMessage: "unsupported",
-                verificationMessage: "unverified",
+            try CapabilityProbe.require(
+                [.worktreeCreateIdempotency],
                 retryTransportFailuresUntil: Date().addingTimeInterval(1),
                 send: { _ in
                     attempts += 1
                     if attempts == 1 { throw transportError }
-                    return .ok
+                    return .capabilities(["worktree_create_idempotency"])
                 },
                 sleep: { _ in }
             )

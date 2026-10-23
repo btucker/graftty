@@ -24,8 +24,10 @@ public protocol ControlPlatform: ControlTeamPlatform {
     /// Automatic-delivery ownership and reachability for one team hook,
     /// evaluated against the presence snapshot taken at hook entry.
     func hookDeliveryPolicy(presence: [TeamPresenceRecord]) -> TeamHookDeliveryPolicy
+    /// What this host's dispatcher supports, answered by `capabilities`.
+    var controlCapabilities: Set<ControlCapability> { get }
     /// Requests the core does not own: panes, previews, worktree operations,
-    /// capabilities, and host-specific setup.
+    /// and host-specific setup.
     func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage?
 }
 

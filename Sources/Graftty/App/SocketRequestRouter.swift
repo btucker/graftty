@@ -93,7 +93,7 @@ final class SocketRequestRouter {
     }
 
     /// Request/response path (`SocketServer.onAsyncRequest`). The shared
-    /// core answers attention, recap, and team messages (routing
+    /// core answers attention, recap, team, and capability messages (routing
     /// `graftty-mac:` recipients through `remoteTeamRouter`) and hands the
     /// rest to `handlePaneRequest`; team lists then gain remote members.
     func handleRequest(_ message: NotificationMessage) async -> ResponseMessage? {
@@ -263,14 +263,6 @@ extension SocketRequestRouter {
                 path: path, index: index, text: text, pressEnter: pressEnter,
                 appState: appState, terminalManager: terminalManager
             )
-        case .agentPromptStagingCapability, .paneAgentCapability:
-            return .ok
-        case .worktreeBaseCapability:
-            return .ok
-        case .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability:
-            return .ok
-        case .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability:
-            return .ok
         case .setWorktreePinned(let path, let isPinned):
             let response = WorktreePinRequestHandler.handle(
                 worktreePath: path, isPinned: isPinned, state: &appState.wrappedValue
@@ -319,8 +311,8 @@ extension SocketRequestRouter {
             }
             return .worktreeRemove(status)
         default:
-            // ControlRequestCore answers attention, recap, and team
-            // messages before platform dispatch.
+            // ControlRequestCore answers attention, recap, team, and
+            // capability messages before platform dispatch.
             return .error("This request is not handled by the Mac app")
         }
     }
