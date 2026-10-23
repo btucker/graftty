@@ -112,6 +112,8 @@ targets:
     dependencies:
       - package: GrafttyMobileKit
         product: GrafttyMobileKit
+      - package: GrafttyMobileKit
+        product: GrafttyRemoteTestSupport
 
   GrafttyMobileBrowserTests:
     type: bundle.unit-test
@@ -152,6 +154,8 @@ targets:
     dependencies:
       - package: GrafttyMobileKit
         product: GrafttyRemoteClient
+      - package: GrafttyMobileKit
+        product: GrafttyRemoteTestSupport
 
 schemes:
   GrafttyBrowserInteraction:
