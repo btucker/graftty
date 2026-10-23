@@ -443,10 +443,10 @@ struct TerminalPaneViewTests {
         container.terminalView.pressesBegan([press], with: nil)
         #expect(delivered == 1)
         #expect(repeats.isRepeating)
-        // The scheduler's delays are positional; pin their order so the first
-        // repeat waits longer than the steady-state interval.
-        #expect(repeats.interval > 0)
-        #expect(repeats.initialDelay > repeats.interval)
+        // The scheduler's delays are positional; pin both values so a swap or a
+        // shortened initial delay fails here.
+        #expect(repeats.initialDelay == 0.4)
+        #expect(repeats.interval == 0.05)
         repeats.fire()
         repeats.fire()
         #expect(delivered == 3)
