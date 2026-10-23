@@ -237,7 +237,7 @@ struct RemoteWorktreeViewerControllerTests {
         #expect(conflict.errors.messages == ["busy"])
     }
 
-    @Test("@spec REMOTE-24.5: When a host answers a remote split with a bare ok, the viewer shall keep that split in flight until a snapshot shows a new pane and shall then send the next queued mutation; if ten seconds elapse first, the viewer shall drop every queued mutation for that worktree.")
+    @Test("@spec REMOTE-24.5: When a host answers a remote split with a bare ok, the viewer shall keep that split in flight until a snapshot shows a new pane and shall then send the next queued mutation; if ten seconds elapse first, the viewer shall cancel that worktree's queued mutations, report the timeout, and restore the prior zoom if its pane is present and no newer user intent superseded it.")
     func legacySplitWaitsForSnapshotOrTimeout() async throws {
         let snapshot = try await ViewerHarness.opened(layout: .leaf("a"))
         let a = try snapshot.terminal("a")
@@ -251,21 +251,57 @@ struct RemoteWorktreeViewerControllerTests {
         snapshot.publish(.split(.leaf("a"), .leaf("b")))
         await snapshot.settle()
         #expect(snapshot.model.requests.last == .split(target: "b", direction: .down))
+        snapshot.clock.fire(.seconds(10))
+        await snapshot.settle()
+        #expect(snapshot.errors.messages.isEmpty)
+        #expect(snapshot.model.requests.count == 2)
 
-        let timeout = try await ViewerHarness.opened(layout: .leaf("a"))
+        let timeout = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
         let timeoutA = try timeout.terminal("a")
+        timeout.surfaces.send(.toggleZoom, from: timeoutA)
         timeout.surfaces.send(.split(.right), from: timeoutA)
-        timeout.surfaces.send(.split(.down), from: timeoutA)
+        timeout.surfaces.send(.resize(direction: .left, amount: 3), from: timeoutA)
         await timeout.settle()
         try await timeout.answer(0, .ok)
         await timeout.settle()
         timeout.clock.fire(.seconds(10))
         await timeout.settle()
-        // The timed-out batch is abandoned; the queue accepts new work.
+        // The batch is abandoned with feedback and the split's unzoom rolls
+        // back. A stale deadline must not alert twice or affect fresh work.
         #expect(timeout.model.requests.count == 1)
+        #expect(timeout.controller.splitTree.zoomed == timeoutA)
+        #expect(timeout.errors.messages.count == 1)
+        #expect(timeout.errors.messages.first?.contains("timed out") == true)
+        #expect(timeout.errors.messages.first?.contains("cancelled") == true)
+        timeout.clock.fire(.seconds(10))
+        await timeout.settle()
+        #expect(timeout.errors.messages.count == 1)
         timeout.surfaces.send(.split(.left), from: timeoutA)
         await timeout.settle()
         #expect(timeout.model.requests.last == .split(target: "a", direction: .left))
+    }
+
+    @Test(arguments: [false, true])
+    func legacyTimeoutDoesNotUndoNewUserIntent(rezoom: Bool) async throws {
+        let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
+        let a = try viewer.terminal("a")
+        let b = try viewer.terminal("b")
+        viewer.surfaces.send(.toggleZoom, from: a)
+        viewer.surfaces.send(.split(.right), from: a)
+        viewer.surfaces.send(.equalize, from: a)
+        await viewer.settle()
+        try await viewer.answer(0, .ok)
+        #expect(viewer.controller.splitTree.zoomed == nil)
+        if rezoom {
+            viewer.surfaces.send(.toggleZoom, from: b)
+        } else {
+            viewer.controller.focusTerminal(b)
+        }
+        viewer.clock.fire(.seconds(10))
+        await viewer.settle()
+        #expect(viewer.controller.splitTree.zoomed == (rezoom ? b : nil))
+        #expect(viewer.errors.messages.count == 1)
+        #expect(viewer.model.requests.count == 1)
     }
 
     @Test("@spec REMOTE-24.6: When a remote close succeeds, the viewer shall remove the closed pane from its layout and focus the projected replacement before the next snapshot arrives, and shall ignore commands from the final closed pane until a snapshot catches up.")
