@@ -17,13 +17,18 @@ struct SessionReconnectTests {
         func close() {}
     }
 
-    /// Fails its first receive only once the test finishes `release`, so a
-    /// test controls when the terminal channel fails instead of racing it.
+    /// Parks every receive until the test finishes `release`, then fails it,
+    /// so a test controls when the terminal channel fails instead of racing
+    /// it. `receiveCalls` lets the test wait until the client is parked.
     final class GatedFailingWS: WebSocketClient, @unchecked Sendable {
         private let release: AsyncStream<Void>
+        private let lock = NSLock()
+        private var _receiveCalls = 0
+        var receiveCalls: Int { lock.withLock { _receiveCalls } }
         init(release: AsyncStream<Void>) { self.release = release }
         func send(_ frame: WebSocketFrame) async throws {}
         func receive() async throws -> WebSocketFrame {
+            lock.withLock { _receiveCalls += 1 }
             for await _ in release {}
             throw URLError(.networkConnectionLost)
         }
@@ -86,7 +91,8 @@ struct SessionReconnectTests {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
         let failure = AsyncStream<Void>.makeStream()
-        factory.nextProvider = { GatedFailingWS(release: failure.stream) }
+        let ws = GatedFailingWS(release: failure.stream)
+        factory.nextProvider = { ws }
         let client = SessionClient(
             sessionName: "s",
             webSocketFactory: factory.make,
@@ -95,17 +101,25 @@ struct SessionReconnectTests {
         )
         defer { client.stop() }
         client.start()
-        // The channel is dialled and its failure is still held back. The
-        // client starts out `.live`, so wait for the dial, not the state.
-        await waitUntil { factory.creations == 1 }
+        // The client is parked in receive on the dialled channel, with its
+        // failure still held back. The client starts out `.live`, so wait for
+        // the receive, not the state.
+        await waitUntil { ws.receiveCalls == 1 }
         #expect(factory.creations == 1)
+        #expect(ws.receiveCalls == 1)
         #expect(client.connectionState == .live)
 
         failure.continuation.finish()
-        // The virtual clock never advances, so the client stays in its first
-        // backoff instead of racing the read with the next dial (#632).
-        await waitUntil { client.connectionState == .reconnecting(attempt: 1) }
+        // A fixed sleep could read the state before the failure landed and
+        // see `.live` (#632), so wait for the transition. The virtual clock
+        // never advances, so the client stays parked in its first 1 s backoff
+        // and no second dial can follow.
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 1) &&
+                clock.hasPendingSleep(for: 1.0)
+        }
         #expect(client.connectionState == .reconnecting(attempt: 1))
+        #expect(clock.hasPendingSleep(for: 1.0))
         #expect(factory.creations == 1)
     }
 
