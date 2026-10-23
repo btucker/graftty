@@ -71,7 +71,11 @@ jobs:
     # The older swift-testing (124.4) on macos-latest (→ macos-15) has
     # an exit-path hang: all tests pass, then the process blocks ~10 min
     # without emitting the final summary. macos-26 sidesteps it.
-    runs-on: macos-26
+    # Same-repo pushes and pull requests run on the self-hosted Mac
+    # (mini-m1: self-hosted, macOS, ARM64) to avoid the hosted macOS
+    # runner queue. Fork pull requests stay on the hosted image so
+    # untrusted code never runs on the self-hosted machine.
+    runs-on: ${{ github.event.pull_request.head.repo.fork == true && 'macos-26' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -80,13 +84,22 @@ jobs:
         run: |
           swift --version
           xcodebuild -version
-          echo "id=$( { swift --version; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          # The id also hashes the absolute workspace: SwiftPM metadata and DerivedData
+          # record absolute paths, so caches from another workspace (hosted vs
+          # self-hosted, or two runner installs) must not be restored here.
+          echo "id=$( { swift --version; xcodebuild -version; echo "$GITHUB_WORKSPACE"; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - name: Test shared SwiftPM wrapper
         timeout-minutes: 2
         run: scripts/test-swiftpm-shared.sh
 
       - uses: ./.github/actions/paging-renderer
+        env:
+          # Persistent self-hosted hosts keep $HOME between jobs; an interrupted
+          # renderer checkout there would poison every later build with the same
+          # fingerprint. Keep the source cache job-owned (runner.temp is only
+          # available at step level).
+          GRAFTTY_GHOSTTY_BUILD_CACHE: ${{ runner.temp }}/ghostty-paging
 
       - name: Cache SwiftPM dependencies
         uses: actions/cache@v4
@@ -96,7 +109,7 @@ jobs:
             .build/repositories
             .build/artifacts
             .build/workspace-state.json
-          key: macos-deps-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          key: macos-deps-v3-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
 
       # workspace-state.json records which checkouts and binary artifacts are
       # extracted, so it lives with the dependency cache above. Restoring it
@@ -111,9 +124,9 @@ jobs:
             .build/*-apple-macosx
             .build/build.db
             .build/debug.yaml
-          key: macos-build-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
+          key: macos-build-v3-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
           restore-keys: |
-            macos-build-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-
+            macos-build-v3-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-
 
       - name: Resolve Swift dependencies
         timeout-minutes: 5
@@ -176,7 +189,7 @@ jobs:
 
   ios-test-shards:
     name: ios-test (${{ matrix.shard }})
-    runs-on: macos-26
+    runs-on: ${{ github.event.pull_request.head.repo.fork == true && 'macos-26' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 50
     strategy:
       fail-fast: false
@@ -192,9 +205,18 @@ jobs:
         run: |
           swift --version
           xcodebuild -version
-          echo "id=$( { swift --version; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          # The id also hashes the absolute workspace: SwiftPM metadata and DerivedData
+          # record absolute paths, so caches from another workspace (hosted vs
+          # self-hosted, or two runner installs) must not be restored here.
+          echo "id=$( { swift --version; xcodebuild -version; echo "$GITHUB_WORKSPACE"; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/paging-renderer
+        env:
+          # Persistent self-hosted hosts keep $HOME between jobs; an interrupted
+          # renderer checkout there would poison every later build with the same
+          # fingerprint. Keep the source cache job-owned (runner.temp is only
+          # available at step level).
+          GRAFTTY_GHOSTTY_BUILD_CACHE: ${{ runner.temp }}/ghostty-paging
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -209,16 +231,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .spm
-          key: ios-deps-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml') }}
+          key: ios-deps-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml') }}
 
       - name: Restore iOS compiled build
         id: ios-build-cache
         uses: actions/cache/restore@v4
         with:
           path: .derivedData
-          key: ios-build-v4-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
+          key: ios-build-v5-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
           restore-keys: |
-            ios-build-v4-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-
+            ios-build-v5-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-
 
       - name: Build GrafttyMobile for testing (iOS Simulator SDK)
         timeout-minutes: 10
@@ -268,6 +290,15 @@ jobs:
           TEST_ARGUMENTS="$(python3 -B scripts/ci/test_plan.py "$SHARD_NAME")"
           export TEST_ARGUMENTS
           scripts/run-ios-test-shard.sh
+
+      - name: Delete the CI simulator
+        # Hosted VMs discarded leaked simulators; a persistent self-hosted host
+        # would accumulate them when boot or the test step fails before the
+        # shard script's own trap runs. Only this job's UDID is touched.
+        if: always() && env.SIMULATOR_UDID != ''
+        run: |
+          xcrun simctl shutdown "$SIMULATOR_UDID" >/dev/null 2>&1 || true
+          xcrun simctl delete "$SIMULATOR_UDID" >/dev/null 2>&1 || true
 
       - name: Upload iOS test results
         if: always()
