@@ -1,19 +1,32 @@
-import GrafttyKit
-import SwiftUI
+import Foundation
+import GrafttyProtocol
 
-/// Validates CLI removal against live app state before any removal side effects.
+/// Host-specific effects behind `graftty worktree remove`.
 @MainActor
-enum CLIWorktreeRemovalRequestHandler {
-    static func begin(
+public protocol CLIWorktreeRemovalPlatform: AnyObject {
+    var state: AppState { get set }
+    var worktreeRemovals: CLIWorktreeRemovalStore { get }
+    /// Resumes a sleeping worktree's processes; false if they cannot resume.
+    func wakeWorktree(_ path: String) -> Bool
+    /// Removes a linked worktree from Git and the model.
+    func removeWorktree(_ path: String, force: Bool) async -> Result<WorktreeRemovalOutcome, WorktreeRemovalError>
+}
+
+/// Validates `graftty worktree remove` against live host state before any
+/// removal side effects, then runs the host's removal in the background.
+/// Shared by the Mac app and the headless host.
+@MainActor
+public enum CLIWorktreeRemovalRequestHandler {
+    public static func begin(
         worktreePath: String,
         force: Bool,
         pinned: Bool,
-        appState: Binding<AppState>,
+        state: @escaping @MainActor () -> AppState,
         worktreeRemovals: CLIWorktreeRemovalStore,
         wakeWorktree: (String) -> Bool,
-        deleteWorktree: @escaping @MainActor (String, Bool) async -> Result<DeleteWorktreeFlow.Outcome, DeleteWorktreeFlow.FlowError>
+        deleteWorktree: @escaping @MainActor (String, Bool) async -> Result<WorktreeRemovalOutcome, WorktreeRemovalError>
     ) -> ResponseMessage {
-        if let error = validationError(worktreePath: worktreePath, pinned: pinned, state: appState.wrappedValue) {
+        if let error = validationError(worktreePath: worktreePath, pinned: pinned, state: state()) {
             return .error(error)
         }
         guard !worktreeRemovals.hasPendingRemoval(worktreePath: worktreePath) else {
@@ -28,7 +41,7 @@ enum CLIWorktreeRemovalRequestHandler {
             // Admission and task execution are separate actor turns. A row
             // may become pinned before this task starts. Recheck before Git,
             // including the vanished-directory prune/dismiss recovery path.
-            if let error = validationError(worktreePath: worktreePath, pinned: pinned, state: appState.wrappedValue) {
+            if let error = validationError(worktreePath: worktreePath, pinned: pinned, state: state()) {
                 worktreeRemovals.markFailed(operationID: status.operationID, error: error, forceAllowed: false)
                 return
             }

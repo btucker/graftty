@@ -1,11 +1,11 @@
 import Foundation
-import GrafttyKit
+import GrafttyProtocol
 
 /// In-memory rendezvous between the fast local-socket acknowledgement and the
 /// async shared worktree-removal flow. Terminal results are retained briefly
 /// so the CLI can recover from a lost poll response.
 @MainActor
-final class CLIWorktreeRemovalStore {
+public final class CLIWorktreeRemovalStore {
     private struct Record {
         var status: WorktreeRemoveStatus
         var updatedAt: Date
@@ -14,11 +14,11 @@ final class CLIWorktreeRemovalStore {
     private var records: [String: Record] = [:]
     private let terminalRetention: TimeInterval
 
-    init(terminalRetention: TimeInterval = 10 * 60) {
+    public init(terminalRetention: TimeInterval = 10 * 60) {
         self.terminalRetention = terminalRetention
     }
 
-    func begin(
+    public func begin(
         worktreePath: String,
         now: Date = Date()
     ) -> WorktreeRemoveStatus {
@@ -35,7 +35,7 @@ final class CLIWorktreeRemovalStore {
         return status
     }
 
-    func markRemoved(operationID: String, now: Date = Date()) {
+    public func markRemoved(operationID: String, now: Date = Date()) {
         transition(
             operationID: operationID,
             state: .removed,
@@ -46,7 +46,7 @@ final class CLIWorktreeRemovalStore {
         )
     }
 
-    func markFailed(
+    public func markFailed(
         operationID: String,
         error: String,
         forceAllowed: Bool,
@@ -63,7 +63,7 @@ final class CLIWorktreeRemovalStore {
         )
     }
 
-    func status(
+    public func status(
         operationID: String,
         now: Date = Date()
     ) -> WorktreeRemoveStatus? {
@@ -71,7 +71,7 @@ final class CLIWorktreeRemovalStore {
         return records[operationID]?.status
     }
 
-    func hasPendingRemoval(
+    public func hasPendingRemoval(
         worktreePath: String,
         now: Date = Date()
     ) -> Bool {

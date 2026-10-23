@@ -47,6 +47,9 @@ final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
         Set(ControlCapability.allCases).subtracting([.paneAgent, .remoteWorktree])
     }
 
+    var worktreeCreation: any CLIWorktreeCreationPlatform { HeadlessWorktreeLifecycle(runtime: runtime) }
+    var worktreeRemoval: any CLIWorktreeRemovalPlatform { HeadlessWorktreeLifecycle(runtime: runtime) }
+
     func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage? {
         await runtime.hostRequest(message)
     }
@@ -56,5 +59,47 @@ final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
         guard let sender = runtime.remoteTeamSender else { return .error("remote team connection is unavailable") }
         return await sender(TeamSendRequest(callerWorktree: callerWorktree, callerAgentID: callerAgentID,
                                             recipient: recipient, text: text, priority: priority))
+    }
+}
+
+/// `graftty worktree add` / `remove` effects. Unlike the platform, which
+/// the runtime owns, this retains the runtime until background Git work
+/// finishes.
+@MainActor
+final class HeadlessWorktreeLifecycle: CLIWorktreeCreationPlatform, CLIWorktreeRemovalPlatform {
+    let runtime: HeadlessHostRuntime
+
+    init(runtime: HeadlessHostRuntime) { self.runtime = runtime }
+
+    var state: AppState {
+        get { runtime.state }
+        set { runtime.state = newValue }
+    }
+    var teamInbox: TeamInbox { runtime.inbox }
+    var worktreeCreations: CLIWorktreeCreationStore { runtime.worktreeCreations }
+    var worktreeRemovals: CLIWorktreeRemovalStore { runtime.worktreeRemovals }
+    var agentPromptDirectory: URL {
+        runtime.configuration.stateDirectory.appendingPathComponent("agent-launch-prompts", isDirectory: true)
+    }
+
+    func stateDidChange() throws { try runtime.save() }
+    func saveStateNow() throws { try runtime.save() }
+    func creationDestinationError(worktreePath: String, repo: RepoEntry) -> String? {
+        runtime.creationDestinationError(worktreePath: worktreePath, repo: repo)
+    }
+    func finishWorktreeCreation(_ plan: CLIWorktreeCreationPlan) async -> String? {
+        do {
+            _ = try await runtime.finishCreatingWorktree(plan)
+            return nil
+        } catch let error as WorktreeCreationError {
+            return error.operationFailureMessage
+        } catch {
+            return String(describing: error)
+        }
+    }
+    /// Headless panes never sleep.
+    func wakeWorktree(_ path: String) -> Bool { true }
+    func removeWorktree(_ path: String, force: Bool) async -> Result<WorktreeRemovalOutcome, WorktreeRemovalError> {
+        await runtime.removeWorktree(path, force: force)
     }
 }

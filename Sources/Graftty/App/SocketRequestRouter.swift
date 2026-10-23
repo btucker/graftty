@@ -105,12 +105,6 @@ final class SocketRequestRouter {
             appState: appState,
             terminalManager: terminalManager,
             teamInbox: teamInbox,
-            teamEventDispatcher: teamEventDispatcher,
-            worktreeMonitor: worktreeMonitor,
-            statsStore: statsStore,
-            prStatusStore: prStatusStore,
-            worktreeCreations: worktreeCreations,
-            worktreeRemovals: worktreeRemovals,
             remoteMacsModel: remoteMacsModel,
             remoteTeamRouter: remoteTeamRouter
         )
@@ -127,12 +121,6 @@ extension SocketRequestRouter {
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         teamInbox: TeamInbox,
-        teamEventDispatcher: TeamEventDispatcher,
-        worktreeMonitor: WorktreeMonitor,
-        statsStore: WorktreeStatsStore,
-        prStatusStore: PRStatusStore,
-        worktreeCreations: CLIWorktreeCreationStore,
-        worktreeRemovals: CLIWorktreeRemovalStore,
         remoteMacsModel: RemoteMacsModel,
         remoteTeamRouter: RemoteTeamRouter
     ) async -> ResponseMessage? {
@@ -261,87 +249,15 @@ extension SocketRequestRouter {
             )
             if response == .ok { GrafttyApp.persistAppState(appState.wrappedValue) }
             return response
-        case .createWorktree(let request):
-            return await beginCLIWorktreeCreation(
-                callerPath: request.callerWorktree,
-                worktreeName: request.worktreeName,
-                branchName: request.branchName,
-                existing: request.existing,
-                base: request.base,
-                command: request.command,
-                agentRuntime: request.agentRuntime,
-                agentPrompt: request.agentPrompt,
-                operationID: request.operationID,
-                appState: appState,
-                terminalManager: terminalManager,
-                teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher,
-                worktreeMonitor: worktreeMonitor,
-                statsStore: statsStore,
-                worktreeCreations: worktreeCreations
-            )
-        case .worktreeCreateStatus(let operationID):
-            guard let status = worktreeCreations.status(operationID: operationID) else {
-                return .error("unknown or expired worktree creation operation")
-            }
-            return .worktreeCreate(status)
-        case .removeWorktree(let worktreePath, let force, let pinned):
-            return beginCLIWorktreeRemoval(
-                worktreePath: worktreePath,
-                force: force,
-                pinned: pinned,
-                appState: appState,
-                terminalManager: terminalManager,
-                statsStore: statsStore,
-                prStatusStore: prStatusStore,
-                teamEventDispatcher: teamEventDispatcher,
-                worktreeRemovals: worktreeRemovals
-            )
-        case .worktreeRemoveStatus(let operationID):
-            guard let status = worktreeRemovals.status(operationID: operationID) else {
-                return .error("unknown or expired worktree removal operation")
-            }
-            return .worktreeRemove(status)
         default:
-            // ControlRequestCore answers attention, recap, team, and
-            // capability messages before platform dispatch.
+            // ControlRequestCore answers attention, recap, team,
+            // capability, and worktree create/remove messages before
+            // platform dispatch.
             return .error("This request is not handled by the Mac app")
         }
     }
 
-    @MainActor
-    private static func beginCLIWorktreeRemoval(
-        worktreePath: String,
-        force: Bool,
-        pinned: Bool,
-        appState: Binding<AppState>,
-        terminalManager: TerminalManager,
-        statsStore: WorktreeStatsStore,
-        prStatusStore: PRStatusStore,
-        teamEventDispatcher: TeamEventDispatcher,
-        worktreeRemovals: CLIWorktreeRemovalStore
-    ) -> ResponseMessage {
-        CLIWorktreeRemovalRequestHandler.begin(
-            worktreePath: worktreePath,
-            force: force,
-            pinned: pinned,
-            appState: appState,
-            worktreeRemovals: worktreeRemovals,
-            wakeWorktree: { terminalManager.wakeWorktree($0) },
-            deleteWorktree: { path, force in
-                await DeleteWorktreeFlow.delete(
-                    worktreePath: path,
-                    force: force,
-                    appState: appState,
-                    terminalManager: terminalManager,
-                    statsStore: statsStore,
-                    prStatusStore: prStatusStore,
-                    teamEventDispatcher: teamEventDispatcher
-                )
-            }
-        )
-    }
-
+    /// `graftty worktree add` from a paired Mac, which has no router.
     @MainActor
     static func beginCLIWorktreeCreation(
         callerPath: String,
@@ -362,155 +278,19 @@ extension SocketRequestRouter {
         statsStore: WorktreeStatsStore,
         worktreeCreations: CLIWorktreeCreationStore
     ) async -> ResponseMessage {
-        let operationID = operationID ?? UUID().uuidString.lowercased()
-        if let existing = worktreeCreations.status(operationID: operationID) {
-            return .worktreeCreate(existing)
-        }
-        defer { worktreeCreations.discardBaseCapture(operationID: operationID) }
-        guard let repo = appState.wrappedValue.repos.first(where: { repo in
-            repo.worktrees.contains(where: { $0.path == callerPath })
-        }) else {
-            return .error("caller is not inside a tracked worktree")
-        }
-
-        if let error = WorktreeCreationInput.validationError(
-            worktreeName: worktreeName, branchName: branchName, existing: existing, base: base
-        ) {
-            return .error(error)
-        }
-        let resolvedBase: String?
-        do {
-            resolvedBase = try await worktreeCreations.captureBase(
-                base, at: callerPath, operationID: operationID
+        await CLIWorktreeCreationRequestHandler.begin(
+            CreateWorktreeRequest(
+                callerWorktree: callerPath, worktreeName: worktreeName, branchName: branchName,
+                existing: existing, base: base, command: command, agentRuntime: agentRuntime,
+                agentPrompt: agentPrompt, operationID: operationID
+            ),
+            creationOrigin: creationOrigin,
+            platform: MacCLIWorktreeCreation(
+                appState: appState, terminalManager: terminalManager, teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher, worktreeMonitor: worktreeMonitor,
+                statsStore: statsStore, worktreeCreations: worktreeCreations
             )
-        } catch {
-            return .error("could not resolve worktree base: \(error)")
-        }
-        // Ref resolution suspends this handler. A retry may have completed
-        // the same preparation and started the operation in the meantime.
-        if let retained = worktreeCreations.status(operationID: operationID) {
-            return .worktreeCreate(retained)
-        }
-
-        if agentPrompt != nil, agentRuntime == nil {
-            return .error("an agent prompt requires an agent runtime")
-        }
-        if let error = CLIWorktreeCreationPolicy.obsoletePromptLoaderError(
-            agentRuntime: agentRuntime,
-            command: command,
-            agentPrompt: agentPrompt
-        ) {
-            return .error(error)
-        }
-        let launch: PreparedWorktreeAgentLaunch
-        if let agentRuntime,
-           CLIWorktreeCreationPolicy.shouldStageAgentPrompt(
-               agentRuntime: agentRuntime,
-               command: command,
-               agentPrompt: agentPrompt
-           ) {
-            do {
-                launch = try WorktreeAgentLaunchCommand.prepare(
-                    agent: agentRuntime,
-                    prompt: agentPrompt,
-                    exactCommand: nil
-                )
-            } catch {
-                return .error("could not stage agent prompt: \(error.localizedDescription)")
-            }
-        } else {
-            launch = PreparedWorktreeAgentLaunch(command: command, promptFile: nil)
-        }
-
-        let branch: BranchSelection = existing
-            ? .useExisting(name: branchName, source: .local)
-            : .createNew(name: branchName)
-        let worktreePath: String
-        switch AddWorktreeFlow.beginCreate(
-            repoPath: repo.path,
-            worktreeName: worktreeName,
-            branch: branch,
-            base: base,
-            creationOrigin: creationOrigin ?? .init(date: Date(), source: .worktree, worktreePath: callerPath,
-                worktreeName: repo.worktrees.first(where: { $0.path == callerPath }).map {
-                    SidebarWorktreeLabel.text(for: $0, inRepoAtPath: repo.path,
-                        siblingPaths: repo.worktrees.map(\.path), defaultBranch: repo.defaultBranchHint)
-                }),
-            appState: appState
-        ) {
-        case .success(let path):
-            worktreePath = path
-        case .failure(let error):
-            launch.discardPromptFile()
-            return .error(error.userMessage ?? "could not begin worktree creation")
-        }
-
-        if let runtime = agentRuntime, launch.promptFile != nil,
-           let index = appState.wrappedValue.indices(forWorktreePath: worktreePath) {
-            appState.wrappedValue.repos[index.repo].worktrees[index.worktree]
-                .expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(agentPrompt), runtime: runtime)
-        }
-
-        // Persist before starting Git, so both a failed launch and a later
-        // manual launch can recover the task. Retries return above before
-        // reaching this write, preventing duplicate inbox copies.
-        if let agentRuntime {
-            do {
-                try WorktreeAgentLaunchCommand.saveInitialPrompt(
-                    agentPrompt, runtime: agentRuntime, repo: repo,
-                    worktreePath: worktreePath, branchName: branchName, inbox: teamInbox
-                )
-                // A background CLI request may have no window observing state.
-                // Save the launch expectation before its first hook can arrive.
-                try GrafttyApp.persistAppStateSynchronously(appState.wrappedValue)
-            } catch {
-                appState.wrappedValue.removeWorktree(atPath: worktreePath)
-                launch.discardPromptFile()
-                return .error("could not save initial agent task: \(error.localizedDescription)")
-            }
-        }
-        let initialCommand = launch.command.flatMap { value in
-            value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
-        }
-        let status = worktreeCreations.start(
-            worktreePath: worktreePath,
-            messageAddress: worktreePath,
-            stagedPromptFile: launch.promptFile,
-            operationID: operationID
-        ) {
-            let result = await AddWorktreeFlow.finishCreate(
-                repoPath: repo.path,
-                worktreePath: worktreePath,
-                branch: branch,
-                base: resolvedBase,
-                appState: appState,
-                worktreeMonitor: worktreeMonitor,
-                statsStore: statsStore,
-                terminalManager: terminalManager,
-                teamEventDispatcher: teamEventDispatcher,
-                initialCommand: initialCommand,
-                terminalStartTiming: AddWorktreeFlow.terminalStartTiming(for: .cli)
-            )
-            switch result {
-            case .success:
-                return nil
-            case .failure(let error):
-                // A background request may have no view persisting removal of
-                // a failed placeholder or cancellation of its launch marker.
-                if let index = appState.wrappedValue.indices(forWorktreePath: worktreePath) {
-                    appState.wrappedValue.repos[index.repo].worktrees[index.worktree].cancelExpectedLaunch()
-                }
-                GrafttyApp.persistAppState(appState.wrappedValue)
-                let message: String
-                if case .discoveryFailed(let detail) = error {
-                    message = detail
-                } else {
-                    message = error.userMessage ?? "worktree creation failed"
-                }
-                return message
-            }
-        }
-        return .worktreeCreate(status)
+        )
     }
 
     @MainActor

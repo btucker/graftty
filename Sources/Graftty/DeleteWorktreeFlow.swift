@@ -22,30 +22,10 @@ import GrafttyKit
 @MainActor
 enum DeleteWorktreeFlow {
 
-    /// Successful outcome carries which branch the flow took so the
-    /// caller can label its UI (mac alert message, mobile toast).
-    /// `dismissed == true` means we ran `GitWorktreePrune` because the
-    /// worktree directory was already gone; `false` means
-    /// `git worktree remove` succeeded normally.
-    struct Outcome {
-        let dismissed: Bool
-    }
-
-    enum FlowError: Error {
-        /// `git worktree remove` failed in a way `--force` could resolve
-        /// (uncommitted/untracked files). Carries stderr + a `git status
-        /// --short` snapshot to surface in the failure UI.
-        case gitFailedForceable(stderr: String, shortStatus: String)
-        /// Failure that `--force` cannot help with: either `--force` was
-        /// already attempted, or the failure class is structural (main
-        /// checkout, non-git repo, git binary missing).
-        case gitFailedFinal(String)
-        /// `worktreePath` did not resolve to any tracked worktree.
-        case notFound
-        /// `worktreePath` resolved to the repo's main checkout, which
-        /// `git worktree remove` refuses by design.
-        case mainCheckoutRejected
-    }
+    /// Shared with the headless host (GrafttyKit). `dismissed == true`
+    /// means the directory was already gone and Git's record was pruned.
+    typealias Outcome = WorktreeRemovalOutcome
+    typealias FlowError = WorktreeRemovalError
 
     /// Run the flow. Confirmation must have already happened; this
     /// function performs the irreversible side effects unconditionally.

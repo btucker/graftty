@@ -1,12 +1,11 @@
 import Foundation
-import GrafttyKit
 import GrafttyProtocol
 
 /// Only local creation/status operations enter this handler. A peer cannot
 /// supply another remote target or reach the rest of the CLI dispatcher.
 @MainActor
-enum RemoteCLIWorktreeService {
-    static func handle(
+public enum RemoteCLIWorktreeService {
+    public static func handle(
         _ request: RemoteWorktreeRequest,
         from device: RemoteDeviceID,
         repos: [RepoEntry],
