@@ -291,6 +291,53 @@ struct SocketRouterCharacterizationTests {
         #expect(list.map(\.focused) == [false, true])
     }
 
+    @Test("showPane reports zmx, tracking, state, and pane errors in guard order")
+    func showPaneErrors() async throws {
+        let router = try RequestRouter()
+        let (running, _, _) = Self.fixture()
+        #expect(await router.route(.showPane(path: "/elsewhere", index: 1, lines: 10), running)
+            == .error("zmx unavailable"))
+        router.terminalManager.zmxLauncher = ZmxLauncher(
+            executable: URL(fileURLWithPath: "/usr/bin/false"),
+            zmxDir: router.directory.appendingPathComponent("zmx")
+        )
+        #expect(await router.route(.showPane(path: "/elsewhere", index: 1, lines: 10), running)
+            == .error("not tracked"))
+        let (closed, _, _) = Self.fixture(state: .closed)
+        #expect(await router.route(.showPane(path: Self.worktreePath, index: 1, lines: 10), closed)
+            == .error("worktree not running"))
+        #expect(await router.route(.showPane(path: Self.worktreePath, index: 3, lines: 10), running)
+            == .error("no pane with id 3 in this worktree"))
+        running.state.repos[0].worktrees[0].paneSessions = [:]
+        #expect(await router.route(.showPane(path: Self.worktreePath, index: 1, lines: 10), running)
+            == .error("pane has no session"))
+    }
+
+    @Test("showPane tails the addressed pane's zmx history and reports zmx failures")
+    func showPaneReadsAddressedSession() async throws {
+        let router = try RequestRouter()
+        let (box, _, sessions) = Self.fixture()
+        // `zmx history <session>` prints two lines and then the session it
+        // was asked for; the second pane's session fails like a dead zmx.
+        let script = router.directory.appendingPathComponent("fake-zmx")
+        try """
+        #!/bin/sh
+        [ "$1" = history ] || exit 64
+        if [ "$2" = "\(sessions[1])" ]; then echo "session ended" >&2; exit 3; fi
+        printf 'first\\nsecond\\n%s\\n' "$2"
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        router.terminalManager.zmxLauncher = ZmxLauncher(
+            executable: script,
+            zmxDir: router.directory.appendingPathComponent("zmx")
+        )
+
+        #expect(await router.route(.showPane(path: Self.worktreePath, index: 1, lines: 2), box)
+            == .paneShow("second\n\(sessions[0])\n"))
+        #expect(await router.route(.showPane(path: Self.worktreePath, index: 2, lines: 2), box)
+            == .error("zmx history failed: zmx history failed: session ended"))
+    }
+
     @Test("Mac platform dispatch answers remote routing itself and leaves team replies to the shared core")
     func platformDispatchHasNoRoutingStubs() async throws {
         let router = try RequestRouter()

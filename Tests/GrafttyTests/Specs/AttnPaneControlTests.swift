@@ -12,9 +12,8 @@ struct PaneShowHandlerTests {
     func tails200To50() async throws {
         let body = (1...200).map { "line\($0)" }.joined(separator: "\n")
         let stubReader = StubZmxHistoryReader(output: body)
-        let response = SocketRequestRouter.handleShowPane_forTesting(
-            path: "/wt", index: 1, lines: 50,
-            reader: stubReader
+        let response = SocketRequestRouter.showPaneResponse(
+            sessionName: "graftty-stub", lines: 50, reader: stubReader
         )
         guard case .paneShow(let text) = response else {
             Issue.record("expected .paneShow, got \(response)")
@@ -38,8 +37,8 @@ struct PaneShowHandlerTests {
             .map { String(repeating: "x", count: 100) + "\($0)" }
             .joined(separator: "\n")
         let stub = StubZmxHistoryReader(output: body)
-        let response = SocketRequestRouter.handleShowPane_forTesting(
-            path: "/wt", index: 1, lines: 50, reader: stub
+        let response = SocketRequestRouter.showPaneResponse(
+            sessionName: "graftty-stub", lines: 50, reader: stub
         )
         guard case .paneShow(let text) = response else {
             Issue.record("expected .paneShow, got \(response)")
