@@ -624,7 +624,7 @@ public final class SessionClient {
                 let delayIndex = min(attempt, self.backoffSchedule.count - 1)
                 let delay = self.backoffSchedule[delayIndex]
                 attempt += 1
-                self.connectionState = .reconnecting(attempt: attempt)
+                self.connectionState = .reconnecting(attempt: attempt + 1)
                 do {
                     try await self.clock.sleep(for: delay)
                 } catch {

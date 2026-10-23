@@ -62,7 +62,13 @@ final class MobileTerminalInputView: UITerminalView {
 
     private var heldArrowPress: UIPress?
     private var arrowRepeatBeganInCompletion = false
-    private var arrowRepeatTimer: Timer?
+    private var cancelArrowRepeat: (() -> Void)?
+    /// Starts the held-arrow repeat: calls `tick` once `initialDelay` has
+    /// elapsed and then every `interval` until `tick` returns false or the
+    /// returned cancel runs. Tests substitute a manual scheduler so IOS-6.28
+    /// does not depend on wall-clock timing.
+    var startArrowRepeat: @MainActor (_ initialDelay: TimeInterval, _ interval: TimeInterval,
+                                      _ tick: @escaping @MainActor () -> Bool) -> () -> Void = MobileTerminalInputView.runLoopRepeat
     private var observesApplicationActivity = false
 
     override init(frame: CGRect) {
@@ -317,7 +323,6 @@ final class MobileTerminalInputView: UITerminalView {
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if let heldArrowPress, presses.contains(heldArrowPress) { stopHardwareArrowRepeat() }
         super.pressesEnded(presses, with: event)
         suppressCompletionSoftwareCallback = false
     }
@@ -345,15 +350,23 @@ final class MobileTerminalInputView: UITerminalView {
                 name: UIApplication.willResignActiveNotification, object: nil)
             observesApplicationActivity = true
         }
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] timer in
+        cancelArrowRepeat = startArrowRepeat(0.4, 0.05) { [weak self] in
+            guard let self else { return false }
+            self.repeatHardwareArrow()
+            return true
+        }
+    }
+
+    private static func runLoopRepeat(initialDelay: TimeInterval, interval: TimeInterval,
+                                      tick: @escaping @MainActor () -> Bool) -> () -> Void {
+        let timer = Timer(timeInterval: interval, repeats: true) { timer in
             MainActor.assumeIsolated {
-                guard let self else { timer.invalidate(); return }
-                self.repeatHardwareArrow()
+                if !tick() { timer.invalidate() }
             }
         }
-        timer.fireDate = Date().addingTimeInterval(0.4)
-        arrowRepeatTimer = timer
+        timer.fireDate = Date().addingTimeInterval(initialDelay)
         RunLoop.main.add(timer, forMode: .common)
+        return { timer.invalidate() }
     }
 
     private func repeatHardwareArrow() {
@@ -367,8 +380,8 @@ final class MobileTerminalInputView: UITerminalView {
     }
 
     @objc func stopHardwareArrowRepeat() {
-        arrowRepeatTimer?.invalidate()
-        arrowRepeatTimer = nil
+        cancelArrowRepeat?()
+        cancelArrowRepeat = nil
         heldArrowPress = nil
         arrowRepeatBeganInCompletion = false
     }
