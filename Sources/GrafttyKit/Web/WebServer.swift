@@ -110,7 +110,7 @@ public final class WebServer {
     }
 
     /// Outcome a default-branch puller reports back.
-    public enum PullDefaultBranchOutcome: Sendable {
+    public enum PullDefaultBranchOutcome: Sendable, Equatable {
         case success(PullDefaultBranchResponse)
         case invalid(String)
         case gitFailed(String)

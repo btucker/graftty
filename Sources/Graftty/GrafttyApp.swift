@@ -826,7 +826,14 @@ struct GrafttyApp: App {
         }
         let teamInbox = services.teamInbox
         let remoteTeamRouter = services.remoteTeamRouter
-        let worktreeManagement = WorktreeManagement(appState: binding, terminalManager: tm, services: services)
+        let localWorktreeOrigin = WorktreeOrigin(
+            deviceID: AppServices.localRemoteDeviceID(),
+            deviceLabel: AppServices.localHostDisplayName(),
+            relayDepth: 0
+        )
+        let worktreeManagement = WorktreeManagement(
+            appState: binding, terminalManager: tm, services: services, localOrigin: localWorktreeOrigin
+        )
         tm.agentCompletionLoader = { currentWorktreePath, update in
             let repos = binding.wrappedValue.repos
             async let remote = remoteTeamRouter.members()
@@ -1167,17 +1174,7 @@ struct GrafttyApp: App {
             }
         }
         webController.setSessionWorktreeProvider { sessionName in
-            await MainActor.run { () -> String? in
-                for repo in appStateBinding.wrappedValue.repos {
-                    for wt in repo.worktrees where wt.state == .running {
-                        for leafID in wt.splitTree.allLeaves
-                        where wt.paneSessions[leafID].map(ZmxLauncher.sessionName(for:)) == sessionName {
-                            return wt.path
-                        }
-                    }
-                }
-                return nil
-            }
+            await MainActor.run { worktreeManagement.worktreePath(forSessionName: sessionName) }
         }
 
         // IOS-4.10: per-worktree pane trees + titles for the mobile
@@ -1195,11 +1192,6 @@ struct GrafttyApp: App {
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
         let panesClaudeRegistry = services.claudeSessionRegistry
-        let localWorktreeOrigin = WorktreeOrigin(
-            deviceID: AppServices.localRemoteDeviceID(),
-            deviceLabel: AppServices.localHostDisplayName(),
-            relayDepth: 0
-        )
         let buildWorktreePanesSnapshot: @Sendable @MainActor () -> [WorktreePanes] = {
             var out: [WorktreePanes] = []
             for repo in appStateBinding.wrappedValue.repos {
@@ -1242,78 +1234,23 @@ struct GrafttyApp: App {
             await services.remoteMacsModel.promotedWorktreesForRelay()
         }
 
-        let statsStore = services.statsStore
-
         // WEB-7.1: feed the web server the repo list for the "Add
         // Worktree" picker. Mirrors the native sidebar's top-level
         // repos.
         webController.setReposProvider {
-            await MainActor.run { () -> [WebServer.RepoInfo] in
-                appStateBinding.wrappedValue.repos.map { repo in
-                    WebServer.RepoInfo(
-                        path: repo.path,
-                        displayName: repo.displayName,
-                        defaultBranchStatus: defaultBranchStatus(
-                            for: repo,
-                            stats: statsStore.stats[repo.path]
-                        ),
-                        origin: localWorktreeOrigin
-                    )
-                }
+            await MainActor.run {
+                worktreeManagement.repositories(includingBranches: false).map { WebServer.RepoInfo($0, includingBranches: false) }
             }
         }
         webController.setRelayedReposProvider {
             await services.remoteMacsModel
                 .promotedRepositoriesForRelay()
-                .map { repository in
-                    WebServer.RepoInfo(
-                        path: repository.id,
-                        displayName: repository.displayName,
-                        defaultBranchStatus: repository.defaultBranchStatus.map {
-                            .init(
-                                branchName: $0.branchName,
-                                remoteRef: $0.remoteRef,
-                                behindCount: $0.behindCount
-                            )
-                        },
-                        branches: repository.branches,
-                        origin: repository.origin
-                    )
-                }
+                .map { WebServer.RepoInfo($0, includingBranches: true) }
+        }
+        webController.setDefaultBranchPuller { req in
+            await .init(worktreeManagement.pullDefaultBranch(repoPath: req.repoPath))
         }
 
-        webController.setDefaultBranchPuller { req in
-            let pullTarget = await MainActor.run {
-                guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
-                    return (tracked: false, status: nil as WebServer.RepoInfo.DefaultBranchStatus?)
-                }
-                return (tracked: true, status: defaultBranchStatus(
-                    for: repo,
-                    stats: statsStore.stats[repo.path]
-                ))
-            }
-            guard pullTarget.tracked else {
-                return .invalid("repository not tracked")
-            }
-            guard let status = pullTarget.status else {
-                return .invalid("default checkout is not behind origin")
-            }
-            do {
-                try await GitDefaultBranchPull.pull(repoPath: req.repoPath, branchName: status.branchName)
-            } catch GitDefaultBranchPull.Error.gitFailed(_, let stderr) {
-                return .gitFailed(stderr)
-            } catch {
-                return .internalFailure("\(error)")
-            }
-            await MainActor.run {
-                guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
-                    return
-                }
-                let branch = repo.worktrees.first(where: { $0.path == repo.path })?.branch ?? ""
-                statsStore.refresh(worktreePath: repo.path, repoPath: repo.path, branch: branch)
-            }
-            return .success(WebServer.PullDefaultBranchResponse(ok: true))
-        }
         // WEB-7.2: drive `POST /worktrees` into the shared
         // `AddWorktreeFlow` through `WorktreeManagement`, which is
         // `@MainActor`: every write to appState and every terminal-surface
@@ -1344,6 +1281,7 @@ struct GrafttyApp: App {
                 appState: appStateBinding,
                 terminalManager: terminalManager,
                 services: services,
+                worktreeManagement: worktreeManagement,
                 buildWorktreePanesSnapshot: buildWorktreePanesSnapshot,
                 localWorktreeOrigin: localWorktreeOrigin,
                 portScanner: portScanner,

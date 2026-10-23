@@ -268,62 +268,10 @@ extension GrafttyApp {
         appState appStateBinding: Binding<AppState>,
         terminalManager: TerminalManager,
         services: AppServices,
+        worktreeManagement: WorktreeManagement,
         portScanner panesPortScanner: PortScanner,
         localWorktreeOrigin: WorktreeOrigin
     ) -> WorktreeManagementChannelHandler.Mutator {
-        let statsStore = services.statsStore
-        let panesRemoteBranchStore = services.remoteBranchStore
-        let worktreeManagement = WorktreeManagement(appState: appStateBinding, terminalManager: terminalManager, services: services)
-        let localRepositorySnapshot: @MainActor () -> [RemoteRepositoryInfo] = {
-            appStateBinding.wrappedValue.repos.map { repo in
-                let snapshot = panesRemoteBranchStore.branchesByRepo[repo.path]
-                    ?? RemoteBranchSnapshot()
-                var mounted: [String: String] = [:]
-                for worktree in repo.worktrees
-                where worktree.state.hasOnDiskWorktree {
-                    mounted[worktree.branch] = worktree.path
-                }
-                let pullRequests = services.prStatusStore.prsByRepoBranch[
-                    repo.path
-                ] ?? [:]
-                let branches = BranchPickerViewModel.entries(
-                    branchSnapshot: snapshot,
-                    mountedBranchToPath: mounted,
-                    prsByBranch: pullRequests,
-                    filterText: ""
-                ).map { branch in
-                    RemoteRepositoryInfo.Branch(
-                        name: branch.name,
-                        source: branch.source == .local
-                            ? .local
-                            : .remoteOnly,
-                        lastCommitDate: branch.lastCommitDate,
-                        mountedWorktreeID: branch.mountedWorktreePath,
-                        pullRequest: branch.pr.map {
-                            .init(number: $0.number, title: $0.title)
-                        }
-                    )
-                }
-                let status = defaultBranchStatus(
-                    for: repo,
-                    stats: statsStore.stats[repo.path]
-                )
-                return RemoteRepositoryInfo(
-                    id: repo.path,
-                    displayName: repo.displayName,
-                    origin: localWorktreeOrigin,
-                    defaultBranchStatus: status.map {
-                        .init(
-                            branchName: $0.branchName,
-                            remoteRef: $0.remoteRef,
-                            behindCount: $0.behindCount
-                        )
-                    },
-                    branches: branches
-                )
-            }
-        }
-
         let worktreeManagementMutator:
             WorktreeManagementChannelHandler.Mutator = { request in
             if request.targetsRelayedResource {
@@ -445,9 +393,7 @@ extension GrafttyApp {
                 return .hostPresentation(presentation)
 
             case .listRepositories:
-                let local = await MainActor.run {
-                    localRepositorySnapshot()
-                }
+                let local = await MainActor.run { worktreeManagement.repositories(includingBranches: true) }
                 let remote = await services.remoteMacsModel
                     .promotedRepositoriesForRelay()
                 return .repositories(local + remote)
@@ -508,39 +454,7 @@ extension GrafttyApp {
                 ))
 
             case .pullDefaultBranch(let repositoryID):
-                let status = await MainActor.run {
-                    () -> WebServer.RepoInfo.DefaultBranchStatus? in
-                    guard let target = appStateBinding.wrappedValue.repos
-                        .first(where: { $0.path == repositoryID }) else {
-                        return nil
-                    }
-                    return defaultBranchStatus(
-                        for: target,
-                        stats: statsStore.stats[target.path]
-                    )
-                }
-                guard let status else {
-                    return .error(
-                        code: "invalid",
-                        message: "default checkout is not behind origin",
-                        forceAllowed: false,
-                        shortStatus: nil
-                    )
-                }
-                do {
-                    try await GitDefaultBranchPull.pull(
-                        repoPath: repositoryID,
-                        branchName: status.branchName
-                    )
-                    return .ok
-                } catch {
-                    return .error(
-                        code: "pull-failed",
-                        message: String(describing: error),
-                        forceAllowed: false,
-                        shortStatus: nil
-                    )
-                }
+                return await WorktreeManagementResponse(defaultBranchPull: worktreeManagement.pullDefaultBranch(repoPath: repositoryID))
 
             case .open(let worktreeID):
                 return await MainActor.run {
@@ -667,6 +581,7 @@ extension GrafttyApp {
         appState appStateBinding: Binding<AppState>,
         terminalManager: TerminalManager,
         services: AppServices,
+        worktreeManagement: WorktreeManagement,
         buildWorktreePanesSnapshot: @escaping @Sendable @MainActor () -> [WorktreePanes],
         localWorktreeOrigin: WorktreeOrigin,
         portScanner panesPortScanner: PortScanner,
@@ -709,6 +624,7 @@ extension GrafttyApp {
                 appState: appStateBinding,
                 terminalManager: terminalManager,
                 services: services,
+                worktreeManagement: worktreeManagement,
                 portScanner: panesPortScanner,
                 localWorktreeOrigin: localWorktreeOrigin
             )

@@ -1620,6 +1620,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-4.11** If a WebSocket terminal client cannot drain output, then the application shall bound queued output to 8 MiB of payload and 1024 frames per connection, including work awaiting its event loop, and disconnect that client on overflow without silently dropping terminal bytes on an open connection.
 
+**WEB-4.12** If a web client attaches to a pane whose worktree has gone stale, then the application shall start its zmx attach child without the missing worktree directory as its working directory.
+
+**WEB-4.13** When a web client attaches to a pane, the application shall start its zmx attach child in the current directory of the running worktree that owns the pane, including after its repository is relocated, and in no worktree directory for a pane whose worktree is not running.
+
 ### WEB-5.x — Client
 
 **WEB-5.1** The bundled client shall render a single terminal (ghostty-web, a WASM build of libghostty — the same VT parser as the native app pane) that attaches to the session indicated by the `/session/<name>` URL path. If a client arrives at the root path `/` with a `?session=<name>` query parameter, the client shall redirect to `/session/<name>` (backward compatibility). Sharing a parser with the native pane is what keeps escape-sequence behavior (cursor movement, SGR state, OSC 8 hyperlinks, scrollback) identical across clients.
@@ -1676,7 +1680,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-7.12** When a client sends `POST /repos/default-branch/pull` with `{repoPath}`, the application shall run the injected default-branch puller for that repository and respond `200` with `{ok: true}` on success, `409` with `{error}` when git rejects the pull, and `503` when the puller is not wired.
 
-**WEB-7.13** When a worktree create or delete finishes, the application shall report the same result to web and paired-device clients, mapping each failure to that transport's existing status, code and message.
+**WEB-7.13** When a worktree create, delete or default-branch pull finishes, the application shall report it to web and paired-device clients from one shared result, mapping each failure to that transport's existing status, code and message.
+
+**WEB-7.14** When a web or paired-device client pulls a repository's default branch, the application shall fast-forward the main checkout and then refresh its divergence stats.
 
 ### WEB-8.x — Web TLS (HTTPS)
 

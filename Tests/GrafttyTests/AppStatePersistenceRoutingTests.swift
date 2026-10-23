@@ -667,7 +667,7 @@ struct WindowlessWorktreeLifecycleSaveTests {
         }
 
         let service = WorktreeManagement(appState: box.binding, terminalManager: manager, teamInbox: TeamInbox(rootDirectory: root.appendingPathComponent("inbox")),
-            teamEventDispatcher: testDispatcher(root), worktreeMonitor: monitor, statsStore: stats, prStatusStore: PRStatusStore(),
+            teamEventDispatcher: testDispatcher(root), worktreeMonitor: monitor, statsStore: stats, prStatusStore: PRStatusStore(), remoteBranchStore: RemoteBranchStore(),
             worktreeCreations: CLIWorktreeCreationStore(), worktreeRemovals: CLIWorktreeRemovalStore())
         let result = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
             await service.create(repoPath: repo, worktreeName: "feature",
@@ -698,7 +698,7 @@ struct WindowlessWorktreeLifecycleSaveTests {
 
         let service = WorktreeManagement(appState: box.binding, terminalManager: manager, teamInbox: TeamInbox(rootDirectory: root.appendingPathComponent("inbox")),
             teamEventDispatcher: testDispatcher(root), worktreeMonitor: WorktreeMonitor(), statsStore: WorktreeStatsStore(),
-            prStatusStore: PRStatusStore(), worktreeCreations: CLIWorktreeCreationStore(), worktreeRemovals: CLIWorktreeRemovalStore())
+            prStatusStore: PRStatusStore(), remoteBranchStore: RemoteBranchStore(), worktreeCreations: CLIWorktreeCreationStore(), worktreeRemovals: CLIWorktreeRemovalStore())
         let result = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
             await service.delete(worktreePath: vanished.path, force: false)
         }
