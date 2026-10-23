@@ -76,6 +76,11 @@ jobs:
     # runner queue. Fork pull requests stay on the hosted image so
     # untrusted code never runs on the self-hosted machine.
     runs-on: ${{ github.event.pull_request.head.repo.fork == true && 'macos-26' || fromJSON('["self-hosted","macOS","ARM64"]') }}
+    env:
+      # Persistent self-hosted hosts keep $HOME between jobs; an interrupted
+      # renderer checkout there would poison every later build with the same
+      # fingerprint. Keep the source cache job-owned.
+      GRAFTTY_GHOSTTY_BUILD_CACHE: ${{ runner.temp }}/ghostty-paging
     steps:
       - uses: actions/checkout@v4
 
@@ -181,6 +186,11 @@ jobs:
   ios-test-shards:
     name: ios-test (${{ matrix.shard }})
     runs-on: ${{ github.event.pull_request.head.repo.fork == true && 'macos-26' || fromJSON('["self-hosted","macOS","ARM64"]') }}
+    env:
+      # Persistent self-hosted hosts keep $HOME between jobs; an interrupted
+      # renderer checkout there would poison every later build with the same
+      # fingerprint. Keep the source cache job-owned.
+      GRAFTTY_GHOSTTY_BUILD_CACHE: ${{ runner.temp }}/ghostty-paging
     timeout-minutes: 50
     strategy:
       fail-fast: false
@@ -272,6 +282,15 @@ jobs:
           TEST_ARGUMENTS="$(python3 -B scripts/ci/test_plan.py "$SHARD_NAME")"
           export TEST_ARGUMENTS
           scripts/run-ios-test-shard.sh
+
+      - name: Delete the CI simulator
+        # Hosted VMs discarded leaked simulators; a persistent self-hosted host
+        # would accumulate them when boot or the test step fails before the
+        # shard script's own trap runs. Only this job's UDID is touched.
+        if: always() && env.SIMULATOR_UDID != ''
+        run: |
+          xcrun simctl shutdown "$SIMULATOR_UDID" >/dev/null 2>&1 || true
+          xcrun simctl delete "$SIMULATOR_UDID" >/dev/null 2>&1 || true
 
       - name: Upload iOS test results
         if: always()
