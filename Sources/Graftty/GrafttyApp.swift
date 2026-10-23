@@ -826,7 +826,14 @@ struct GrafttyApp: App {
         }
         let teamInbox = services.teamInbox
         let remoteTeamRouter = services.remoteTeamRouter
-        let worktreeManagement = WorktreeManagement(appState: binding, terminalManager: tm, services: services)
+        let localWorktreeOrigin = WorktreeOrigin(
+            deviceID: AppServices.localRemoteDeviceID(),
+            deviceLabel: AppServices.localHostDisplayName(),
+            relayDepth: 0
+        )
+        let worktreeManagement = WorktreeManagement(
+            appState: binding, terminalManager: tm, services: services, localOrigin: localWorktreeOrigin
+        )
         tm.agentCompletionLoader = { currentWorktreePath, update in
             let repos = binding.wrappedValue.repos
             async let remote = remoteTeamRouter.members()
@@ -1185,11 +1192,6 @@ struct GrafttyApp: App {
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
         let panesClaudeRegistry = services.claudeSessionRegistry
-        let localWorktreeOrigin = WorktreeOrigin(
-            deviceID: AppServices.localRemoteDeviceID(),
-            deviceLabel: AppServices.localHostDisplayName(),
-            relayDepth: 0
-        )
         let buildWorktreePanesSnapshot: @Sendable @MainActor () -> [WorktreePanes] = {
             var out: [WorktreePanes] = []
             for repo in appStateBinding.wrappedValue.repos {
@@ -1279,6 +1281,7 @@ struct GrafttyApp: App {
                 appState: appStateBinding,
                 terminalManager: terminalManager,
                 services: services,
+                worktreeManagement: worktreeManagement,
                 buildWorktreePanesSnapshot: buildWorktreePanesSnapshot,
                 localWorktreeOrigin: localWorktreeOrigin,
                 portScanner: portScanner,

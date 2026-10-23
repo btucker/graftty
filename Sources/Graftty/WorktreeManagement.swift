@@ -9,8 +9,9 @@ import GrafttyProtocol
 /// (`CLIWorktreeCreationRequestHandler`, `CLIWorktreeRemovalRequestHandler`).
 /// Each transport keeps only a map from these results to its wire.
 ///
-/// Holds no state of its own: the model, caches and operation stores belong
-/// to the app, so every instance acts on the same worktrees.
+/// Holds no state of its own beyond this Mac's origin: the model, caches and
+/// operation stores belong to the app, so every instance acts on the same
+/// worktrees.
 @MainActor
 final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalPlatform {
     let appState: Binding<AppState>
@@ -23,8 +24,10 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
     let remoteBranchStore: RemoteBranchStore
     let worktreeCreations: CLIWorktreeCreationStore
     let worktreeRemovals: CLIWorktreeRemovalStore
-    /// This Mac, as the owner of the repositories it lists.
-    let localOrigin: WorktreeOrigin
+    /// This Mac, as the owner of the repositories it lists. Resolved on
+    /// first use, so a transport that never lists repositories (the control
+    /// socket) does not read the device-ID store or the host name.
+    private(set) lazy var localOrigin: WorktreeOrigin = SidebarHostController.shared.owner
 
     init(appState: Binding<AppState>, terminalManager: TerminalManager, teamInbox: TeamInbox,
          teamEventDispatcher: TeamEventDispatcher, worktreeMonitor: WorktreeMonitor,
@@ -41,20 +44,18 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
         self.remoteBranchStore = remoteBranchStore
         self.worktreeCreations = worktreeCreations
         self.worktreeRemovals = worktreeRemovals
-        self.localOrigin = localOrigin ?? Self.localOrigin()
+        if let localOrigin { self.localOrigin = localOrigin }
     }
 
-    static func localOrigin() -> WorktreeOrigin {
-        WorktreeOrigin(deviceID: AppServices.localRemoteDeviceID(), deviceLabel: AppServices.localHostDisplayName(), relayDepth: 0)
-    }
-
-    convenience init(appState: Binding<AppState>, terminalManager: TerminalManager, services: AppServices) {
+    convenience init(appState: Binding<AppState>, terminalManager: TerminalManager, services: AppServices,
+                     localOrigin: WorktreeOrigin? = nil) {
         self.init(
             appState: appState, terminalManager: terminalManager, teamInbox: services.teamInbox,
             teamEventDispatcher: services.teamEventDispatcher, worktreeMonitor: services.worktreeMonitor,
             statsStore: services.statsStore, prStatusStore: services.prStatusStore,
             remoteBranchStore: services.remoteBranchStore,
-            worktreeCreations: services.cliWorktreeCreations, worktreeRemovals: services.cliWorktreeRemovals
+            worktreeCreations: services.cliWorktreeCreations, worktreeRemovals: services.cliWorktreeRemovals,
+            localOrigin: localOrigin
         )
     }
 
@@ -160,9 +161,13 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
     }
 
     /// The worktree a zmx session's pane belongs to, as recorded when the
-    /// pane's session was mapped. Web attaches start their shell there.
+    /// pane's session was mapped. Web attaches start their shell there, so
+    /// a worktree without its directory (stale panes stay live, GIT-3.4)
+    /// resolves to nil: the attach child cannot `chdir` into it (WEB-4.12).
     func worktreePath(forSessionName sessionName: String) -> String? {
-        terminalManager.worktreePath(forSessionName: sessionName)
+        guard let path = terminalManager.worktreePath(forSessionName: sessionName),
+              appState.wrappedValue.worktree(forPath: path)?.state.hasOnDiskWorktree == true else { return nil }
+        return path
     }
 
     // MARK: - `graftty worktree add` / `remove`

@@ -268,10 +268,10 @@ extension GrafttyApp {
         appState appStateBinding: Binding<AppState>,
         terminalManager: TerminalManager,
         services: AppServices,
+        worktreeManagement: WorktreeManagement,
         portScanner panesPortScanner: PortScanner,
         localWorktreeOrigin: WorktreeOrigin
     ) -> WorktreeManagementChannelHandler.Mutator {
-        let worktreeManagement = WorktreeManagement(appState: appStateBinding, terminalManager: terminalManager, services: services)
         let worktreeManagementMutator:
             WorktreeManagementChannelHandler.Mutator = { request in
             if request.targetsRelayedResource {
@@ -581,6 +581,7 @@ extension GrafttyApp {
         appState appStateBinding: Binding<AppState>,
         terminalManager: TerminalManager,
         services: AppServices,
+        worktreeManagement: WorktreeManagement,
         buildWorktreePanesSnapshot: @escaping @Sendable @MainActor () -> [WorktreePanes],
         localWorktreeOrigin: WorktreeOrigin,
         portScanner panesPortScanner: PortScanner,
@@ -623,6 +624,7 @@ extension GrafttyApp {
                 appState: appStateBinding,
                 terminalManager: terminalManager,
                 services: services,
+                worktreeManagement: worktreeManagement,
                 portScanner: panesPortScanner,
                 localWorktreeOrigin: localWorktreeOrigin
             )

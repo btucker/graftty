@@ -86,6 +86,27 @@ struct WorktreeManagementQueryTests {
         #expect(service.worktreePath(forSessionName: ZmxLauncher.sessionName(for: PaneSessionID())) == nil)
     }
 
+    @Test("@spec WEB-4.12: If a web client attaches to a pane whose worktree has gone stale, then the application shall start its zmx attach child without the missing worktree directory as its working directory.")
+    func sessionLookupSkipsStaleWorktrees() throws {
+        let root = try scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pane = PaneSlotID()
+        let session = PaneSessionID()
+        // GIT-3.4: a worktree deleted while running keeps its live panes.
+        var worktree = WorktreeEntry(path: "/repo/.worktrees/gone", branch: "gone", state: .running)
+        worktree.splitTree = SplitTree(root: .leaf(pane))
+        worktree.paneSessions = [pane: session]
+        worktree.markStale()
+        let box = StateBox(AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [
+            WorktreeEntry(path: "/repo", branch: "main"), worktree,
+        ])]))
+        let manager = TerminalManager(socketPath: root.appendingPathComponent("control.sock").path)
+        manager.recordPaneSessions(for: worktree.splitTree, paneSessions: worktree.paneSessions, worktreePath: worktree.path)
+        let service = service(box, root: root, terminalManager: manager)
+
+        #expect(service.worktreePath(forSessionName: ZmxLauncher.sessionName(for: session)) == nil)
+    }
+
     @Test("@spec WEB-7.14: When a web or paired-device client pulls a repository's default branch, the application shall fast-forward the main checkout and then refresh its divergence stats.")
     func pullRefreshesStats() async throws {
         let root = try scratch()
