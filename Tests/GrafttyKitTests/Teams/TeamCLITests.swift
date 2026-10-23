@@ -130,7 +130,7 @@ struct TeamCLITests {
     @Test func teamListMembersFromTeamViewMatchExpected() {
         let repo = makeRepo(path: "/repo", displayName: "myrepo", branches: ["main", "feature/alice"])
         let wt = repo.worktrees[1]
-        let team = TeamView.team(for: wt, in: [repo], teamsEnabled: true)!
+        let team = TeamView.team(for: wt, in: [repo])!
 
         let members = team.members.map { m in
             TeamListMember(
@@ -152,15 +152,8 @@ struct TeamCLITests {
     @Test func memberNamedReturnsNilForUnknownRecipient() {
         let repo = makeRepo(path: "/repo", displayName: "myrepo", branches: ["main", "alice"])
         let wt = repo.worktrees[0]
-        let team = TeamView.team(for: wt, in: [repo], teamsEnabled: true)!
+        let team = TeamView.team(for: wt, in: [repo])!
         #expect(team.memberNamed("nobody") == nil)
         #expect(team.memberNamed("alice") != nil)
-    }
-
-    @Test func teamModeDisabledReturnsNilFromTeamView() {
-        let repo = makeRepo(path: "/repo", displayName: "myrepo", branches: ["main", "dev"])
-        let wt = repo.worktrees[0]
-        // teamsEnabled: false → team() returns nil → handler returns "team mode is disabled" before this
-        #expect(TeamView.team(for: wt, in: [repo], teamsEnabled: false) == nil)
     }
 }

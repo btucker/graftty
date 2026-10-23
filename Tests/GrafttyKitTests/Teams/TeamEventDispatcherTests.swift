@@ -27,8 +27,7 @@ struct TeamEventDispatcherTests {
             to: "main",
             text: "ping",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let team = TeamLookup.team(for: "/repo/.worktrees/alice", in: [repo])!
@@ -183,8 +182,7 @@ struct TeamEventDispatcherTests {
             to: "alice",
             text: "ping",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let resolved = try #require(message)
@@ -251,8 +249,7 @@ struct TeamEventDispatcherTests {
             fromWorktree: "/repo/.worktrees/alice",
             text: "heads up",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(messages.count == 2)

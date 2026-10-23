@@ -41,8 +41,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "please review",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(delivery.recipient.name == "alice")
@@ -81,8 +80,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "please review",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         // The recipient is the worktree, not whichever agent happens to be
@@ -99,8 +97,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice#\(claudeID)",
             text: "for that exact agent",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(explicit.message.to.runtime == "claude")
@@ -142,8 +139,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "queued for whoever is here",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         // Claude exits before delivery; only Codex remains. The row must not
@@ -160,8 +156,7 @@ struct TeamInboxRequestHandlerTests {
             event: .sessionStart,
             sessionID: "codex-session",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(output.contains("queued for whoever is here"))
@@ -194,8 +189,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "\(alice)#codex",
             text: "reply when Codex resumes",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(delivery.message.to.runtime == "codex")
@@ -216,8 +210,7 @@ struct TeamInboxRequestHandlerTests {
             event: .sessionStart,
             sessionID: "claude-present",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(!claudeOutput.contains("reply when Codex resumes"))
         #expect(claudeOutput.contains("shared while Codex is away"))
@@ -231,8 +224,7 @@ struct TeamInboxRequestHandlerTests {
             event: .sessionStart,
             sessionID: "codex-resumed",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(codexOutput.contains("reply when Codex resumes"))
         #expect(try inbox.worktreeWatermark(
@@ -267,8 +259,7 @@ struct TeamInboxRequestHandlerTests {
                 recipient: "alice#\(identity.rawValue)",
                 text: "do not reroute",
                 priority: .normal,
-                repos: [repo],
-                teamsEnabled: true
+                repos: [repo]
             )
         }
         #expect(try inbox.messages(teamID: "/repo").isEmpty)
@@ -306,8 +297,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "\(targetPath)#\(identity.rawValue)",
             text: "path-addressed",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(delivery.recipient.branch == "foo-bar")
@@ -326,8 +316,7 @@ struct TeamInboxRequestHandlerTests {
             callerWorktree: "/repo/.worktrees/alice",
             text: "heads up",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(deliveries.map { $0.recipient.name }.sorted() == ["bob", "main"])
@@ -347,8 +336,7 @@ struct TeamInboxRequestHandlerTests {
                 recipient: "nobody",
                 text: "hello",
                 priority: .normal,
-                repos: [repo],
-                teamsEnabled: true
+                repos: [repo]
             )
         }
     }
@@ -373,8 +361,7 @@ struct TeamInboxRequestHandlerTests {
                 recipient: "alice",
                 text: "message \(index)",
                 priority: .normal,
-                repos: [repo],
-                teamsEnabled: true
+                repos: [repo]
             )
         }
 
@@ -387,8 +374,7 @@ struct TeamInboxRequestHandlerTests {
             all: false,
             beforeID: nil,
             limit: 2,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(newest.messages.map(\.id) == ["0004", "0005"])
         #expect(newest.nextBeforeID == "0004")
@@ -402,8 +388,7 @@ struct TeamInboxRequestHandlerTests {
             all: false,
             beforeID: newest.nextBeforeID,
             limit: 2,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(middle.messages.map(\.id) == ["0002", "0003"])
         #expect(middle.nextBeforeID == "0002")
@@ -417,8 +402,7 @@ struct TeamInboxRequestHandlerTests {
             all: false,
             beforeID: middle.nextBeforeID,
             limit: 2,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(oldest.messages.map(\.id) == ["0001"])
         #expect(oldest.nextBeforeID == nil)
@@ -493,8 +477,7 @@ struct TeamInboxRequestHandlerTests {
                 all: false,
                 beforeID: nil,
                 limit: nil,
-                repos: [repo],
-                teamsEnabled: true
+                repos: [repo]
             )
         }
 
@@ -509,8 +492,7 @@ struct TeamInboxRequestHandlerTests {
                 beforeID: nil,
                 forwardPagination: nil,
                 limit: 100,
-                repos: [repo],
-                teamsEnabled: true
+                repos: [repo]
             )
         }
     }
@@ -557,8 +539,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "queued before launch",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let output = try handler.hook(
@@ -567,8 +548,7 @@ struct TeamInboxRequestHandlerTests {
             event: .sessionStart,
             sessionID: "session-1",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(!output.contains("Graftty team context"))
@@ -600,8 +580,7 @@ struct TeamInboxRequestHandlerTests {
                 recipient: "alice",
                 text: "queued before launch",
                 priority: .normal,
-                repos: [repo],
-                teamsEnabled: true
+                repos: [repo]
             )
 
             let output = try handler.hook(
@@ -610,8 +589,7 @@ struct TeamInboxRequestHandlerTests {
                 event: .sessionStart,
                 sessionID: "session-1",
                 paneSessionName: nil,
-                repos: [repo],
-                teamsEnabled: true
+                repos: [repo]
             )
 
             #expect(output.contains("graftty worktree add <name> --agent <codex|claude> --prompt-stdin"))
@@ -654,8 +632,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "queued for the owner",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let secondaryOutput = try handler.hook(
@@ -664,8 +641,7 @@ struct TeamInboxRequestHandlerTests {
             event: .sessionStart,
             sessionID: "secondary",
             paneSessionName: "graftty-secondary",
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(secondaryOutput.contains("`graftty-team` skill"))
@@ -682,8 +658,7 @@ struct TeamInboxRequestHandlerTests {
             event: .sessionStart,
             sessionID: "owner",
             paneSessionName: "graftty-owner",
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(ownerOutput.contains("queued for the owner"))
     }
@@ -742,7 +717,6 @@ struct TeamInboxRequestHandlerTests {
             sessionID: "claude-later",
             paneSessionName: nil,
             repos: [repo],
-            teamsEnabled: true,
             agentID: claudeID.rawValue
         )
         #expect(!claudeOutput.contains("for the first agent"))
@@ -755,7 +729,6 @@ struct TeamInboxRequestHandlerTests {
             sessionID: "codex-first",
             paneSessionName: nil,
             repos: [repo],
-            teamsEnabled: true,
             agentID: codexID.rawValue
         )
         #expect(codexOutput.contains("for the first agent"))
@@ -805,8 +778,7 @@ struct TeamInboxRequestHandlerTests {
             event: .sessionStart,
             sessionID: "claude-session",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(!claudeOutput.contains("for Codex"))
@@ -835,16 +807,14 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "normal first",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         _ = try handler.send(
             callerWorktree: "/repo",
             recipient: "alice",
             text: "urgent second",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let postToolOutput = try handler.hook(
@@ -853,8 +823,7 @@ struct TeamInboxRequestHandlerTests {
             event: .postToolUse,
             sessionID: "session-1",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(postToolOutput.contains("urgent second"))
@@ -877,8 +846,7 @@ struct TeamInboxRequestHandlerTests {
             event: .stop,
             sessionID: "session-1",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(stopOutput == "{}")
 
@@ -898,8 +866,7 @@ struct TeamInboxRequestHandlerTests {
             event: .sessionStart,
             sessionID: "session-1",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(nextSessionOutput.contains("normal first"))
         #expect(try inbox.worktreeWatermark(
@@ -925,8 +892,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "urgent body",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let output = try handler.hook(
@@ -935,8 +901,7 @@ struct TeamInboxRequestHandlerTests {
             event: .postToolUse,
             sessionID: "owner",
             paneSessionName: "graftty-owner",
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(!output.contains("urgent body"))
@@ -961,8 +926,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "urgent body",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let output = try handler.hook(
@@ -971,8 +935,7 @@ struct TeamInboxRequestHandlerTests {
             event: .postToolUse,
             sessionID: "owner",
             paneSessionName: "graftty-owner",
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(output.contains("urgent body"))
@@ -1001,8 +964,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "urgent body",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         // Hold the inter-process watermark lock from a child process so the
@@ -1021,8 +983,7 @@ struct TeamInboxRequestHandlerTests {
                 event: .postToolUse,
                 sessionID: "owner",
                 paneSessionName: nil,
-                repos: [repo],
-                teamsEnabled: true
+                repos: [repo]
             )
         }
 
@@ -1038,8 +999,7 @@ struct TeamInboxRequestHandlerTests {
             event: .postToolUse,
             sessionID: "owner",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(output.contains("urgent body"))
         #expect(try inbox.cursor(teamID: "/repo", sessionID: "owner")?.lastSeenID == "0001")
@@ -1058,8 +1018,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "already delivered",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         try inbox.writeWorktreeWatermark(
             TeamInboxWorktreeWatermark(
@@ -1075,8 +1034,7 @@ struct TeamInboxRequestHandlerTests {
             event: .sessionStart,
             sessionID: "session-anchored",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let newer = try handler.send(
@@ -1084,8 +1042,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "newer urgent",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         try inbox.writeWorktreeWatermark(
             TeamInboxWorktreeWatermark(
@@ -1101,8 +1058,7 @@ struct TeamInboxRequestHandlerTests {
             event: .postToolUse,
             sessionID: "session-anchored",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(!output.contains("already delivered"))
@@ -1130,8 +1086,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "urgent body",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let output = try handler.hook(
@@ -1140,8 +1095,7 @@ struct TeamInboxRequestHandlerTests {
             event: .postToolUse,
             sessionID: "secondary",
             paneSessionName: "graftty-secondary",
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(!output.contains("urgent body"))
@@ -1161,8 +1115,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "urgent body",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let output = try handler.hook(
@@ -1171,8 +1124,7 @@ struct TeamInboxRequestHandlerTests {
             event: .postToolUse,
             sessionID: "legacy",
             paneSessionName: nil,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(output.contains("urgent body"))
@@ -1225,8 +1177,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "urgent body",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let output = try handler.hook(
@@ -1235,8 +1186,7 @@ struct TeamInboxRequestHandlerTests {
             event: .postToolUse,
             sessionID: "secondary",
             paneSessionName: "graftty-secondary",
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(!output.contains("urgent body"))
@@ -1253,12 +1203,12 @@ struct TeamInboxRequestHandlerTests {
 
         _ = try handler.send(
             callerWorktree: "/repo", recipient: "alice", text: "hi",
-            priority: .normal, repos: [repo], teamsEnabled: true
+            priority: .normal, repos: [repo]
         )
         let stopOutput = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
             event: .stop, sessionID: "s-1", paneSessionName: nil,
-            repos: [repo], teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(stopOutput == "{}")
@@ -1273,7 +1223,7 @@ struct TeamInboxRequestHandlerTests {
         let stopOutput = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
             event: .stop, sessionID: "s-1", paneSessionName: nil,
-            repos: [repo], teamsEnabled: true
+            repos: [repo]
         )
         #expect(stopOutput == "{}")
     }
@@ -1288,7 +1238,7 @@ struct TeamInboxRequestHandlerTests {
         let output = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
             event: .sessionStart, sessionID: "s-1", paneSessionName: nil,
-            repos: [repo], teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(output.contains("`graftty-team` skill"))
@@ -1304,7 +1254,7 @@ struct TeamInboxRequestHandlerTests {
         let output = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
             event: .postToolUse, sessionID: "s-1", paneSessionName: nil,
-            repos: [repo], teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(!output.isEmpty)
@@ -1327,8 +1277,7 @@ struct TeamInboxRequestHandlerTests {
             recipient: "alice",
             text: "urgent body",
             priority: .urgent,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         let output = try handler.hook(
@@ -1337,8 +1286,7 @@ struct TeamInboxRequestHandlerTests {
             event: .postToolUse,
             sessionID: "secondary",
             paneSessionName: "graftty-secondary",
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(!output.contains("urgent body"))

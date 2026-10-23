@@ -3,31 +3,22 @@ import XCTest
 @testable import GrafttyKit
 
 final class TeamActivityLogWindowIDTests: XCTestCase {
-    /// @spec TEAM-7.1: When the user invokes the Window → Team Activity Log command, the application shall open the focused tracked repository's Team Activity Log, including repositories with one worktree, and shall disable the command when no tracked worktree is focused or agent teams are disabled.
-    func testFocusedTeamIDResolvesOnlyForTeamEnabledFocusedWorktree() {
+    /// @spec TEAM-7.1: When the user invokes the Window → Team Activity Log command, the application shall open the focused tracked repository's Team Activity Log, including repositories with one worktree, and shall disable the command when no tracked worktree is focused.
+    func testFocusedTeamIDResolvesOnlyForFocusedTrackedWorktree() {
         let repo = teamRepoFixture()
 
-        // Happy path: focused worktree has a team and teams are enabled.
+        // Happy path: focused worktree has a team.
         let resolved = TeamActivityLogWindowID.focusedTeamID(
             selectedWorktreePath: repo.worktrees[1].path,
-            repos: [repo],
-            agentTeamsEnabled: true
+            repos: [repo]
         )
         XCTAssertEqual(resolved?.teamID, repo.path)
         XCTAssertEqual(resolved?.teamName, repo.displayName)
 
-        // Disabled: agentTeamsEnabled = false.
-        XCTAssertNil(TeamActivityLogWindowID.focusedTeamID(
-            selectedWorktreePath: repo.worktrees[1].path,
-            repos: [repo],
-            agentTeamsEnabled: false
-        ))
-
         // Disabled: nothing focused.
         XCTAssertNil(TeamActivityLogWindowID.focusedTeamID(
             selectedWorktreePath: nil,
-            repos: [repo],
-            agentTeamsEnabled: true
+            repos: [repo]
         ))
 
         // A single-worktree repository has a team and an activity log.
@@ -35,8 +26,7 @@ final class TeamActivityLogWindowIDTests: XCTestCase {
         XCTAssertEqual(
             TeamActivityLogWindowID.focusedTeamID(
                 selectedWorktreePath: solo.worktrees[0].path,
-                repos: [solo],
-                agentTeamsEnabled: true
+                repos: [solo]
             ),
             TeamActivityLogWindowID(teamID: solo.path, teamName: solo.displayName)
         )

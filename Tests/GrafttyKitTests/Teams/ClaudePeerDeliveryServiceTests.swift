@@ -343,8 +343,7 @@ struct ClaudePeerDeliveryServiceTests {
         let message = try #require(try dispatcher.dispatchTeamMessage(
             fromWorktree: "/source", to: fixture.worktree,
             text: "cross repository brief", priority: .normal,
-            repos: repos, teamsEnabled: true,
-            senderRuntime: .codex, senderAgentID: "codex-0123456789ab"
+            repos: repos, senderRuntime: .codex, senderAgentID: "codex-0123456789ab"
         ))
         #expect(message.repoPath == fixture.teamID)
         #expect(try fixture.inbox.messages(teamID: "/source").isEmpty)

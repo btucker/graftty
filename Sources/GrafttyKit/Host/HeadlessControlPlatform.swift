@@ -1,9 +1,9 @@
 import Foundation
 import GrafttyProtocol
 
-/// The headless host's side of `ControlRequestCore`. Team mode is always
-/// on, state persists after each core mutation, and there is no
-/// notification center, so stopped-turn notifications are dropped.
+/// The headless host's side of `ControlRequestCore`. State persists after
+/// each core mutation, and there is no notification center, so
+/// stopped-turn notifications are dropped.
 @MainActor
 final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
     unowned let runtime: HeadlessHostRuntime
@@ -19,7 +19,6 @@ final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
         get { runtime.state }
         set { runtime.state = newValue }
     }
-    var teamsEnabled: Bool { true }
     var teamInbox: TeamInbox { runtime.inbox }
     var teamPresence: TeamPresenceStorage { runtime.presence }
     var attentionRecaps: AttentionRecapCoordinator { runtime.recaps }

@@ -2,19 +2,12 @@ import Foundation
 import GrafttyKit
 
 enum CLIWorktreeCreationPolicy {
-    static func validationError(agentRuntime: TeamHookRuntime?, teamsEnabled: Bool) -> String? {
-        guard agentRuntime != nil, !teamsEnabled else { return nil }
-        return "Agent Teams is disabled; enable it in Graftty Settings before using --agent"
-    }
-
-    /// ATTN-1.27: `pane add --agent` follows `worktree add --agent`'s rules.
-    /// Without Agent Teams no hook consumes the durable task, so a later
-    /// agent of that runtime would inherit it.
+    /// ATTN-1.27: rejects malformed `pane add --agent` requests before a
+    /// pane is split.
     static func paneAddError(
         agentRuntime: TeamHookRuntime?,
         command: String?,
-        agentPrompt: String?,
-        teamsEnabled: Bool
+        agentPrompt: String?
     ) -> String? {
         if agentPrompt != nil, agentRuntime == nil {
             return "an agent prompt requires an agent runtime"
@@ -22,7 +15,7 @@ enum CLIWorktreeCreationPolicy {
         if agentRuntime != nil, command != nil {
             return "an agent runtime and a command are mutually exclusive"
         }
-        return validationError(agentRuntime: agentRuntime, teamsEnabled: teamsEnabled)
+        return nil
     }
 
     /// An interim CLI revision put a prompt-file path inside a shell command

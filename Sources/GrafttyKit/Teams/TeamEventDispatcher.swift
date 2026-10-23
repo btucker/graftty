@@ -23,8 +23,8 @@ public final class TeamEventDispatcher {
     // MARK: - team_message (TEAM-5.1)
 
     /// Writes a single `team_message` row addressed to the named recipient.
-    /// No-ops (silently) when teams are disabled, the sender's worktree is
-    /// not in a team, or the recipient cannot be resolved. Canonical paths
+    /// No-ops (silently) when the sender's worktree is not in a team or
+    /// the recipient cannot be resolved. Canonical paths
     /// may target a different repository; names remain team-local.
     @discardableResult
     public func dispatchTeamMessage(
@@ -33,13 +33,11 @@ public final class TeamEventDispatcher {
         text: String,
         priority: TeamInboxPriority,
         repos: [RepoEntry],
-        teamsEnabled: Bool,
         senderRuntime: TeamHookRuntime? = nil,
         senderAgentID: String? = nil,
         recipientRuntime: TeamHookRuntime? = nil,
         recipientAgentID: String? = nil
     ) throws -> TeamInboxMessage? {
-        guard teamsEnabled else { return nil }
         guard let team = TeamLookup.team(for: senderWorktreePath, in: repos),
               let senderMember = team.members.first(where: { $0.worktreePath == senderWorktreePath }),
               let target = TeamLookup.recipient(named: recipientName, from: team, in: repos)
@@ -81,11 +79,9 @@ public final class TeamEventDispatcher {
         text: String,
         priority: TeamInboxPriority,
         repos: [RepoEntry],
-        teamsEnabled: Bool,
         senderRuntime: TeamHookRuntime? = nil,
         senderAgentID: String? = nil
     ) throws -> [TeamInboxMessage] {
-        guard teamsEnabled else { return [] }
         guard let team = TeamLookup.team(for: senderWorktreePath, in: repos),
               let senderMember = team.members.first(where: { $0.worktreePath == senderWorktreePath })
         else { return [] }

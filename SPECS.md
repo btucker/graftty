@@ -914,7 +914,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.26** When `graftty pane add --agent` is used, the CLI shall first verify that the running app advertises pane agent launch, and the add-pane request shall carry the agent runtime and initial task so an older app cannot silently treat it as a plain split.
 
-**ATTN-1.27** If an add-pane request carries an agent prompt without an agent runtime, an agent runtime together with a command, or an agent runtime while Agent Teams is disabled, then the application shall reject it before splitting a pane.
+**ATTN-1.27** If an add-pane request carries an agent prompt without an agent runtime, or an agent runtime together with a command, then the application shall reject it before splitting a pane.
 
 **ATTN-1.28** When a pane added with `graftty pane add --agent` is destroyed, the application shall delete that pane's staged agent prompt file and withdraw its pending durable initial task, so a pane closed before its agent starts leaves no task behind for the next agent of that runtime.
 
@@ -2562,7 +2562,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-2.x — Team Identity & Membership
 
-**TEAM-2.1** While agent teams are enabled, the application shall provide team identity and inbox delivery for every tracked repository, including a single worktree that communicates with a remote Mac.
+**TEAM-2.1** The application shall provide team identity and inbox delivery for every tracked repository, including a single worktree that communicates with a remote Mac.
 
 **TEAM-2.2** A team's *member name* for a given worktree shall be `WorktreeNameSanitizer(worktree.branch)`, the same sanitization rule used for new worktree names per `GIT-5.1`.
 
@@ -2634,7 +2634,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-7.x — Team Activity Log Window
 
-**TEAM-7.1** When the user invokes the Window → Team Activity Log command, the application shall open the focused tracked repository's Team Activity Log, including repositories with one worktree, and shall disable the command when no tracked worktree is focused or agent teams are disabled.
+**TEAM-7.1** When the user invokes the Window → Team Activity Log command, the application shall open the focused tracked repository's Team Activity Log, including repositories with one worktree, and shall disable the command when no tracked worktree is focused.
 
 **TEAM-7.2** Right-clicking a team-enabled worktree row in the sidebar shall include a *Show Team Activity…* item that opens the activity-log window for that team. The routing key derives from the same `(teamID, teamName)` pair the Window menu command uses, so both entry points target the same per-team `WindowGroup` instance.
 
@@ -2731,8 +2731,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-14.1** When a team address names a remote Mac, the application shall preserve its device ID, absolute worktree path, and optional runtime or canonical agent suffix without path-character collisions.
 
 **TEAM-14.2** When an authenticated remote Mac requests team members, the application shall list tracked local worktrees across repositories, including repositories with one worktree, with repository names and canonical agent addresses.
-
-**TEAM-14.3** While team mode is disabled, the application shall reject remote team listing and messages without writing an inbox row.
 
 **TEAM-14.4** When an authenticated remote Mac sends a team message, the application shall durably append it to the local recipient inbox and qualify the sender worktree with the authenticated device ID.
 

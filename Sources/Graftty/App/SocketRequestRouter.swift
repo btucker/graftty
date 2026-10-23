@@ -31,7 +31,6 @@ final class SocketRequestRouter {
     let agentRegistry: ClaudeSessionRegistry
     let remoteMacsModel: RemoteMacsModel
     let remoteTeamRouter: RemoteTeamRouter
-    let teamsEnabledProvider: () -> Bool
 
     init(
         appState: Binding<AppState>,
@@ -46,8 +45,7 @@ final class SocketRequestRouter {
         remoteBranchStore: RemoteBranchStore,
         agentRegistry: ClaudeSessionRegistry,
         remoteMacsModel: RemoteMacsModel,
-        remoteTeamRouter: RemoteTeamRouter,
-        teamsEnabled: @escaping () -> Bool = { AppServices.teamsEnabled }
+        remoteTeamRouter: RemoteTeamRouter
     ) {
         self.appState = appState
         self.terminalManager = terminalManager
@@ -62,7 +60,6 @@ final class SocketRequestRouter {
         self.agentRegistry = agentRegistry
         self.remoteMacsModel = remoteMacsModel
         self.remoteTeamRouter = remoteTeamRouter
-        self.teamsEnabledProvider = teamsEnabled
     }
 
     convenience init(
@@ -370,12 +367,6 @@ extension SocketRequestRouter {
             return .worktreeCreate(existing)
         }
         defer { worktreeCreations.discardBaseCapture(operationID: operationID) }
-        if let error = CLIWorktreeCreationPolicy.validationError(
-            agentRuntime: agentRuntime,
-            teamsEnabled: AppServices.teamsEnabled
-        ) {
-            return .error(error)
-        }
         guard let repo = appState.wrappedValue.repos.first(where: { repo in
             repo.worktrees.contains(where: { $0.path == callerPath })
         }) else {
@@ -568,8 +559,7 @@ extension SocketRequestRouter {
         if let error = CLIWorktreeCreationPolicy.paneAddError(
             agentRuntime: agentRuntime,
             command: command,
-            agentPrompt: agentPrompt,
-            teamsEnabled: AppServices.teamsEnabled
+            agentPrompt: agentPrompt
         ) {
             return .error(error)
         }

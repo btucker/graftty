@@ -207,8 +207,6 @@ struct SocketRouterCharacterizationTests {
             try? FileManager.default.removeItem(at: directory)
         }
 
-        var teamsEnabled = false
-
         func router(for box: StateBox) -> SocketRequestRouter {
             SocketRequestRouter(
                 appState: box.binding,
@@ -223,8 +221,7 @@ struct SocketRouterCharacterizationTests {
                 remoteBranchStore: remoteBranchStore,
                 agentRegistry: ClaudeSessionRegistry(),
                 remoteMacsModel: remoteMacsModel,
-                remoteTeamRouter: remoteTeamRouter,
-                teamsEnabled: { [teamsEnabled] in teamsEnabled }
+                remoteTeamRouter: remoteTeamRouter
             )
         }
 
@@ -359,8 +356,7 @@ struct SocketRouterCharacterizationTests {
             == .error("Unknown or disconnected viewing Mac 'mac'. Connected clients: none"))
         #expect(await router.route(Self.remoteWorktreeStatus, box)
             == .error("Unknown or disconnected Mac 'mac'. Connected Macs: none"))
-        // The reply handler rejects an unknown message whether or not team
-        // mode is enabled; only the error text depends on that setting.
+        // The shared core's reply handler rejects an unknown message.
         guard case .error(let replyError)? = await router.route(
             .teamReply(callerWorktree: Self.worktreePath, messageID: "m", text: "t", priority: .normal), box
         ) else {
@@ -395,7 +391,6 @@ struct SocketRouterCharacterizationTests {
     @Test("graftty-mac team sends and messages forward to the connected peer through the shared core")
     func remoteTeamSendForwardsToPeer() async throws {
         let router = try RequestRouter()
-        router.teamsEnabled = true
         let peer = FakePeer()
         peer.connect(router.remoteTeamRouter)
         let (box, _, _) = Self.fixture()
@@ -409,16 +404,32 @@ struct SocketRouterCharacterizationTests {
             .send(senderWorktree: Self.worktreePath, senderAgentID: nil, recipientWorktree: "/Users/peer/api",
                   recipientSuffix: nil, text: "hi", priority: .normal),
         ])
-        router.teamsEnabled = false
-        #expect(await router.route(.teamSend(callerWorktree: Self.worktreePath, recipient: address, text: "x", priority: .normal), box)
-            == .error(TeamInboxRequestError.teamModeDisabled.description))
-        #expect(peer.sent.count == 2)
+    }
+
+    @Test("@spec TEAM-1.1: When Graftty starts, the application shall make Agent Teams available without an enable switch, including for users who previously disabled them.")
+    func legacyAgentTeamsOptOutIsIgnored() async throws {
+        let legacyKey = "agentTeamsEnabled"
+        let previous = UserDefaults.standard.object(forKey: legacyKey)
+        UserDefaults.standard.set(false, forKey: legacyKey)
+        defer {
+            if let previous {
+                UserDefaults.standard.set(previous, forKey: legacyKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: legacyKey)
+            }
+        }
+        let router = try RequestRouter()
+        let (box, _, _) = Self.fixture()
+        guard case .teamList(_, let members)? = await router.route(.teamList(callerWorktree: Self.worktreePath), box) else {
+            Issue.record("a saved Agent Teams opt-out must not disable team requests")
+            return
+        }
+        #expect(members.contains { $0.worktreePath == Self.worktreePath })
     }
 
     @Test("team lists through the router include the connected peer's members")
     func teamListIncludesRemoteMembers() async throws {
         let router = try RequestRouter()
-        router.teamsEnabled = true
         FakePeer().connect(router.remoteTeamRouter)
         let (box, _, _) = Self.fixture()
         guard case .teamList(_, let members)? = await router.route(.teamList(callerWorktree: Self.worktreePath), box) else {

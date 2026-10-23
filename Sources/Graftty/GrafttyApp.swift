@@ -198,9 +198,7 @@ struct GrafttyApp: App {
 
         // Must run before any UserDefaults read so non-binding readers see
         // the same defaults as @AppStorage. TEAM-1.6.
-        var registeredDefaults = DefaultPrompts.registrations
-        registeredDefaults[SettingsKeys.agentTeamsEnabled] = true
-        UserDefaults.standard.register(defaults: registeredDefaults)
+        UserDefaults.standard.register(defaults: DefaultPrompts.registrations)
 
         let loaded = AppState.loadOrFreshBackingUpCorruption(from: AppState.defaultDirectory)
         _appState = State(initialValue: loaded)
@@ -368,9 +366,8 @@ struct GrafttyApp: App {
             }
 
             // TEAM-7.1: *Window → Team Activity Log* opens the activity
-            // window for the focused worktree's team. Disabled when the
-            // current selection has no team (single-worktree repo or
-            // teams disabled). The button is hosted inside a tiny View
+            // window for the focused worktree's team. Disabled when no
+            // tracked worktree is focused. The button is hosted inside a tiny View
             // wrapper so it can read the `\.openWindow` environment
             // value, which is unavailable directly inside `.commands`.
             CommandGroup(after: .windowList) {
@@ -560,8 +557,7 @@ struct GrafttyApp: App {
             await portScanner.tick()
         }
 
-        // Wrappers always go on PATH; the Agent Teams toggle is read inside
-        // the wrapper at request time.
+        // Wrappers always go on PATH.
         Self.installAgentHookAssets()
 
         // Refresh previously installed plugins after app updates. First-time
@@ -885,7 +881,6 @@ struct GrafttyApp: App {
                     return try JSONEncoder().encode(response)
                 }
                 let repos = binding.wrappedValue.repos
-                let enabled = AppServices.teamsEnabled
                 let handler = RemoteTeamService(
                     inbox: teamInbox,
                     agentRecords: {
@@ -894,7 +889,7 @@ struct GrafttyApp: App {
                     agentReachability: { TeamAgentReachability.isReachable($0) }
                 )
                 let response = await OffMainIO.run {
-                    handler.handle(request, from: deviceID, repos: repos, teamsEnabled: enabled)
+                    handler.handle(request, from: deviceID, repos: repos)
                 }
                 return try JSONEncoder().encode(response)
             } catch {

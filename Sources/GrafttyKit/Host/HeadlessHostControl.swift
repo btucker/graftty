@@ -200,7 +200,7 @@ public extension HeadlessHostRuntime {
         let presence = presence
         return RemoteTeamService(inbox: inbox, agentRecords: { (try? presence.listAll()) ?? [] },
             agentReachability: { TeamAgentReachability.isReachable($0) })
-            .handle(request, from: deviceID, repos: state.repos, teamsEnabled: true)
+            .handle(request, from: deviceID, repos: state.repos)
     }
 }
 

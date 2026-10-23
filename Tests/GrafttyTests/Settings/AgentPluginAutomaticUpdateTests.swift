@@ -52,7 +52,6 @@ struct AgentPluginAutomaticUpdateTests {
         let suite = "AgentPluginAutoUpdate-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(false, forKey: SettingsKeys.agentTeamsEnabled)
         defaults.set(AgentPluginInstaller.integrationRevision, forKey: SettingsKeys.agentPluginInstalledRevision)
         var attempts = 0
         var refreshes = 0
@@ -122,7 +121,6 @@ struct AgentPluginAutomaticUpdateTests {
         let suite = "AgentPluginAutoUpdatePreparation-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(true, forKey: SettingsKeys.agentTeamsEnabled)
         defaults.set(7, forKey: SettingsKeys.agentPluginInstalledRevision)
         let updater = AgentPluginAutomaticUpdate()
         await updater.runIfNeeded(defaults: defaults, buildVersion: "100.60.00", update: {
@@ -138,7 +136,6 @@ struct AgentPluginAutomaticUpdateTests {
         let suite = "AgentPluginAutoUpdateReentry-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(true, forKey: SettingsKeys.agentTeamsEnabled)
         defaults.set(7, forKey: SettingsKeys.agentPluginInstalledRevision)
         let updater = AgentPluginAutomaticUpdate()
         await updater.runIfNeeded(defaults: defaults, buildVersion: "100.60.00", update: {

@@ -3,24 +3,22 @@ import GrafttyProtocol
 
 /// Helpers for firing `team_member_joined` and `team_member_left` events
 /// (TEAM-5.2 and TEAM-5.3) when worktrees are added to or removed from a
-/// team-enabled repo. Routes through `TeamEventDispatcher` so the event
+/// repo. Routes through `TeamEventDispatcher` so the event
 /// lands as an inbox row addressed to the main worktree.
 public enum TeamMembershipEvents {
 
     /// Fire `team_member_joined` to the main worktree when a new worktree joins.
     ///
     /// Conditions that suppress the event:
-    /// - `teamsEnabled` is false.
     /// - The repo has fewer than 2 worktrees (the joiner is alone).
     /// - The joiner is the main worktree itself (nobody else to notify).
     /// - The joiner path is not found in `repo.worktrees` (defensive guard).
     public static func fireJoined(
         repo: RepoEntry,
         joinerWorktreePath: String,
-        teamsEnabled: Bool,
         dispatcher: TeamEventDispatcher
     ) {
-        guard teamsEnabled, repo.worktrees.count >= 2 else { return }
+        guard repo.worktrees.count >= 2 else { return }
         guard repo.worktrees.contains(where: { $0.path == joinerWorktreePath }) else { return }
         // If the joiner is the main worktree, there is nobody to notify.
         guard repo.path != joinerWorktreePath else { return }
@@ -38,7 +36,6 @@ public enum TeamMembershipEvents {
     /// Fire `team_member_left` to the main worktree when a worktree is removed.
     ///
     /// Conditions that suppress the event:
-    /// - `teamsEnabled` is false.
     /// - The main worktree is no longer present in `repo.worktrees`.
     /// - The leaver *was* the main worktree.
     ///
@@ -50,10 +47,8 @@ public enum TeamMembershipEvents {
         leaverBranch: String,
         leaverPath: String,
         reason: TeamChannelEvents.LeaveReason,
-        teamsEnabled: Bool,
         dispatcher: TeamEventDispatcher
     ) {
-        guard teamsEnabled else { return }
         // Notify only if the main worktree is still present.
         guard repo.worktrees.contains(where: { $0.path == repo.path }) else { return }
         // If the leaver was the main worktree itself, don't fire.

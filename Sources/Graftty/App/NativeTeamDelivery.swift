@@ -147,20 +147,13 @@ final class NativeTeamDelivery {
             let cancellable = observer.start { [self] messages in
                 Task { @MainActor in
                     refreshDeliveryLiveness()
-                    guard AppServices.teamsEnabled else {
-                        await deliveryState.markSeen(messages)
-                        return
-                    }
                     let recipientWorktrees = await deliveryState.claimRecipientWorktrees(in: messages)
                     let awakeRecipients = recipientWorktrees.filter { tm.wakeWorktree($0) }
                     await GrafttyApp.drainNativeDeliveryMessages(
                         teamID: teamID,
                         recipientWorktrees: awakeRecipients,
                         inbox: services.teamInbox,
-                        deliveries: GrafttyApp.nativeDeliveries(
-                            codex: codexAppServerDeliveryService,
-                            claude: claudePeerDeliveryService
-                        )
+                        deliveries: nativeDeliveries
                     )
                 }
             }
@@ -223,17 +216,18 @@ final class NativeTeamDelivery {
         Task { await retryDelivery(records: restoredPresenceRecords) }
     }
 
+    /// Both native services, in the order a drain pass consults them.
+    private var nativeDeliveries: [any CodexAppServerDeliveryTrigger] {
+        [codexAppServerDeliveryService, claudePeerDeliveryService]
+    }
+
     /// Retries delivery for every worktree with a presence record, through
-    /// both native services, unless Agent Teams is turned off.
+    /// both native services.
     private func retryDelivery(records: [TeamPresenceRecord]) async {
         await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
             inbox: services.teamInbox,
             records: records,
-            deliveries: GrafttyApp.nativeDeliveries(
-                codex: codexAppServerDeliveryService,
-                claude: claudePeerDeliveryService,
-                enabled: AppServices.teamsEnabled
-            )
+            deliveries: nativeDeliveries
         )
     }
 }

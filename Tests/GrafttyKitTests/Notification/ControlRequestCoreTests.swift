@@ -22,7 +22,6 @@ struct ControlRequestCoreTests {
     final class RecordingPlatform: ControlPlatform {
         let root: URL
         var state: AppState
-        var teamsEnabled = true
         let teamInbox: TeamInbox
         let teamEventDispatcher: TeamEventDispatcher
         let teamPresence: TeamPresenceStorage
@@ -133,7 +132,7 @@ struct ControlRequestCoreTests {
         #expect(platform.platformRequests.count == 3)
     }
 
-    @Test("graftty-mac sends forward through remote routing after team-mode and caller checks")
+    @Test("graftty-mac sends forward through remote routing after caller checks")
     func remoteForwarding() async throws {
         let platform = try RecordingPlatform()
         let address = "graftty-mac://device/Users/peer/api"
@@ -149,11 +148,6 @@ struct ControlRequestCoreTests {
         #expect(await ControlRequestCore.handleRequest(.teamSend(callerWorktree: "/untracked", recipient: address,
             text: "x", priority: .normal), platform: platform) == .error(TeamInboxRequestError.callerNotTracked.description))
         #expect(routing.sends.count == 2)
-        platform.teamsEnabled = false
-        #expect(await ControlRequestCore.handleRequest(.teamSend(callerWorktree: "/repo", recipient: address,
-            text: "x", priority: .normal), platform: platform) == .error(TeamInboxRequestError.teamModeDisabled.description))
-        #expect(routing.sends.count == 2)
-        platform.teamsEnabled = true
         platform.routing = nil
         #expect(await ControlRequestCore.handleRequest(.teamSend(callerWorktree: "/repo", recipient: address,
             text: "x", priority: .normal), platform: platform) == .error("remote team connection is unavailable"))

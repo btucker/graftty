@@ -129,8 +129,7 @@ struct CodexAppServerInboxDeliveryWiringTests {
             to: "alice",
             text: "direct background message",
             priority: .normal,
-            repos: [fixture.repo],
-            teamsEnabled: true
+            repos: [fixture.repo]
         )
         await fixture.deliverAppendedMessages()
 

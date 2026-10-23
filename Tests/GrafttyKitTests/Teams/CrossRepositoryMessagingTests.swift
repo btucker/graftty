@@ -42,7 +42,7 @@ struct CrossRepositoryMessagingTests {
         let delivery = try sender.send(
             callerWorktree: "/source", callerAgentID: "codex-abcdef012345",
             recipient: target + suffix, text: "cross repository brief", priority: .urgent,
-            repos: repos, teamsEnabled: true
+            repos: repos
         )
         #expect(delivery.recipient.worktreePath == target)
         #expect(delivery.message.team == "source")
@@ -60,7 +60,7 @@ struct CrossRepositoryMessagingTests {
         let output = try receiver.hook(
             callerWorktree: target, runtime: .claude,
             event: .postToolUse, sessionID: "target-session", paneSessionName: nil,
-            repos: repos, teamsEnabled: true, agentID: agentID
+            repos: repos, agentID: agentID
         )
         #expect(output.contains("cross repository brief"))
         #expect(try inbox.worktreePendingMessages(teamID: "/target", recipientWorktree: target).isEmpty)
@@ -83,7 +83,7 @@ struct CrossRepositoryMessagingTests {
         let send = try TeamReplyResolver(inbox: inbox).resolve(
             callerWorktree: "/target", callerAgentID: "claude-012345abcdef",
             messageID: row.id, fallback: fallback, text: "received", priority: .normal,
-            repos: repos, teamsEnabled: true
+            repos: repos
         )
         #expect(send.recipient == "/source#\(fallback ? "codex" : "codex-abcdef012345")")
         let record = TeamPresenceRecord(
@@ -92,7 +92,7 @@ struct CrossRepositoryMessagingTests {
         )
         let reply = try Self.handler(inbox: inbox, records: [record]).send(
             callerWorktree: send.callerWorktree, callerAgentID: send.callerAgentID, recipient: send.recipient,
-            text: send.text, priority: send.priority, repos: repos, teamsEnabled: true
+            text: send.text, priority: send.priority, repos: repos
         )
         #expect(reply.message.to.worktree == "/source")
         #expect(reply.message.to.agentID == (fallback ? nil : "codex-abcdef012345"))
@@ -111,14 +111,14 @@ struct CrossRepositoryMessagingTests {
         let handler = Self.handler(inbox: inbox)
         let local = try handler.send(
             callerWorktree: "/source", recipient: "runner", text: "local", priority: .normal,
-            repos: repos, teamsEnabled: true
+            repos: repos
         )
         #expect(local.message.to.worktree == "/source/.worktrees/runner")
         for address in ["foreign", "/untracked", "/untracked#claude", "/target#claude-000000000000"] {
             #expect(throws: (any Error).self) {
                 try handler.send(
                     callerWorktree: "/source", recipient: address, text: "rejected", priority: .normal,
-                    repos: repos, teamsEnabled: true
+                    repos: repos
                 )
             }
         }
@@ -143,7 +143,7 @@ struct CrossRepositoryMessagingTests {
         #expect(throws: TeamInboxRequestError.agentUnavailable(id)) {
             try handler.send(
                 callerWorktree: "/source", recipient: "/target#\(id)", text: "rejected", priority: .normal,
-                repos: repos, teamsEnabled: true
+                repos: repos
             )
         }
         #expect(try inbox.messages(teamID: "/target").isEmpty)
@@ -166,7 +166,7 @@ struct CrossRepositoryMessagingTests {
         ] {
             let delivery = try handler.send(
                 callerWorktree: "/source", recipient: address, text: "brief", priority: .normal,
-                repos: repos, teamsEnabled: true
+                repos: repos
             )
             #expect(delivery.message.to.worktree == path)
             #expect(delivery.message.to.runtime == runtime)
@@ -190,7 +190,7 @@ struct CrossRepositoryMessagingTests {
             try TeamReplyResolver(inbox: inbox).resolve(
                 callerWorktree: "/target", callerAgentID: nil,
                 messageID: row.id, fallback: true, text: "received", priority: .normal,
-                repos: repos, teamsEnabled: true
+                repos: repos
             )
         }
         #expect(try inbox.messages(teamID: "/source").isEmpty)

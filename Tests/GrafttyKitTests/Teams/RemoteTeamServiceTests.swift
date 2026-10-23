@@ -27,7 +27,7 @@ struct RemoteTeamServiceTests {
     func rosterIncludesSingletonAndCanonicalAgents() throws {
         try withService(records: [presence()]) { service, _ in
             let other = TeamTestFixtures.makeRepo(path: "/other", displayName: "other", branches: ["main"])
-            let response = service.handle(.list, from: peer, repos: [repo(), other], teamsEnabled: true)
+            let response = service.handle(.list, from: peer, repos: [repo(), other])
             guard case .members(let members) = response else { Issue.record("Expected members"); return }
             #expect(members.map(\.worktreePath) == ["/repo", "/other"])
             #expect(members.map(\.name) == ["repo/main", "other/main"])
@@ -35,19 +35,10 @@ struct RemoteTeamServiceTests {
         }
     }
 
-    @Test("@spec TEAM-14.3: While team mode is disabled, the application shall reject remote team listing and messages without writing an inbox row.")
-    func disabledTeamsRejectRequests() throws {
-        try withService { (service, inbox) throws in
-            #expect(service.handle(.list, from: peer, repos: [repo()], teamsEnabled: false).isError)
-            #expect(service.handle(request(), from: peer, repos: [repo()], teamsEnabled: false).isError)
-            #expect(try inbox.messages(teamID: "/repo").isEmpty)
-        }
-    }
-
     @Test("@spec TEAM-14.4: When an authenticated remote Mac sends a team message, the application shall durably append it to the local recipient inbox and qualify the sender worktree with the authenticated device ID.")
     func senderIsQualifiedAndMessageIsDurable() throws {
         try withService { (service, inbox) throws in
-            #expect(service.handle(request(senderAgentID: agentID), from: peer, repos: [repo()], teamsEnabled: true) == .ok)
+            #expect(service.handle(request(senderAgentID: agentID), from: peer, repos: [repo()]) == .ok)
             let row = try #require(inbox.messages(teamID: "/repo").first)
             #expect(row.from.worktree == "graftty-mac://remote-mac-id/sender")
             #expect(row.from.runtime == "claude")
@@ -66,7 +57,7 @@ struct RemoteTeamServiceTests {
     func recipientsMustMatchTrackedPaths() throws {
         try withService { (service, inbox) throws in
             for recipient in ["main", "/repo/child", "/unknown", "/repo#friendly-agent"] {
-                #expect(service.handle(request(recipient: recipient), from: peer, repos: [repo()], teamsEnabled: true).isError)
+                #expect(service.handle(request(recipient: recipient), from: peer, repos: [repo()]).isError)
             }
             #expect(try inbox.messages(teamID: "/repo").isEmpty)
         }
@@ -75,13 +66,13 @@ struct RemoteTeamServiceTests {
     @Test("@spec TEAM-14.6: When a remote team message targets a canonical agent ID, the application shall bind delivery to that exact reachable agent and reject missing or stale agents without enqueuing.")
     func exactAgentsFailClosed() throws {
         try withService(records: [presence()]) { (service, inbox) throws in
-            #expect(service.handle(request(recipient: "/repo#\(agentID)"), from: peer, repos: [repo()], teamsEnabled: true) == .ok)
+            #expect(service.handle(request(recipient: "/repo#\(agentID)"), from: peer, repos: [repo()]) == .ok)
             #expect(try inbox.messages(teamID: "/repo").first?.to.agentID == agentID)
-            #expect(service.handle(request(recipient: "/repo#codex-000000000000"), from: peer, repos: [repo()], teamsEnabled: true).isError)
+            #expect(service.handle(request(recipient: "/repo#codex-000000000000"), from: peer, repos: [repo()]).isError)
             #expect(try inbox.messages(teamID: "/repo").count == 1)
         }
         try withService(records: [presence()], reachable: false) { (service, inbox) throws in
-            #expect(service.handle(request(recipient: "/repo#\(agentID)"), from: peer, repos: [repo()], teamsEnabled: true).isError)
+            #expect(service.handle(request(recipient: "/repo#\(agentID)"), from: peer, repos: [repo()]).isError)
             #expect(try inbox.messages(teamID: "/repo").isEmpty)
         }
     }
@@ -89,7 +80,7 @@ struct RemoteTeamServiceTests {
     @Test("@spec TEAM-14.7: When a remote team message targets a runtime, the application shall retain the runtime without pinning an agent so it can wait for that provider's next session.")
     func runtimeAddressQueuesWithoutAgent() throws {
         try withService { (service, inbox) throws in
-            #expect(service.handle(request(recipient: "/repo#codex"), from: peer, repos: [repo()], teamsEnabled: true) == .ok)
+            #expect(service.handle(request(recipient: "/repo#codex"), from: peer, repos: [repo()]) == .ok)
             let row = try #require(inbox.messages(teamID: "/repo").first)
             #expect(row.to.runtime == "codex")
             #expect(row.to.agentID == nil)
@@ -100,7 +91,7 @@ struct RemoteTeamServiceTests {
     func invalidMessagesDoNotWrite() throws {
         try withService { (service, inbox) throws in
             for invalid in [request(senderWorktree: "relative"), request(senderWorktree: "graftty-mac://spoof/repo"), request(senderAgentID: "friendly-agent"), request(text: " \n\t")] {
-                #expect(service.handle(invalid, from: peer, repos: [repo()], teamsEnabled: true).isError)
+                #expect(service.handle(invalid, from: peer, repos: [repo()]).isError)
             }
             #expect(try inbox.messages(teamID: "/repo").isEmpty)
         }
@@ -123,7 +114,7 @@ struct RemoteTeamServiceTests {
                 let address = try RemoteTeamAddress(deviceID: peer, worktreePath: path, suffix: suffix)
                 let decoded = try #require(RemoteTeamAddress(rawValue: address.rawValue))
                 let request = RemoteTeamRequest.send(senderWorktree: "/sender#codex", senderAgentID: nil, recipientWorktree: decoded.worktreePath, recipientSuffix: decoded.suffix, text: "hello", priority: .normal)
-                #expect(service.handle(request, from: peer, repos: [tracked], teamsEnabled: true) == .ok)
+                #expect(service.handle(request, from: peer, repos: [tracked]) == .ok)
             }
             let rows = try inbox.messages(teamID: "/repo")
             #expect(rows.map(\.to.worktree) == ["/repo#claude", "/repo"])
@@ -135,12 +126,12 @@ struct RemoteTeamServiceTests {
     @Test("A singleton repository delivers remote messages through the existing session hook and acknowledges them.")
     func singletonHookConsumesRemoteMessage() throws {
         try withService { (service, inbox) throws in
-            #expect(service.handle(request(), from: peer, repos: [repo()], teamsEnabled: true) == .ok)
+            #expect(service.handle(request(), from: peer, repos: [repo()]) == .ok)
             let handler = TeamInboxRequestHandler(
                 inbox: inbox,
                 dispatcher: TeamEventDispatcher(inbox: inbox, preferencesProvider: { TeamEventRoutingPreferences() }, templateProvider: { "" })
             )
-            let output = try handler.hook(callerWorktree: "/repo", runtime: .claude, event: .sessionStart, sessionID: "session", paneSessionName: "pane", repos: [repo()], teamsEnabled: true)
+            let output = try handler.hook(callerWorktree: "/repo", runtime: .claude, event: .sessionStart, sessionID: "session", paneSessionName: "pane", repos: [repo()])
             let payload = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: [String: String]])
             let context = try #require(payload["hookSpecificOutput"]?["additionalContext"])
             #expect(context.contains("graftty-mac://remote-mac-id/sender"))

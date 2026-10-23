@@ -39,7 +39,6 @@ public protocol ControlTeamPlatform: AnyObject {
     /// never holds a mutation across a suspension, so concurrent requests
     /// that land during an `await` are preserved.
     var state: AppState { get set }
-    var teamsEnabled: Bool { get }
     var teamInbox: TeamInbox { get }
     var teamEventDispatcher: TeamEventDispatcher { get }
     var teamPresence: TeamPresenceStorage { get }

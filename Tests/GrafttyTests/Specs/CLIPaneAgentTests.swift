@@ -26,18 +26,16 @@ struct CLIPaneAgentTests {
         }
     }
 
-    @Test("@spec ATTN-1.27: If an add-pane request carries an agent prompt without an agent runtime, an agent runtime together with a command, or an agent runtime while Agent Teams is disabled, then the application shall reject it before splitting a pane.")
+    @Test("@spec ATTN-1.27: If an add-pane request carries an agent prompt without an agent runtime, or an agent runtime together with a command, then the application shall reject it before splitting a pane.")
     func appRejectsInvalidAgentPaneRequests() {
         #expect(CLIWorktreeCreationPolicy.paneAddError(
-            agentRuntime: nil, command: nil, agentPrompt: "x", teamsEnabled: true) != nil)
+            agentRuntime: nil, command: nil, agentPrompt: "x") != nil)
         #expect(CLIWorktreeCreationPolicy.paneAddError(
-            agentRuntime: .codex, command: "codex", agentPrompt: nil, teamsEnabled: true) != nil)
+            agentRuntime: .codex, command: "codex", agentPrompt: nil) != nil)
         #expect(CLIWorktreeCreationPolicy.paneAddError(
-            agentRuntime: .codex, command: nil, agentPrompt: "x", teamsEnabled: false) != nil)
+            agentRuntime: .codex, command: nil, agentPrompt: "x") == nil)
         #expect(CLIWorktreeCreationPolicy.paneAddError(
-            agentRuntime: .codex, command: nil, agentPrompt: "x", teamsEnabled: true) == nil)
-        #expect(CLIWorktreeCreationPolicy.paneAddError(
-            agentRuntime: nil, command: "pnpm test", agentPrompt: nil, teamsEnabled: false) == nil)
+            agentRuntime: nil, command: "pnpm test", agentPrompt: nil) == nil)
     }
 
     @Test("@spec ATTN-1.28: When a pane added with `graftty pane add --agent` is destroyed, the application shall delete that pane's staged agent prompt file and withdraw its pending durable initial task, so a pane closed before its agent starts leaves no task behind for the next agent of that runtime.")
