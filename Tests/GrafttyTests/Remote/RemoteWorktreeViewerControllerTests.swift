@@ -24,19 +24,19 @@ struct RemoteWorktreeViewerControllerTests {
         await viewer.settle()
         #expect(viewer.model.requests == [.split(target: "a", direction: .right)])
 
-        try viewer.answer(0, .splitCreated(sessionName: "b"))
+        try await viewer.answer(0, .splitCreated(sessionName: "b"))
         await viewer.settle()
         #expect(viewer.model.requests.count == 2)
 
-        try viewer.answer(1, .splitCreated(sessionName: "c"))
+        try await viewer.answer(1, .splitCreated(sessionName: "c"))
         await viewer.settle()
         #expect(viewer.model.requests.count == 3)
 
-        try viewer.answer(2, .ok)
+        try await viewer.answer(2, .ok)
         await viewer.settle()
         #expect(viewer.model.requests.count == 4)
 
-        try viewer.answer(3, .ok)
+        try await viewer.answer(3, .ok)
         await viewer.settle()
         #expect(viewer.model.requests == [
             .split(target: "a", direction: .right),
@@ -59,15 +59,15 @@ struct RemoteWorktreeViewerControllerTests {
         viewer.surfaces.send(.close, from: a)
         await viewer.settle()
 
-        try viewer.answer(0, .splitCreated(sessionName: "b"))
+        try await viewer.answer(0, .splitCreated(sessionName: "b"))
         await viewer.settle()
         #expect(viewer.model.requests.last == .split(target: "b", direction: .down))
 
-        try viewer.answer(1, .splitCreated(sessionName: "c"))
+        try await viewer.answer(1, .splitCreated(sessionName: "c"))
         await viewer.settle()
         #expect(viewer.model.requests.last == .equalize(target: "c"))
 
-        try viewer.answer(2, .ok)
+        try await viewer.answer(2, .ok)
         await viewer.settle()
         #expect(viewer.model.requests.last == .close(target: "c"))
     }
@@ -82,7 +82,7 @@ struct RemoteWorktreeViewerControllerTests {
         viewer.controller.focusTerminal(a)
         viewer.surfaces.send(.equalize, from: a)
 
-        try viewer.answer(0, .splitCreated(sessionName: "b"))
+        try await viewer.answer(0, .splitCreated(sessionName: "b"))
         await viewer.settle()
         #expect(viewer.model.requests.last == .equalize(target: "a"))
 
@@ -101,7 +101,7 @@ struct RemoteWorktreeViewerControllerTests {
         snapshotFirst.controller.focusTerminal(first)
         snapshotFirst.publish(.split(.leaf("a"), .leaf("b")))
         await snapshotFirst.settle()
-        try snapshotFirst.answer(0, .splitCreated(sessionName: "b"))
+        try await snapshotFirst.answer(0, .splitCreated(sessionName: "b"))
         await snapshotFirst.settle()
         #expect(snapshotFirst.controller.selectedRemotePaneSessionName == "a")
         #expect(snapshotFirst.surfaces.focused == first)
@@ -115,7 +115,7 @@ struct RemoteWorktreeViewerControllerTests {
         cancelled.surfaces.send(.split(.down), from: a)
         cancelled.surfaces.send(.equalize, from: a)
         await cancelled.settle()
-        try cancelled.answer(0, .error(code: "cancelled", message: "cancelled"))
+        try await cancelled.answer(0, .error(code: "cancelled", message: "cancelled"))
         await cancelled.settle()
         #expect(cancelled.model.requests.count == 1)
         #expect(cancelled.errors.messages.isEmpty)
@@ -128,7 +128,7 @@ struct RemoteWorktreeViewerControllerTests {
         unreachable.surfaces.send(.split(.right), from: unreachableA)
         unreachable.surfaces.send(.split(.down), from: unreachableA)
         await unreachable.settle()
-        try unreachable.answer(0, .error(code: "downstream-unavailable", message: "offline"))
+        try await unreachable.answer(0, .error(code: "downstream-unavailable", message: "offline"))
         await unreachable.settle()
         #expect(unreachable.model.requests.count == 1)
         #expect(unreachable.errors.messages == ["offline"])
@@ -138,7 +138,7 @@ struct RemoteWorktreeViewerControllerTests {
         conflict.surfaces.send(.split(.right), from: conflictA)
         conflict.surfaces.send(.split(.down), from: conflictA)
         await conflict.settle()
-        try conflict.answer(0, .error(code: "conflict", message: "busy"))
+        try await conflict.answer(0, .error(code: "conflict", message: "busy"))
         await conflict.settle()
         #expect(conflict.model.requests == [
             .split(target: "a", direction: .right),
@@ -154,7 +154,7 @@ struct RemoteWorktreeViewerControllerTests {
         snapshot.surfaces.send(.split(.right), from: a)
         snapshot.surfaces.send(.split(.down), from: a)
         await snapshot.settle()
-        try snapshot.answer(0, .ok)
+        try await snapshot.answer(0, .ok)
         await snapshot.settle()
         #expect(snapshot.model.requests.count == 1)
         #expect(snapshot.clock.requested == [.seconds(10)])
@@ -167,7 +167,7 @@ struct RemoteWorktreeViewerControllerTests {
         timeout.surfaces.send(.split(.right), from: timeoutA)
         timeout.surfaces.send(.split(.down), from: timeoutA)
         await timeout.settle()
-        try timeout.answer(0, .ok)
+        try await timeout.answer(0, .ok)
         await timeout.settle()
         timeout.clock.fire(.seconds(10))
         await timeout.settle()
@@ -187,7 +187,7 @@ struct RemoteWorktreeViewerControllerTests {
         viewer.surfaces.send(.close, from: a)
         await viewer.settle()
         #expect(viewer.model.requests == [.close(target: "a")])
-        try viewer.answer(0, .ok)
+        try await viewer.answer(0, .ok)
         await viewer.settle()
         #expect(viewer.controller.splitTree.allLeaves == [b])
         #expect(viewer.controller.selectedRemotePaneSessionName == "b")
@@ -202,7 +202,7 @@ struct RemoteWorktreeViewerControllerTests {
         let lastA = try last.terminal("a")
         last.surfaces.send(.close, from: lastA)
         await last.settle()
-        try last.answer(0, .ok)
+        try await last.answer(0, .ok)
         await last.settle()
         #expect(last.controller.splitTree.root == nil)
         last.surfaces.send(.split(.right), from: lastA)
@@ -219,7 +219,7 @@ struct RemoteWorktreeViewerControllerTests {
         failed.surfaces.send(.equalize, from: a)
         await failed.settle()
         #expect(failed.controller.splitTree.zoomed == nil)
-        try failed.answer(0, .error(code: "conflict", message: "nope"))
+        try await failed.answer(0, .error(code: "conflict", message: "nope"))
         await failed.settle()
         #expect(failed.controller.splitTree.zoomed == a)
         #expect(failed.errors.messages == ["nope"])
@@ -229,7 +229,7 @@ struct RemoteWorktreeViewerControllerTests {
         rezoomed.surfaces.send(.equalize, from: rezoomedB)
         await rezoomed.settle()
         rezoomed.surfaces.send(.toggleZoom, from: rezoomedB)
-        try rezoomed.answer(0, .ok)
+        try await rezoomed.answer(0, .ok)
         await rezoomed.settle()
         #expect(rezoomed.controller.splitTree.zoomed == rezoomedB)
     }
@@ -282,7 +282,7 @@ struct RemoteWorktreeViewerControllerTests {
         let a = try viewer.terminal("a")
         viewer.surfaces.send(.resize(direction: .down, amount: 5), from: a)
         await viewer.settle()
-        try viewer.answer(0, .ok)
+        try await viewer.answer(0, .ok)
         viewer.surfaces.send(.resize(direction: .right, amount: 7), from: a)
         await viewer.settle()
         #expect(viewer.model.requests == [
@@ -318,7 +318,7 @@ struct RemoteWorktreeViewerControllerTests {
         await viewer.settle()
         viewer.publish(.split(.leaf("a"), .leaf("b")))
         await viewer.settle()
-        try viewer.answer(0, .splitCreated(sessionName: "b"))
+        try await viewer.answer(0, .splitCreated(sessionName: "b"))
         await viewer.settle()
         let b = try viewer.terminal("b")
         #expect(viewer.controller.selectedRemotePaneSessionName == "b")
@@ -349,11 +349,11 @@ struct RemoteWorktreeViewerControllerTests {
         try await step("split") { viewer.surfaces.send(.split(.right), from: a) }
         try await step("queue split") { viewer.surfaces.send(.split(.down), from: a) }
         try await step("queue equalize") { viewer.surfaces.send(.equalize, from: a) }
-        try await step("split 1 answered") { try viewer.answer(0, .splitCreated(sessionName: "b")) }
+        try await step("split 1 answered") { try await viewer.answer(0, .splitCreated(sessionName: "b")) }
         try await step("snapshot 1") { viewer.publish(.split(.leaf("a"), .leaf("b"))) }
-        try await step("split 2 answered") { try viewer.answer(1, .splitCreated(sessionName: "c")) }
+        try await step("split 2 answered") { try await viewer.answer(1, .splitCreated(sessionName: "c")) }
         try await step("snapshot 2") { viewer.publish(.split(.leaf("a"), .split(.leaf("b"), .leaf("c")))) }
-        try await step("equalize answered") { try viewer.answer(2, .ok) }
+        try await step("equalize answered") { try await viewer.answer(2, .ok) }
         #expect(publishingSteps == ["snapshot 1", "snapshot 2"])
     }
 
@@ -364,7 +364,7 @@ struct RemoteWorktreeViewerControllerTests {
         let a = try viewer.terminal("a")
         viewer.surfaces.send(.split(.right), from: a)
         await viewer.settle()
-        try viewer.answer(0, .splitCreated(sessionName: "b"))
+        try await viewer.answer(0, .splitCreated(sessionName: "b"))
         await viewer.settle()
         viewer.publish(.split(.leaf("a"), .leaf("b")))
         await viewer.settle()
@@ -440,20 +440,37 @@ private final class ViewerHarness {
         try #require(surfaces.liveTerminal(forSession: sessionName))
     }
 
-    /// Answers the `index`th pane-control request, failing the test (rather
-    /// than trapping) when the viewer never sent it.
-    func answer(_ index: Int, _ response: PaneControlResponse) throws {
-        try #require(
-            model.paneControls.indices.contains(index),
-            "pane-control request \(index) was never sent; sent \(model.requests)"
-        )
+    /// Answers the `index`th pane-control request once the viewer has sent
+    /// it, waiting on that condition (bounded) rather than on a turn count,
+    /// and failing the test rather than trapping if it never arrives.
+    func answer(_ index: Int, _ response: PaneControlResponse) async throws {
+        try await until("pane-control request \(index) is sent") {
+            model.paneControls.indices.contains(index)
+        }
         model.paneControls[index].resolve(response)
+        await settle()
+    }
+
+    /// Yields until `condition` holds; bounded, with no wall-clock waits.
+    func until(_ description: String, _ condition: () -> Bool) async throws {
+        for _ in 0..<2_000 where !condition() {
+            await Task.yield()
+            surfaces.drainFirstResponders()
+        }
+        try #require(condition(), "timed out waiting until \(description); sent \(model.requests)")
     }
 
     /// Yields until the fakes have seen no new activity for 20 consecutive
     /// turns, so queued main-actor tasks and deferred first-responder
     /// promotions have run. Bounded, with no wall-clock waits; a viewer
     /// that keeps working past the bound is a test failure.
+    ///
+    /// Every task involved (the controller's, the fake pane-control and
+    /// open tasks) is main-actor isolated, so a resumed continuation is
+    /// enqueued on the main executor ahead of this loop's next turn; the
+    /// longest chain (response, handler, dispatch, surface open) is a few
+    /// hops, well inside 20 quiet turns. Positive waits on a request use
+    /// `until` instead.
     func settle() async {
         var quietTurns = 0
         for _ in 0..<2_000 {
