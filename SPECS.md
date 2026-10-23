@@ -4657,3 +4657,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEST-1.12** When the native notification fixture validates its private queue, the harness shall compare canonical directory paths independently of URL directory metadata and reject other directories.
 
 **TEST-1.13** When a Quick Look integration run drives both provider TUIs, the test harness shall type unique prompts through the native keyboard, open and dismiss the production preview, capture every action, and fail unless all required retained and transient pane cases finish successfully.
+
+**TEST-1.14** If a loopback test peer's data channel does not open or arrive within its deadline, then the test fixture shall fail the wait with a data-channel-open timeout naming the channel label.
