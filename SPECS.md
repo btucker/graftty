@@ -3504,6 +3504,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-26.26** When a host resource probe receives its first authenticated sidebar snapshot, the application shall timestamp the observation locally, preserve unknown metrics, and fail on timeout or disconnect.
 
+**REMOTE-26.27** When relaying replication bytes, the application shall drain writes before forwarding input EOF, preserve the reverse stream, and close both endpoints on cancellation, deadline, failed authorization, or oversized input.
+
 ### REMOTE-27.x — Native session replication and restore
 
 **REMOTE-27.1** While a delegated host is reachable, the application shall regularly copy worktree-associated native Claude and Codex session data to the recorded parent, excluding authentication files.
