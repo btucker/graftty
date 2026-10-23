@@ -3034,6 +3034,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.29** While a mobile dial awaits post-connect validation, concurrent callers shall await that attempt's final result rather than receive its provisional connection.
 
+**REMOTE-2.30** When either native client orders signaling routes, the application shall prefer discovered URLs, the pin's last successful route, pin routes, and saved host routes in that order, deduplicate by URL, and use the saved base URL only if no candidates exist.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -3241,6 +3243,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-12.18** When an explicit reconnect arrives during an ordinary connection attempt, the application shall replace the weaker attempt with one signed replacement attempt and shall deduplicate further reconnects while that replacement attempt remains pending.
 
 **REMOTE-12.19** When a Remote Mac receives an ownership snapshot acknowledging its live terminal grid, the application shall suppress matching resize requests from layout and native resize callbacks so the ownership exchange terminates.
+
+**REMOTE-12.20** When a saved Mac's pin has a last successful route absent from its saved routes, the application shall include that refreshed route in the next authenticated dial.
 
 ### REMOTE-13.x
 

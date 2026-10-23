@@ -459,15 +459,11 @@ final class RemoteMacConnectionRegistry {
                 refreshed.lastConnectedAt = now()
                 refreshedPinnedHost = refreshed
             case .webRTC(let webRTC):
-                var routes: [RemoteConnectionRoute] = []
-                if let lastSuccessful = remoteMac.lastSuccessfulRoute {
-                    routes.append(lastSuccessful)
-                }
-                routes.append(contentsOf: remoteMac.routes)
-                routes.append(contentsOf: pinnedHost.routes)
-                if routes.isEmpty {
-                    routes.append(RemoteConnectionRoute(kind: .lan, baseURL: try requiredBaseURL(remoteMac, identity: identity)))
-                }
+                let routes = RemoteHostDialer.routingRoutes(
+                    pinnedHost: pinnedHost,
+                    hostRoutes: remoteMac.routes,
+                    fallbackBaseURL: try requiredBaseURL(remoteMac, identity: identity)
+                )
                 refreshedPinnedHost = try await RemoteHostDialer.negotiate(
                     webRTC,
                     signaling: signalingClient,
