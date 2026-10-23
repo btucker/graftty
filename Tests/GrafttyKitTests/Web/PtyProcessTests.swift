@@ -6,6 +6,7 @@ import Darwin
 import Glibc
 #endif
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 /// `.serialized` because `PtyProcess.spawn` uses raw `fork(2)`. Concurrent
 /// forks from Swift Testing tasks can deadlock a child in process-global

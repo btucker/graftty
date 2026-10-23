@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 /// Pre-cycle-140, `WorktreeStatsStore.performRepoFetch` called
 /// `GitRunner.captureAll` — which returns normally on non-zero exit —
@@ -40,7 +41,6 @@ struct WorktreeStatsStoreFetchTests {
     @Test func throwingFetchIncrementsStreak() async {
         // This is the regression target: a `git fetch` that throws
         // (non-zero exit) must be treated as a failure, not as success.
-        struct StubError: Error {}
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
             WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }
@@ -58,7 +58,6 @@ struct WorktreeStatsStoreFetchTests {
 
     @MainActor
     @Test func repeatedFailuresAccumulate() async {
-        struct StubError: Error {}
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
             WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }
@@ -78,7 +77,6 @@ struct WorktreeStatsStoreFetchTests {
     @Test func recoveryAfterFailureResetsStreak() async {
         // Proves the streak is NOT sticky — once fetch succeeds again,
         // backoff disengages.
-        struct StubError: Error {}
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
             WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }

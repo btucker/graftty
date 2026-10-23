@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 /// Engine-level tests for the PTY-backed attach engine shared by `/ws`
 /// (via the `WebSession` adapter) and the SSH-over-WebRTC `terminal`
@@ -13,7 +14,7 @@ struct ZmxAttachEngineTests {
 
     @Test("@spec REMOTE-10.2: While a legacy SSH terminal consumer is stalled, the application shall bound queued output and backpressure its attach reader without losing bytes, and shall release queued output when the attachment closes.", .timeLimit(.minutes(1)))
     func stalledConsumerBackpressuresAndCloseDiscardsQueuedOutput() async throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-output-backpressure")
+        let dir = try makeTempDir(prefix: "zmx-output-backpressure")
         defer { try? FileManager.default.removeItem(at: dir) }
         let started = dir.appendingPathComponent("started")
         let completed = dir.appendingPathComponent("completed")
@@ -42,7 +43,7 @@ struct ZmxAttachEngineTests {
 
     @Test("a legacy SSH consumer drains all output before EOF", .timeLimit(.minutes(1)))
     func streamDeliversAllBytesBeforeEOF() async throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-output-drain")
+        let dir = try makeTempDir(prefix: "zmx-output-drain")
         defer { try? FileManager.default.removeItem(at: dir) }
         let script = dir.appendingPathComponent("zmx")
         try Self.writeScript("""
@@ -72,7 +73,7 @@ struct ZmxAttachEngineTests {
 
     @Test("canceling an idle SSH consumer closes its attach reader", .timeLimit(.minutes(1)))
     func cancelingStreamConsumerClosesEngine() async throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-output-cancel")
+        let dir = try makeTempDir(prefix: "zmx-output-cancel")
         defer { try? FileManager.default.removeItem(at: dir) }
         let script = dir.appendingPathComponent("zmx")
         try Self.writeScript("#!/bin/sh\nexec sleep 20\n", to: script)
@@ -159,7 +160,7 @@ struct ZmxAttachEngineTests {
 
     @Test("@spec ZMX-9.8: When the legacy attach client decodes a snapshot, the application shall report its source grid before delivering replay bytes, preserve those bytes, and never substitute the outer PTY's requested grid.")
     func snapshotGridPrecedesReplay() throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-replay-grid")
+        let dir = try makeTempDir(prefix: "zmx-replay-grid")
         defer { try? FileManager.default.removeItem(at: dir) }
         let script = dir.appendingPathComponent("zmx")
         try Self.writeScript("""
@@ -240,7 +241,7 @@ struct ZmxAttachEngineTests {
     }
 
     @Test func spawnAndEchoRoundTripThroughTerminalByteStream() async throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-attach-engine")
+        let dir = try makeTempDir(prefix: "zmx-attach-engine")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeEchoZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -268,7 +269,7 @@ struct ZmxAttachEngineTests {
     // MARK: - Close semantics
 
     @Test func closeSendsSIGTERMAndFinishesInboundBytes() async throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-attach-engine")
+        let dir = try makeTempDir(prefix: "zmx-attach-engine")
         defer { try? FileManager.default.removeItem(at: dir) }
         let startedFile = dir.appendingPathComponent("started.txt")
         let termFile = dir.appendingPathComponent("term.txt")
@@ -300,7 +301,7 @@ struct ZmxAttachEngineTests {
     // MARK: - Resize reaches the real PTY (the headline upgrade over ZmxAttachStream's ENOTTY no-op)
 
     @Test func resizeChangesRealPTYWinsize() async throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-attach-engine")
+        let dir = try makeTempDir(prefix: "zmx-attach-engine")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeSizeReportingZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -334,7 +335,7 @@ struct ZmxAttachEngineTests {
     private static func reportedWinsize(
         after resizes: (TerminalSyncResizing) throws -> Void
     ) async throws -> String {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-attach-engine")
+        let dir = try makeTempDir(prefix: "zmx-attach-engine")
         defer { try? FileManager.default.removeItem(at: dir) }
         let script = dir.appendingPathComponent("zmx")
         try writeScript("""
@@ -395,7 +396,7 @@ struct ZmxAttachEngineTests {
     retain bytes nobody will ever drain.
     """)
     func callbackModeDoesNotBufferIntoInboundBytes() throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-attach-engine-callback-mode")
+        let dir = try makeTempDir(prefix: "zmx-attach-engine-callback-mode")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeEchoZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -434,7 +435,7 @@ struct ZmxAttachEngineTests {
     /// late-assigned callback on a stream-mode engine would ALSO fire —
     /// double-delivering every chunk.
     @Test func lateAssignedCallbackNeverFiresOnStreamModeEngine() async throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-attach-engine-late-callback")
+        let dir = try makeTempDir(prefix: "zmx-attach-engine-late-callback")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeEchoZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -473,7 +474,7 @@ struct ZmxAttachEngineTests {
     // deleted ZmxAttachStreamRegistryTests.
 
     @Test func registersAttachOnStartAndDetachesExactlyOnceOnClose() throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-attach-engine-registry")
+        let dir = try makeTempDir(prefix: "zmx-attach-engine-registry")
         defer { try? FileManager.default.removeItem(at: dir) }
         let startedFile = dir.appendingPathComponent("started.txt")
         let termFile = dir.appendingPathComponent("term.txt")
@@ -510,7 +511,7 @@ struct ZmxAttachEngineTests {
     /// observe EOF before the attach is registered — this test pins that
     /// ordering so a future refactor can't reintroduce the race.
     @Test func instantlyDyingChildStillBalancesRegistryAttachDetach() throws {
-        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "zmx-attach-engine-instant-death")
+        let dir = try makeTempDir(prefix: "zmx-attach-engine-instant-death")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeInstantExitZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)

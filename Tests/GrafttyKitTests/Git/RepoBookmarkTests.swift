@@ -1,16 +1,10 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("RepoBookmark Tests")
 struct RepoBookmarkTests {
-
-    private func makeTempDir() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-bookmark-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
 
     @Test func mintAndResolveReturnsSamePath() throws {
         let dir = try makeTempDir()

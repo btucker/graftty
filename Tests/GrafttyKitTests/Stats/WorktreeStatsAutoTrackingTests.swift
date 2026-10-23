@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 @Suite("Worktree stats auto-tracking integration")
 @MainActor
@@ -84,7 +85,7 @@ struct WorktreeStatsAutoTrackingTests {
             .init(defaultBranch: "trunk", stats: .init(ahead: 0, behind: 2, insertions: 0, deletions: 0,
                                                       upstreamRefs: .init(defaultRef: "refs/heads/trunk")))
         })
-        store.start(ticker: PassiveAutoTrackingTicker(), getRepos: { state.repos }, recordAutoTrackingAttempt: { path, target in
+        store.start(ticker: ManualTicker(), getRepos: { state.repos }, recordAutoTrackingAttempt: { path, target in
             guard let index = state.repos[0].worktrees.firstIndex(where: { $0.path == path }) else { return }
             state.repos[0].worktrees[index].autoTrackLastAttempt = target
         })
@@ -111,11 +112,4 @@ struct WorktreeStatsAutoTrackingTests {
             repos = [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [home, role])]
         }
     }
-}
-
-@MainActor
-private final class PassiveAutoTrackingTicker: PollingTickerLike {
-    func start(onTick: @MainActor @escaping () async -> Void) {}
-    func stop() {}
-    func pulse() {}
 }

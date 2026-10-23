@@ -2,6 +2,7 @@ import Testing
 import GrafttyProtocol
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 /// PR/MR association keys off the **tracked remote branch**, not the
 /// local branch name. GitHub's `gh pr list` keys results by

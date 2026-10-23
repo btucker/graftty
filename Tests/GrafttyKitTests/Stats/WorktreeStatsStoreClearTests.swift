@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 /// DIVERGE-4.5: `clear(worktreePath:)` must release the `inFlight` gate
 /// and bump a per-path generation counter so an in-flight refresh whose
@@ -63,7 +64,7 @@ struct WorktreeStatsStoreClearTests {
     @Test func clearBetweenRefreshAndApplyDropsStaleWrite() async throws {
         // Continuation that the test will resume after calling clear().
         let resumeStream = AsyncStream<Void>.makeStream()
-        let resumeIterator = Box(resumeStream.stream.makeAsyncIterator())
+        let resumeIterator = MutableBox(resumeStream.stream.makeAsyncIterator())
 
         let cannedStats = WorktreeStats(ahead: 3, behind: 7, insertions: 40, deletions: 10, hasUncommittedChanges: false)
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
@@ -98,12 +99,4 @@ struct WorktreeStatsStoreClearTests {
         #expect(store.stats["/wt"] == nil,
                 "DIVERGE-4.5 violation: apply repopulated stats for cleared worktree")
     }
-}
-
-/// Swift 6 doesn't let an AsyncStream.Iterator cross actor boundaries
-/// directly — wrap in a Sendable box (unchecked because we only use it
-/// in single-reader fashion here).
-private final class Box<T>: @unchecked Sendable {
-    var value: T
-    init(_ value: T) { self.value = value }
 }

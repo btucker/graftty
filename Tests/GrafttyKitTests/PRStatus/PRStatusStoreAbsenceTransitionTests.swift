@@ -1,6 +1,7 @@
 import XCTest
 import GrafttyProtocol
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 /// @spec PR-8.24: While polling a tracked PR or MR, the application shall
 /// preserve raw `checks == .none` and `mergeable == .unknown` values for the

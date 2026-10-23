@@ -3,15 +3,8 @@ import Foundation
 /// Shared fixture helpers for tests that spawn a fake `zmx` PTY child
 /// process (`ZmxAttachEngineTests`, `WebSessionTests`) — both suites drive
 /// the same `PtyProcess.spawn`-backed plumbing and previously carried
-/// identical private copies of these three helpers.
+/// identical private copies of these helpers.
 enum PTYFixtureTestSupport {
-    static func makeTempDir(prefix: String) throws -> URL {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
     static func shellQuoted(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }

@@ -1,11 +1,12 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("Agent Hook Installer")
 struct AgentHookInstallerTests {
     @Test func installWritesWrappersIdempotently() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let installer = AgentHookInstaller(rootDirectory: root, grafttyCLIPath: "/usr/local/bin/graftty")
 
         let first = try installer.install()
@@ -163,7 +164,7 @@ struct AgentHookInstallerTests {
     }
 
     @Test func installRepairsStaleWrapperMarker() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let bin = root.appendingPathComponent("bin", isDirectory: true)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let stale = bin.appendingPathComponent("codex")
@@ -206,7 +207,7 @@ struct AgentHookInstallerTests {
     @spec AGENT-6.11: When Graftty installs its agent hook assets, the application shall never write a Claude launch wrapper, shall remove a previously generated Claude wrapper that carries Graftty's wrapper marker while preserving any unmarked file at that path, leave Claude lifecycle hooks and team instructions to the installed provider plugin, and retain only Codex's app-server/remote transport wrapper.
     """)
     func installRemovesManagedClaudeWrapperAndKeepsCodexTransport() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let bin = root.appendingPathComponent("bin", isDirectory: true)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let claudeURL = bin.appendingPathComponent("claude")
@@ -243,12 +244,5 @@ struct AgentHookInstallerTests {
         #expect(script.contains(#"GRAFTTY_AGENT_ID="codex-$_graftty_agent_suffix""#))
         #expect(!script.contains(#"if [ -z "${GRAFTTY_AGENT_ID:-}" ]; then"#))
         #expect(!script.contains("(runtime.rawValue)"))
-    }
-
-    private static func temporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-agent-hooks-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
     }
 }

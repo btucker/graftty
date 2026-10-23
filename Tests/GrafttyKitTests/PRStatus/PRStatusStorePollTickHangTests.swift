@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 /// Regression for the polling loop itself getting stuck behind a hung
 /// host CLI call. `PR-7.13` lets later dispatches supersede old in-flight
@@ -20,7 +21,7 @@ struct PRStatusStorePollTickHangTests {
     @MainActor
     @Test(.timeLimit(.minutes(1)))
     func tickReturnsWithoutWaitingForHungFetch() async throws {
-        let ticker = CapturingTicker()
+        let ticker = ManualTicker()
         let hang = AsyncStream<Void>.makeStream()
         let fetcher = HangingPRFetcher(stream: hang.stream)
         let origin = HostingOrigin(
@@ -52,25 +53,6 @@ struct PRStatusStorePollTickHangTests {
         // contention of parallel suites (a busy MainActor delays even the hop to
         // this instant tick — the PollingHeart starvation artifact).
         await ticker.fire()
-    }
-}
-
-@MainActor
-private final class CapturingTicker: PollingTickerLike {
-    private var onTick: (@MainActor () async -> Void)?
-
-    func start(onTick: @MainActor @escaping () async -> Void) {
-        self.onTick = onTick
-    }
-
-    func stop() {
-        onTick = nil
-    }
-
-    func pulse() {}
-
-    func fire() async {
-        await onTick?()
     }
 }
 

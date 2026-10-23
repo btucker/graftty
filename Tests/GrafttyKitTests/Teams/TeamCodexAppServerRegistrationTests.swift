@@ -1,18 +1,12 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("Codex app-server registration")
 struct TeamCodexAppServerRegistrationTests {
     private static let worktree = "/repo/.worktrees/alice"
     private static let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
-
-    private static func temporaryDirectory() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-codex-app-server-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
 
     private static func record(
         pane: String,
@@ -97,7 +91,7 @@ struct TeamCodexAppServerRegistrationTests {
 
     @Test("App-server register helper writes metadata for canonical worktree and pane session.")
     func codexAppServerRegisterWritesCanonicalWorktreeMetadata() throws {
-        let dir = try Self.temporaryDirectory()
+        let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let storage = CodexAppServerSessionStorage(rootDirectory: dir)
 
@@ -121,7 +115,7 @@ struct TeamCodexAppServerRegistrationTests {
 
     @Test("App-server register stores the native Codex binary when the wrapper resolved a Node shim.")
     func codexAppServerRegisterStoresNativeCodexBinaryForNodeShim() throws {
-        let dir = try Self.temporaryDirectory()
+        let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (shim, native) = try Self.installNodeShim(root: dir) { packageRoot in
             Self.vendoredBinary(in: packageRoot
@@ -137,7 +131,7 @@ struct TeamCodexAppServerRegistrationTests {
 
     @Test("App-server register stores the native Codex binary from the in-package vendor fallback layout.")
     func codexAppServerRegisterStoresNativeCodexBinaryForInPackageVendorLayout() throws {
-        let dir = try Self.temporaryDirectory()
+        let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (shim, native) = try Self.installNodeShim(root: dir) { packageRoot in
             Self.vendoredBinary(in: packageRoot)
@@ -151,7 +145,7 @@ struct TeamCodexAppServerRegistrationTests {
 
     @Test("App-server unregister deletes only the exact team/worktree/pane record.")
     func codexAppServerUnregisterDeletesExactRecord() throws {
-        let dir = try Self.temporaryDirectory()
+        let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let storage = CodexAppServerSessionStorage(rootDirectory: dir)
         try storage.write(Self.record(pane: "graftty-aaaaaaaa", socketPath: "/tmp/a.sock", appServerPID: 42))
@@ -186,7 +180,7 @@ struct TeamCodexAppServerRegistrationTests {
 
     @Test("App-server unregister leaves current record when stale cleanup socket mismatches.")
     func codexAppServerUnregisterPreservesMismatchedSocketRecord() throws {
-        let dir = try Self.temporaryDirectory()
+        let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let storage = CodexAppServerSessionStorage(rootDirectory: dir)
         let current = Self.record(pane: "graftty-aaaaaaaa", socketPath: "/tmp/current.sock", appServerPID: 42)
@@ -211,7 +205,7 @@ struct TeamCodexAppServerRegistrationTests {
 
     @Test("App-server unregister leaves current record when stale cleanup PID mismatches.")
     func codexAppServerUnregisterPreservesMismatchedPIDRecord() throws {
-        let dir = try Self.temporaryDirectory()
+        let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let storage = CodexAppServerSessionStorage(rootDirectory: dir)
         let current = Self.record(

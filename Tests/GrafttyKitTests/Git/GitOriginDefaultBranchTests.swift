@@ -1,16 +1,10 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("GitOriginDefaultBranch", .serialized)
 struct GitOriginDefaultBranchTests {
-
-    func makeTempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-origin-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
 
     @discardableResult
     func shell(_ command: String, at dir: URL) throws -> Int32 {

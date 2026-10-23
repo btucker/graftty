@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("""
 @spec CONFIG-2.7: If GrafttyKit's resource bundle uses either SwiftPM's flat \

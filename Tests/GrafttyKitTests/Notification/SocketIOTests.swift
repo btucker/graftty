@@ -6,6 +6,7 @@ import Darwin
 import Glibc
 #endif
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("SocketIO.writeAll")
 struct SocketIOTests {

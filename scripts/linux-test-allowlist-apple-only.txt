@@ -119,7 +119,6 @@ Tests/GrafttyKitTests/PRStatus/PRStatusStoreRefreshBranchGateTests.swift
 Tests/GrafttyKitTests/PRStatus/PRStatusStoreRefreshBypassTests.swift
 Tests/GrafttyKitTests/PRStatus/PRStatusStoreTransitionTests.swift
 Tests/GrafttyKitTests/PRStatus/PRStatusStoreUpstreamTrackingTests.swift
-Tests/GrafttyKitTests/PRStatus/Support/ManualTicker.swift
 Tests/GrafttyKitTests/Polling/BackgroundProcessLimiterIntegrationTests.swift
 Tests/GrafttyKitTests/Polling/RepoPollSchedulerTests.swift
 Tests/GrafttyKitTests/Ports/SystemLsofRunnerTests.swift

@@ -4,6 +4,7 @@ import GrafttyProtocol
 import Testing
 
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("TrustedPeerStore Tests")
 struct TrustedPeerStoreTests {
@@ -24,12 +25,6 @@ struct TrustedPeerStoreTests {
 
         #expect(disabled.worktreeManagement == .disabled)
         #expect(allowed.worktreeManagement == .allowed)
-    }
-
-    func makeTempDir() throws -> URL {
-        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
     }
 
     func makePeer(

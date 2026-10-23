@@ -6,18 +6,12 @@ import Glibc
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("@spec TEAM-7.4: When the messages.jsonl file appended-to is the team's inbox, the application shall emit the parsed message list to the registered observer callback within one second of the append, including when the file is created after the observer started watching. The observer shall stay correct even if the kqueue file-system event is dropped or its queue is briefly starved, by re-reading on a periodic change-gated poll. When the watched file is deleted (a present→absent transition), the observer shall not emit an empty list — so delta-tracking consumers keep their watermark — and shall resume emitting when the file is recreated.")
 struct TeamInboxObserverTests {
-    static func temporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("inboxObserverTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
     @Test func emitsOnAppend() async throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let inbox = TeamInbox(rootDirectory: root)
         let teamID = "team-1"
         let observer = TeamInboxObserver(rootDirectory: root, teamID: teamID)
@@ -42,7 +36,7 @@ struct TeamInboxObserverTests {
     }
 
     @Test func emitsAfterFileCreatedLate() async throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let teamID = "team-2"
         let observer = TeamInboxObserver(rootDirectory: root, teamID: teamID)
         let capture = LockedMessageBatches()
@@ -75,7 +69,7 @@ struct TeamInboxObserverTests {
     /// Disabling the event sources isolates the backstop so the test is
     /// deterministic (no reliance on vnode timing).
     @Test func pollingBackstopDetectsLateFileWhenEventSourceMissed() async throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let teamID = "team-poll"
         let observer = TeamInboxObserver(
             rootDirectory: root,
@@ -110,7 +104,7 @@ struct TeamInboxObserverTests {
     /// watermark and re-deliver every message on the next append. The vnode
     /// `.delete` path never emitted; the poll must match.
     @Test func pollDoesNotEmitEmptyBatchOnFileDeletion() async throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let teamID = "team-del"
         let observer = TeamInboxObserver(
             rootDirectory: root,
@@ -145,7 +139,7 @@ struct TeamInboxObserverTests {
 
     @Test("Deletion between the size check and read preserves the last batch", arguments: [false, true])
     func deletionDuringReadDoesNotEmitEmptyBatch(force: Bool) async throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let teamID = "team-delete-during-read"
         let inbox = TeamInbox(rootDirectory: root)
@@ -190,7 +184,7 @@ struct TeamInboxObserverTests {
     #if !os(Linux)
     @Test("Reattaching an inbox file closes each descriptor exactly once")
     func reattachDoesNotDoubleCloseFileDescriptor() async throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let teamID = "team-fd-ownership"
         let inbox = TeamInbox(rootDirectory: root)
         try inbox.appendMessage(
@@ -222,7 +216,7 @@ struct TeamInboxObserverTests {
 
     @Test("Deletion between the signature check and read does not emit an empty batch", arguments: [false, true])
     func deletionDuringReadPreservesLastBatch(force: Bool) async throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let teamID = "team-delete-during-read"
         let inbox = TeamInbox(rootDirectory: root)
@@ -272,7 +266,7 @@ struct TeamInboxObserverTests {
 
     @Test("An initially absent inbox emits one empty snapshot")
     func initiallyAbsentInboxEmitsEmptySnapshot() async throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let observer = TeamInboxObserver(
             rootDirectory: root, teamID: "absent", pollInterval: .seconds(30),

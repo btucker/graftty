@@ -8,6 +8,7 @@ import GrafttyProtocol
 import Testing
 
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 /// On-disk compatibility net for the stores migrated onto `JSONFileStore`
 /// (#488). Each `legacy*` helper is a frozen copy of the coder setup the
@@ -16,12 +17,6 @@ import Testing
 /// the earlier writer produced (so the earlier reader accepts them).
 @Suite("JSON store on-disk compatibility")
 struct JSONStoreCompatibilityTests {
-
-    private func makeTempDir() throws -> URL {
-        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
 
     private static let at = Date(timeIntervalSince1970: 1_700_000_000)
 

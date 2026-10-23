@@ -4,6 +4,7 @@ import SwiftUI
 import Testing
 @testable import GrafttyKit
 @testable import Graftty
+import GrafttyKitTestSupport
 
 @Suite("WorktreeMonitorBridge event-driven refresh", .serialized)
 struct WorktreeMonitorBridgeTests {
@@ -22,7 +23,7 @@ struct WorktreeMonitorBridgeTests {
         let compute = RecordingStatsCompute()
         let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in }, autoTracking: tracker,
                                       computeLocalDefault: { a, b, c, d, _ in await compute.function(a, b, c, d) })
-        store.start(ticker: PassivePollingTicker(), getRepos: { stateBox.state.repos }, recordAutoTrackingAttempt: { path, target in
+        store.start(ticker: ManualTicker(), getRepos: { stateBox.state.repos }, recordAutoTrackingAttempt: { path, target in
             guard let indices = stateBox.state.indices(forWorktreePath: path) else { return }
             stateBox.state.repos[indices.repo].worktrees[indices.worktree].autoTrackLastAttempt = target
         })
@@ -188,7 +189,7 @@ struct WorktreeMonitorBridgeTests {
         // sequenced fetcher's create-race result before the origin-ref
         // event under test drives the first refresh.
         prStore.start(
-            ticker: PassivePollingTicker(),
+            ticker: ManualTicker(),
             getRepos: { stateBox.state.repos }
         )
         defer { prStore.stop() }
@@ -391,13 +392,6 @@ private final class RecordingStatsCompute: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         calls[path, default: 0] += 1
     }
-}
-
-@MainActor
-private final class PassivePollingTicker: PollingTickerLike {
-    func start(onTick: @MainActor @escaping () async -> Void) {}
-    func stop() {}
-    func pulse() {}
 }
 
 private struct NoopCLIExecutor: CLIExecutor {

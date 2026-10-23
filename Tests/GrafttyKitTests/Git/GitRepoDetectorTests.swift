@@ -1,16 +1,10 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("GitRepoDetector Tests", .serialized)
 struct GitRepoDetectorTests {
-
-    func makeTempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-git-test-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
 
     func shell(_ command: String, at dir: URL) throws {
         let process = Process()

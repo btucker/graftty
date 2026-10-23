@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("TailscaleLocalAPI — parsing")
 struct TailscaleLocalAPIParsingTests {
@@ -111,16 +112,8 @@ struct RemoteAccessRouteDiscoveryTests {
 """)
 struct TailscaleLocalAPIAutoDetectTests {
 
-    private func makeTempDir() throws -> String {
-        let dir = NSTemporaryDirectory() + "tsapi-" + UUID().uuidString
-        try FileManager.default.createDirectory(
-            atPath: dir, withIntermediateDirectories: true
-        )
-        return dir
-    }
-
     @Test func prefersUnixSocketWhenPresent() throws {
-        let tmp = try makeTempDir()
+        let tmp = try makeTempDir().path
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         // A plain file at the candidate path is enough for the existence probe.
         let fakeSocket = tmp + "/tailscaled.socket"
@@ -137,7 +130,7 @@ struct TailscaleLocalAPIAutoDetectTests {
     }
 
     @Test func fallsBackToMacsysTCPWhenSocketsAbsent() throws {
-        let tmp = try makeTempDir()
+        let tmp = try makeTempDir().path
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         try "49161".write(toFile: tmp + "/ipnport", atomically: true, encoding: .utf8)
         try "token-abc-123".write(
@@ -152,7 +145,7 @@ struct TailscaleLocalAPIAutoDetectTests {
     }
 
     @Test func readsPortFromIpnportSymlink() throws {
-        let tmp = try makeTempDir()
+        let tmp = try makeTempDir().path
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         // macsys writes ipnport as a symlink whose target is the port number.
         try FileManager.default.createSymbolicLink(
@@ -170,7 +163,7 @@ struct TailscaleLocalAPIAutoDetectTests {
     }
 
     @Test func trimsWhitespaceFromTokenAndPort() throws {
-        let tmp = try makeTempDir()
+        let tmp = try makeTempDir().path
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         try "  49161\n".write(toFile: tmp + "/ipnport", atomically: true, encoding: .utf8)
         try "token-xyz\n".write(
@@ -184,7 +177,7 @@ struct TailscaleLocalAPIAutoDetectTests {
     }
 
     @Test func throwsSocketUnreachableWhenNothingPresent() throws {
-        let tmp = try makeTempDir()
+        let tmp = try makeTempDir().path
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         #expect(throws: TailscaleLocalAPI.Error.socketUnreachable) {
             _ = try TailscaleLocalAPI.autoDetected(
@@ -206,7 +199,7 @@ struct TailscaleLocalAPIAutoDetectTests {
     /// `.socketUnreachable` instead of storing a ticking-bomb port
     /// in the transport enum.
     @Test func outOfRangePortIsNotDetected() throws {
-        let tmp = try makeTempDir()
+        let tmp = try makeTempDir().path
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         try "70000".write(toFile: tmp + "/ipnport", atomically: true, encoding: .utf8)
         try "token-xyz".write(
@@ -221,7 +214,7 @@ struct TailscaleLocalAPIAutoDetectTests {
     }
 
     @Test func negativePortIsNotDetected() throws {
-        let tmp = try makeTempDir()
+        let tmp = try makeTempDir().path
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         try "-1".write(toFile: tmp + "/ipnport", atomically: true, encoding: .utf8)
         try "token-xyz".write(
@@ -236,7 +229,7 @@ struct TailscaleLocalAPIAutoDetectTests {
     }
 
     @Test func missingTokenFileIsNotDetected() throws {
-        let tmp = try makeTempDir()
+        let tmp = try makeTempDir().path
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         try "49161".write(toFile: tmp + "/ipnport", atomically: true, encoding: .utf8)
         // Intentionally no sameuserproof-49161 file.
@@ -249,7 +242,7 @@ struct TailscaleLocalAPIAutoDetectTests {
     }
 
     @Test func emptyTokenIsNotDetected() throws {
-        let tmp = try makeTempDir()
+        let tmp = try makeTempDir().path
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         try "49161".write(toFile: tmp + "/ipnport", atomically: true, encoding: .utf8)
         try "   \n".write(
