@@ -764,26 +764,13 @@ public final class RemoteConnectionCoordinator {
         for host: Host,
         pinnedHost: PinnedHost
     ) -> [RemoteConnectionRoute] {
-        var candidates: [RemoteConnectionRoute] = []
-        if let discovered = host.remoteDeviceID.flatMap({
-            discoveredBaseURLs[$0]
-        }) {
-            candidates.append(
-                RemoteConnectionRoute(kind: .lan, baseURL: discovered)
-            )
-        }
-        if let lastSuccessful = pinnedHost.lastSuccessfulRoute {
-            candidates.append(lastSuccessful)
-        }
-        candidates.append(contentsOf: pinnedHost.routes)
-        candidates.append(contentsOf: host.routes)
-        if candidates.isEmpty {
-            candidates.append(
-                RemoteConnectionRoute(kind: .lan, baseURL: host.baseURL)
-            )
-        }
-        var seen = Set<URL>()
-        return candidates.filter { seen.insert($0.baseURL).inserted }
+        let discovered = host.remoteDeviceID.flatMap { discoveredBaseURLs[$0] }
+        return RemoteHostDialer.routingRoutes(
+            pinnedHost: pinnedHost,
+            hostRoutes: host.routes,
+            discoveredBaseURLs: discovered.map { [$0] } ?? [],
+            fallbackBaseURL: host.baseURL
+        )
     }
 
     private func discardPanesStore(
