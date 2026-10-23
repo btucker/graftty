@@ -1,6 +1,6 @@
 # Remote skill provisioning
 
-Skill capture, authenticated transfer, and staging are available for Claude and Codex. Automatic provisioning, container mounts, launch integration, full plugin installation, and settings reconciliation remain pending. The CLI reports `staged`, not agent readiness.
+Skill capture, authenticated transfer, revision staging, and explicit Dev Container placement are available for Claude and Codex. A placement can install staged skills and launch a native agent inside its container. Full plugin installation, settings reconciliation, automatic capture on every launch/resume, and durable session mounts remain pending. Skill availability does not establish agent authentication or complete configuration parity.
 
 ## Capture and stage
 
@@ -34,7 +34,29 @@ graftty remote skills stage --input /absolute/path/to/skills.json \
   --parent-id <authenticated-parent-id> --project-id <project-id>
 ```
 
-The returned `userDirectory` and `projectDirectory` contain native relative directory layouts. Provisioning must place or mount these at the agent's actual home and worktree, including inside a Dev Container. They are not discovery roots merely because they exist in the staging store. `--directory` selects an alternate store. Parent and project arguments partition local storage; they do not authenticate a network sender. The future receiving service must derive these identities from the authenticated assignment.
+The returned `userDirectory` and `projectDirectory` contain native relative directory layouts. Provisioning must place or mount these at the agent's actual home and worktree, including inside a Dev Container. They are not discovery roots merely because they exist in the staging store. `--directory` selects an alternate store. Parent and project arguments partition local storage; they do not authenticate a network sender. The authenticated receiver derives these identities from the connection; local staging labels cannot authorize a remote placement.
+
+## Placement and agent launch
+
+After export and authenticated sync, select the exact staged revision when creating the worktree:
+
+```sh
+graftty remote placement create --host <paired-host-name-or-device-id> \
+  --operation-id <stable-placement-uuid> \
+  --repository /registered/repository/on/worker --name task \
+  --architecture arm64 --dev-container \
+  --skill-revision codex:<revision-from-export> --agent codex
+```
+
+Repeat `--skill-revision` for Claude if both runtimes need skills. Omit `--agent` to open a shell with those skills available. An agent selection requires a matching revision. Install the native agent executable in the project's Dev Container configuration; Graftty checks that it exists before opening the pane, but does not install it or copy a login. Use `remote placement status` with the same host and placement UUID to inspect asynchronous setup.
+
+The worker reloads and verifies the complete staged content using the authenticated parent's device and fingerprint plus the registered repository. Unknown, altered, or another parent's revisions fail before admission. The selection is part of the retained placement intent, so retries cannot change it. A distinct request type makes older workers reject skill-bearing placement rather than silently discard its options.
+
+Installation uses `devcontainer exec` as the configured remote user, in the actual container workspace. Bounded shell commands carry file bytes as base64 data. The image needs POSIX shell utilities, `base64`, and `diff`. A private home holds writable native runtime directories, with each personal skill linked to its separate source directory. `HOME`, `CODEX_HOME`, and `CLAUDE_CONFIG_DIR` point to this profile in the opened shell and agent. Codex can create its bundled `.system` skills without writing into the selected personal skills.
+
+Project skills retain their native worktree paths. Identical checked-in directories are reused. Missing project skills are copied as ordinary files, including executable flags, and can appear as untracked worktree changes. Conflicting content or symlink destinations fail setup without overwriting them. Sync the intended Git revision or select a matching snapshot before retrying with a new placement operation. Setup failure retains the worktree and reports an uncertain operation; it does not claim the agent started.
+
+The profile path is retained with the prepared container and reused when reopening a pane. Each new placement gets its own profile; refreshing an existing worktree's active skill revision is still pending. The profile currently lives in the container filesystem, so it survives a restart of that container but not its removal or replacement. Durable host mounts and native session replication must be added before relying on this path for Spot session recovery.
 
 ## Scope and exclusions
 
@@ -62,4 +84,6 @@ Keep runtime-owned files outside the snapshot. In particular, the installed Code
 
 `RemoteSkillNativeDiscoveryTests` runs opt-in checks against actual staged snapshots. Set `GRAFTTY_TEST_CODEX_BINARY` and/or `GRAFTTY_TEST_CLAUDE_BINARY` to absolute native executable paths, then run `scripts/swiftpm test --filter RemoteSkillNativeDiscoveryTests`. Each probe owns an isolated runtime home and child process group, uses bounded protocol reads, and sends initialization/discovery requests only.
 
-A local Codex app-server probe initialized an isolated runtime home and listed fixture skills without sending a model request. It discovered a skill in that home's `skills` directory with user scope and a worktree `.agents/skills` skill with repository scope. A separate Claude stream initialization, also using an isolated runtime home without a model request, returned both the personal and project fixture skills in its command list. Neither probe copied authentication material. These probes verify the installed runtimes' discovery behavior, not automatic remote provisioning, plugin compatibility, or Linux execution. The published [Codex skill documentation](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills) describes `.agents/skills` discovery; [Claude's skill documentation](https://code.claude.com/docs/en/skills#choose-where-skills-load) describes its personal and project skill locations. Runtime-specific compatibility must be checked before activation.
+`DevContainerLiveSkillsTests` runs the production preparer, installer, launch shell, and cleanup against a real local Linux Docker engine. Put the official Dev Container CLI on `PATH`, set `GRAFTTY_TEST_DEVCONTAINER_IMAGE` to an image containing Git, POSIX shell utilities, `base64`, and `diff`, and run `scripts/swiftpm test --filter DevContainerLiveSkillsTests`. The disposable container is removed on success or failure. A local run passed with CLI 0.89.0 and `swift:6.2.3-noble`, verifying both runtimes' skill layouts, executable project files, isolated environment variables, Git access, and profile persistence across a stop/start. That probe uses an ordinary checkout; it does not establish linked-worktree or native Linux agent compatibility.
+
+A local Codex app-server probe initialized an isolated runtime home and listed fixture skills without sending a model request. It discovered a skill in that home's `skills` directory with user scope and a worktree `.agents/skills` skill with repository scope. A separate Claude stream initialization, also using an isolated runtime home without a model request, returned both the personal and project fixture skills in its command list. Neither probe copied authentication material. These probes verify the installed runtimes' discovery behavior, not plugin compatibility or Linux execution. The published [Codex skill documentation](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills) describes `.agents/skills` discovery; [Claude's skill documentation](https://code.claude.com/docs/en/skills#choose-where-skills-load) describes its personal and project skill locations. Runtime-specific compatibility must be checked before activation.

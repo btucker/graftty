@@ -129,6 +129,72 @@ struct HeadlessHostRuntimeTests {
         try await runtime.shutdown()
     }
 
+    @Test("@spec REMOTE-29.10: When a host starts draining during environment preparation, the application shall retain the created worktree and refuse to start its new pane or agent after preparation finishes.")
+    func drainDuringPreparationPreventsNewAgentLaunch() async throws {
+        let (root, config, _) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid", "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals)
+        _ = try await runtime.registerRepository(root.path)
+        await #expect(throws: (any Error).self) {
+            try await runtime.createWorktree(repository: root.path, name: "interrupted", branch: "interrupted", command: "codex", prepareEnvironment: { _ in
+                try runtime.beginDrain(.init(provider: "test-cloud", eventID: "notice", action: .terminate, deadline: Date().addingTimeInterval(120)))
+            })
+        }
+        #expect(terminals.starts.isEmpty)
+        let created = root.appendingPathComponent(".worktrees/interrupted").path
+        #expect(FileManager.default.fileExists(atPath: created))
+        #expect(runtime.state.worktree(forPath: created)?.state == .closed)
+    }
+
+    @Test func skillPlacementUsesAuthenticatedOwnerAndContainerProfile() async throws {
+        let (root, config, _) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appendingPathComponent("container-home")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let devConfig = root.appendingPathComponent(".devcontainer/devcontainer.json")
+        try FileManager.default.createDirectory(at: devConfig.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"image":"fixture"}"#.utf8).write(to: devConfig)
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["add", ".devcontainer"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid", "commit", "-m", "initial"], at: root.path)
+        let help = try await GitRunner.captureAll(args: ["worktree", "add", "-h"], at: root.path)
+        guard (help.stdout + help.stderr).contains("relative-paths") else { return }
+        let destination = root.appendingPathComponent(".worktrees/skills")
+        let executor = SkillContainerExecutor(home: home, workspace: destination)
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, devContainers: .init(executor: executor))
+        _ = try await runtime.registerRepository(root.path)
+        runtime.hostResources = .init(sampledAt: Date().timeIntervalSince1970, architecture: "arm64", operatingSystem: "linux", cpuCount: 8, cpuUtilization: 0,
+            memoryTotalBytes: 16 << 30, memoryAvailableBytes: 16 << 30, diskPath: root.path, diskAvailableBytes: 100 << 30,
+            activeWorktrees: 0, pendingWorktreeOperations: 0)
+        let owner = RemoteMacConnectionSummary.ID(deviceID: .init(value: "parent"), fingerprint: try .init(rawBytes: Data(repeating: 1, count: 32)))
+        let other = RemoteMacConnectionSummary.ID(deviceID: owner.deviceID, fingerprint: try .init(rawBytes: Data(repeating: 2, count: 32)))
+        let snapshot = RemoteSkillSnapshot(runtime: .codex, files: [.init(scope: .user, path: ".agents/skills/personal/SKILL.md", contents: Data("personal".utf8))])
+        _ = try await RemoteSkillTransferSender.transfer(snapshot, repositoryID: root.path, operationID: UUID()) { request in
+            guard case .agentSkills(let status) = await runtime.receiveSkills(request, owner: owner) else { throw RemoteSkillError("Transfer rejected") }
+            return status
+        }
+        let intent = HostPlacementIntent(repositoryID: root.path, worktreeName: "skills", branchName: "skills",
+            demand: .init(architecture: "arm64", cpus: 1, memoryBytes: 1 << 30, diskBytes: 1 << 20),
+            devContainer: .init(skills: [.init(runtime: "codex", revision: try snapshot.revision)], agentRuntime: "codex"))
+        let id = UUID()
+        guard case .error = await runtime.place(.createWithAgentSkills(operationID: id, intent: intent), owner: other) else {
+            Issue.record("Another key selected the parent's skills"); return
+        }
+        #expect(runtime.placements.pendingCount == 0 && terminals.starts.isEmpty)
+        #expect(await executor.commands.isEmpty)
+        let admitted = await runtime.place(.createWithAgentSkills(operationID: id, intent: intent), owner: owner)
+        guard case .placement = admitted else { Issue.record("Admission failed: \(admitted)"); return }
+        guard case .placement(let record) = try await completedPlacement(runtime, id: id, owner: owner) else { Issue.record("No retained placement"); return }
+        #expect(record.state == .created)
+        let profile = try #require(record.environment?.agentSkillHome)
+        #expect(try String(contentsOfFile: profile + "/.agents/skills/personal/SKILL.md", encoding: .utf8) == "personal")
+        let launch = try #require(terminals.starts.first)
+        let command = launch.env["GRAFTTY_INITIAL_COMMAND"] ?? launch.argv.joined(separator: " ")
+        #expect(command.contains("devcontainer") && command.contains("CODEX_HOME=" + profile + "/.codex") && command.contains("codex\nexec /bin/sh"))
+    }
+
     @Test("@spec REMOTE-31.19: When a placement is admitted, the host shall return its preparing status without waiting for setup, continue independently of the request lifetime, and finish canceling owned jobs before shutdown returns.", arguments: [false, true])
     func placementOutlivesRequestButNotShutdown(stop: Bool) async throws {
         let (root, config, _) = try fixture()

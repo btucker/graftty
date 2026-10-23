@@ -191,6 +191,12 @@ public final class HostPlacementLedger {
                 throw HostRuntimeError.invalid("Dev Container configuration must be a path inside the new worktree")
             }
         }
+        if let skills = intent.devContainer?.skills { try RemoteSkillTransferReceiver.validate(skills) }
+        if let agent = intent.devContainer?.agentRuntime {
+            guard TeamHookRuntime(rawValue: agent) != nil, intent.devContainer?.skills?.contains(where: { $0.runtime == agent }) == true else {
+                throw HostRuntimeError.invalid("Agent launch requires a matching staged skill revision")
+            }
+        }
         try HostPlacementPlanner.validate(demand: intent.demand, policy: .init())
     }
 }

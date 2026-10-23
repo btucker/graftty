@@ -11,16 +11,16 @@ import Glibc
 /// parent credentials, plugins, or hooks are passed to either child process.
 struct RemoteSkillNativeDiscoveryTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_TEST_CODEX_BINARY"] != nil))
-    func codexDiscoversStagedUserAndProjectSkills() throws {
-        try verify(.codex, binary: #require(ProcessInfo.processInfo.environment["GRAFTTY_TEST_CODEX_BINARY"]))
+    func codexDiscoversStagedUserAndProjectSkills() async throws {
+        try await verify(.codex, binary: #require(ProcessInfo.processInfo.environment["GRAFTTY_TEST_CODEX_BINARY"]))
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_TEST_CLAUDE_BINARY"] != nil))
-    func claudeDiscoversStagedUserAndProjectSkills() throws {
-        try verify(.claude, binary: #require(ProcessInfo.processInfo.environment["GRAFTTY_TEST_CLAUDE_BINARY"]))
+    func claudeDiscoversStagedUserAndProjectSkills() async throws {
+        try await verify(.claude, binary: #require(ProcessInfo.processInfo.environment["GRAFTTY_TEST_CLAUDE_BINARY"]))
     }
 
-    private func verify(_ runtime: TeamHookRuntime, binary: String) throws {
+    private func verify(_ runtime: TeamHookRuntime, binary: String) async throws {
         let fixture = try SkillFixture()
         defer { fixture.remove() }
         let userRoot = runtime == .codex ? ".codex" : ".claude"
@@ -30,26 +30,25 @@ struct RemoteSkillNativeDiscoveryTests {
         }
         try fixture.write("home/\(userRoot)/skills/graftty-probe-personal/SKILL.md", text("graftty-probe-personal"))
         try fixture.write("project/\(projectRoot)/skills/graftty-probe-project/SKILL.md", text("graftty-probe-project"))
-        let installation = try RemoteSkillStore(directory: fixture.root.appendingPathComponent("store"))
+        if runtime == .codex { try fixture.write("home/.agents/skills/graftty-probe-modern/SKILL.md", text("graftty-probe-modern")) }
+        let snapshot = try fixture.capture(runtime)
+        _ = try RemoteSkillStore(directory: fixture.root.appendingPathComponent("store"))
             .stage(fixture.capture(runtime), parentID: "fixture-parent", projectID: "fixture-project")
-        // Runtime state belongs outside the immutable revision. A provisioner
-        // must supply equivalent mounts/links in the actual agent environment.
-        let profile = fixture.root.appendingPathComponent("runtime")
-        let runtimeSkills = profile.appendingPathComponent("skills")
-        try FileManager.default.createDirectory(at: runtimeSkills, withIntermediateDirectories: true)
-        // Codex writes its bundled .system skills here. Link individual personal
-        // skills so those writes never change the immutable parent revision.
-        let personal = installation.userDirectory.appendingPathComponent(userRoot + "/skills")
-        for skill in try FileManager.default.contentsOfDirectory(at: personal, includingPropertiesForKeys: nil) {
-            try FileManager.default.createSymbolicLink(at: runtimeSkills.appendingPathComponent(skill.lastPathComponent), withDestinationURL: skill)
-        }
-        var environment = ["PATH": "/usr/bin:/bin:/usr/local/bin", "TMPDIR": FileManager.default.temporaryDirectory.path]
-        environment[runtime == .codex ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"] = profile.path
+        let workspace = fixture.root.appendingPathComponent("native-workspace")
+        let containerHome = fixture.root.appendingPathComponent("container-home")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: containerHome, withIntermediateDirectories: true)
+        let profilePath = try await DevContainerSkillInstaller.install([snapshot], workspace: workspace.path, execArguments: ["exec"],
+            operationID: UUID(), executor: SkillContainerExecutor(home: containerHome, workspace: workspace))
+        let profile = URL(fileURLWithPath: profilePath)
+        var environment = ["PATH": "/usr/bin:/bin:/usr/local/bin", "TMPDIR": FileManager.default.temporaryDirectory.path, "HOME": profile.path]
+        environment["CODEX_HOME"] = profile.appendingPathComponent(".codex").path
+        environment["CLAUDE_CONFIG_DIR"] = profile.appendingPathComponent(".claude").path
         environment["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
         let args = runtime == .codex ? ["app-server", "--listen", "stdio://"] :
             ["--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--settings", "{\"disableAllHooks\":true}"]
         let child = try DuplexSubprocess(executable: URL(fileURLWithPath: "/bin/sh"),
-            arguments: ["-c", "cd \"$1\" && shift && exec \"$@\"", "graftty-skill-probe", installation.projectDirectory.path, binary] + args,
+            arguments: ["-c", "cd \"$1\" && shift && exec \"$@\"", "graftty-skill-probe", workspace.path, binary] + args,
             environment: environment)
         let stream = SkillProbeStream(child: child)
         let names: Set<String>
@@ -58,7 +57,7 @@ struct RemoteSkillNativeDiscoveryTests {
             let initialized = try stream.receive { ($0["id"] as? Int) == 1 }
             #expect(initialized["error"] == nil)
             try stream.send(["method": "initialized", "params": [:]])
-            try stream.send(["id": 2, "method": "skills/list", "params": ["cwds": [installation.projectDirectory.path], "forceReload": true]])
+            try stream.send(["id": 2, "method": "skills/list", "params": ["cwds": [workspace.path], "forceReload": true]])
             let response = try stream.receive { ($0["id"] as? Int) == 2 }
             let result = try #require(response["result"] as? [String: Any])
             let entries = try #require(result["data"] as? [[String: Any]])
@@ -77,6 +76,12 @@ struct RemoteSkillNativeDiscoveryTests {
         }
         #expect(names.contains("graftty-probe-personal"))
         #expect(names.contains("graftty-probe-project"))
+        if runtime == .codex { #expect(names.contains("graftty-probe-modern")) }
+        let installedSource = profile.deletingLastPathComponent().appendingPathComponent("source/" + runtime.rawValue)
+        for file in snapshot.files {
+            #expect(try Data(contentsOf: installedSource.appendingPathComponent(RemoteSkillSnapshot.key(file))) == file.contents)
+        }
+        #expect(!FileManager.default.fileExists(atPath: installedSource.appendingPathComponent("user/.codex/skills/.system").path))
         // Child deinit kills and reaps its process group on every exit path.
         // Discovery must not mutate the staged configuration.
         _ = try RemoteSkillStore(directory: fixture.root.appendingPathComponent("store"))

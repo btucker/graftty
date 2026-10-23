@@ -82,8 +82,7 @@ public actor RemoteSkillTransferReceiver {
                 try Task.checkCancellation()
                 // Length-prefix the device ID before adding the fingerprint so
                 // two different identity components cannot share a namespace.
-                let identity = "\(owner.deviceID.value.utf8.count):\(owner.deviceID.value):\(owner.fingerprint.display)"
-                _ = try store.stage(snapshot, parentID: identity, projectID: upload.descriptor.repositoryID,
+                _ = try store.stage(snapshot, parentID: Self.namespace(owner), projectID: upload.descriptor.repositoryID,
                                     beforePublish: { try Task.checkCancellation() })
                 upload.phase = .staged
             } catch {
@@ -101,6 +100,25 @@ public actor RemoteSkillTransferReceiver {
 
     public func discardIncomplete() {
         uploads = uploads.filter { $0.value.phase != .receiving }
+    }
+
+    public func load(_ selections: [HostAgentSkillRevision], owner: RemoteMacConnectionSummary.ID, repositoryID: String) throws -> [RemoteSkillSnapshot] {
+        try Self.validate(selections)
+        return try selections.map {
+            guard let runtime = TeamHookRuntime(rawValue: $0.runtime) else { throw RemoteSkillError("Unknown skill runtime") }
+            return try store.load(runtime: runtime, revision: $0.revision, parentID: Self.namespace(owner), projectID: repositoryID)
+        }
+    }
+
+    public nonisolated static func validate(_ selections: [HostAgentSkillRevision]) throws {
+        guard (1...2).contains(selections.count), Set(selections.map(\.runtime)).count == selections.count,
+              selections.allSatisfy({ TeamHookRuntime(rawValue: $0.runtime) != nil && $0.revision.count == 64 && $0.revision.allSatisfy { "0123456789abcdef".contains($0) } }) else {
+            throw RemoteSkillError("Select one exact revision per runtime, for codex and/or claude")
+        }
+    }
+
+    private static func namespace(_ owner: RemoteMacConnectionSummary.ID) -> String {
+        "\(owner.deviceID.value.utf8.count):\(owner.deviceID.value):\(owner.fingerprint.display)"
     }
 
     private func scheduleExpiry() {

@@ -5,7 +5,7 @@ import GrafttyProtocol
 
 struct RemoteSkills: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "skills", abstract: "Export and stage user and project skills for remote agents",
-        discussion: "Snapshots contain skill directories and supporting files only. Plugin installation, settings, authentication, automatic transfer, and agent activation are separate. Review the skill content you intend to share; credential filenames and private keys are rejected, but arbitrary secrets embedded in prose cannot be detected reliably.",
+        discussion: "Snapshots contain skill directories and supporting files only. Use sync to transfer a snapshot, then remote placement create --skill-revision to install it in a container. Plugin installation, settings, and authentication remain separate. Review the skill content you intend to share; credential filenames and private keys are rejected, but arbitrary secrets embedded in prose cannot be detected reliably.",
         subcommands: [RemoteSkillsExport.self, RemoteSkillsStage.self, RemoteSkillsSync.self])
 }
 

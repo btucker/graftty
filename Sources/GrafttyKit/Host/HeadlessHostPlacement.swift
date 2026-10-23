@@ -18,10 +18,15 @@ public extension HeadlessHostRuntime {
                     throw HostRuntimeError.notFound("Placement not found")
                 }
                 return .placement(record)
-            case .create(let id, let intent), .createInDevContainer(let id, let intent):
+            case .create(let id, let intent), .createInDevContainer(let id, let intent), .createWithAgentSkills(let id, let intent):
                 let containerRequest: Bool
-                if case .createInDevContainer = request { containerRequest = true } else { containerRequest = false }
-                guard containerRequest == (intent.devContainer != nil) else {
+                let skillRequest: Bool
+                switch request {
+                case .createWithAgentSkills: containerRequest = true; skillRequest = true
+                case .createInDevContainer: containerRequest = true; skillRequest = false
+                default: containerRequest = false; skillRequest = false
+                }
+                guard containerRequest == (intent.devContainer != nil), skillRequest == (intent.devContainer?.skills != nil) else {
                     throw HostRuntimeError.invalid("Container placement requires the explicit container request type")
                 }
                 // Check ownership and immutable arguments before any filesystem or Git work.
@@ -38,6 +43,10 @@ public extension HeadlessHostRuntime {
                 guard !FileManager.default.fileExists(atPath: intent.worktreePath), state.worktree(forPath: intent.worktreePath) == nil else {
                     throw HostRuntimeError.invalid("Worktree destination already exists")
                 }
+                let skills: [RemoteSkillSnapshot]
+                if let selections = intent.devContainer?.skills {
+                    skills = try await skillTransfers.load(selections, owner: owner, repositoryID: intent.repositoryID)
+                } else { skills = [] }
                 if containerRequest {
                     let help = try await GitRunner.captureAll(args: ["worktree", "add", "-h"], at: intent.repositoryID, timeout: .seconds(5))
                     guard (help.stdout + help.stderr).contains("relative-paths") else {
@@ -63,7 +72,7 @@ public extension HeadlessHostRuntime {
                 // Persist admission and retain the task without suspending in between.
                 placementTasks[id] = Task { [self] in
                     defer { placementTasks[id] = nil }
-                    await performPlacement(id: id, intent: intent)
+                    await performPlacement(id: id, intent: intent, skills: skills)
                 }
                 return .placement(admitted)
             }
@@ -72,17 +81,19 @@ public extension HeadlessHostRuntime {
         }
     }
 
-    private func performPlacement(id: UUID, intent: HostPlacementIntent) async {
+    private func performPlacement(id: UUID, intent: HostPlacementIntent, skills: [RemoteSkillSnapshot]) async {
         do {
             try Task.checkCancellation()
             let prepare: (@MainActor @Sendable (String) async throws -> Void)?
             if let request = intent.devContainer {
                 prepare = { [self] path in
-                    let environment = try await devContainers.prepare(workspace: path, configuration: request.configuration, operationID: id)
+                    let environment = try await devContainers.prepare(workspace: path, configuration: request.configuration, operationID: id, skills: skills,
+                        agent: request.agentRuntime.flatMap(TeamHookRuntime.init(rawValue:)))
                     try placements.recordEnvironment(operationID: id, environment: environment)
                 }
             } else { prepare = nil }
             let created = try await createWorktree(repository: intent.repositoryID, name: intent.worktreeName, branch: intent.branchName,
+                command: intent.devContainer?.agentRuntime,
                 relativeGitPaths: intent.devContainer != nil, prepareEnvironment: prepare)
             try placements.complete(operationID: id, worktreeID: created.path, paneID: created.session)
         } catch {

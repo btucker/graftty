@@ -278,6 +278,7 @@ public final class HeadlessHostRuntime {
             try Task.checkCancellation()
             try await prepareEnvironment?(path)
             try Task.checkCancellation()
+            guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
             return try await openUnlocked(path, command: plan.initialCommand)
         } catch {
             closeCreatingRow(path)

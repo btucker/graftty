@@ -5,6 +5,18 @@ import GrafttyKit
 import GrafttyProtocol
 
 struct RemoteSkillsCLITests {
+    @Test func placementRequiresMatchingSkillsBeforeAgentLaunch() throws {
+        let args = ["remote", "placement", "create", "--host", "worker", "--repository", "/repo", "--name", "task", "--architecture", "arm64", "--operation-id", UUID().uuidString]
+        let revision = String(repeating: "a", count: 64)
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(args + ["--skill-revision", "codex:" + revision]) }
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(args + ["--dev-container", "--agent", "codex"]) }
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(args + ["--dev-container", "--agent", "claude", "--skill-revision", "codex:" + revision]) }
+        #expect(throws: (any Error).self) { _ = try GrafttyCLI.parseAsRoot(args + ["--dev-container", "--skill-revision", "codex:" + revision, "--skill-revision", "codex:" + revision]) }
+        let parsed = try #require(try GrafttyCLI.parseAsRoot(args + ["--dev-container", "--agent", "codex", "--skill-revision", "codex:" + revision]) as? RemotePlacementCreate)
+        #expect(try parsed.skills() == [.init(runtime: "codex", revision: revision)])
+        #expect(parsed.agent == "codex")
+    }
+
     @Test("@spec REMOTE-28.10: When exporting or staging remote skills through the CLI, the application shall require explicit source and destination selections, verify the requested revision before staging, and report staged paths without activating an agent or copying authentication stores.")
     func exportStageAndRejectWrongRevision() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-skill-cli-" + UUID().uuidString)

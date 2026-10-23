@@ -12,7 +12,17 @@ public struct HostPlacementDemand: Codable, Sendable, Equatable {
 
 public struct HostDevContainerRequest: Codable, Sendable, Equatable {
     public let configuration: String?
-    public init(configuration: String? = nil) { self.configuration = configuration }
+    public let skills: [HostAgentSkillRevision]?
+    public let agentRuntime: String?
+    public init(configuration: String? = nil, skills: [HostAgentSkillRevision]? = nil, agentRuntime: String? = nil) {
+        self.configuration = configuration; self.skills = skills; self.agentRuntime = agentRuntime
+    }
+}
+
+public struct HostAgentSkillRevision: Codable, Sendable, Equatable {
+    public let runtime: String
+    public let revision: String
+    public init(runtime: String, revision: String) { self.runtime = runtime; self.revision = revision }
 }
 
 /// Immutable arguments for one idempotent host admission and worktree creation.
@@ -33,6 +43,8 @@ public struct HostPlacementIntent: Codable, Sendable, Equatable {
 public enum HostPlacementRequest: Codable, Sendable, Equatable {
     case create(operationID: UUID, intent: HostPlacementIntent)
     case createInDevContainer(operationID: UUID, intent: HostPlacementIntent)
+    // A distinct case prevents older workers from silently ignoring skill selections.
+    case createWithAgentSkills(operationID: UUID, intent: HostPlacementIntent)
     case status(operationID: UUID)
 }
 

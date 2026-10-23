@@ -22,7 +22,13 @@ public actor DevContainerPreparer {
         }
     }
 
-    public func prepare(workspace rawWorkspace: String, configuration: String? = nil, operationID: UUID) async throws -> PreparedDevContainer {
+    public func prepare(workspace rawWorkspace: String, configuration: String? = nil, operationID: UUID, skills: [RemoteSkillSnapshot] = [], agent: TeamHookRuntime? = nil) async throws -> PreparedDevContainer {
+        if !skills.isEmpty {
+            try RemoteSkillTransferReceiver.validate(try skills.map { .init(runtime: $0.runtime.rawValue, revision: try $0.revision) })
+        }
+        if let agent, !skills.contains(where: { $0.runtime == agent }) {
+            throw DevContainerPreparationError(stage: "agent-skills", message: "Agent launch requires a matching skill revision")
+        }
         guard rawWorkspace.hasPrefix("/") else { throw DevContainerPreparationError(stage: "configuration", message: "Workspace must be absolute") }
         let workspace = CanonicalPath.canonicalize(rawWorkspace)
         guard workspace.hasPrefix("/"), preparing.insert(workspace).inserted else {
@@ -64,9 +70,19 @@ public actor DevContainerPreparer {
         guard try Data(contentsOf: URL(fileURLWithPath: config)) == contents else {
             throw DevContainerPreparationError(stage: "configuration-changed", message: "Configuration changed while preparing; the container is not reported prepared")
         }
+        if let agent {
+            _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", "command -v " + agent.rawValue + " >/dev/null"],
+                at: workspace, stage: "agent-runtime (install \(agent.rawValue) in the Dev Container)", timeout: .seconds(30))
+        }
+        let agentHome: String?
+        if skills.isEmpty { agentHome = nil }
+        else {
+            agentHome = try await DevContainerSkillInstaller.install(skills, workspace: workspace,
+                execArguments: ["exec"] + common + ["--container-id", containerID], operationID: operationID, executor: executor)
+        }
         return PreparedDevContainer(containerID: containerID, workspace: workspace, configurationPath: config,
             configurationDigest: SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined(),
-            remoteWorkspaceFolder: remoteFolder, remoteUser: output["remoteUser"] as? String, usesRelativeGitWorktree: relativeGit)
+            remoteWorkspaceFolder: remoteFolder, remoteUser: output["remoteUser"] as? String, usesRelativeGitWorktree: relativeGit, agentSkillHome: agentHome)
     }
 
     public nonisolated static func shellCommand(for environment: PreparedDevContainer, command: String? = nil) -> String {
@@ -74,8 +90,14 @@ public actor DevContainerPreparer {
                     "--workspace-folder", environment.workspace, "--config", environment.configurationPath,
                     "--mount-workspace-git-root", "false"]
         if environment.usesRelativeGitWorktree { args += ["--mount-git-worktree-common-dir", "true"] }
-        if let command { args += ["/bin/sh", "-lc", command + "\nexec /bin/sh -l"] }
-        else { args += ["/bin/sh", "-l"] }
+        if let home = environment.agentSkillHome {
+            args += ["env", "HOME=" + home, "CODEX_HOME=" + home + "/.codex", "CLAUDE_CONFIG_DIR=" + home + "/.claude"]
+            if let command { args += ["/bin/sh", "-c", command + "\nexec /bin/sh"] }
+            else { args += ["/bin/sh"] }
+        } else {
+            if let command { args += ["/bin/sh", "-lc", command + "\nexec /bin/sh -l"] }
+            else { args += ["/bin/sh", "-l"] }
+        }
         return "exec " + args.map(WorktreeAgentLaunchCommand.shellLiteral).joined(separator: " ")
     }
 

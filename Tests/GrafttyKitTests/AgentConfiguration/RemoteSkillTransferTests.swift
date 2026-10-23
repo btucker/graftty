@@ -4,6 +4,29 @@ import GrafttyProtocol
 @testable import GrafttyKit
 
 struct RemoteSkillTransferTests {
+    @Test("@spec REMOTE-28.15: When a placement selects staged skills, the application shall load and verify each exact revision from the authenticated parent's repository namespace before admitting work, including after a host restart.")
+    func placementLoadsOnlyOwnersVerifiedRevisionAfterRestart() async throws {
+        let fixture = try SkillFixture(); defer { fixture.remove() }
+        let directory = fixture.root.appendingPathComponent("store")
+        let receiver = RemoteSkillTransferReceiver(directory: directory)
+        let owner = try identity(1)
+        let snapshot = RemoteSkillSnapshot(runtime: .codex, files: [.init(scope: .user, path: ".agents/skills/demo/SKILL.md", contents: Data("demo".utf8))])
+        _ = try await RemoteSkillTransferSender.transfer(snapshot, repositoryID: "/repo", operationID: UUID()) {
+            try await receiver.handle($0, owner: owner, repositories: ["/repo"])
+        }
+        let restarted = RemoteSkillTransferReceiver(directory: directory)
+        let selection = HostAgentSkillRevision(runtime: "codex", revision: try snapshot.revision)
+        #expect(try await restarted.load([selection], owner: owner, repositoryID: "/repo") == [snapshot])
+        await #expect(throws: (any Error).self) { try await restarted.load([selection], owner: identity(2), repositoryID: "/repo") }
+        await #expect(throws: (any Error).self) { try await restarted.load([selection], owner: owner, repositoryID: "/other") }
+        await #expect(throws: (any Error).self) { try await restarted.load([selection, selection], owner: owner, repositoryID: "/repo") }
+        let files = try #require(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
+        let manifest = try #require(files.compactMap { $0 as? URL }.first { $0.lastPathComponent == "SKILL.md" })
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifest.path)
+        try Data("tampered".utf8).write(to: manifest)
+        await #expect(throws: (any Error).self) { try await restarted.load([selection], owner: owner, repositoryID: "/repo") }
+    }
+
     @Test("@spec REMOTE-28.11: When receiving remote skills, the application shall bind bounded chunks and their retained acknowledgements to the authenticated parent identity and registered repository, reject conflicting retries, and publish only a complete snapshot matching the declared runtime and revision.")
     func boundTransferAndLostAcknowledgementRetry() async throws {
         let fixture = try SkillFixture()

@@ -10,10 +10,12 @@ public struct PreparedDevContainer: Codable, Sendable, Equatable {
     public let remoteUser: String?
     public let usesRelativeGitWorktree: Bool
     public let agentReady: Bool
+    public let agentSkillHome: String?
     public init(containerID: String, workspace: String, configurationPath: String, configurationDigest: String,
-                remoteWorkspaceFolder: String, remoteUser: String?, usesRelativeGitWorktree: Bool) {
+                remoteWorkspaceFolder: String, remoteUser: String?, usesRelativeGitWorktree: Bool, agentSkillHome: String? = nil) {
         self.containerID = containerID; self.workspace = workspace; self.configurationPath = configurationPath
         self.configurationDigest = configurationDigest; self.remoteWorkspaceFolder = remoteWorkspaceFolder
         self.remoteUser = remoteUser; self.usesRelativeGitWorktree = usesRelativeGitWorktree; agentReady = false
+        self.agentSkillHome = agentSkillHome
     }
 }

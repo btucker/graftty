@@ -5,7 +5,7 @@ import GrafttyProtocol
 
 struct RemotePlacement: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "placement", abstract: "Admit a workload and create a worktree on a paired Linux host",
-        discussion: "Requires an already registered repository. Creation returns a preparing operation while the host continues setup; query status with the same UUID. Use --dev-container on create to prepare an image or Dockerfile environment and open its shell. Graftty agent integration and durable agent-session mounts are not yet available inside the container. Agent login and AWS instance launch are not automatic. Reuse the same operation UUID when retrying, including after a lost reply. No credentials are copied.",
+        discussion: "Requires an already registered repository. Creation returns a preparing operation while the host continues setup; query status with the same UUID. Use --dev-container on create to prepare an image or Dockerfile environment and open its shell. Use --skill-revision to install already-synced skills and --agent to start its native executable in an isolated container home. Plugin/settings replication and durable agent-session mounts remain pending. Agent login and AWS instance launch are not automatic. Reuse the same operation UUID when retrying, including after a lost reply. No credentials are copied.",
         subcommands: [RemotePlacementCreate.self, RemotePlacementStatus.self])
 }
 
@@ -58,8 +58,9 @@ struct RemotePlacementTarget: ParsableArguments {
         }
         guard record.operationID == (try uuid()) else { throw ValidationError("Host returned a different placement operation.") }
         switch request {
-        case .create(_, let intent), .createInDevContainer(_, let intent):
-            guard record.intent == intent, intent.devContainer == nil || record.state != .created || record.environment != nil else {
+        case .create(_, let intent), .createInDevContainer(_, let intent), .createWithAgentSkills(_, let intent):
+            guard record.intent == intent, intent.devContainer == nil || record.state != .created || record.environment != nil,
+                  intent.devContainer?.skills == nil || record.state != .created || record.environment?.agentSkillHome != nil else {
                 throw ValidationError("Host returned a different placement configuration. Inspect the retained operation before retrying.")
             }
         case .status: break
@@ -86,8 +87,27 @@ struct RemotePlacementCreate: ParsableCommand {
     @Option(help: "New branch name; defaults to the worktree name") var branch: String?
     @Flag(help: "Prepare a Dev Container and open its shell; requires compatible Git on the host and in the container") var devContainer = false
     @Option(help: "Selected Dev Container JSON path relative to the new worktree; requires --dev-container") var devContainerConfig: String?
+    @Option(help: "Staged runtime:revision, e.g. codex:<sha256>; repeat for claude. Requires --dev-container") var skillRevision: [String] = []
+    @Option(help: "Start codex or claude in the container; requires its skill revision and an installed native executable") var agent: String?
+    func skills() throws -> [HostAgentSkillRevision]? {
+        guard !skillRevision.isEmpty else { return nil }
+        guard devContainer else { throw ValidationError("--skill-revision requires --dev-container") }
+        let selections = try skillRevision.map { value in
+            let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+            guard parts.count == 2 else { throw ValidationError("Use runtime:revision for each --skill-revision") }
+            return HostAgentSkillRevision(runtime: String(parts[0]), revision: String(parts[1]))
+        }
+        try RemoteSkillTransferReceiver.validate(selections)
+        return selections.sorted { $0.runtime < $1.runtime }
+    }
     func validate() throws {
         guard devContainer || devContainerConfig == nil else { throw ValidationError("--dev-container-config requires --dev-container") }
+        let selected = try skills()
+        if let agent {
+            guard TeamHookRuntime(rawValue: agent) != nil, selected?.contains(where: { $0.runtime == agent }) == true else {
+                throw ValidationError("--agent requires a matching --skill-revision and --dev-container")
+            }
+        }
         guard repository.hasPrefix("/") else { throw ValidationError("Provide the registered absolute repository path on the remote host.") }
         if let error = WorktreeCreationInput.validationError(worktreeName: name, branchName: branch ?? name) { throw ValidationError(error) }
         try HostPlacementPlanner.validate(demand: resources.demand(), policy: .init())
@@ -95,8 +115,9 @@ struct RemotePlacementCreate: ParsableCommand {
     func run() throws {
         let id = try target.uuid()
         let intent = HostPlacementIntent(repositoryID: repository, worktreeName: name, branchName: branch ?? name,
-            demand: try resources.demand(), devContainer: devContainer ? .init(configuration: devContainerConfig) : nil)
-        try target.run(devContainer ? .createInDevContainer(operationID: id, intent: intent) : .create(operationID: id, intent: intent))
+            demand: try resources.demand(), devContainer: devContainer ? .init(configuration: devContainerConfig, skills: try skills(), agentRuntime: agent) : nil)
+        if intent.devContainer?.skills != nil { try target.run(.createWithAgentSkills(operationID: id, intent: intent)) }
+        else { try target.run(devContainer ? .createInDevContainer(operationID: id, intent: intent) : .create(operationID: id, intent: intent)) }
     }
 }
 

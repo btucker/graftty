@@ -16,6 +16,22 @@ public struct RemoteSkillStore: Sendable {
     public let directory: URL
     public init(directory: URL) { self.directory = directory }
 
+    public func load(runtime: TeamHookRuntime, revision: String, parentID: String, projectID: String) throws -> RemoteSkillSnapshot {
+        guard revision.count == 64, revision.allSatisfy({ "0123456789abcdef".contains($0) }) else {
+            throw RemoteSkillError("Invalid skill revision")
+        }
+        let root = try SkillFileIO.physical(directory)
+        let relative = [RemoteSkillSnapshot.digest(Data(parentID.utf8)), RemoteSkillSnapshot.digest(Data(projectID.utf8)), runtime.rawValue, revision].joined(separator: "/")
+        let descriptor = try SkillFileIO.openDirectory(root)
+        defer { GrafttyPOSIX.close(descriptor) }
+        let bytes = try SkillFileIO.read(directory: descriptor, path: relative + "/snapshot.json", maximum: RemoteSkillSnapshot.maximumEncodedBytes).bytes
+        let snapshot = try RemoteSkillSnapshot.decode(bytes)
+        guard snapshot.runtime == runtime, try snapshot.revision == revision else { throw RemoteSkillError("Staged skills do not match the requested revision") }
+        let installed = RemoteSkillInstallation(directory: root.appendingPathComponent(relative, isDirectory: true), revision: revision, runtime: runtime)
+        try verify(installed, snapshot: snapshot, encoded: snapshot.encoded())
+        return snapshot
+    }
+
     public func stage(_ snapshot: RemoteSkillSnapshot, parentID: String, projectID: String) throws -> RemoteSkillInstallation {
         try stage(snapshot, parentID: parentID, projectID: projectID, beforePublish: {})
     }

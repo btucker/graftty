@@ -3672,6 +3672,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-28.14** When sending remote skills, the application shall pin the destination identity, resume the same snapshot and operation from a matching retained offset, bound each request, and accept completion only from a matching staged acknowledgement.
 
+**REMOTE-28.15** When a placement selects staged skills, the application shall load and verify each exact revision from the authenticated parent's repository namespace before admitting work, including after a host restart.
+
+**REMOTE-28.16** When a Dev Container placement selects verified skill revisions, the application shall install their user skills into an isolated writable agent home and project skills into the container worktree before opening its shell, rejecting conflicting project content without overwriting it.
+
+**REMOTE-28.17** When a skill-bearing container placement selects an agent, the application shall require a matching runtime revision, check the agent executable in that container, and launch with the retained isolated skill home without claiming authentication readiness.
+
 ### REMOTE-29.x — AWS Spot evacuation
 
 **REMOTE-29.1** When configuring AWS compute, the application shall support Spot instances in the initial AWS provider implementation.
@@ -3691,6 +3697,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-29.8** When the AWS interruption adapter polls instance metadata, it shall use IMDSv2 without redirects or proxies, distinguish an absent notice from failed observation, and translate valid action deadlines into provider-independent interruption notices.
 
 **REMOTE-29.9** When a host begins draining for a provider interruption, it shall durably retain one operation and its managed placements, reject new admission across restarts, preserve existing retries, and never extend the earliest observed deadline.
+
+**REMOTE-29.10** When a host starts draining during environment preparation, the application shall retain the created worktree and refuse to start its new pane or agent after preparation finishes.
 
 ### REMOTE-30.x — MCP access through the parent
 
