@@ -95,10 +95,17 @@ struct SessionReconnectTests {
         )
         defer { client.stop() }
         client.start()
-        await quiesce()
+        // The channel is open and its failure is still held back.
+        await waitUntil { client.connectionState == .live }
+        #expect(client.connectionState == .live)
+        #expect(factory.creations == 1)
+
+        failure.continuation.finish()
+        // The virtual clock never advances, so the client stays in its first
+        // backoff instead of racing the read with the next dial (#632).
+        await waitUntil { client.connectionState == .reconnecting(attempt: 1) }
         #expect(client.connectionState == .reconnecting(attempt: 1))
         #expect(factory.creations == 1)
-        failure.continuation.finish()
     }
 
     @Test("""
