@@ -99,15 +99,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case reconnectRemoteMac(target: String)
     case reconnectRemoteClient(target: String)
     case remoteWorktree(target: String, request: RemoteWorktreeRequest)
-    /// `agentRuntime` launches that runtime through the staged prompt path
-    /// shared with `createWorktree`; `command` stays an arbitrary shell line.
-    case addPane(
-        path: String,
-        direction: PaneSplit,
-        command: String?,
-        agentRuntime: TeamHookRuntime? = nil,
-        agentPrompt: String? = nil
-    )
+    case addPane(AddPaneRequest)
     case paneAgentCapability
     case closePane(path: String, index: Int)
     case showPane(path: String, index: Int, lines: Int)
@@ -131,17 +123,7 @@ public enum NotificationMessage: Sendable, Equatable {
     )
     case teamMembers(callerWorktree: String?, worktree: String?, repo: String?)
     case teamList(callerWorktree: String)
-    case createWorktree(
-        callerWorktree: String,
-        worktreeName: String,
-        branchName: String,
-        existing: Bool,
-        base: String?,
-        command: String?,
-        agentRuntime: TeamHookRuntime?,
-        agentPrompt: String?,
-        operationID: String?
-    )
+    case createWorktree(CreateWorktreeRequest)
     case agentPromptStagingCapability
     case worktreeBaseCapability
     case worktreeCreateIdempotencyCapability
@@ -188,6 +170,21 @@ public extension NotificationMessage {
                                   providerSleepActivity: providerSleepActivity))
     }
 
+    static func addPane(path: String, direction: PaneSplit, command: String?, agentRuntime: TeamHookRuntime? = nil,
+                        agentPrompt: String? = nil) -> Self {
+        .addPane(AddPaneRequest(path: path, direction: direction, command: command, agentRuntime: agentRuntime,
+                                agentPrompt: agentPrompt))
+    }
+
+    static func createWorktree(callerWorktree: String, worktreeName: String, branchName: String, existing: Bool,
+                               base: String?, command: String?, agentRuntime: TeamHookRuntime?, agentPrompt: String?,
+                               operationID: String?) -> Self {
+        .createWorktree(CreateWorktreeRequest(
+            callerWorktree: callerWorktree, worktreeName: worktreeName, branchName: branchName, existing: existing,
+            base: base, command: command, agentRuntime: agentRuntime, agentPrompt: agentPrompt,
+            operationID: operationID))
+    }
+
     static func providerActivity(callerWorktree: String, runtime: TeamHookRuntime, sessionID: String?,
                                  paneSessionName: String?, activity: ProviderSleepActivity) -> Self {
         .providerActivity(ProviderActivityRequest(callerWorktree: callerWorktree, runtime: runtime,
@@ -209,7 +206,7 @@ public extension NotificationMessage {
 extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case targets
-        case type, path, text, clearAfter, direction, command, index, lines
+        case type, path, text, clearAfter, index, lines
         case target, request, result
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
@@ -219,16 +216,10 @@ extension NotificationMessage: Codable {
         case snapshotThroughID = "snapshot_through_id"
         case forwardPagination = "forward_pagination"
         case throughID = "through_id"
-        case worktreeName = "worktree_name"
-        case branchName = "branch_name"
         case worktreePath = "worktree_path"
-        case base
         case force, pinned
         case isPinned = "is_pinned"
         case operationID = "operation_id"
-        case agentRuntime = "agent_runtime"
-        case agentPrompt = "agent_prompt"
-        case existing
         case paneSessionName = "pane_session_name"
         case recap
         case pressEnter = "press_enter"
@@ -280,13 +271,9 @@ extension NotificationMessage: Codable {
         case .reconnectRemoteClient(let target):
             try container.encode("reconnect_remote_client", forKey: .type)
             try container.encode(target, forKey: .target)
-        case .addPane(let path, let direction, let command, let agentRuntime, let agentPrompt):
+        case .addPane(let request):
             try container.encode("add_pane", forKey: .type)
-            try container.encode(path, forKey: .path)
-            try container.encode(direction, forKey: .direction)
-            try container.encodeIfPresent(command, forKey: .command)
-            try container.encodeIfPresent(agentRuntime, forKey: .agentRuntime)
-            try container.encodeIfPresent(agentPrompt, forKey: .agentPrompt)
+            try request.encode(to: encoder)
         case .paneAgentCapability:
             try container.encode("pane_agent_capability", forKey: .type)
         case .closePane(let path, let index):
@@ -355,27 +342,9 @@ extension NotificationMessage: Codable {
         case .teamList(let path):
             try container.encode("team_list", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
-        case .createWorktree(
-            let callerWorktree,
-            let worktreeName,
-            let branchName,
-            let existing,
-            let base,
-            let command,
-            let agentRuntime,
-            let agentPrompt,
-            let operationID
-        ):
+        case .createWorktree(let request):
             try container.encode("create_worktree", forKey: .type)
-            try container.encode(callerWorktree, forKey: .callerWorktree)
-            try container.encode(worktreeName, forKey: .worktreeName)
-            try container.encode(branchName, forKey: .branchName)
-            try container.encode(existing, forKey: .existing)
-            try container.encodeIfPresent(base, forKey: .base)
-            try container.encodeIfPresent(command, forKey: .command)
-            try container.encodeIfPresent(agentRuntime, forKey: .agentRuntime)
-            try container.encodeIfPresent(agentPrompt, forKey: .agentPrompt)
-            try container.encodeIfPresent(operationID, forKey: .operationID)
+            try request.encode(to: encoder)
         case .agentPromptStagingCapability:
             try container.encode("agent_prompt_staging_capability", forKey: .type)
         case .worktreeBaseCapability:
@@ -452,16 +421,7 @@ extension NotificationMessage: Codable {
         case "reconnect_remote_client":
             self = .reconnectRemoteClient(target: try container.decode(String.self, forKey: .target))
         case "add_pane":
-            let path = try container.decode(String.self, forKey: .path)
-            let direction = try container.decode(PaneSplit.self, forKey: .direction)
-            let command = try container.decodeIfPresent(String.self, forKey: .command)
-            self = .addPane(
-                path: path,
-                direction: direction,
-                command: command,
-                agentRuntime: try container.decodeIfPresent(TeamHookRuntime.self, forKey: .agentRuntime),
-                agentPrompt: try container.decodeIfPresent(String.self, forKey: .agentPrompt)
-            )
+            self = .addPane(try AddPaneRequest(from: decoder))
         case "pane_agent_capability":
             self = .paneAgentCapability
         case "close_pane":
@@ -557,17 +517,7 @@ extension NotificationMessage: Codable {
             let path = try container.decode(String.self, forKey: .callerWorktree)
             self = .teamList(callerWorktree: path)
         case "create_worktree":
-            self = .createWorktree(
-                callerWorktree: try container.decode(String.self, forKey: .callerWorktree),
-                worktreeName: try container.decode(String.self, forKey: .worktreeName),
-                branchName: try container.decode(String.self, forKey: .branchName),
-                existing: try container.decode(Bool.self, forKey: .existing),
-                base: try container.decodeIfPresent(String.self, forKey: .base),
-                command: try container.decodeIfPresent(String.self, forKey: .command),
-                agentRuntime: try container.decodeIfPresent(TeamHookRuntime.self, forKey: .agentRuntime),
-                agentPrompt: try container.decodeIfPresent(String.self, forKey: .agentPrompt),
-                operationID: try container.decodeIfPresent(String.self, forKey: .operationID)
-            )
+            self = .createWorktree(try CreateWorktreeRequest(from: decoder))
         case "agent_prompt_staging_capability":
             self = .agentPromptStagingCapability
         case "worktree_base_capability":

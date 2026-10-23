@@ -97,13 +97,13 @@ struct RemoteCLIWorktreeTests {
         var scopedID = ""
         let create: (NotificationMessage) -> ResponseMessage = { request in
             creations += 1
-            guard case let .createWorktree(caller, name, branch, existing, base, command, runtime, prompt, id) = request,
-                  let id else { return .error("Wrong request") }
+            guard case .createWorktree(let creation) = request, let id = creation.operationID else {
+                return .error("Wrong request")
+            }
             scopedID = id
-            #expect(caller == "/destination")
-            #expect(name == "fix" && branch == "fix" && !existing)
-            #expect(base == "HEAD" && command == "codex" && runtime == .codex)
-            #expect(prompt == "fix tests")
+            #expect(creation == CreateWorktreeRequest(
+                callerWorktree: "/destination", worktreeName: "fix", branchName: "fix", existing: false, base: "HEAD",
+                command: "codex", agentRuntime: .codex, agentPrompt: "fix tests", operationID: id))
             return .worktreeCreate(store.begin(worktreePath: "/destination/.worktrees/fix",
                 messageAddress: "/destination/.worktrees/fix", operationID: id))
         }
@@ -140,7 +140,8 @@ struct RemoteCLIWorktreeTests {
         var creations = 0
         let create: (NotificationMessage) -> ResponseMessage = { message in
             creations += 1
-            guard case .createWorktree(_, _, _, _, _, _, _, _, let id) = message else { return .error("Wrong request") }
+            guard case .createWorktree(let creation) = message else { return .error("Wrong request") }
+            let id = creation.operationID
             return .worktreeCreate(store.begin(worktreePath: "/destination/.worktrees/fix",
                 messageAddress: "/destination/.worktrees/fix", operationID: id))
         }

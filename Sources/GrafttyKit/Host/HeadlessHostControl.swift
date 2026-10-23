@@ -111,14 +111,14 @@ public extension HeadlessHostRuntime {
                 return .paneList(worktree.splitTree.allLeaves.enumerated().map { offset, slot in
                     PaneInfo(id: offset + 1, title: worktree.paneTitleMetadata[slot]?.title, focused: worktree.focusedPaneSlotID == slot)
                 })
-            case .addPane(let path, let direction, let command, let agentRuntime, let agentPrompt):
+            case .addPane(let request):
                 // The CLI probes `.paneAgentCapability` first, which this
                 // host does not advertise; refuse rather than run a plain split.
-                guard agentRuntime == nil, agentPrompt == nil else { throw HostRuntimeError.invalid("pane add --agent is not supported on this host") }
-                let worktree = try requireWorktree(path)
+                guard request.agentRuntime == nil, request.agentPrompt == nil else { throw HostRuntimeError.invalid("pane add --agent is not supported on this host") }
+                let worktree = try requireWorktree(request.path)
                 if let slot = worktree.focusedPaneSlotID ?? worktree.splitTree.allLeaves.first, let session = worktree.paneSessions[slot] {
-                    _ = try await splitPane(target: launcher.sessionName(for: session), direction: PaneControlRequest.SplitDirection(rawValue: direction.rawValue) ?? .right, command: command)
-                } else { _ = try await openWorktree(path, command: command) }
+                    _ = try await splitPane(target: launcher.sessionName(for: session), direction: PaneControlRequest.SplitDirection(rawValue: request.direction.rawValue) ?? .right, command: request.command)
+                } else { _ = try await openWorktree(request.path, command: request.command) }
                 return .ok
             case .closePane(let path, let index): try await closePane(target: paneSession(path, index: index))
             case .sendPane(let path, let index, let text, let enter):
@@ -127,19 +127,20 @@ public extension HeadlessHostRuntime {
                 return .paneShow(try await terminals.show(paneSession(path, index: index), lines: lines))
             case .agentPromptStagingCapability, .worktreeBaseCapability, .worktreeCreateIdempotencyCapability,
                  .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability: return .ok
-            case .createWorktree(let caller, let name, let branch, let existing, let base, let command, let runtime, let prompt, let suppliedID):
-                guard let repo = state.repo(forWorktreePath: caller) else { throw HostRuntimeError.notFound("caller is not registered") }
-                let id = suppliedID ?? UUID().uuidString
+            case .createWorktree(let request):
+                guard let repo = state.repo(forWorktreePath: request.callerWorktree) else { throw HostRuntimeError.notFound("caller is not registered") }
+                let id = request.operationID ?? UUID().uuidString
                 if let operation = creations[id] { return .worktreeCreate(operation) }
-                let path = URL(fileURLWithPath: repo.path).appendingPathComponent(".worktrees").appendingPathComponent(name).path
+                let path = URL(fileURLWithPath: repo.path).appendingPathComponent(".worktrees").appendingPathComponent(request.worktreeName).path
                 let pending = WorktreeCreateStatus(operationID: id, state: .pending, worktreePath: path, messageAddress: path)
                 creations[id] = pending
                 Task {
                     do {
                         let exactCommand = WorktreeAgentLaunchCommand.shouldStagePrompt(
-                            agent: runtime, command: command, prompt: prompt) ? nil : command
-                        let result = try await createWorktree(repository: repo.path, name: name, branch: branch,
-                            existing: existing, base: base, command: exactCommand, agent: runtime, prompt: prompt, callerPath: caller,
+                            agent: request.agentRuntime, command: request.command, prompt: request.agentPrompt) ? nil : request.command
+                        let result = try await createWorktree(repository: repo.path, name: request.worktreeName,
+                            branch: request.branchName, existing: request.existing, base: request.base, command: exactCommand,
+                            agent: request.agentRuntime, prompt: request.agentPrompt, callerPath: request.callerWorktree,
                             creationOrigin: creationOrigin)
                         creations[id] = WorktreeCreateStatus(operationID: id, state: .ready, worktreePath: result.path, messageAddress: result.path)
                     } catch {

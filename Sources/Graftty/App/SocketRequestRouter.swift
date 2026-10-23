@@ -16,6 +16,8 @@ import GrafttyRemoteClient
 /// directory.
 @MainActor
 final class SocketRequestRouter {
+    private static let wakeFailure = "Could not resume worktree processes. Retry before interacting with this worktree."
+
     let appState: Binding<AppState>
     let terminalManager: TerminalManager
     let teamInbox: TeamInbox
@@ -142,10 +144,11 @@ extension SocketRequestRouter {
             guard let worktree = OpenResourceRouting.worktree(path: path, paneSessionName: session, state: appState.wrappedValue) else {
                 return .error("The originating pane is unavailable. Run graftty open from a tracked worktree.")
             }
-            guard terminalManager.wakeWorktree(worktree.path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
-        case .addPane(let path, _, _, _, _), .closePane(let path, _),
-             .showPane(let path, _, _), .sendPane(let path, _, _, _):
-            guard terminalManager.wakeWorktree(path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
+            guard terminalManager.wakeWorktree(worktree.path) else { return .error(Self.wakeFailure) }
+        case .addPane(let request):
+            guard terminalManager.wakeWorktree(request.path) else { return .error(Self.wakeFailure) }
+        case .closePane(let path, _), .showPane(let path, _, _), .sendPane(let path, _, _, _):
+            guard terminalManager.wakeWorktree(path) else { return .error(Self.wakeFailure) }
         default: break
         }
         switch message {
@@ -222,9 +225,9 @@ extension SocketRequestRouter {
             return await remoteTeamRouter.reconnectClient(target: target)
         case .listPanes(let path):
             return listPanes(path: path, appState: appState, terminalManager: terminalManager)
-        case .addPane(let path, let direction, let command, let agentRuntime, let agentPrompt):
-            return await addPane(path: path, direction: direction, command: command,
-                                 agentRuntime: agentRuntime, agentPrompt: agentPrompt, teamInbox: teamInbox,
+        case .addPane(let request):
+            return await addPane(path: request.path, direction: request.direction, command: request.command,
+                                 agentRuntime: request.agentRuntime, agentPrompt: request.agentPrompt, teamInbox: teamInbox,
                                  appState: appState, terminalManager: terminalManager)
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
@@ -274,27 +277,17 @@ extension SocketRequestRouter {
             )
             if response == .ok { GrafttyApp.persistAppState(appState.wrappedValue) }
             return response
-        case .createWorktree(
-            let callerPath,
-            let worktreeName,
-            let branchName,
-            let existing,
-            let base,
-            let command,
-            let agentRuntime,
-            let agentPrompt,
-            let operationID
-        ):
+        case .createWorktree(let request):
             return await beginCLIWorktreeCreation(
-                callerPath: callerPath,
-                worktreeName: worktreeName,
-                branchName: branchName,
-                existing: existing,
-                base: base,
-                command: command,
-                agentRuntime: agentRuntime,
-                agentPrompt: agentPrompt,
-                operationID: operationID,
+                callerPath: request.callerWorktree,
+                worktreeName: request.worktreeName,
+                branchName: request.branchName,
+                existing: request.existing,
+                base: request.base,
+                command: request.command,
+                agentRuntime: request.agentRuntime,
+                agentPrompt: request.agentPrompt,
+                operationID: request.operationID,
                 appState: appState,
                 terminalManager: terminalManager,
                 teamInbox: teamInbox,
