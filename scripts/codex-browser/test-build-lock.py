@@ -2,13 +2,15 @@
 """Exercise build locking with real lockf and no network or compiler work.
 
 The checks are ordering-based, not timed: the first build signals that it
-holds the lock, the second is observed blocked inside `lockf`, and only then
-is the first released. A build that enters the guarded section while the
-other still holds it records the overlap itself. Waits end on the event or on
-the build exiting; HANG_GUARD only turns a wedged fixture into a failure.
+holds the lock, the second is observed blocked inside `lockf` on a lock the
+first holds, and only then is the first released. A build that enters the
+guarded section while the other still holds it records the overlap itself.
+Waits end on the event or on the build exiting; HANG_GUARD only turns a wedged
+fixture into a failure.
 """
 import os
 import pathlib
+import re
 import signal
 import subprocess
 import tempfile
@@ -18,6 +20,8 @@ import unittest
 
 # Not a timing budget: a healthy run never comes near it.
 HANG_GUARD = 120
+# build.sh runs `/usr/bin/lockf -k LOCK_FILE env ...`; captures LOCK_FILE.
+LOCKF = re.compile(r"\S*/lockf (?:-\S+ )*(.+?) env ")
 
 
 class BuildLockTests(unittest.TestCase):
@@ -35,7 +39,6 @@ class BuildLockTests(unittest.TestCase):
             root = pathlib.Path(os.environ['FIXTURE_ROOT'])
             # Lets a run simulate a loaded runner without changing the checks.
             time.sleep(float(os.environ.get('FIXTURE_START_DELAY', '0')))
-            (root / ('ready-' + os.environ['FIXTURE_LABEL'])).touch()
             print(root / 'bin/cargo')
         """)
         self.executable("git", """
@@ -70,7 +73,9 @@ class BuildLockTests(unittest.TestCase):
             "HOME": str(self.root),
             "FIXTURE_ROOT": str(self.root),
             "FIXTURE_LABEL": label,
-            "FIXTURE_HANG_GUARD": str(HANG_GUARD),
+            # Outlasts every test-side wait, so a hang is reported as a hang
+            # rather than as the overlap a self-released gate would produce.
+            "FIXTURE_HANG_GUARD": str(2 * HANG_GUARD),
             "FIXTURE_START_DELAY": os.environ.get("FIXTURE_START_DELAY", "0"),
         }
         if holder:
@@ -93,21 +98,32 @@ class BuildLockTests(unittest.TestCase):
                 self.fail("Fixture hung waiting for " + description)
             time.sleep(.01)
 
-    def marker(self, name):
-        return lambda: (self.root / name).exists()
+    def exists(self, name):
+        return (self.root / name).exists()
 
-    def blocked_in_lockf(self, process):
-        """True once every leaf process in the build's session is a waiting
-        `lockf`: it has not yet acquired its lock and started its command."""
-        def check():
-            table = subprocess.run(["/bin/ps", "-A", "-o", "pid=,ppid=,pgid=,comm="],
-                                   capture_output=True, text=True, check=True).stdout
-            rows = [line.split(None, 3) for line in table.splitlines() if line.strip()]
-            group = [row for row in rows if len(row) == 4 and int(row[2]) == process.pid]
-            parents = {int(row[1]) for row in group}
-            leaves = [row for row in group if int(row[0]) not in parents]
-            return bool(leaves) and all(row[3].endswith("lockf") for row in leaves)
-        return check
+    def waiting_on_lock(self, waiter, holder):
+        """True once every leaf process in `waiter`'s session is a `lockf`
+        naming a lock file that a `lockf` in `holder`'s session holds, so it is
+        blocked on that lock and has not started its command. Matching the
+        lock file keeps an uncontended `lockf`, childless for a moment between
+        taking its lock and forking, from passing for a blocked one."""
+        table = subprocess.run(["/bin/ps", "-A", "-ww", "-o", "pid=,ppid=,pgid=,args="],
+                               capture_output=True, text=True, check=True).stdout
+        rows = [row for row in (line.split(None, 3) for line in table.splitlines()) if len(row) == 4]
+
+        def lock_file(args):
+            match = LOCKF.match(args)
+            return match and match.group(1)
+
+        held = {lock_file(args) for _, _, pgid, args in rows if int(pgid) == holder.pid} - {None}
+        group = [row for row in rows if int(row[2]) == waiter.pid]
+        parents = {row[1] for row in group}
+        leaves = [args for pid, _, _, args in group if pid not in parents]
+        return bool(leaves) and all(lock_file(args) in held for args in leaves)
+
+    def assert_no_overlap(self):
+        self.assertFalse(self.exists("overlap-second"),
+                         "Second build accessed shared artifacts before the first released its lock")
 
     def stop_processes(self):
         for process in self.processes:
@@ -120,20 +136,18 @@ class BuildLockTests(unittest.TestCase):
 
     def assert_serialized(self, first_cache, second_cache, first_output, second_output):
         first = self.launch("first", first_cache, first_output)
-        self.wait_until("entered-first", first, self.marker("entered-first"))
+        self.wait_until("entered-first", first, lambda: self.exists("entered-first"))
         second = self.launch("second", second_cache, second_output, holder="first")
-        # Contended: the second build waits in lockf. Unprotected, it would
-        # enter instead and record the overlap.
-        self.wait_until("second build waiting on the lock", second,
-                        lambda: self.blocked_in_lockf(second)() or self.marker("entered-second")())
-        self.assertFalse((self.root / "overlap-second").exists(),
-                         "Second build accessed shared artifacts before the first released its lock")
+        # Contended: the second build waits in lockf on the first's lock.
+        # Unprotected, it would enter instead and record the overlap.
+        self.wait_until("second build waiting on the first's lock", second,
+                        lambda: self.exists("entered-second") or self.waiting_on_lock(second, first))
+        self.assert_no_overlap()
         (self.root / "release-first").touch()
         first_log = first.communicate(timeout=HANG_GUARD)[0]
         self.assertEqual(first.returncode, 73, first_log)
-        self.wait_until("entered-second", second, self.marker("entered-second"))
-        self.assertFalse((self.root / "overlap-second").exists(),
-                         "Second build accessed shared artifacts before the first released its lock")
+        self.wait_until("entered-second", second, lambda: self.exists("entered-second"))
+        self.assert_no_overlap()
         (self.root / "release-second").touch()
         second_log = second.communicate(timeout=HANG_GUARD)[0]
         self.assertEqual(second.returncode, 73, second_log)
