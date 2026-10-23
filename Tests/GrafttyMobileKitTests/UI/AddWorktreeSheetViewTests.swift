@@ -13,6 +13,11 @@ struct AddWorktreeSheetViewTests {
         await #expect(throws: RelayedWorktreeManagementClient.ClientError.pairedConnectionUnavailable) {
             _ = try await AddWorktreeSheetView.loadRepositories(using: nil)
         }
+        // The live provider exists for every host and returns nil while
+        // the host is unpaired or disconnected.
+        await #expect(throws: RelayedWorktreeManagementClient.ClientError.pairedConnectionUnavailable) {
+            _ = try await AddWorktreeSheetView.loadRepositories(using: { nil })
+        }
     }
 
     @Test("""
@@ -70,9 +75,11 @@ struct AddWorktreeSheetViewTests {
             ),
         ]
         let repositories = [
-            RepoInfo(
-                path: "relay-repository-token",
+            RemoteRepositoryInfo(
+                id: "relay-repository-token",
                 displayName: "app",
+                origin: nil,
+                defaultBranchStatus: nil,
                 branches: branches
             ),
         ]

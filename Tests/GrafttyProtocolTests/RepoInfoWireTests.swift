@@ -4,8 +4,8 @@ import Testing
 
 /// `Fixtures/repo-info-v1.json` was encoded by `WebServer.RepoInfo` before
 /// the type moved to GrafttyProtocol (#484). The web client reads
-/// `GET /repos`, including repositories relayed from other Macs, so the
-/// shared type must keep its shape.
+/// `GET /repos`, and older Mobile builds read it with repositories
+/// relayed from other Macs, so the shared type must keep its shape.
 @Suite("RepoInfo wire fixture")
 struct RepoInfoWireTests {
     static let expected = [

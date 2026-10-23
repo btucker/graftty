@@ -1,4 +1,5 @@
-/// Capability advertisement used by Mobile's HTTP fallback.
+/// Capability advertisement sent by older Mobile builds' HTTP fallback.
+/// Current Mobile builds use only the paired connection and never send it.
 ///
 /// Older Mobile builds do not understand relayed route identifiers, so the
 /// Mac only appends one-hop repositories and worktrees when this token is
