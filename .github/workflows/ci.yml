@@ -91,8 +91,14 @@ jobs:
             .build/checkouts
             .build/repositories
             .build/artifacts
-          key: macos-deps-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+            .build/workspace-state.json
+          key: macos-deps-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
 
+      # workspace-state.json records which checkouts and binary artifacts are
+      # extracted, so it lives with the dependency cache above. Restoring it
+      # with compiled products while the dependency cache missed made SwiftPM
+      # trust artifacts that were not there (Sparkle.xcframework Info.plist not
+      # found) on every pull request whose dependency key was new.
       - name: Restore compiled SwiftPM build
         id: swift-build-cache
         uses: actions/cache/restore@v4
@@ -101,10 +107,9 @@ jobs:
             .build/*-apple-macosx
             .build/build.db
             .build/debug.yaml
-            .build/workspace-state.json
-          key: macos-build-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
+          key: macos-build-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
           restore-keys: |
-            macos-build-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-
+            macos-build-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-
 
       - name: Resolve Swift dependencies
         timeout-minutes: 5
@@ -137,7 +142,6 @@ jobs:
             .build/*-apple-macosx
             .build/build.db
             .build/debug.yaml
-            .build/workspace-state.json
           key: ${{ steps.swift-build-cache.outputs.cache-primary-key }}
 
       - name: Test package targets in isolated processes
