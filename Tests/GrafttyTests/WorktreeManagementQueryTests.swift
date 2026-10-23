@@ -107,6 +107,33 @@ struct WorktreeManagementQueryTests {
         #expect(service.worktreePath(forSessionName: ZmxLauncher.sessionName(for: session)) == nil)
     }
 
+    /// Relocation rewrites a running worktree's path but keeps its panes and
+    /// sessions; `TerminalManager` still holds the path recorded before the
+    /// move. A closed worktree never had a cwd for web attaches.
+    @Test("@spec WEB-4.13: When a web client attaches to a pane, the application shall start its zmx attach child in the current directory of the running worktree that owns the pane, including after its repository is relocated, and in no worktree directory for a pane whose worktree is not running.")
+    func sessionLookupFollowsTheOwningRunningWorktree() throws {
+        let root = try scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pane = PaneSlotID()
+        let session = PaneSessionID()
+        var worktree = WorktreeEntry(path: "/old/repo/.worktrees/a", branch: "a", state: .running)
+        worktree.splitTree = SplitTree(root: .leaf(pane))
+        worktree.paneSessions = [pane: session]
+        let manager = TerminalManager(socketPath: root.appendingPathComponent("control.sock").path)
+        manager.recordPaneSessions(for: worktree.splitTree, paneSessions: worktree.paneSessions, worktreePath: worktree.path)
+        var moved = worktree
+        moved.path = "/new/repo/.worktrees/a"
+        let box = StateBox(AppState(repos: [RepoEntry(path: "/new/repo", displayName: "Repo", worktrees: [
+            WorktreeEntry(path: "/new/repo", branch: "main"), moved,
+        ])]))
+        let service = service(box, root: root, terminalManager: manager)
+        let name = ZmxLauncher.sessionName(for: session)
+
+        #expect(service.worktreePath(forSessionName: name) == "/new/repo/.worktrees/a")
+        box.state.repos[0].worktrees[1].state = .closed
+        #expect(service.worktreePath(forSessionName: name) == nil)
+    }
+
     @Test("@spec WEB-7.14: When a web or paired-device client pulls a repository's default branch, the application shall fast-forward the main checkout and then refresh its divergence stats.")
     func pullRefreshesStats() async throws {
         let root = try scratch()

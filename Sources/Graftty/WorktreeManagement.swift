@@ -160,14 +160,20 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
         }
     }
 
-    /// The worktree a zmx session's pane belongs to, as recorded when the
-    /// pane's session was mapped. Web attaches start their shell there, so
-    /// a worktree without its directory (stale panes stay live, GIT-3.4)
-    /// resolves to nil: the attach child cannot `chdir` into it (WEB-4.12).
+    /// The directory a web attach to `sessionName` starts in: the running
+    /// worktree that owns the pane now. `TerminalManager` maps the session to
+    /// its pane without scanning every leaf; the path comes from the model,
+    /// because the one `TerminalManager` recorded with the pane goes stale
+    /// when a repository is relocated (WEB-4.13). A stale worktree's panes
+    /// stay live (GIT-3.4) but have no directory to start in (WEB-4.12).
     func worktreePath(forSessionName sessionName: String) -> String? {
-        guard let path = terminalManager.worktreePath(forSessionName: sessionName),
-              appState.wrappedValue.worktree(forPath: path)?.state.hasOnDiskWorktree == true else { return nil }
-        return path
+        guard let pane = terminalManager.paneID(forSessionName: sessionName).map(PaneSlotID.init(id:)) else { return nil }
+        for repo in appState.wrappedValue.repos {
+            for worktree in repo.worktrees where worktree.state == .running && worktree.splitTree.containsLeaf(pane) {
+                return worktree.paneSessions[pane].map(ZmxLauncher.sessionName(for:)) == sessionName ? worktree.path : nil
+            }
+        }
+        return nil
     }
 
     // MARK: - `graftty worktree add` / `remove`
