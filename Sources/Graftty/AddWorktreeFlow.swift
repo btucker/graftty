@@ -116,6 +116,8 @@ enum AddWorktreeFlow {
         creationOrigin: WorktreeHistory.Origin? = nil,
         appState: Binding<AppState>
     ) -> Swift.Result<String, FlowError> {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         let usesExistingBranch: Bool
         if case .useExisting = branch {
             usesExistingBranch = true
@@ -178,6 +180,8 @@ enum AddWorktreeFlow {
         initialCommand: String? = nil,
         terminalStartTiming: TerminalStartTiming
     ) async -> Swift.Result<Result, FlowError> {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         // For .useExisting, the start point is the existing branch itself;
         // git takes it from argv. For .createNew, an explicit CLI base wins;
         // otherwise default to origin's main.
@@ -406,6 +410,7 @@ enum AddWorktreeFlow {
         teamEventDispatcher: TeamEventDispatcher,
         entryPoint: CreationEntryPoint = .web
     ) async -> Swift.Result<Result, FlowError> {
+        // Both phases save their own changes (#604).
         let worktreePath: String
         switch beginCreate(
             repoPath: repoPath,

@@ -1026,6 +1026,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-2.8** When `AppState` is marked for saving, the application shall notify the registered change observer on every mark, whether or not a window is open.
 
+**PERSIST-2.9** When a pane command changes `AppState` (start, split, close, resize, equalize, zoom, navigate, reassign or pane attention), the application shall save the change within the save delay even while no window is open.
+
+**PERSIST-2.10** When a worktree is created or removed through the control socket, a paired device or the web server, the application shall save the result within the save delay even while no window is open.
+
+**PERSIST-2.11** When a paired device reorders projects or worktrees or acknowledges attention, the application shall save the change within the save delay even while no window is open.
+
+**PERSIST-2.12** When a background source (an attention auto-clear timer or a branch change found by the filesystem monitor) changes `AppState`, the application shall save the change within the save delay even while no window is open.
+
 ### PERSIST-3.x — Restore on Launch
 
 **PERSIST-3.1** When the application launches with an existing `state.json`, it shall restore the sidebar with all saved repositories and worktrees.

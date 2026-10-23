@@ -181,6 +181,8 @@ extension GrafttyApp {
             terminalManager.destroySurfaces(terminalIDs: entry.terminalIDs)
             appState.repos[entry.repoIdx].worktrees[entry.worktreeIdx].prepareForStop()
         }
+        // The menu bar stays usable with no window open (#604).
+        Self.persistAppState(appState)
     }
 
     /// Resolve the user's Ghostty config file path, create it if missing,

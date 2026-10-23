@@ -16,7 +16,7 @@ extension SocketRequestRouter: ControlPlatform {
     var remoteTeamRouting: (any ControlRemoteTeamRouting)? { remoteTeamRouter }
     var instructionsDirectory: URL { InstructionStore.defaultApplicationSupportDirectory }
 
-    func stateDidChange() {}
+    func stateDidChange() { GrafttyApp.persistAppState(appState.wrappedValue) }
 
     func providerActivity(path: String, paneSessionName: String?, sessionID: String?,
                           activity: ProviderSleepActivity, runtime: TeamHookRuntime) {
