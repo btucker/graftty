@@ -863,7 +863,7 @@ struct RemoteConnectionCoordinatorTests {
     /// released, and the chosen "let it finish, then evict" behavior
     /// means the negotiation's own result — even though it's a
     /// successful one — must never be registered as a live connection.
-    @Test(.timeLimit(.minutes(2)))
+    @Test("@spec REMOTE-2.26: When a mobile dial is invalidated before it becomes usable, the application shall discard its connection without saving refreshed connection metadata.", .timeLimit(.minutes(2)))
     func invalidateDuringInFlightNegotiationEvictsOnCompletionRatherThanRegistering() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
         let hostKey = Curve25519.Signing.PrivateKey()
@@ -871,6 +871,8 @@ struct RemoteConnectionCoordinatorTests {
             directory: dir,
             serverKey: hostKey
         )
+        let store = PinnedHostStore(directory: dir)
+        let before = try #require(store.get(id: #require(host.remoteDeviceID)))
         let counter = CallCounter()
         try await ConnectionBox.withFixture { box in
             let gate = Gate()
@@ -910,6 +912,7 @@ struct RemoteConnectionCoordinatorTests {
             await gate.open()
 
             let result = await negotiated
+            #expect(try store.get(id: before.id) == before)
             #expect(result == nil, "a connection invalidated mid-negotiation must never be handed back to the caller")
             #expect(counter.count == 1, "exactly one negotiation attempt — invalidate must not have started a second one")
 

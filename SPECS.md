@@ -3006,6 +3006,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.23** If the LAN remote-access listener's configured port is outside 0–65535, then the application shall fail to start with a thrown error rather than terminate the process.
 
+**REMOTE-2.24** When a dial refreshes connection metadata after a concurrent pairing edit, the client shall preserve the current pairing fields and update only routes, last successful route, wake addresses, and connection time.
+
+**REMOTE-2.25** If a pin is removed or its key changes during a dial, then the client shall reject the connection metadata refresh and leave the current pairing unchanged.
+
+**REMOTE-2.26** When a mobile dial is invalidated before it becomes usable, the application shall discard its connection without saving refreshed connection metadata.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.

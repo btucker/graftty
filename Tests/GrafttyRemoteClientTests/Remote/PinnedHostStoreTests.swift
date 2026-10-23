@@ -29,6 +29,63 @@ struct PinnedHostStoreTests {
         #expect(legacy.id == host.id)
     }
 
+    @Test("@spec REMOTE-2.24: When a dial refreshes connection metadata after a concurrent pairing edit, the client shall preserve the current pairing fields and update only routes, last successful route, wake addresses, and connection time.")
+    func connectionRefreshPreservesPairingEdits() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = PinnedHostStore(directory: dir)
+        let original = makeHost()
+        try store.add(original)
+        let repaired = PinnedHost(
+            id: original.id, kind: .linux, publicKey: original.publicKey,
+            displayName: "Repaired", pinnedAt: original.pinnedAt.addingTimeInterval(1),
+            pairingURL: URL(string: "http://new.local:8800/v2/pairing")!
+        )
+        try store.upsertAfterPairing(repaired)
+        var refreshed = original
+        refreshed.routes = [RemoteConnectionRoute(kind: .lan, baseURL: URL(string: "http://new.local:8800")!)]
+        refreshed.lastSuccessfulRoute = refreshed.routes.first
+        refreshed.lastConnectedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        refreshed.wakeOnLAN = try WakeOnLANAdvertisement(
+            hostDeviceID: original.id,
+            targets: [WakeOnLANTarget(macAddress: "02:11:22:33:44:55", ipv4Address: "192.168.1.10")],
+            signingKey: Curve25519.Signing.PrivateKey()
+        )
+
+        try RemoteHostDialer.persistRefreshedPin(refreshed, using: store.update) { _ in Issue.record("unexpected write failure") }
+
+        var expected = repaired
+        expected.routes = refreshed.routes
+        expected.lastSuccessfulRoute = refreshed.lastSuccessfulRoute
+        expected.lastConnectedAt = refreshed.lastConnectedAt
+        expected.wakeOnLAN = refreshed.wakeOnLAN
+        #expect(try store.get(id: original.id) == expected)
+    }
+
+    @Test("@spec REMOTE-2.25: If a pin is removed or its key changes during a dial, then the client shall reject the connection metadata refresh and leave the current pairing unchanged.")
+    func connectionRefreshRejectsRevokedOrRotatedPin() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = PinnedHostStore(directory: dir)
+        let original = makeHost()
+        let repaired = PinnedHost(
+            id: original.id, kind: .linux, publicKey: makeHost().publicKey,
+            displayName: "Rotated", pinnedAt: original.pinnedAt,
+            pairingURL: original.pairingURL
+        )
+        try store.add(original)
+        try store.upsertAfterPairing(repaired)
+        #expect(throws: (any Swift.Error).self) {
+            try RemoteHostDialer.persistRefreshedPin(original, using: store.update) { _ in Issue.record("trust change must fail the dial") }
+        }
+        #expect(try store.get(id: original.id) == repaired)
+        try store.remove(id: original.id)
+        #expect(throws: PinnedHostStore.Error.notFound) {
+            try RemoteHostDialer.persistRefreshedPin(original, using: store.update) { _ in Issue.record("revocation must fail the dial") }
+        }
+        #expect(try store.get(id: original.id) == nil)
+    }
+
     func makeTempDir() throws -> URL {
         let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
