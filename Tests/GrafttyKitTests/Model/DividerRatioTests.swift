@@ -1,5 +1,7 @@
 import Testing
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 @testable import GrafttyKit
 
 @Suite("DividerRatio — pure ratio math")
