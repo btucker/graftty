@@ -40,7 +40,8 @@ private final class ArrowTestPress: UIPress {
 /// calls `fire()`, so IOS-6.28 needs no wall-clock sleeps (#620).
 @MainActor
 private final class ManualArrowRepeat {
-    private(set) var initialDelays: [TimeInterval] = []
+    private(set) var initialDelay: TimeInterval = 0
+    private(set) var interval: TimeInterval = 0
     private var tick: (@MainActor () -> Bool)?
     private var generation = 0
 
@@ -48,7 +49,8 @@ private final class ManualArrowRepeat {
 
     func start(initialDelay: TimeInterval, interval: TimeInterval,
                tick: @escaping @MainActor () -> Bool) -> () -> Void {
-        initialDelays.append(initialDelay)
+        self.initialDelay = initialDelay
+        self.interval = interval
         generation += 1
         let started = generation
         self.tick = tick
@@ -441,7 +443,10 @@ struct TerminalPaneViewTests {
         container.terminalView.pressesBegan([press], with: nil)
         #expect(delivered == 1)
         #expect(repeats.isRepeating)
-        #expect((repeats.initialDelays.last ?? 0) > 0)
+        // The scheduler's delays are positional; pin their order so the first
+        // repeat waits longer than the steady-state interval.
+        #expect(repeats.interval > 0)
+        #expect(repeats.initialDelay > repeats.interval)
         repeats.fire()
         repeats.fire()
         #expect(delivered == 3)
@@ -450,13 +455,16 @@ struct TerminalPaneViewTests {
         let releasedCount = delivered
         repeats.fire()
         #expect(delivered == releasedCount)
+        // Each stop below is meaningful only if the re-press restarted the repeat.
         container.terminalView.pressesBegan([press], with: nil)
+        #expect(repeats.isRepeating)
         container.terminalView.pressesCancelled([press], with: nil)
         #expect(!repeats.isRepeating)
         let cancelledCount = delivered
         repeats.fire()
         #expect(delivered == cancelledCount)
         container.terminalView.pressesBegan([press], with: nil)
+        #expect(repeats.isRepeating)
         container.committedSoftwareInput = nil
         let disabledCount = delivered
         repeats.fire()
@@ -464,6 +472,7 @@ struct TerminalPaneViewTests {
         #expect(!repeats.isRepeating)
         container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
         container.terminalView.pressesBegan([press], with: nil)
+        #expect(repeats.isRepeating)
         _ = container.terminalView.resignFirstResponder()
         let unfocusedCount = delivered
         repeats.fire()
