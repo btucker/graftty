@@ -4,6 +4,27 @@ import GrafttyProtocol
 import GrafttyCommandUI
 import GrafttyRemoteClient
 
+enum RemotePaneLayoutProjection {
+    static func node(
+        from layout: PaneLayoutNode,
+        slotForSession: (String) -> PaneSlotID
+    ) -> SplitTree.Node {
+        switch layout {
+        case .leaf(let sessionName, _, _, _, _, _):
+            return .leaf(slotForSession(sessionName))
+        case let .split(direction, ratio, left, right):
+            return .split(.init(
+                direction: direction == .horizontal
+                    ? .horizontal
+                    : .vertical,
+                ratio: ratio,
+                left: node(from: left, slotForSession: slotForSession),
+                right: node(from: right, slotForSession: slotForSession)
+            ))
+        }
+    }
+}
+
 /// The remote-host operations the viewer needs. `RemoteMacsModel` is the
 /// production conformer; tests drive the mutation queue with a fake.
 @MainActor
