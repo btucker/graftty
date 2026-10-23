@@ -132,11 +132,12 @@ worktree cannot replace test or run artifacts while a command is executing.
 
 `GrafttyKitTests` compiles every file on Linux except those under
 `Tests/GrafttyKitTests/Apple/` and the files in `linuxPendingKitTests` in
-Package.swift (tests not yet ported, #477). Put a test that needs AppKit or a
-macOS-only API under `Apple/` (keeping its topic subdirectory), or wrap it after
-its imports in a whole-file `#if os(macOS)` / `#if canImport(AppKit)`. Never add
-to `linuxPendingKitTests`; shrink it. `scripts/check-linux-test-allowlist.py`
-(CI `verify-specs`) fails on a stale or redundant exclude entry.
+Package.swift (tests not yet ported; each entry names what blocks it). Put a
+test that needs AppKit or a macOS-only API under `Apple/` (keeping its topic
+subdirectory), or wrap it after its imports in a whole-file `#if os(macOS)` /
+`#if canImport(AppKit)`. Never add to `linuxPendingKitTests`; shrink it.
+`scripts/check-linux-test-allowlist.py` (CI `verify-specs`) fails on a stale or
+redundant exclude entry.
 
 ## Always run /code-review xhigh --fix before opening a PR
 
