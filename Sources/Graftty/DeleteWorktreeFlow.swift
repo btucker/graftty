@@ -51,8 +51,9 @@ enum DeleteWorktreeFlow {
         }
         // WEB-7.16 / GIT-4.21: a web or paired-device client, or a sidebar
         // sheet confirmed after another removal began, can reach a row whose
-        // creation or removal is still running. A `.creating` row has no
-        // directory yet, so GIT-4.13 would prune it as vanished.
+        // creation or removal is still running. A `.creating` row may have no
+        // directory yet (GIT-4.13 would prune it as vanished), or a checkout
+        // whose creation has not finished; either way it is not ours to remove.
         guard !wt.state.isInFlight else {
             return .failure(.gitFailedFinal(WorktreeRemovalError.operationInProgressMessage))
         }
