@@ -717,9 +717,9 @@ extension GrafttyApp {
     /// callbacks every agent in it shares: panes-state subscriptions, pane
     /// control, worktree management, and the Chrome tab broker.
     ///
-    /// `panesStateSubscribe` / `panesStateV2Subscribe`: poll their snapshots
-    /// (local panes, plus relayed remote panes for V2) through
-    /// `PanesStatePolling`. A pub-sub hook is left as a post-R6 follow-up.
+    /// `panesStateSubscribe` / `panesStateV2Subscribe`: rebuild their
+    /// snapshots (local panes, plus relayed remote panes for V2) when
+    /// `AppStateChanges` publishes, and send the ones that changed.
     ///
     /// `paneControlMutator`: maps session-name targets to `PaneSlotID`
     /// via `TerminalManager.paneID(forSessionName:)` and dispatches to
@@ -740,7 +740,7 @@ extension GrafttyApp {
         let trustedPeerStore = services.trustedPeerStore
         let sshConnectionRegistry = services.sshConnectionRegistry
         let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { onChange in
-            await PanesStatePolling.subscribe(snapshot: {
+            await services.appStateChanges.subscribePanesState(snapshot: {
                 let projects = SidebarHostController.shared.localProjects(appStateBinding.wrappedValue.repos, owner: localWorktreeOrigin)
                 let navigation = SidebarSnapshot(projects: (appStateBinding.wrappedValue.sidebarNavigation?.order ?? .init()).sorted(projects))
                 return .snapshot(buildWorktreePanesSnapshot(), sidebar: navigation)
@@ -748,7 +748,7 @@ extension GrafttyApp {
         }
 
         let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe = { onChange in
-            await PanesStatePolling.subscribe(snapshot: {
+            await services.appStateChanges.subscribePanesState(snapshot: {
                 let remote = await services.remoteMacsModel.sidebarRelaySnapshot()
                 let navigation = SidebarHostController.shared.snapshot(state: appStateBinding, owner: localWorktreeOrigin, remote: remote.projects,
                     authoritativeRemoteOwners: remote.authoritativeOwnerIDs, savedRemoteOwners: Set(services.remoteMacsModel.savedRemoteMacs.map(\.id)))
