@@ -2420,7 +2420,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.23** When a host publishes or renders a worktree row, the application shall project it through the one shared WorktreePanes projection, sending a pane layout only for a running worktree unless the Mac sidebar asks to keep a stopped worktree's saved layout, and dropping divergence stats for a worktree without an on-disk checkout.
 
-**IPAD-1.24** While the iPad layout displays a paired host, the application shall apply the host's pushed panes-state frames to the shared worktree state whether the sidebar column is shown or collapsed, so the collapsed-sidebar attention indicator (IPAD-1.11) stays current.
+**IPAD-1.24** While the iPad layout displays a paired host with the sidebar column collapsed, the application shall apply the host's pushed panes-state frames to the shared worktree state, so the collapsed-sidebar attention indicator (IPAD-1.11) stays current without the sidebar list on screen.
 
 **IPAD-1.25** When the iPad layout starts observing a paired host's pushed panes-state frames, the application shall recompute the shared worktree state from the first frame even if its rows equal the rows already stored, such as rows seeded by a notification or recent-pane activation, so the collapsed-sidebar attention indicator (IPAD-1.11) reflects them.
 
