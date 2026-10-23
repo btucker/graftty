@@ -100,8 +100,19 @@ struct LatestValueBroadcastTests {
                 _ = await observer.next()
                 observers.append(observer)
             }
-            DispatchQueue.concurrentPerform(iterations: 2) { lane in
-                if lane == 0 { broadcast.publish(WideFrame(id: 2)) } else { broadcast.finish() }
+            // A lock re-entry regression deadlocks synchronously, which the
+            // time limit cannot interrupt, so the race runs under a bounded
+            // wait. On a deadlock the observers are leaked: releasing them
+            // would take the stuck lock.
+            let raced = await finishes(within: 5) {
+                DispatchQueue.concurrentPerform(iterations: 2) { lane in
+                    if lane == 0 { broadcast.publish(WideFrame(id: 2)) } else { broadcast.finish() }
+                }
+            }
+            guard raced else {
+                Issue.record("publish racing finish deadlocked")
+                _ = Unmanaged.passRetained(LeakedObservers(observers))
+                return
             }
             let expected: Int? = broadcast.latest?.id == 2 ? 2 : nil
             for index in observers.indices where await observers[index].next()?.id != expected {
@@ -161,6 +172,9 @@ struct LatestValueBroadcastTests {
     @Test(arguments: [false, true], PayloadReleaseAction.allCases)
     func releasingAReplacedPayloadMayUseTheBroadcast(withObserver: Bool, action: PayloadReleaseAction) {
         let fixture = ReentrantFixture(withObserver: withObserver)
+        // Proves the deinit ran and finished its re-entry, so an
+        // implementation that never releases replaced payloads cannot pass.
+        let used = DispatchSemaphore(value: 0)
         let usesBroadcast: @Sendable () -> Void = { [weak broadcast = fixture.broadcast] in
             guard let broadcast else { return }
             switch action {
@@ -168,6 +182,7 @@ struct LatestValueBroadcastTests {
             case .publish: broadcast.publish(Payload(onRelease: {}))
             case .finish: broadcast.finish()
             }
+            used.signal()
         }
         let published = DispatchSemaphore(value: 0)
         DispatchQueue.global().async {
@@ -176,6 +191,7 @@ struct LatestValueBroadcastTests {
             published.signal()
         }
         #expect(published.wait(timeout: .now() + 5) == .success)
+        #expect(used.wait(timeout: .now() + 5) == .success)
     }
 }
 
@@ -196,6 +212,37 @@ private struct WideFrame: Sendable {
         let rows = (words, words, words, words, words, words, words, words)
         padding = (rows, rows, rows, rows, rows, rows, rows, rows)
     }
+}
+
+/// Runs `work` on a queue and reports whether it returned within `seconds`,
+/// without blocking a cooperative thread on a work item that may deadlock.
+private func finishes(within seconds: Double, _ work: @escaping @Sendable () -> Void) async -> Bool {
+    let resumed = ResumeOnce()
+    return await withCheckedContinuation { continuation in
+        DispatchQueue.global().async {
+            work()
+            if resumed.claim() { continuation.resume(returning: true) }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+            if resumed.claim() { continuation.resume(returning: false) }
+        }
+    }
+}
+
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+    func claim() -> Bool {
+        lock.withLock {
+            defer { claimed = true }
+            return !claimed
+        }
+    }
+}
+
+private final class LeakedObservers {
+    let observers: [AsyncStream<WideFrame>.AsyncIterator]
+    init(_ observers: [AsyncStream<WideFrame>.AsyncIterator]) { self.observers = observers }
 }
 
 private final class ReentrantFixture: Sendable {
