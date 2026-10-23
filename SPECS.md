@@ -1676,7 +1676,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-7.12** When a client sends `POST /repos/default-branch/pull` with `{repoPath}`, the application shall run the injected default-branch puller for that repository and respond `200` with `{ok: true}` on success, `409` with `{error}` when git rejects the pull, and `503` when the puller is not wired.
 
-**WEB-7.13** When a worktree create or delete finishes, the application shall report the same result to web and paired-device clients, mapping each failure to that transport's existing status, code and message.
+**WEB-7.13** When a worktree create, delete or default-branch pull finishes, the application shall report it to web and paired-device clients from one shared result, mapping each failure to that transport's existing status, code and message.
+
+**WEB-7.14** When a web or paired-device client pulls a repository's default branch, the application shall fast-forward the main checkout and then refresh its divergence stats.
 
 ### WEB-8.x — Web TLS (HTTPS)
 

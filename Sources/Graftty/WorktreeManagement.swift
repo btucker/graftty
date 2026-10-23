@@ -20,13 +20,17 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
     let worktreeMonitor: WorktreeMonitor
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
+    let remoteBranchStore: RemoteBranchStore
     let worktreeCreations: CLIWorktreeCreationStore
     let worktreeRemovals: CLIWorktreeRemovalStore
+    /// This Mac, as the owner of the repositories it lists.
+    let localOrigin: WorktreeOrigin
 
     init(appState: Binding<AppState>, terminalManager: TerminalManager, teamInbox: TeamInbox,
          teamEventDispatcher: TeamEventDispatcher, worktreeMonitor: WorktreeMonitor,
-         statsStore: WorktreeStatsStore, prStatusStore: PRStatusStore,
-         worktreeCreations: CLIWorktreeCreationStore, worktreeRemovals: CLIWorktreeRemovalStore) {
+         statsStore: WorktreeStatsStore, prStatusStore: PRStatusStore, remoteBranchStore: RemoteBranchStore,
+         worktreeCreations: CLIWorktreeCreationStore, worktreeRemovals: CLIWorktreeRemovalStore,
+         localOrigin: WorktreeOrigin? = nil) {
         self.appState = appState
         self.terminalManager = terminalManager
         self.teamInbox = teamInbox
@@ -34,8 +38,14 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
         self.worktreeMonitor = worktreeMonitor
         self.statsStore = statsStore
         self.prStatusStore = prStatusStore
+        self.remoteBranchStore = remoteBranchStore
         self.worktreeCreations = worktreeCreations
         self.worktreeRemovals = worktreeRemovals
+        self.localOrigin = localOrigin ?? Self.localOrigin()
+    }
+
+    static func localOrigin() -> WorktreeOrigin {
+        WorktreeOrigin(deviceID: AppServices.localRemoteDeviceID(), deviceLabel: AppServices.localHostDisplayName(), relayDepth: 0)
     }
 
     convenience init(appState: Binding<AppState>, terminalManager: TerminalManager, services: AppServices) {
@@ -43,6 +53,7 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
             appState: appState, terminalManager: terminalManager, teamInbox: services.teamInbox,
             teamEventDispatcher: services.teamEventDispatcher, worktreeMonitor: services.worktreeMonitor,
             statsStore: services.statsStore, prStatusStore: services.prStatusStore,
+            remoteBranchStore: services.remoteBranchStore,
             worktreeCreations: services.cliWorktreeCreations, worktreeRemovals: services.cliWorktreeRemovals
         )
     }
@@ -81,6 +92,77 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
             prStatusStore: prStatusStore,
             teamEventDispatcher: teamEventDispatcher
         )
+    }
+
+    /// Why a default-branch pull did not run or failed.
+    enum DefaultBranchPullError: Error {
+        case repositoryNotTracked
+        /// The main checkout is not on origin's default branch or not behind it.
+        case notBehind
+        case pullFailed(any Error)
+    }
+
+    /// Fast-forwards a repository's main checkout to origin's default
+    /// branch, then refreshes its divergence stats.
+    func pullDefaultBranch(repoPath: String) async -> Result<Void, DefaultBranchPullError> {
+        guard let repo = appState.wrappedValue.repos.first(where: { $0.path == repoPath }) else {
+            return .failure(.repositoryNotTracked)
+        }
+        guard let status = defaultBranchStatus(for: repo, stats: statsStore.stats[repo.path]) else {
+            return .failure(.notBehind)
+        }
+        do {
+            try await GitDefaultBranchPull.pull(repoPath: repoPath, branchName: status.branchName)
+        } catch {
+            return .failure(.pullFailed(error))
+        }
+        if let repo = appState.wrappedValue.repos.first(where: { $0.path == repoPath }) {
+            let branch = repo.worktrees.first(where: { $0.path == repo.path })?.branch ?? ""
+            statsStore.refresh(worktreePath: repo.path, repoPath: repo.path, branch: branch)
+        }
+        return .success(())
+    }
+
+    /// This Mac's repositories, as the sidebar lists them. Branch choices
+    /// (with mounted worktrees and pull requests) are built only when asked
+    /// for, since the web client's picker does not show them.
+    func repositories(includingBranches: Bool) -> [RemoteRepositoryInfo] {
+        appState.wrappedValue.repos.map { repo in
+            RemoteRepositoryInfo(
+                id: repo.path,
+                displayName: repo.displayName,
+                origin: localOrigin,
+                defaultBranchStatus: defaultBranchStatus(for: repo, stats: statsStore.stats[repo.path]),
+                branches: includingBranches ? branches(of: repo) : []
+            )
+        }
+    }
+
+    private func branches(of repo: RepoEntry) -> [RemoteRepositoryInfo.Branch] {
+        var mounted: [String: String] = [:]
+        for worktree in repo.worktrees where worktree.state.hasOnDiskWorktree {
+            mounted[worktree.branch] = worktree.path
+        }
+        return BranchPickerViewModel.entries(
+            branchSnapshot: remoteBranchStore.branchesByRepo[repo.path] ?? RemoteBranchSnapshot(),
+            mountedBranchToPath: mounted,
+            prsByBranch: prStatusStore.prsByRepoBranch[repo.path] ?? [:],
+            filterText: ""
+        ).map { branch in
+            RemoteRepositoryInfo.Branch(
+                name: branch.name,
+                source: branch.source == .local ? .local : .remoteOnly,
+                lastCommitDate: branch.lastCommitDate,
+                mountedWorktreeID: branch.mountedWorktreePath,
+                pullRequest: branch.pr.map { .init(number: $0.number, title: $0.title) }
+            )
+        }
+    }
+
+    /// The worktree a zmx session's pane belongs to, as recorded when the
+    /// pane's session was mapped. Web attaches start their shell there.
+    func worktreePath(forSessionName sessionName: String) -> String? {
+        terminalManager.worktreePath(forSessionName: sessionName)
     }
 
     // MARK: - `graftty worktree add` / `remove`
@@ -184,6 +266,41 @@ extension WorktreeManagementResponse {
             self = .error(code: "git-failed", message: stderr, forceAllowed: true, shortStatus: status)
         case .failure(.gitFailedFinal(let message)):
             self = .error(code: "git-failed", message: message, forceAllowed: false, shortStatus: nil)
+        }
+    }
+}
+
+extension WebServer.PullDefaultBranchOutcome {
+    /// `POST /repos/default-branch/pull` (WEB-7.12).
+    init(_ result: Result<Void, WorktreeManagement.DefaultBranchPullError>) {
+        switch result {
+        case .success: self = .success(.init(ok: true))
+        case .failure(.repositoryNotTracked): self = .invalid("repository not tracked")
+        case .failure(.notBehind): self = .invalid("default checkout is not behind origin")
+        case .failure(.pullFailed(GitDefaultBranchPull.Error.gitFailed(_, let stderr))): self = .gitFailed(stderr)
+        case .failure(.pullFailed(let error)): self = .internalFailure("\(error)")
+        }
+    }
+}
+
+extension WebServer.RepoInfo {
+    /// `GET /repos`. Local rows carry no branch list; relayed rows do.
+    init(_ repository: RemoteRepositoryInfo, includingBranches: Bool) {
+        self.init(path: repository.id, displayName: repository.displayName,
+                  defaultBranchStatus: repository.defaultBranchStatus,
+                  branches: includingBranches ? repository.branches : nil, origin: repository.origin)
+    }
+}
+
+extension WorktreeManagementResponse {
+    /// The paired-device envelope's `pullDefaultBranch`.
+    init(defaultBranchPull result: Result<Void, WorktreeManagement.DefaultBranchPullError>) {
+        switch result {
+        case .success: self = .ok
+        case .failure(.repositoryNotTracked), .failure(.notBehind):
+            self = .error(code: "invalid", message: "default checkout is not behind origin", forceAllowed: false, shortStatus: nil)
+        case .failure(.pullFailed(let error)):
+            self = .error(code: "pull-failed", message: String(describing: error), forceAllowed: false, shortStatus: nil)
         }
     }
 }

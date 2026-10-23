@@ -50,7 +50,7 @@ final class SocketRequestRouter {
         self.worktreeManagement = WorktreeManagement(
             appState: appState, terminalManager: terminalManager, teamInbox: teamInbox,
             teamEventDispatcher: teamEventDispatcher, worktreeMonitor: worktreeMonitor,
-            statsStore: statsStore, prStatusStore: prStatusStore,
+            statsStore: statsStore, prStatusStore: prStatusStore, remoteBranchStore: remoteBranchStore,
             worktreeCreations: worktreeCreations, worktreeRemovals: worktreeRemovals
         )
         self.remoteBranchStore = remoteBranchStore
