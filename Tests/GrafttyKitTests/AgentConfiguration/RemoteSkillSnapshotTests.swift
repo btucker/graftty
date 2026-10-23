@@ -9,6 +9,30 @@ import Glibc
 
 @Suite("Remote skill snapshots")
 struct RemoteSkillSnapshotTests {
+    @Test("@spec REMOTE-28.19: When a runtime home mirrors the user's native skill directory inside their home, the application shall capture that directory through the alias while rejecting project-root escapes and aliases to unrelated directories.")
+    func managedRuntimeAliasCanReachOnlyItsNativeUserRoot() throws {
+        let fixture = try SkillFixture(); defer { fixture.remove() }
+        try fixture.write("home/.codex/skills/personal/SKILL.md", "personal")
+        try fixture.write("home/.codex/auth.json", "do not export")
+        let managed = fixture.root.appendingPathComponent("managed")
+        try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: true)
+        let alias = managed.appendingPathComponent("skills")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: fixture.root.appendingPathComponent("home/.codex/skills"))
+        func capture() throws -> RemoteSkillSnapshot {
+            try RemoteSkillSnapshot.capture(runtime: .codex, home: fixture.root.appendingPathComponent("home"),
+                workspace: fixture.root.appendingPathComponent("project"), environment: ["CODEX_HOME": managed.path])
+        }
+        #expect(try capture().files.map(\.path) == [".codex/skills/personal/SKILL.md"])
+        try FileManager.default.createDirectory(at: fixture.root.appendingPathComponent("project/.codex"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: fixture.root.appendingPathComponent("project/.codex/skills"), withDestinationURL: fixture.root.appendingPathComponent("home/.codex/skills"))
+        #expect(throws: (any Error).self) { try capture() }
+        try FileManager.default.removeItem(at: fixture.root.appendingPathComponent("project/.codex/skills"))
+        try FileManager.default.removeItem(at: alias)
+        try fixture.write("home/unrelated/personal/SKILL.md", "unrelated")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: fixture.root.appendingPathComponent("home/unrelated"))
+        #expect(throws: (any Error).self) { try capture() }
+    }
+
     @Test("@spec REMOTE-28.7: When capturing remote skills, the application shall retain user and project scope, supporting file bytes and executable flags in a deterministic runtime-specific snapshot without exporting the rest of the agent home.")
     func captureScopesAndResources() throws {
         let fixture = try SkillFixture()

@@ -81,7 +81,8 @@ struct DevContainerPreparerTests {
         }
     }
 
-    @Test func relativeWorktreeRequiresUpstreamSupportForEachCommand() async throws {
+    @Test("@spec REMOTE-26.29: When preparing or reopening a relative Git worktree in a Dev Container, the application shall enable both upstream Git-root and common-directory mounting so Git metadata remains reachable inside the container.")
+    func relativeWorktreeRequiresUpstreamSupportForEachCommand() async throws {
         let root = try workspace(); defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.removeItem(at: root.appendingPathComponent(".git"))
         try Data("gitdir: ../../.git/worktrees/task\n".utf8).write(to: root.appendingPathComponent(".git"))
@@ -91,6 +92,13 @@ struct DevContainerPreparerTests {
         let calls = await executor.calls
         #expect(calls.filter { $0.args.contains("--help") }.count == 3)
         #expect(calls.filter { !$0.args.contains("--help") }.allSatisfy { $0.args.contains("--mount-git-worktree-common-dir") })
+        for call in calls where !call.args.contains("--help") {
+            let index = try #require(call.args.firstIndex(of: "--mount-workspace-git-root"))
+            #expect(call.args[index + 1] == "true")
+        }
+        let shell = DevContainerPreparer.shellCommand(for: result)
+        #expect(shell.contains("'--mount-workspace-git-root' 'true'"))
+        #expect(shell.contains("'--mount-git-worktree-common-dir' 'true'"))
         let old = DevContainerExecutorFake(supportsRelative: false)
         await #expect(throws: (any Error).self) { try await DevContainerPreparer(executor: old).prepare(workspace: root.path, operationID: UUID()) }
         #expect(await old.calls.count == 1)

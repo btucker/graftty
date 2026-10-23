@@ -72,6 +72,7 @@ public extension RemoteSkillSnapshot {
         // Resolve each configured root once. Cross-root skill links may point to
         // another selected root, but never to arbitrary home or repository files.
         var roots: [(Source, URL)] = []
+        let userHome = try SkillFileIO.physical(home)
         for source in sources {
             guard let attributes = try SkillFileIO.attributesIfPresent(source.directory) else { continue }
             guard attributes[.type] as? FileAttributeType == .typeDirectory || attributes[.type] as? FileAttributeType == .typeSymbolicLink else {
@@ -79,7 +80,15 @@ public extension RemoteSkillSnapshot {
             }
             let root = try SkillFileIO.physical(source.directory)
             let base = try SkillFileIO.physical(source.base)
-            guard root.path.hasPrefix(base.path + "/") else { throw RemoteSkillError("Skill root escapes its configured home or project") }
+            // Graftty's managed runtime home aliases the user's native skills.
+            // Admit only that exact native root inside the user home, never an
+            // arbitrary alias target or a project link into the user's files.
+            let nativeUserRoot = home.appendingPathComponent(source.destination)
+            let mirrorsNativeUserRoot = source.scope == .user && root.path.hasPrefix(userHome.path + "/") &&
+                (try? SkillFileIO.physical(nativeUserRoot))?.path == root.path
+            guard root.path.hasPrefix(base.path + "/") || mirrorsNativeUserRoot else {
+                throw RemoteSkillError("Skill root escapes its configured home or project")
+            }
             roots.append((source, root))
         }
         for (source, root) in roots {

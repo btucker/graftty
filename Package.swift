@@ -103,11 +103,13 @@ let strictWarnings: [SwiftSetting] = [
 
 #if os(Linux)
 let isLinux = true
+let containerProcessDependencies: [Target.Dependency] = [.product(name: "Subprocess", package: "swift-subprocess")]
 let appleDependencies: [Package.Dependency] = []
 let appleKitDependencies: [Target.Dependency] = []
 let webRTCDependencies: [Target.Dependency] = []
 #else
 let isLinux = false
+let containerProcessDependencies: [Target.Dependency] = []
 let appleDependencies: [Package.Dependency] = [
     ghosttyDependency,
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
@@ -196,6 +198,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.22.0"),
         .package(url: "https://github.com/stencilproject/Stencil.git", from: "0.15.1"),
+        .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "1.0.0"),
     ] + appleDependencies,
     targets: ([
         .target(
@@ -222,7 +225,7 @@ let package = Package(
                 .product(name: "NIOWebSocket", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "Stencil", package: "Stencil"),
-            ] + appleKitDependencies + cryptoDependencies,
+            ] + appleKitDependencies + cryptoDependencies + containerProcessDependencies,
             exclude: isLinux ? linuxKitExclusions : [],
             resources: [
                 .copy("Web/Resources"),

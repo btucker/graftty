@@ -36,7 +36,7 @@ struct DevContainerLiveSkillsTests {
         }
         let configuration = try JSONSerialization.data(withJSONObject: config)
         try fixture.write("workspace/.devcontainer/devcontainer.json", String(decoding: configuration, as: UTF8.self))
-        let runner = CLIRunner(terminatesOnCancellation: true)
+        let runner = DevContainerCommandRunner()
         _ = try await runner.run(command: "git", args: ["init", "--quiet"], at: workspace, timeout: .seconds(10))
         let preparer = DevContainerPreparer(executor: runner, profileDirectory: durable ? fixture.root.appendingPathComponent("profiles") : nil)
         let operation = UUID()

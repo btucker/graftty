@@ -3636,6 +3636,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-26.27** When relaying replication bytes, the application shall drain writes before forwarding input EOF, preserve the reverse stream, and close both endpoints on cancellation, deadline, failed authorization, or oversized input.
 
+**REMOTE-26.28** When a Dev Container command exits while a background descendant remains running, the application shall return the command's output and exit status without waiting for the descendant.
+
+**REMOTE-26.29** When preparing or reopening a relative Git worktree in a Dev Container, the application shall enable both upstream Git-root and common-directory mounting so Git metadata remains reachable inside the container.
+
 ### REMOTE-27.x — Native session replication and restore
 
 **REMOTE-27.1** While a delegated host is reachable, the application shall regularly copy worktree-associated native Claude and Codex session data to the recorded parent, excluding authentication files.
@@ -3683,6 +3687,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-28.17** When a skill-bearing container placement selects an agent, the application shall require a matching runtime revision, check the agent executable in that container, and launch with the retained isolated skill home without claiming authentication readiness.
 
 **REMOTE-28.18** When a managed placement installs agent skills, the application shall bind-mount a private placement directory at the same host and container path, verify its visibility and matching user identity before launch, and retain native profile files when the container is removed.
+
+**REMOTE-28.19** When a runtime home mirrors the user's native skill directory inside their home, the application shall capture that directory through the alias while rejecting project-root escapes and aliases to unrelated directories.
 
 ### REMOTE-29.x — AWS Spot evacuation
 

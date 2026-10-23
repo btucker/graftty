@@ -12,7 +12,7 @@ public actor DevContainerPreparer {
     private let executor: any CLIExecutor
     private let profileDirectory: URL?
     private var preparing: Set<String> = []
-    public init(executor: any CLIExecutor = CLIRunner(terminatesOnCancellation: true), profileDirectory: URL? = nil) {
+    public init(executor: any CLIExecutor = DevContainerCommandRunner(), profileDirectory: URL? = nil) {
         self.executor = executor; self.profileDirectory = profileDirectory
     }
 
@@ -48,7 +48,9 @@ public actor DevContainerPreparer {
         }
         let relativeGit = try usesRelativeWorktree(at: workspace)
         if relativeGit { try await checkRelativeWorktreeSupport(at: workspace) }
-        var common = ["--workspace-folder", workspace, "--config", config, "--mount-workspace-git-root", "false"]
+        // Upstream only adds the worktree's common-directory mount when
+        // Git-root mounting is also enabled. The Git root is this worktree.
+        var common = ["--workspace-folder", workspace, "--config", config, "--mount-workspace-git-root", relativeGit ? "true" : "false"]
         if relativeGit { common += ["--mount-git-worktree-common-dir", "true"] }
         let read = try await run(["read-configuration"] + common, at: workspace, stage: "configuration", timeout: .seconds(60))
         guard let configuration = try json(read.stdout, stage: "configuration")["configuration"] as? [String: Any] else {
@@ -99,7 +101,7 @@ public actor DevContainerPreparer {
     public nonisolated static func shellCommand(for environment: PreparedDevContainer, command: String? = nil) -> String {
         var args = ["devcontainer", "exec", "--container-id", environment.containerID,
                     "--workspace-folder", environment.workspace, "--config", environment.configurationPath,
-                    "--mount-workspace-git-root", "false"]
+                    "--mount-workspace-git-root", environment.usesRelativeGitWorktree ? "true" : "false"]
         if environment.usesRelativeGitWorktree { args += ["--mount-git-worktree-common-dir", "true"] }
         if let home = environment.agentSkillHome {
             args += ["env", "HOME=" + home, "CODEX_HOME=" + home + "/.codex", "CLAUDE_CONFIG_DIR=" + home + "/.claude"]
