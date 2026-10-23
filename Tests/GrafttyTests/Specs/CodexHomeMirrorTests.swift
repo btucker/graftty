@@ -405,18 +405,26 @@ struct CodexHomeMirrorTests {
         try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
 
         let ready = root.appendingPathComponent("lock-ready")
+        let started = root.appendingPathComponent("rebuild-started")
         let release = root.appendingPathComponent("lock-release")
         let holderScript = root.appendingPathComponent("hold-lock.sh")
+        // Each wait gives up after 250 polls (5 s plus fork overhead) so a
+        // missing signal fails the test instead of hanging the run. The
+        // release budget starts only once the rebuild worker has started,
+        // and the exit status says which signal the holder exited on.
         try writeFile(holderScript, """
         #!/bin/sh
+        wait_for() {
+          i=0
+          while [ ! -f "$1" ]; do
+            [ $i -ge 250 ] && return 1
+            /bin/sleep 0.02
+            i=$((i + 1))
+          done
+        }
         /usr/bin/touch "$GRAFTTY_TEST_LOCK_READY"
-        # Give up after 250 polls (5 s plus fork overhead) so a release that
-        # never comes fails the test instead of hanging the run.
-        i=0
-        while [ ! -f "$GRAFTTY_TEST_LOCK_RELEASE" ] && [ $i -lt 250 ]; do
-          /bin/sleep 0.02
-          i=$((i + 1))
-        done
+        wait_for "$GRAFTTY_TEST_REBUILD_STARTED" || exit 4
+        wait_for "$GRAFTTY_TEST_LOCK_RELEASE" || exit 3
         """)
         try FileManager.default.setAttributes(
             [.posixPermissions: NSNumber(value: Int16(0o755))],
@@ -432,6 +440,7 @@ struct CodexHomeMirrorTests {
         ]
         holder.environment = [
             "GRAFTTY_TEST_LOCK_READY": ready.path,
+            "GRAFTTY_TEST_REBUILD_STARTED": started.path,
             "GRAFTTY_TEST_LOCK_RELEASE": release.path,
         ]
         try holder.run()
@@ -452,27 +461,25 @@ struct CodexHomeMirrorTests {
         // suite can saturate the cooperative pool, so both the rebuild and
         // the release run on GCD. A release that waited on a cooperative
         // thread could land late or never.
-        let (elapsed, releasedFirst) = try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<(Duration, Bool), any Error>) in
+        let elapsed = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Duration, any Error>) in
             DispatchQueue.global().async {
                 let startedAt = ContinuousClock.now
+                try? Data().write(to: started, options: .atomic)
                 DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(400)) {
                     try? Data().write(to: release, options: .atomic)
                 }
                 continuation.resume(with: Result {
                     try mirror.rebuild()
-                    return (
-                        ContinuousClock.now - startedAt,
-                        FileManager.default.fileExists(atPath: release.path)
-                    )
+                    return ContinuousClock.now - startedAt
                 })
             }
         }
         holder.waitUntilExit()
         #expect(elapsed >= .milliseconds(250))
-        // A rebuild that got the lock because the holder hit its poll limit
-        // finished before the release landed.
-        #expect(releasedFirst)
+        // 0 means the release freed the lock; 3 or 4 means the holder gave
+        // up waiting, so the lock was freed by its deadline instead.
+        #expect(holder.terminationStatus == 0)
         #expect(FileManager.default.fileExists(
             atPath: dst.appendingPathComponent(".graftty-mirror-version").path
         ))
