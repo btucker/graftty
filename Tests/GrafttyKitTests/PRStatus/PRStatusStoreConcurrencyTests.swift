@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import GrafttyKit
 import GrafttyKitTestSupport
+import GrafttyTestSupport
 
 @Suite("PRStatusStore background concurrency")
 struct PRStatusStoreConcurrencyTests {
@@ -12,6 +13,7 @@ struct PRStatusStoreConcurrencyTests {
     func pollingBatchesAndRotatesAcrossRepositories() async throws {
         let fetcher = RecordingPRFetcher()
         let work = ManualWorkQueue()
+        let clock = MutableBox(Date(timeIntervalSince1970: 1_000_000))
         let origin = HostingOrigin(
             provider: .github,
             host: "github.com",
@@ -22,7 +24,7 @@ struct PRStatusStoreConcurrencyTests {
         let store = PRStatusStore(
             fetcherFor: { _ in fetcher },
             detectHost: { _ in origin },
-            now: { Date(timeIntervalSince1970: 1_000_000) }
+            now: { clock.value }
         )
         store.dispatchWork = work.enqueue
         let repos = (0..<12).map { index in
@@ -50,6 +52,8 @@ struct PRStatusStoreConcurrencyTests {
             await work.runBatch()
             #expect(fetcher.completedCount == expectedCompletedCount)
             #expect(repos.allSatisfy { !store.isInFlightForTesting($0.path) })
+            // Expire cooldown so only cursor rotation can select new repos.
+            clock.withValue { $0.addTimeInterval(60) }
         }
 
         #expect(fetcher.branches == Set((0..<12).map { "feature-\($0)" }))

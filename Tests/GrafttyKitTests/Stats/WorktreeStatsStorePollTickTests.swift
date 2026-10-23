@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import GrafttyKitTestSupport
+import GrafttyTestSupport
 @testable import GrafttyKit
 
 /// DIVERGE-4.6: the five-second polling safety net must keep every running
@@ -217,12 +218,13 @@ struct WorktreeStatsStorePollTickTests {
 """)
     func repoFetchesAreSubmittedInRotatingBatches() async throws {
         let fetch = RecordingFetch()
+        let clock = MutableBox(Self.now)
         let store = WorktreeStatsStore(
             compute: { _, _, _, _ in
                 WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
             },
             fetch: fetch.function,
-            now: { Self.now }
+            now: { clock.value }
         )
         let work = ManualWorkQueue()
         store.dispatchWork = work.enqueue
@@ -255,6 +257,8 @@ struct WorktreeStatsStorePollTickTests {
             #expect(repos.allSatisfy { !store.isInFlightRepoForTesting($0.path) })
             // Fetch success queues four local recomputes.
             await work.runBatch()
+            // Expire cooldown so only cursor rotation can select new repos.
+            clock.withValue { $0.addTimeInterval(60) }
         }
 
         #expect(fetch.calledPaths == Set(repos.map(\.path)))
