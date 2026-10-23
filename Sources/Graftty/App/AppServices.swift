@@ -34,6 +34,8 @@ final class AppServices {
     let displayOwnershipStore: SessionDisplayOwnershipStore
     let teamInbox: TeamInbox
     let remoteTeamRouter = RemoteTeamRouter()
+    /// Published on every input to the sidebar and panes-state snapshots.
+    let appStateChanges = AppStateChanges()
     let teamEventDispatcher: TeamEventDispatcher
     let cliWorktreeCreations: CLIWorktreeCreationStore
     let cliWorktreeRemovals: CLIWorktreeRemovalStore

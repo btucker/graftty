@@ -46,6 +46,7 @@ struct MainWindow: View {
     @ObservedObject private var iconStore = SidebarHostController.shared
     @ObservedObject private var previewWindows = FilePreviewWindows.shared
     @ObservedObject var remoteMacsModel: RemoteMacsModel
+    let appStateChanges: AppStateChanges
     let makeRemoteMacPairingDriver: () -> AddRemoteMacPairingDriving
 
     @EnvironmentObject private var updaterController: UpdaterController
@@ -122,6 +123,7 @@ struct MainWindow: View {
                 claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
                 remoteMacsModel: remoteMacsModel,
+                appStateChanges: appStateChanges,
                 selectedRemoteIdentity: selectedRemoteIdentity,
                 selectedRemoteWorktreePath: selectedRemoteWorktreePath,
                 selectedRemotePaneSessionName: selectedRemotePaneSessionName,

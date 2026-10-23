@@ -44,7 +44,9 @@ final class SidebarHostController: ObservableObject {
             let key = repo.id.uuidString
             switch repo.iconOverride {
             case .initials:
-                icons[key] = nil
+                // Writing nil over nil still publishes, which would rebuild the
+                // sidebar on every 30 s recheck (PERF-1.20).
+                if icons[key] != nil { icons[key] = nil }
                 checked[repo.id] = Date()
                 resolvedSignatures[repo.id] = signature
             case .image(let data):

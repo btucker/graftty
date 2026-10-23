@@ -259,6 +259,7 @@ struct GrafttyApp: App {
                 teamEventDispatcher: services.teamEventDispatcher,
                 hostPairingCoordinator: services.hostPairingCoordinator,
                 remoteMacsModel: services.remoteMacsModel,
+                appStateChanges: services.appStateChanges,
                 makeRemoteMacPairingDriver: services.remoteMacPairingDriverFactory
             )
                 .environmentObject(webController)
@@ -271,6 +272,7 @@ struct GrafttyApp: App {
                 }
                 .onChange(of: appState) { _, newState in
                     Self.persistAppState(newState)
+                    services.appStateChanges.publish()
                 }
                 .onOpenURL { url in
                     handleDeepLink(url)
@@ -536,6 +538,20 @@ struct GrafttyApp: App {
                 await tmRef?.lookupShellPIDForPortScan(for: id)
             }
         }
+
+        // PERF-1.18: the other inputs folded into sidebar and panes-state
+        // snapshots. AppState itself publishes from `.onChange(of: appState)`.
+        let changes = services.appStateChanges
+        changes.publish(on: terminalManager.paneTitleInvalidations.$generation.dropFirst())
+        changes.publish(on: portBindingsModel.objectWillChange)
+        changes.publish(on: services.remoteMacsModel.objectWillChange)
+        changes.publish(on: SidebarHostController.shared.objectWillChange)
+        changes.publish(onChangeOf: { [services] in
+            _ = services.prStatusStore.infos
+            _ = services.statsStore.stats
+            _ = services.claudeSessionRegistry.livenessBySession
+            _ = services.remoteBranchStore.branchesByRepo
+        })
 
         // 2s cadence for port-binding scans. Cheap (one batched lsof
         // across all registered shell PIDs per tick) and only meaningful

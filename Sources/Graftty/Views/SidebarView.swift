@@ -50,6 +50,7 @@ struct SidebarView: View {
     let claudeSessionRegistry: ClaudeSessionRegistry
     let remoteBranchStore: RemoteBranchStore
     @ObservedObject var remoteMacsModel: RemoteMacsModel
+    let appStateChanges: AppStateChanges
     let selectedRemoteIdentity: RemoteMacIdentity?
     let selectedRemoteWorktreePath: String?
     let selectedRemotePaneSessionName: String?
@@ -472,12 +473,7 @@ struct SidebarView: View {
         // Its compact variant extends to 40 points even with a smaller inset.
         .ignoresSafeArea(.container, edges: .top)
         }
-        .task {
-            while !Task.isCancelled {
-                await refreshNavigation()
-                try? await Task.sleep(for: .seconds(1))
-            }
-        }
+        .task { await appStateChanges.observe { await refreshNavigation() } }
         .onChange(of: reportController.activeID) { _, id in
             if id != nil {
                 if frozenWorktreeOrder.isEmpty {
