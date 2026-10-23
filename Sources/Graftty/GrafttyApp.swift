@@ -825,8 +825,8 @@ struct GrafttyApp: App {
             sleepCoordinator.wakeForInput(session: session)
         }
         let teamInbox = services.teamInbox
-        let teamEventDispatcher = services.teamEventDispatcher
         let remoteTeamRouter = services.remoteTeamRouter
+        let worktreeManagement = WorktreeManagement(appState: binding, terminalManager: tm, services: services)
         tm.agentCompletionLoader = { currentWorktreePath, update in
             let repos = binding.wrappedValue.repos
             async let remote = remoteTeamRouter.members()
@@ -855,12 +855,7 @@ struct GrafttyApp: App {
                 if case .worktree(let operation) = request {
                     let response = await RemoteCLIWorktreeService.handle(
                         operation, from: deviceID, repos: binding.wrappedValue.repos,
-                        platform: MacCLIWorktreeCreation(
-                            appState: binding, terminalManager: tm, teamInbox: teamInbox,
-                            teamEventDispatcher: teamEventDispatcher,
-                            worktreeMonitor: services.worktreeMonitor,
-                            statsStore: services.statsStore,
-                            worktreeCreations: services.cliWorktreeCreations))
+                        platform: worktreeManagement)
                     return try JSONEncoder().encode(response)
                 }
                 let repos = binding.wrappedValue.repos
@@ -1287,14 +1282,6 @@ struct GrafttyApp: App {
                 }
         }
 
-        // WEB-7.2: drive `POST /worktrees` into the shared
-        // `AddWorktreeFlow`. `AddWorktreeFlow.add` is itself
-        // `@MainActor`; calling it from this non-isolated async closure
-        // inserts an implicit hop, so every write to appState and every
-        // terminal-surface creation happens on the main actor — same
-        // isolation as the native sidebar's "+" button.
-        let worktreeMonitor = services.worktreeMonitor
-        let dispatcherForWeb = services.teamEventDispatcher
         webController.setDefaultBranchPuller { req in
             let pullTarget = await MainActor.run {
                 guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
@@ -1327,70 +1314,23 @@ struct GrafttyApp: App {
             }
             return .success(WebServer.PullDefaultBranchResponse(ok: true))
         }
+        // WEB-7.2: drive `POST /worktrees` into the shared
+        // `AddWorktreeFlow` through `WorktreeManagement`, which is
+        // `@MainActor`: every write to appState and every terminal-surface
+        // creation happens on the main actor, as from the sidebar's "+".
         webController.setWorktreeCreator { req in
-            let branch: BranchSelection
-            if req.existing {
-                branch = .useExisting(name: req.branchName, source: .local)
-            } else {
-                branch = .createNew(name: req.branchName)
-            }
-            let result = await AddWorktreeFlow.add(
-                repoPath: req.repoPath,
-                worktreeName: req.worktreeName,
-                branch: branch,
-                appState: appStateBinding,
-                worktreeMonitor: worktreeMonitor,
-                statsStore: statsStore,
-                terminalManager: tm,
-                teamEventDispatcher: dispatcherForWeb
-            )
-            switch result {
-            case .success(let outcome):
-                return .success(WebServer.CreateWorktreeResponse(
-                    sessionName: outcome.sessionName,
-                    worktreePath: outcome.worktreePath
-                ))
-            case .failure(let err):
-                switch err {
-                case .gitFailed(let msg): return .gitFailed(msg)
-                case .repoNotFound: return .invalid("repository not tracked")
-                case .pathCollision: return .invalid("a worktree at that name already exists")
-                case .branchAlreadyMounted:
-                    return .conflict(message: err.userMessage ?? "branch already mounted")
-                case .invalidInput(let msg): return .invalid(msg)
-                case .discoveryFailed(let msg): return .internalFailure(msg)
-                }
-            }
+            let branch: BranchSelection = req.existing
+                ? .useExisting(name: req.branchName, source: .local)
+                : .createNew(name: req.branchName)
+            return await .init(worktreeManagement.create(
+                repoPath: req.repoPath, worktreeName: req.worktreeName, branch: branch, entryPoint: .web
+            ))
         }
 
         // WEB-7.8: drive `POST /worktrees/delete` into the shared
-        // `DeleteWorktreeFlow`. Mirrors the create wiring above —
-        // closure runs on `MainActor` via `DeleteWorktreeFlow.delete`'s
-        // `@MainActor` isolation, so every `appState` mutation and
-        // surface teardown lands on the main actor, same as the native
-        // sidebar's "Delete Worktree" path.
+        // `DeleteWorktreeFlow` through `WorktreeManagement`.
         webController.setWorktreeRemover { req in
-            let result = await DeleteWorktreeFlow.delete(
-                worktreePath: req.worktreePath,
-                force: req.force,
-                appState: appStateBinding,
-                terminalManager: tm,
-                statsStore: statsStore,
-                prStatusStore: prStatusStore,
-                teamEventDispatcher: dispatcherForWeb
-            )
-            switch result {
-            case .success(let outcome):
-                return .success(WebServer.DeleteWorktreeResponse(dismissed: outcome.dismissed))
-            case .failure(.notFound):
-                return .notFound("unknown worktree path")
-            case .failure(.mainCheckoutRejected):
-                return .invalid("cannot delete the repo's main checkout")
-            case .failure(.gitFailedForceable(let stderr, let status)):
-                return .gitFailedForceable(stderr: stderr, shortStatus: status)
-            case .failure(.gitFailedFinal(let msg)):
-                return .gitFailedFinal(msg)
-            }
+            await .init(worktreeManagement.delete(worktreePath: req.worktreePath, force: req.force))
         }
 
         // Build the paired-device pool before starting the paired-access

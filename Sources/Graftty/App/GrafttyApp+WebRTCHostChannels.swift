@@ -271,10 +271,9 @@ extension GrafttyApp {
         portScanner panesPortScanner: PortScanner,
         localWorktreeOrigin: WorktreeOrigin
     ) -> WorktreeManagementChannelHandler.Mutator {
-        let worktreeMonitor = services.worktreeMonitor
         let statsStore = services.statsStore
-        let dispatcherForWeb = services.teamEventDispatcher
         let panesRemoteBranchStore = services.remoteBranchStore
+        let worktreeManagement = WorktreeManagement(appState: appStateBinding, terminalManager: terminalManager, services: services)
         let localRepositorySnapshot: @MainActor () -> [RemoteRepositoryInfo] = {
             appStateBinding.wrappedValue.repos.map { repo in
                 let snapshot = panesRemoteBranchStore.branchesByRepo[repo.path]
@@ -504,32 +503,9 @@ extension GrafttyApp {
                 } else {
                     branch = .createNew(name: branchName)
                 }
-                let result = await AddWorktreeFlow.add(
-                    repoPath: repositoryID,
-                    worktreeName: worktreeName,
-                    branch: branch,
-                    appState: appStateBinding,
-                    worktreeMonitor: worktreeMonitor,
-                    statsStore: statsStore,
-                    terminalManager: terminalManager,
-                    teamEventDispatcher: dispatcherForWeb,
-                    entryPoint: .pairedClient
-                )
-                switch result {
-                case .success(let outcome):
-                    return .created(
-                        worktreeID: outcome.worktreePath,
-                        paneID: outcome.sessionName
-                    )
-                case .failure(let error):
-                    return .error(
-                        code: "create-failed",
-                        message: error.userMessage
-                            ?? "could not create worktree",
-                        forceAllowed: false,
-                        shortStatus: nil
-                    )
-                }
+                return await WorktreeManagementResponse(creation: worktreeManagement.create(
+                    repoPath: repositoryID, worktreeName: worktreeName, branch: branch, entryPoint: .pairedClient
+                ))
 
             case .pullDefaultBranch(let repositoryID):
                 let status = await MainActor.run {
@@ -626,47 +602,7 @@ extension GrafttyApp {
                 }
 
             case let .delete(worktreeID, force):
-                let result = await DeleteWorktreeFlow.delete(
-                    worktreePath: worktreeID,
-                    force: force,
-                    appState: appStateBinding,
-                    terminalManager: terminalManager,
-                    statsStore: statsStore,
-                    prStatusStore: services.prStatusStore,
-                    teamEventDispatcher: dispatcherForWeb
-                )
-                switch result {
-                case .success(let outcome):
-                    return .deleted(dismissed: outcome.dismissed)
-                case .failure(.notFound):
-                    return .error(
-                        code: "not-found",
-                        message: "unknown worktree",
-                        forceAllowed: false,
-                        shortStatus: nil
-                    )
-                case .failure(.mainCheckoutRejected):
-                    return .error(
-                        code: "invalid",
-                        message: "cannot delete the main checkout",
-                        forceAllowed: false,
-                        shortStatus: nil
-                    )
-                case .failure(.gitFailedForceable(let stderr, let status)):
-                    return .error(
-                        code: "git-failed",
-                        message: stderr,
-                        forceAllowed: true,
-                        shortStatus: status
-                    )
-                case .failure(.gitFailedFinal(let message)):
-                    return .error(
-                        code: "git-failed",
-                        message: message,
-                        forceAllowed: false,
-                        shortStatus: nil
-                    )
-                }
+                return await WorktreeManagementResponse(removal: worktreeManagement.delete(worktreePath: worktreeID, force: force))
 
             case let .acknowledge(worktreeID, paneID):
                 return await MainActor.run {

@@ -22,11 +22,7 @@ final class SocketRequestRouter {
     let terminalManager: TerminalManager
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
-    let worktreeMonitor: WorktreeMonitor
-    let statsStore: WorktreeStatsStore
-    let prStatusStore: PRStatusStore
-    let worktreeCreations: CLIWorktreeCreationStore
-    let worktreeRemovals: CLIWorktreeRemovalStore
+    let worktreeManagement: WorktreeManagement
     let remoteBranchStore: RemoteBranchStore
     let agentRegistry: ClaudeSessionRegistry
     let remoteMacsModel: RemoteMacsModel
@@ -51,11 +47,12 @@ final class SocketRequestRouter {
         self.terminalManager = terminalManager
         self.teamInbox = teamInbox
         self.teamEventDispatcher = teamEventDispatcher
-        self.worktreeMonitor = worktreeMonitor
-        self.statsStore = statsStore
-        self.prStatusStore = prStatusStore
-        self.worktreeCreations = worktreeCreations
-        self.worktreeRemovals = worktreeRemovals
+        self.worktreeManagement = WorktreeManagement(
+            appState: appState, terminalManager: terminalManager, teamInbox: teamInbox,
+            teamEventDispatcher: teamEventDispatcher, worktreeMonitor: worktreeMonitor,
+            statsStore: statsStore, prStatusStore: prStatusStore,
+            worktreeCreations: worktreeCreations, worktreeRemovals: worktreeRemovals
+        )
         self.remoteBranchStore = remoteBranchStore
         self.agentRegistry = agentRegistry
         self.remoteMacsModel = remoteMacsModel
