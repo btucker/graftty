@@ -51,6 +51,11 @@ struct HostAgentEnvironmentTests {
             let timeout = try #require(await scheduler.nextAction())
             #expect(timeout.seconds == 0.1)
             timeout.run()
+            // Drive the already-scheduled escalation instead of assuming TERM
+            // alone interrupts the shell's builtin read on every platform.
+            let escalation = try #require(scheduler.pendingAction())
+            #expect(escalation.seconds == 2)
+            escalation.run()
             let result = try await subprocessResult(run)
             #expect(try result.get() == nil)
         } else {
