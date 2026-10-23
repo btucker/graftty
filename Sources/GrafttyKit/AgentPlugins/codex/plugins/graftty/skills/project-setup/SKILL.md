@@ -23,6 +23,8 @@ Lifecycle commands execute project code, sometimes on the host. Inspect the conf
 
 Do not copy or mount SSH private keys, AWS credential files, Git credential stores, agent authentication stores, or a user's entire home into the environment. Do not enable automatic credential forwarding. Document independent login requirements for private registries, packages, Git remotes, Claude, and Codex. Existing credentials may be used where independently configured; do not print their contents in verification output.
 
+Document required MCP server IDs and whether each tool must operate on the Linux checkout or on the parent Mac. Parent-proxied MCP access is planned but not yet implemented. When available, the parent grants scoped access and retains upstream authentication; project configuration must not contain tokens or private credential references. Check supported integrations rather than assuming every Claude, Codex, or app connector login is reusable. MCP access and the agent runtime's model-service login are separate prerequisites.
+
 ## Verify worktree behavior
 
 Check Git metadata access inside the container. A linked worktree's `.git` file points outside its checkout; merely mounting the checkout can leave `git status` broken. Inspect `git rev-parse --git-common-dir` and the existing worktree layout before choosing mounts.

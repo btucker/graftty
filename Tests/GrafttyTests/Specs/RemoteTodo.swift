@@ -153,13 +153,6 @@ struct RemoteTodo {
 """, .disabled("not yet implemented"))
     func remote_27_4() async throws { }
 
-    // MARK: - REMOTE-28.x — Remote development skills
-
-    @Test("""
-@spec REMOTE-28.2: When an agent uses the remote-host skill, the skill shall explain its recorded parent and direct or parent-mediated publication workflow without treating skill instructions as authentication or authorization enforcement.
-""", .disabled("not yet implemented"))
-    func remote_28_2() async throws { }
-
     // MARK: - REMOTE-29.x — AWS Spot evacuation
 
     @Test("""

@@ -489,20 +489,31 @@ struct AgentPluginInstallerTests {
 
     @Test("@spec REMOTE-28.1: When an agent uses the project-setup skill, the skill shall guide creation or repair of version-controlled Dev Container configuration, verification of project commands, and documentation of resource and authentication prerequisites without embedding credentials.")
     func projectSetupSkillSurvivesIndependentProviderCaching() throws {
+        try assertIndependentProviderCaching(skill: "project-setup")
+    }
+
+    @Test("@spec REMOTE-28.2: When an agent uses the remote-host skill, the skill shall explain its recorded parent and direct or parent-mediated publication workflow without treating skill instructions as authentication or authorization enforcement.")
+    func remoteHostSkillSurvivesIndependentProviderCaching() throws {
+        try assertIndependentProviderCaching(skill: "remote-host")
+    }
+
+    private func assertIndependentProviderCaching(skill: String) throws {
         let fm = FileManager.default
-        let temporary = fm.temporaryDirectory.appendingPathComponent("graftty-project-setup-\(UUID())")
+        let temporary = fm.temporaryDirectory.appendingPathComponent("graftty-\(skill)-\(UUID())")
         defer { try? fm.removeItem(at: temporary) }
         let prepared = temporary.appendingPathComponent("prepared")
         _ = try AgentPluginInstaller().prepare(destinationRoot: prepared)
-        var skills: [Data] = []
         for provider in ["codex", "claude"] {
             let cached = temporary.appendingPathComponent("cached-\(provider)")
             try fm.copyItem(at: prepared.appendingPathComponent("\(provider)/plugins/graftty"), to: cached)
-            let file = cached.appendingPathComponent("skills/project-setup/SKILL.md")
+        }
+        try fm.removeItem(at: prepared)
+        var skills: [Data] = []
+        for provider in ["codex", "claude"] {
+            let file = temporary.appendingPathComponent("cached-\(provider)/skills/\(skill)/SKILL.md")
             #expect(try fm.attributesOfItem(atPath: file.path)[.type] as? FileAttributeType == .typeRegular)
             skills.append(try Data(contentsOf: file))
         }
-        try fm.removeItem(at: prepared)
         #expect(skills.count == 2 && !skills[0].isEmpty && skills[0] == skills[1])
         for provider in ["codex", "claude"] {
             try SkillMarkdown.validateLinks(in: temporary.appendingPathComponent("cached-\(provider)"))
