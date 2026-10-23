@@ -3568,6 +3568,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-24.13** While remote pane mutations are queued or in flight, the viewer shall publish a change only when its selection, layout, or opening state changes, so queue bookkeeping alone does not re-evaluate the window.
 
+**REMOTE-24.14** If a dispatched remote pane mutation has no reply after thirty seconds, then the viewer shall report the timeout, abandon that worktree's queued mutations, release the queue for other Macs, and ignore the expired dispatch's late result.
+
 ## CHROME — Dedicated Chrome tabs
 
 ### CHROME-1.x — Host profiles and ownership

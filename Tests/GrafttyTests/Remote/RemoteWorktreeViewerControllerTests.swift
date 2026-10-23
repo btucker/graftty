@@ -48,6 +48,96 @@ struct RemoteWorktreeViewerControllerTests {
         #expect(viewer.errors.messages.isEmpty)
     }
 
+    @Test("@spec REMOTE-24.14: If a dispatched remote pane mutation has no reply after thirty seconds, then the viewer shall report the timeout, abandon that worktree's queued mutations, release the queue for other Macs, and ignore the expired dispatch's late result.", arguments: [HostManagedPaneCommand.split(.right), .close, .equalize, .resize(direction: .left, amount: 3)])
+    func hungMutationTimesOutAndIgnoresLateReply(command: HostManagedPaneCommand) async throws {
+        let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
+        let a = try viewer.terminal("a")
+        viewer.surfaces.send(command, from: a)
+        viewer.surfaces.send(.split(.down), from: a)
+        await viewer.settle()
+
+        let other = RemoteMac(
+            id: RemoteDeviceID(value: "other-mac"),
+            label: "Other Mac",
+            fingerprint: try RemoteIdentityFingerprint(rawBytes: Data(repeating: 0x33, count: 32)),
+            lastKnownBaseURL: nil,
+            addedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let otherIdentity = RemoteMacIdentity(other)
+        viewer.model.savedRemoteMacs.append(other)
+        viewer.model.worktreePanesByRemote[otherIdentity] = viewer.model.worktreePanesByRemote[viewer.identity]
+        viewer.controller.selectRemoteWorktree(other, worktreePath: ViewerHarness.path, acknowledging: false)
+        await viewer.settle()
+        let otherA = try viewer.terminal("a")
+        viewer.surfaces.send(.equalize, from: otherA)
+        await viewer.settle()
+        #expect(viewer.model.requests.count == 1)
+
+        viewer.clock.fire(.seconds(30))
+        await viewer.settle()
+        #expect(viewer.model.requests.count == 2)
+        #expect(viewer.model.requests.last == .equalize(target: "a"))
+        #expect(viewer.errors.messages.count == 1)
+        #expect(viewer.errors.messages.first?.contains("timed out") == true)
+
+        // A late result belongs to the expired dispatch, even after another
+        // Mac has acquired the viewer's queue slot.
+        let lateResponse: PaneControlResponse
+        if case .split = command {
+            lateResponse = .splitCreated(sessionName: "late")
+        } else {
+            lateResponse = .ok
+        }
+        try await viewer.answer(0, lateResponse)
+        #expect(viewer.model.requests.count == 2)
+        #expect(viewer.controller.selectedRemotePaneSessionName == "a")
+        viewer.surfaces.send(.close, from: otherA)
+        await viewer.settle()
+        #expect(viewer.model.requests.count == 2)
+        try await viewer.answer(1, .ok)
+        #expect(viewer.model.requests.last == .close(target: "a"))
+        viewer.controller.selectRemoteWorktree(viewer.mac, worktreePath: ViewerHarness.path, acknowledging: false)
+        await viewer.settle()
+        #expect(viewer.controller.splitTree.allLeaves.count == 1)
+        #expect(viewer.controller.selectedRemotePaneSessionName == "a")
+        #expect(viewer.errors.messages.count == 1)
+        #expect(viewer.model.operationTasks[0].isCancelled)
+    }
+
+    @Test func expiredDispatchCannotAbortFreshWorkOnTheSameMac() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
+        let a = try viewer.terminal("a")
+        viewer.surfaces.send(.split(.right), from: a)
+        await viewer.settle()
+        viewer.clock.fire(.seconds(30))
+        await viewer.settle()
+        viewer.surfaces.send(.split(.down), from: a)
+        viewer.surfaces.send(.equalize, from: a)
+        await viewer.settle()
+        #expect(viewer.model.requests.count == 2)
+        try await viewer.answer(0, .error(code: "downstream-unavailable", message: "late failure"))
+        #expect(viewer.errors.messages.count == 1)
+        try await viewer.answer(1, .splitCreated(sessionName: "b"))
+        #expect(viewer.model.requests.last == .equalize(target: "b"))
+    }
+
+    @Test func expiredEqualizeCannotClearRestoredZoom() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
+        let a = try viewer.terminal("a")
+        viewer.surfaces.send(.toggleZoom, from: a)
+        viewer.surfaces.send(.equalize, from: a)
+        await viewer.settle()
+        viewer.clock.fire(.seconds(30))
+        await viewer.settle()
+        #expect(viewer.controller.splitTree.zoomed == a)
+        viewer.surfaces.send(.resize(direction: .left, amount: 3), from: a)
+        await viewer.settle()
+        try await viewer.answer(0, .ok)
+        #expect(viewer.controller.splitTree.zoomed == a)
+        #expect(viewer.model.requests.count == 2)
+        #expect(viewer.errors.messages.count == 1)
+    }
+
     @Test("@spec REMOTE-24.2: When a queued remote split completes with its created session, the viewer shall retarget later queued commands that followed the split source in the same focus generation onto the created pane.")
     func completedSplitRetargetsQueuedCommands() async throws {
         let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
@@ -157,7 +247,7 @@ struct RemoteWorktreeViewerControllerTests {
         try await snapshot.answer(0, .ok)
         await snapshot.settle()
         #expect(snapshot.model.requests.count == 1)
-        #expect(snapshot.clock.requested == [.seconds(10)])
+        #expect(snapshot.clock.requested == [.seconds(30), .seconds(10)])
         snapshot.publish(.split(.leaf("a"), .leaf("b")))
         await snapshot.settle()
         #expect(snapshot.model.requests.last == .split(target: "b", direction: .down))
@@ -568,6 +658,7 @@ private final class FakeViewerModel: RemoteWorktreeViewerModel {
     var worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]] = [:]
     var openWorktreeResponse: WorktreeManagementResponse = .ok
     private(set) var paneControls: [FakePaneControl] = []
+    private(set) var operationTasks: [Task<PaneControlResponse, Never>] = []
     private(set) var openedWorktrees: [String] = []
 
     var requests: [PaneControlRequest] { paneControls.map(\.request) }
@@ -579,7 +670,9 @@ private final class FakeViewerModel: RemoteWorktreeViewerModel {
     func queuePaneControl(on remoteMac: RemoteMac, request: PaneControlRequest) -> Task<PaneControlResponse, Never> {
         let operation = FakePaneControl(request: request)
         paneControls.append(operation)
-        return Task { await operation.response() }
+        let task = Task { await operation.response() }
+        operationTasks.append(task)
+        return task
     }
 
     func connectViewer(to remoteMac: RemoteMac) async throws {}
