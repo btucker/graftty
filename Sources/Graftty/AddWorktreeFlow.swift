@@ -262,7 +262,6 @@ enum AddWorktreeFlow {
         for (path, branch) in pathsToWire {
             worktreeMonitor.watchWorktreePath(path)
             worktreeMonitor.watchHeadRef(worktreePath: path, repoPath: repoPath)
-            worktreeMonitor.watchWorktreeContents(worktreePath: path)
             statsStore.refresh(worktreePath: path, repoPath: repoPath, branch: branch)
         }
 

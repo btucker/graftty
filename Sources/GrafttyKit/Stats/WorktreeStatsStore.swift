@@ -88,9 +88,8 @@ public final class WorktreeStatsStore {
     /// The compute function invoked off-main to resolve the default
     /// branch and divergence stats. Injected so tests can supply a
     /// controllable stub (yielding at a chosen point, returning canned
-    /// output) without having to mutate the global `GitRunner.executor`
-    /// — which races with concurrent test suites. In production this
-    /// defaults to `Self.defaultCompute` which uses the real GitRunner.
+    /// output) per instance. In production this defaults to
+    /// `Self.defaultCompute` which uses the real GitRunner.
     @ObservationIgnored
     private let compute: ComputeFunction
 
@@ -141,8 +140,7 @@ public final class WorktreeStatsStore {
     /// Runs `git fetch` for the repo. Throwing means the fetch failed —
     /// caller increments the repo's fetch failure streak and applies
     /// exponential backoff. Injected so tests can drive the failure path
-    /// deterministically without mutating the global `GitRunner.executor`
-    /// (which poisoned concurrent test suites in cycle 122).
+    /// deterministically per instance.
     @ObservationIgnored
     private let fetch: FetchFunction
 
@@ -420,8 +418,8 @@ public final class WorktreeStatsStore {
     }
 
     /// Builds the production compute pipeline around one absolute deadline.
-    /// The executor seam keeps timeout-propagation tests independent of
-    /// `GitRunner`'s legacy process-global test override.
+    /// `executor` lets timeout-propagation tests substitute the git
+    /// subprocess runner.
     nonisolated static func makeDefaultCompute(
         executor: CLIExecutor? = nil,
         timeout: Duration = localCommandTimeout(),

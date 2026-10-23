@@ -4,12 +4,12 @@ import Foundation
 
 /// Unit tests for `GitWorktreeRepair`. Unlike the sibling
 /// `GitWorktreeRemoveTests` (which shells out to real `git`), these tests
-/// stub `GitRunner`'s executor via the shared `FakeCLIExecutor` so we can
+/// pass the shared `FakeCLIExecutor` through `using:` so we can
 /// assert the exact args and cwd the wrapper produces without depending
 /// on a real repo layout. The wrapper is thin — the contract worth
 /// pinning is "the right command is assembled and non-zero becomes
 /// `gitFailed`".
-@Suite("GitWorktreeRepair Tests", .serialized)
+@Suite("GitWorktreeRepair Tests")
 struct GitWorktreeRepairTests {
 
     @Test func repairInvokesGitWithExpectedArgs() async throws {
@@ -23,15 +23,14 @@ struct GitWorktreeRepairTests {
             ],
             output: CLIOutput(stdout: "", stderr: "", exitCode: 0)
         )
-        GitRunner.configure(executor: fake)
-        defer { GitRunner.resetForTests() }
 
         try await GitWorktreeRepair.repair(
             repoPath: "/tmp/repo",
             worktreePaths: [
                 "/tmp/repo/.worktrees/a",
                 "/tmp/repo/.worktrees/b",
-            ]
+            ],
+            using: fake
         )
 
         #expect(fake.invocations.count == 1)
@@ -51,10 +50,8 @@ struct GitWorktreeRepairTests {
             args: ["worktree", "repair"],
             output: CLIOutput(stdout: "", stderr: "", exitCode: 0)
         )
-        GitRunner.configure(executor: fake)
-        defer { GitRunner.resetForTests() }
 
-        try await GitWorktreeRepair.repair(repoPath: "/tmp/repo", worktreePaths: [])
+        try await GitWorktreeRepair.repair(repoPath: "/tmp/repo", worktreePaths: [], using: fake)
 
         #expect(fake.invocations.count == 1)
         #expect(fake.invocations[0].directory == "/tmp/repo")
@@ -72,11 +69,9 @@ struct GitWorktreeRepairTests {
                 exitCode: 1
             )
         )
-        GitRunner.configure(executor: fake)
-        defer { GitRunner.resetForTests() }
 
         do {
-            try await GitWorktreeRepair.repair(repoPath: "/tmp", worktreePaths: [])
+            try await GitWorktreeRepair.repair(repoPath: "/tmp", worktreePaths: [], using: fake)
             Issue.record("expected GitWorktreeRepair.Error.gitFailed to be thrown")
         } catch GitWorktreeRepair.Error.gitFailed(let exitCode, let stderr) {
             #expect(exitCode == 1)

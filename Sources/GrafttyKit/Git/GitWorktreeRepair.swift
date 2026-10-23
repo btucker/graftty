@@ -25,10 +25,14 @@ public enum GitWorktreeRepair {
     ///     useful when a relocate cascade already knows exactly which
     ///     worktrees moved and wants to avoid a full walk. Defaults to
     ///     empty, which mirrors `git worktree repair` with no args.
-    public static func repair(repoPath: String, worktreePaths: [String] = []) async throws {
+    public static func repair(
+        repoPath: String,
+        worktreePaths: [String] = [],
+        using executor: CLIExecutor? = nil
+    ) async throws {
         var args = ["worktree", "repair"]
         args.append(contentsOf: worktreePaths)
-        let result = try await GitRunner.captureAll(args: args, at: repoPath)
+        let result = try await GitRunner.captureAll(args: args, at: repoPath, using: executor)
         guard result.exitCode == 0 else {
             throw Error.gitFailed(
                 exitCode: result.exitCode,

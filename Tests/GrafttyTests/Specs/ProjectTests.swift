@@ -132,7 +132,7 @@ struct NonGitPollingGateTests {
         let counter = ListCallCounter()
         let store = RemoteBranchStore { repoPath in
             await counter.bump(repoPath: repoPath)
-            return RemoteBranchSnapshot(branches: [])
+            return RemoteBranchSnapshot()
         }
         let ticker = ManualPollingTicker()
         let repos: [RepoEntry] = [

@@ -44,15 +44,6 @@ public struct RemoteBranchSnapshot: Sendable, Equatable {
     /// Back-compat: callers that previously read `branches: Set<String>`
     /// (e.g. `hasRemote`) now read the derived set.
     public var branches: Set<String> { Set(remoteBranches.map(\.name)) }
-
-    /// Back-compat initializer for existing callers that pass a `Set<String>`.
-    /// `lastCommitDate` is set to `Date.distantPast` for all refs.
-    public init(branches: Set<String>, upstreams: [String: String] = [:]) {
-        self.remoteBranches = branches.map { BranchRef(name: $0, lastCommitDate: .distantPast) }
-        self.localBranches = []
-        self.upstreams = upstreams
-        self.defaultBranch = nil
-    }
 }
 
 @MainActor

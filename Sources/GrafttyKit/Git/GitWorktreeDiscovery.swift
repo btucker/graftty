@@ -58,12 +58,16 @@ public enum GitWorktreeDiscovery {
         return results
     }
 
-    public static func discover(repoPath: String) async throws -> [DiscoveredWorktree] {
+    public static func discover(
+        repoPath: String,
+        using executor: CLIExecutor? = nil
+    ) async throws -> [DiscoveredWorktree] {
         do {
             let output = try await GitRunner.run(
                 args: ["worktree", "list", "--porcelain"],
                 at: repoPath,
-                timeout: discoveryTimeout
+                timeout: discoveryTimeout,
+                using: executor
             )
             // Do not expose deleted-directory metadata as a live worktree to
             // relocators, branch refreshes, or reconciliation callers.

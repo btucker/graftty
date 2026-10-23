@@ -105,15 +105,14 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                 monitor.stopWatchingWorktree(wt.path)
             }
 
-            // watchWorktreePath / watchHeadRef / watchWorktreeContents are
-            // idempotent, so registering for the whole repo is cheap; this
-            // is how newly-discovered worktrees (external `git worktree
-            // add`) start getting HEAD + working-tree tracking without an
-            // app restart. Includes resurrected entries.
+            // watchWorktreePath / watchHeadRef are idempotent, so
+            // registering for the whole repo is cheap; this is how
+            // newly-discovered worktrees (external `git worktree add`)
+            // start getting path + HEAD tracking without an app restart.
+            // Includes resurrected entries.
             for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state.hasOnDiskWorktree {
                 monitor.watchWorktreePath(wt.path)
                 monitor.watchHeadRef(worktreePath: wt.path, repoPath: repoPath)
-                monitor.watchWorktreeContents(worktreePath: wt.path)
             }
 
             // Existing worktrees' stats are driven by their own HEAD and
