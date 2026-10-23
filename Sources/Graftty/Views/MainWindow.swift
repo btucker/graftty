@@ -1203,11 +1203,7 @@ struct MainWindow: View {
     }
 
     private func presentRemoteWorktreeError(_ message: String) {
-        let alert = NSAlert()
-        alert.messageText = "Remote worktree operation failed"
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.runModal()
+        RemoteWorktreeViewerController.presentAlert(message)
     }
 
     private func selectRemotePane(_ remoteMac: RemoteMac, worktreePath: String, sessionName: String) {
@@ -2839,57 +2835,12 @@ struct MainWindow: View {
         }
     }
 
-    /// Promote the terminal's backing `NSView` to the window's first
-    /// responder so keyDown events route to libghostty. Dispatched async
-    /// because the view may have just been created by `createSurfaces` and
-    /// SwiftUI hasn't attached it to the window hierarchy yet — you can't
-    /// `makeFirstResponder` a view that isn't in a window.
     private func makePaneFirstResponder(
         _ terminalID: PaneSlotID,
         when shouldFocus: (() -> Bool)? = nil,
         onFocused: (() -> Void)? = nil
     ) {
-        attemptMakePaneFirstResponder(
-            terminalID,
-            when: shouldFocus,
-            onFocused: onFocused,
-            attemptsRemaining: 20
-        )
-    }
-
-    /// SwiftUI can take more than one run-loop turn to mount a newly selected
-    /// worktree's terminal. Retry for a bounded interval, and only force the
-    /// deferred zmx attach after AppKit has supplied a real grid. The normal
-    /// layout notifier usually wins; `startForBackgroundLaunch` is one-shot
-    /// and acts as a fallback for the UI-add path that previously left a
-    /// mounted pane with no live session.
-    private func attemptMakePaneFirstResponder(
-        _ terminalID: PaneSlotID,
-        when shouldFocus: (() -> Bool)?,
-        onFocused: (() -> Void)?,
-        attemptsRemaining: Int
-    ) {
-        let tm = terminalManager
-        DispatchQueue.main.asyncAfter(deadline: attemptsRemaining == 20 ? .now() : .now() + 0.05) {
-            guard !NSApp.isHidden, shouldFocus?() ?? true else { return }
-            guard let view = tm.view(for: terminalID),
-                  let window = view.window,
-                  view.bounds.width > 0,
-                  view.bounds.height > 0 else {
-                guard attemptsRemaining > 1 else { return }
-                attemptMakePaneFirstResponder(
-                    terminalID,
-                    when: shouldFocus,
-                    onFocused: onFocused,
-                    attemptsRemaining: attemptsRemaining - 1
-                )
-                return
-            }
-            _ = tm.handle(for: terminalID)?.startForBackgroundLaunch()
-            tm.setVisible(true, for: terminalID)
-            guard window.makeFirstResponder(view) else { return }
-            onFocused?()
-        }
+        terminalManager.promoteToFirstResponder(terminalID, when: shouldFocus, onFocused: onFocused)
     }
 
     private func focusRemotePane(

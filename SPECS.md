@@ -3480,6 +3480,34 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-23.11** When Linux panes allocate PTYs concurrently, the application shall resolve each master's own slave path without sharing mutable lookup storage.
 
+### REMOTE-24.x — Mac remote worktree viewer
+
+**REMOTE-24.1** While a split request for a remote worktree is in flight, the viewer shall hold every later split, close, equalize, and resize for that worktree in one ordered queue and send the next request only after the host answers the previous one.
+
+**REMOTE-24.2** When a queued remote split completes with its created session, the viewer shall retarget later queued commands that followed the split source in the same focus generation onto the created pane.
+
+**REMOTE-24.3** If the user explicitly focuses, zooms, or selects a pane while a remote split is in flight, then the viewer shall neither move focus to the pane that split creates nor retarget commands queued after that intent.
+
+**REMOTE-24.4** If a remote split fails with a cancelled or downstream-unavailable code, then the viewer shall drop every queued mutation for that worktree, alerting only for downstream-unavailable; for any other error the viewer shall continue with the next queued mutation and show the error unless its code is no-matching-split.
+
+**REMOTE-24.5** When a host answers a remote split with a bare ok, the viewer shall keep that split in flight until a snapshot shows a new pane and shall then send the next queued mutation; if ten seconds elapse first, the viewer shall drop every queued mutation for that worktree.
+
+**REMOTE-24.6** When a remote close succeeds, the viewer shall remove the closed pane from its layout and focus the projected replacement before the next snapshot arrives, and shall ignore commands from the final closed pane until a snapshot catches up.
+
+**REMOTE-24.7** When a remote equalize fails, the viewer shall restore the snapshot layout and the zoom it cleared; when it succeeds, the viewer shall keep the zoom cleared unless the user zoomed again after sending it.
+
+**REMOTE-24.8** When a remote surface closes unexpectedly, the viewer shall recreate a surface for the same session; if opening the session or creating its surface fails, the viewer shall retry after 750 ms while its worktree is still selected and the host still lists that pane.
+
+**REMOTE-24.9** When the window disappears, the viewer shall destroy every remote surface and empty its layout while keeping the selection, so that the next snapshot recreates the surfaces; the panes' registered command handlers shall not keep the viewer alive.
+
+**REMOTE-24.10** When the viewer sends a remote resize, it shall carry the key window's content extent along the resize axis.
+
+**REMOTE-24.11** When the user selects a closed remote worktree, the viewer shall ask the host to open it and show it as opening until a snapshot shows it no longer closed; if the open fails, the viewer shall show the error and stop showing it as opening.
+
+**REMOTE-24.12** When a snapshot shows the pane a remote split created before the split response arrives, and no explicit intent intervened, the viewer shall focus the created pane once the response arrives.
+
+**REMOTE-24.13** While remote pane mutations are queued or in flight, the viewer shall publish a change only when its selection, layout, or opening state changes, so queue bookkeeping alone does not re-evaluate the window.
+
 ## CHROME — Dedicated Chrome tabs
 
 ### CHROME-1.x — Host profiles and ownership
