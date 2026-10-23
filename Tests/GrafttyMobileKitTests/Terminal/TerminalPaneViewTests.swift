@@ -409,6 +409,8 @@ struct TerminalPaneViewTests {
             input: press.arrow.characters, modifierFlags: [], perform: { delivered += 1 })]
         container.terminalView.pressesBegan([press], with: nil)
         #expect(delivered == 1)
+        // A loaded simulator stalls the main thread past the initial delay.
+        Thread.sleep(forTimeInterval: 0.45)
         try await Task.sleep(for: .milliseconds(100))
         #expect(delivered == 1)
         try await Task.sleep(for: .milliseconds(550))
