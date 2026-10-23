@@ -36,6 +36,37 @@ private final class ArrowTestPress: UIPress {
     override var key: UIKey? { arrow }
 }
 
+/// Stands in for the held-arrow repeat timer: nothing repeats until the test
+/// calls `fire()`, so IOS-6.28 needs no wall-clock sleeps (#620).
+@MainActor
+private final class ManualArrowRepeat {
+    private(set) var initialDelay: TimeInterval = 0
+    private(set) var interval: TimeInterval = 0
+    private var tick: (@MainActor () -> Bool)?
+    private var generation = 0
+
+    var isRepeating: Bool { tick != nil }
+
+    func start(initialDelay: TimeInterval, interval: TimeInterval,
+               tick: @escaping @MainActor () -> Bool) -> () -> Void {
+        self.initialDelay = initialDelay
+        self.interval = interval
+        generation += 1
+        let started = generation
+        self.tick = tick
+        return { [weak self] in
+            guard let self, self.generation == started else { return }
+            self.tick = nil
+        }
+    }
+
+    /// Runs one repeat, as the timer would after the initial delay.
+    func fire() {
+        guard let tick else { return }
+        if !tick() { self.tick = nil }
+    }
+}
+
 @MainActor
 private final class NativeInputDelegateSpy: NSObject, UITextInputDelegate {
     var events: [String] = []
@@ -398,8 +429,10 @@ struct TerminalPaneViewTests {
     }
 
     @Test("@spec IOS-6.28: While a hardware arrow key is held in a mobile terminal, the application shall use its own repeat scheduler with libghostty's automatic repeat disabled, repeat that key after an initial delay, and stop repeating on release, cancellation, keyboard ineligibility, focus loss, or dismissal of the agent picker that received the held arrow.", arguments: [UIKeyboardHIDUsage.keyboardLeftArrow, .keyboardRightArrow, .keyboardUpArrow, .keyboardDownArrow])
-    func heldArrowRepeatsAndStops(usage: UIKeyboardHIDUsage) async throws {
+    func heldArrowRepeatsAndStops(usage: UIKeyboardHIDUsage) {
         let container = TerminalInputContainerView(frame: .zero)
+        let repeats = ManualArrowRepeat()
+        container.terminalView.startArrowRepeat = repeats.start
         #expect(!container.terminalView.automaticallyRepeatsHardwareKeys)
         container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
         var delivered = 0
@@ -409,30 +442,42 @@ struct TerminalPaneViewTests {
             input: press.arrow.characters, modifierFlags: [], perform: { delivered += 1 })]
         container.terminalView.pressesBegan([press], with: nil)
         #expect(delivered == 1)
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(delivered == 1)
-        try await Task.sleep(for: .milliseconds(550))
-        #expect(delivered > 1)
+        #expect(repeats.isRepeating)
+        // The scheduler's delays are positional; pin both values so a swap or a
+        // shortened initial delay fails here.
+        #expect(repeats.initialDelay == 0.4)
+        #expect(repeats.interval == 0.05)
+        repeats.fire()
+        repeats.fire()
+        #expect(delivered == 3)
         container.terminalView.pressesEnded([press], with: nil)
+        #expect(!repeats.isRepeating)
         let releasedCount = delivered
-        try await Task.sleep(for: .milliseconds(150))
+        repeats.fire()
         #expect(delivered == releasedCount)
+        // Each stop below is meaningful only if the re-press restarted the repeat.
         container.terminalView.pressesBegan([press], with: nil)
+        #expect(repeats.isRepeating)
         container.terminalView.pressesCancelled([press], with: nil)
+        #expect(!repeats.isRepeating)
         let cancelledCount = delivered
-        try await Task.sleep(for: .milliseconds(650))
+        repeats.fire()
         #expect(delivered == cancelledCount)
         container.terminalView.pressesBegan([press], with: nil)
+        #expect(repeats.isRepeating)
         container.committedSoftwareInput = nil
         let disabledCount = delivered
-        try await Task.sleep(for: .milliseconds(650))
+        repeats.fire()
         #expect(delivered == disabledCount)
+        #expect(!repeats.isRepeating)
         container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
         container.terminalView.pressesBegan([press], with: nil)
+        #expect(repeats.isRepeating)
         _ = container.terminalView.resignFirstResponder()
         let unfocusedCount = delivered
-        try await Task.sleep(for: .milliseconds(650))
+        repeats.fire()
         #expect(delivered == unfocusedCount)
+        #expect(!repeats.isRepeating)
     }
 
     @Test("first-line clearance preserves the full scroll viewport and excludes chrome from terminal input")
