@@ -89,6 +89,8 @@ The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.8`, an
 
 Both agent plugins now bundle the `remote-host` skill alongside `project-setup`. It explains the recorded parent, independently authenticated origin publication, parent fallback, separate Git/session receipts, and parent-proxied MCP execution location. It explicitly identifies runtime features still pending rather than inventing working commands. Packaging tests verify both skills remain readable after each provider caches its plugin independently and the preparation directory is removed.
 
+User and project skill snapshots can now be exported and staged with `graftty remote skills export` and `stage`. The snapshot preserves native scope, supporting files, executable bits, and a deterministic content revision. Staging verifies the requested revision and creates a complete tree isolated by parent, project, runtime, and revision. Existing revisions remain available to running agents. These commands do not yet transfer snapshots automatically, mount them into containers, install third-party plugins, or activate agent configuration. See [skill provisioning](../plans/2026-10-23-remote-skill-provisioning.md) for commands, limits, and validation evidence.
+
 The byte relay now uses SwiftNIO inbound backpressure and waits for each destination write to flush before forwarding EOF. It preserves the reverse stream for Git's final response and closes both endpoints on cancellation, deadline, failed authorization, or oversized input. A native Git push through Unix-socket and process-pipe endpoints verifies transferred refs, blob contents, and repository integrity on macOS and ARM64 Linux. Linux validation uses the normal debug test configuration and Python for the Git connector fixture. This validates the stream component; authenticated SSH data-channel integration, durable parent receipts, and periodic replication remain pending.
 
 Connection preparation now uses a provider registry. The AWS adapter owns enrollment lookup, account verification, SSM arguments, and current-trust checks. Shared callers use an opaque provider binding and a pinned SSH identity. Tests exercise a second provider and reject changed bindings, transport substitutions, and revoked trust. This connection contract does not yet cover automatic provisioning or recovery.
@@ -284,7 +286,7 @@ Graftty identity keys remain local to their devices. Public-key pairing is compa
 
 ## Remote agent skills and configuration
 
-Requirements: `REMOTE-28.3` through `REMOTE-28.6`. Implementation is pending.
+Requirements: `REMOTE-28.3` through `REMOTE-28.10`. Snapshot capture and staging are implemented; automatic provisioning and launch integration remain pending.
 
 Remote provisioning includes the parent's user-installed skills and enabled plugins for the selected runtime. Project setup also includes project-level and worktree-local skills, including local files that are not present in the Git checkout. Preserve each runtime's discovery scope and precedence. Prepare these files where the agent actually runs, including inside the Dev Container, rather than only installing them in the host user's home. Reuse the runtime's supported plugin installation mechanism and record the resolved versions and content revisions. Do not copy Mac binary caches to Linux.
 

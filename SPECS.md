@@ -3530,6 +3530,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-28.6** When refreshing remote agent configuration, the application shall stage a complete revision before activating it for a new launch, preserve running agents' configuration, and remove obsolete Graftty-managed entries without deleting unrelated remote configuration.
 
+**REMOTE-28.7** When capturing remote skills, the application shall retain user and project scope, supporting file bytes and executable flags in a deterministic runtime-specific snapshot without exporting the rest of the agent home.
+
+**REMOTE-28.8** When capturing or decoding a remote skill snapshot, the application shall reject escaping links, special files, credential-file paths, duplicate or traversing destinations, and excessive content before installing any files.
+
+**REMOTE-28.9** When staging a remote skill snapshot, the application shall validate all content before publishing a complete revision isolated by parent, project, and runtime, retaining earlier revisions for running agents.
+
+**REMOTE-28.10** When exporting or staging remote skills through the CLI, the application shall require explicit source and destination selections, verify the requested revision before staging, and report staged paths without activating an agent or copying authentication stores.
+
 ### REMOTE-29.x — AWS Spot evacuation
 
 **REMOTE-29.1** When configuring AWS compute, the application shall support Spot instances in the initial AWS provider implementation.
