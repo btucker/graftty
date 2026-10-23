@@ -88,6 +88,8 @@ public final class RemoteConnectionCoordinator {
     private let signaling: SignalingClient
     private let connectionFactory: (Curve25519.Signing.PrivateKey, RemoteIdentityFingerprint) -> RemoteHostConnection
     private let now: @Sendable () -> Date
+    /// Internal seam for controlling the final actor hop in connection tests.
+    var stateAfterRegistration: (RemoteHostConnection) async -> RemoteHostConnection.State = { await $0.state }
 
     /// Successfully negotiated, still-live connections, keyed by `Host.id`.
     private var liveConnections: [UUID: RemoteHostConnection] = [:]
@@ -733,7 +735,7 @@ public final class RemoteConnectionCoordinator {
         // own (ICE failed, DataChannel closed) in the gap between
         // the dialer applying the answer and this line, independent of any
         // `invalidate` call.
-        let state = await connection.state
+        let state = await stateAfterRegistration(connection)
         if state.isTerminal {
             evict(hostID: host.id, connectionIdentity: connectionIdentity)
             await connection.close()

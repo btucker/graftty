@@ -512,6 +512,40 @@ struct RemoteConnectionCoordinatorTests {
         }
     }
 
+    @Test("@spec REMOTE-2.27: If a mobile connection becomes terminal or loses registration during post-connect verification, then the client shall discard it without saving connection metadata.", .timeLimit(.minutes(1)), arguments: [false, true])
+    func rejectedPostConnectVerificationDoesNotRefreshPin(invalidate: Bool) async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: hostKey)
+        let store = PinnedHostStore(directory: dir)
+        let before = try #require(store.get(id: #require(host.remoteDeviceID)))
+        try await ConnectionBox.withFixture { box in
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(transport: Self.successTransport(box: box, host: host, hostKey: hostKey)),
+                connectionFactory: { key, fingerprint in
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
+                    box.set(connection)
+                    return connection
+                }
+            )
+            coordinator.stateAfterRegistration = { [weak coordinator] connection in
+                if invalidate {
+                    await coordinator?.invalidate(host: host)
+                    // Model a nonterminal snapshot taken before the invalidation
+                    // was processed by the main actor.
+                    return .connected
+                }
+                await connection.close()
+                return await connection.state
+            }
+
+            #expect(await coordinator.connection(for: host) == nil)
+            #expect(try store.get(id: before.id) == before)
+        }
+    }
+
     // MARK: - Register-then-verify (A2(i))
 
     /// Best-effort regression test, NOT a deterministic RED reproduction:
@@ -902,7 +936,12 @@ struct RemoteConnectionCoordinatorTests {
             // WHILE the negotiation is genuinely in flight, not after it
             // already completed.
             do {
-                try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
+                let clock = ContinuousClock()
+                let deadline = clock.now.advanced(by: .seconds(10))
+                while await gate.enteredCount < 1 {
+                    guard clock.now < deadline else { throw RemoteConnectionTestSupport.PollTimeout(timeout: .seconds(10), stage: "waiting for signaling gate") }
+                    await Task.yield()
+                }
             } catch {
                 // Release the cancellation-unaware child before async-let scope exit.
                 await gate.open()
