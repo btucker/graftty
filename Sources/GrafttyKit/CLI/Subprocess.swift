@@ -75,7 +75,6 @@ enum Subprocess {
         }
 
         let buffers = PipeBuffers()
-        var pipes: [Pipe] = []
         var files: (directory: URL, stdout: URL, stderr: URL)?
         defer { if let files { try? FileManager.default.removeItem(at: files.directory) } }
         switch launch.capture {
@@ -89,7 +88,6 @@ enum Subprocess {
             let stderr = Pipe()
             buffers.stdout.attach(stdout.fileHandleForReading)
             buffers.stderr.attach(stderr.fileHandleForReading)
-            pipes = [stdout, stderr]
             process.standardOutput = stdout
             process.standardError = stderr
         case .files:
@@ -113,21 +111,17 @@ enum Subprocess {
 
         let termination = SubprocessTermination(
             process: process, killGrace: Subprocess.seconds(of: launch.killGrace), scheduler: launch.scheduler)
-        let launchedPipes = pipes
-        let waitsForPipeEOF = launch.capture == .pipes
         let status: Int32 = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { process in
                     termination.finish()
-                    if waitsForPipeEOF {
-                        // The child is dead, so everything it wrote is
-                        // already in the pipes. Read it now instead of
-                        // waiting for EOF, which a background child that
-                        // inherited a pipe, or a readability callback queued
-                        // behind a busy dispatch pool, can hold back (CLI-1.4).
-                        buffers.stdout.finish()
-                        buffers.stderr.finish()
-                    }
+                    // The child is dead, so everything it wrote is already in
+                    // the pipes. Read it now instead of waiting for EOF, which
+                    // a background child that inherited a pipe, or a
+                    // readability callback queued behind a busy dispatch pool,
+                    // can hold back (CLI-1.4). A no-op for `.files` capture.
+                    buffers.stdout.finish()
+                    buffers.stderr.finish()
                     continuation.resume(returning: process.terminationStatus)
                 }
                 do {
@@ -137,7 +131,8 @@ enum Subprocess {
                     }
                 } catch {
                     termination.finish()
-                    for pipe in launchedPipes { pipe.fileHandleForReading.readabilityHandler = nil }
+                    buffers.stdout.finish()
+                    buffers.stderr.finish()
                     continuation.resume(throwing: error)
                 }
             }
@@ -162,7 +157,8 @@ enum Subprocess {
     }
 
     /// Crash-safe single-chunk drain of a pipe's read descriptor. Returns the
-    /// bytes one `read` returns, or `nil` at EOF or on a closed descriptor.
+    /// bytes one `read` returns, or `nil` at EOF, on a closed descriptor, or
+    /// when a non-blocking descriptor has nothing to read yet.
     ///
     /// One POSIX `read` returns what the pipe holds now. `FileHandle`'s
     /// `read(upToCount:)` keeps reading until it fills the count or reaches
@@ -188,18 +184,9 @@ enum Subprocess {
         let flags = fcntl(fd, F_GETFL)
         guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0 else { return Data() }
         var result = Data()
-        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
-        while true {
-            let count = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
-            if count > 0 {
-                result.append(contentsOf: buffer[0..<count])
-            } else if count < 0, errno == EINTR {
-                continue
-            } else {
-                // 0 is EOF; EAGAIN means the pipe is empty but still open.
-                return result
-            }
-        }
+        // Stops at EOF, or at EAGAIN when the pipe is empty but still open.
+        while let chunk = drainChunk(fd: fd) { result.append(chunk) }
+        return result
     }
 
     /// `Duration` → seconds as a `Double`, for `DispatchQueue.asyncAfter`
@@ -310,8 +297,6 @@ private final class PipeStream: @unchecked Sendable {
     }
 
     private func drainAvailable() {
-        // The handler is cleared outside the lock: a platform's setter may
-        // wait for an in-flight callback, which could be waiting for it.
         let atEOF = lock.withLock { () -> FileHandle? in
             guard !finished else { return nil }
             guard let chunk = Subprocess.drainChunk(fd: fd) else { return handle }
@@ -332,6 +317,8 @@ private final class PipeStream: @unchecked Sendable {
             self.handle = nil
             return handle
         }
+        // Cleared outside the lock: a setter that synchronizes with the
+        // source could otherwise wait on a callback blocked on this lock.
         drained?.readabilityHandler = nil
     }
 }

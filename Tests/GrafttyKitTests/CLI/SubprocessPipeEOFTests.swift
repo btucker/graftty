@@ -4,15 +4,41 @@ import Testing
 
 @Suite("Subprocess pipe capture")
 struct SubprocessPipeEOFTests {
-    @Test("@spec CLI-1.4: When a piped subprocess exits, the application shall return its captured output without waiting for a pipe's end-of-file, even when a background child still holds that pipe open.")
-    func exitDoesNotWaitForAHeldPipe() async throws {
-        // `sleep` inherits stdout and stderr, so neither pipe reaches EOF
-        // until it exits, long after `sh` has. Before CLI-1.4 the call waited
-        // out a five-second EOF timeout (and, on macOS, lost the output).
+    /// Before CLI-1.4 the termination handler blocked until both readability
+    /// callbacks reported EOF. On Linux those callbacks can queue behind it,
+    /// so commands randomly waited out the five-second EOF timeout (twenty of
+    /// these took 25 s in `swift:6.2.3-noble`).
+    @Test("@spec CLI-1.4: When a piped subprocess exits, the application shall return all of its output without waiting out an end-of-file timeout.")
+    func exitReturnsOutputWithoutAnEOFWait() async throws {
+        for _ in 0..<20 {
+            let started = ContinuousClock.now
+            let output = try await Subprocess.run(SubprocessLaunch(
+                executable: "/bin/sh",
+                arguments: ["-c", "head -c 200000 /dev/zero | tr '\\0' a; printf tail; printf oops >&2"],
+                timeoutLabel: "sh"
+            ))
+            let elapsed = ContinuousClock.now - started
+            #expect(output.stdout.count == 200_004)
+            #expect(output.stdout.suffix(4) == Data("tail".utf8))
+            #expect(output.stderr == Data("oops".utf8))
+            // A fast command; the EOF timeout alone took five seconds.
+            #expect(elapsed < .milliseconds(4500), "took \(elapsed)")
+        }
+    }
+
+    #if canImport(Darwin)
+    /// A background child that inherits the pipes keeps them open after the
+    /// command exits. The callback used to block in `read(upToCount:)` until
+    /// that child exited, so the command waited out the EOF timeout and came
+    /// back with no output. On Linux, swift-corelibs-foundation reports
+    /// termination only once every process holding the socket it creates at
+    /// launch has closed it, so the command still waits for such a child.
+    @Test("A background child holding the pipes neither delays nor loses the output")
+    func heldPipeDoesNotDelayOrLoseOutput() async throws {
         let started = ContinuousClock.now
         let output = try await Subprocess.run(SubprocessLaunch(
             executable: "/bin/sh",
-            arguments: ["-c", "echo out; echo err >&2; sleep 30 &"],
+            arguments: ["-c", "echo out; echo err >&2; sleep 8 &"],
             timeoutLabel: "sh"
         ))
         let elapsed = ContinuousClock.now - started
@@ -22,18 +48,5 @@ struct SubprocessPipeEOFTests {
         #expect(String(decoding: output.stderr, as: UTF8.self) == "err\n")
         #expect(elapsed < .milliseconds(4500), "returned after \(elapsed)")
     }
-
-    @Test("Output written just before exit is captured in full")
-    func lastWritesBeforeExitAreKept() async throws {
-        for _ in 0..<20 {
-            let output = try await Subprocess.run(SubprocessLaunch(
-                executable: "/bin/sh",
-                arguments: ["-c", "head -c 200000 /dev/zero | tr '\\0' a; printf tail; printf oops >&2"],
-                timeoutLabel: "sh"
-            ))
-            #expect(output.stdout.count == 200_004)
-            #expect(output.stdout.suffix(4) == Data("tail".utf8))
-            #expect(output.stderr == Data("oops".utf8))
-        }
-    }
+    #endif
 }

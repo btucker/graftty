@@ -171,12 +171,12 @@ struct CLIRunnerTests {
     }
 
     /// @spec CLI-1.1: When a subprocess pipe's read fd is closed out from
-    /// under the in-flight readability handler (process/pipe teardown after a
-    /// timeout SIGTERM, where the per-stream EOF wait lapsed under load), the
-    /// application shall treat the read as EOF rather than crash. The legacy
-    /// `NSFileHandle.availableData` raises an *uncatchable*
+    /// under the in-flight readability handler during process/pipe teardown,
+    /// the application shall treat the read as EOF rather than crash.
+    /// `FileHandle` reads raise an *uncatchable*
     /// `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd,
-    /// SIGABRT-ing the whole process; the crash-safe drain returns `nil`.
+    /// SIGABRT-ing the whole process; the drain's raw `read` reports EBADF,
+    /// which it returns as `nil`.
     @Test func drainChunkReturnsNilOnClosedFDInsteadOfCrashing() throws {
         // A descriptor torn down under the handler reads as EOF. -1 stands in
         // for it: a just-closed number could be reused by a parallel test.
