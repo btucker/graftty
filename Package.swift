@@ -127,25 +127,14 @@ let linuxKitExclusions = ["Updater", "Editor", "Model/PNGThumbnail.swift",
 let linuxPendingKitTests = [
     "CLI/CLIRunnerTests.swift", // #666: GNU env not-found message
     "Git/WorktreeMonitorTests.swift",
-    "Hosting/GitOriginHostTests.swift",
-    "Notification/SocketIOReadAllTests.swift",
-    "Notification/SocketIntegrationTests.swift",
-    "Notification/SocketServerBufferCapTests.swift",
-    "Remote/HostPairingServerTests.swift",
-    "Remote/MacToMac/LANRemoteAccessServerTests.swift",
-    "Remote/PagedZmxAttachEngineTests.swift",
-    "Remote/ZmxAttachEngineTests.swift",
+    "Remote/MacToMac/LANRemoteAccessServerTests.swift", // URLSession, with the Web slice
+    "Remote/PagedZmxAttachEngineTests.swift", // #672: TERM-12.40 flaky on Linux
+    "Remote/ZmxAttachEngineTests.swift", // runs the bundled macOS zmx
     "SidebarHostNavigationTests.swift",
-    "Stats/WorktreeStatsStoreLocalGitTimeoutTests.swift",
-    "Support/BlockedFIFOTestSupport.swift",
     "Teams/AgentPluginInstallerTests.swift", // #667: Codex TOML parse differs on Linux
-    "Teams/ClaudePeerMessagingTests.swift",
-    "Teams/ClaudePeerReplyBridgeTests.swift",
-    "Teams/ClaudePeerSessionRegistryTests.swift",
     "Teams/ShellStartupCommandTests.swift",
     "Web/AgentCompletionsEndpointTests.swift",
     "Web/GhosttyKeybindingsEndpointTests.swift",
-    "Web/TailscaleLocalAPISlowMintTests.swift",
     "Web/WebCertRenewerTests.swift",
     "Web/WebServerAuthTests.swift",
     "Web/WebServerDeleteEndpointTests.swift",
@@ -154,11 +143,11 @@ let linuxPendingKitTests = [
     "Web/WebServerWorktreeEndpointTests.swift",
     "Web/WebTLSContextProviderTests.swift",
     "Web/WebTestTLSHelpers.swift",
-    "WorktreeSleep/ShellSleepActivityTests.swift",
+    "WorktreeSleep/ShellSleepActivityTests.swift", // needs zsh
     "Zmx/ZmxLauncherTests.swift", // #653: Linux zmx path case
-    "Zmx/ZmxNativeHostManagedIntegrationTests.swift",
-    "Zmx/ZmxResizePropagationTests.swift",
-    "Zmx/ZmxSurvivalIntegrationTests.swift",
+    "Zmx/ZmxNativeHostManagedIntegrationTests.swift", // runs the bundled macOS zmx
+    "Zmx/ZmxResizePropagationTests.swift", // runs the bundled macOS zmx
+    "Zmx/ZmxSurvivalIntegrationTests.swift", // runs the bundled macOS zmx
 ]
 let appleTargets: Set<String> = ["AppcastUpdater", "appcast-updater", "AppcastUpdaterTests", "Graftty", "GrafttyCommandUI", "GrafttyCommandUITests", "GrafttyMobileKit",
                                "GrafttyMobileKitTests", "GrafttyTests", "OwnershipModelTests", "GrafttyRemoteClientTests",

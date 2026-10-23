@@ -1,6 +1,10 @@
 import Testing
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import GrafttyProtocol
 @testable import GrafttyKit
 
@@ -78,7 +82,7 @@ struct ZmxResizePropagationTests {
 
         func write(_ text: String) {
             text.utf8CString.withUnsafeBufferPointer { bytes in
-                _ = Darwin.write(masterFd, bytes.baseAddress, bytes.count - 1)
+                _ = GrafttyPOSIX.write(masterFd, bytes.baseAddress, bytes.count - 1)
             }
         }
 
@@ -88,7 +92,7 @@ struct ZmxResizePropagationTests {
             var buffer = [UInt8](repeating: 0, count: 4_096)
             while Date() < deadline {
                 let count = buffer.withUnsafeMutableBufferPointer {
-                    Darwin.read(masterFd, $0.baseAddress, $0.count)
+                    GrafttyPOSIX.read(masterFd, $0.baseAddress, $0.count)
                 }
                 if count > 0 {
                     output.append(contentsOf: buffer[0..<count])
@@ -106,10 +110,10 @@ struct ZmxResizePropagationTests {
         /// Aggressively tear down: SIGKILL the attach client directly,
         /// reap it, and leave session cleanup to the scoped launcher.
         func terminate() {
-            _ = Darwin.kill(pid, SIGKILL)
+            _ = kill(pid, SIGKILL)
             var status: Int32 = 0
-            while Darwin.waitpid(pid, &status, 0) == -1, errno == EINTR {}
-            Darwin.close(masterFd)
+            while waitpid(pid, &status, 0) == -1, errno == EINTR {}
+            GrafttyPOSIX.close(masterFd)
         }
     }
 
@@ -617,7 +621,7 @@ struct ZmxResizePropagationTests {
             Thread.sleep(forTimeInterval: 0.2)
             let newline: [UInt8] = [0x0A]
             _ = newline.withUnsafeBufferPointer { ptr in
-                Darwin.write(attach.masterFd, ptr.baseAddress, ptr.count)
+                GrafttyPOSIX.write(attach.masterFd, ptr.baseAddress, ptr.count)
             }
 
             let needle = Self.resizeNeedle(rows: Self.targetRows, cols: Self.targetCols)

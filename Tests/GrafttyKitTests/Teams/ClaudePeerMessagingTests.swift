@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import Testing
 @testable import GrafttyKit
 
@@ -98,7 +102,7 @@ struct ClaudePeerMessagingTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let socketPath = directory.appendingPathComponent("peer.sock").path
 
-        let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+        let listener = socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         #expect(listener >= 0)
         guard listener >= 0 else { return }
         defer { close(listener) }
@@ -114,7 +118,7 @@ struct ClaudePeerMessagingTests {
         }
         let bindResult = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-                Darwin.bind(
+                GrafttyPOSIX.bind(
                     listener,
                     socketAddress,
                     socklen_t(MemoryLayout<sockaddr_un>.size)
@@ -123,7 +127,7 @@ struct ClaudePeerMessagingTests {
         }
         #expect(bindResult == 0)
         guard bindResult == 0 else { return }
-        #expect(Darwin.listen(listener, 1) == 0)
+        #expect(GrafttyPOSIX.listen(listener, 1) == 0)
 
         let messageID = try #require(UUID(uuidString: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"))
         try ClaudePeerSocketClient.sendUserMessage(
@@ -133,7 +137,7 @@ struct ClaudePeerMessagingTests {
             messageID: messageID
         )
 
-        let client = Darwin.accept(listener, nil, nil)
+        let client = GrafttyPOSIX.accept(listener, nil, nil)
         #expect(client >= 0)
         guard client >= 0 else { return }
         defer { close(client) }
