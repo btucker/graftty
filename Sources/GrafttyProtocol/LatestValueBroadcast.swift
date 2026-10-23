@@ -13,6 +13,9 @@ import Foundation
 /// filtering is left to observers. See
 /// docs/superpowers/specs/2026-10-22-observable-worktree-store.md.
 public final class LatestValueBroadcast<Value: Sendable>: @unchecked Sendable {
+    /// Guards the fields below. Nothing is released while it is held: a
+    /// reference value's deinit may read `latest`, publish, or end an
+    /// observer, and each of those takes this lock.
     private let lock = NSLock()
     private var value: Value?
     private var isFinished = false
@@ -37,14 +40,20 @@ public final class LatestValueBroadcast<Value: Sendable>: @unchecked Sendable {
     /// Records `value` and delivers it to every observer. Ignored once the
     /// broadcast has finished.
     public func publish(_ value: Value) {
-        // Yield under the lock so concurrent publishers cannot leave an
-        // observer holding an older value than `latest`. Yielding never
-        // re-enters the lock; only termination does.
+        // Yield under the lock so neither a concurrent publish nor finish()
+        // can leave an observer holding an older value than `latest`. The
+        // replaced value and any unread one an observer's buffer drops are
+        // released after unlocking.
+        var released: [Value] = []
         lock.withLock {
             guard !isFinished else { return }
+            if let replaced = self.value { released.append(replaced) }
             self.value = value
-            for observer in observers.values { observer.yield(value) }
+            for observer in observers.values {
+                if case .dropped(let unread) = observer.yield(value) { released.append(unread) }
+            }
         }
+        withExtendedLifetime(released) {}
     }
 
     /// The latest value, if any, followed by every later one. The sequence
@@ -54,15 +63,19 @@ public final class LatestValueBroadcast<Value: Sendable>: @unchecked Sendable {
         let id = UUID()
         continuation.onTermination = { [weak self] _ in
             guard let self else { return }
-            _ = self.lock.withLock { self.observers.removeValue(forKey: id) }
+            let removed = self.lock.withLock { self.observers.removeValue(forKey: id) }
+            withExtendedLifetime(removed) {}
         }
+        // Register and replay under the lock so no publish or finish() lands
+        // in between. The new stream's buffer is empty, so the replay drops
+        // nothing.
         let registered = lock.withLock { () -> Bool in
             guard !isFinished else { return false }
             observers[id] = continuation
             if let value { continuation.yield(value) }
             return true
         }
-        // Finishing outside the lock: termination re-enters it.
+        // Finishing runs `onTermination`, which takes the lock.
         if !registered { continuation.finish() }
         return stream
     }
@@ -74,7 +87,8 @@ public final class LatestValueBroadcast<Value: Sendable>: @unchecked Sendable {
             defer { self.observers.removeAll() }
             return Array(self.observers.values)
         }
-        // Outside the lock: each finish runs `onTermination`, which takes it.
+        // Outside the lock: each finish runs `onTermination`, and releasing
+        // an abandoned observer's stream releases its buffered value.
         for observer in observers { observer.finish() }
     }
 }
