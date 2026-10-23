@@ -371,7 +371,8 @@ final class MobileTerminalInputView: UITerminalView {
     }
 
     private func repeatHardwareArrow() {
-        guard isKeyboardInputEnabled, textContext.markedRange == nil, let heldArrowPress else {
+        guard isKeyboardInputEnabled, textContext.markedRange == nil, let heldArrowPress,
+              !arrowRepeatBeganInCompletion || agentCompletion?.isActive == true else {
             stopHardwareArrowRepeat()
             return
         }
