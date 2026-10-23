@@ -100,12 +100,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// degenerate environments.
     private static let iceGatheringTimeout: Duration = .seconds(5)
 
-    /// Most-recently received binary frame. Test-only entry point —
-    /// production code routes through the channel-framing layer
-    /// added in a later PR. `internal` so the in-target test can read it
-    /// via `@testable import`.
-    internal private(set) var lastReceivedBinary: Data?
-
     private let clientKey: Curve25519.Signing.PrivateKey
     private let expectedHostFingerprint: RemoteIdentityFingerprint
     private var sshTransport: SSHNIOTransport?
@@ -308,19 +302,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         } catch {
             setState(.failed(reason: "apply answer failed: \(error)"))
             throw error
-        }
-    }
-
-    /// Send a binary frame over the open data channel. Throws if the
-    /// channel isn't open. Production code will route through a channel
-    /// multiplexer; this is the raw-bytes entry point for the loopback test.
-    public func sendBinary(_ data: Data) async throws {
-        guard let dc = dataChannel, dc.readyState == .open else {
-            throw ConnectionError.notOpen
-        }
-        let buffer = RTCDataBuffer(data: data, isBinary: true)
-        guard dc.sendData(buffer) else {
-            throw ConnectionError.sendFailed
         }
     }
 
@@ -797,8 +778,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         case notConfigured
         case notConnected
         case notOpen
-        case sendFailed
-        case closed
         case dataChannelOpenTimedOut
     }
 }

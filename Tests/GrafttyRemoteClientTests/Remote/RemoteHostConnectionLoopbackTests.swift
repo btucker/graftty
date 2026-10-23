@@ -8,90 +8,27 @@ import WebRTC
 
 /// Loopback test: construct a `RemoteHostConnection` (offerer, mobile-side)
 /// and a paired in-process answerer using the bundled WebRTC SDK, exchange
-/// SDP + ICE in-process (no signaling endpoint yet), verify a DataChannel
-/// opens, and verify a byte ping-pong round-trips.
+/// SDP + ICE in-process (no signaling endpoint yet), and verify transport
+/// arming, early-candidate buffering, and the connection's terminal-state
+/// observability.
 ///
 /// This is the M1.1 acceptance criterion: SDK integration works, peer
 /// connection negotiates, data channel opens. M1.2 replaces the in-process
 /// SDP swap with an HTTPS signaling endpoint; M1.3 adds Noise before any
 /// channel traffic; M1.4 framing.
-@Suite("WebRTC SDK integration — loopback DataChannel ping-pong (M1.1 foundation).")
+@Suite("WebRTC SDK integration — loopback negotiation and connection state (M1.1 foundation).")
 struct RemoteHostConnectionLoopbackTests {
-
-    @Test(.disabled("""
-        RemoteHostConnection now installs an SSH handshake after the \
-        DataChannel opens (R4). TestAnswerer does not speak SSH, so \
-        applyAnswer() would hang until the 30-second timeout fires and \
-        then throw. DataChannel connectivity is still verified by \
-        SSHAuthLoopbackTests (R3) which adds an SSH server on the \
-        answerer side.
-        """))
-    func twoConnectionsExchangeBytesOverDataChannel() async throws {
-        let clientKey = Curve25519.Signing.PrivateKey()
-        let hostKey = Curve25519.Signing.PrivateKey()
-        let hostFingerprint = RemoteIdentityFingerprint(
-            of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)
-        )
-        let client = RemoteHostConnection(
-            clientKey: clientKey,
-            expectedHostFingerprint: hostFingerprint
-        )
-        let answererPeer = TestAnswerer()
-
-        // 1. Client creates offer.
-        let offer = try await client.createOffer()
-
-        // 2. In a real flow this would be POSTed to /v1/rtc/offer.
-        //    Here we feed it straight into the answerer.
-        let answer = try await answererPeer.accept(offer: offer)
-
-        // 3. Forward ICE candidates each way. Both sides buffer candidates
-        //    emitted during the initial gathering pass (which happens
-        //    inside `createOffer` / `accept` before this point), then
-        //    drain in arrival order when their target is bound.
-        await client.bindIceCandidates(to: answererPeer)
-        await answererPeer.bindIceCandidates(to: client)
-
-        // 4. Apply the answer on the client; this waits for the data
-        //    channel to reach the `open` state on the offerer side.
-        try await client.applyAnswer(answer)
-
-        // 5. Send a binary ping from the client; the answerer should
-        //    receive it within a short window.
-        let ping = Data([0xCA, 0xFE, 0xBA, 0xBE])
-        try await client.sendBinary(ping)
-
-        try await pollUntil(timeout: .seconds(5)) {
-            await answererPeer.lastReceived == ping
-        }
-
-        // 6. Send a binary pong back; the client should receive it.
-        let pong = Data([0xDE, 0xAD, 0xBE, 0xEF])
-        try await answererPeer.send(pong)
-
-        try await pollUntil(timeout: .seconds(5)) {
-            await client.lastReceivedBinary == pong
-        }
-
-        await client.close()
-        await answererPeer.close()
-    }
 
     // MARK: - Task 1 (W3): terminal-state observability
     //
     // These reuse the M1.1 `TestAnswerer` (raw WebRTC, no SSH) rather
     // than a full SSH-speaking peer. That's sufficient here because
-    // `RemoteHostConnection.installSSHHandlerAndResume`'s success path
+    // `RemoteHostConnection.startSSHOverDataChannel`'s success path
     // (the one that sets `.connected`) only waits for the LOCAL
     // DataChannel to reach `.open` and the local SSH handler to be
     // installed — it does not wait for the remote peer to complete a
-    // real SSH handshake. `TestAnswerer` not speaking SSH is exactly
-    // why `twoConnectionsExchangeBytesOverDataChannel` above is
-    // disabled (its raw ping/pong assertions relied on
-    // `RemoteHostConnection`'s own `dataChannelDelegate.onMessage`,
-    // which `SSHNIOTransport` now steals by re-assigning
-    // `dataChannel.delegate`) — but that breakage is orthogonal to
-    // `.connected` firing, which these tests confirm still happens.
+    // real SSH handshake, so `TestAnswerer` not speaking SSH does not
+    // affect `.connected` firing, which these tests confirm.
 
     /// @spec-less regression test (Task 1 has no @spec ID — see the task
     /// brief): a normal offer/answer/ICE negotiation must fire the
@@ -318,17 +255,9 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     private let factory: RTCPeerConnectionFactory
     private var peerConnection: RTCPeerConnection?
     private var dataChannel: RTCDataChannel?
-    /// `nonisolated let` so the `onDataChannel` callback (which fires on
-    /// WebRTC's serial queue) can install `dc.delegate` and the
-    /// `onMessage` closure **synchronously**, before any message has a
-    /// chance to race in. The previous design queued a `Task { await
-    /// adopt }`; if the first message arrived during the actor-queue gap
-    /// between Task dispatch and Task execution, `dc.delegate` was nil
-    /// and WebRTC dropped the message. The delegate classes are
-    /// `@unchecked Sendable`.
+    /// Held `nonisolated` (the class is `@unchecked Sendable`) so `init`
+    /// can install its callbacks without actor isolation.
     private nonisolated let delegate = AnswererDelegate()
-    private nonisolated let dataChannelDelegate = AnswererDataChannelDelegate()
-    private(set) var lastReceived: Data?
     /// Mirror of `RemoteHostConnection.pendingLocalCandidates` — buffer
     /// candidates gathered during `accept` until the test binds a target,
     /// so the offerer doesn't starve waiting for our host candidates.
@@ -343,18 +272,8 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
         delegate.onIceCandidate = { [weak self] candidate in
             Task { await self?.routeLocalIceCandidate(candidate) }
         }
-        // Install dc routing synchronously so the first inbound message
-        // is never dropped to a nil delegate during an actor-queue gap.
-        // Stashing the dc reference (for `send`) can still go through
-        // the actor since `send` is only driven by the test after
-        // `applyAnswer` returns.
         delegate.onDataChannel = { [weak self] dc in
-            guard let self else { return }
-            dc.delegate = self.dataChannelDelegate
-            self.dataChannelDelegate.onMessage = { [weak self] data in
-                Task { await self?.record(data) }
-            }
-            Task { await self.captureDataChannel(dc) }
+            Task { await self?.captureDataChannel(dc) }
         }
     }
 
@@ -436,16 +355,6 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
         pending?.resume()
     }
 
-    func send(_ data: Data) async throws {
-        guard let dc = dataChannel, dc.readyState == .open else {
-            throw NSError(domain: "TestAnswerer", code: 3)
-        }
-        let buffer = RTCDataBuffer(data: data, isBinary: true)
-        guard dc.sendData(buffer) else {
-            throw NSError(domain: "TestAnswerer", code: 4)
-        }
-    }
-
     func bindIceCandidates(to client: RemoteHostConnection) {
         self.iceCandidateTarget = client
         let drained = pendingLocalCandidates
@@ -482,10 +391,6 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
         iceCandidateTarget = nil
         pendingLocalCandidates.removeAll()
     }
-
-    fileprivate func record(_ data: Data) {
-        self.lastReceived = data
-    }
 }
 
 private final class AnswererDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
@@ -508,14 +413,6 @@ private final class AnswererDelegate: NSObject, RTCPeerConnectionDelegate, @unch
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
         onDataChannel?(dataChannel)
-    }
-}
-
-private final class AnswererDataChannelDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
-    nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
-    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {}
-    func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
-        onMessage?(buffer.data)
     }
 }
 

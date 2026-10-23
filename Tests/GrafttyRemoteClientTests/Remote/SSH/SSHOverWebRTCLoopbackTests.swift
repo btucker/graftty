@@ -410,9 +410,8 @@ private final class LoopbackExecCollector: ChannelDuplexHandler {
 
 /// Test-only actor that wraps a single side (offerer or answerer) of
 /// the loopback WebRTC pairing. Mirrors `TestAnswerer` from the M1.1
-/// loopback test, but exposes the raw `RTCDataChannel` (rather than
-/// going through `RemoteHostConnection.sendBinary` / `lastReceivedBinary`)
-/// so we can hand the DataChannel to an `SSHNIOTransport`.
+/// loopback test, but exposes the raw `RTCDataChannel` so we can hand
+/// the DataChannel to an `SSHNIOTransport`.
 ///
 /// Kept inline rather than extracted as a shared helper per the R2
 /// plan recommendation — the duplication is small and the answerer
