@@ -18,6 +18,7 @@ public struct WorktreePickerView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
     @Environment(\.remoteConnectionCoordinator) private var coordinator
+    @Environment(\.remoteWorktreeUpdates) private var worktreeUpdates
 
     public init(
         host: Host,
@@ -45,7 +46,7 @@ public struct WorktreePickerView: View {
                 scene: scenePhase,
                 gateUnlocked: gate.isUnlocked
             ),
-            remote: RemoteWorktreeProviders(coordinator: coordinator, host: host),
+            remote: RemoteWorktreeProviders(coordinator: coordinator, host: host, worktreeUpdates: worktreeUpdates),
             onSelect: onSelect,
             onSelectPane: onSelectPane,
             navigation: navigation,

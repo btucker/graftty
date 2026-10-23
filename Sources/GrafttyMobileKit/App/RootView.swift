@@ -75,6 +75,9 @@ public struct RootView: View {
         }
         .environment(\.biometricGate, gate)
         .environment(\.remoteConnectionCoordinator, coordinator)
+        .environment(\.remoteWorktreeUpdates, RemoteWorktreeUpdatesProvider { [coordinator] host in
+            coordinator.isPaired(host) ? coordinator.worktreeUpdates(for: host) : nil
+        })
         .environment(\.worktreeContextActions, WorktreeContextActions { [hostID = iPadAppState.selectedHostId] path, source in
             openContextWorktree(path, source: source, hostID: hostID)
         })

@@ -27,6 +27,7 @@ public struct IPadRootLayout: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
     @Environment(\.remoteConnectionCoordinator) private var coordinator
+    @Environment(\.remoteWorktreeUpdates) private var worktreeUpdates
     @State private var paneEnvironment: PaneEnvironment = .empty
     @State private var explicitSelectionGeneration: UInt64 = 0
     @State private var pendingMobileSplits: [PendingMobileSplit] = []
@@ -119,7 +120,9 @@ public struct IPadRootLayout: View {
                                 scene: scenePhase,
                                 gateUnlocked: gate.isUnlocked
                             ),
-                            remote: RemoteWorktreeProviders(coordinator: coordinator, host: host),
+                            remote: RemoteWorktreeProviders(
+                                coordinator: coordinator, host: host, worktreeUpdates: worktreeUpdates
+                            ),
                             onSelect: { wt in selectWorktree(wt) },
                             onSelectPane: { worktree, leaf in
                                 selectWorktree(worktree)

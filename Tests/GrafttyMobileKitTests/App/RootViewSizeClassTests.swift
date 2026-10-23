@@ -109,12 +109,14 @@ struct RootViewSizeClassTests {
     @Test("Without an injected coordinator, a worktree list gets no remote providers")
     func absentCoordinatorBuildsNoRemoteProviders() {
         let host = Host(label: "test", baseURL: URL(string: "https://test.local")!)
-        let none = RemoteWorktreeProviders(coordinator: nil, host: host)
+        let none = RemoteWorktreeProviders(coordinator: nil, host: host, worktreeUpdates: nil)
         #expect(!none.includeRemoteWorktrees)
-        #expect(none.connection == nil && none.snapshot == nil && none.sidebar == nil)
+        #expect(none.connection == nil && none.snapshot == nil && none.sidebar == nil && none.updates == nil)
 
-        let wired = RemoteWorktreeProviders(coordinator: RemoteConnectionCoordinator(connectionsAllowedInitially: false), host: host)
-        #expect(wired.connection != nil && wired.snapshot != nil && wired.sidebar != nil)
+        // An unpaired host gets no push stream even when a feed is injected.
+        let wired = RemoteWorktreeProviders(coordinator: RemoteConnectionCoordinator(connectionsAllowedInitially: false),
+                                            host: host, worktreeUpdates: RemoteWorktreeUpdatesProvider { _ in nil })
+        #expect(wired.connection != nil && wired.snapshot != nil && wired.sidebar != nil && wired.updates == nil)
     }
 }
 

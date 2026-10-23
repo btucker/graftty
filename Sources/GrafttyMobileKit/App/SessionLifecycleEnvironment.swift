@@ -12,6 +12,22 @@ private struct RemoteConnectionCoordinatorKey: EnvironmentKey {
     static let defaultValue: RemoteConnectionCoordinator? = nil
 }
 
+/// A paired host's pushed worktree frames, or nil when the host is not
+/// paired. Every consumer subscribes through this one value. A struct rather
+/// than a bare closure so reading it from the environment needs no function
+/// conversion under strict concurrency.
+struct RemoteWorktreeUpdatesProvider: Sendable {
+    let updates: @MainActor @Sendable (Host) -> AsyncStream<RemoteWorktreeUpdate>?
+
+    @MainActor func callAsFunction(_ host: Host) -> AsyncStream<RemoteWorktreeUpdate>? {
+        updates(host)
+    }
+}
+
+private struct RemoteWorktreeUpdatesKey: EnvironmentKey {
+    static let defaultValue: RemoteWorktreeUpdatesProvider? = nil
+}
+
 private struct MobileNotificationPaneActivationKey: EnvironmentKey {
     static let defaultValue: MobileNotificationPaneActivation? = nil
 }
@@ -34,6 +50,13 @@ extension EnvironmentValues {
     var remoteConnectionCoordinator: RemoteConnectionCoordinator? {
         get { self[RemoteConnectionCoordinatorKey.self] }
         set { self[RemoteConnectionCoordinatorKey.self] = newValue }
+    }
+
+    /// RootView derives this from `remoteConnectionCoordinator`; previews and
+    /// tests may inject frames without a coordinator.
+    var remoteWorktreeUpdates: RemoteWorktreeUpdatesProvider? {
+        get { self[RemoteWorktreeUpdatesKey.self] }
+        set { self[RemoteWorktreeUpdatesKey.self] = newValue }
     }
 }
 
@@ -219,14 +242,14 @@ public struct RemoteWorktreeProviders {
     public var snapshot: RemoteWorktreeSnapshotProvider?
     public var sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)?
     /// Pushed frames for the host, so the list never polls (IOS-4.52).
-    public var updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)?
+    public var updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>?)?
 
     public init(
         includeRemoteWorktrees: Bool = false,
         connection: RemoteConnectionProvider? = nil,
         snapshot: RemoteWorktreeSnapshotProvider? = nil,
         sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil,
-        updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)? = nil
+        updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>?)? = nil
     ) {
         self.includeRemoteWorktrees = includeRemoteWorktrees
         self.connection = connection
@@ -236,16 +259,22 @@ public struct RemoteWorktreeProviders {
     }
 
     @MainActor
-    init(coordinator: RemoteConnectionCoordinator?, host: Host) {
-        guard let coordinator else { self.init(); return }
+    init(
+        coordinator: RemoteConnectionCoordinator?,
+        host: Host,
+        worktreeUpdates: RemoteWorktreeUpdatesProvider?
+    ) {
         // `isPaired` reads the pin file, and this runs on every render.
-        let paired = coordinator.isPaired(host)
+        // Without a coordinator (previews, tests) an injected feed stands
+        // in for pairing.
+        let paired = coordinator?.isPaired(host) ?? (worktreeUpdates != nil)
         // Not a ternary: Swift 6.4 fails to type-check `cond ? { … } : nil`
         // for a main-actor closure ("failed to produce diagnostic").
-        var updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)?
-        if paired {
-            updates = { coordinator.worktreeUpdates(for: host) }
+        var updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>?)?
+        if paired, let worktreeUpdates {
+            updates = { worktreeUpdates(host) }
         }
+        guard let coordinator else { self.init(updates: updates); return }
         self.init(
             includeRemoteWorktrees: paired,
             connection: makeRemoteConnectionProvider(

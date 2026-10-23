@@ -64,7 +64,7 @@ public struct WorktreeListContent: View {
     // when RootView chose the iPad layout. Follow the navigation container.
     private let isSidebar: Bool
     private var remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)?
-    private var remoteUpdatesProvider: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)?
+    private var remoteUpdatesProvider: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>?)?
     private var navigationWindowWidth: Double
 
     private struct PendingDelete: Identifiable, Equatable {
@@ -421,7 +421,7 @@ public struct WorktreeListContent: View {
     /// changes (order, availability and icons) arrive as frames too, with
     /// the worktree array unchanged.
     private func observeRemoteWorktrees() async {
-        guard isReadyToLoad, let updates = remoteUpdatesProvider?() else { return }
+        guard isReadyToLoad, let updates = remoteUpdatesProvider?() ?? nil else { return }
         // The sibling load task also sets this; a first frame must not find
         // it unset if this task happens to run first.
         presentedHostID = host.id
