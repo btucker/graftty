@@ -2,7 +2,7 @@ import SwiftUI
 import GrafttyKit
 
 /// @spec TEAM-7.1
-/// When the user invokes the Window → Team Activity Log command, the application shall open the focused tracked repository's Team Activity Log, including repositories with one worktree, and shall disable the command when no tracked worktree is focused or agent teams are disabled.
+/// When the user invokes the Window → Team Activity Log command, the application shall open the focused tracked repository's Team Activity Log, including repositories with one worktree, and shall disable the command when no tracked worktree is focused.
 ///
 /// Routing key for the Team Activity Log `WindowGroup`. Captures the
 /// team's stable inbox ID plus its display name so the window's title
@@ -26,15 +26,13 @@ struct TeamActivityLogWindowID: Hashable, Codable {
 extension TeamActivityLogWindowID {
     /// Resolves the activity-log routing key for the currently-focused
     /// worktree's team, including repositories with one worktree. Returns
-    /// nil when no tracked worktree is focused or agent teams are disabled.
+    /// nil when no tracked worktree is focused.
     /// Pure function so the gating logic is unit-testable
     /// without hosting the SwiftUI menu button.
     static func focusedTeamID(
         selectedWorktreePath: String?,
-        repos: [RepoEntry],
-        agentTeamsEnabled: Bool
+        repos: [RepoEntry]
     ) -> TeamActivityLogWindowID? {
-        guard agentTeamsEnabled else { return nil }
         guard let path = selectedWorktreePath else { return nil }
         guard let team = TeamLookup.team(for: path, in: repos) else { return nil }
         return TeamActivityLogWindowID(
@@ -51,7 +49,6 @@ extension TeamActivityLogWindowID {
 struct TeamActivityLogMenuButton: View {
     @Binding var appState: AppState
     @Environment(\.openWindow) private var openWindow
-    @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
 
     var body: some View {
         Button("Team Activity Log") {
@@ -64,8 +61,7 @@ struct TeamActivityLogMenuButton: View {
     private func focusedTeamID() -> TeamActivityLogWindowID? {
         TeamActivityLogWindowID.focusedTeamID(
             selectedWorktreePath: appState.selectedWorktreePath,
-            repos: appState.repos,
-            agentTeamsEnabled: agentTeamsEnabled
+            repos: appState.repos
         )
     }
 }

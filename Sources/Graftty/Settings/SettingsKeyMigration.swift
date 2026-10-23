@@ -10,9 +10,6 @@ enum SettingsKeyMigration {
     static let newKey = "teamEventRoutingPreferences"
 
     static func run(in defaults: UserDefaults = .standard) {
-        // Agent Teams is always available; discard a saved opt-out before
-        // registering the new true default at app startup.
-        defaults.removeObject(forKey: SettingsKeys.agentTeamsEnabled)
         migrateRoutingPreferences(in: defaults)
         migrateMainWorktreeTemplateVariable(in: defaults, key: SettingsKeys.teamPrompt)
     }

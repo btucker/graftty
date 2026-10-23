@@ -220,7 +220,6 @@ final class AppServices {
         // before that point the guard below is a no-op.
         self.prStatusStore.onTransition = { [weak self] routable, subjectWorktreePath, attrs in
             guard let self else { return }
-            guard AppServices.teamsEnabled else { return }
             let appState = self.appStateProvider?() ?? AppState()
             let event = ChannelServerMessage.event(
                 type: routable.wireType,
@@ -533,12 +532,6 @@ final class AppServices {
         let hostName = ProcessInfo.processInfo.hostName
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return hostName.isEmpty ? "Mac" : hostName
-    }
-
-    /// Whether the Agent Teams setting is on. Read live, so a change in
-    /// Settings applies to the next event without a restart.
-    nonisolated static var teamsEnabled: Bool {
-        UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
     }
 
     /// Every agent presence record on disk, or none if the directory

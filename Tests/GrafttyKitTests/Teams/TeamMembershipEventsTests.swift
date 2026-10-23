@@ -34,7 +34,6 @@ struct TeamMembershipEventsTests {
         TeamMembershipEvents.fireJoined(
             repo: repo,
             joinerWorktreePath: "/r/multi/.worktrees/feature-login",
-            teamsEnabled: true,
             dispatcher: dispatcher
         )
 
@@ -53,23 +52,6 @@ struct TeamMembershipEventsTests {
         TeamMembershipEvents.fireJoined(
             repo: repo,
             joinerWorktreePath: "/r/multi",  // the main worktree
-            teamsEnabled: true,
-            dispatcher: dispatcher
-        )
-
-        let messages = try inbox.messages(teamID: TeamLookup.id(forRepoPath: repo.path))
-        #expect(messages.isEmpty)
-    }
-
-    @Test func joinDoesNotFireWhenTeamModeOff() throws {
-        let root = try Self.temporaryDirectory()
-        let (dispatcher, inbox) = Self.makeDispatcher(rootDirectory: root)
-        let repo = makeRepo(branches: ["main", "feature/login"])
-
-        TeamMembershipEvents.fireJoined(
-            repo: repo,
-            joinerWorktreePath: "/r/multi/.worktrees/feature-login",
-            teamsEnabled: false,
             dispatcher: dispatcher
         )
 
@@ -88,7 +70,6 @@ struct TeamMembershipEventsTests {
             leaverBranch: "feature/login",
             leaverPath: "/r/multi/.worktrees/feature-login",
             reason: .removed,
-            teamsEnabled: true,
             dispatcher: dispatcher
         )
 
@@ -96,24 +77,6 @@ struct TeamMembershipEventsTests {
         #expect(messages.count == 1)
         #expect(messages.first?.kind == TeamChannelEvents.EventType.memberLeft)
         #expect(messages.first?.to.worktree == "/r/multi")
-    }
-
-    @Test func leaveDoesNotFireWhenTeamModeOff() throws {
-        let root = try Self.temporaryDirectory()
-        let (dispatcher, inbox) = Self.makeDispatcher(rootDirectory: root)
-        let repo = makeRepo(branches: ["main"])
-
-        TeamMembershipEvents.fireLeft(
-            repo: repo,
-            leaverBranch: "feature/login",
-            leaverPath: "/r/multi/.worktrees/feature-login",
-            reason: .removed,
-            teamsEnabled: false,
-            dispatcher: dispatcher
-        )
-
-        let messages = try inbox.messages(teamID: TeamLookup.id(forRepoPath: repo.path))
-        #expect(messages.isEmpty)
     }
 
     @Test func leaveDoesNotFireIfMainWorktreeIsGone() throws {
@@ -128,7 +91,6 @@ struct TeamMembershipEventsTests {
             leaverBranch: "main",
             leaverPath: "/r/multi",
             reason: .removed,
-            teamsEnabled: true,
             dispatcher: dispatcher
         )
 
@@ -149,7 +111,6 @@ struct TeamMembershipEventsTests {
         TeamMembershipEvents.fireJoined(
             repo: repo,
             joinerWorktreePath: "/repo/.worktrees/alice",
-            teamsEnabled: true,
             dispatcher: dispatcher
         )
 

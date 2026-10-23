@@ -33,10 +33,10 @@ public struct TeamView: Sendable, Equatable {
     public let repoPath: String
     public let repoDisplayName: String
     /// `members[0]` is always the repository's main worktree, enforced by
-    /// the static factory `team(for:in:teamsEnabled:)`.
+    /// the static factory `team(for:in:)`.
     public let members: [TeamMember]
 
-    /// Internal so external modules must construct via `team(for:in:teamsEnabled:)`,
+    /// Internal so external modules must construct via `team(for:in:)`,
     /// which enforces the "members[0] is the main worktree, count >= 1" invariant.
     internal init(repoPath: String, repoDisplayName: String, members: [TeamMember]) {
         self.repoPath = repoPath
@@ -62,15 +62,13 @@ public struct TeamView: Sendable, Equatable {
         members.filter { $0.worktreePath != worktree.path }
     }
 
-    /// Resolves the team for a given worktree. Returns nil when team mode is
-    /// off, the worktree's repo is not in `repos`, or the repository has no worktrees.
+    /// Resolves the team for a given worktree. Returns nil when the
+    /// worktree's repo is not in `repos` or the repository has no worktrees.
     /// A single local worktree still needs presence and inbox delivery to communicate with agents on another Mac.
     public static func team(
         for worktree: WorktreeEntry,
-        in repos: [RepoEntry],
-        teamsEnabled: Bool
+        in repos: [RepoEntry]
     ) -> TeamView? {
-        guard teamsEnabled else { return nil }
         guard let repo = repos.first(where: { $0.worktrees.contains(where: { $0.id == worktree.id }) }) else {
             return nil
         }

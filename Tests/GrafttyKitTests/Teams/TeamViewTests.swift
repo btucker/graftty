@@ -12,25 +12,20 @@ struct TeamViewTests {
     @Test("@spec TEAM-2.1: While agent teams are enabled, the application shall provide team identity and inbox delivery for every tracked repository, including a single worktree that communicates with a remote Mac.")
     func singleWorktreeRepoHasTeam() {
         let repo = makeRepo(path: "/r/single", displayName: "single", branches: ["main"])
-        #expect(TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true)?.members.count == 1)
+        #expect(TeamView.team(for: repo.worktrees[0], in: [repo])?.members.count == 1)
     }
 
     @Test func multiWorktreeRepoHasTeamWhenEnabled() {
         let repo = makeRepo(path: "/r/multi", displayName: "multi", branches: ["main", "feature/login"])
-        let view = TeamView.team(for: repo.worktrees[1], in: [repo], teamsEnabled: true)
+        let view = TeamView.team(for: repo.worktrees[1], in: [repo])
         #expect(view != nil)
         #expect(view?.repoDisplayName == "multi")
         #expect(view?.members.count == 2)
     }
 
-    @Test func teamModeOffMeansNoTeam() {
-        let repo = makeRepo(path: "/r/multi", displayName: "multi", branches: ["main", "feature/login"])
-        #expect(TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: false) == nil)
-    }
-
     @Test func mainWorktreeIsRepoRoot() {
         let repo = makeRepo(path: "/r/multi", displayName: "multi", branches: ["main", "feature/login"])
-        let view = TeamView.team(for: repo.worktrees[1], in: [repo], teamsEnabled: true)!
+        let view = TeamView.team(for: repo.worktrees[1], in: [repo])!
         #expect(view.mainWorktree.worktreePath == "/r/multi")
         #expect(view.mainWorktree.isMainWorktree)
         let linkedWorktree = view.members.first(where: { !$0.isMainWorktree })!
@@ -39,7 +34,7 @@ struct TeamViewTests {
 
     @Test func memberNameSanitizesBranch() {
         let repo = makeRepo(path: "/r/multi", displayName: "multi", branches: ["main", "feature/login-form"])
-        let view = TeamView.team(for: repo.worktrees[1], in: [repo], teamsEnabled: true)!
+        let view = TeamView.team(for: repo.worktrees[1], in: [repo])!
         let linkedWorktree = view.members.first(where: { !$0.isMainWorktree })!
         // WorktreeNameSanitizer replaces "/" with "-" preservation rules; we expect
         // the sanitized form (the existing sanitizer keeps "/" — confirm in impl).
@@ -49,7 +44,7 @@ struct TeamViewTests {
 
     @Test func peersOfMemberExcludesSelf() {
         let repo = makeRepo(path: "/r/multi", displayName: "multi", branches: ["main", "a", "b"])
-        let view = TeamView.team(for: repo.worktrees[2], in: [repo], teamsEnabled: true)!
+        let view = TeamView.team(for: repo.worktrees[2], in: [repo])!
         let peers = view.peers(of: repo.worktrees[2])
         #expect(peers.count == 2)
         #expect(peers.allSatisfy { $0.worktreePath != repo.worktrees[2].path })
@@ -57,7 +52,7 @@ struct TeamViewTests {
 
     @Test func memberNamedFindsByName() {
         let repo = makeRepo(path: "/r/multi", displayName: "multi", branches: ["main", "alice", "bob"])
-        let view = TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true)!
+        let view = TeamView.team(for: repo.worktrees[0], in: [repo])!
         #expect(view.memberNamed("alice")?.branch == "alice")
         #expect(view.memberNamed("nobody") == nil)
     }
@@ -68,7 +63,7 @@ struct TeamViewTests {
             displayName: "multi",
             branches: ["main", "foo--bar", "foo-bar"]
         )
-        let view = TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true)!
+        let view = TeamView.team(for: repo.worktrees[0], in: [repo])!
         let targetPath = "/r/multi/.worktrees/foo-bar"
 
         #expect(view.memberNamed(targetPath)?.worktreePath == targetPath)
@@ -77,7 +72,7 @@ struct TeamViewTests {
 
     @Test func membersSortedWithMainWorktreeFirst() {
         let repo = makeRepo(path: "/r/multi", displayName: "multi", branches: ["main", "a", "b"])
-        let view = TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true)!
+        let view = TeamView.team(for: repo.worktrees[0], in: [repo])!
         #expect(view.members[0].isMainWorktree)
         #expect(view.members[0].worktreePath == "/r/multi")
     }

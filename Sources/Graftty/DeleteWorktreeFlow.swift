@@ -168,7 +168,6 @@ enum DeleteWorktreeFlow {
                 leaverBranch: leaverBranch,
                 leaverPath: wt.path,
                 reason: .removed,
-                teamsEnabled: AppServices.teamsEnabled,
                 dispatcher: teamEventDispatcher
             )
         }

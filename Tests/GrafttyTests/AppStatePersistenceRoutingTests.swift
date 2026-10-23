@@ -146,8 +146,7 @@ private final class HeadlessRouter {
             remoteBranchStore: remoteBranchStore,
             agentRegistry: ClaudeSessionRegistry(),
             remoteMacsModel: remoteMacsModel,
-            remoteTeamRouter: RemoteTeamRouter(),
-            teamsEnabled: { true }
+            remoteTeamRouter: RemoteTeamRouter()
         )
     }
 
@@ -159,22 +158,6 @@ private final class HeadlessRouter {
     func send(_ message: NotificationMessage, _ box: StateBox) {
         router(for: box).handleMessage(message)
     }
-}
-
-/// `AppServices.teamsEnabled` reads `UserDefaults.standard` live; agent
-/// launches are rejected without it. Restored after each test.
-@MainActor
-private func withAgentTeamsEnabled<T>(_ body: () async -> T) async -> T {
-    let previous = UserDefaults.standard.object(forKey: SettingsKeys.agentTeamsEnabled)
-    UserDefaults.standard.set(true, forKey: SettingsKeys.agentTeamsEnabled)
-    defer {
-        if let previous {
-            UserDefaults.standard.set(previous, forKey: SettingsKeys.agentTeamsEnabled)
-        } else {
-            UserDefaults.standard.removeObject(forKey: SettingsKeys.agentTeamsEnabled)
-        }
-    }
-    return await body()
 }
 
 private let repoPath = "/nonexistent-persistence-routing-repo"
@@ -191,9 +174,6 @@ private func runningWorktreeState() -> (AppState, PaneSlotID) {
     return (state, pane)
 }
 
-/// Both agent-launch suites toggle the process-wide Agent Teams default
-/// through `withAgentTeamsEnabled`; run concurrently, one can restore the
-/// key mid-test for the other or leave `true` behind for later runs.
 @Suite(.serialized)
 @MainActor
 struct AgentLaunchPersistenceTests {
@@ -209,14 +189,12 @@ struct AgentLaunchPersistenceTests {
             let router = try HeadlessRouter()
             let box = StateBox(runningWorktreeState().0)
 
-            let response = await withAgentTeamsEnabled {
-                await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
-                    await router.route(.createWorktree(
-                        callerWorktree: repoPath, worktreeName: "agent-task", branchName: "agent-task",
-                        existing: false, base: nil, command: nil,
-                        agentRuntime: .codex, agentPrompt: nil, operationID: "op-flush"
-                    ), box)
-                }
+            let response = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+                await router.route(.createWorktree(
+                    callerWorktree: repoPath, worktreeName: "agent-task", branchName: "agent-task",
+                    existing: false, base: nil, command: nil,
+                    agentRuntime: .codex, agentPrompt: nil, operationID: "op-flush"
+                ), box)
             }
 
             guard case .worktreeCreate = response else {
@@ -241,13 +219,11 @@ struct AgentLaunchPersistenceTests {
                 }
             }
 
-            let response = await withAgentTeamsEnabled {
-                await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
-                    await router.route(.addPane(
-                        path: repoPath, direction: .right, command: nil,
-                        agentRuntime: .codex, agentPrompt: nil
-                    ), box)
-                }
+            let response = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+                await router.route(.addPane(
+                    path: repoPath, direction: .right, command: nil,
+                    agentRuntime: .codex, agentPrompt: nil
+                ), box)
             }
 
             #expect(response == .ok, "\(String(describing: response))")
@@ -276,14 +252,12 @@ struct AgentLaunchPersistenceTests {
             // A synchronous flush blocks main for the held write, so keep the
             // hold short; a suspending flush lets the retry in while it is parked.
             probe.holdWrites(upTo: .milliseconds(200))
-            let (original, retry) = await withAgentTeamsEnabled {
-                await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
-                    let original = Task { await router.route(request, box) }
-                    await probe.waitUntilAWriteIsParked()  // the original is suspended in its flush
-                    let retry = await router.route(request, box)
-                    probe.releaseWrites()
-                    return (await original.value, retry)
-                }
+            let (original, retry) = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+                let original = Task { await router.route(request, box) }
+                await probe.waitUntilAWriteIsParked()  // the original is suspended in its flush
+                let retry = await router.route(request, box)
+                probe.releaseWrites()
+                return (await original.value, retry)
             }
 
             guard case .worktreeCreate(let status) = original else {

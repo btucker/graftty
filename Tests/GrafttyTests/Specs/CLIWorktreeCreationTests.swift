@@ -816,18 +816,6 @@ struct CLIWorktreeCreationTests {
         #expect(FileManager.default.fileExists(atPath: currentPrompt.path))
     }
 
-    @Test("Agent launch is rejected before mutation when Agent Teams is disabled")
-    func agentLaunchRequiresTeamMode() {
-        #expect(CLIWorktreeCreationPolicy.validationError(
-            agentRuntime: .codex,
-            teamsEnabled: false
-        )?.contains("Agent Teams is disabled") == true)
-        #expect(CLIWorktreeCreationPolicy.validationError(
-            agentRuntime: nil,
-            teamsEnabled: false
-        ) == nil)
-    }
-
     @Test("The app stages current prompts and bare legacy launches, but preserves legacy loaders")
     func launchPolicyPreservesWireCompatibility() {
         #expect(CLIWorktreeCreationPolicy.shouldStageAgentPrompt(

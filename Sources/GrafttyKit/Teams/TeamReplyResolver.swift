@@ -36,10 +36,8 @@ public struct TeamReplyResolver {
         fallback: Bool,
         text: String,
         priority: TeamInboxPriority,
-        repos: [RepoEntry],
-        teamsEnabled: Bool
+        repos: [RepoEntry]
     ) throws -> TeamSendRequest {
-        guard teamsEnabled else { throw TeamInboxRequestError.teamModeDisabled }
         guard let repo = repos.first(where: { $0.worktrees.contains(where: { $0.path == callerWorktree }) }) else {
             throw TeamInboxRequestError.callerNotTracked
         }

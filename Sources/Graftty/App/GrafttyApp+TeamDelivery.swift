@@ -16,11 +16,6 @@ extension GrafttyApp {
             self.skipInitialSnapshot = skipInitialSnapshot
         }
 
-        func markSeen(_ messages: [TeamInboxMessage]) {
-            lastSeenCount = messages.count
-            skipInitialSnapshot = false
-        }
-
         func claimRecipientWorktrees(in messages: [TeamInboxMessage]) -> [String] {
             if skipInitialSnapshot {
                 skipInitialSnapshot = false
@@ -98,11 +93,9 @@ extension GrafttyApp {
 
     nonisolated static func nativeDeliveries(
         codex: CodexAppServerDeliveryService,
-        claude: ClaudePeerDeliveryService,
-        enabled: Bool = true
+        claude: ClaudePeerDeliveryService
     ) -> [any CodexAppServerDeliveryTrigger] {
-        guard enabled else { return [] }
-        return [codex, claude]
+        [codex, claude]
     }
 
     nonisolated static func retryNativeDeliveryForPresenceWorktrees(

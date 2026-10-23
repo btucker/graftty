@@ -22,7 +22,6 @@ struct ControlRequestCoreTests {
     final class RecordingPlatform: ControlPlatform {
         let root: URL
         var state: AppState
-        var teamsEnabled = true
         let teamInbox: TeamInbox
         let teamEventDispatcher: TeamEventDispatcher
         let teamPresence: TeamPresenceStorage
@@ -149,11 +148,6 @@ struct ControlRequestCoreTests {
         #expect(await ControlRequestCore.handleRequest(.teamSend(callerWorktree: "/untracked", recipient: address,
             text: "x", priority: .normal), platform: platform) == .error(TeamInboxRequestError.callerNotTracked.description))
         #expect(routing.sends.count == 2)
-        platform.teamsEnabled = false
-        #expect(await ControlRequestCore.handleRequest(.teamSend(callerWorktree: "/repo", recipient: address,
-            text: "x", priority: .normal), platform: platform) == .error(TeamInboxRequestError.teamModeDisabled.description))
-        #expect(routing.sends.count == 2)
-        platform.teamsEnabled = true
         platform.routing = nil
         #expect(await ControlRequestCore.handleRequest(.teamSend(callerWorktree: "/repo", recipient: address,
             text: "x", priority: .normal), platform: platform) == .error("remote team connection is unavailable"))

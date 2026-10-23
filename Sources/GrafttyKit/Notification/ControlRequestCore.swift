@@ -63,29 +63,29 @@ public enum ControlRequestCore {
         case .teamReply(let request):
             return await teamReply(request, platform: platform)
         case .teamBroadcast(let callerPath, let callerAgentID, let text, let priority):
-            return await teamInboxOperation("failed to write team inbox broadcast", platform: platform) { handler, repos, enabled in
+            return await teamInboxOperation("failed to write team inbox broadcast", platform: platform) { handler, repos in
                 _ = try handler.broadcast(callerWorktree: callerPath, callerAgentID: callerAgentID, text: text,
-                                          priority: priority, repos: repos, teamsEnabled: enabled)
+                                          priority: priority, repos: repos)
                 return .ok
             }
         case .teamInbox(let request):
             // ATTN-2.19: the inbox page parses the full message history off the main actor.
-            return await teamInboxOperation("failed to read team inbox", platform: platform) { handler, repos, enabled in
+            return await teamInboxOperation("failed to read team inbox", platform: platform) { handler, repos in
                 let page = try handler.diagnosticPage(
                     callerWorktree: request.callerWorktree, callerAgentID: request.callerAgentID,
                     consuming: request.consuming, worktree: request.worktree, repo: request.repo,
                     member: request.member, unread: request.unread, all: request.all,
                     beforeID: request.beforeID, afterID: request.afterID,
                     snapshotThroughID: request.snapshotThroughID, forwardPagination: request.forwardPagination,
-                    limit: request.limit, repos: repos, teamsEnabled: enabled
+                    limit: request.limit, repos: repos
                 )
                 return .teamInbox(messages: page.messages, nextBeforeID: page.nextBeforeID,
                                   nextAfterID: page.nextAfterID, snapshotThroughID: page.snapshotThroughID)
             }
         case .teamInboxAdvance(let callerPath, let callerAgentID, let throughID):
-            return await teamInboxOperation("failed to advance team inbox", platform: platform, reportsInboxErrors: true) { handler, repos, enabled in
+            return await teamInboxOperation("failed to advance team inbox", platform: platform, reportsInboxErrors: true) { handler, repos in
                 try handler.advanceRead(callerWorktree: callerPath, callerAgentID: callerAgentID,
-                                        throughID: throughID, repos: repos, teamsEnabled: enabled)
+                                        throughID: throughID, repos: repos)
                 return .ok
             }
         case .teamMembers(let callerPath, let worktree, let repo):
@@ -179,13 +179,12 @@ public enum ControlRequestCore {
     /// control socket.
     private static func teamInboxOperation(
         _ failure: String, platform: any ControlTeamPlatform, reportsInboxErrors: Bool = false,
-        _ body: @escaping @Sendable (TeamInboxRequestHandler, [RepoEntry], Bool) throws -> ResponseMessage
+        _ body: @escaping @Sendable (TeamInboxRequestHandler, [RepoEntry]) throws -> ResponseMessage
     ) async -> ResponseMessage {
         let handler = teamHandler(platform: platform)
         let repos = platform.state.repos
-        let enabled = platform.teamsEnabled
         do {
-            return try await OffMainIO.run { try body(handler, repos, enabled) }
+            return try await OffMainIO.run { try body(handler, repos) }
         } catch let error as TeamInboxRequestError {
             return .error(error.description)
         } catch let error as TeamInboxError where reportsInboxErrors {
@@ -199,14 +198,13 @@ public enum ControlRequestCore {
     /// otherwise appends to the local team inbox.
     private static func teamSend(_ request: TeamSendRequest, platform: any ControlTeamPlatform) async -> ResponseMessage {
         guard request.recipient.hasPrefix("graftty-mac:") else {
-            return await teamInboxOperation("failed to write team inbox message", platform: platform) { handler, repos, enabled in
+            return await teamInboxOperation("failed to write team inbox message", platform: platform) { handler, repos in
                 _ = try handler.send(callerWorktree: request.callerWorktree, callerAgentID: request.callerAgentID,
                                      recipient: request.recipient, text: request.text, priority: request.priority,
-                                     repos: repos, teamsEnabled: enabled)
+                                     repos: repos)
                 return .ok
             }
         }
-        guard platform.teamsEnabled else { return .error(TeamInboxRequestError.teamModeDisabled.description) }
         guard platform.state.worktree(forPath: request.callerWorktree) != nil else {
             return .error(TeamInboxRequestError.callerNotTracked.description)
         }
@@ -219,13 +217,12 @@ public enum ControlRequestCore {
     public static func teamReply(_ reply: TeamReplyRequest, platform: any ControlTeamPlatform) async -> ResponseMessage {
         let inbox = platform.teamInbox
         let repos = platform.state.repos
-        let enabled = platform.teamsEnabled
         do {
             let send = try await OffMainIO.run {
                 try TeamReplyResolver(inbox: inbox).resolve(
                     callerWorktree: reply.callerWorktree, callerAgentID: reply.callerAgentID,
                     messageID: reply.messageID, fallback: reply.fallback, text: reply.text,
-                    priority: reply.priority, repos: repos, teamsEnabled: enabled
+                    priority: reply.priority, repos: repos
                 )
             }
             return await teamSend(send, platform: platform)
@@ -239,7 +236,7 @@ public enum ControlRequestCore {
         do {
             let result = try teamHandler(platform: platform).members(
                 callerWorktree: callerPath, worktree: worktree, repo: repo,
-                repos: platform.state.repos, teamsEnabled: platform.teamsEnabled
+                repos: platform.state.repos
             )
             return .teamList(teamName: result.teamName, members: result.members)
         } catch let error as TeamInboxRequestError {
@@ -288,17 +285,13 @@ public enum ControlRequestCore {
             do { try platform.stateDidChange() } catch { return .error(String(describing: error)) }
         }
 
-        // Attention-only hooks must return quickly and must not depend on the
-        // team feature being enabled. They carry no inbox or instruction data.
+        // Attention-only hooks must return quickly. They carry no inbox or
+        // instruction data.
         if isAttentionOnlyTeamHook(runtime: runtime, event: event) {
             return .teamHookOutput("{}")
         }
 
         do {
-            let teamsEnabled = platform.teamsEnabled
-            if event == .sessionStart, !teamsEnabled {
-                return .teamHookOutput(try TeamHookRenderer.sessionStart(runtime: runtime))
-            }
             // Snapshotted before the instruction render's `await`; the
             // ownership decision below therefore reads presence as it stood
             // at hook entry. A stale snapshot at worst hands delivery to a
@@ -342,8 +335,7 @@ public enum ControlRequestCore {
             let output = try await OffMainIO.run { [instructions] in
                 try handler.hook(
                     callerWorktree: callerPath, runtime: runtime, event: event, sessionID: sessionID,
-                    paneSessionName: paneSessionName, repos: repos, teamsEnabled: teamsEnabled,
-                    instructions: instructions, agentID: currentAgentID
+                    paneSessionName: paneSessionName, repos: repos, instructions: instructions, agentID: currentAgentID
                 )
             }
             return .teamHookOutput(output)

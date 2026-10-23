@@ -95,7 +95,6 @@ struct SidebarView: View {
 
     @Binding var pendingAddWorktree: AddWorktreeRequest?
 
-    @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
 
     /// Hovered drop-target row during a pane drag (PWD-1.5). Nil otherwise.
     @State private var dropTargetWorktreeID: WorktreeEntry.ID?
@@ -1030,10 +1029,9 @@ struct SidebarView: View {
                 onDeleteWorktree(worktree.path, window)
             })
         }
-        // TEAM-7.2: team-aware items appear when the worktree is in a
-        // team-enabled repo with ≥2 worktrees.
-        if agentTeamsEnabled,
-           let team = TeamView.team(for: worktree, in: appState.repos, teamsEnabled: true) {
+        // TEAM-7.2: team-aware items appear when the worktree belongs to
+        // a team.
+        if let team = TeamView.team(for: worktree, in: appState.repos) {
             menu.addItem(.separator())
             // TEAM-7.2: opens the activity-log window for this team.
             let teamID = TeamLookup.id(of: team)

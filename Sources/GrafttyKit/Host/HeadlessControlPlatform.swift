@@ -19,7 +19,6 @@ final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
         get { runtime.state }
         set { runtime.state = newValue }
     }
-    var teamsEnabled: Bool { true }
     var teamInbox: TeamInbox { runtime.inbox }
     var teamPresence: TeamPresenceStorage { runtime.presence }
     var attentionRecaps: AttentionRecapCoordinator { runtime.recaps }

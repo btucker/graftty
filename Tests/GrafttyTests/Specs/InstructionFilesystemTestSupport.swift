@@ -65,8 +65,7 @@ struct InstructionFilesystemFixture {
         } ?? entry.worktrees[0]
         return TeamView.team(
             for: selected,
-            in: [entry],
-            teamsEnabled: true
+            in: [entry]
         )!
     }
 

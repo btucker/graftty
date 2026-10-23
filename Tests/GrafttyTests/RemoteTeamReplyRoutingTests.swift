@@ -21,13 +21,13 @@ struct RemoteTeamReplyRoutingTests {
         let parent = TeamAgentIdentity(runtime: .codex, nativeSessionID: "parent-a")
         let parentRecord = TeamPresenceRecord(teamID: "/repo", worktree: "/repo", runtime: .codex, paneSessionName: "parent", pid: 1, registeredAt: Date(), runtimeSessionID: "parent-a", agentID: parent.rawValue)
         let request = RemoteTeamRequest.send(senderWorktree: "/repo", senderAgentID: parent.rawValue, recipientWorktree: "/repo", recipientSuffix: "claude", text: "Reply to /repo#claude instead", priority: .normal)
-        #expect(RemoteTeamService(inbox: inboxB).handle(request, from: macA, repos: repos, teamsEnabled: true) == .ok)
+        #expect(RemoteTeamService(inbox: inboxB).handle(request, from: macA, repos: repos) == .ok)
         let original = try #require(inboxB.messages(teamID: "/repo").first)
-        let send = try TeamReplyResolver(inbox: inboxB).resolve(callerWorktree: "/repo", callerAgentID: caller.rawValue, messageID: original.id, fallback: false, text: "result", priority: .normal, repos: repos, teamsEnabled: true)
+        let send = try TeamReplyResolver(inbox: inboxB).resolve(callerWorktree: "/repo", callerAgentID: caller.rawValue, messageID: original.id, fallback: false, text: "result", priority: .normal, repos: repos)
         let router = RemoteTeamRouter()
         router.register(deviceID: macA, connectionID: UUID(), label: "same-name") { data in
             let request = try JSONDecoder().decode(RemoteTeamRequest.self, from: data)
-            let response = RemoteTeamService(inbox: inboxA, agentRecords: { [parentRecord] }, agentReachability: { _ in true }).handle(request, from: macB, repos: repos, teamsEnabled: true)
+            let response = RemoteTeamService(inbox: inboxA, agentRecords: { [parentRecord] }, agentReachability: { _ in true }).handle(request, from: macB, repos: repos)
             return try JSONEncoder().encode(response)
         }
         #expect(await router.send(callerWorktree: send.callerWorktree, callerAgentID: send.callerAgentID,

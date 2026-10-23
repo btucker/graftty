@@ -21,8 +21,7 @@ struct TeamInboxReadAdvancementTests {
         try fixture.handler.advanceRead(
             callerWorktree: fixture.alice,
             throughID: aliceSecond.id,
-            repos: [fixture.repo],
-            teamsEnabled: true
+            repos: [fixture.repo]
         )
 
         #expect(try fixture.watermark(for: fixture.alice) == aliceSecond.id)
@@ -31,8 +30,7 @@ struct TeamInboxReadAdvancementTests {
         try fixture.handler.advanceRead(
             callerWorktree: fixture.alice,
             throughID: aliceFirst.id,
-            repos: [fixture.repo],
-            teamsEnabled: true
+            repos: [fixture.repo]
         )
         #expect(try fixture.watermark(for: fixture.alice) == aliceSecond.id)
 
@@ -43,16 +41,14 @@ struct TeamInboxReadAdvancementTests {
             try fixture.handler.advanceRead(
                 callerWorktree: fixture.alice,
                 throughID: bobMessage.id,
-                repos: [fixture.repo],
-                teamsEnabled: true
+                repos: [fixture.repo]
             )
         }
         #expect(throws: TeamInboxError.advanceTargetNotFound("missing")) {
             try fixture.handler.advanceRead(
                 callerWorktree: fixture.alice,
                 throughID: "missing",
-                repos: [fixture.repo],
-                teamsEnabled: true
+                repos: [fixture.repo]
             )
         }
     }
@@ -128,16 +124,14 @@ struct TeamInboxReadAdvancementTests {
             beforeID: nil,
             forwardPagination: true,
             limit: 100,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(claudePage.messages.map(\.id) == [shared.id])
         try handler.advanceRead(
             callerWorktree: alice,
             callerAgentID: claudeID,
             throughID: shared.id,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         let skipped = try inbox.worktreeWatermark(teamID: "/repo", worktree: alice)
         #expect(skipped?.lastDeliveredToAnySessionID == shared.id)
@@ -156,16 +150,14 @@ struct TeamInboxReadAdvancementTests {
             beforeID: nil,
             forwardPagination: true,
             limit: 100,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(codexPage.messages.map(\.id) == [targeted.id])
         try handler.advanceRead(
             callerWorktree: alice,
             callerAgentID: codexID,
             throughID: targeted.id,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         let compacted = try inbox.worktreeWatermark(teamID: "/repo", worktree: alice)
         #expect(compacted?.lastDeliveredToAnySessionID == shared.id)
@@ -222,8 +214,7 @@ struct TeamInboxReadAdvancementTests {
             snapshotThroughID: nil,
             forwardPagination: true,
             limit: 100,
-            repos: [fixture.repo],
-            teamsEnabled: true
+            repos: [fixture.repo]
         )
 
         #expect(page.messages == [fromMain])
@@ -253,8 +244,7 @@ struct TeamInboxReadAdvancementTests {
             snapshotThroughID: nil,
             forwardPagination: true,
             limit: 2,
-            repos: [fixture.repo],
-            teamsEnabled: true
+            repos: [fixture.repo]
         )
         #expect(oldest.messages == Array(messages.prefix(2)))
         #expect(oldest.nextAfterID == messages[1].id)
@@ -274,8 +264,7 @@ struct TeamInboxReadAdvancementTests {
             snapshotThroughID: oldest.snapshotThroughID,
             forwardPagination: true,
             limit: 2,
-            repos: [fixture.repo],
-            teamsEnabled: true
+            repos: [fixture.repo]
         )
         #expect(middle.messages == Array(messages[2...3]))
         #expect(middle.nextAfterID == messages[3].id)
@@ -293,8 +282,7 @@ struct TeamInboxReadAdvancementTests {
             snapshotThroughID: middle.snapshotThroughID,
             forwardPagination: true,
             limit: 2,
-            repos: [fixture.repo],
-            teamsEnabled: true
+            repos: [fixture.repo]
         )
         #expect(newest.messages == [messages[4]])
         #expect(newest.nextAfterID == nil)
@@ -340,8 +328,7 @@ struct TeamInboxReadAdvancementTests {
             try fixture.handler.advanceRead(
                 callerWorktree: fixture.alice,
                 throughID: message.id,
-                repos: [fixture.repo],
-                teamsEnabled: true
+                repos: [fixture.repo]
             )
         }
         #expect(try fixture.watermark(for: fixture.alice) == nil)
@@ -369,8 +356,7 @@ struct TeamInboxReadAdvancementTests {
                 beforeID: nil,
                 forwardPagination: true,
                 limit: 100,
-                repos: [fixture.repo],
-                teamsEnabled: true
+                repos: [fixture.repo]
             )
         }
         #expect(try fixture.watermark(for: fixture.alice) == nil)
@@ -405,8 +391,7 @@ struct TeamInboxReadAdvancementTests {
             event: .sessionStart,
             sessionID: "existing-session",
             paneSessionName: nil,
-            repos: [fixture.repo],
-            teamsEnabled: true
+            repos: [fixture.repo]
         )
 
         #expect(!output.contains("seen by this session"))
@@ -443,8 +428,7 @@ struct TeamInboxReadAdvancementTests {
             event: .sessionStart,
             sessionID: "archived-session",
             paneSessionName: nil,
-            repos: [fixture.repo],
-            teamsEnabled: true
+            repos: [fixture.repo]
         )
 
         #expect(output.contains("retained acknowledged"))
@@ -479,8 +463,7 @@ struct TeamInboxReadAdvancementTests {
             event: .sessionStart,
             sessionID: "retained-session",
             paneSessionName: nil,
-            repos: [fixture.repo],
-            teamsEnabled: true
+            repos: [fixture.repo]
         )
 
         #expect(!output.contains("seen by this session"))

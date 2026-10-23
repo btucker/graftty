@@ -120,8 +120,7 @@ struct TeamPeerMessageEnvelopeTests {
             recipient: "\(recipientPath)#\(recipientID.rawValue)",
             text: "reply to me",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
 
         #expect(delivery.message.from.runtime == "codex")
@@ -141,8 +140,7 @@ struct TeamPeerMessageEnvelopeTests {
             recipient: "/repo/R&amp;D#\(senderID.rawValue)",
             text: "received",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(reply.message.to.worktree == repoPath)
         #expect(reply.message.to.agentID == senderID.rawValue)
@@ -153,8 +151,7 @@ struct TeamPeerMessageEnvelopeTests {
             recipient: "/repo/R&amp;D#codex",
             text: "received after restart",
             priority: .normal,
-            repos: [repo],
-            teamsEnabled: true
+            repos: [repo]
         )
         #expect(fallbackReply.message.to.worktree == repoPath)
         #expect(fallbackReply.message.to.runtime == "codex")

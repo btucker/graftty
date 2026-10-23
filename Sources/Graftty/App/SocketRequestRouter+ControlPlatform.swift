@@ -10,7 +10,6 @@ extension SocketRequestRouter: ControlPlatform {
         set { appState.wrappedValue = newValue }
     }
 
-    var teamsEnabled: Bool { teamsEnabledProvider() }
     var teamPresence: TeamPresenceStorage { TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()) }
     var attentionRecaps: AttentionRecapCoordinator { .shared }
     var remoteTeamRouting: (any ControlRemoteTeamRouting)? { remoteTeamRouter }
