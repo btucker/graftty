@@ -398,94 +398,89 @@ struct CodexHomeMirrorTests {
     @Test("""
     @spec TEAM-10.11: While a managed Codex home rebuild and durable administration can access the same coordination lock, the application shall serialize them so one finishes before the other begins.
     """)
-    func rebuildWaitsForSharedAdministrationLock() async throws {
+    func rebuildWaitsForSharedAdministrationLock() throws {
         let (src, dst) = try makeMirrorSandbox()
         let root = src.deletingLastPathComponent()
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true)
 
         let ready = root.appendingPathComponent("lock-ready")
-        let started = root.appendingPathComponent("rebuild-started")
         let release = root.appendingPathComponent("lock-release")
         let holderScript = root.appendingPathComponent("hold-lock.sh")
-        // Each wait gives up after 250 polls (5 s plus fork overhead) so a
-        // missing signal fails the test instead of hanging the run. The
-        // release budget starts only once the rebuild worker has started,
-        // and the exit status says which signal the holder exited on.
+        // The holder gives up after 250 polls (5 s plus fork overhead) and
+        // exits 3, so a release that never comes fails the test instead of
+        // hanging the run.
         try writeFile(holderScript, """
         #!/bin/sh
-        wait_for() {
-          i=0
-          while [ ! -f "$1" ]; do
-            [ $i -ge 250 ] && return 1
-            /bin/sleep 0.02
-            i=$((i + 1))
-          done
-        }
         /usr/bin/touch "$GRAFTTY_TEST_LOCK_READY"
-        wait_for "$GRAFTTY_TEST_REBUILD_STARTED" || exit 4
-        wait_for "$GRAFTTY_TEST_LOCK_RELEASE" || exit 3
+        i=0
+        while [ ! -f "$GRAFTTY_TEST_LOCK_RELEASE" ]; do
+          [ $i -ge 250 ] && exit 3
+          /bin/sleep 0.02
+          i=$((i + 1))
+        done
         """)
         try FileManager.default.setAttributes(
             [.posixPermissions: NSNumber(value: Int16(0o755))],
             ofItemAtPath: holderScript.path
         )
 
-        let holder = Process()
-        holder.executableURL = URL(fileURLWithPath: "/usr/bin/lockf")
-        holder.arguments = [
-            "-k",
-            dst.appendingPathComponent(".graftty-mirror.lock").path,
-            holderScript.path,
-        ]
-        holder.environment = [
-            "GRAFTTY_TEST_LOCK_READY": ready.path,
-            "GRAFTTY_TEST_REBUILD_STARTED": started.path,
-            "GRAFTTY_TEST_LOCK_RELEASE": release.path,
-        ]
-        try holder.run()
+        // Spawned and reaped directly rather than through Process, whose exit
+        // handling runs on a GCD source and so needs a free worker.
+        let holder = try spawn(
+            [
+                "/usr/bin/lockf",
+                "-k",
+                dst.appendingPathComponent(".graftty-mirror.lock").path,
+                holderScript.path,
+            ],
+            environment: [
+                "GRAFTTY_TEST_LOCK_READY": ready.path,
+                "GRAFTTY_TEST_LOCK_RELEASE": release.path,
+            ]
+        )
+        var holderExit: Int32?
         defer {
-            try? Data().write(to: release, options: .atomic)
-            if holder.isRunning {
-                holder.terminate()
-                holder.waitUntilExit()
+            if holderExit == nil {
+                try? Data().write(to: release, options: .atomic)
+                if exitStatus(of: holder, timeout: 10) == nil {
+                    kill(holder, SIGKILL)
+                    _ = exitStatus(of: holder, timeout: 5)
+                }
             }
         }
-        try #require(await waitForFile(ready, timeout: 2.0))
+        try #require(waitForFile(ready, timeout: 2.0))
 
+        // The test body is synchronous, rebuild() runs on its own thread, and
+        // the holder is reaped with waitpid, so nothing here waits for a free
+        // cooperative or GCD worker, and every wait has a timeout.
         let mirror = CodexHomeMirror(
             sourceDirectory: src,
             mirrorDirectory: dst
         )
-        // rebuild() blocks in flock until the holder exits, and the full
-        // suite can saturate the cooperative pool, so both the rebuild and
-        // the release run on GCD. A release that waited on a cooperative
-        // thread could land late or never.
-        let (elapsed, releasedFirst) = try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<(Duration, Bool), any Error>) in
-            DispatchQueue.global().async {
-                let startedAt = ContinuousClock.now
-                try? Data().write(to: started, options: .atomic)
-                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(400)) {
-                    try? Data().write(to: release, options: .atomic)
-                }
-                continuation.resume(with: Result {
-                    try mirror.rebuild()
-                    return (
-                        ContinuousClock.now - startedAt,
-                        FileManager.default.fileExists(atPath: release.path)
-                    )
-                })
-            }
+        let outcome = RebuildOutcome()
+        let started = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        Thread {
+            started.signal()
+            outcome.result = Result { try mirror.rebuild() }
+            finished.signal()
+        }.start()
+
+        // While the holder keeps the lock, rebuild() stays blocked. The
+        // window opens only once the thread runs, so a thread that starts
+        // late cannot pass for one blocked on the lock.
+        try #require(started.wait(timeout: .now() + .seconds(2)) == .success)
+        let blockedWhileHeld = finished.wait(timeout: .now() + .milliseconds(300)) == .timedOut
+        #expect(blockedWhileHeld)
+        try Data().write(to: release, options: .atomic)
+        if blockedWhileHeld {
+            try #require(finished.wait(timeout: .now() + .seconds(10)) == .success)
         }
-        holder.waitUntilExit()
-        #expect(elapsed >= .milliseconds(250))
-        // 0 means the release freed the lock; 3 or 4 means the holder gave
-        // up waiting, so the lock was freed by its deadline instead.
-        #expect(holder.terminationStatus == 0)
-        // rebuild() returned only after the release, so it waited for the
-        // holder rather than skipping the lock.
-        #expect(releasedFirst)
+        try #require(outcome.result).get()
+        holderExit = exitStatus(of: holder, timeout: 10)
+        // 0 means the release freed the lock; 3 means the holder gave up.
+        #expect(holderExit == 0)
         #expect(FileManager.default.fileExists(
             atPath: dst.appendingPathComponent(".graftty-mirror-version").path
         ))
@@ -599,15 +594,41 @@ struct CodexHomeMirrorTests {
         try content.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private func waitForFile(_ url: URL, timeout: TimeInterval) async -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if FileManager.default.fileExists(atPath: url.path) {
-                return true
-            }
-            try? await Task.sleep(for: .milliseconds(20))
+    private func spawn(_ argv: [String], environment: [String: String]) throws -> pid_t {
+        let cArgv = argv.map { strdup($0) } + [nil]
+        let cEnvironment = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        defer { (cArgv + cEnvironment).forEach { free($0) } }
+        var pid: pid_t = 0
+        let result = posix_spawn(&pid, argv[0], nil, nil, cArgv, cEnvironment)
+        guard result == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: result) ?? .EIO)
         }
-        return FileManager.default.fileExists(atPath: url.path)
+        return pid
+    }
+
+    /// The exit code of `pid` once it exits, -1 if a signal ended it, or nil
+    /// if it is still running at the deadline.
+    private func exitStatus(of pid: pid_t, timeout: TimeInterval) -> Int32? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var status: Int32 = 0
+        while true {
+            let reaped = waitpid(pid, &status, WNOHANG)
+            if reaped == pid {
+                return status & 0x7f == 0 ? (status >> 8) & 0xff : -1
+            }
+            if reaped == -1, errno != EINTR { return nil }
+            guard Date() < deadline else { return nil }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+    }
+
+    private func waitForFile(_ url: URL, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !FileManager.default.fileExists(atPath: url.path) {
+            guard Date() < deadline else { return false }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        return true
     }
 
     private func commands(in groups: [[String: Any]]) -> [String] {
@@ -616,4 +637,10 @@ struct CodexHomeMirrorTests {
             return handlers.compactMap { $0["command"] as? String }
         }
     }
+}
+
+/// Hands rebuild()'s result from its thread to the test; the semaphore the
+/// thread signals orders the write before the read.
+private final class RebuildOutcome: @unchecked Sendable {
+    var result: Result<Void, any Error>?
 }
