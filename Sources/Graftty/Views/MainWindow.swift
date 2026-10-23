@@ -1201,11 +1201,7 @@ struct MainWindow: View {
     }
 
     private func presentRemoteWorktreeError(_ message: String) {
-        let alert = NSAlert()
-        alert.messageText = "Remote worktree operation failed"
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.runModal()
+        RemoteWorktreeViewerController.presentAlert(message)
     }
 
     private func selectRemotePane(_ remoteMac: RemoteMac, worktreePath: String, sessionName: String) {

@@ -116,7 +116,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
         self.sleep = sleep
     }
 
-    private static func presentAlert(_ message: String) {
+    static func presentAlert(_ message: String) {
         let alert = NSAlert()
         alert.messageText = "Remote worktree operation failed"
         alert.informativeText = message
@@ -149,8 +149,17 @@ final class RemoteWorktreeViewerController: ObservableObject {
     var selectedWorktreeSnapshot: WorktreePanes? {
         guard let identity = selectedRemoteIdentity,
               let path = selectedRemoteWorktreePath else { return nil }
-        return model.worktreePanesByRemote[identity]?.first {
-            $0.path == path && ($0.origin?.relayDepth ?? 0) == 0
+        return Self.directWorktree(path, in: model.worktreePanesByRemote[identity])
+    }
+
+    /// The host's own row for `worktreePath`. Relayed copies of the same
+    /// path belong to another Mac and are never the viewer's to drive.
+    private static func directWorktree(
+        _ worktreePath: String,
+        in worktrees: [WorktreePanes]?
+    ) -> WorktreePanes? {
+        worktrees?.first {
+            $0.path == worktreePath && ($0.origin?.relayDepth ?? 0) == 0
         }
     }
 
@@ -184,9 +193,10 @@ final class RemoteWorktreeViewerController: ObservableObject {
 
     /// In-flight rows (creating, deleting) cannot be selected.
     func canSelectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String) -> Bool {
-        model.worktreePanesByRemote[RemoteMacIdentity(remoteMac)]?.first(where: {
-            $0.path == worktreePath && ($0.origin?.relayDepth ?? 0) == 0
-        })?.state.isInFlight != true
+        Self.directWorktree(
+            worktreePath,
+            in: model.worktreePanesByRemote[RemoteMacIdentity(remoteMac)]
+        )?.state.isInFlight != true
     }
 
     func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String, acknowledging: Bool) {
@@ -425,11 +435,10 @@ final class RemoteWorktreeViewerController: ObservableObject {
             worktreePanesByRemote: worktreePanesByRemote
         )
         openingRemoteWorktrees = openingRemoteWorktrees.filter { target in
-            worktreePanesByRemote[target.identity]?.contains {
-                $0.path == target.worktreePath
-                    && ($0.origin?.relayDepth ?? 0) == 0
-                    && $0.state == .closed
-            } == true
+            Self.directWorktree(
+                target.worktreePath,
+                in: worktreePanesByRemote[target.identity]
+            )?.state == .closed
         }
         let currentIdentities = Set(worktreePanesByRemote.keys)
         let staleIdentities = Set(remoteTerminalSlots.keys.map(\.identity))
@@ -496,10 +505,8 @@ final class RemoteWorktreeViewerController: ObservableObject {
                 continue
             }
             let sessionNames = Set(
-                worktrees.first(where: {
-                    $0.path == target.worktreePath
-                        && ($0.origin?.relayDepth ?? 0) == 0
-                })?.layout?.leaves.map(\.sessionName) ?? []
+                Self.directWorktree(target.worktreePath, in: worktrees)?
+                    .layout?.leaves.map(\.sessionName) ?? []
             )
             if pendingRemoteCloseProjections[target]?
                 .removedSessionNames.isDisjoint(with: sessionNames) == true {
@@ -519,23 +526,10 @@ final class RemoteWorktreeViewerController: ObservableObject {
             identity: identity,
             worktreePath: worktreePath
         )
-        guard let worktree = model.worktreePanesByRemote[identity]?
-            .first(where: {
-                $0.path == worktreePath && ($0.origin?.relayDepth ?? 0) == 0
-            }) else {
-            pendingRemoteSplitFocusResults.removeAll {
-                $0.target == focusTarget && $0.removedSessionName != nil
-            }
-            pendingRemoteCloseProjections[focusTarget] = nil
-            if selectedRemoteIdentity == identity,
-               selectedRemoteWorktreePath == worktreePath {
-                selectedRemotePaneSessionName = nil
-            }
-            destroyRemoteSurfaces(identity: identity, worktreePath: worktreePath)
-            splitTree = SplitTree(root: nil)
-            return
-        }
-        guard let layout = worktree.layout else {
+        guard let layout = Self.directWorktree(
+            worktreePath,
+            in: model.worktreePanesByRemote[identity]
+        )?.layout else {
             pendingRemoteSplitFocusResults.removeAll {
                 $0.target == focusTarget && $0.removedSessionName != nil
             }
@@ -862,18 +856,9 @@ final class RemoteWorktreeViewerController: ObservableObject {
         let projectedSessionNames = Set(projectedSessionOrder)
 
         switch command {
-        case .split(let split):
-            let direction: PaneControlRequest.SplitDirection
-            switch split {
-            case .right:
-                direction = .right
-            case .down:
-                direction = .down
-            case .left:
-                direction = .left
-            case .up:
-                direction = .up
-            }
+        case .split(let direction):
+            // `PaneSplit` and the wire's split direction are both
+            // `PaneSplitDirection`, so the command's direction goes out as-is.
             let pending = PendingRemoteSplitFocus(
                 id: UUID(),
                 target: target,
@@ -1548,11 +1533,10 @@ final class RemoteWorktreeViewerController: ObservableObject {
             guard let index = pendingRemoteSplitFocus.firstIndex(
                 where: { $0.id == candidate.id }
             ),
-            let layout = worktreePanesByRemote[candidate.target.identity]?
-                .first(where: {
-                    $0.path == candidate.target.worktreePath
-                        && ($0.origin?.relayDepth ?? 0) == 0
-                })?.layout,
+            let layout = Self.directWorktree(
+                candidate.target.worktreePath,
+                in: worktreePanesByRemote[candidate.target.identity]
+            )?.layout,
             (pendingRemoteCloseProjections[candidate.target]?
                 .removedSessionNames.isDisjoint(
                     with: Set(layout.leaves.map(\.sessionName))
@@ -1858,57 +1842,5 @@ extension TerminalManager: RemoteWorktreeViewerSurfaces {
             view.configureAgentCompletion(currentWorktreePath: worktreePath, loader: agentCompletions)
         }
         return true
-    }
-
-    /// Promote the terminal's backing `NSView` to the window's first
-    /// responder so keyDown events route to libghostty. Dispatched async
-    /// because the view may have just been created by `createSurfaces` and
-    /// SwiftUI hasn't attached it to the window hierarchy yet — you can't
-    /// `makeFirstResponder` a view that isn't in a window.
-    func promoteToFirstResponder(
-        _ terminalID: PaneSlotID,
-        when shouldFocus: (() -> Bool)? = nil,
-        onFocused: (() -> Void)? = nil
-    ) {
-        attemptPromoteToFirstResponder(
-            terminalID,
-            when: shouldFocus,
-            onFocused: onFocused,
-            attemptsRemaining: 20
-        )
-    }
-
-    /// SwiftUI can take more than one run-loop turn to mount a newly selected
-    /// worktree's terminal. Retry for a bounded interval, and only force the
-    /// deferred zmx attach after AppKit has supplied a real grid. The normal
-    /// layout notifier usually wins; `startForBackgroundLaunch` is one-shot
-    /// and acts as a fallback for the UI-add path that previously left a
-    /// mounted pane with no live session.
-    private func attemptPromoteToFirstResponder(
-        _ terminalID: PaneSlotID,
-        when shouldFocus: (() -> Bool)?,
-        onFocused: (() -> Void)?,
-        attemptsRemaining: Int
-    ) {
-        DispatchQueue.main.asyncAfter(deadline: attemptsRemaining == 20 ? .now() : .now() + 0.05) { [self] in
-            guard !NSApp.isHidden, shouldFocus?() ?? true else { return }
-            guard let view = view(for: terminalID),
-                  let window = view.window,
-                  view.bounds.width > 0,
-                  view.bounds.height > 0 else {
-                guard attemptsRemaining > 1 else { return }
-                attemptPromoteToFirstResponder(
-                    terminalID,
-                    when: shouldFocus,
-                    onFocused: onFocused,
-                    attemptsRemaining: attemptsRemaining - 1
-                )
-                return
-            }
-            _ = handle(for: terminalID)?.startForBackgroundLaunch()
-            setVisible(true, for: terminalID)
-            guard window.makeFirstResponder(view) else { return }
-            onFocused?()
-        }
     }
 }

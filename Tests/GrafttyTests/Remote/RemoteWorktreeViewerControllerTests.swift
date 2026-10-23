@@ -81,7 +81,7 @@ struct RemoteWorktreeViewerControllerTests {
         #expect(viewer.controller.focusedTerminalID == a)
     }
 
-    @Test("@spec REMOTE-24.4: If a remote split fails with a cancelled or downstream-unavailable code, then the viewer shall drop every queued mutation for that worktree without an alert; for any other error the viewer shall show the error and continue with the next queued mutation.")
+    @Test("@spec REMOTE-24.4: If a remote split fails with a cancelled or downstream-unavailable code, then the viewer shall drop every queued mutation for that worktree, alerting only for downstream-unavailable; for any other error the viewer shall continue with the next queued mutation and show the error unless its code is no-matching-split.")
     func failedSplitAbortsOrContinuesTheQueue() async throws {
         let cancelled = try await ViewerHarness.opened(layout: .leaf("a"))
         let a = try cancelled.terminal("a")
@@ -97,6 +97,16 @@ struct RemoteWorktreeViewerControllerTests {
         await cancelled.settle()
         #expect(cancelled.model.requests.last == .split(target: "a", direction: .left))
 
+        let unreachable = try await ViewerHarness.opened(layout: .leaf("a"))
+        let unreachableA = try unreachable.terminal("a")
+        unreachable.surfaces.send(.split(.right), from: unreachableA)
+        unreachable.surfaces.send(.split(.down), from: unreachableA)
+        await unreachable.settle()
+        unreachable.model.paneControls[0].resolve(.error(code: "downstream-unavailable", message: "offline"))
+        await unreachable.settle()
+        #expect(unreachable.model.requests.count == 1)
+        #expect(unreachable.errors.messages == ["offline"])
+
         let conflict = try await ViewerHarness.opened(layout: .leaf("a"))
         let conflictA = try conflict.terminal("a")
         conflict.surfaces.send(.split(.right), from: conflictA)
@@ -111,7 +121,7 @@ struct RemoteWorktreeViewerControllerTests {
         #expect(conflict.errors.messages == ["busy"])
     }
 
-    @Test("@spec REMOTE-24.5: When a host answers a remote split with a bare ok, the viewer shall keep that split in flight until a snapshot shows a new pane or ten seconds elapse, and shall then send the next queued mutation.")
+    @Test("@spec REMOTE-24.5: When a host answers a remote split with a bare ok, the viewer shall keep that split in flight until a snapshot shows a new pane and shall then send the next queued mutation; if ten seconds elapse first, the viewer shall drop every queued mutation for that worktree.")
     func legacySplitWaitsForSnapshotOrTimeout() async throws {
         let snapshot = try await ViewerHarness.opened(layout: .leaf("a"))
         let a = try snapshot.terminal("a")
@@ -198,7 +208,7 @@ struct RemoteWorktreeViewerControllerTests {
         #expect(rezoomed.controller.splitTree.zoomed == rezoomedB)
     }
 
-    @Test("@spec REMOTE-24.8: When a remote surface closes unexpectedly, the viewer shall recreate a surface for the same session; if creating a surface fails, the viewer shall retry after 750 ms while that pane is still selected.")
+    @Test("@spec REMOTE-24.8: When a remote surface closes unexpectedly, the viewer shall recreate a surface for the same session; if opening the session or creating its surface fails, the viewer shall retry after 750 ms while its worktree is still selected and the host still lists that pane.")
     func surfacesAreRecreatedAndRetried() async throws {
         let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
         let original = try viewer.terminal("a")
