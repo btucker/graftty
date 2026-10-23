@@ -73,6 +73,7 @@ struct MainWindow: View {
         teamEventDispatcher: TeamEventDispatcher,
         hostPairingCoordinator: RemoteMacHostPairingCoordinator,
         remoteMacsModel: RemoteMacsModel,
+        appStateChanges: AppStateChanges,
         makeRemoteMacPairingDriver: @escaping () -> AddRemoteMacPairingDriving
     ) {
         _appState = appState
@@ -85,6 +86,7 @@ struct MainWindow: View {
         self.teamEventDispatcher = teamEventDispatcher
         self.hostPairingCoordinator = hostPairingCoordinator
         self.remoteMacsModel = remoteMacsModel
+        self.appStateChanges = appStateChanges
         self.makeRemoteMacPairingDriver = makeRemoteMacPairingDriver
         _remoteViewer = StateObject(wrappedValue: RemoteWorktreeViewerController(
             model: remoteMacsModel,
