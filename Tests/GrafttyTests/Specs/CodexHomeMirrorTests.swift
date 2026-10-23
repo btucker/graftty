@@ -410,8 +410,12 @@ struct CodexHomeMirrorTests {
         try writeFile(holderScript, """
         #!/bin/sh
         /usr/bin/touch "$GRAFTTY_TEST_LOCK_READY"
-        while [ ! -f "$GRAFTTY_TEST_LOCK_RELEASE" ]; do
+        # Give up after 250 polls (5 s plus fork overhead) so a release that
+        # never comes fails the test instead of hanging the run.
+        i=0
+        while [ ! -f "$GRAFTTY_TEST_LOCK_RELEASE" ] && [ $i -lt 250 ]; do
           /bin/sleep 0.02
+          i=$((i + 1))
         done
         """)
         try FileManager.default.setAttributes(
@@ -438,22 +442,37 @@ struct CodexHomeMirrorTests {
                 holder.waitUntilExit()
             }
         }
-        #expect(await waitForFile(ready, timeout: 2.0))
+        try #require(await waitForFile(ready, timeout: 2.0))
 
-        let releaseTask = Task.detached {
-            try await Task.sleep(for: .milliseconds(400))
-            try Data().write(to: release, options: .atomic)
-        }
         let mirror = CodexHomeMirror(
             sourceDirectory: src,
             mirrorDirectory: dst
         )
-        let startedAt = Date()
-        try mirror.rebuild()
-        let elapsed = Date().timeIntervalSince(startedAt)
-        try await releaseTask.value
+        // rebuild() blocks in flock until the holder exits, and the full
+        // suite can saturate the cooperative pool, so both the rebuild and
+        // the release run on GCD. A release that waited on a cooperative
+        // thread could land late or never.
+        let (elapsed, releasedFirst) = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<(Duration, Bool), any Error>) in
+            DispatchQueue.global().async {
+                let startedAt = ContinuousClock.now
+                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(400)) {
+                    try? Data().write(to: release, options: .atomic)
+                }
+                continuation.resume(with: Result {
+                    try mirror.rebuild()
+                    return (
+                        ContinuousClock.now - startedAt,
+                        FileManager.default.fileExists(atPath: release.path)
+                    )
+                })
+            }
+        }
         holder.waitUntilExit()
-        #expect(elapsed >= 0.25)
+        #expect(elapsed >= .milliseconds(250))
+        // A rebuild that got the lock because the holder hit its poll limit
+        // finished before the release landed.
+        #expect(releasedFirst)
         #expect(FileManager.default.fileExists(
             atPath: dst.appendingPathComponent(".graftty-mirror-version").path
         ))
