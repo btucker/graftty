@@ -74,8 +74,7 @@ struct IPadRootLayoutSelectionTests {
         let view = WorktreeListContent(
             host: sampleHost(),
             onSelect: { _ in },
-            onSelectPane: { _, _ in },
-            onListChanged: { _ in }
+            onSelectPane: { _, _ in }
         )
         _ = view
         #expect(true)
@@ -1135,7 +1134,7 @@ instead of an empty bridge.
         ) == nil)
     }
 
-    @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
+    @Test("stale-selectedWorktreePath is cleared when a worktree list arrives without the path")
     func stalePathCleanup() {
         let appState = freshAppState()
         appState.selectedWorktreePath = "/repo/branch-deleted-out-of-band"

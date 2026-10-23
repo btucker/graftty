@@ -13,7 +13,8 @@ private struct RemoteConnectionCoordinatorKey: EnvironmentKey {
 }
 
 /// A paired host's pushed worktree frames, or nil when the host is not
-/// paired. Every consumer subscribes through this one value. A struct rather
+/// paired. Worktree lists and the iPad layout subscribe through this value;
+/// `SingleSessionView` still asks the coordinator directly. A struct rather
 /// than a bare closure so reading it from the environment needs no function
 /// conversion under strict concurrency.
 struct RemoteWorktreeUpdatesProvider: Sendable {
