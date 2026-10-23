@@ -393,7 +393,6 @@ public struct WorktreeListContent: View {
         .sheet(isPresented: $isAddSheetPresented) {
             AddWorktreeSheetView(
                 host: host,
-                includeRemoteWorktrees: includeRemoteWorktrees,
                 remoteConnectionProvider: remoteConnectionProvider
             ) { submission in
                 beginCreatingWorktree(submission)
@@ -1309,14 +1308,14 @@ public struct WorktreeListContent: View {
         let rows: [WorktreePanes]
         if case .loaded(let list) = state { rows = list } else { rows = [] }
         let targetProject = projects(for: rows).first {
-            $0.repositoryID == repository.path && $0.owner?.deviceID == repository.origin?.deviceID
+            $0.repositoryID == repository.id && $0.owner?.deviceID == repository.origin?.deviceID
         }
         let temporaryID = "creating-" + UUID().uuidString
         let placeholder = WorktreePanes(
             path: temporaryID,
             displayName: (request.worktreeName as NSString).lastPathComponent,
             repoDisplayName: repository.displayName,
-            repositoryID: repository.path,
+            repositoryID: repository.id,
             displayBranch: request.branchName, state: .creating,
             isMainCheckout: false, prBadge: nil, stats: nil,
             attentionText: nil, layout: nil, origin: repository.origin,
