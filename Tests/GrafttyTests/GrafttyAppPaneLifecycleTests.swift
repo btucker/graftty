@@ -1,3 +1,5 @@
+import AppKit
+import GhosttyKit
 import SwiftUI
 import Testing
 @testable import Graftty
@@ -49,7 +51,7 @@ struct GrafttyAppPaneLifecycleTests {
         ))
         manager.insertSurfaceForTesting(handle, for: pane)
 
-        let result = GrafttyApp.startWorktree(
+        let result = PaneCommands.startWorktree(
             path: worktree.path,
             appState: binding,
             terminalManager: manager,
@@ -104,7 +106,7 @@ struct GrafttyAppPaneLifecycleTests {
         ))
         manager.insertSurfaceForTesting(handle, for: pane)
 
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: worktree.path,
             appState: binding,
             terminalManager: manager
@@ -152,7 +154,7 @@ struct GrafttyAppPaneLifecycleTests {
             socketPath: "/tmp/graftty-multi-pane-open-test.sock"
         )
 
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: worktree.path,
             appState: binding,
             terminalManager: manager
@@ -191,7 +193,7 @@ struct GrafttyAppPaneLifecycleTests {
             socketPath: "/tmp/graftty-multi-pane-fallback-test.sock"
         )
 
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: fallbackWorktree.path,
             appState: fallbackBinding,
             terminalManager: fallbackManager
@@ -277,17 +279,17 @@ struct GrafttyAppPaneLifecycleTests {
         )
         let manager = TerminalManager(socketPath: "/tmp/graftty-open-test.sock")
 
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: running.path,
             appState: binding,
             terminalManager: manager
         ) == .alreadyRunning)
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: stale.path,
             appState: binding,
             terminalManager: manager
         ) == .unavailable)
-        #expect(GrafttyApp.startWorktree(
+        #expect(PaneCommands.startWorktree(
             path: "/repo/missing",
             appState: binding,
             terminalManager: manager
@@ -342,6 +344,79 @@ struct GrafttyAppPaneLifecycleTests {
         #expect(!manager.routeHostManagedPaneCommand(.close, for: remote))
     }
 
+    @Test("dispatchPaneCommand routes to a host-managed handler before the local pane callback")
+    func dispatchPaneCommandPrefersHostManagedHandler() {
+        let remote = PaneSlotID()
+        let local = PaneSlotID()
+        let manager = TerminalManager(socketPath: "/tmp/graftty-command-test.sock")
+        var routed: [HostManagedPaneCommand] = []
+        var localCalls: [String] = []
+        manager.registerHostManagedPaneCommandHandler(for: remote) { routed.append($0) }
+        manager.onSplitRequest = { id, split in localCalls.append("split \(id == local) \(split)") }
+        manager.onCloseRequest = { id in localCalls.append("close \(id == local)") }
+        manager.onSurfaceClosed = { id in localCalls.append("surfaceClosed \(id == local)") }
+        manager.onGotoSplit = { id, direction in localCalls.append("focus \(id == local) \(direction)") }
+        manager.onGotoSplitOrder = { id, forward in localCalls.append("focusOrder \(id == local) \(forward)") }
+        manager.onToggleZoom = { id in localCalls.append("zoom \(id == local)") }
+        manager.onResizeSplit = { id, direction, amount in
+            localCalls.append("resize \(id == local) \(direction) \(amount)")
+        }
+        manager.onEqualizeSplits = { id in localCalls.append("equalize \(id == local)") }
+
+        let commands: [HostManagedPaneCommand] = [
+            .split(.left), .close, .surfaceClosed, .focus(.right),
+            .focusOrder(forward: true), .toggleZoom,
+            .resize(direction: .down, amount: 4), .equalize,
+        ]
+        for command in commands {
+            manager.dispatchPaneCommand(command, for: remote)
+        }
+        #expect(routed == commands)
+        #expect(localCalls.isEmpty)
+
+        for command in commands {
+            manager.dispatchPaneCommand(command, for: local)
+        }
+        #expect(routed == commands)
+        #expect(localCalls == [
+            "split true left", "close true", "surfaceClosed true", "focus true right",
+            "focusOrder true true", "zoom true", "resize true down 4", "equalize true",
+        ])
+    }
+
+    @Test("Surface context-menu splits and surface closes for a host-managed pane reach its handler, not the local callbacks")
+    func surfaceEntryPointsRouteHostManagedPaneCommands() throws {
+        _ = NSApplication.shared
+        let manager = TerminalManager(socketPath: "/tmp/graftty-command-test.sock")
+        manager.initialize()
+        manager.zmxLauncher = ZmxLauncher(
+            executable: URL(fileURLWithPath: "/usr/bin/false"),
+            zmxDir: URL(fileURLWithPath: "/tmp/graftty-command-unused")
+        )
+        let id = PaneSlotID()
+        defer { manager.evictSurface(terminalID: id, forRetry: true) }
+        let handle = try #require(manager.createSurface(
+            terminalID: id,
+            paneSessionID: PaneSessionID(),
+            worktreePath: "/tmp"
+        ))
+        let view = try #require(handle.view as? SurfaceNSView)
+        let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(
+            try #require(ghostty_surface_userdata(handle.surface))
+        ).takeUnretainedValue()
+        var routed: [HostManagedPaneCommand] = []
+        var localCalls = 0
+        manager.registerHostManagedPaneCommandHandler(for: id) { routed.append($0) }
+        manager.onSplitRequest = { _, _ in localCalls += 1 }
+        manager.onSurfaceClosed = { _ in localCalls += 1 }
+
+        view.splitRight(nil)
+        manager.receiveSurfaceClosed(box)
+
+        #expect(routed == [.split(.right), .surfaceClosed])
+        #expect(localCalls == 0)
+    }
+
     @Test func reassignPaneByPWDMovesPaneSessionToTargetWorktree() {
         let slot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000031")!)
         let session = PaneSessionID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000041")!)
@@ -372,7 +447,7 @@ struct GrafttyAppPaneLifecycleTests {
             worktreePath: source.path
         )
 
-        GrafttyApp.reassignPaneByPWD(
+        PaneCommands.reassignPaneByPWD(
             appState: binding,
             terminalManager: manager,
             terminalID: slot,
@@ -438,7 +513,7 @@ struct GrafttyAppPaneLifecycleTests {
         manager.markFirstPane(moving)
         manager.markFirstPane(targetPrimary)
 
-        GrafttyApp.reassignPaneByPWD(
+        PaneCommands.reassignPaneByPWD(
             appState: binding,
             terminalManager: manager,
             terminalID: moving,

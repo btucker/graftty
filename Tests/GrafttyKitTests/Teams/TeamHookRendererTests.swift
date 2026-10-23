@@ -35,6 +35,8 @@ struct TeamHookRendererTests {
             #expect(context.contains("`graftty-team` skill for agent coordination"))
             #expect(context.contains("durable roles"))
             #expect(context.contains("task-specific `emoji`"))
+            #expect(context.contains("`historyEntry`"))
+            #expect(context.contains("omit routine updates"))
             #expect(context.contains("`emojiAlternatives`"))
             #expect(context.contains("`graftty-preview` skill"))
             #expect(context.contains("asked to show files"))
@@ -67,6 +69,8 @@ struct TeamHookRendererTests {
         #expect(json["decision"] == "block")
         #expect(json["reason"]?.contains("graftty attention report --stdin") == true)
         #expect(json["reason"]?.contains("context") == true)
+        #expect(json["reason"]?.contains("historyEntry") == true)
+        #expect(json["reason"]?.contains("Omit historyEntry for routine updates") == true)
         #expect(json["reason"]?.contains("emojiAlternatives") == true)
         #expect(json["reason"]?.contains("already reported without an emoji") == true)
     }

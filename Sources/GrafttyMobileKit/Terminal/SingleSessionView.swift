@@ -75,12 +75,12 @@ struct SingleSessionView: View {
     /// collapsed sidebar (IPAD-1.7).
     let isFullScreen: Bool
     let showsProjectRail: Bool
-    /// Injected from `RootView` on BOTH size classes so `openTerminal()`
-    /// can negotiate (or reuse) the per-host `RemoteHostConnection` for
-    /// SSH-over-WebRTC. `nil` exists only in preview and narrowly scoped
-    /// test contexts; production refuses the dial when pairing is absent
-    /// or negotiation fails.
-    let coordinator: RemoteConnectionCoordinator?
+    /// RootView's coordinator, from the environment on BOTH size classes,
+    /// so `openTerminal()` can negotiate (or reuse) the per-host
+    /// `RemoteHostConnection` for SSH-over-WebRTC. `nil` exists only in
+    /// preview and narrowly scoped test contexts; production refuses the
+    /// dial when pairing is absent or negotiation fails.
+    @Environment(\.remoteConnectionCoordinator) private var coordinator
     /// Not-yet-honored focus requests owned by app-scoped state (the iPad
     /// layout passes `appState.pendingFocusRequests`). A pending delta, not
     /// a monotonic total, so view recreation cannot replay honored requests.
@@ -178,19 +178,14 @@ struct SingleSessionView: View {
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
-    static func shouldShowTakeControl(
-        isFullScreen: Bool,
-        clientCanTakeControl: Bool
-    ) -> Bool {
-        // Fullscreen controls navigation chrome, not display ownership.
+    /// IPAD-1.18: fullscreen controls navigation chrome, not display
+    /// ownership, so Take Control depends only on the client.
+    static func shouldShowTakeControl(clientCanTakeControl: Bool) -> Bool {
         clientCanTakeControl
     }
 
-    static func shouldExposeKeyboard(
-        clientIsOwner: Bool,
-        keyboardAllowed: Bool,
-        isKeyboardVisible: Bool
-    ) -> Bool {
+    /// IOS-6.13: keyboard chrome appears only for the display owner.
+    static func shouldExposeKeyboard(clientIsOwner: Bool) -> Bool {
         clientIsOwner
     }
 
@@ -308,7 +303,6 @@ struct SingleSessionView: View {
         navigationPath: Binding<NavigationPath>,
         isFullScreen: Bool = true,
         showsProjectRail: Bool = true,
-        coordinator: RemoteConnectionCoordinator? = nil,
         externalPendingFocusRequests: Int = 0,
         onExternalFocusRequestsConsumed: (() -> Void)? = nil,
         ghosttyCommandContext: MobileGhosttyCommandContext? = nil,
@@ -330,7 +324,6 @@ struct SingleSessionView: View {
         self._navigationPath = navigationPath
         self.isFullScreen = isFullScreen
         self.showsProjectRail = showsProjectRail
-        self.coordinator = coordinator
         self.externalPendingFocusRequests = externalPendingFocusRequests
         self.onExternalFocusRequestsConsumed = onExternalFocusRequestsConsumed
         self.ghosttyCommandContext = ghosttyCommandContext
@@ -754,7 +747,6 @@ struct SingleSessionView: View {
             return
         }
         let makeClient = { SessionClient.live(
-            baseURL: step.host.baseURL,
             sessionName: step.sessionName,
             role: Self.sessionRole,
             // REMOTE-2.1 (substance; the spec ID itself lands in W4):
@@ -847,24 +839,21 @@ struct SingleSessionView: View {
     private func observeAttention() async {
         guard isFullScreen, isPaneFocused, let coordinator,
               LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
-        while !Task.isCancelled {
-            do {
-                let rows = try await coordinator.worktreePanes(for: step.host)
-                let snapshot = await coordinator.navigationSnapshot(for: step.host, matching: rows)
-                guard !Task.isCancelled else { return }
-                let projects: [SidebarProject]
-                if case let .snapshot(snapshotRows, metadata)? = snapshot, snapshotRows == rows {
-                    projects = metadata?.projects ?? SidebarProjection.projects(rows)
-                } else { projects = SidebarProjection.projects(rows) }
+        for await update in coordinator.worktreeUpdates(for: step.host) {
+            // An update already handed over when SwiftUI cancelled this task
+            // belongs to an observation that has ended.
+            guard !Task.isCancelled else { return }
+            switch update {
+            case .unavailable:
+                // Do not present a stale count while the host is unreachable.
+                attentionWorktrees = []
+            case let .frame(.snapshot(rows, metadata)):
+                let projects = metadata?.projects ?? SidebarProjection.projects(rows)
                 sidebarNavigation?.reconcile(worktrees: rows, projects: projects)
                 recentPaneActions?.history.reconcile(hostID: step.host.id, worktrees: rows, projects: projects)
                 attentionWorktrees = rows
                 recordRecentVisit()
-            } catch {
-                // Do not present a stale count while the host is unreachable.
-                attentionWorktrees = []
             }
-            do { try await Task.sleep(for: .seconds(1)) } catch { return }
         }
     }
 
@@ -924,17 +913,10 @@ struct SingleSessionView: View {
     @ViewBuilder
     private var terminalChrome: some View {
         let shouldShowTakeControl = client.map {
-            Self.shouldShowTakeControl(
-                isFullScreen: isFullScreen,
-                clientCanTakeControl: $0.canTakeControl
-            )
+            Self.shouldShowTakeControl(clientCanTakeControl: $0.canTakeControl)
         } ?? false
         let shouldExposeKeyboard = client.map {
-            Self.shouldExposeKeyboard(
-                clientIsOwner: $0.isOwner,
-                keyboardAllowed: keyboardAllowed,
-                isKeyboardVisible: isKeyboardVisible
-            )
+            Self.shouldExposeKeyboard(clientIsOwner: $0.isOwner)
         } ?? false
         if shouldShowTakeControl || shouldExposeKeyboard {
             VStack(spacing: 8) {

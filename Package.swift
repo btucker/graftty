@@ -119,8 +119,54 @@ let webRTCDependencies: [Target.Dependency] = [.product(name: "WebRTC", package:
 let cryptoDependencies: [Target.Dependency] = [.product(name: "Crypto", package: "swift-crypto")]
 let linuxKitExclusions = ["Updater", "Editor", "Model/PNGThumbnail.swift",
                           "Ports/PortBindingsModel.swift"]
+// GrafttyKitTests compiles every file on Linux except `Apple/` (tests that
+// need AppKit, macOS-only APIs or GrafttyKit code excluded from Linux) and
+// this list of files not yet ported (#477). Shrink it as files are ported or
+// moved under `Apple/`; do not add to it. scripts/check-linux-test-allowlist.py
+// checks both.
+let linuxPendingKitTests = [
+    "CLI/CLIRunnerTests.swift",
+    "Git/WorktreeMonitorTests.swift",
+    "Hosting/GitOriginHostTests.swift",
+    "Notification/SocketIOReadAllTests.swift",
+    "Notification/SocketIntegrationTests.swift",
+    "Notification/SocketServerBufferCapTests.swift",
+    // @MainActor XCTestCase classes crash Linux XCTest discovery.
+    "PRStatus/PRStatusStoreAbsenceTransitionTests.swift",
+    "PRStatus/PRStatusStoreTransitionTests.swift",
+    "Remote/HostPairingServerTests.swift",
+    "Remote/MacToMac/LANRemoteAccessServerTests.swift",
+    "Remote/PagedZmxAttachEngineTests.swift",
+    "Remote/ZmxAttachEngineTests.swift",
+    "SidebarHostNavigationTests.swift",
+    "Stats/WorktreeStatsStoreLocalGitTimeoutTests.swift",
+    "Support/BlockedFIFOTestSupport.swift",
+    "Teams/AgentPluginInstallerTests.swift",
+    "Teams/ClaudePeerDeliveryServiceTests.swift",
+    "Teams/ClaudePeerMessagingTests.swift",
+    "Teams/ClaudePeerReplyBridgeTests.swift",
+    "Teams/ClaudePeerSessionRegistryTests.swift",
+    "Teams/ShellStartupCommandTests.swift",
+    "Web/AgentCompletionsEndpointTests.swift",
+    "Web/GhosttyKeybindingsEndpointTests.swift",
+    "Web/TailscaleLocalAPISlowMintTests.swift",
+    "Web/WebCertRenewerTests.swift",
+    "Web/WebServerAuthTests.swift",
+    "Web/WebServerDeleteEndpointTests.swift",
+    "Web/WebServerIntegrationTests.swift",
+    "Web/WebServerPortInUseTests.swift",
+    "Web/WebServerWorktreeEndpointTests.swift",
+    "Web/WebTLSContextProviderTests.swift",
+    "Web/WebTestTLSHelpers.swift",
+    "WorktreeSleep/ShellSleepActivityTests.swift",
+    "Zmx/ZmxLauncherTests.swift",
+    "Zmx/ZmxNativeHostManagedIntegrationTests.swift",
+    "Zmx/ZmxResizePropagationTests.swift",
+    "Zmx/ZmxSurvivalIntegrationTests.swift",
+]
 let appleTargets: Set<String> = ["AppcastUpdater", "appcast-updater", "AppcastUpdaterTests", "Graftty", "GrafttyCommandUI", "GrafttyCommandUITests", "GrafttyMobileKit",
-                               "GrafttyMobileKitTests", "GrafttyTests", "OwnershipModelTests", "GrafttyRemoteClientTests"]
+                               "GrafttyMobileKitTests", "GrafttyTests", "OwnershipModelTests", "GrafttyRemoteClientTests",
+                               "GrafttyRemoteTestSupport"]
 
 let package = Package(
     name: "Graftty",
@@ -142,7 +188,10 @@ let package = Package(
         .library(name: "GrafttyRemoteClient", targets: ["GrafttyRemoteClient"]),
         .library(name: "GrafttyCommandUI", targets: ["GrafttyCommandUI"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
-    ] as [Product]).filter { !isLinux || !["appcast-updater", "Graftty", "GrafttyCommandUI", "GrafttyMobileKit"].contains($0.name) },
+        // Test-only: the iOS test bundles (Apps/GrafttyMobile/project.yml)
+        // can link a package product, not a bare target.
+        .library(name: "GrafttyRemoteTestSupport", targets: ["GrafttyRemoteTestSupport"]),
+    ] as [Product]).filter { !isLinux || !["appcast-updater", "Graftty", "GrafttyCommandUI", "GrafttyMobileKit", "GrafttyRemoteTestSupport"].contains($0.name) },
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
@@ -183,6 +232,7 @@ let package = Package(
                 .copy("Web/Resources"),
                 .copy("AgentPlugins"),
                 .copy("HostSetup/Resources/linux-install.sh"),
+                .copy("Teams/Resources/codex-wrapper.sh"),
                 // Vendored ghostty runtime resources (CONFIG-2.5) — see
                 // GhosttyResources/ghostty/PROVENANCE.md. `ghostty` and
                 // `terminfo` land at the bundle root as siblings, mirroring
@@ -264,6 +314,27 @@ let package = Package(
             dependencies: ["AppcastUpdater"],
             swiftSettings: strictWarnings
         ),
+        // Shared test scaffolding (#477). Foundation-only so any test target
+        // can link it; Kit-dependent doubles live in GrafttyKitTestSupport.
+        .target(
+            name: "GrafttyTestSupport",
+            path: "Tests/GrafttyTestSupport",
+            swiftSettings: strictWarnings
+        ),
+        // The loopback WebRTC peer shared by the GrafttyRemoteClient and
+        // GrafttyMobileKit test targets (#477).
+        .target(
+            name: "GrafttyRemoteTestSupport",
+            dependencies: ["GrafttyRemoteClient", "GrafttyTunnel"] + webRTCDependencies,
+            path: "Tests/GrafttyRemoteTestSupport",
+            swiftSettings: strictWarnings
+        ),
+        .target(
+            name: "GrafttyKitTestSupport",
+            dependencies: ["GrafttyKit"],
+            path: "Tests/GrafttyKitTestSupport",
+            swiftSettings: strictWarnings
+        ),
         .testTarget(
             name: "GrafttyTunnelTests",
             dependencies: ["GrafttyTunnel", .product(name: "NIOCore", package: "swift-nio"),
@@ -279,7 +350,7 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyProtocolTests",
-            dependencies: ["GrafttyProtocol"] + cryptoDependencies,
+            dependencies: ["GrafttyProtocol", "GrafttyTestSupport"] + cryptoDependencies,
             exclude: isLinux ? ["UI", "WorktreePanesTests.swift"] : [],
             resources: [.copy("Fixtures")],
             swiftSettings: strictWarnings
@@ -299,14 +370,9 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyKitTests",
-            dependencies: ["GrafttyKit", "GrafttyProtocol",
+            dependencies: ["GrafttyKit", "GrafttyProtocol", "GrafttyTestSupport", "GrafttyKitTestSupport",
                            .product(name: "NIOEmbedded", package: "swift-nio")] + cryptoDependencies,
-            sources: isLinux ? ["Ports/PortBindingTests.swift", "Ports/LsofOutputParserTests.swift", "Ports/PortScannerTests.swift", "Ports/ProcessTreeWalkerTests.swift", "Ports/LinuxProcSocketScannerTests.swift", "Host/HeadlessHostPortTests.swift", "Host/HostResourceSamplerTests.swift", "Process/LinuxProcessStatTests.swift", "Process/HostPOSIXTests.swift", "Host/HeadlessHostRuntimeTests.swift", "Model/WorktreePanesProjectionTests.swift", "Host/HostAgentEnvironmentTests.swift", "HostSetup/LinuxHostAgentInstallTests.swift", "HostSetup/LinuxHostSetupTests.swift", "HostSetup/LinuxHostSetupExecutionTests.swift", "HostSetup/LinuxHostPackagingTests.swift", "HostSetup/LinuxHostMaintenanceTests.swift",
-                "AgentConfiguration/RemoteSkillSnapshotTests.swift", "AgentConfiguration/RemoteSkillStoreTests.swift", "AgentConfiguration/RemoteSkillNativeDiscoveryTests.swift", "AgentConfiguration/RemoteSkillTransferTests.swift", "Support/MutableBox.swift", "Teams/TeamTestFixtures.swift", "Notification/SocketIOTests.swift", "Teams/TeamInboxObserverTests.swift", "Web/PtyProcessTests.swift", "Web/WebSocketOutputTests.swift",
-                "Zmx/ZmxRunnerTests.swift", "Teams/TeamInboxTests.swift", "Teams/TeamInboxParseCacheTests.swift", "Teams/TeamPresenceStorageTests.swift",
-                "Teams/AttentionFileHandoffTests.swift", "Remote/MacToMac/GrafttyBonjourServiceTests.swift", "Remote/MacToMac/RemoteMacTransportTests.swift",
-                "Persistence/JSONStoreCompatibilityTests.swift", "CLI/DuplexSubprocessTests.swift", "Providers/AWSProviderTests.swift", "Providers/AWSHostEnrollmentTests.swift",
-                "Providers/HostProviderRegistryTests.swift", "Providers/AWSInterruptionSourceTests.swift", "Providers/AWSHostInventoryTests.swift", "Placement/HostPlacementPlannerTests.swift", "Placement/HostPlacementLedgerTests.swift", "DevContainers/DevContainerPreparerTests.swift", "Replication/GitDelegationStoreTests.swift", "Replication/GitReceiveHookTests.swift", "Replication/GitReceiveBrokerTests.swift"] : nil,
+            exclude: isLinux ? ["Apple"] + linuxPendingKitTests : [],
             resources: [
                 .process("Hosting/Fixtures"),
                 .copy("Web/Fixtures"),
@@ -326,13 +392,14 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyMobileKitTests",
-            dependencies: ["GrafttyMobileKit"],
+            dependencies: ["GrafttyMobileKit", "GrafttyRemoteTestSupport"],
             swiftSettings: strictWarnings
         ),
         .testTarget(
             name: "GrafttyRemoteClientTests",
             dependencies: [
                 "GrafttyRemoteClient",
+                "GrafttyRemoteTestSupport",
                 "GrafttyTunnel",
                 "GrafttyProtocol",
                 .product(name: "NIO", package: "swift-nio"),
@@ -344,7 +411,7 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyTests",
-            dependencies: ["Graftty", "GrafttyCLI"],
+            dependencies: ["Graftty", "GrafttyCLI", "GrafttyTestSupport", "GrafttyKitTestSupport"],
             swiftSettings: strictWarnings
         ),
         .testTarget(

@@ -105,15 +105,14 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                 monitor.stopWatchingWorktree(wt.path)
             }
 
-            // watchWorktreePath / watchHeadRef / watchWorktreeContents are
-            // idempotent, so registering for the whole repo is cheap; this
-            // is how newly-discovered worktrees (external `git worktree
-            // add`) start getting HEAD + working-tree tracking without an
-            // app restart. Includes resurrected entries.
+            // watchWorktreePath / watchHeadRef are idempotent, so
+            // registering for the whole repo is cheap; this is how
+            // newly-discovered worktrees (external `git worktree add`)
+            // start getting path + HEAD tracking without an app restart.
+            // Includes resurrected entries.
             for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state.hasOnDiskWorktree {
                 monitor.watchWorktreePath(wt.path)
                 monitor.watchHeadRef(worktreePath: wt.path, repoPath: repoPath)
-                monitor.watchWorktreeContents(worktreePath: wt.path)
             }
 
             // Existing worktrees' stats are driven by their own HEAD and
@@ -272,7 +271,10 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let match = discovered.first(where: { $0.path == worktreePath }) else { return }
             guard let repoIdx = binding.wrappedValue.repos.firstIndex(where: { $0.path == repoPath }),
                   let wtIdx = binding.wrappedValue.repos[repoIdx].worktrees.firstIndex(where: { $0.path == worktreePath }) else { return }
-            binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
+            // FSEvents delegate: runs with no window open (#604).
+            GrafttyApp.persistingChanges(to: binding) {
+                binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
+            }
             store.refreshAutoTracking(repoPath: repoPath)
             if binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state.hasOnDiskWorktree {
                 store.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)

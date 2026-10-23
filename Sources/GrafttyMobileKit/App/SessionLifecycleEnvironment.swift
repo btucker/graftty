@@ -8,6 +8,27 @@ private struct BiometricGateKey: EnvironmentKey {
     static let defaultValue: BiometricGate? = nil
 }
 
+private struct RemoteConnectionCoordinatorKey: EnvironmentKey {
+    static let defaultValue: RemoteConnectionCoordinator? = nil
+}
+
+/// A paired host's pushed worktree frames, or nil when the host is not
+/// paired. Worktree lists and the iPad layout subscribe through this value;
+/// `SingleSessionView` still asks the coordinator directly. A struct rather
+/// than a bare closure so reading it from the environment needs no function
+/// conversion under strict concurrency.
+struct RemoteWorktreeUpdatesProvider: Sendable {
+    let updates: @MainActor @Sendable (Host) -> AsyncStream<RemoteWorktreeUpdate>?
+
+    @MainActor func callAsFunction(_ host: Host) -> AsyncStream<RemoteWorktreeUpdate>? {
+        updates(host)
+    }
+}
+
+private struct RemoteWorktreeUpdatesKey: EnvironmentKey {
+    static let defaultValue: RemoteWorktreeUpdatesProvider? = nil
+}
+
 private struct MobileNotificationPaneActivationKey: EnvironmentKey {
     static let defaultValue: MobileNotificationPaneActivation? = nil
 }
@@ -21,6 +42,22 @@ extension EnvironmentValues {
     var biometricGate: BiometricGate? {
         get { self[BiometricGateKey.self] }
         set { self[BiometricGateKey.self] = newValue }
+    }
+
+    /// RootView's one coordinator, shared by both size classes so a host
+    /// negotiated from either surface is cached for the other. `nil` only
+    /// in previews and tests that inject none: views then load no remote
+    /// worktrees and open no remote sessions.
+    var remoteConnectionCoordinator: RemoteConnectionCoordinator? {
+        get { self[RemoteConnectionCoordinatorKey.self] }
+        set { self[RemoteConnectionCoordinatorKey.self] = newValue }
+    }
+
+    /// RootView derives this from `remoteConnectionCoordinator`; previews and
+    /// tests may inject frames without a coordinator.
+    var remoteWorktreeUpdates: RemoteWorktreeUpdatesProvider? {
+        get { self[RemoteWorktreeUpdatesKey.self] }
+        set { self[RemoteWorktreeUpdatesKey.self] = newValue }
     }
 }
 
@@ -42,8 +79,8 @@ extension SessionClient {
 
     /// One-stop factory for the terminal transport + `SessionClient`
     /// pair. Both `SingleSessionView` (initial / re-dial) and
-    /// `WorktreeDetailView` (preview pool) need the same triplet — URL
-    /// composition + WS construction + SessionClient binding.
+    /// `WorktreeDetailView` (preview pool) need the same pair — the
+    /// authenticated terminal dial + SessionClient binding.
     ///
     /// `remoteConnectionProvider`, when non-nil, is invoked FRESH on
     /// EVERY dial — not just the first. `SessionClient`'s internal
@@ -58,9 +95,8 @@ extension SessionClient {
     /// `RemoteHostConnection` (fresh WebRTC + fresh SSH userauth) the
     /// next time the provider is asked. When the provider returns nil
     /// (no coordinator, host unpaired, or negotiation failed) the
-    /// factory fails closed. The legacy `/ws` transport remains available
-    /// only through an explicit test/compatibility opt-in; production device
-    /// pairing never silently downgrades after authentication fails.
+    /// factory fails closed (IOS-4.28): there is no unauthenticated
+    /// fallback transport.
     ///
     /// `clock` / `backoffSchedule` default to `SessionClient`'s own
     /// `productionClock()` / `productionBackoffSchedule()` — the single
@@ -71,34 +107,20 @@ extension SessionClient {
     /// `remoteConnectionProvider` re-consultation logic instead of a
     /// hand-rolled substitute.
     static func live(
-        baseURL: URL,
         sessionName: String,
         role: Role = .fullscreen,
         remoteConnectionProvider: (@Sendable () async -> RemoteHostConnection?)? = nil,
-        allowLegacyWebSocketFallback: Bool =
-            legacyWebSocketFallbackEnabledByDefault,
         clock: any Clock = SessionClient.productionClock(),
         backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule()
     ) -> SessionClient {
         SessionClient(
             sessionName: sessionName,
             webSocketFactory: {
-                if let remoteHost = await remoteConnectionProvider?() {
-                    return try await remoteHost.openTerminalSession(
-                        sessionName: sessionName, preferPaged: MobilePagedTerminalRenderer.isSupported,
-                        background: role == .preview
-                    )
-                }
-                if sessionName.hasPrefix("relay-pane-") {
-                    throw RemoteSessionTransportError
-                        .relayRequiresPairedConnection
-                }
-                guard allowLegacyWebSocketFallback else {
-                    throw RemoteSessionTransportError
-                        .pairedConnectionUnavailable
-                }
-                let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
-                return URLSessionWebSocketClient(url: wsURL)
+                try await dialTransport(
+                    sessionName: sessionName,
+                    role: role,
+                    remoteHost: await remoteConnectionProvider?()
+                )
             },
             clock: clock,
             backoffSchedule: backoffSchedule,
@@ -106,10 +128,25 @@ extension SessionClient {
         )
     }
 
-    /// Security-sensitive production default. Tests that specifically cover
-    /// the retired WebSocket transport must opt in at the call site.
-    public nonisolated static let legacyWebSocketFallbackEnabledByDefault =
-        false
+    /// One dial of `live`'s transport: the authenticated terminal
+    /// subsystem on `remoteHost`, or a fail-closed error when no paired
+    /// connection is available (IOS-4.28). `nonisolated` so the
+    /// `@Sendable` factory's dials stay off the main actor.
+    nonisolated static func dialTransport(
+        sessionName: String,
+        role: Role,
+        remoteHost: RemoteHostConnection?
+    ) async throws -> WebSocketClient {
+        guard let remoteHost else {
+            throw sessionName.hasPrefix("relay-pane-")
+                ? RemoteSessionTransportError.relayRequiresPairedConnection
+                : RemoteSessionTransportError.pairedConnectionUnavailable
+        }
+        return try await remoteHost.openTerminalSession(
+            sessionName: sessionName, preferPaged: MobilePagedTerminalRenderer.isSupported,
+            background: role == .preview
+        )
+    }
 }
 
 enum RemoteSessionTransportError: LocalizedError, Equatable {
@@ -193,6 +230,65 @@ func makeRemoteWorktreeSnapshotProvider(
             for: host,
             onProgress: onProgress,
             reconnect: reconnect
+        )
+    }
+}
+
+/// The remote I/O a worktree list needs for one host. The compact picker and
+/// the iPad sidebar both build it from the shared coordinator, so the two
+/// surfaces cannot wire a host differently.
+public struct RemoteWorktreeProviders {
+    public var includeRemoteWorktrees: Bool
+    public var connection: RemoteConnectionProvider?
+    public var snapshot: RemoteWorktreeSnapshotProvider?
+    public var sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)?
+    /// Pushed frames for the host, so the list never polls (IOS-4.52).
+    public var updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>?)?
+
+    public init(
+        includeRemoteWorktrees: Bool = false,
+        connection: RemoteConnectionProvider? = nil,
+        snapshot: RemoteWorktreeSnapshotProvider? = nil,
+        sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil,
+        updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>?)? = nil
+    ) {
+        self.includeRemoteWorktrees = includeRemoteWorktrees
+        self.connection = connection
+        self.snapshot = snapshot
+        self.sidebar = sidebar
+        self.updates = updates
+    }
+
+    @MainActor
+    init(
+        coordinator: RemoteConnectionCoordinator?,
+        host: Host,
+        worktreeUpdates: RemoteWorktreeUpdatesProvider?
+    ) {
+        // `isPaired` reads the pin file, and this runs on every render.
+        // Without a coordinator (previews, tests) an injected feed stands
+        // in for pairing.
+        let paired = coordinator?.isPaired(host) ?? (worktreeUpdates != nil)
+        // Not a ternary: Swift 6.4 fails to type-check `cond ? { … } : nil`
+        // for a main-actor closure ("failed to produce diagnostic").
+        var updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>?)?
+        if paired, let worktreeUpdates {
+            updates = { worktreeUpdates(host) }
+        }
+        guard let coordinator else { self.init(updates: updates); return }
+        self.init(
+            includeRemoteWorktrees: paired,
+            connection: makeRemoteConnectionProvider(
+                coordinator: coordinator,
+                host: host,
+                sessionName: "worktree-management"
+            ),
+            snapshot: makeRemoteWorktreeSnapshotProvider(coordinator: coordinator, host: host),
+            sidebar: { rows in
+                guard coordinator.isPaired(host) else { return .snapshot(rows) }
+                return await coordinator.navigationSnapshot(for: host, matching: rows)
+            },
+            updates: updates
         )
     }
 }

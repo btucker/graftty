@@ -28,11 +28,15 @@ public final class HeadlessHostRuntime {
     let skillTransfers: RemoteSkillTransferReceiver
     var placementTasks: [UUID: Task<Void, Never>] = [:]
     var isShuttingDown = false
-    var creations: [String: WorktreeCreateStatus] = [:]
-    var removals: [String: WorktreeRemoveStatus] = [:]
-    var busyAgents: Set<String> = []
+    /// `graftty worktree add` / `remove` operations, shared with the Mac app.
+    let worktreeCreations = CLIWorktreeCreationStore()
+    let worktreeRemovals = CLIWorktreeRemovalStore()
+    /// Provider hook busy/idle state per pane session, fed by the shared
+    /// control core. The headless host does not poll `claude agents`.
+    let agentLiveness = ClaudeSessionRegistry()
+    lazy var controlPlatform = HeadlessControlPlatform(runtime: self)
     var deliveryTask: Task<Void, Never>?
-    public var remoteTeamSender: (@MainActor @Sendable (NotificationMessage) async -> ResponseMessage)?
+    public var remoteTeamSender: (@MainActor @Sendable (TeamSendRequest) async -> ResponseMessage)?
     var maintenance: HostMaintenance?
     var repositoryBranches: [String: RemoteBranchSnapshot] = [:]
     var operationGeneration: UInt64 = 0
@@ -191,82 +195,116 @@ public final class HeadlessHostRuntime {
         await refreshPortBindings()
     }
 
+    /// Creates a linked worktree and starts its first pane, as a paired
+    /// client's worktree-management request does.
     public func createWorktree(repository: String, name: String, branch: String,
-        existing: Bool = false, remoteOnly: Bool = false, base: String? = nil, command: String? = nil,
-        agent: TeamHookRuntime? = nil, prompt: String? = nil, callerPath: String? = nil,
-        creationOrigin: WorktreeHistory.Origin? = nil, relativeGitPaths: Bool = false,
+        existing: Bool = false, remoteOnly: Bool = false, command: String? = nil, relativeGitPaths: Bool = false,
         prepareEnvironment: (@MainActor @Sendable (String) async throws -> Void)? = nil) async throws -> (path: String, session: String) {
         guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
         guard let repo = state.repos.first(where: { $0.path == repository }) else { throw HostRuntimeError.notFound("repository is not registered") }
-        if let error = WorktreeCreationInput.validationError(worktreeName: name, branchName: branch, existing: existing, base: base) {
+        // Validate the name before probing the destination it names.
+        if let error = WorktreeCreationInput.validationError(worktreeName: name, branchName: branch, existing: existing) {
             throw HostRuntimeError.invalid(error)
         }
-        if let error = WorktreeAgentLaunchCommand.validationError(prompt: prompt) { throw HostRuntimeError.invalid(error) }
+        let selection: BranchSelection = existing ? .useExisting(name: branch, source: remoteOnly ? .remoteOnly : .local) : .createNew(name: branch)
+        let path = AppState.linkedWorktreePath(repoPath: repo.path, worktreeName: name)
+        // The paired-client envelope has always reported a tracked
+        // destination as an invalid one.
+        if state.worktree(forPath: path) != nil { throw HostRuntimeError.invalid("worktree destination already exists or is invalid") }
+        if let error = creationDestinationError(worktreePath: path, repo: repo) { throw HostRuntimeError.invalid(error) }
+        switch state.insertCreatingWorktree(repoPath: repo.path, worktreeName: name, branch: selection) {
+        case .success: try? save()
+        case .failure(let error): throw HostRuntimeError.invalid(error.userMessage ?? "could not begin worktree creation")
+        }
+        let session = try await finishCreatingWorktree(CLIWorktreeCreationPlan(repoPath: repo.path, worktreePath: path,
+            branch: selection, base: nil, initialCommand: command, agentRuntime: nil),
+            relativeGitPaths: relativeGitPaths, prepareEnvironment: prepareEnvironment)
+        return (path, session)
+    }
+
+    /// Rejects destinations the placeholder check cannot see: an existing
+    /// directory or a symlink anywhere under `.worktrees`.
+    func creationDestinationError(worktreePath path: String, repo: RepoEntry) -> String? {
+        guard !isShuttingDown, placements.drain == nil else { return "Host is shutting down or draining" }
         let container = (repo.path as NSString).appendingPathComponent(".worktrees")
-        let path = (container as NSString).appendingPathComponent(name)
-        guard path.hasPrefix(container + "/"), !FileManager.default.fileExists(atPath: path), state.worktree(forPath: path) == nil else {
-            throw HostRuntimeError.invalid("worktree destination already exists or is invalid")
+        guard path.hasPrefix(container + "/"), !FileManager.default.fileExists(atPath: path) else {
+            return "worktree destination already exists or is invalid"
         }
         // Reject existing symlink parents, including .worktrees itself.
         var ancestor = (path as NSString).deletingLastPathComponent
         while ancestor.hasPrefix(container) {
             if let attributes = try? FileManager.default.attributesOfItem(atPath: ancestor),
                attributes[.type] as? FileAttributeType == .typeSymbolicLink {
-                throw HostRuntimeError.invalid("worktree destination contains a symlink")
+                return "worktree destination contains a symlink"
             }
             let parent = (ancestor as NSString).deletingLastPathComponent
             if parent == ancestor { break }
             ancestor = parent
         }
-        try acquire(path)
-        defer { busyPaths.remove(path) }
-        if let agent { try await agentSetup.ensure(agent) }
-        guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
-        let launch = try WorktreeAgentLaunchCommand.prepare(agent: agent, prompt: prompt, exactCommand: command,
-            promptDirectory: configuration.stateDirectory.appendingPathComponent("agent-launch-prompts"))
-        do {
-            let selection: BranchSelection = existing ? .useExisting(name: branch, source: remoteOnly ? .remoteOnly : .local) : .createNew(name: branch)
-            try await GitWorktreeAdd.add(repoPath: repo.path, worktreePath: path, branch: selection,
-                startPoint: existing ? nil : base, startPointResolutionPath: callerPath ?? repo.path, relativePaths: relativeGitPaths)
-        } catch { launch.discardPromptFile(); throw error }
-        guard let ri = state.repos.firstIndex(where: { $0.path == repo.path }) else { throw HostRuntimeError.notFound("repository removed during creation") }
-        let createdAt = Date()
-        let origin = creationOrigin ?? WorktreeHistory.Origin(date: createdAt, source: callerPath == nil ? .user : .worktree,
-            worktreePath: callerPath, worktreeName: repo.worktrees.first(where: { $0.path == callerPath }).map {
-                SidebarWorktreeLabel.text(for: $0, inRepoAtPath: repo.path,
-                    siblingPaths: repo.worktrees.map(\.path), defaultBranch: repo.defaultBranchHint)
-            })
-        var entry = WorktreeEntry(path: path, branch: branch, createdAt: createdAt, creationOrigin: origin)
-        if let agent, launch.promptFile != nil {
-            entry.expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(prompt), runtime: agent)
+        return nil
+    }
+
+    /// Phase two for a `.creating` row: Git, then the first pane. A Git
+    /// failure drops the row; a pane failure leaves the worktree closed.
+    func finishCreatingWorktree(_ plan: CLIWorktreeCreationPlan, relativeGitPaths: Bool = false,
+        prepareEnvironment: (@MainActor @Sendable (String) async throws -> Void)? = nil) async throws -> String {
+        let path = plan.worktreePath
+        do { try acquire(path) } catch {
+            _ = state.removeWorktree(atPath: path)
+            try? save()
+            throw error
         }
-        state.repos[ri].worktrees.append(entry)
+        defer { busyPaths.remove(path) }
+        do {
+            if let agent = plan.agentRuntime { try await agentSetup.ensure(agent) }
+            guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
+            let startPoint = await GitWorktreeAdd.startPoint(for: plan.branch, base: plan.base, repoPath: plan.repoPath)
+            try await GitWorktreeAdd.add(repoPath: plan.repoPath, worktreePath: path, branch: plan.branch, startPoint: startPoint, relativePaths: relativeGitPaths)
+        } catch {
+            _ = state.removeWorktree(atPath: path)
+            try? save()
+            throw error
+        }
         do {
             try save() // Retain successful Git creation even if shell startup fails.
-            if let agent {
-                try WorktreeAgentLaunchCommand.saveInitialPrompt(prompt, runtime: agent, repo: repo,
-                    worktreePath: path, branchName: branch, inbox: inbox)
-            }
+        } catch {
+            closeCreatingRow(path)
+            throw error
+        }
+        if let repo = state.repo(forWorktreePath: path) {
+            TeamMembershipEvents.fireJoined(repo: repo, joinerWorktreePath: path, dispatcher: controlPlatform.teamEventDispatcher)
+        }
+        do {
             try Task.checkCancellation()
             try await prepareEnvironment?(path)
             try Task.checkCancellation()
-            return (path, try await openUnlocked(path, command: launch.command))
+            return try await openUnlocked(path, command: plan.initialCommand)
         } catch {
-            launch.discardPromptFile()
-            if let index = state.indices(forWorktreePath: path) {
-                state.repos[index.repo].worktrees[index.worktree].cancelExpectedLaunch()
-                try? save()
-            }
+            closeCreatingRow(path)
             throw error
         }
     }
 
-    public func deleteWorktree(_ path: String, force: Bool = false, allowPinned: Bool = false) async throws {
+    /// A worktree Git created whose first pane did not start stays registered, closed.
+    private func closeCreatingRow(_ path: String) {
+        guard let index = state.indices(forWorktreePath: path),
+              state.repos[index.repo].worktrees[index.worktree].state == .creating else { return }
+        state.repos[index.repo].worktrees[index.worktree].state = .closed
+        try? save()
+    }
+
+    /// Removes a linked worktree. The row reads `.deleting` while Git runs
+    /// and gets its prior state back if Git refuses. Git's and the final
+    /// save's errors are thrown unchanged, so each caller keeps its own wire:
+    /// `graftty worktree remove` maps them like the Mac's `DeleteWorktreeFlow`
+    /// (`HeadlessWorktreeLifecycle`), the paired-client envelope as it always
+    /// has. `pruneVanished` is GIT-4.13: when Git refuses a worktree whose
+    /// directory is already gone, prune Git's record and report a dismissal.
+    func removeWorktree(_ path: String, force: Bool, pruneVanished: Bool = false) async throws -> WorktreeRemovalOutcome {
         let index = try indices(path)
         let repo = state.repos[index.repo]
         let worktree = repo.worktrees[index.worktree]
         guard path != repo.path else { throw HostRuntimeError.invalid("cannot delete the main checkout") }
-        guard !worktree.isPinned || allowPinned else { throw HostRuntimeError.invalid("unpin the worktree before deleting it") }
         try acquire(path)
         defer { busyPaths.remove(path) }
         let placement = placements.record(for: path)
@@ -282,9 +320,21 @@ public final class HeadlessHostRuntime {
         let restartContainer: Bool
         if let containerID { restartContainer = try await devContainers.stopForDeletion(containerID: containerID) }
         else { restartContainer = false }
-        do { try await GitWorktreeRemove.remove(repoPath: repo.path, worktreePath: path, force: force) }
-        catch {
+        let priorState = worktree.state
+        state.repos[index.repo].worktrees[index.worktree].state = .deleting
+        try? save()
+        var dismissed = false
+        do {
+            try await GitWorktreeRemove.remove(repoPath: repo.path, worktreePath: path, force: force)
+        } catch GitWorktreeRemove.Error.gitFailed where pruneVanished && !FileManager.default.fileExists(atPath: path) {
+            try? await GitWorktreePrune.run(repoPath: repo.path)
+            dismissed = true
+        } catch {
             let deletionError = error
+            if let current = state.indices(forWorktreePath: path) {
+                state.repos[current.repo].worktrees[current.worktree].state = priorState
+                try? save()
+            }
             if restartContainer, let containerID {
                 do {
                     // Restore the environment even if the requesting channel was
@@ -298,7 +348,12 @@ public final class HeadlessHostRuntime {
             throw error
         }
         for session in worktree.paneSessions.values { try? await terminals.kill(launcher.sessionName(for: session)) }
+        worktreeStats[path] = nil
         state.removeWorktree(atPath: path)
+        if let repo = state.repo(forWorktreePath: repo.path) {
+            TeamMembershipEvents.fireLeft(repo: repo, leaverBranch: worktree.branch, leaverPath: path,
+                reason: .removed, dispatcher: controlPlatform.teamEventDispatcher)
+        }
         try save()
         try placements.releaseDeletedWorktree(path)
         await refreshPortBindings()
@@ -309,6 +364,17 @@ public final class HeadlessHostRuntime {
                 throw error
             }
         }
+        return WorktreeRemovalOutcome(dismissed: dismissed)
+    }
+
+    public func deleteWorktree(_ path: String, force: Bool = false, allowPinned: Bool = false) async throws {
+        let index = try indices(path)
+        let repo = state.repos[index.repo]
+        guard path != repo.path else { throw HostRuntimeError.invalid("cannot delete the main checkout") }
+        guard !repo.worktrees[index.worktree].isPinned || allowPinned else {
+            throw HostRuntimeError.invalid("unpin the worktree before deleting it")
+        }
+        _ = try await removeWorktree(path, force: force)
     }
 
     public func shutdown() async throws {
@@ -376,7 +442,7 @@ public final class HeadlessHostRuntime {
     }
 
     public func snapshot() -> [WorktreePanes] {
-        let liveness = Dictionary(uniqueKeysWithValues: busyAgents.map { ($0, AgentLiveness.busy) })
+        let liveness = agentLiveness.livenessBySession
         return state.repos.flatMap { repo in
             let siblingPaths = repo.worktrees.map(\.path)
             return SidebarHostNavigation.displayedWorktrees(in: repo).map { worktree in

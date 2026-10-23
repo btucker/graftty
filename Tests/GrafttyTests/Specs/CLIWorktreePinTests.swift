@@ -52,14 +52,17 @@ struct CLIWorktreePinTests {
             var requests: [NotificationMessage] = []
             var lines: [String] = []
             try WorktreePinCommand.run(target: target, isPinned: true,
-                resolveCurrent: { "/repo/.worktrees/release" }, send: { requests.append($0); return .ok },
+                resolveCurrent: { "/repo/.worktrees/release" }, send: { request in
+                    requests.append(request)
+                    return request == .capabilities ? .capabilities(["worktree_pin"]) : .ok
+                },
                 writeLine: { lines.append($0) })
             #expect(requests.count == 2)
             let probe = try #require(requests.first)
             let request = try #require(requests.last)
             let probeJSON = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(probe)) as? [String: Any])
             let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
-            #expect(probeJSON["type"] as? String == "worktree_pin_capability")
+            #expect(probeJSON["type"] as? String == "capabilities")
             #expect(json["type"] as? String == "set_worktree_pinned")
             #expect(json["worktree_path"] as? String == "/repo/.worktrees/release")
             #expect(json["is_pinned"] as? Bool == true)
@@ -103,12 +106,12 @@ struct CLIWorktreePinTests {
     }
 
     @Test func unsupportedAppFailsBeforeSendingMutation() {
-        var sent = 0
+        var sent: [NotificationMessage] = []
         #expect(throws: (any Error).self) {
             try WorktreePinCommand.run(target: nil, isPinned: true, resolveCurrent: { "/repo/.worktrees/release" },
-                send: { _ in sent += 1; return .error("unsupported") }, writeLine: { _ in })
+                send: { sent.append($0); return .error("unsupported") }, writeLine: { _ in })
         }
-        #expect(sent == 1)
+        #expect(sent == [.capabilities, .worktreePinCapability])
     }
 
     @Test func pinAndUnpinAreIdempotentAndPersistOnlyTheFlag() throws {

@@ -2,15 +2,10 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 import GrafttyProtocol
+import GrafttyTestSupport
 
 @Suite("HostDeviceIDStore Tests")
 struct HostDeviceIDStoreTests {
-
-    private func makeTempDir() throws -> URL {
-        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
 
     @Test("loadOrGenerateAndPersist generates once: a second load — including from a fresh store instance — returns the same ID")
     func generatesOnceAndIsStable() throws {

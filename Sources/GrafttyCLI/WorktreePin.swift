@@ -59,16 +59,11 @@ enum WorktreePinCommand {
             path = try resolveCurrent()
         }
 
-        try WorktreeCapability.require(
-            .worktreePinCapability,
-            unsupportedMessage: "the running Graftty app does not support worktree pinning; relaunch the updated app, then retry",
-            verificationMessage: "could not verify worktree pinning support; relaunch the updated Graftty app, then retry",
-            send: send
-        )
+        try CapabilityProbe.require([.worktreePin], send: send)
         let response = try CLIEnv.sendRequest(
             .setWorktreePinned(worktreePath: path, isPinned: isPinned), using: send, writeError: CLIEnv.printError
         )
-        try CLIEnv.expectOk(response)
+        try CLIEnv.expectOk(response, for: isPinned ? "worktree pin" : "worktree unpin")
         let action = isPinned ? "pinned" : "unpinned"
         writeLine("\(action) worktree=\(WorktreeAgentLaunchCommand.shellLiteral(path))")
     }

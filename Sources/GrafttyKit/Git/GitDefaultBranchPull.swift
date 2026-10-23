@@ -11,7 +11,11 @@ public enum GitDefaultBranchPull {
         case cliFailure(CLIError)
     }
 
-    public static func pull(repoPath: String, branchName: String) async throws {
+    public static func pull(
+        repoPath: String,
+        branchName: String,
+        using executor: CLIExecutor? = nil
+    ) async throws {
         guard !branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw Error.gitFailed(exitCode: 1, stderr: "default branch is unknown")
         }
@@ -19,7 +23,8 @@ public enum GitDefaultBranchPull {
         do {
             currentBranch = try await GitRunner.run(
                 args: ["branch", "--show-current"],
-                at: repoPath
+                at: repoPath,
+                using: executor
             )
             guard currentBranch.trimmingCharacters(in: .whitespacesAndNewlines) == branchName else {
                 throw Error.gitFailed(
@@ -30,7 +35,8 @@ public enum GitDefaultBranchPull {
             _ = try await GitRunner.run(
                 args: ["pull", "--ff-only", "origin", branchName],
                 at: repoPath,
-                timeout: .seconds(20)
+                timeout: .seconds(20),
+                using: executor
             )
         } catch let err as GitDefaultBranchPull.Error {
             throw err

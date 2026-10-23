@@ -272,6 +272,9 @@ struct GitAutoTrackingTests {
     func realConflictRemainsBehindLocalDefault() async throws {
         let (root, clone, _) = try makeClonedRepo()
         defer { try? FileManager.default.removeItem(at: root) }
+        // GitAutoTracking runs git through CLIRunner with the process
+        // environment, so the merge needs a committer identity of its own.
+        #expect(try shellInRepo("git config user.name Test && git config user.email test@test.com", at: clone) == 0)
         #expect(try shellInRepo("git switch -c role && printf 'role\\n' > file.txt && git commit -am role && git switch main && printf 'main\\n' > file.txt && git commit -am main && git switch role", at: clone) == 0)
         let executor = CLIRunner()
         let compute = WorktreeStatsStore.makeDefaultCompute(executor: executor, useLocalDefault: true)

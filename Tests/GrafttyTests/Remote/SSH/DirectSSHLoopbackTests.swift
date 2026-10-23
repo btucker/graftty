@@ -150,7 +150,7 @@ struct DirectSSHLoopbackTests {
         func cleanup() { try? FileManager.default.removeItem(at: directory) }
     }
 
-    @Test("@spec REMOTE-24.16: When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and require worktree-management permission.", .timeLimit(.minutes(1)), arguments: [true, false])
+    @Test("@spec REMOTE-31.16: When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and require worktree-management permission.", .timeLimit(.minutes(1)), arguments: [true, false])
     func placementUsesAuthenticatedIdentity(allowed: Bool) async throws {
         let f = Fixture(); defer { f.cleanup() }
         let peer = try f.peer(key: f.clientKey, managementAllowed: allowed)

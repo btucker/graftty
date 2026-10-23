@@ -109,6 +109,7 @@ public struct WorktreeTimeline: Sendable {
         public let title: String
         public let completed: String
         public let decisions: [String]
+        public var isExplicitEntry: Bool = false
         public var sourceWorktreePath: String? = nil
 
         public var sourceWorktreeName: String? {
@@ -125,9 +126,14 @@ public struct WorktreeTimeline: Sendable {
     public let events: [Event]
 
     public init(history: WorktreeHistory?, brief: WorktreeBrief?) {
-        var result = (brief?.history ?? []).map {
-            Event(id: $0.id.uuidString, kind: .checkpoint, timestamp: $0.timestamp,
-                  title: $0.title, completed: $0.completed, decisions: $0.decisions)
+        var previousDecisions: Set<String> = []
+        var result = (brief?.history ?? []).map { checkpoint in
+            let isExplicit = checkpoint.isExplicitEntry == true
+            let introduced = isExplicit ? [] : checkpoint.decisions.filter { !previousDecisions.contains($0) }
+            if !isExplicit { previousDecisions = Set(checkpoint.decisions) }
+            return Event(id: checkpoint.id.uuidString, kind: .checkpoint, timestamp: checkpoint.timestamp,
+                         title: checkpoint.title, completed: checkpoint.completed, decisions: introduced,
+                         isExplicitEntry: isExplicit)
         }
         result += (history?.inputs ?? []).flatMap { input -> [Event] in
             let parts = input.source.map { [WorktreePromptContent.Part(source: $0, text: input.text)] }
@@ -193,7 +199,7 @@ public struct WorktreeTimeline: Sendable {
             run.removeAll(keepingCapacity: true)
         }
         for (index, event) in events.enumerated() {
-            if index > 0, event.kind == .checkpoint, !recent.contains(event.id) {
+            if index > 0, event.kind == .checkpoint, !event.isExplicitEntry, !recent.contains(event.id) {
                 run.append(event)
             } else {
                 flush()

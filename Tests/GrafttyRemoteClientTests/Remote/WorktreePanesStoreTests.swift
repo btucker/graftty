@@ -29,7 +29,7 @@ struct WorktreePanesStoreTests {
         #expect(await store.navigationSnapshot(matching: []) == .snapshot([]))
     }
 
-    @Test("@spec REMOTE-24.14: When an authenticated host sample is received, the client shall assign its own receipt time, avoid refreshing replayed samples, and invalidate telemetry on disconnect so stale or absent measurements cannot imply idle capacity.")
+    @Test("@spec REMOTE-31.14: When an authenticated host sample is received, the client shall assign its own receipt time, avoid refreshing replayed samples, and invalidate telemetry on disconnect so stale or absent measurements cannot imply idle capacity.")
     func resourceSamplesExpireAndCannotSurviveDisconnect() async throws {
         let driver = MetadataChannelDriver()
         let store = WorktreePanesStore(driver: driver)
@@ -48,6 +48,27 @@ struct WorktreePanesStoreTests {
         await store.applySnapshot([], receivedAt: Date(timeIntervalSince1970: 140))
         #expect(await store.resourceObservation == nil)
         #expect(await store.sidebar?.hostResources == nil)
+    }
+
+    @Test("@spec REMOTE-6.13: When a panes-state frame is applied, the client store shall publish its worktree rows and sidebar metadata together as one frame to every observer, and shall end those observations when the channel closes or the client unsubscribes.", .timeLimit(.minutes(1)))
+    func framesPublishAppliedSnapshotsUntilClose() async throws {
+        let driver = MetadataChannelDriver()
+        let store = WorktreePanesStore(driver: driver)
+        var frames = store.frameUpdates().makeAsyncIterator()
+        let sidebar = SidebarSnapshot(projects: [.init(id: "p", repositoryID: "/repo", name: "Project")])
+        driver.sidebarSnapshot = sidebar
+        let rows = makeWorktrees(count: 2)
+        await store.applySnapshot(rows)
+        #expect(await frames.next() == .snapshot(rows, sidebar: sidebar))
+        await store.markClosed(reason: "network-error")
+        #expect(await frames.next() == nil)
+
+        let unsubscribed = WorktreePanesStore(driver: FakeChannelDriver())
+        await unsubscribed.applySnapshot(rows)
+        var late = unsubscribed.frameUpdates().makeAsyncIterator()
+        #expect(await late.next() == .snapshot(rows))
+        await unsubscribed.unsubscribe()
+        #expect(await late.next() == nil)
     }
 
     @Test func subscribeOpensDriverAndUpdatesState() async throws {
@@ -116,6 +137,71 @@ struct WorktreePanesStoreTests {
                 layout: .leaf(sessionName: "s\(idx)", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
             )
         }
+    }
+}
+
+@Suite("@spec REMOTE-6.7: While a client waits for the first panes-state snapshot, it shall resume as soon as a snapshot or channel close is applied, report a close ahead of a snapshot, and report a timeout only when the deadline fires first.")
+struct FirstSnapshotWaitTests {
+    @Test func resumesWhenSnapshotArrives() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        let deadline = ManualReplyDeadline()
+        let wait = Task { try await store.waitForFirstSnapshot(deadline: deadline.deadline) }
+        await deadline.waitUntilArmed()
+
+        await store.applySnapshot([])
+
+        #expect(try await wait.value == .received)
+        #expect(!deadline.isArmed)
+    }
+
+    @Test func resumesWhenChannelCloses() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        let deadline = ManualReplyDeadline()
+        let wait = Task { try await store.waitForFirstSnapshot(deadline: deadline.deadline) }
+        await deadline.waitUntilArmed()
+
+        await store.markClosed(reason: "network-error")
+
+        #expect(try await wait.value == .closed)
+        #expect(!deadline.isArmed)
+    }
+
+    @Test func reportsCloseAheadOfSnapshot() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        await store.applySnapshot([])
+        await store.unsubscribe()
+
+        #expect(try await store.waitForFirstSnapshot(deadline: ManualReplyDeadline().deadline) == .closed)
+    }
+
+    @Test func returnsImmediatelyForAnAlreadyAppliedSnapshot() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        await store.applySnapshot([])
+
+        #expect(try await store.waitForFirstSnapshot(deadline: ManualReplyDeadline().deadline) == .received)
+    }
+
+    @Test func timesOutWhenDeadlineFiresFirst() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        let deadline = ManualReplyDeadline()
+        let wait = Task { try await store.waitForFirstSnapshot(deadline: deadline.deadline) }
+        await deadline.waitUntilArmed()
+
+        deadline.fire()
+
+        #expect(try await wait.value == .timedOut)
+    }
+
+    @Test func cancellationThrowsAndDisarmsDeadline() async throws {
+        let store = WorktreePanesStore(driver: FakeChannelDriver())
+        let deadline = ManualReplyDeadline()
+        let wait = Task { try await store.waitForFirstSnapshot(deadline: deadline.deadline) }
+        await deadline.waitUntilArmed()
+
+        wait.cancel()
+
+        await #expect(throws: CancellationError.self) { try await wait.value }
+        #expect(!deadline.isArmed)
     }
 }
 

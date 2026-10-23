@@ -168,6 +168,8 @@ extension GrafttyApp {
         } catch {
             NSLog("[Graftty] relocateRepo: discover failed at %@: %@",
                   newRepoPath, String(describing: error))
+            // The repo path (and bookmark) already moved; keep it on restart.
+            Self.persistAppState(appState.wrappedValue)
             return
         }
 

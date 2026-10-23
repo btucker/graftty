@@ -207,47 +207,11 @@ struct PaneList: ParsableCommand {
             throw ExitCode(1)
         }
         let response = try CLIEnv.sendRequest(.listPanes(path: path))
-        switch response {
-        case .paneList(let panes):
-            for pane in panes {
-                print(pane.formattedLine())
-            }
-        case .error(let msg):
-            CLIEnv.printError(msg)
-            throw ExitCode(1)
-        case .serverBusy:
-            CLIEnv.printError(ResponseMessage.serverBusyMessage)
-            throw ExitCode(1)
-        case .ok:
-            CLIEnv.printError("Unexpected ok response for list")
-            throw ExitCode(1)
-        case .paneShow:
-            CLIEnv.printError("Unexpected pane_show response for list")
-            throw ExitCode(1)
-        case .teamList:
-            CLIEnv.printError("Unexpected team_list response for list")
-            throw ExitCode(1)
-        case .teamHookOutput:
-            CLIEnv.printError("Unexpected team_hook_output response for list")
-            throw ExitCode(1)
-        case .teamInbox:
-            CLIEnv.printError("Unexpected team_inbox response for list")
-            throw ExitCode(1)
-        case .worktreeCreate, .worktreeCreateRetry:
-            CLIEnv.printError("Unexpected worktree_create response for list")
-            throw ExitCode(1)
-        case .agentSkills:
-            throw ValidationError("Unexpected skill transfer response")
-        case .placement:
-            throw ValidationError("Unexpected placement response")
-        case .remoteHosts:
-            throw ValidationError("Unexpected host list response")
-        case .linuxSetupIdentity:
-            CLIEnv.printError("Unexpected linux_setup_identity response for list")
-            throw ExitCode(1)
-        case .worktreeRemove:
-            CLIEnv.printError("Unexpected worktree_remove response for list")
-            throw ExitCode(1)
+        let panes = try CLIEnv.expect(response, for: "pane list") {
+            if case .paneList(let panes) = $0 { panes } else { nil }
+        }
+        for pane in panes {
+            print(pane.formattedLine())
         }
     }
 }
@@ -321,15 +285,10 @@ struct PaneAdd: ParsableCommand {
         if agent != nil {
             // An app without this capability would ignore the agent fields
             // and report success for a plain split.
-            try WorktreeCapability.require(
-                .paneAgentCapability,
-                unsupportedMessage: "the running Graftty app does not support pane add --agent; quit and relaunch the updated app, then retry",
-                verificationMessage: "could not verify pane add --agent support; quit and relaunch Graftty, then retry",
-                retryTransportFailuresUntil: Date().addingTimeInterval(5)
-            )
+            try CapabilityProbe.require([.paneAgent], retryTransportFailuresUntil: Date().addingTimeInterval(5))
         }
         let response = try CLIEnv.sendRequest(request(path: path, resolvedPrompt: resolvedPrompt))
-        try CLIEnv.expectOk(response)
+        try CLIEnv.expectOk(response, for: "pane add")
     }
 }
 
@@ -356,7 +315,7 @@ struct PaneClose: ParsableCommand {
             throw ExitCode(1)
         }
         let response = try CLIEnv.sendRequest(.closePane(path: path, index: id))
-        try CLIEnv.expectOk(response)
+        try CLIEnv.expectOk(response, for: "pane close")
     }
 }
 
@@ -412,8 +371,8 @@ enum PaneShowDispatcher {
         case .error(let msg):
             emit(msg, to: stderr)
             return 1
-        default:
-            emit("unexpected response", to: stderr)
+        case let response:
+            emit("Unexpected \(response.wireType) response for pane show", to: stderr)
             return 1
         }
     }
@@ -480,8 +439,8 @@ enum PaneSendDispatcher {
         case .error(let msg):
             emit(msg, to: stderr)
             return 1
-        default:
-            emit("unexpected response", to: stderr)
+        case let response:
+            emit("Unexpected \(response.wireType) response for pane send", to: stderr)
             return 1
         }
     }
@@ -523,8 +482,8 @@ private func resolveTargetPane(
     case .error(let msg):
         emit(msg, to: stderr)
         return nil
-    default:
-        emit("unexpected response from list", to: stderr)
+    case let response:
+        emit("Unexpected \(response.wireType) response for pane \(verb.rawValue)", to: stderr)
         return nil
     }
 }
@@ -645,47 +604,33 @@ enum CLIEnv {
         }
     }
 
-    static func expectOk(_ response: ResponseMessage) throws {
+    /// Returns what `extract` finds in `response`. Otherwise writes the
+    /// server's error, the busy notice, or ATTN-1.29's wrong-type line naming
+    /// `command`, and exits 1.
+    static func expect<T>(
+        _ response: ResponseMessage,
+        for command: String,
+        writeError: (String) -> Void = printError,
+        _ extract: (ResponseMessage) -> T?
+    ) throws -> T {
+        if let value = extract(response) { return value }
         switch response {
-        case .ok:
-            return
-        case .error(let msg):
-            printError(msg)
-            throw ExitCode(1)
+        case .error(let message):
+            writeError(message)
         case .serverBusy:
-            printError(ResponseMessage.serverBusyMessage)
-            throw ExitCode(1)
-        case .paneList:
-            printError("Unexpected pane_list response")
-            throw ExitCode(1)
-        case .paneShow:
-            printError("Unexpected pane_show response")
-            throw ExitCode(1)
-        case .teamList:
-            printError("Unexpected team_list response")
-            throw ExitCode(1)
-        case .teamHookOutput:
-            printError("Unexpected team_hook_output response")
-            throw ExitCode(1)
-        case .teamInbox:
-            printError("Unexpected team_inbox response")
-            throw ExitCode(1)
-        case .worktreeCreate, .worktreeCreateRetry:
-            printError("Unexpected worktree_create response")
-            throw ExitCode(1)
-        case .agentSkills:
-            throw ValidationError("Unexpected skill transfer response")
-        case .placement:
-            throw ValidationError("Unexpected placement response")
-        case .remoteHosts:
-            throw ValidationError("Unexpected host list response")
-        case .linuxSetupIdentity:
-            printError("Unexpected linux_setup_identity response")
-            throw ExitCode(1)
-        case .worktreeRemove:
-            printError("Unexpected worktree_remove response")
-            throw ExitCode(1)
+            writeError(ResponseMessage.serverBusyMessage)
+        default:
+            writeError("Unexpected \(response.wireType) response for \(command)")
         }
+        throw ExitCode(1)
+    }
+
+    static func expectOk(
+        _ response: ResponseMessage,
+        for command: String,
+        writeError: (String) -> Void = printError
+    ) throws {
+        try expect(response, for: command, writeError: writeError) { $0 == .ok ? () : nil }
     }
 
     static func printError(_ msg: String) {

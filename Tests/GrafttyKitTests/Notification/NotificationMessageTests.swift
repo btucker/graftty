@@ -50,26 +50,12 @@ struct NotificationMessageTests {
         } else { Issue.record("Expected .clear") }
     }
 
-    @Test func encodeTeamMessage() throws {
-        let msg: NotificationMessage = .teamMessage(callerWorktree: "/r/a", recipient: "alice", text: "hi")
-        let data = try JSONEncoder().encode(msg)
-        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        #expect(json["type"] as? String == "team_message")
-        #expect(json["caller_worktree"] as? String == "/r/a")
-        #expect(json["recipient"] as? String == "alice")
-        #expect(json["text"] as? String == "hi")
-    }
-
-    @Test func decodeTeamMessage() throws {
+    @Test("@spec ATTN-2.26: When the application receives a legacy `team_message` request, it shall handle it as a normal-priority `team_send` with no caller agent ID.")
+    func legacyTeamMessageDecodesAsTeamSend() throws {
         let json = #"{"type":"team_message","caller_worktree":"/r/a","recipient":"alice","text":"hi"}"#
         let msg = try JSONDecoder().decode(NotificationMessage.self, from: Data(json.utf8))
-        guard case let .teamMessage(caller, recipient, text) = msg else {
-            Issue.record("expected .teamMessage")
-            return
-        }
-        #expect(caller == "/r/a")
-        #expect(recipient == "alice")
-        #expect(text == "hi")
+        #expect(msg == .teamSend(callerWorktree: "/r/a", callerAgentID: nil, recipient: "alice", text: "hi",
+                                 priority: .normal))
     }
 
     @Test func encodeTeamList() throws {
@@ -228,10 +214,10 @@ struct NotificationMessageTests {
         )
         let encoded = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: encoded)
-        guard case let .teamHook(_, _, _, _, _, paneSessionName, _, _, _) = decoded else {
+        guard case .teamHook(let request) = decoded else {
             Issue.record("expected .teamHook"); return
         }
-        #expect(paneSessionName == "graftty-abc12345")
+        #expect(request.paneSessionName == "graftty-abc12345")
     }
 
     @Test("Old .teamHook payload (no pane_session_name, no caller_agent_id) decodes the optional fields as nil.")
@@ -245,14 +231,12 @@ struct NotificationMessageTests {
         }
         """
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: oldJSON.data(using: .utf8)!)
-        guard case let .teamHook(
-            _, callerAgentID, _, _, _, paneSessionName, attentionReason, _, _
-        ) = decoded else {
+        guard case .teamHook(let request) = decoded else {
             Issue.record("expected .teamHook"); return
         }
-        #expect(callerAgentID == nil)
-        #expect(paneSessionName == nil)
-        #expect(attentionReason == nil)
+        #expect(request.callerAgentID == nil)
+        #expect(request.paneSessionName == nil)
+        #expect(request.attentionReason == nil)
     }
 
     @Test func teamInboxRoundTripsDiagnosticFilters() throws {

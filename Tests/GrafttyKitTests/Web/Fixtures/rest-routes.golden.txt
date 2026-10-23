@@ -1,0 +1,41 @@
+ws 404 text/plain; charset=utf-8 not found
+
+sessions 200 application/json; charset=utf-8 [{"name":"graftty-1","repoDisplayName":"r","worktreeDisplayName":"wt","worktreePath":"\/r\/wt"}]
+agent-completions 200 application/json; charset=utf-8 [{"address":"a","hostName":"h","projectName":"r","projectPath":"\/r","runtime":"claude","worktreeName":"wt","worktreePath":"\/r\/wt"}]
+repos-local 200 application/json; charset=utf-8 [{"defaultBranchStatus":{"behindCount":2,"branchName":"main","remoteRef":"origin\/main"},"displayName":"r","origin":{"deviceID":{"value":"mac"},"deviceLabel":"Mac","relayDepth":0},"path":"\/r"}]
+repos-relayed 200 application/json; charset=utf-8 [{"defaultBranchStatus":{"behindCount":2,"branchName":"main","remoteRef":"origin\/main"},"displayName":"r","origin":{"deviceID":{"value":"mac"},"deviceLabel":"Mac","relayDepth":0},"path":"\/r"},{"branches":[],"displayName":"relay","path":"relay-r"}]
+panes 200 application/json; charset=utf-8 [{"displayBranch":"wt","displayName":"wt","isMainCheckout":false,"path":"\/r\/wt","ports":[],"repoDisplayName":"r","state":"closed"}]
+panes-relayed 200 application/json; charset=utf-8 [{"displayBranch":"wt","displayName":"wt","isMainCheckout":false,"path":"\/r\/wt","ports":[],"repoDisplayName":"r","state":"closed"},{"displayBranch":"wt","displayName":"wt","isMainCheckout":false,"path":"relay-wt","ports":[],"repoDisplayName":"r","state":"closed"}]
+ghostty-config 200 text/plain; charset=utf-8 font-size = 13
+
+keybindings 200 application/json; charset=utf-8 {"bindings":{}}
+create-get 405 application/json; charset=utf-8 {"error":"only POST is supported"}
+create-bad-json 400 application/json; charset=utf-8 {"error":"invalid JSON body: DecodingError.dataCorrupted: Data was corrupted. Debug description: The given data was not valid JSON.. Underlying error: Error Domain=NSCocoaErrorDomain Code=3840 \"Unexpected end of file\" UserInfo={NSDebugDescription=Unexpected end of file}"}
+create-empty 400 application/json; charset=utf-8 {"error":"repoPath, worktreeName, and branchName are required"}
+create-ok 200 application/json; charset=utf-8 {"sessionName":"graftty-1","worktreePath":"\/r\/.worktrees\/a"}
+create-invalid 400 application/json; charset=utf-8 {"error":"bad name"}
+create-git 409 application/json; charset=utf-8 {"error":"fatal: branch exists"}
+create-conflict 409 application/json; charset=utf-8 {"error":"branch is already mounted at b"}
+create-internal 500 application/json; charset=utf-8 {"error":"no surface"}
+pull-get 405 application/json; charset=utf-8 {"error":"only POST is supported"}
+pull-bad-json 400 application/json; charset=utf-8 {"error":"invalid JSON body: DecodingError.typeMismatch: Expected value of type Dictionary<String, Any>. Debug description: Expected to decode Dictionary<String, Any> but found an array instead."}
+pull-empty 400 application/json; charset=utf-8 {"error":"repoPath is required"}
+pull-ok 200 application/json; charset=utf-8 {"ok":true}
+pull-invalid 400 application/json; charset=utf-8 {"error":"default checkout is not behind origin"}
+pull-git 409 application/json; charset=utf-8 {"error":"not a fast-forward"}
+pull-internal 500 application/json; charset=utf-8 {"error":"boom"}
+delete-get 405 application/json; charset=utf-8 {"error":"only POST is supported"}
+delete-bad-json 400 application/json; charset=utf-8 {"error":"invalid JSON body: DecodingError.keyNotFound: Key 'force' not found in keyed decoding container. Debug description: No value associated with key CodingKeys(stringValue: \"force\", intValue: nil) (\"force\")."}
+delete-empty 400 application/json; charset=utf-8 {"error":"worktreePath is required"}
+delete-ok 200 application/json; charset=utf-8 {"dismissed":true}
+delete-invalid 400 application/json; charset=utf-8 {"error":"cannot delete the repo's main checkout"}
+delete-missing 404 application/json; charset=utf-8 {"error":"unknown worktree path"}
+delete-dirty 409 application/json; charset=utf-8 {"error":"contains untracked files","forceAllowed":true,"shortStatus":"?? a"}
+delete-final 409 application/json; charset=utf-8 {"error":"locked","forceAllowed":false}
+delete-internal 500 application/json; charset=utf-8 {"error":"boom"}
+spa-fallback 200 text/html; charset=utf-8 <356 bytes>
+unwired-create 503 application/json; charset=utf-8 {"error":"worktree creation not available"}
+unwired-pull 503 application/json; charset=utf-8 {"error":"default branch pull not available"}
+unwired-delete 503 application/json; charset=utf-8 {"error":"worktree deletion not available"}
+unwired-keybindings 503 application/json; charset=utf-8 {"error":"keybindings provider not ready"}
+unwired-repos 200 application/json; charset=utf-8 []

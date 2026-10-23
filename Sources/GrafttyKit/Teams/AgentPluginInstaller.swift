@@ -15,17 +15,8 @@ private func exchangePluginDirectories(
 ) -> Int32
 #endif
 
-public enum AgentPluginProvider: String, CaseIterable, Sendable {
-    case codex
-    case claude
-
-    public var displayName: String {
-        switch self {
-        case .codex: "Codex"
-        case .claude: "Claude"
-        }
-    }
-}
+/// Each hook runtime ships exactly one provider plugin.
+public typealias AgentPluginProvider = TeamHookRuntime
 
 public struct AgentPluginInstallStep: Equatable, Sendable {
     public let provider: AgentPluginProvider

@@ -11,7 +11,6 @@ import SwiftUI
 /// showing the selected worktree's actual live terminal panes in the same
 /// split tree supplied by the Mac.
 public struct IPadRootLayout: View {
-    public static let paintsTerminalBackgroundBehindSidebar = true
     private var railIsCollapsed: Bool {
         SidebarLayoutPolicy.railCollapsed(preference: appState.sidebarNavigation.railCollapsed, isMobile: true, windowWidth: appState.navigationWindowWidth)
     }
@@ -23,15 +22,12 @@ public struct IPadRootLayout: View {
 
     @Bindable public var hostStore: HostStore
     @Bindable public var appState: IPadAppState
-    /// Shared with the compact path's `SingleSessionView` at the
-    /// `RootView` level so a host negotiated from either surface is
-    /// cached for the other (W3 Task 3).
-    public let coordinator: RemoteConnectionCoordinator
     @Bindable public var nearbyMacBrowser: NearbyMacBrowser
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
+    @Environment(\.remoteConnectionCoordinator) private var coordinator
+    @Environment(\.remoteWorktreeUpdates) private var worktreeUpdates
     @State private var paneEnvironment: PaneEnvironment = .empty
-    @State private var worktreeListRefreshToken: Int = 0
     @State private var explicitSelectionGeneration: UInt64 = 0
     @State private var pendingMobileSplits: [PendingMobileSplit] = []
     @State private var pendingMobileMutationOrder: [UUID] = []
@@ -87,12 +83,10 @@ public struct IPadRootLayout: View {
     public init(
         hostStore: HostStore,
         appState: IPadAppState,
-        coordinator: RemoteConnectionCoordinator,
         nearbyMacBrowser: NearbyMacBrowser = NearbyMacBrowser()
     ) {
         self.hostStore = hostStore
         self.appState = appState
-        self.coordinator = coordinator
         self.nearbyMacBrowser = nearbyMacBrowser
     }
 
@@ -101,12 +95,16 @@ public struct IPadRootLayout: View {
     }
 
     public var body: some View {
+        // Built once per render: `isPaired` reads the pin file.
+        let remote = selectedHost.map { (host: $0, providers: remoteProviders(for: $0)) }
         // `.balanced` locks in column-style (sidebar permanently to the
         // left of the detail) rather than letting iPad heuristics pick
         // `.prominentDetail` (overlay). `columnVisibility` is bound to
         // appState so the system's sidebar-toggle button can flip it back
         // to `.all` after a user collapse — without the binding there'd
         // be no way to re-show a hidden sidebar.
+        //
+        // @spec IPAD-1.20: While `IPadRootLayout` is presented, iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
         ZStack {
             appState.theme.background.ignoresSafeArea()
             NavigationSplitView(columnVisibility: Binding(
@@ -114,49 +112,25 @@ public struct IPadRootLayout: View {
                 set: { appState.columnVisibility = $0 }
             )) {
                 Group {
-                    if let host = selectedHost {
+                    if let remote {
                         WorktreeListContent(
-                            host: host,
+                            host: remote.host,
                             isSidebar: true,
                             theme: appState.theme,
                             selectedWorktreePath: appState.selectedWorktreePath,
                             focusedPaneId: appState.focusedPaneId,
-                            includeRemoteWorktrees: coordinator.isPaired(host),
                             isReadyToLoad: LiveSessionReadiness.isActive(
                                 scene: scenePhase,
                                 gateUnlocked: gate.isUnlocked
                             ),
-                            remoteConnectionProvider: makeRemoteConnectionProvider(
-                                coordinator: coordinator,
-                                host: host,
-                                sessionName: "worktree-management"
-                            ),
-                            remoteSnapshotProvider:
-                                makeRemoteWorktreeSnapshotProvider(
-                                    coordinator: coordinator,
-                                    host: host
-                                ),
+                            remote: remote.providers,
                             onSelect: { wt in selectWorktree(wt) },
-                            onSelectPaneWithWorktree: { worktree, leaf in
+                            onSelectPane: { worktree, leaf in
                                 selectWorktree(worktree)
                                 selectPane(leaf)
                             },
-                            onListChanged: { list in
-                                Self.onWorktreeListChanged(
-                                    appState: appState,
-                                    list: list
-                                )
-                                reconcileMobileCloseProjections(in: list)
-                                resolveLegacyMobileSplit(in: list)
-                                applyPendingMobileCreatedFocus(in: list)
-                            },
-                            externalRefreshToken: worktreeListRefreshToken,
                             navigation: appState.sidebarNavigation,
-                            navigationWindowWidth: appState.navigationWindowWidth,
-                            remoteSidebarProvider: { rows in
-                                guard coordinator.isPaired(host) else { return .snapshot(rows) }
-                                return await coordinator.navigationSnapshot(for: host, matching: rows)
-                            }
+                            navigationWindowWidth: appState.navigationWindowWidth
                         )
                     } else {
                         Spacer()
@@ -175,8 +149,7 @@ public struct IPadRootLayout: View {
                             selectedHost: selectedHost,
                             hostStore: hostStore,
                             appState: appState,
-                            browser: nearbyMacBrowser,
-                            coordinator: coordinator
+                            browser: nearbyMacBrowser
                         )
                     }
                 }
@@ -199,7 +172,6 @@ public struct IPadRootLayout: View {
                 IPadDetailColumn(
                     host: selectedHost,
                     appState: appState,
-                    coordinator: coordinator,
                     paneEnvironment: paneEnvironment,
                     ghosttyCommandContext: ghosttyCommandContext,
                     onSelectPane: { sessionName in
@@ -235,6 +207,16 @@ public struct IPadRootLayout: View {
             )
         )) {
             await refreshHostPresentationState()
+        }
+        // The layout owns the shared worktree rows, so they stay current
+        // whether or not the sidebar list is on screen. IPAD-1.24 pins the
+        // collapsed-sidebar case; #648 tracks the shown one.
+        .task(id: WorktreeFeedKey(
+            hostID: selectedHost?.id,
+            isReady: LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked),
+            hasUpdates: remote?.providers.updates != nil
+        )) {
+            await observeWorktrees()
         }
         .task(id: PaneEnvironmentRefreshKey(
             hostID: selectedHost?.id,
@@ -276,22 +258,51 @@ public struct IPadRootLayout: View {
     }
 
     static func applyHostSwitch(appState: IPadAppState, to newHostId: UUID) {
-        appState.selectedHostId = newHostId
-        appState.selectedWorktreePath = nil
-        appState.focusedPaneId = nil
+        appState.select(hostID: newHostId, worktreePath: nil, paneID: nil)
         appState.latestWorktrees = []
         appState.worktreePickerProject = nil
         appState.anyWorktreeHasAttention = false
     }
 
+    private func remoteProviders(for host: Host) -> RemoteWorktreeProviders {
+        RemoteWorktreeProviders(coordinator: coordinator, host: host, worktreeUpdates: worktreeUpdates)
+    }
+
+    /// Applies the selected host's pushed frames to the shared worktree rows
+    /// and settles pane mutations waiting on them (IPAD-1.24).
+    private func observeWorktrees() async {
+        guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked),
+              let host = selectedHost,
+              let updates = remoteProviders(for: host).updates?() else { return }
+        // Compare with what this observation applied, not with
+        // `latestWorktrees`: RootView seeds that from activation fetches
+        // without recomputing what derives from it (IPAD-1.25).
+        var applied: [WorktreePanes]?
+        for await update in updates {
+            guard !Task.isCancelled, appState.selectedHostId == host.id else { return }
+            guard case let .frame(.snapshot(list, _)) = update else {
+                // Keep the last rows while the host is unreachable.
+                continue
+            }
+            // A sidebar-only frame repeats the rows (IOS-4.31).
+            guard list != applied else { continue }
+            applied = list
+            Self.onWorktreeListChanged(appState: appState, list: list)
+            reconcileMobileCloseProjections(in: list)
+            resolveLegacyMobileSplit(in: list)
+            applyPendingMobileCreatedFocus(in: list)
+        }
+    }
+
     static func onWorktreeListChanged(appState: IPadAppState, list: [WorktreePanes]) {
+        // @Observable skips a write of an equal value, so a repeated frame
+        // leaves views observing these rows alone (IPAD-1.26).
         appState.latestWorktrees = list
 
         // Clear a stale selection whose path vanished server-side.
         if let path = appState.selectedWorktreePath,
            !list.contains(where: { $0.path == path }) {
-            appState.selectedWorktreePath = nil
-            appState.focusedPaneId = nil
+            appState.select(hostID: appState.selectedHostId, worktreePath: nil, paneID: nil)
         }
         // IPAD-1.17: the selected worktree is still present, but its focused
         // pane was closed/renamed on the host — fall back to the first leaf
@@ -304,7 +315,7 @@ public struct IPadRootLayout: View {
             if !leaves.contains(where: { $0.sessionName == pane }) {
                 let fallback = leaves.first?.sessionName
                 // Guard the write so unchanged values don't bump
-                // `@Observable` invalidation on every polling snapshot.
+                // `@Observable` invalidation on every pushed snapshot.
                 if appState.focusedPaneId != fallback {
                     appState.focusedPaneId = fallback
                 }
@@ -314,29 +325,27 @@ public struct IPadRootLayout: View {
         // worktree-scoped and pane-scoped attention, including unseen agent
         // stops. The detail column toolbar reads this to decide whether to show a
         // collapsed-sidebar attention indicator.
-        appState.anyWorktreeHasAttention = list.contains(where: IPadWorktreeNavigation.hasAttention)
+        let hasAttention = list.contains(where: IPadWorktreeNavigation.hasAttention)
+        appState.anyWorktreeHasAttention = hasAttention
     }
 
     static func applyWorktreeSelection(appState: IPadAppState, worktree: WorktreePanes) {
         guard !worktree.state.isInFlight else { return }
-        appState.selectedWorktreePath = worktree.path
-        appState.focusedPaneId = worktree.layout?.leaves.first?.sessionName
-        appState.requestActiveTerminal()
+        appState.select(hostID: appState.selectedHostId, worktreePath: worktree.path,
+                        paneID: worktree.layout?.leaves.first?.sessionName, requestsTerminalFocus: true)
     }
 
     static func applyPaneSelection(appState: IPadAppState, leaf: PaneLayoutNode.Leaf) {
-        if let worktree = appState.latestWorktrees.first(where: { wt in
+        let worktree = appState.latestWorktrees.first { wt in
             wt.layout?.leaves.contains { $0.sessionName == leaf.sessionName } ?? false
-        }) {
-            appState.selectedWorktreePath = worktree.path
         }
-        appState.focusedPaneId = leaf.sessionName
-        appState.requestActiveTerminal()
+        appState.select(hostID: appState.selectedHostId,
+                        worktreePath: worktree?.path ?? appState.selectedWorktreePath,
+                        paneID: leaf.sessionName, requestsTerminalFocus: true)
     }
 
     static func applyBackToWorktrees(appState: IPadAppState) {
-        appState.selectedWorktreePath = nil
-        appState.focusedPaneId = nil
+        appState.select(hostID: appState.selectedHostId, worktreePath: nil, paneID: nil)
         appState.columnVisibility = .all
     }
 
@@ -659,14 +668,12 @@ public struct IPadRootLayout: View {
                     createdSessionName: sessionName,
                     worktrees: appState.latestWorktrees
                 )
-                worktreeListRefreshToken &+= 1
                 dispatchNextMobileMutation()
             case .ok:
                 // Released hosts cannot return the created session. Keep
                 // this split as the sole in-flight mutation until a panes
                 // snapshot identifies its new leaf.
                 pendingMobileSplits[index].legacySucceeded = true
-                worktreeListRefreshToken &+= 1
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(10))
                     guard mobileMutationInFlight == pending.id,
@@ -675,7 +682,7 @@ public struct IPadRootLayout: View {
                           }) else {
                         return
                     }
-                    // A host switch, failed polling connection, or a peer
+                    // A host switch, failed panes connection, or a peer
                     // that never publishes the mutation must not block all
                     // later pane controls forever. Only this worktree's
                     // batch is unsafe to rebase; commands for another
@@ -1070,7 +1077,7 @@ public struct IPadRootLayout: View {
                     )
                     // Match local focus immediately, including disabling
                     // controls when the final pane closed. The token stays
-                    // alive until polling proves the closed pane is absent.
+                    // alive until a pushed snapshot proves the closed pane is absent.
                     appState.focusedPaneId = projectedTarget
                     applyPendingMobileCreatedFocus(
                         in: appState.latestWorktrees
@@ -1130,7 +1137,6 @@ public struct IPadRootLayout: View {
                         doomedIDs.contains($0)
                     }
                 }
-                worktreeListRefreshToken &+= 1
             }
             dispatchNextMobileMutation()
         }
@@ -1181,7 +1187,7 @@ public struct IPadRootLayout: View {
         }
         let capturedHostID = host.id
         keybindingSet = Self.keybindingSetForStartingHostRefresh()
-        let presentation = await coordinator.presentation(for: host)
+        let presentation = await coordinator?.presentation(for: host)
         let text = presentation?.ghosttyConfig
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
@@ -1206,7 +1212,7 @@ public struct IPadRootLayout: View {
 
         await closeAndClearPaneEnvironment()
         let capturedHostID = host.id
-        let remoteHost = await coordinator.connection(for: host)
+        let remoteHost = await coordinator?.connection(for: host)
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         let environment = await buildPaneEnvironment(remoteHost: remoteHost)
@@ -1236,6 +1242,12 @@ public struct IPadRootLayout: View {
     }
 }
 
+private struct WorktreeFeedKey: Hashable {
+    let hostID: UUID?
+    let isReady: Bool
+    let hasUpdates: Bool
+}
+
 private struct PaneEnvironmentRefreshKey: Hashable {
     let hostID: UUID?
     let isReady: Bool
@@ -1255,7 +1267,7 @@ private struct HostMenu: View {
     @Bindable var hostStore: HostStore
     @Bindable var appState: IPadAppState
     @Bindable var browser: NearbyMacBrowser
-    let coordinator: RemoteConnectionCoordinator
+    @Environment(\.remoteConnectionCoordinator) private var coordinator
 
     @State private var showingAddHost = false
 
@@ -1263,8 +1275,10 @@ private struct HostMenu: View {
         Menu {
             // Saved hosts with a checkmark on the currently-selected
             // one; tapping fires the standard host switch (clears
-            // worktree selection + focused pane).
-            ForEach(hostStore.hosts.filter { coordinator.isPaired($0) }) {
+            // worktree selection + focused pane). Filtered once: each
+            // `isPaired` reads the pinned-host store from disk.
+            let pairedHosts = hostStore.hosts.filter { coordinator?.isPaired($0) == true }
+            ForEach(pairedHosts) {
                 host in
                 Button {
                     IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
@@ -1276,7 +1290,7 @@ private struct HostMenu: View {
                     }
                 }
             }
-            if hostStore.hosts.contains(where: { coordinator.isPaired($0) }) {
+            if !pairedHosts.isEmpty {
                 Divider()
             }
             Button {
@@ -1342,7 +1356,6 @@ struct IPadTerminalDetailChrome: ViewModifier {
 struct IPadDetailColumn: View {
     let host: Host?
     @Bindable var appState: IPadAppState
-    let coordinator: RemoteConnectionCoordinator
     /// Still needed after the toolbar splits moved onto
     /// `ghosttyCommandContext`: `shouldShowSplitControls` gates the toolbar
     /// group on `paneControlClient` availability.
@@ -1433,7 +1446,6 @@ struct IPadDetailColumn: View {
             MultiPaneDetailView(
                 host: host,
                 worktree: worktree,
-                coordinator: coordinator,
                 theme: appState.theme,
                 focusedPaneId: appState.focusedPaneId,
                 pendingFocusRequests: appState.pendingFocusRequests,

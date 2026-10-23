@@ -14,6 +14,7 @@ struct RemoteOpenButton: View {
     let ownerDeviceID: RemoteDeviceID?
     let isActive: Bool
     var managementTransport: ((WorktreeManagementRequest, Host) async throws -> WorktreeManagementResponse)? = nil
+    var pollingClock: any Clock = SystemClock()
     let browserConnectionReady: Bool
     let isPaneFocused: Bool
     let hasOwnershipSnapshot: Bool
@@ -160,7 +161,7 @@ struct RemoteOpenButton: View {
                 } catch {
                     if Task.isCancelled { return }
                 }
-                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                do { try await pollingClock.sleep(for: 3) } catch { return }
             }
         }
         .background {

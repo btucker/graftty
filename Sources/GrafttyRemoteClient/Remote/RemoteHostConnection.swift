@@ -100,12 +100,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// degenerate environments.
     private static let iceGatheringTimeout: Duration = .seconds(5)
 
-    /// Most-recently received binary frame. Test-only entry point —
-    /// production code routes through the channel-framing layer
-    /// added in a later PR. `internal` so the in-target test can read it
-    /// via `@testable import`.
-    internal private(set) var lastReceivedBinary: Data?
-
     private let clientKey: Curve25519.Signing.PrivateKey
     private let expectedHostFingerprint: RemoteIdentityFingerprint
     private var sshTransport: SSHNIOTransport?
@@ -311,19 +305,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         }
     }
 
-    /// Send a binary frame over the open data channel. Throws if the
-    /// channel isn't open. Production code will route through a channel
-    /// multiplexer; this is the raw-bytes entry point for the loopback test.
-    public func sendBinary(_ data: Data) async throws {
-        guard let dc = dataChannel, dc.readyState == .open else {
-            throw ConnectionError.notOpen
-        }
-        let buffer = RTCDataBuffer(data: data, isBinary: true)
-        guard dc.sendData(buffer) else {
-            throw ConnectionError.sendFailed
-        }
-    }
-
     /// Bind locally-gathered ICE candidates so they're routed into the
     /// remote peer's connection. Candidates emitted before this call
     /// are buffered (see `pendingLocalCandidates`) and forwarded in
@@ -409,27 +390,10 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         return client
     }
 
-    /// Opens a `panes-state@graftty.dev` SSH subsystem channel. The
-    /// supplied callbacks fire each time the server pushes a snapshot or
-    /// the channel closes. Throws `ConnectionError.notConnected` if the
-    /// SSH handshake has not completed.
-    public func openPanesStateChannel(
-        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
-        onClosed: @escaping @Sendable (String) async -> Void
-    ) async throws -> PanesStateChannelClient {
-        let client = try await makePanesStateClient(
-            onSnapshot: onSnapshot,
-            onClosed: onClosed
-        )
-        try await client.open()
-        return client
-    }
-
     /// Constructs a `PanesStateChannelClient` against the current SSH
     /// transport but does NOT call `open()` on it. Used by
-    /// `buildPaneEnvironment`, where the channel client is wrapped in a
-    /// `WorktreePanesStore` and the store's `subscribe()` performs the
-    /// single open. Throws `ConnectionError.notConnected` if the SSH
+    /// `PanesStateSubscription`, where the store's `subscribe()` performs
+    /// the single open. Throws `ConnectionError.notConnected` if the SSH
     /// handshake has not completed.
     public func makePanesStateClient(
         onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
@@ -456,22 +420,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         )
     }
 
-    /// Opens the `pane-control@graftty.dev` SSH subsystem channel. Returns
-    /// a client ready for typed RPCs (`split`, `close`, `swap`). Throws
-    /// `ConnectionError.notConnected` if the SSH handshake has not
-    /// completed.
-    public func openPaneControlChannel() async throws -> PaneControlChannelClient {
-        let client = try makePaneControlClient()
-        try await client.open()
-        return client
-    }
-
-    /// Constructs a `PaneControlChannelClient` against the current SSH
-    /// transport but does NOT call `open()` on it. Used by
-    /// `buildPaneEnvironment`, where the channel client is wrapped in a
-    /// `PaneControlClient` and `PaneControlClient.open()` performs the
-    /// single open. Throws `ConnectionError.notConnected` if the SSH
-    /// handshake has not completed.
     public func makeChromeTabClient() throws -> ChromeTabChannelClient {
         guard
             let transport = sshTransport,
@@ -485,6 +433,10 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         )
     }
 
+    /// Constructs a `PaneControlChannelClient` against the current SSH
+    /// transport but does NOT call `open()` on it; the `PaneControlClient`
+    /// wrapping it performs the single open. Throws
+    /// `ConnectionError.notConnected` if the SSH handshake has not completed.
     public func makePaneControlClient() throws -> PaneControlChannelClient {
         guard
             let transport = sshTransport,
@@ -521,13 +473,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
               let transport = bulkHandlerBox != nil ? bulkTransport : sshTransport,
               let box = bulkHandlerBox ?? sshHandlerBox else { throw ConnectionError.notConnected }
         return SSHSocketTransport(parent: transport.channel, handler: box.handler)
-    }
-
-    public func openWorktreeManagementChannel() async throws
-        -> WorktreeManagementChannelClient {
-        let client = try makeWorktreeManagementClient()
-        try await client.open()
-        return client
     }
 
     public func makeWorktreeManagementClient() throws
@@ -840,8 +785,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         case notConfigured
         case notConnected
         case notOpen
-        case sendFailed
-        case closed
         case dataChannelOpenTimedOut
     }
 }

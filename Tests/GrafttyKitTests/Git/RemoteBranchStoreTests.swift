@@ -1,6 +1,8 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
+import GrafttyTestSupport
 
 @Suite("RemoteBranchStore")
 struct RemoteBranchStoreTests {
@@ -64,7 +66,7 @@ struct RemoteBranchStoreTests {
     """)
     func pollingBatchesAndRotatesAcrossRepositories() async throws {
         let lister = ConcurrencyRecordingRemoteBranchLister(delay: .milliseconds(100))
-        let ticker = CapturingTicker()
+        let ticker = ManualTicker(clearsTickOnStop: false)
         let store = RemoteBranchStore(list: lister.list)
         let repos = (0..<12).map {
             RepoEntry(path: "/repo-\($0)", displayName: "repo-\($0)", worktrees: [])
@@ -95,7 +97,7 @@ struct RemoteBranchStoreTests {
         let store = RemoteBranchStore(
             list: RemoteBranchStore.makeDefaultList(executor: executor)
         )
-        let ticker = CapturingTicker()
+        let ticker = ManualTicker(clearsTickOnStop: false)
         let repos = (0..<5).map {
             RepoEntry(path: "/repo-\($0)", displayName: "repo-\($0)", worktrees: [])
         }
@@ -128,7 +130,7 @@ struct RemoteBranchStoreTests {
     @Test func upstreamRemoteBranchExposesTrackedMapping() async throws {
         let store = RemoteBranchStore(list: { _ in
             RemoteBranchSnapshot(
-                branches: ["main", "feature/bar"],
+                remoteBranchNames: ["main", "feature/bar"],
                 upstreams: ["main": "main", "local-name": "feature/bar"]
             )
         })
@@ -146,7 +148,7 @@ struct RemoteBranchStoreTests {
     @Test func hasRemoteIsTrueWhenUpstreamSetEvenIfLocalNameNotInBranches() async throws {
         let store = RemoteBranchStore(list: { _ in
             RemoteBranchSnapshot(
-                branches: ["feature/bar"],
+                remoteBranchNames: ["feature/bar"],
                 upstreams: ["local-rename": "feature/bar"]
             )
         })
@@ -174,7 +176,7 @@ struct RemoteBranchStoreTests {
 
     @MainActor
     @Test func hasRemoteRejectsEmptyWhitespaceAndSentinelBranches() async throws {
-        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(branches: ["main"]) })
+        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(remoteBranchNames: ["main"]) })
         store.refresh(repoPath: "/repo")
         try await waitUntil(timeout: 1.0) {
             store.hasRemote(repoPath: "/repo", branch: "main")
@@ -196,7 +198,7 @@ struct RemoteBranchStoreTests {
             store.hasRemote(repoPath: "/repo", branch: "main")
         }
 
-        lister.set(result: .failure(TestError.boom), for: "/repo")
+        lister.set(result: .failure(StubError()), for: "/repo")
         store.refresh(repoPath: "/repo")
         try await Task.sleep(for: .milliseconds(100))
 
@@ -205,7 +207,7 @@ struct RemoteBranchStoreTests {
 
     @MainActor
     @Test func clearDropsSnapshot() async throws {
-        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(branches: ["main"]) })
+        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(remoteBranchNames: ["main"]) })
         store.refresh(repoPath: "/repo")
         try await waitUntil(timeout: 1.0) {
             store.hasRemote(repoPath: "/repo", branch: "main")
@@ -520,7 +522,7 @@ struct RemoteBranchStoreTests {
             "/a": .success(["main"]),
             "/b": .success(["feature"]),
         ])
-        let ticker = CapturingTicker()
+        let ticker = ManualTicker(clearsTickOnStop: false)
         let store = RemoteBranchStore(list: lister.list)
         let repos = [
             RepoEntry(path: "/a", displayName: "a", worktrees: []),
@@ -541,7 +543,7 @@ struct RemoteBranchStoreTests {
         let lister = RecordingRemoteBranchLister(results: [
             "/repo": .success(["main"]),
         ])
-        let ticker = CapturingTicker()
+        let ticker = ManualTicker(clearsTickOnStop: false)
         let store = RemoteBranchStore(list: lister.list)
 
         store.start(
@@ -562,8 +564,8 @@ struct RemoteBranchStoreTests {
             "/old": .success(["old"]),
             "/new": .success(["new"]),
         ])
-        let firstTicker = CapturingTicker()
-        let secondTicker = CapturingTicker()
+        let firstTicker = ManualTicker(clearsTickOnStop: false)
+        let secondTicker = ManualTicker(clearsTickOnStop: false)
         let store = RemoteBranchStore(list: lister.list)
 
         store.start(
@@ -588,8 +590,8 @@ struct RemoteBranchStoreTests {
 
     @MainActor
     @Test func pulseForwardsToActiveTickerAndDoesNothingAfterStop() {
-        let ticker = CapturingTicker()
-        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(branches: []) })
+        let ticker = ManualTicker(clearsTickOnStop: false)
+        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot() })
 
         store.start(ticker: ticker, getRepos: { [] })
         store.pulse()
@@ -744,33 +746,6 @@ private final class CombinedRefScanExecutor: CLIExecutor, @unchecked Sendable {
     }
 }
 
-@MainActor
-private final class CapturingTicker: PollingTickerLike {
-    private var onTick: (@MainActor () async -> Void)?
-    private(set) var stopCallCount = 0
-    private(set) var pulseCallCount = 0
-
-    func start(onTick: @MainActor @escaping () async -> Void) {
-        self.onTick = onTick
-    }
-
-    func stop() {
-        stopCallCount += 1
-    }
-
-    func pulse() {
-        pulseCallCount += 1
-    }
-
-    func fire() async {
-        await onTick?()
-    }
-}
-
-private enum TestError: Error {
-    case boom
-}
-
 private final class CompletionToken {}
 
 private final class PermitBlocker: @unchecked Sendable {
@@ -824,7 +799,7 @@ private final class RecordingRemoteBranchLister: @unchecked Sendable {
 
     var list: RemoteBranchStore.ListFunction {
         { [weak self] repoPath in
-            guard let self else { return RemoteBranchSnapshot(branches: []) }
+            guard let self else { return RemoteBranchSnapshot() }
             return try await self.list(repoPath: repoPath)
         }
     }
@@ -879,7 +854,7 @@ private final class RecordingRemoteBranchLister: @unchecked Sendable {
             invocations[repoPath, default: 0] += 1
             switch results[repoPath] ?? .success([]) {
             case .success(let branches):
-                return .success(RemoteBranchSnapshot(branches: branches))
+                return .success(RemoteBranchSnapshot(remoteBranchNames: branches))
             case .failure(let error):
                 return .failure(error)
             }
@@ -944,5 +919,15 @@ private final class ConcurrencyRecordingRemoteBranchLister: @unchecked Sendable 
             activeCount -= 1
             _completedCount += 1
         }
+    }
+}
+
+extension RemoteBranchSnapshot {
+    /// Test fixture: remote branches by name, with no commit-date ordering.
+    init(remoteBranchNames names: some Sequence<String>, upstreams: [String: String] = [:]) {
+        self.init(
+            remoteBranches: names.map { BranchRef(name: $0, lastCommitDate: .distantPast) },
+            upstreams: upstreams
+        )
     }
 }

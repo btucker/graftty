@@ -446,17 +446,6 @@ public actor WebRTCHostAgent {
         pending?.resume()
     }
 
-    /// Send a binary frame back to the client. Test-only entry point.
-    public func sendBinary(_ data: Data) async throws {
-        guard let dc = dataChannel, dc.readyState == .open else {
-            throw HostError.notOpen
-        }
-        let buffer = RTCDataBuffer(data: data, isBinary: true)
-        guard dc.sendData(buffer) else {
-            throw HostError.sendFailed
-        }
-    }
-
     /// `async` — and `await`s the SSH transport's teardown directly rather
     /// than spawning a fire-and-forget `Task` — so that a caller like
     /// `SSHConnectionRegistry.revoke` (which `await`s the registered close
@@ -1048,8 +1037,6 @@ public actor WebRTCHostAgent {
     public enum HostError: Error, Equatable, Sendable {
         case peerConnectionInitFailed
         case sdpGenerationFailed
-        case notOpen
-        case sendFailed
         /// The connection was closed or replaced while native offer
         /// negotiation was suspended.
         case superseded

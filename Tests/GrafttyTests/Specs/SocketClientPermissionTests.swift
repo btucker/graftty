@@ -58,10 +58,8 @@ struct SocketClientPermissionTests {
         #expect(errors == [denied.description])
 
         #expect(throws: ExitCode.self) {
-            try WorktreeCapability.require(
-                .worktreeCreateIdempotencyCapability,
-                unsupportedMessage: "unsupported",
-                verificationMessage: "unverified",
+            try CapabilityProbe.require(
+                [.worktreeCreateIdempotency],
                 retryTransportFailuresUntil: Date().addingTimeInterval(60),
                 send: { _ in attempts += 1; throw denied },
                 sleep: { _ in Issue.record("Unexpected retry") }

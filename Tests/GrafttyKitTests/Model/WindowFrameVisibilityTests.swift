@@ -1,6 +1,8 @@
 import Testing
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 /// Mirror of `WindowFrameTracker.Coordinator.frameIsVisibleOnAnyScreen` logic
 /// extracted so we can test it without AppKit. Keep the minOverlap constant

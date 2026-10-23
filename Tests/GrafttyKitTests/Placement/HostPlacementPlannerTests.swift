@@ -7,7 +7,7 @@ struct HostPlacementPlannerTests {
     private let now = Date(timeIntervalSince1970: 1000)
     private var demand: HostPlacementDemand { .init(architecture: "arm64", cpus: 2, memoryBytes: 4 * 1024 * 1024 * 1024, diskBytes: 8 * 1024 * 1024 * 1024) }
 
-    @Test("@spec REMOTE-24.15: When an agent requests a read-only placement plan, the CLI shall rank connected compatible hosts using fresh measured CPU, memory, and disk headroom, explain rejections and unknown reservation state, and require admission before starting work.")
+    @Test("@spec REMOTE-31.15: When an agent requests a read-only placement plan, the CLI shall rank connected compatible hosts using fresh measured CPU, memory, and disk headroom, explain rejections and unknown reservation state, and require admission before starting work.")
     func packsCompatibleHostsButDoesNotGrantAdmission() throws {
         let small = try host("small", memoryGiB: 8)
         let large = try host("large", memoryGiB: 16)

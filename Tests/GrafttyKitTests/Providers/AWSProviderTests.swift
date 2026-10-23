@@ -29,7 +29,7 @@ struct AWSProviderTests {
         #expect(try store.load()?.regions == ["us-east-1"])
     }
 
-    @Test("@spec REMOTE-24.10: When querying AWS Spot offers, the CLI shall compare the latest effective Linux prices for the configured pool by region and Availability Zone, filter architecture and resource requirements, use the preferred type only to break equal-price ties, and distinguish observed prices from verified capacity.")
+    @Test("@spec REMOTE-31.10: When querying AWS Spot offers, the CLI shall compare the latest effective Linux prices for the configured pool by region and Availability Zone, filter architecture and resource requirements, use the preferred type only to break equal-price ties, and distinguish observed prices from verified capacity.")
     func comparesEligibleOffersUsingFreshObservationOfEffectivePrices() async throws {
         let now = Date(timeIntervalSince1970: 1_750_000_000)
         let runner = AWSFixtureExecutor(prices: """

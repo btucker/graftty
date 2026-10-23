@@ -27,17 +27,14 @@ public final class SocketServer: @unchecked Sendable {
     /// Request/response variant of `onMessage`. When set, the server calls
     /// this after `onMessage` and, if the handler returns a non-nil
     /// `ResponseMessage`, writes it to the client (as JSON + newline)
-    /// before closing the connection. Handlers are invoked on the main
-    /// queue and complete asynchronously without retaining a socket worker.
-    public var onRequest: ((NotificationMessage) -> ResponseMessage?)?
-    /// Async request variant used when a handler needs to await work without
-    /// blocking the main actor (for example a bounded zmx subprocess). When
-    /// present it takes precedence over `onRequest`.
+    /// before closing the connection. Handlers run on the main actor and
+    /// may suspend (for example on a bounded zmx subprocess) without
+    /// retaining a socket worker or blocking the main actor.
     public var onAsyncRequest:
         (@MainActor @Sendable (NotificationMessage) async -> ResponseMessage?)?
 
-    /// Upper bound on how long an `onRequest` handler (which runs on the main
-    /// queue) may retain its connection. If the main queue stalls — modal
+    /// Upper bound on how long an `onAsyncRequest` handler (which runs on the
+    /// main actor) may retain its connection. If the main queue stalls — modal
     /// dialog, long synchronous work, reentrancy bug — the server still
     /// closes the fd after 5s. The prior semaphore-based implementation also
     /// retained a dispatch worker for this entire interval; request completion
@@ -347,70 +344,39 @@ public final class SocketServer: @unchecked Sendable {
             // notify/clear clients close as soon as their one-way write
             // completes. Waiting on the app's response dispatcher for those
             // messages cannot produce a useful reply and, during hook bursts,
-            // can needlessly occupy every bounded request slot.
-            guard message.expectsResponse else {
+            // can needlessly occupy every bounded request slot. Without a
+            // request handler there is likewise no reply to wait for.
+            guard message.expectsResponse, let onAsyncRequest else {
                 index += 1
                 continue
             }
             let nextIndex = index + 1
 
-            if let onAsyncRequest {
-                guard let requestID = registerRequest(fd: fd, lease: lease) else {
-                    finishClient(fd: fd, lease: lease)
-                    return
-                }
-                scheduleRequestTimeout(
+            guard let requestID = registerRequest(fd: fd, lease: lease) else {
+                finishClient(fd: fd, lease: lease)
+                return
+            }
+            scheduleRequestTimeout(
+                fd: fd,
+                lease: lease,
+                requestID: requestID
+            )
+            Task { @MainActor [weak self] in
+                guard self?.isConnectionActive(
                     fd: fd,
-                    lease: lease,
-                    requestID: requestID
-                )
-                Task { @MainActor [weak self] in
-                    guard self?.isConnectionActive(
+                    lease: lease
+                ) == true else { return }
+                let response = await onAsyncRequest(message)
+                self?.clientQueue.async { [weak self] in
+                    self?.completeRequest(
                         fd: fd,
-                        lease: lease
-                    ) == true else { return }
-                    let response = await onAsyncRequest(message)
-                    self?.clientQueue.async { [weak self] in
-                        self?.completeRequest(
-                            fd: fd,
-                            lease: lease,
-                            requestID: requestID,
-                            response: response,
-                            messages: messages,
-                            nextIndex: nextIndex
-                        )
-                    }
+                        lease: lease,
+                        requestID: requestID,
+                        response: response,
+                        messages: messages,
+                        nextIndex: nextIndex
+                    )
                 }
-            } else if let onRequest {
-                guard let requestID = registerRequest(fd: fd, lease: lease) else {
-                    finishClient(fd: fd, lease: lease)
-                    return
-                }
-                scheduleRequestTimeout(
-                    fd: fd,
-                    lease: lease,
-                    requestID: requestID
-                )
-                DispatchQueue.main.async { [weak self] in
-                    guard self?.isConnectionActive(
-                        fd: fd,
-                        lease: lease
-                    ) == true else { return }
-                    let response = onRequest(message)
-                    self?.clientQueue.async { [weak self] in
-                        self?.completeRequest(
-                            fd: fd,
-                            lease: lease,
-                            requestID: requestID,
-                            response: response,
-                            messages: messages,
-                            nextIndex: nextIndex
-                        )
-                    }
-                }
-            } else {
-                index += 1
-                continue
             }
             return
         }

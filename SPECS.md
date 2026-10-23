@@ -328,6 +328,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-3.5** If the user adds a repository that is already in the sidebar, then the application shall not create a duplicate and shall select the existing entry.
 
+**LAYOUT-3.6** When the user chooses File → Add Repository… or presses ⇧⌘O, the application shall run the focused window's Add Repository action, and shall disable the command while no window publishes one.
+
 ### LAYOUT-4.x — Removing & Relocating Repositories
 
 **LAYOUT-4.1** When the user right-clicks a repository header row in the sidebar, the application shall display a context menu containing a "Remove Repository" action.
@@ -914,9 +916,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.26** When `graftty pane add --agent` is used, the CLI shall first verify that the running app advertises pane agent launch, and the add-pane request shall carry the agent runtime and initial task so an older app cannot silently treat it as a plain split.
 
-**ATTN-1.27** If an add-pane request carries an agent prompt without an agent runtime, an agent runtime together with a command, or an agent runtime while Agent Teams is disabled, then the application shall reject it before splitting a pane.
+**ATTN-1.27** If an add-pane request carries an agent prompt without an agent runtime, or an agent runtime together with a command, then the application shall reject it before splitting a pane.
 
 **ATTN-1.28** When a pane added with `graftty pane add --agent` is destroyed, the application shall delete that pane's staged agent prompt file and withdraw its pending durable initial task, so a pane closed before its agent starts leaves no task behind for the next agent of that runtime.
+
+**ATTN-1.29** If the application answers a CLI request that expects a response with a response of a different type, then the CLI shall print `Unexpected <type> response for <command>` naming the wire type it received, and exit with code 1. `team hook` keeps its unrendered-output fallback, and `remote setup-linux` keeps its update-the-app error.
+
+**ATTN-1.30** When a CLI command needs app capabilities, the CLI shall check all of them with one `capabilities` request, and if the running app closes that request without a response or answers it with anything other than a capability list, then the CLI shall fall back to the single-capability probes that older apps answer.
 
 ### ATTN-2.x — Communication Protocol
 
@@ -966,6 +972,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-2.24** While admitted control-socket request handlers are suspended, the application shall start each additional admitted client's receive and handler deadline independently of those blocked workers so a fast request cannot expire while waiting to begin processing.
 
+**ATTN-2.25** The control-socket protocol shall keep every request and response type tag and field key stable across releases, and shall keep decoding the optional fields that older peers omit, so an older running application keeps serving a newer CLI.
+
+**ATTN-2.26** When the application receives a legacy `team_message` request, it shall handle it as a normal-priority `team_send` with no caller agent ID.
+
+**ATTN-2.27** When the CLI sends `capabilities`, the application shall answer with the name of every control capability its dispatcher supports, and shall answer each older single-capability probe from that same set: `ok` when supported, an error otherwise.
+
 ### ATTN-3.x — Error Handling
 
 **ATTN-3.1** If the application is not running, then the CLI shall print "Graftty is not running" and exit with code 1.
@@ -1007,6 +1019,26 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PERSIST-2.1** The application shall save state when any of the following occur: split tree changes, worktree state changes, repository added or removed, selection changes, window resize or move (debounced), app moving to background, or app quit.
 
 **PERSIST-2.2** When a state save fails (full disk, read-only `$HOME`, permissions clash, or any other `FileManager` / `Data.write` throw), the application shall log the error via `NSLog` so it surfaces in Console.app, rather than silently discarding every subsequent persisted mutation. Analogue of `ATTN-2.7` for the `AppState.save(to:)` path. `AppState.save(to:)` shall continue to throw so the caller can surface or recover; the spec pins only that the app-level caller stops using `try?` to mask it.
+
+**PERSIST-2.3** When `AppState` changes, the application shall coalesce the changes into one `state.json` write that runs off the main thread no later than the save delay after the first unsaved change.
+
+**PERSIST-2.4** The application shall write `state.json` snapshots in the order they were taken, so a write already in flight can never land after a newer snapshot.
+
+**PERSIST-2.5** When a request launches an agent whose CLI hooks read `state.json`, the application shall write every marked state change to disk before replying.
+
+**PERSIST-2.6** When the application terminates, it shall synchronously write the newest state after any in-flight write completes, so quitting never loses the last change.
+
+**PERSIST-2.7** While no window is open, when a control-socket request changes `AppState`, the application shall still save the change within the save delay.
+
+**PERSIST-2.8** When `AppState` is marked for saving, the application shall notify the registered change observer on every mark, whether or not a window is open.
+
+**PERSIST-2.9** When a pane command changes `AppState` (start, split, close, resize, equalize, zoom, navigate, reassign or pane attention), the application shall save the change within the save delay even while no window is open.
+
+**PERSIST-2.10** When a worktree is created or removed through the control socket, a paired device or the web server, the application shall save the result within the save delay even while no window is open.
+
+**PERSIST-2.11** When a paired device reorders projects or worktrees or acknowledges attention, the application shall save the change within the save delay even while no window is open.
+
+**PERSIST-2.12** When a background source (an attention auto-clear timer or a branch change found by the filesystem monitor) changes `AppState`, the application shall save the change within the save delay even while no window is open.
 
 ### PERSIST-3.x — Restore on Launch
 
@@ -1254,7 +1286,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONFIG-2.6** The application shall resolve GrafttyKit's SwiftPM resource bundle from the packaged `.app` layout (`Contents/Resources/`), falling back to `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not trap on SwiftPM's generated accessor (which probes only the `.app` root and the compiling machine's `.build` path — neither present once shipped).
 
-**CONFIG-2.7** If GrafttyKit's resource bundle uses either SwiftPM's flat layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's build system, then the application shall locate the bundled web client assets, agent plugin payload, and vendored ghostty runtime resources.
+**CONFIG-2.7** If GrafttyKit's resource bundle uses either SwiftPM's flat layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's build system, then the application shall locate the bundled web client assets, agent plugin payload, Codex wrapper template, and vendored ghostty runtime resources.
 
 ## DIVERGE — Worktree Divergence Indicator
 
@@ -1349,6 +1381,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TECH-6.1** If an iOS CI test shard loses access to its selected simulator before testing begins, then the workflow shall create and boot a replacement simulator and retry `xcodebuild` exactly once. The workflow shall not retry ordinary build or test failures.
 
 **TECH-6.2** While an iOS CI shard discovers its simulator destination, the workflow shall allow 60 seconds for discovery on both the first attempt and its bounded recovery attempt.
+
+**TECH-6.3** When CI partitions Swift tests, the workflow shall select every discovered non-ownership test exactly once, preserve the separate ownership corpus gate, and reject an empty discovery result.
+
+**TECH-6.4** When an iOS CI runner executes multiple test batches, the workflow shall preserve separate test processes and result bundles, reuse its simulator, execute later batches after a test failure, and retain the failure status.
 
 ## ZMX — zmx Session Backing
 
@@ -1502,7 +1538,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-4.7** If Linux zmx builds encounter a transient dependency download failure, then the release scripts shall retry at most three times, preserve exhausted failures, and stop immediately for compiler or test failures.
 
-**DIST-4.8** When building Linux zmx, the release scripts shall run its complete test suite in the same ReleaseSafe mode as the shipped executable, retaining runtime safety checks for large-history tests.
+**DIST-4.8** When a Linux zmx build restores compiled artifacts, the release scripts shall execute the unit tests again, retain format validation and ReleaseSafe compilation, and isolate cache entries by architecture and build inputs.
+
+**DIST-4.9** When the Linux smoke test installs Git inside the fresh container, the script shall run every apt-get command under a kill-backed timeout with apt retries and a per-connection timeout shorter than that bound, and shall print the apt output with the exit status on failure, so a mirror stall fails fast with a diagnostic instead of consuming the job timeout in silence.
+
+**DIST-4.10** When building Linux zmx, the release scripts shall run its complete test suite in the same ReleaseSafe mode as the shipped executable, retaining runtime safety checks for large-history tests.
 
 ## WEB — Web Access
 
@@ -1533,6 +1573,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **WEB-1.12** While the server is listening, the Settings pane shall render a **Base URL** row distinct from the diagnostic "Listening on" row. The Base URL is the HTTPS URL composed from the machine's MagicDNS FQDN (WEB-8.1) and the listening port — the URL a user copies to open the web client. It renders as a clickable `Link` opening the default browser, plus a copy button (`doc.on.doc`, accessible label "Copy URL") that writes to `NSPasteboard.general`. The "Listening on" row below is informational (which sockets are actually up) and must not be conflated with the Base URL. Plain selectable text is not sufficient for the Base URL — users were expected to triple-click, copy, then switch apps and paste (four steps for one ask).
 
 **WEB-1.14** While web access is enabled and the latest server bring-up attempt failed with a transient dependency error (Tailscale daemon unreachable, MagicDNS name not yet published, or certificate not yet mintable), the application shall automatically retry bring-up with capped exponential backoff until it succeeds or web access is disabled.
+
+**WEB-1.15** While web access is enabled, the application shall query the Tailscale daemon off the main actor, so constructing the web server controller or applying a Web Access settings change returns without waiting for the daemon to respond.
 
 ### WEB-2.x — Authorization
 
@@ -1581,6 +1623,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **WEB-4.10** When the WebSocket bridge spawns a `zmx attach` child to back a mobile-client session, the application shall propagate the same shell-integration env (`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERMINFO` when ghostty-terminfo is available, and `ZDOTDIR` pointing at Ghostty's zsh shell-integration when the user's shell is zsh) that host-managed native panes use (per `ZMX-6.3` / `ZMX-6.5`). Without this, the WS attach can win the create-session race against the Mac surface's attach (which is slow because it follows `git worktree add` + discovery) and spawn the daemon's user shell with no shell integration — silencing the first-PWD trigger (so the host pane never types the user's default command) and leaving the shell without truecolor.
 
 **WEB-4.11** If a WebSocket terminal client cannot drain output, then the application shall bound queued output to 8 MiB of payload and 1024 frames per connection, including work awaiting its event loop, and disconnect that client on overflow without silently dropping terminal bytes on an open connection.
+
+**WEB-4.12** If a web client attaches to a pane whose worktree has gone stale, then the application shall start its zmx attach child without the missing worktree directory as its working directory.
+
+**WEB-4.13** When a web client attaches to a pane, the application shall start its zmx attach child in the current directory of the running worktree that owns the pane, including after its repository is relocated, and in no worktree directory for a pane whose worktree is not running.
 
 ### WEB-5.x — Client
 
@@ -1637,6 +1683,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **WEB-7.11** When `/new` is creating a new branch and the selected repository's default checkout is behind its origin default branch, the web client shall offer to pull the default checkout before posting `POST /worktrees`; accepting the offer shall call `POST /repos/default-branch/pull` with `{repoPath}` and shall leave worktree creation pending until the user submits again after the pull succeeds.
 
 **WEB-7.12** When a client sends `POST /repos/default-branch/pull` with `{repoPath}`, the application shall run the injected default-branch puller for that repository and respond `200` with `{ok: true}` on success, `409` with `{error}` when git rejects the pull, and `503` when the puller is not wired.
+
+**WEB-7.13** When a worktree create, delete or default-branch pull finishes, the application shall report it to web and paired-device clients from one shared result, mapping each failure to that transport's existing status, code and message.
+
+**WEB-7.14** When a web or paired-device client pulls a repository's default branch, the application shall fast-forward the main checkout and then refresh its divergence stats.
+
+**WEB-7.15** When a REST worktree create, delete or default-branch pull finishes, the application shall answer success with 200 and its JSON result, invalid input with 400, an unknown worktree with 404, a Git refusal or conflict with 409, and any other failure with 500, each failure carrying a JSON error message and a delete 409 also carrying whether a forced retry is allowed.
 
 ### WEB-8.x — Web TLS (HTTPS)
 
@@ -2012,8 +2064,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.21** When the user taps a pane child row beneath a multi-leaf worktree in the worktree picker (`IOS-4.1`), the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree-detail screen (`IOS-4.10`). The system edge-swipe-back gesture returns the user to the worktree picker.
 
-**IOS-4.22** When the explicit legacy Web Access compatibility path constructs a session WebSocket URL, it shall advertise the display-client kind via a `client=ios` query parameter so older daemons classify the connection as `.ios`. Production paired-device sessions shall use the authenticated terminal subsystem and shall not select this compatibility path automatically (`IOS-4.28`).
-
 **IOS-4.23** When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch; an equal-epoch snapshot is applied only when its revision is not lower than the last applied (see IOS-4.27).
 
 **IOS-4.24** When an ownership snapshot promotes this client from non-owner to display owner, the application shall send an `ownerResize` carrying its current iOS viewport before queued input, waiting for the physical viewport after releasing a follower canvas.
@@ -2030,7 +2080,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.30** When a paired host's worktree list mounts before the biometric gate has made authenticated connections available, the application shall keep the initial loading state pending and automatically start the load when the active, unlocked readiness state arrives. A successful list shall remain mounted across transient inactive/active cycles, while changing hosts shall automatically load the new host without requiring Refresh.
 
-**IOS-4.31** When authenticated worktree polling receives a snapshot equal to the list already rendered, the application shall not republish `onListChanged` or replace the list state. It shall publish a genuinely changed snapshot so pane metadata and topology still update promptly.
+**IOS-4.31** When an authenticated worktree push or refresh delivers rows equal to the list already rendered, the application shall not replace the list state. It shall apply a genuinely changed snapshot so pane metadata and topology still update promptly.
 
 **IOS-4.32** When a follower takes control without typing, the application shall lay out and confirm its physical viewport before sending the owner resize, including while rendering is reduced.
 
@@ -2067,6 +2117,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-4.49** When an owning mobile pane receives an in-band source grid, the application shall update the parser without fitting the physical viewport to that grid, while continuing to report keyboard, rotation, and font size changes.
 
 **IOS-4.50** While a mobile terminal is displayed, long-pressing Back shall offer the most recently opened distinct panes with host, project, worktree, and pane labels, retain visits across relaunches, and open the selected stable pane identity without changing ordinary Back taps or allowing stale targets or superseded navigation to redirect the user.
+
+**IOS-4.51** While a mobile view observes a paired host's worktrees, the application shall deliver the newest pushed panes-state frame without polling. When a subscription that delivered frames ends after staying open for at least a minimum lifetime, the application shall subscribe again immediately; when it ends sooner, the application shall wait a retry delay first without reporting the host unavailable. If subscribing fails or a subscription ends before delivering a frame, then the application shall report the host unavailable and subscribe again only after a retry delay, stopping once the view stops observing.
+
+**IOS-4.52** While a paired host's worktree list is displayed, when the host pushes a changed panes-state frame, the application shall render it without fetching the list again.
+
+**IOS-4.53** When the host whose worktree list is displayed becomes paired, the application shall begin applying the host's pushed panes-state frames without requiring Refresh.
+
+**IOS-4.54** If a pulled worktree list completes after a newer pushed panes-state frame was applied, then the application shall keep the pushed frame rather than replace it with the pulled rows.
 
 ### IOS-5.x — Multi-pane layout
 
@@ -2222,9 +2280,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.6** When the user swipes a worktree row in `WorktreePickerView` that is neither the repo's main checkout nor in an in-flight state (`.creating` / `.deleting`), the application shall reveal a trailing destructive action labeled "Delete" for non-stale rows and "Dismiss" for `.stale` rows. Rows for the main checkout or for in-flight worktrees shall expose no swipe action.
 
-**IOS-9.7** When the user taps the trailing destructive action revealed by `IOS-9.6`, the application shall present a SwiftUI confirmation dialog before any HTTP call. The dialog title shall be "Delete Worktree?" for non-stale rows and "Dismiss Worktree?" for `.stale` rows; the dialog body shall mirror the Mac's NSAlert copy ("This will delete the worktree but not the branch." / "This will remove this stale entry from Graftty."). On cancel, no request shall be issued.
+**IOS-9.7** When the user taps the trailing destructive action revealed by `IOS-9.6`, the application shall present a SwiftUI confirmation dialog before issuing any delete request. The dialog title shall be "Delete Worktree?" for non-stale rows and "Dismiss Worktree?" for `.stale` rows; the dialog body shall mirror the Mac's NSAlert copy ("This will delete the worktree but not the branch." / "This will remove this stale entry from Graftty."). On cancel, no request shall be issued.
 
-**IOS-9.8** If `POST /worktrees/delete` returns 409 with `forceAllowed: true`, then the application shall present a Force Delete confirmation surfacing the `shortStatus` field as the dialog body, and shall retry the request with `force: true` only on user confirmation. A 409 with `forceAllowed: false` (or 4xx/5xx of any other shape) shall present a non-retryable error toast and shall not loop.
+**IOS-9.8** If a worktree delete management request returns an error with `forceAllowed: true`, then the application shall present a Force Delete confirmation surfacing the `shortStatus` field as the dialog body, and shall retry the request with `force: true` only on user confirmation. An error with `forceAllowed: false`, or any other non-deleted response, shall present a non-retryable error toast and shall not loop.
 
 **IOS-9.9** While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the order of `repoDisplayName` first-occurrences in the authenticated panes-state snapshot rather than sort the group keys alphabetically, so the mobile picker's repo order matches the user's Mac sidebar order.
 
@@ -2241,6 +2299,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-9.15** When mobile worktree creation fails, the application shall remove its temporary row and show the error outside the dismissed form.
 
 **IOS-9.16** While a mobile worktree row is creating, deleting, or opening, the application shall center its progress indicator beside the primary title without moving the title baseline or enlarging the row.
+
+**IOS-9.17** If the mobile Add Worktree sheet has no authenticated paired connection, then the application shall fail its repository list closed instead of reading repositories over unauthenticated HTTP.
 
 ### IOS-10.x
 
@@ -2376,6 +2436,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.23** When a host publishes or renders a worktree row, the application shall project it through the one shared WorktreePanes projection, sending a pane layout only for a running worktree unless the Mac sidebar asks to keep a stopped worktree's saved layout, and dropping divergence stats for a worktree without an on-disk checkout.
 
+**IPAD-1.24** While the iPad layout displays a paired host with the sidebar column collapsed, the application shall apply the host's pushed panes-state frames to the shared worktree state, so the collapsed-sidebar attention indicator (IPAD-1.11) stays current without the sidebar list on screen.
+
+**IPAD-1.25** When the iPad layout starts observing a paired host's pushed panes-state frames, the application shall recompute the shared worktree state from the first frame even if its rows equal the rows already stored, such as rows seeded by a notification or recent-pane activation, so the collapsed-sidebar attention indicator (IPAD-1.11) reflects them.
+
+**IPAD-1.26** When the iPad layout applies a pushed panes-state frame whose rows equal the shared worktree state, the application shall leave the shared rows and attention indicator unwritten, so views observing them are not invalidated by a repeated frame.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
@@ -2464,6 +2530,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-8.9** When a terminal pane remounts with zero pending focus requests (all prior requests already honored and consumed), the application shall not call becomeFirstResponder, so a keyboard the user dismissed is not re-summoned by idle-snapshot swaps or other view recreations.
 
+**IPAD-8.10** When a worktree or pane is selected at compact width, from the compact picker or a worktree context link, the application shall not add a terminal focus request to the shared app state, because only the regular-width detail column consumes those requests.
+
 ### IPAD-9.x
 
 **IPAD-9.1** When iPad selects or refreshes a paired Mac, it shall consume the host-resolved Ghostty keybindings from the authenticated `hostPresentation` response, decode raw action-name keys for forward compatibility, and expose only known `GhosttyAction` chords through `GhosttyKeybindBridge`.
@@ -2510,7 +2578,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-2.x — Team Identity & Membership
 
-**TEAM-2.1** While agent teams are enabled, the application shall provide team identity and inbox delivery for every tracked repository, including a single worktree that communicates with a remote Mac.
+**TEAM-2.1** The application shall provide team identity and inbox delivery for every tracked repository, including a single worktree that communicates with a remote Mac.
 
 **TEAM-2.2** A team's *member name* for a given worktree shall be `WorktreeNameSanitizer(worktree.branch)`, the same sanitization rule used for new worktree names per `GIT-5.1`.
 
@@ -2552,6 +2620,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.13** When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree, unpinning, and explicitly removing a pinned worktree, and explain role instruction files and retention after PR or MR resolution.
 
+**TEAM-4.14** When `graftty team msg <address> <text>` is invoked, the CLI shall send a normal-priority `team_send` request as a hidden alias of `team send` that `graftty team --help` does not list.
+
 ### TEAM-5.x — `team_*` Inbox Events
 
 **TEAM-5.1** When team_message is dispatched, the application shall append exactly one inbox row addressed to the named recipient.
@@ -2580,7 +2650,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### TEAM-7.x — Team Activity Log Window
 
-**TEAM-7.1** When the user invokes the Window → Team Activity Log command, the application shall open the focused tracked repository's Team Activity Log, including repositories with one worktree, and shall disable the command when no tracked worktree is focused or agent teams are disabled.
+**TEAM-7.1** When the user invokes the Window → Team Activity Log command, the application shall open the focused tracked repository's Team Activity Log, including repositories with one worktree, and shall disable the command when no tracked worktree is focused.
 
 **TEAM-7.2** Right-clicking a team-enabled worktree row in the sidebar shall include a *Show Team Activity…* item that opens the activity-log window for that team. The routing key derives from the same `(teamID, teamName)` pair the Window menu command uses, so both entry points target the same per-team `WindowGroup` instance.
 
@@ -2656,6 +2726,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-11.11** While a team's message log is unchanged on disk, the application shall reuse its previously decoded rows instead of re-reading and re-decoding the log, so one team hook delivery decodes the log at most once.
 
+**TEAM-11.12** While a native delivery pass is running for a worktree, the application shall coalesce further arrivals for that worktree into at most one follow-up pass after the current pass finishes, and shall keep running passes while each pass acknowledges rows.
+
+**TEAM-11.13** When a native transport acknowledges only some of the rows it was offered, the application shall advance shared delivery state for exactly those rows, offer the remainder in a follow-up pass, and keep rows reserved for another runtime as pending gaps.
+
+**TEAM-11.14** If no pending row resolves to a reachable agent of a native transport's runtime, then the application shall leave every row pending without contacting that transport.
+
 ### TEAM-12.x
 
 **TEAM-12.1** When a direct `team send` message arrives for a live Codex agent whose running worktree is in the background with no mounted terminal surface, the application shall wake and deliver to the agent without selecting or foregrounding that worktree.
@@ -2671,8 +2747,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-14.1** When a team address names a remote Mac, the application shall preserve its device ID, absolute worktree path, and optional runtime or canonical agent suffix without path-character collisions.
 
 **TEAM-14.2** When an authenticated remote Mac requests team members, the application shall list tracked local worktrees across repositories, including repositories with one worktree, with repository names and canonical agent addresses.
-
-**TEAM-14.3** While team mode is disabled, the application shall reject remote team listing and messages without writing an inbox row.
 
 **TEAM-14.4** When an authenticated remote Mac sends a team message, the application shall durably append it to the local recipient inbox and qualify the sender worktree with the authenticated device ID.
 
@@ -2964,6 +3038,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-6.6** While a panes-state channel is open, the client shall keep delivering snapshots and report the close even after its owner releases it.
 
+**REMOTE-6.7** While a client waits for the first panes-state snapshot, it shall resume as soon as a snapshot or channel close is applied, report a close ahead of a snapshot, and report a timeout only when the deadline fires first.
+
+**REMOTE-6.8** When a host rejects the origin-aware panes-state-v2 subsystem, the client shall open the V1 panes-state subsystem on the same connection and deliver its snapshots to the store and the owner.
+
+**REMOTE-6.9** If opening the panes-state-v2 subsystem fails for any reason other than the host rejecting it, then the client shall report that failure without opening the V1 subsystem.
+
+**REMOTE-6.10** If the panes-state channel closes before its open completes, then the client shall fail the subscription without opening another subsystem or reporting the close or any later snapshot to the owner, and shall report closes after a completed open to the owner.
+
+**REMOTE-6.11** If the task opening a panes-state subscription is cancelled when the host rejects panes-state-v2, then the client shall stop without opening the V1 subsystem.
+
+**REMOTE-6.12** When a client observes a changing value through a latest-value broadcast, the application shall first deliver the latest published value, then deliver only the newest value published while the observer was busy, and shall end every observation once the broadcast finishes.
+
+**REMOTE-6.13** When a panes-state frame is applied, the client store shall publish its worktree rows and sidebar metadata together as one frame to every observer, and shall end those observations when the channel closes or the client unsubscribes.
+
 ### REMOTE-7.x — pane_control Channel
 
 **REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability.
@@ -3180,6 +3268,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-13.29** When a relayed terminal receives a burst of small output frames within its byte and event limits, the application shall preserve all output in order and shall keep the attachment open until the source ends.
 
+**REMOTE-13.30** If a worktree snapshot carries an attention source or timestamp without attention text, then the application shall treat the worktree as having no worktree-scoped attention.
+
+**REMOTE-13.31** When a client sends a worktree-management request over a remote host link, it shall open a dedicated worktree-management channel for that request and close the channel whether the open, the send, or neither fails.
+
 ### REMOTE-14.x — Shared project navigation
 
 **REMOTE-14.1** When a host publishes sidebar metadata, the application shall preserve the original worktree snapshot fields and decode older snapshots without navigation metadata.
@@ -3229,6 +3321,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-20.12** When a direct SSH hostname resolves to IPv4 and IPv6, the application shall authenticate the successful connection without failed address attempts closing its authentication waiter.
 
 **REMOTE-20.14** When a Linux TCP tunnel receives EOF with forwarded writes pending, the application shall finish those writes before closing the destination.
+
+**REMOTE-20.15** When a direct SSH connection dials its host, the application shall run the connection on NIO's shared event loop group rather than starting an event-loop thread per connection.
+
+**REMOTE-20.16** If a direct SSH connection is closed while it is still waiting for authentication, then the pending connect shall fail and return rather than wait forever.
 
 ### REMOTE-21.x
 
@@ -3368,6 +3464,50 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.41** If a headless host worktree has no on-disk checkout, then the application shall omit its cached divergence stats from the published row.
 
+**REMOTE-22.42** When a headless host receives an attention-only provider hook, the application shall answer an empty hook output without consulting the team inbox, even for an untracked worktree.
+
+**REMOTE-22.43** When a headless host receives a provider hook for a pane in the caller's worktree, the application shall publish that pane busy from prompt submission through tool use and idle at a stop, a session start, or a blocking attention reason, and shall ignore panes outside the caller's worktree.
+
+**REMOTE-22.44** When a headless host renders session-start instructions for the main checkout, the application shall key them by the repository's refreshed default branch, falling back to the saved hint.
+
+**REMOTE-22.45** When a headless host records a provider's stopped turn, the application shall label it with the provider's display name and drop a stop older than that session's recorded progress.
+
+**REMOTE-22.46** When a headless host receives provider hooks for a session that raised blocking attention, the application shall keep that attention through PreToolUse and clear it on PostToolUseFailure.
+
+**REMOTE-22.47** When a headless host receives a notification with an auto-clear duration, the application shall store the normalized duration on the attention it persists.
+
+**REMOTE-22.48** When a headless host receives a team send or message for a graftty-mac address, the application shall forward it to the paired peer only for a tracked caller.
+
+**REMOTE-22.49** When a headless host receives a provider hook without a caller agent ID, the application shall resolve the agent from the provider session's presence record before delivering its targeted messages.
+
+**REMOTE-22.50** If a headless host receives a worktree creation request from an untracked caller, with an invalid worktree name, with an agent prompt but no agent runtime, or with an obsolete prompt loader, then the application shall reject it with the Mac app's message before acknowledging an operation.
+
+**REMOTE-22.51** When a headless host receives a worktree creation request with an explicit base, the application shall resolve the base in the caller's worktree before acknowledging the operation, and shall reject a base that does not resolve.
+
+**REMOTE-22.52** When a headless host accepts a worktree creation request, the application shall show a creating row for the destination before acknowledging it, and shall reject a destination that is already tracked or an existing branch that is already checked out.
+
+**REMOTE-22.53** When a headless host creates a new branch without an explicit base, the application shall start it from the branch that origin names as its default rather than from the main checkout's current HEAD, as the Mac app does.
+
+**REMOTE-22.54** If a headless host is polled for a worktree creation or removal that it does not retain, then the application shall answer with the Mac app's unknown-or-expired message, and finished results shall expire after the retention period.
+
+**REMOTE-22.55** When a paired Mac creates or polls a worktree on a headless host, the application shall scope the operation ID to that peer, so another peer can neither poll nor reuse it.
+
+**REMOTE-22.56** When a headless host creates or removes a linked worktree, the application shall send the team's member-joined or member-left event to the main checkout, as the Mac app does.
+
+**REMOTE-22.57** If a headless host receives a worktree removal request for an unknown worktree, the main checkout, a pinned worktree without --pinned, or a worktree whose removal is already pending, then the application shall reject it with the Mac app's message before acknowledging, and shall recheck the pin before Git runs.
+
+**REMOTE-22.58** If Git refuses to remove a headless worktree because of local changes, then the application shall report Git's message with the worktree's `git status --short` output and allow a forced retry.
+
+**REMOTE-22.59** While a headless host removes a worktree, the application shall show it as deleting, and if Git refuses the removal, the application shall restore the worktree's prior state.
+
+**REMOTE-22.60** If a paired client asks a headless host to delete a worktree that is still being created or removed, then the application shall reject the request and leave the row to the operation that owns it.
+
+**REMOTE-22.61** If a headless host cannot save a new worktree's initial agent task, then the application shall reject the creation and drop its creating row from saved state as well as from the live model.
+
+**REMOTE-22.62** When a headless host removes a worktree, the application shall drop the worktree's cached diff statistics, so a worktree created later at the same path starts without them.
+
+**REMOTE-22.63** If Git refuses a headless worktree creation, then the application shall report Git's message as the operation's error, as the Mac app does.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.
@@ -3392,47 +3532,33 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-23.11** When Linux panes allocate PTYs concurrently, the application shall resolve each master's own slave path without sharing mutable lookup storage.
 
-### REMOTE-24.x — Provider preferences and placement
+### REMOTE-24.x — Mac remote worktree viewer
 
-**REMOTE-24.1** When a user configures the aws compute provider, the CLI shall persist the selected existing AWS profile and placement preferences without copying AWS credentials.
+**REMOTE-24.1** While a split request for a remote worktree is in flight, the viewer shall hold every later split, close, equalize, and resize for that worktree in one ordered queue and send the next request only after the host answers the previous one.
 
-**REMOTE-24.2** When a user configures an instance pool or preferred instance type, the CLI shall persist, display, update, and clear those per-user settings without hard-coding a universal preferred instance type.
+**REMOTE-24.2** When a queued remote split completes with its created session, the viewer shall retarget later queued commands that followed the split source in the same focus generation onto the created pane.
 
-**REMOTE-24.3** When resolving placement preferences, the application shall report effective values and their sources without silently relaxing configured spending or host-count limits.
+**REMOTE-24.3** If the user explicitly focuses, zooms, or selects a pane while a remote split is in flight, then the viewer shall neither move focus to the pane that split creates nor retarget commands queued after that intent.
 
-**REMOTE-24.4** When an agent lists remote hosts, the CLI shall report host identity, readiness, architecture, CPU capacity and utilization, available memory, free disk, pending placements, and observation timestamps.
+**REMOTE-24.4** If a remote split fails with a cancelled or downstream-unavailable code, then the viewer shall drop every queued mutation for that worktree, alerting only for downstream-unavailable; for any other error the viewer shall continue with the next queued mutation and show the error unless its code is no-matching-split.
 
-**REMOTE-24.5** When placing a worktree, the application shall evaluate compatible existing hosts using current resource headroom and pending reservations before allocating another instance.
+**REMOTE-24.5** When a host answers a remote split with a bare ok, the viewer shall keep that split in flight until a snapshot shows a new pane and shall then send the next queued mutation; if ten seconds elapse first, the viewer shall drop every queued mutation for that worktree.
 
-**REMOTE-24.6** When selecting new AWS Spot capacity, the application shall compare eligible instance-type and Availability Zone prices with timestamps, compatibility, configured preferences, and limits.
+**REMOTE-24.6** When a remote close succeeds, the viewer shall remove the closed pane from its layout and focus the projected replacement before the next snapshot arrives, and shall ignore commands from the final closed pane until a snapshot catches up.
 
-**REMOTE-24.7** If host telemetry or price observations are stale or absent, then the application shall expose the uncertainty rather than treating unknown capacity as idle or unknown prices as zero.
+**REMOTE-24.7** When a remote equalize fails, the viewer shall restore the snapshot layout and the zoom it cleared; when it succeeds, the viewer shall keep the zoom cleared unless the user zoomed again after sending it.
 
-**REMOTE-24.8** When concurrent or retried placement requests are accepted, the application shall reserve capacity and reuse operation identities to avoid duplicate allocations.
+**REMOTE-24.8** When a remote surface closes unexpectedly, the viewer shall recreate a surface for the same session; if opening the session or creating its surface fails, the viewer shall retry after 750 ms while its worktree is still selected and the host still lists that pane.
 
-**REMOTE-24.9** When an AWS instance starts, the application shall verify trusted Graftty connectivity and project readiness before reporting the requested worktree ready.
+**REMOTE-24.9** When the window disappears, the viewer shall destroy every remote surface and empty its layout while keeping the selection, so that the next snapshot recreates the surfaces; the panes' registered command handlers shall not keep the viewer alive.
 
-**REMOTE-24.10** When querying AWS Spot offers, the CLI shall compare the latest effective Linux prices for the configured pool by region and Availability Zone, filter architecture and resource requirements, use the preferred type only to break equal-price ties, and distinguish observed prices from verified capacity.
+**REMOTE-24.10** When the viewer sends a remote resize, it shall carry the key window's content extent along the resize axis.
 
-**REMOTE-24.11** When listing AWS provider instances, the CLI shall report account-scoped instance identity, lifecycle state, available hardware metadata, and observation time across configured regions, default to Graftty-tagged instances, and expose readiness and unmeasured load as unknown without treating tags as authenticated host ownership.
+**REMOTE-24.11** When the user selects a closed remote worktree, the viewer shall ask the host to open it and show it as opening until a snapshot shows it no longer closed; if the open fails, the viewer shall show the error and stop showing it as opening.
 
-**REMOTE-24.12** When a host publishes resource observations on its authenticated panes-state channel, the protocol shall preserve optional CPU, memory, disk, and workload measurements with a sample timestamp while accepting legacy snapshots without telemetry.
+**REMOTE-24.12** When a snapshot shows the pane a remote split created before the split response arrives, and no explicit intent intervened, the viewer shall focus the created pane once the response arrives.
 
-**REMOTE-24.13** While a Linux host runs, the host shall periodically measure CPU utilization from successive kernel counters, available memory from MemAvailable, and unprivileged filesystem headroom, reporting unreadable or invalid measurements as unknown rather than zero.
-
-**REMOTE-24.14** When an authenticated host sample is received, the client shall assign its own receipt time, avoid refreshing replayed samples, and invalidate telemetry on disconnect so stale or absent measurements cannot imply idle capacity.
-
-**REMOTE-24.15** When an agent requests a read-only placement plan, the CLI shall rank connected compatible hosts using fresh measured CPU, memory, and disk headroom, explain rejections and unknown reservation state, and require admission before starting work.
-
-**REMOTE-24.16** When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and require worktree-management permission.
-
-**REMOTE-24.17** When a host admits a placement, the application shall persist the parent-bound operation before creating its worktree, return the retained result on retries, and expose uncertain creation without starting it again.
-
-**REMOTE-24.18** When an agent creates or queries a remote placement, the CLI shall require a stable operation UUID and an unambiguous connected paired host and send its pinned identity with the request.
-
-**REMOTE-24.19** When a placement is admitted, the host shall return its preparing status without waiting for setup, continue independently of the request lifetime, and finish canceling owned jobs before shutdown returns.
-
-**REMOTE-24.20** When connecting through a registered compute provider, the application shall select the adapter by provider identifier, preserve the enrollment operation and pinned host identity, and recheck adapter authorization without requiring AWS-specific identifiers in shared connection code.
+**REMOTE-24.13** While remote pane mutations are queued or in flight, the viewer shall publish a change only when its selection, layout, or opening state changes, so queue bookkeeping alone does not re-evaluate the window.
 
 ### REMOTE-25.x — Dev Container environments
 
@@ -3585,6 +3711,48 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-30.8** When preparing or recovering a worktree, the application shall generate scoped MCP bridge configuration from current parent grants and check MCP readiness separately from container readiness and agent-runtime authentication.
 
 **REMOTE-30.9** When configuring granted MCP servers for a remote agent, the application shall preserve their logical server names and upstream tool definitions through separate Graftty bridge entries without requiring an agent-facing forwarding tool.
+
+### REMOTE-31.x — Provider preferences and placement
+
+**REMOTE-31.1** When a user configures the aws compute provider, the CLI shall persist the selected existing AWS profile and placement preferences without copying AWS credentials.
+
+**REMOTE-31.2** When a user configures an instance pool or preferred instance type, the CLI shall persist, display, update, and clear those per-user settings without hard-coding a universal preferred instance type.
+
+**REMOTE-31.3** When resolving placement preferences, the application shall report effective values and their sources without silently relaxing configured spending or host-count limits.
+
+**REMOTE-31.4** When an agent lists remote hosts, the CLI shall report host identity, readiness, architecture, CPU capacity and utilization, available memory, free disk, pending placements, and observation timestamps.
+
+**REMOTE-31.5** When placing a worktree, the application shall evaluate compatible existing hosts using current resource headroom and pending reservations before allocating another instance.
+
+**REMOTE-31.6** When selecting new AWS Spot capacity, the application shall compare eligible instance-type and Availability Zone prices with timestamps, compatibility, configured preferences, and limits.
+
+**REMOTE-31.7** If host telemetry or price observations are stale or absent, then the application shall expose the uncertainty rather than treating unknown capacity as idle or unknown prices as zero.
+
+**REMOTE-31.8** When concurrent or retried placement requests are accepted, the application shall reserve capacity and reuse operation identities to avoid duplicate allocations.
+
+**REMOTE-31.9** When an AWS instance starts, the application shall verify trusted Graftty connectivity and project readiness before reporting the requested worktree ready.
+
+**REMOTE-31.10** When querying AWS Spot offers, the CLI shall compare the latest effective Linux prices for the configured pool by region and Availability Zone, filter architecture and resource requirements, use the preferred type only to break equal-price ties, and distinguish observed prices from verified capacity.
+
+**REMOTE-31.11** When listing AWS provider instances, the CLI shall report account-scoped instance identity, lifecycle state, available hardware metadata, and observation time across configured regions, default to Graftty-tagged instances, and expose readiness and unmeasured load as unknown without treating tags as authenticated host ownership.
+
+**REMOTE-31.12** When a host publishes resource observations on its authenticated panes-state channel, the protocol shall preserve optional CPU, memory, disk, and workload measurements with a sample timestamp while accepting legacy snapshots without telemetry.
+
+**REMOTE-31.13** While a Linux host runs, the host shall periodically measure CPU utilization from successive kernel counters, available memory from MemAvailable, and unprivileged filesystem headroom, reporting unreadable or invalid measurements as unknown rather than zero.
+
+**REMOTE-31.14** When an authenticated host sample is received, the client shall assign its own receipt time, avoid refreshing replayed samples, and invalidate telemetry on disconnect so stale or absent measurements cannot imply idle capacity.
+
+**REMOTE-31.15** When an agent requests a read-only placement plan, the CLI shall rank connected compatible hosts using fresh measured CPU, memory, and disk headroom, explain rejections and unknown reservation state, and require admission before starting work.
+
+**REMOTE-31.16** When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and require worktree-management permission.
+
+**REMOTE-31.17** When a host admits a placement, the application shall persist the parent-bound operation before creating its worktree, return the retained result on retries, and expose uncertain creation without starting it again.
+
+**REMOTE-31.18** When an agent creates or queries a remote placement, the CLI shall require a stable operation UUID and an unambiguous connected paired host and send its pinned identity with the request.
+
+**REMOTE-31.19** When a placement is admitted, the host shall return its preparing status without waiting for setup, continue independently of the request lifetime, and finish canceling owned jobs before shutdown returns.
+
+**REMOTE-31.20** When connecting through a registered compute provider, the application shall select the adapter by provider identifier, preserve the enrollment operation and pinned host identity, and recheck adapter authorization without requiring AWS-specific identifiers in shared connection code.
 
 ## CHROME — Dedicated Chrome tabs
 
@@ -4082,7 +4250,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.37** When Graftty's plugin integration changes within a development build whose version string stays the same, the application shall refresh previously installed plugins and record the new integration revision after success.
 
-**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents to lead with the stable problem being solved and why it matters, followed by verified progress, next steps, retained decisions, meaningful checkpoints, and task-related emoji choices, with a user question only when input is needed.
+**AGENT-6.38** When Graftty installs the recap skill, the application shall ask agents to lead with the stable problem being solved and why it matters, followed by verified progress, next steps, retained decisions, optional history entries describing what changed and why without repeating current state, and task-related emoji choices, with a user question only when input is needed.
 
 **AGENT-6.39** When a native agent exposes its messaging socket through a symbolic link, the application shall treat the link as reachable only while it resolves to a socket.
 
@@ -4122,17 +4290,21 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.57** When `graftty pane add --agent` launches an agent with an initial task, the application shall save that task as a durable runtime-addressed inbox row only if no live agent of the same runtime already owns automatic delivery in the worktree and no initial task for that runtime is still pending there, so an existing implementer never receives or supersedes the added agent's task.
 
+**AGENT-6.58** When Graftty renders the Codex launch wrapper from its bundled shell template, the application shall substitute every placeholder in one pass, never expand placeholder text inside a substituted value, and fail when the template and the supplied values disagree.
+
 ## CLI — CLI
 
 ### CLI-1.x
 
-**CLI-1.1** When a subprocess pipe's read fd is closed out from under the in-flight readability handler (process/pipe teardown after a timeout SIGTERM, where the per-stream EOF wait lapsed under load), the application shall treat the read as EOF rather than crash. The legacy `NSFileHandle.availableData` raises an *uncatchable* `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd, SIGABRT-ing the whole process; the crash-safe drain returns `nil`.
+**CLI-1.1** When a subprocess pipe's read fd is closed out from under the in-flight readability handler during process/pipe teardown, the application shall treat the read as EOF rather than crash. `FileHandle` reads raise an *uncatchable* `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd, SIGABRT-ing the whole process; the drain's raw `read` reports EBADF, which it returns as `nil`.
 
 **CLI-1.2** When a timeout-enabled subprocess exits before its deadline, the application shall allow its Process and pipe descriptors to be released immediately rather than retain them in the delayed timeout work item until the original deadline.
 
 **CLI-1.3** If a stopped subprocess, timed out or cancelled, is still running when its kill grace (two seconds by default) elapses after SIGTERM, then the application shall send SIGKILL so the caller is released instead of waiting for a child that ignores SIGTERM.
 
-**CLI-1.4** When a CLI runner explicitly enables cancellation, the application shall terminate its subprocess and propagate cancellation instead of waiting for the command timeout.
+**CLI-1.4** When a piped subprocess exits, the application shall return all of its output without waiting out an end-of-file timeout.
+
+**CLI-1.5** When a CLI runner explicitly enables cancellation, the application shall terminate its subprocess and propagate cancellation instead of waiting for the command timeout.
 
 ## CONTEXT — CONTEXT
 
@@ -4142,15 +4314,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-2.x
 
-**CONTEXT-2** When an agent reports a meaningful checkpoint or purpose change, the application shall retain it in the worktree history, merge consecutive updates to the same checkpoint, ignore repeated reports and older updates, and retain at most 32 checkpoints.
+**CONTEXT-2** When an agent reports a legacy checkpoint or purpose change, the application shall retain it without copying accumulated decisions, merge consecutive updates to the same legacy checkpoint, ignore repeated reports and older updates, retain at most 32 entries, and leave routine reports out of history.
 
 ### CONTEXT-3.x
 
-**CONTEXT-3** When a report includes purpose-change, checkpoint, or decision fields, the application shall validate their text bounds and preserve legacy reports that omit those fields.
+**CONTEXT-3** When a report includes purpose-change, checkpoint, history-entry, or decision fields, the application shall validate their text bounds and preserve legacy reports that omit those fields.
 
 ### CONTEXT-4.x
 
-**CONTEXT-4** When a worktree report is viewed, dismissed, resumed, serialized, or sent to a paired device, the application shall retain its current brief and checkpoint history independently of unread attention.
+**CONTEXT-4** When a worktree report is viewed, dismissed, resumed, serialized, or sent to a paired device, the application shall retain its current brief and explicit or legacy history independently of unread attention.
 
 ### CONTEXT-5.x
 
@@ -4186,7 +4358,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-14.x
 
-**CONTEXT-14** While a worktree history has more than eight events, the application shall fold only consecutive runs of at least two older agent checkpoints, retain creation, every user input, and the latest two checkpoints, and expand each run or all events in chronological order.
+**CONTEXT-14** While a worktree history has more than eight events, the application shall fold only consecutive runs of at least two older legacy checkpoints, retain creation, every user input, and the latest two checkpoints, and expand each run or all events in chronological order.
 
 ### CONTEXT-15.x
 
@@ -4219,6 +4391,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-22.x
 
 **CONTEXT-22** When Context history displays a source worktree, the application shall label it with its directory name while retaining its full path for navigation and sender details.
+
+### CONTEXT-23.x
+
+**CONTEXT-23** When a report includes an explicit history entry, the application shall retain its headline and optional detail independently of the current brief, suppress consecutive identical entries without moving their timestamps, and preserve distinct entries and entries separated by user input.
+
+### CONTEXT-24.x
+
+**CONTEXT-24** When a history contains explicit entries and legacy snapshots, the application shall keep explicit headlines visible in the shared timeline and show only decisions newly introduced relative to the previous legacy snapshot.
 
 ## MEM — MEM
 
@@ -4273,6 +4453,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PERF-1.13** When the thirty-second divergence fetch cadence becomes due for more than four repositories at once, the application shall keep at most four repository fetches outstanding and advance a round-robin cursor so recurring network work cannot fill the shared background-process queue ahead of other pollers.
 
 **PERF-1.14** When the stats, remote-branch, and PR polling cadences align in a twelve-repository workspace, the application shall run at most four background subprocess pipelines in aggregate rather than allowing each poller to consume an independent concurrency budget.
+
+**PERF-1.15** When the main window resolves the selected local worktree's context, the application shall project only that worktree's repository and produce the same row as the full sidebar projection.
+
+**PERF-1.16** When an observer subscribes to application state changes, the application shall rebuild once immediately and then once per burst of changes published while a rebuild is in progress, instead of rebuilding on a fixed interval.
+
+**PERF-1.17** While no application state change is published, the application shall still rebuild observed snapshots on each safety-net tick so a change source that was not wired cannot leave a viewer stale indefinitely.
+
+**PERF-1.18** When a store that sidebar and panes-state snapshots read changes, the application shall publish an application state change.
+
+**PERF-1.19** While application state changes keep arriving, the application shall rebuild observed snapshots no more often than once per second.
+
+**PERF-1.20** When a sidebar refresh re-resolves a project icon that has not changed, the application shall not publish a project icon change.
+
+**PERF-1.21** When a paired device subscribes to panes-state, the application shall send the initial snapshot before the subscription returns, and afterwards re-read the snapshot only when an application state change is published or the safety-net tick fires, sending it only when it differs from the last snapshot sent.
+
+**PERF-1.22** While no window is open, when a control-socket request changes `AppState`, the application shall send the change to panes-state subscribers without waiting for the safety-net tick.
 
 ## PORTS — PORTS
 

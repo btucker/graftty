@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 @Suite("PRStatusStore background concurrency")
 struct PRStatusStoreConcurrencyTests {

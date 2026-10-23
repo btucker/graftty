@@ -8,13 +8,6 @@ honest about what was carried and what got closed.
 
 ## Open
 
-### FU-1 — LoopbackPeer 5-copy dedup (test infra)
-The iOS SSH loopback suites each carry their own copy of the `LoopbackPeer`
-harness (≈5 copies). Deduping means a shared test target that links the native
-WebRTC SDK and a matching `.pbxproj` change — the setup cost currently outweighs
-the win. **Effort:** M. **Risk if left:** copies drift; a wire-format change
-must be applied 5×.
-
 ### FU-2 — SSH `window-change` bypasses the 10 000-column grid cap (parity nit)
 The `/ws` path clamps requested terminal dimensions to a 10 000-column grid cap;
 the SSH `window-change` handler does not clamp equivalently. Not exploitable in
@@ -87,6 +80,8 @@ the older docs was left as dated record. **Effort:** S, optional. **Fix:** add a
   regenerated.
 - ✅ **Dead `ChannelRouter` / `ChannelFrame` M1.4 scaffolding** — deleted in **W5**
   (−1093 lines); superseded by the R4/R5/W2 SSH channels.
+- ✅ **FU-1 — LoopbackPeer 5-copy dedup** — the five loopback suites share one
+  `LoopbackPeer` from the `GrafttyRemoteTestSupport` target (#477).
 
 ## Named non-goals (not follow-ups — deliberate scope)
 

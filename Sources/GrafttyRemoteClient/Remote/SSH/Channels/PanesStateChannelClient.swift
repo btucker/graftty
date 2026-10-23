@@ -53,9 +53,8 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         onClosed: @escaping OnClosed,
         onSidebarSnapshot: @escaping @Sendable (SidebarSnapshot?) async -> Void = { _ in }
     ) {
-        // Mac-to-Mac negotiation sets `requestReply` so a peer that
+        // `PanesStateSubscription` sets `requestReply` so a peer that
         // predates panes-state-v2 can reject it and the caller can retry V1.
-        // The default remains fire-and-forget for existing Mobile callers.
         self.channel = SubsystemChannel(
             parentChannel: parentChannel,
             parentHandler: parentHandler,
@@ -123,7 +122,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                 // setCallbacks(...) doesn't race with the read.
                 let onSnapshot = self.lock.withLock { self.onSnapshot }
                 guard
-                    let message = try? JSONDecoder().decode(PanesStateMessage.self, from: bytes)
+                    let message = try? JSONDecoder.shared.decode(PanesStateMessage.self, from: bytes)
                 else { continue }
                 switch message {
                 case .snapshot(let worktrees, let sidebar):

@@ -10,9 +10,7 @@ import Testing
 @Suite("WorktreePanes wire fixture")
 struct WorktreePanesWireFixtureTests {
     private func fixture() throws -> Data {
-        let url = try #require(Bundle.module.url(
-            forResource: "worktree-panes-v1", withExtension: "json", subdirectory: "Fixtures"))
-        return try Data(contentsOf: url)
+        try WireFixture.data("worktree-panes-v1")
     }
 
     @Test
@@ -28,6 +26,32 @@ struct WorktreePanesWireFixtureTests {
         let released = try JSONSerialization.jsonObject(with: fixture()) as? NSArray
         #expect(current != nil)
         #expect(current == released)
+    }
+
+    /// `encode(to:)` is hand-written, so a new field that misses an encode
+    /// line (or a value in `WorktreePanesWireFixture.rows`) fails here.
+    @Test
+    func fixtureRowsEncodeEveryCodingKey() throws {
+        let encoded = try JSONEncoder().encode(WorktreePanesWireFixture.rows)
+        let rows = try #require(try JSONSerialization.jsonObject(with: encoded) as? [[String: Any]])
+        let keys = Set(rows.flatMap(\.keys))
+        #expect(keys == Set(WorktreePanes.CodingKeys.allCases.map(\.stringValue)))
+    }
+
+    @Test("""
+    @spec REMOTE-13.30: If a worktree snapshot carries an attention source or timestamp without attention text, \
+    then the application shall treat the worktree as having no worktree-scoped attention.
+    """)
+    func attentionSourceWithoutTextIsNoAttention() throws {
+        let orphan = #"""
+        {"path":"/r","displayName":"r","repoDisplayName":"r","attentionSource":"agentStop","attentionTimestamp":5}
+        """#
+        let row = try JSONDecoder().decode(WorktreePanes.self, from: Data(orphan.utf8))
+        #expect(row.attentionSource == nil)
+        #expect(row.attentionTimestamp == nil)
+        #expect(row.attention == nil)
+        let reencoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(row)) as? [String: Any]
+        #expect(reencoded?.keys.contains { $0.hasPrefix("attention") } == false)
     }
 }
 

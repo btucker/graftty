@@ -64,7 +64,7 @@ public final class PaneControlChannelClient: @unchecked Sendable {
             busy: ClientError.busy,
             decode: { bytes in
                 do {
-                    return try JSONDecoder().decode(PaneControlResponse.self, from: bytes)
+                    return try JSONDecoder.shared.decode(PaneControlResponse.self, from: bytes)
                 } catch {
                     return .error(code: "malformed-response", message: String(describing: error))
                 }

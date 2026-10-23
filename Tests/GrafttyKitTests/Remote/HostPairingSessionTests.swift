@@ -1,20 +1,19 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import GrafttyProtocol
 import Testing
 
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("HostPairingSession Tests")
 struct HostPairingSessionTests {
 
     // MARK: Helpers
-
-    private func makeTempDir() throws -> URL {
-        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
 
     private func makeSession(
         identityStore: HostIdentityStore,

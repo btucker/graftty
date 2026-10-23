@@ -36,10 +36,8 @@ public struct TeamReplyResolver {
         fallback: Bool,
         text: String,
         priority: TeamInboxPriority,
-        repos: [RepoEntry],
-        teamsEnabled: Bool
-    ) throws -> NotificationMessage {
-        guard teamsEnabled else { throw TeamInboxRequestError.teamModeDisabled }
+        repos: [RepoEntry]
+    ) throws -> TeamSendRequest {
         guard let repo = repos.first(where: { $0.worktrees.contains(where: { $0.path == callerWorktree }) }) else {
             throw TeamInboxRequestError.callerNotTracked
         }
@@ -81,7 +79,8 @@ public struct TeamReplyResolver {
                 throw TeamReplyError.ambiguousSender
             }
         }
-        return .teamSend(callerWorktree: callerWorktree, callerAgentID: callerAgentID, recipient: address, text: text, priority: priority)
+        return TeamSendRequest(callerWorktree: callerWorktree, callerAgentID: callerAgentID, recipient: address,
+                               text: text, priority: priority)
     }
 
     /// Message IDs normally contain only timestamp and UUID characters. Quote

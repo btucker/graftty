@@ -16,15 +16,13 @@ import GrafttyRemoteClient
 /// directory.
 @MainActor
 final class SocketRequestRouter {
+    private static let wakeFailure = "Could not resume worktree processes. Retry before interacting with this worktree."
+
     let appState: Binding<AppState>
     let terminalManager: TerminalManager
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
-    let worktreeMonitor: WorktreeMonitor
-    let statsStore: WorktreeStatsStore
-    let prStatusStore: PRStatusStore
-    let worktreeCreations: CLIWorktreeCreationStore
-    let worktreeRemovals: CLIWorktreeRemovalStore
+    let worktreeManagement: WorktreeManagement
     let remoteBranchStore: RemoteBranchStore
     let agentRegistry: ClaudeSessionRegistry
     let remoteMacsModel: RemoteMacsModel
@@ -49,11 +47,12 @@ final class SocketRequestRouter {
         self.terminalManager = terminalManager
         self.teamInbox = teamInbox
         self.teamEventDispatcher = teamEventDispatcher
-        self.worktreeMonitor = worktreeMonitor
-        self.statsStore = statsStore
-        self.prStatusStore = prStatusStore
-        self.worktreeCreations = worktreeCreations
-        self.worktreeRemovals = worktreeRemovals
+        self.worktreeManagement = WorktreeManagement(
+            appState: appState, terminalManager: terminalManager, teamInbox: teamInbox,
+            teamEventDispatcher: teamEventDispatcher, worktreeMonitor: worktreeMonitor,
+            statsStore: statsStore, prStatusStore: prStatusStore, remoteBranchStore: remoteBranchStore,
+            worktreeCreations: worktreeCreations, worktreeRemovals: worktreeRemovals
+        )
         self.remoteBranchStore = remoteBranchStore
         self.agentRegistry = agentRegistry
         self.remoteMacsModel = remoteMacsModel
@@ -87,54 +86,28 @@ final class SocketRequestRouter {
 
     /// Fire-and-forget path (`SocketServer.onMessage`).
     func handleMessage(_ message: NotificationMessage) {
-        Self.handleNotification(
-            message,
-            appState: appState,
-            terminalManager: terminalManager
-        )
+        ControlRequestCore.handleMessage(message, platform: self)
     }
 
-    /// Request/response path (`SocketServer.onAsyncRequest`). Remote
-    /// worktree, client-reconnect, team-reply, and remote (`graftty-mac:`)
-    /// team-send messages are routed before pane dispatch; the rest go
-    /// through `handlePaneRequest`, and team lists gain remote members.
+    /// Request/response path (`SocketServer.onAsyncRequest`). The shared
+    /// core answers attention, recap, team, capability, and worktree
+    /// create/remove messages (routing `graftty-mac:` recipients through
+    /// `remoteTeamRouter`) and hands the rest to `handlePaneRequest`; team
+    /// lists then gain remote members.
     func handleRequest(_ message: NotificationMessage) async -> ResponseMessage? {
-        if case .remoteWorktree(let target, let request) = message {
-            return await remoteTeamRouter.worktree(target: target, request: request, repos: appState.wrappedValue.repos)
-        }
-        if case .reconnectRemoteClient(let target) = message {
-            return await remoteTeamRouter.reconnectClient(target: target)
-        }
-        if case .teamReply = message {
-            return await GrafttyApp.handleTeamReply(
-                message, appState: appState, router: remoteTeamRouter,
-                inbox: teamInbox, dispatcher: teamEventDispatcher
-            )
-        }
-        if let response = await GrafttyApp.handleRemoteTeamSend(
-            message, appState: appState, router: remoteTeamRouter
-        ) { return response }
-        let response = await handlePaneRequest(message)
+        let response = await ControlRequestCore.handleRequest(message, platform: self)
         return await remoteTeamRouter.includingRemoteMembers(in: response, for: message)
     }
 
-    /// Pane dispatch with this router's collaborators, without the
-    /// pre-routing `handleRequest` applies first.
+    /// Mac-specific dispatch for requests the shared core does not own.
     func handlePaneRequest(_ message: NotificationMessage) async -> ResponseMessage? {
         let response = await Self.handlePaneRequest(
             message,
             appState: appState,
             terminalManager: terminalManager,
             teamInbox: teamInbox,
-            teamEventDispatcher: teamEventDispatcher,
-            worktreeMonitor: worktreeMonitor,
-            statsStore: statsStore,
-            prStatusStore: prStatusStore,
-            worktreeCreations: worktreeCreations,
-            worktreeRemovals: worktreeRemovals,
-            remoteBranchStore: remoteBranchStore,
-            agentRegistry: agentRegistry,
-            remoteMacsModel: remoteMacsModel
+            remoteMacsModel: remoteMacsModel,
+            remoteTeamRouter: remoteTeamRouter
         )
         if case .linuxSetupIdentity(let identity) = response {
             return .linuxSetupIdentity(.init(deviceID: identity.deviceID, displayName: identity.displayName,
@@ -145,129 +118,6 @@ final class SocketRequestRouter {
 }
 
 extension SocketRequestRouter {
-    @MainActor
-    static func handleNotification(
-        _ message: NotificationMessage,
-        appState: Binding<AppState>,
-        terminalManager: TerminalManager
-    ) {
-        switch message {
-        case let .providerActivity(path, runtime, sessionID, paneSessionName, activity):
-            terminalManager.autoSleep.providerActivity(path: path, session: paneSessionName, sessionID: sessionID, activity: activity, runtime: runtime)
-        case .notify(let path, let text, let clearAfter, let paneSessionName):
-            // Defense-in-depth behind the CLI's ATTN-1.7 guard: reject
-            // empty / whitespace-only text silently so a raw socket
-            // client (`nc -U`, custom script, web surface) can't write
-            // an invisible red capsule Andy can't read or dismiss.
-            guard Attention.isValidText(text) else { return }
-            // Normalize the requested auto-clear duration against the
-            // server's contract: ≤0 → nil (STATE-2.8), >24h → clamped
-            // to 24h (STATE-2.9). A non-CLI socket client can still
-            // send ridiculous values; `effectiveClearAfter` makes the
-            // server a single source of truth for what actually
-            // schedules.
-            let effectiveClearAfter = Attention.effectiveClearAfter(clearAfter)
-            // AGENT-4.1/4.2: when the message carries a pane session name,
-            // resolve it to a pane slot within the targeted worktree and
-            // write pane-scoped attention. Reuse `setAttentionForTerminal`
-            // for the auto-clear path; for the no-clear case write the slot
-            // directly. Falls through to worktree-scoped if it resolves no
-            // live pane (e.g. the session ended).
-            if let paneSessionName {
-                for repoIdx in appState.wrappedValue.repos.indices {
-                    for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices
-                        where appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
-                        guard let slot = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                            .paneSlot(forSessionName: paneSessionName) else { continue }
-                        if let effectiveClearAfter {
-                            GrafttyApp.setAttentionForTerminal(
-                                appState: appState,
-                                terminalID: slot,
-                                text: text,
-                                clearAfter: effectiveClearAfter,
-                                source: .userNotify
-                            )
-                        } else {
-                            appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                                .setAttention(
-                                    Attention(text: text, timestamp: Date(), source: .userNotify),
-                                    pane: slot
-                                )
-                        }
-                        return
-                    }
-                }
-            }
-            // Pin the timestamp the attention carries AND the auto-clear
-            // timer closes over, so the timer can verify it's still OUR
-            // notification when it fires (cf. WorktreeEntry.clearAttentionIfTimestamp).
-            let stamp = Date()
-            for repoIdx in appState.wrappedValue.repos.indices {
-                for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
-                    if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
-                        appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].setAttention(
-                            Attention(
-                                text: text,
-                                timestamp: stamp,
-                                clearAfter: effectiveClearAfter,
-                                source: .userNotify
-                            ),
-                            pane: nil
-                        )
-
-                        if let effectiveClearAfter {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + effectiveClearAfter) {
-                                for ri in appState.wrappedValue.repos.indices {
-                                    for wi in appState.wrappedValue.repos[ri].worktrees.indices {
-                                        if appState.wrappedValue.repos[ri].worktrees[wi].path == path {
-                                            appState.wrappedValue.repos[ri].worktrees[wi].clearAttentionIfTimestamp(stamp)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        case .clear(let path, let paneSessionName):
-            // AGENT-4.x: a pane-scoped clear targets just that pane's
-            // attention slot; resolve the session name within the worktree
-            // and fall through to worktree-scoped clear if unresolved.
-            if let paneSessionName {
-                for repoIdx in appState.wrappedValue.repos.indices {
-                    for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices
-                        where appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
-                        if let slot = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                            .paneSlot(forSessionName: paneSessionName) {
-                            appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                                .paneAttention[slot] = nil
-                            return
-                        }
-                    }
-                }
-            }
-            for repoIdx in appState.wrappedValue.repos.indices {
-                for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
-                    if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
-                        appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].attention = nil
-                    }
-                }
-            }
-        case .previewFiles, .previewImage, .offerResource, .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend, .teamReply,
-             .teamBroadcast, .teamHook, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,
-             .createWorktree, .agentPromptStagingCapability, .paneAgentCapability, .worktreeBaseCapability,
-             .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability,
-             .worktreeCreateStatus, .removeWorktree, .worktreeRemoveCapability, .worktreePinnedRemovalCapability,
-             .worktreePinCapability, .setWorktreePinned,
-             .worktreeRemoveStatus, .remoteSkills, .remotePlacement, .listRemoteHosts, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree,
-             .attentionReport, .linuxSetupIdentity, .completeLinuxSetup:
-            // Request-style messages are answered by `handleRequest` via
-            // SocketServer.onAsyncRequest; they are no-ops on the
-            // fire-and-forget onMessage path.
-            break
-        }
-    }
-
     /// Dispatcher for request-style messages from the CLI. Returns a
     /// `ResponseMessage` the server writes back to the client. Must run
     /// on the main actor because it touches `appState` and `terminalManager`.
@@ -277,25 +127,19 @@ extension SocketRequestRouter {
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         teamInbox: TeamInbox,
-        teamEventDispatcher: TeamEventDispatcher,
-        worktreeMonitor: WorktreeMonitor,
-        statsStore: WorktreeStatsStore,
-        prStatusStore: PRStatusStore,
-        worktreeCreations: CLIWorktreeCreationStore,
-        worktreeRemovals: CLIWorktreeRemovalStore,
-        remoteBranchStore: RemoteBranchStore,
-        agentRegistry: ClaudeSessionRegistry,
-        remoteMacsModel: RemoteMacsModel
+        remoteMacsModel: RemoteMacsModel,
+        remoteTeamRouter: RemoteTeamRouter
     ) async -> ResponseMessage? {
         switch message {
         case .offerResource(let path, _, let session), .previewImage(let path, _, let session), .previewFiles(let path, _, let session):
             guard let worktree = OpenResourceRouting.worktree(path: path, paneSessionName: session, state: appState.wrappedValue) else {
                 return .error("The originating pane is unavailable. Run graftty open from a tracked worktree.")
             }
-            guard terminalManager.wakeWorktree(worktree.path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
-        case .addPane(let path, _, _, _, _), .closePane(let path, _),
-             .showPane(let path, _, _), .sendPane(let path, _, _, _):
-            guard terminalManager.wakeWorktree(path) else { return .error("Could not resume worktree processes. Retry before interacting with this worktree.") }
+            guard terminalManager.wakeWorktree(worktree.path) else { return .error(Self.wakeFailure) }
+        case .addPane(let request):
+            guard terminalManager.wakeWorktree(request.path) else { return .error(Self.wakeFailure) }
+        case .closePane(let path, _), .showPane(let path, _, _), .sendPane(let path, _, _, _):
+            guard terminalManager.wakeWorktree(path) else { return .error(Self.wakeFailure) }
         default: break
         }
         switch message {
@@ -372,19 +216,15 @@ extension SocketRequestRouter {
             return .remoteHosts(await remoteMacsModel.remoteMacConnectionSummaries())
         case .reconnectRemoteMac(let target):
             return await remoteMacsModel.reconnectRemoteMac(target: target)
-        case .remoteWorktree:
-            return .error("Remote worktree routing is unavailable")
-        case .reconnectRemoteClient:
-            return .error("Client reconnect routing is unavailable")
+        case .remoteWorktree(let target, let request):
+            return await remoteTeamRouter.worktree(target: target, request: request, repos: appState.wrappedValue.repos)
+        case .reconnectRemoteClient(let target):
+            return await remoteTeamRouter.reconnectClient(target: target)
         case .listPanes(let path):
             return listPanes(path: path, appState: appState, terminalManager: terminalManager)
-        case .teamReply:
-            // The socket dispatcher routes replies through the local and
-            // remote team handlers before entering pane dispatch.
-            return .error("Team reply routing is unavailable")
-        case .addPane(let path, let direction, let command, let agentRuntime, let agentPrompt):
-            return await addPane(path: path, direction: direction, command: command,
-                                 agentRuntime: agentRuntime, agentPrompt: agentPrompt, teamInbox: teamInbox,
+        case .addPane(let request):
+            return await addPane(path: request.path, direction: request.direction, command: request.command,
+                                 agentRuntime: request.agentRuntime, agentPrompt: request.agentPrompt, teamInbox: teamInbox,
                                  appState: appState, terminalManager: terminalManager)
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
@@ -408,397 +248,25 @@ extension SocketRequestRouter {
             let reader = ZmxHistorySubprocessReader(launcher: launcher)
             let sessionName = ZmxLauncher.sessionName(for: sessionID)
             return await Task.detached(priority: .utility) {
-                do {
-                    let body = try reader.history(sessionName: sessionName)
-                    return .paneShow(ScrollbackTail.tail(body, lines: lines))
-                } catch {
-                    return .error("zmx history failed: \(error.localizedDescription)")
-                }
+                showPaneResponse(sessionName: sessionName, lines: lines, reader: reader)
             }.value
         case .sendPane(let path, let index, let text, let pressEnter):
             return await handleSendPane(
                 path: path, index: index, text: text, pressEnter: pressEnter,
                 appState: appState, terminalManager: terminalManager
             )
-        case .teamMessage(let callerPath, let recipient, let text):
-            return await GrafttyApp.handleTeamSend(
-                callerPath: callerPath,
-                callerAgentID: nil,
-                recipient: recipient,
-                text: text,
-                priority: .normal,
-                appState: appState,
-                teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher
-            )
-        case .teamSend(let callerPath, let callerAgentID, let recipient, let text, let priority):
-            return await GrafttyApp.handleTeamSend(
-                callerPath: callerPath,
-                callerAgentID: callerAgentID,
-                recipient: recipient,
-                text: text,
-                priority: priority,
-                appState: appState,
-                teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher
-            )
-        case .teamBroadcast(let callerPath, let callerAgentID, let text, let priority):
-            return await GrafttyApp.handleTeamBroadcast(
-                callerPath: callerPath,
-                callerAgentID: callerAgentID,
-                text: text,
-                priority: priority,
-                appState: appState,
-                teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher
-            )
-        case .teamHook(
-            let callerPath,
-            let callerAgentID,
-            let runtime,
-            let event,
-            let sessionID,
-            let paneSessionName,
-            let attentionReason,
-            let stopHookActive,
-            let providerSleepActivity
-        ):
-            terminalManager.autoSleep.providerActivity(path: callerPath, session: paneSessionName, sessionID: sessionID, activity: providerSleepActivity ?? .unknown, runtime: runtime)
-            return await GrafttyApp.handleTeamHook(
-                callerPath: callerPath,
-                callerAgentID: callerAgentID,
-                runtime: runtime,
-                event: event,
-                sessionID: sessionID,
-                paneSessionName: paneSessionName,
-                attentionReason: attentionReason,
-                stopHookActive: stopHookActive,
-                appState: appState,
-                teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher,
-                terminalManager: terminalManager,
-                remoteBranchStore: remoteBranchStore,
-                agentRegistry: agentRegistry
-            )
-        case .attentionReport(let callerPath, let callerAgentID, let recap):
-            guard recap.isValid, appState.wrappedValue.worktree(forPath: callerPath) != nil else {
-                return .error("invalid attention recap or unknown worktree")
-            }
-            AttentionRecapCoordinator.shared.report(recap, worktree: callerPath, agentID: callerAgentID)
-            return .ok
-        case .teamInbox(let request):
-            return await GrafttyApp.handleTeamInbox(
-                request: request,
-                appState: appState,
-                teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher
-            )
-        case .teamInboxAdvance(let callerPath, let callerAgentID, let throughID):
-            return await GrafttyApp.handleTeamInboxAdvance(
-                callerPath: callerPath,
-                callerAgentID: callerAgentID,
-                throughID: throughID,
-                appState: appState,
-                teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher
-            )
-        case .teamMembers(let callerPath, let worktree, let repo):
-            return GrafttyApp.handleTeamMembers(
-                callerPath: callerPath,
-                worktree: worktree,
-                repo: repo,
-                appState: appState,
-                teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher
-            )
-        case .teamList(let callerPath):
-            return GrafttyApp.handleTeamMembers(
-                callerPath: callerPath,
-                worktree: nil,
-                repo: nil,
-                appState: appState,
-                teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher
-            )
-        case .agentPromptStagingCapability, .paneAgentCapability:
-            return .ok
-        case .worktreeBaseCapability:
-            return .ok
-        case .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability:
-            return .ok
-        case .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability:
-            return .ok
         case .setWorktreePinned(let path, let isPinned):
             let response = WorktreePinRequestHandler.handle(
                 worktreePath: path, isPinned: isPinned, state: &appState.wrappedValue
             )
             if response == .ok { GrafttyApp.persistAppState(appState.wrappedValue) }
             return response
-        case .createWorktree(
-            let callerPath,
-            let worktreeName,
-            let branchName,
-            let existing,
-            let base,
-            let command,
-            let agentRuntime,
-            let agentPrompt,
-            let operationID
-        ):
-            return await beginCLIWorktreeCreation(
-                callerPath: callerPath,
-                worktreeName: worktreeName,
-                branchName: branchName,
-                existing: existing,
-                base: base,
-                command: command,
-                agentRuntime: agentRuntime,
-                agentPrompt: agentPrompt,
-                operationID: operationID,
-                appState: appState,
-                terminalManager: terminalManager,
-                teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher,
-                worktreeMonitor: worktreeMonitor,
-                statsStore: statsStore,
-                worktreeCreations: worktreeCreations
-            )
-        case .worktreeCreateStatus(let operationID):
-            guard let status = worktreeCreations.status(operationID: operationID) else {
-                return .error("unknown or expired worktree creation operation")
-            }
-            return .worktreeCreate(status)
-        case .removeWorktree(let worktreePath, let force, let pinned):
-            return beginCLIWorktreeRemoval(
-                worktreePath: worktreePath,
-                force: force,
-                pinned: pinned,
-                appState: appState,
-                terminalManager: terminalManager,
-                statsStore: statsStore,
-                prStatusStore: prStatusStore,
-                teamEventDispatcher: teamEventDispatcher,
-                worktreeRemovals: worktreeRemovals
-            )
-        case .worktreeRemoveStatus(let operationID):
-            guard let status = worktreeRemovals.status(operationID: operationID) else {
-                return .error("unknown or expired worktree removal operation")
-            }
-            return .worktreeRemove(status)
-        case .notify, .clear, .providerActivity:
-            // Fire-and-forget cases — no response. `onMessage` already handled them.
-            return nil
+        default:
+            // ControlRequestCore answers attention, recap, team,
+            // capability, and worktree create/remove messages before
+            // platform dispatch.
+            return .error("This request is not handled by the Mac app")
         }
-    }
-
-    @MainActor
-    private static func beginCLIWorktreeRemoval(
-        worktreePath: String,
-        force: Bool,
-        pinned: Bool,
-        appState: Binding<AppState>,
-        terminalManager: TerminalManager,
-        statsStore: WorktreeStatsStore,
-        prStatusStore: PRStatusStore,
-        teamEventDispatcher: TeamEventDispatcher,
-        worktreeRemovals: CLIWorktreeRemovalStore
-    ) -> ResponseMessage {
-        CLIWorktreeRemovalRequestHandler.begin(
-            worktreePath: worktreePath,
-            force: force,
-            pinned: pinned,
-            appState: appState,
-            worktreeRemovals: worktreeRemovals,
-            wakeWorktree: { terminalManager.wakeWorktree($0) },
-            deleteWorktree: { path, force in
-                await DeleteWorktreeFlow.delete(
-                    worktreePath: path,
-                    force: force,
-                    appState: appState,
-                    terminalManager: terminalManager,
-                    statsStore: statsStore,
-                    prStatusStore: prStatusStore,
-                    teamEventDispatcher: teamEventDispatcher
-                )
-            }
-        )
-    }
-
-    @MainActor
-    static func beginCLIWorktreeCreation(
-        callerPath: String,
-        worktreeName: String,
-        branchName: String,
-        existing: Bool,
-        base: String?,
-        command: String?,
-        agentRuntime: TeamHookRuntime?,
-        agentPrompt: String?,
-        operationID: String?,
-        creationOrigin: WorktreeHistory.Origin? = nil,
-        appState: Binding<AppState>,
-        terminalManager: TerminalManager,
-        teamInbox: TeamInbox,
-        teamEventDispatcher: TeamEventDispatcher,
-        worktreeMonitor: WorktreeMonitor,
-        statsStore: WorktreeStatsStore,
-        worktreeCreations: CLIWorktreeCreationStore
-    ) async -> ResponseMessage {
-        let operationID = operationID ?? UUID().uuidString.lowercased()
-        if let existing = worktreeCreations.status(operationID: operationID) {
-            return .worktreeCreate(existing)
-        }
-        defer { worktreeCreations.discardBaseCapture(operationID: operationID) }
-        if let error = CLIWorktreeCreationPolicy.validationError(
-            agentRuntime: agentRuntime,
-            teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-        ) {
-            return .error(error)
-        }
-        guard let repo = appState.wrappedValue.repos.first(where: { repo in
-            repo.worktrees.contains(where: { $0.path == callerPath })
-        }) else {
-            return .error("caller is not inside a tracked worktree")
-        }
-
-        if let error = WorktreeCreationInput.validationError(
-            worktreeName: worktreeName, branchName: branchName, existing: existing, base: base
-        ) {
-            return .error(error)
-        }
-        let resolvedBase: String?
-        do {
-            resolvedBase = try await worktreeCreations.captureBase(
-                base, at: callerPath, operationID: operationID
-            )
-        } catch {
-            return .error("could not resolve worktree base: \(error)")
-        }
-        // Ref resolution suspends this handler. A retry may have completed
-        // the same preparation and started the operation in the meantime.
-        if let retained = worktreeCreations.status(operationID: operationID) {
-            return .worktreeCreate(retained)
-        }
-
-        if agentPrompt != nil, agentRuntime == nil {
-            return .error("an agent prompt requires an agent runtime")
-        }
-        if let error = CLIWorktreeCreationPolicy.obsoletePromptLoaderError(
-            agentRuntime: agentRuntime,
-            command: command,
-            agentPrompt: agentPrompt
-        ) {
-            return .error(error)
-        }
-        let launch: PreparedWorktreeAgentLaunch
-        if let agentRuntime,
-           CLIWorktreeCreationPolicy.shouldStageAgentPrompt(
-               agentRuntime: agentRuntime,
-               command: command,
-               agentPrompt: agentPrompt
-           ) {
-            do {
-                launch = try WorktreeAgentLaunchCommand.prepare(
-                    agent: agentRuntime,
-                    prompt: agentPrompt,
-                    exactCommand: nil
-                )
-            } catch {
-                return .error("could not stage agent prompt: \(error.localizedDescription)")
-            }
-        } else {
-            launch = PreparedWorktreeAgentLaunch(command: command, promptFile: nil)
-        }
-
-        let branch: BranchSelection = existing
-            ? .useExisting(name: branchName, source: .local)
-            : .createNew(name: branchName)
-        let worktreePath: String
-        switch AddWorktreeFlow.beginCreate(
-            repoPath: repo.path,
-            worktreeName: worktreeName,
-            branch: branch,
-            base: base,
-            creationOrigin: creationOrigin ?? .init(date: Date(), source: .worktree, worktreePath: callerPath,
-                worktreeName: repo.worktrees.first(where: { $0.path == callerPath }).map {
-                    SidebarWorktreeLabel.text(for: $0, inRepoAtPath: repo.path,
-                        siblingPaths: repo.worktrees.map(\.path), defaultBranch: repo.defaultBranchHint)
-                }),
-            appState: appState
-        ) {
-        case .success(let path):
-            worktreePath = path
-        case .failure(let error):
-            launch.discardPromptFile()
-            return .error(error.userMessage ?? "could not begin worktree creation")
-        }
-
-        if let runtime = agentRuntime, launch.promptFile != nil,
-           let index = appState.wrappedValue.indices(forWorktreePath: worktreePath) {
-            appState.wrappedValue.repos[index.repo].worktrees[index.worktree]
-                .expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(agentPrompt), runtime: runtime)
-        }
-
-        // Persist before starting Git, so both a failed launch and a later
-        // manual launch can recover the task. Retries return above before
-        // reaching this write, preventing duplicate inbox copies.
-        if let agentRuntime {
-            do {
-                try WorktreeAgentLaunchCommand.saveInitialPrompt(
-                    agentPrompt, runtime: agentRuntime, repo: repo,
-                    worktreePath: worktreePath, branchName: branchName, inbox: teamInbox
-                )
-                // A background CLI request may have no window observing state.
-                // Save the launch expectation before its first hook can arrive.
-                try appState.wrappedValue.save(to: AppState.defaultDirectory)
-            } catch {
-                appState.wrappedValue.removeWorktree(atPath: worktreePath)
-                launch.discardPromptFile()
-                return .error("could not save initial agent task: \(error.localizedDescription)")
-            }
-        }
-        let initialCommand = launch.command.flatMap { value in
-            value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
-        }
-        let status = worktreeCreations.start(
-            worktreePath: worktreePath,
-            messageAddress: worktreePath,
-            stagedPromptFile: launch.promptFile,
-            operationID: operationID
-        ) {
-            let result = await AddWorktreeFlow.finishCreate(
-                repoPath: repo.path,
-                worktreePath: worktreePath,
-                branch: branch,
-                base: resolvedBase,
-                appState: appState,
-                worktreeMonitor: worktreeMonitor,
-                statsStore: statsStore,
-                terminalManager: terminalManager,
-                teamEventDispatcher: teamEventDispatcher,
-                initialCommand: initialCommand,
-                terminalStartTiming: AddWorktreeFlow.terminalStartTiming(for: .cli)
-            )
-            switch result {
-            case .success:
-                return nil
-            case .failure(let error):
-                // A background request may have no view persisting removal of
-                // a failed placeholder or cancellation of its launch marker.
-                if let index = appState.wrappedValue.indices(forWorktreePath: worktreePath) {
-                    appState.wrappedValue.repos[index.repo].worktrees[index.worktree].cancelExpectedLaunch()
-                }
-                GrafttyApp.persistAppState(appState.wrappedValue)
-                let message: String
-                if case .discoveryFailed(let detail) = error {
-                    message = detail
-                } else {
-                    message = error.userMessage ?? "worktree creation failed"
-                }
-                return message
-            }
-        }
-        return .worktreeCreate(status)
     }
 
     @MainActor
@@ -847,8 +315,7 @@ extension SocketRequestRouter {
         if let error = CLIWorktreeCreationPolicy.paneAddError(
             agentRuntime: agentRuntime,
             command: command,
-            agentPrompt: agentPrompt,
-            teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            agentPrompt: agentPrompt
         ) {
             return .error(error)
         }
@@ -913,7 +380,7 @@ extension SocketRequestRouter {
         // ATTN-1.25: hand the command to surface creation, which runs it
         // once the shell is ready; typing after the split could arrive first.
         guard let targetID = appState.wrappedValue.worktree(forPath: path)?.firstPane,
-              let newPaneID = GrafttyApp.splitPane(
+              let newPaneID = PaneCommands.splitPane(
                   appState: appState,
                   terminalManager: terminalManager,
                   targetID: targetID,
@@ -943,7 +410,7 @@ extension SocketRequestRouter {
             appState.wrappedValue.repos[index.repo].worktrees[index.worktree]
                 .expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(agentPrompt), runtime: agentRuntime)
             // As in `createWorktree`: no window may be observing state.
-            try? appState.wrappedValue.save(to: AppState.defaultDirectory)
+            try? GrafttyApp.persistAppStateSynchronously(appState.wrappedValue)
         }
         return .ok
     }
@@ -967,7 +434,7 @@ extension SocketRequestRouter {
         guard let targetID = wt.splitTree.leaf(atPaneID: index) else {
             return .error("no pane with id \(index) in this worktree")
         }
-        GrafttyApp.closePane(
+        PaneCommands.closePane(
             appState: appState,
             terminalManager: terminalManager,
             targetID: targetID,
@@ -976,16 +443,15 @@ extension SocketRequestRouter {
         return .ok
     }
 
-    /// Test seam: lets the spec test exercise the `.showPane` route's
-    /// read+tail logic without constructing a full `AppState`. Skips
-    /// worktree lookup / state checks and goes straight to the reader.
-    @MainActor
-    internal static func handleShowPane_forTesting(
-        path: String, index: Int, lines: Int,
+    /// The `.showPane` route's read-and-tail step, after the worktree and
+    /// pane guards have resolved `sessionName`. Nonisolated so the route can
+    /// run it off the main actor while the reader spawns `zmx history`.
+    nonisolated static func showPaneResponse(
+        sessionName: String, lines: Int,
         reader: ZmxHistoryReader
     ) -> ResponseMessage {
         do {
-            let body = try reader.history(sessionName: "graftty-stub")
+            let body = try reader.history(sessionName: sessionName)
             return .paneShow(ScrollbackTail.tail(body, lines: lines))
         } catch {
             return .error("zmx history failed: \(error.localizedDescription)")

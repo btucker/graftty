@@ -58,9 +58,9 @@ final class NativeTeamDelivery {
             }
             guard reachable else { return .error("The replying Claude agent is no longer reachable") }
             return await GrafttyApp.handleTeamReply(
-                .teamReply(callerWorktree: recipient.worktreePath, callerAgentID: recipient.id.rawValue,
-                           messageID: original.id, text: reply.body,
-                           priority: reply.priority == .now ? .urgent : .normal),
+                TeamReplyRequest(callerWorktree: recipient.worktreePath, callerAgentID: recipient.id.rawValue,
+                                 messageID: original.id, text: reply.body,
+                                 priority: reply.priority == .now ? .urgent : .normal),
                 appState: binding, router: remoteTeamRouter, inbox: teamInbox,
                 dispatcher: teamEventDispatcher
             )
@@ -119,16 +119,7 @@ final class NativeTeamDelivery {
                 await TeamPresenceMonitor.sweep(storage: presenceStorage)
             }
             refreshDeliveryLiveness(records: records)
-            let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-            await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
-                inbox: services.teamInbox,
-                records: records,
-                deliveries: GrafttyApp.nativeDeliveries(
-                    codex: codexAppServerDeliveryService,
-                    claude: claudePeerDeliveryService,
-                    enabled: teamsEnabled
-                )
-            )
+            await retryDelivery(records: records)
         }
 
         // Subscribe Codex app-server and Claude peer delivery to inbox
@@ -153,32 +144,16 @@ final class NativeTeamDelivery {
             // by multiple observer queues — Swift Dictionary is not
             // thread-safe.)
             let deliveryState = GrafttyApp.CodexAppServerInboxObserverDeliveryState(skipInitialSnapshot: true)
-            let cancellable = observer.start {
-                [self, weak codexAppServerDeliveryService, weak claudePeerDeliveryService] messages in
+            let cancellable = observer.start { [self] messages in
                 Task { @MainActor in
                     refreshDeliveryLiveness()
-                    guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else {
-                        await deliveryState.markSeen(messages)
-                        return
-                    }
-                    guard codexAppServerDeliveryService != nil || claudePeerDeliveryService != nil else {
-                        await deliveryState.markSeen(messages)
-                        return
-                    }
                     let recipientWorktrees = await deliveryState.claimRecipientWorktrees(in: messages)
                     let awakeRecipients = recipientWorktrees.filter { tm.wakeWorktree($0) }
-                    var deliveries: [any CodexAppServerDeliveryTrigger] = []
-                    if let codexAppServerDeliveryService {
-                        deliveries.append(codexAppServerDeliveryService)
-                    }
-                    if let claudePeerDeliveryService {
-                        deliveries.append(claudePeerDeliveryService)
-                    }
                     await GrafttyApp.drainNativeDeliveryMessages(
                         teamID: teamID,
                         recipientWorktrees: awakeRecipients,
                         inbox: services.teamInbox,
-                        deliveries: deliveries
+                        deliveries: nativeDeliveries
                     )
                 }
             }
@@ -216,17 +191,7 @@ final class NativeTeamDelivery {
             }
             let records = presenceIndex.allRecords()
             refreshDeliveryLiveness(records: records)
-            Task {
-                await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
-                    inbox: services.teamInbox,
-                    records: records,
-                    deliveries: GrafttyApp.nativeDeliveries(
-                        codex: codexAppServerDeliveryService,
-                        claude: claudePeerDeliveryService,
-                        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-                    )
-                )
-            }
+            Task { await retryDelivery(records: records) }
         }
     }
 
@@ -248,17 +213,22 @@ final class NativeTeamDelivery {
     func refreshAndRetryRestoredDelivery() {
         let restoredPresenceRecords = refreshPresenceIndex()
         refreshDeliveryLiveness(records: restoredPresenceRecords)
-        Task {
-            await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
-                inbox: services.teamInbox,
-                records: restoredPresenceRecords,
-                deliveries: GrafttyApp.nativeDeliveries(
-                    codex: codexAppServerDeliveryService,
-                    claude: claudePeerDeliveryService,
-                    enabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-                )
-            )
-        }
+        Task { await retryDelivery(records: restoredPresenceRecords) }
+    }
+
+    /// Both native services, in the order a drain pass consults them.
+    private var nativeDeliveries: [any CodexAppServerDeliveryTrigger] {
+        [codexAppServerDeliveryService, claudePeerDeliveryService]
+    }
+
+    /// Retries delivery for every worktree with a presence record, through
+    /// both native services.
+    private func retryDelivery(records: [TeamPresenceRecord]) async {
+        await GrafttyApp.retryNativeDeliveryForPresenceWorktrees(
+            inbox: services.teamInbox,
+            records: records,
+            deliveries: nativeDeliveries
+        )
     }
 }
 

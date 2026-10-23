@@ -134,8 +134,7 @@ struct TeamInboxParseCacheTests {
                 recipient: "alice",
                 text: text,
                 priority: priority,
-                repos: [repo],
-                teamsEnabled: true
+                repos: [repo]
             )
         }
 
@@ -146,8 +145,7 @@ struct TeamInboxParseCacheTests {
                 event: event,
                 sessionID: "owner",
                 paneSessionName: "graftty-owner",
-                repos: [repo],
-                teamsEnabled: true
+                repos: [repo]
             )
         }
 

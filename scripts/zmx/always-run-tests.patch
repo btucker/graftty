@@ -1,0 +1,13 @@
+diff --git a/build.zig b/build.zig
+--- a/build.zig
++++ b/build.zig
+@@ -96,6 +96,9 @@ pub fn build(b: *std.Build) void {
+         });
+ 
+         const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
++        // Reuse compilation, but execute tests on every CI and release build.
++        // Zig otherwise caches successful Run steps along with their binaries.
++        run_exe_unit_tests.has_side_effects = true;
+         test_step.dependOn(&run_exe_unit_tests.step);
+     }
+ 

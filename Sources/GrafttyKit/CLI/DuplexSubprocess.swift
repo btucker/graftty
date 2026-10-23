@@ -45,12 +45,19 @@ public final class DuplexSubprocess: @unchecked Sendable {
         try? stdin.fileHandleForReading.close()
         try? stdout.fileHandleForWriting.close()
         try? stderr.fileHandleForWriting.close()
+        let errorDescriptor = errors.fileDescriptor
         errors.readabilityHandler = { [weak self] handle in
-            guard let chunk = Subprocess.drainChunk(from: handle) else {
-                handle.readabilityHandler = nil
-                return
+            guard let self else { return }
+            self.lifecycle.withLock {
+                // Keep a queued callback from reading a descriptor that stop()
+                // has closed and another process has since reused.
+                guard !self.stopped else { return }
+                guard let chunk = Subprocess.drainChunk(fd: errorDescriptor) else {
+                    handle.readabilityHandler = nil
+                    return
+                }
+                self.appendDiagnostics(chunk)
             }
-            self?.appendDiagnostics(chunk)
         }
     }
 

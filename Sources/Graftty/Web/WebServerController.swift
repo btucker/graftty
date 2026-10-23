@@ -13,10 +13,11 @@ final class WebServerController: ObservableObject {
 
     private var server: WebServer?
     private var renewer: WebCertRenewer?
-    /// In-flight task running `certPair` + server bring-up off the
-    /// MainActor. Cancelled on stop()/re-reconcile, with each post-await
-    /// step gated on `Task.isCancelled` so a stale completion can't
-    /// race a fresh status onto the pane. WEB-8.6.
+    /// In-flight task running the Tailscale `status` query, `certPair` and
+    /// server bring-up off the MainActor (WEB-1.15). Cancelled on
+    /// stop()/re-reconcile, with each post-await step gated on
+    /// `Task.isCancelled` so a stale completion can't race a fresh status
+    /// onto the pane. WEB-8.6.
     private var reconcileTask: Task<Void, Never>?
     /// Pending automatic retry after a transient cold-boot failure. A Mac
     /// restart relaunches Graftty during session-restore *before* `tailscaled`
@@ -32,6 +33,14 @@ final class WebServerController: ObservableObject {
     private let zmxExecutable: URL
     private let zmxDir: URL
     private var cancellables = Set<AnyCancellable>()
+    /// Resolves the LocalAPI endpoint and reads its status. Injected by tests
+    /// so WEB-1.15 can hold the daemon "pending" without a real tailscaled.
+    private let fetchTailscaleStatus: TailscaleStatusFetch
+
+    /// `@concurrent` so the daemon round-trip runs off the main actor even
+    /// if nonisolated async functions start inheriting their caller's actor
+    /// (NonisolatedNonsendingByDefault). WEB-1.15.
+    typealias TailscaleStatusFetch = @concurrent @Sendable () async throws -> (api: TailscaleLocalAPI, status: TailscaleLocalAPI.Status)
 
     /// Supplies `GET /sessions` with the current running sessions
     /// (`WEB-5.4`). Injected by `GrafttyApp` after `appState` + the
@@ -83,9 +92,11 @@ final class WebServerController: ObservableObject {
         settings: WebAccessSettings,
         zmxExecutable: URL,
         zmxDir: URL,
-        displayOwnershipStore: SessionDisplayOwnershipStore = SessionDisplayOwnershipStore()
+        displayOwnershipStore: SessionDisplayOwnershipStore = SessionDisplayOwnershipStore(),
+        fetchTailscaleStatus: @escaping TailscaleStatusFetch = { try await WebServerController.autoDetectedTailscaleStatus() }
     ) {
         self.settings = settings
+        self.fetchTailscaleStatus = fetchTailscaleStatus
         self.zmxExecutable = zmxExecutable
         self.zmxDir = zmxDir
         self.displayOwnershipStore = displayOwnershipStore
@@ -238,6 +249,10 @@ final class WebServerController: ObservableObject {
         displayOwnershipStore
     }
 
+    var reconcileTaskForTests: Task<Void, Never>? {
+        reconcileTask
+    }
+
     /// Force-rebuild the running server so a new provider closure is
     /// captured into a fresh `WebServer.Config`. No-ops when the server
     /// isn't running yet — an in-flight `reconcileTask` reads providers
@@ -314,12 +329,8 @@ final class WebServerController: ObservableObject {
         retryTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard let self, !Task.isCancelled else { return }
-            // Detach our own handle BEFORE reconcile(): its top-of-function
-            // `retryTask?.cancel()` would otherwise cancel *this* running Task,
-            // and that self-cancel poisons `Task.isCancelled` for the rest of
-            // the synchronous reconcile — so a `failReconcile(.magicDNSDisabled)`
-            // would hit its `guard !Task.isCancelled` and no-op, silently killing
-            // the magicDNS retry chain and wedging `lastApplied`. WEB-1.14.
+            // Detach our own handle BEFORE reconcile() so its top-of-function
+            // `retryTask?.cancel()` doesn't cancel *this* running Task. WEB-1.14.
             self.retryTask = nil
             // The desired (enabled, port) tuple is unchanged from the failed
             // attempt, so clear `lastApplied` too or reconcile()'s no-op guard
@@ -333,6 +344,7 @@ final class WebServerController: ObservableObject {
         let desired = (enabled: settings.isEnabled, port: settings.port)
         if let last = lastApplied, last == desired { return }
         lastApplied = desired
+        let previousStatus = status
 
         // A fresh attempt supersedes any pending retry; scheduleRetry will
         // re-arm one (with the incremented backoff) if this attempt also
@@ -364,11 +376,30 @@ final class WebServerController: ObservableObject {
             retryAttempt = 0  // terminal status ends the retry campaign. WEB-1.14
             return
         }
+        // Keep showing the last transient failure while this attempt
+        // re-queries Tailscale, rather than flashing "Stopped" on every
+        // WEB-1.14 retry until the off-main status query answers. WEB-1.15.
+        if Self.isTransientStartupFailure(previousStatus) {
+            status = previousStatus
+        }
+        let port = desired.port
+        reconcileTask = Task { [weak self] in
+            await self?.completeReconcile(port: port)
+        }
+    }
+
+    @concurrent nonisolated static func autoDetectedTailscaleStatus() async throws -> (api: TailscaleLocalAPI, status: TailscaleLocalAPI.Status) {
+        let api = try TailscaleLocalAPI.autoDetected()
+        return (api, try await api.status())
+    }
+
+    private func completeReconcile(port: Int) async {
+        // The fetch closure is `@concurrent`, so the daemon round-trip (and
+        // the blocking `recv` inside it) runs off the main actor. WEB-1.15.
         let api: TailscaleLocalAPI
         let tailscaleStatus: TailscaleLocalAPI.Status
         do {
-            api = try TailscaleLocalAPI.autoDetected()
-            tailscaleStatus = try runBlocking { try await api.status() }
+            (api, tailscaleStatus) = try await fetchTailscaleStatus()
         } catch TailscaleLocalAPI.Error.socketUnreachable {
             // Cold-boot race: `tailscaled` hasn't published its LocalAPI socket
             // yet. failReconcile clears lastApplied + arms a backoff retry so we
@@ -378,10 +409,12 @@ final class WebServerController: ObservableObject {
             failReconcile(.tailscaleUnavailable)
             return
         } catch {
+            guard !Task.isCancelled else { return }
             status = .error("\(error)")
             retryAttempt = 0  // terminal status ends the retry campaign. WEB-1.14
             return
         }
+        if Task.isCancelled { return }
         guard let fqdn = tailscaleStatus.dnsName else {
             // MagicDNS name not yet published — transient at cold boot, or the
             // user just enabled MagicDNS in the admin console. failReconcile
@@ -392,27 +425,8 @@ final class WebServerController: ObservableObject {
         }
 
         status = .provisioningCert
-        let bind = tailscaleStatus.tailscaleIPs
+        let bindAddresses = tailscaleStatus.tailscaleIPs
         let ownerLogin = tailscaleStatus.loginName
-        let port = desired.port
-        reconcileTask = Task { [weak self] in
-            await self?.completeReconcile(
-                api: api,
-                fqdn: fqdn,
-                bindAddresses: bind,
-                ownerLogin: ownerLogin,
-                port: port
-            )
-        }
-    }
-
-    private func completeReconcile(
-        api: TailscaleLocalAPI,
-        fqdn: String,
-        bindAddresses: [String],
-        ownerLogin: String,
-        port: Int
-    ) async {
         let pair: (cert: Data, key: Data)
         do {
             pair = try await api.certPair(for: fqdn)
@@ -517,19 +531,5 @@ final class WebServerController: ObservableObject {
         )
         r.start()
         renewer = r
-    }
-
-    /// Bridge async to sync for the one-shot Tailscale `status()` at reconcile
-    /// time. Runs on a detached Task so we don't deadlock the MainActor.
-    private func runBlocking<T>(_ op: @escaping @Sendable () async throws -> T) throws -> T where T: Sendable {
-        let sem = DispatchSemaphore(value: 0)
-        nonisolated(unsafe) var result: Result<T, Swift.Error> = .failure(CancellationError())
-        Task.detached {
-            do { result = .success(try await op()) }
-            catch { result = .failure(error) }
-            sem.signal()
-        }
-        sem.wait()
-        return try result.get()
     }
 }

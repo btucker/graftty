@@ -8,7 +8,7 @@ import UIKit
 @testable import GrafttyMobileKit
 
 @MainActor
-@Suite("WorktreeListContent — extracted picker preserves callbacks + onListChanged")
+@Suite("WorktreeListContent — extracted picker preserves callbacks")
 struct WorktreeListContentTests {
 
     @Test("@spec IPAD-1.22: While the iPad split-view sidebar has a compact column size class, the application shall retain the project rail and select projects within the sidebar rather than push compact navigation destinations.", arguments: [true, false])
@@ -21,8 +21,8 @@ struct WorktreeListContentTests {
         let rows = [sampleWorktree(path: "/repo/first")]
         let controller = UIHostingController(rootView: WorktreeListContent(
             host: sampleHost(), isSidebar: true,
-            remoteSnapshotProvider: { _, _ in rows },
-            onSelect: { _ in }, onSelectPane: { _ in }, navigation: navigation
+            remote: RemoteWorktreeProviders(snapshot: { _, _ in rows }),
+            onSelect: { _ in }, onSelectPane: { _, _ in }, navigation: navigation
         ).defaultAppStorage(defaults).environment(\.horizontalSizeClass, .compact))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 500, height: 700))
         window.rootViewController = controller
@@ -54,10 +54,10 @@ struct WorktreeListContentTests {
     func projectDestinationHasItsOwnSelection() {
         let project = SidebarProject(id: "repo", repositoryID: "repo", name: "Repo")
         let step = ProjectStep(host: sampleHost(), project: project)
-        let root = WorktreePickerView(host: step.host, coordinator: RemoteConnectionCoordinator(),
-            onSelect: { _ in }, onSelectPane: { _ in })
-        let destination = WorktreePickerView(host: step.host, coordinator: root.coordinator,
-            onSelect: { _ in }, onSelectPane: { _ in }, project: step.project)
+        let root = WorktreePickerView(host: step.host,
+            onSelect: { _ in }, onSelectPane: { _, _ in })
+        let destination = WorktreePickerView(host: step.host,
+            onSelect: { _ in }, onSelectPane: { _, _ in }, project: step.project)
         #expect(root.project == nil)
         #expect(destination.project?.id == "repo")
         let navigation = SidebarNavigationState(prefix: "project-route-\(UUID())")
@@ -101,33 +101,15 @@ struct WorktreeListContentTests {
         )
     }
 
-    @Test("init stores host and three callbacks; onListChanged defaults to no-op")
-    func initStoresCallbacks() {
+    @Test("init stores the host")
+    func initStoresHost() {
         let h = sampleHost()
         let view = WorktreeListContent(
             host: h,
             onSelect: { _ in },
-            onSelectPane: { _ in }
+            onSelectPane: { _, _ in }
         )
         #expect(view.host.id == h.id)
-        #expect(view.externalRefreshToken == 0)
-        // No-op default doesn't crash when invoked.
-        view.onListChanged([])
-    }
-
-    @Test("custom onListChanged is invoked with the supplied list")
-    func customOnListChanged() {
-        var received: [WorktreePanes]?
-        let view = WorktreeListContent(
-            host: sampleHost(),
-            onSelect: { _ in },
-            onSelectPane: { _ in },
-            onListChanged: { list in received = list },
-            externalRefreshToken: 3
-        )
-        view.onListChanged([])
-        #expect(received != nil && received?.isEmpty == true)
-        #expect(view.externalRefreshToken == 3)
     }
 
     @Test("""
@@ -176,9 +158,9 @@ struct WorktreeListContentTests {
     }
 
     @Test("""
-    @spec IOS-4.31: When authenticated worktree polling receives a snapshot equal to the list already rendered, the application shall not republish `onListChanged` or replace the list state. It shall publish a genuinely changed snapshot so pane metadata and topology still update promptly.
+    @spec IOS-4.31: When an authenticated worktree push or refresh delivers rows equal to the list already rendered, the application shall not replace the list state. It shall apply a genuinely changed snapshot so pane metadata and topology still update promptly.
     """)
-    func identicalPollingSnapshotsDoNotRepublishThePaneHierarchy() {
+    func identicalSnapshotsDoNotRepublishThePaneHierarchy() {
         let current = [sampleWorktree(path: "/repo/first")]
 
         #expect(!WorktreeListContent.shouldPublishLoadedList(
@@ -195,20 +177,132 @@ struct WorktreeListContentTests {
         ))
     }
 
+    @Test("@spec IOS-4.52: While a paired host's worktree list is displayed, when the host pushes a changed panes-state frame, the application shall render it without fetching the list again.", .timeLimit(.minutes(1)))
+    func pushedFrameUpdatesTheListWithoutAFetch() async throws {
+        let suite = "worktree-push-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let initial = [sampleWorktree(path: "/repo/first")]
+        let pushed = initial + [sampleWorktree(path: "/repo/second")]
+        let fetches = FetchCounter()
+        let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
+        let hosted = try host(WorktreeListContent(
+            host: sampleHost(),
+            remote: RemoteWorktreeProviders(
+                includeRemoteWorktrees: true,
+                snapshot: { _, _ in fetches.count += 1; return initial },
+                updates: { frames.stream }
+            ),
+            onSelect: { _ in }, onSelectPane: { _, _ in },
+            navigation: SidebarNavigationState(prefix: "test", defaults: defaults, collapsed: true)
+        ), defaults: defaults)
+        defer { hosted.isHidden = true }
+
+        try await waitUntilRendered(hosted, ["first"])
+        frames.continuation.yield(.frame(.snapshot(pushed)))
+        try await waitUntilRendered(hosted, ["first", "second"])
+        #expect(fetches.count == 1)
+    }
+
+    @Test("@spec IOS-4.54: If a pulled worktree list completes after a newer pushed panes-state frame was applied, then the application shall keep the pushed frame rather than replace it with the pulled rows.", .timeLimit(.minutes(1)))
+    func lateInitialLoadDoesNotOverwriteNewerPushedFrames() async throws {
+        let suite = "worktree-late-load-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let stale = [sampleWorktree(path: "/repo/a")]
+        func frame(_ paths: String...) -> [WorktreePanes] { paths.map { sampleWorktree(path: "/repo/\($0)") } }
+        let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
+        let loadStarted = AsyncStream<Void>.makeStream()
+        let loadReturned = AsyncStream<Void>.makeStream()
+        let load = HeldLoad()
+        let hosted = try host(WorktreeListContent(
+            host: sampleHost(),
+            remote: RemoteWorktreeProviders(
+                includeRemoteWorktrees: true,
+                snapshot: { _, _ in
+                    loadStarted.continuation.yield()
+                    await load.wait()
+                    loadReturned.continuation.yield()
+                    return stale
+                },
+                updates: { frames.stream }
+            ),
+            onSelect: { _ in }, onSelectPane: { _, _ in },
+            navigation: SidebarNavigationState(prefix: "test", defaults: defaults, collapsed: true)
+        ), defaults: defaults)
+        defer { hosted.isHidden = true; load.release() }
+
+        // The initial load is in flight; pushed frames still render.
+        var started = loadStarted.stream.makeAsyncIterator()
+        try #require(await started.next() != nil)
+        frames.continuation.yield(.frame(.snapshot(frame("b"))))
+        try await waitUntilRendered(hosted, ["b"])
+        frames.continuation.yield(.frame(.snapshot(frame("b", "c"))))
+        try await waitUntilRendered(hosted, ["b", "c"])
+
+        // The load now completes with rows older than the pushed frames. Its
+        // result is applied (or dropped) in the same main-actor job that
+        // returned it, so a short bounded check is enough to see it.
+        load.release()
+        var returned = loadReturned.stream.makeAsyncIterator()
+        try #require(await returned.next() != nil)
+        for _ in 0..<25 {
+            #expect(!renderedNames(in: hosted).contains("a"))
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(renderedNames(in: hosted).isSuperset(of: ["b", "c"]))
+    }
+
+    @Test("@spec IOS-4.53: When the host whose worktree list is displayed becomes paired, the application shall begin applying the host's pushed panes-state frames without requiring Refresh.", .timeLimit(.minutes(1)))
+    func pairingTheDisplayedHostStartsApplyingPushedFrames() async throws {
+        struct NotPaired: Error {}
+        let suite = "worktree-pairing-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: SidebarLayoutPolicy.projectRailSettingKey)
+        let navigation = SidebarNavigationState(prefix: "test", defaults: defaults, collapsed: true)
+        let host = sampleHost()
+        let pushed = [sampleWorktree(path: "/repo/first")]
+        let fetches = AsyncStream<Void>.makeStream()
+        let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
+        // Pairing in place keeps the host's ID; only its providers change.
+        func list(paired: Bool) -> WorktreeListContent {
+            var updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>?)?
+            if paired { updates = { frames.stream } }
+            return WorktreeListContent(
+                host: host,
+                remote: RemoteWorktreeProviders(
+                    includeRemoteWorktrees: paired,
+                    snapshot: { _, _ in fetches.continuation.yield(); throw NotPaired() },
+                    updates: updates
+                ),
+                onSelect: { _ in }, onSelectPane: { _, _ in },
+                navigation: navigation
+            )
+        }
+        let controller = UIHostingController(rootView: AnyView(rendered(list(paired: false), defaults: defaults)))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 700))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        var fetched = fetches.stream.makeAsyncIterator()
+        // The unpaired host's first load has run (and failed).
+        try #require(await fetched.next() != nil)
+        controller.rootView = AnyView(rendered(list(paired: true), defaults: defaults))
+        frames.continuation.yield(.frame(.snapshot(pushed)))
+        try await waitUntilRendered(window, pushed.map(\.displayName))
+    }
+
     @Test("WorktreePickerView wrapper delegates to WorktreeListContent")
     func wrapperDelegates() {
         let h = sampleHost()
-        let coordinator = RemoteConnectionCoordinator()
         let wrapper = WorktreePickerView(
             host: h,
-            coordinator: coordinator,
             onSelect: { _ in },
-            onSelectPane: { _ in }
+            onSelectPane: { _, _ in }
         )
-        let requiredCoordinator: RemoteConnectionCoordinator =
-            wrapper.coordinator
         #expect(wrapper.host.id == h.id)
-        #expect(requiredCoordinator === coordinator)
     }
 
     @Test("""
@@ -341,6 +435,50 @@ struct WorktreeListContentTests {
         ) == "Elapsed 0s")
     }
 
+    /// The list as hosted tests render it: flat rows (no project rail) with
+    /// an accessibility tree to read row names from.
+    private func rendered(_ list: WorktreeListContent, defaults: UserDefaults) -> some View {
+        list.defaultAppStorage(defaults)
+            .accessibilityElement(children: .contain)
+            .environment(\.accessibilityEnabled, true)
+    }
+
+    private func host(_ list: WorktreeListContent, defaults: UserDefaults) throws -> UIWindow {
+        defaults.set(false, forKey: SidebarLayoutPolicy.projectRailSettingKey)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 700))
+        window.rootViewController = UIHostingController(rootView: rendered(list, defaults: defaults))
+        window.makeKeyAndVisible()
+        return window
+    }
+
+    /// Worktree display names the hosted list currently renders.
+    private func renderedNames(in window: UIWindow) -> Set<String> {
+        guard let root = window.rootViewController?.view else { return [] }
+        root.layoutIfNeeded()
+        var names: Set<String> = [], pending: [NSObject] = [root], seen: Set<ObjectIdentifier> = []
+        while let object = pending.popLast(), seen.count < 4096 {
+            guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
+            if let label = object.accessibilityLabel { names.insert(label) }
+            if let view = object as? UIView { pending.append(contentsOf: view.subviews) }
+            pending.append(contentsOf: (object.accessibilityElements ?? []).compactMap { $0 as? NSObject })
+            for index in 0..<max(0, min(object.accessibilityElementCount(), 128)) {
+                if let child = object.accessibilityElement(at: index) as? NSObject { pending.append(child) }
+            }
+        }
+        return names
+    }
+
+    /// Hosted rendering is asynchronous; wait a bounded time for the rows.
+    private func waitUntilRendered(_ window: UIWindow, _ names: [String],
+                                   sourceLocation: SourceLocation = #_sourceLocation) async throws {
+        for _ in 0..<150 {
+            if renderedNames(in: window).isSuperset(of: names) { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        Issue.record("Rows \(names) were not rendered", sourceLocation: sourceLocation)
+        throw CancellationError()
+    }
+
     private func sampleWorktree(path: String) -> WorktreePanes {
         WorktreePanes(
             path: path,
@@ -354,6 +492,26 @@ struct WorktreeListContentTests {
             attentionText: nil,
             layout: nil
         )
+    }
+}
+@MainActor
+private final class FetchCounter { var count = 0 }
+
+/// An initial load the test completes by hand.
+@MainActor
+private final class HeldLoad {
+    private var waiter: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    func wait() async {
+        guard !released else { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func release() {
+        released = true
+        waiter?.resume()
+        waiter = nil
     }
 }
 #endif

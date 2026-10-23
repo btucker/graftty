@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 @Suite("Shared background-process budget")
 struct BackgroundProcessLimiterIntegrationTests {

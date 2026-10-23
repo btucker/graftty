@@ -16,11 +16,6 @@ extension GrafttyApp {
             self.skipInitialSnapshot = skipInitialSnapshot
         }
 
-        func markSeen(_ messages: [TeamInboxMessage]) {
-            lastSeenCount = messages.count
-            skipInitialSnapshot = false
-        }
-
         func claimRecipientWorktrees(in messages: [TeamInboxMessage]) -> [String] {
             if skipInitialSnapshot {
                 skipInitialSnapshot = false
@@ -61,20 +56,6 @@ extension GrafttyApp {
         })
     }
 
-    nonisolated static func deliverCodexAppServerMessages(
-        teamID: String,
-        recipientWorktrees: [String],
-        delivery: CodexAppServerDeliveryTrigger
-    ) async {
-        await withTaskGroup(of: Void.self) { group in
-            for recipientWorktree in recipientWorktrees {
-                group.addTask {
-                    await delivery.onMessageArrival(team: teamID, worktree: recipientWorktree)
-                }
-            }
-        }
-    }
-
     nonisolated static func drainNativeDeliveryMessages(
         teamID: String,
         recipientWorktrees: [String],
@@ -108,15 +89,6 @@ extension GrafttyApp {
                 }
             }
         }
-    }
-
-    nonisolated static func nativeDeliveries(
-        codex: CodexAppServerDeliveryService,
-        claude: ClaudePeerDeliveryService,
-        enabled: Bool = true
-    ) -> [any CodexAppServerDeliveryTrigger] {
-        guard enabled else { return [] }
-        return [codex, claude]
     }
 
     nonisolated static func retryNativeDeliveryForPresenceWorktrees(
@@ -154,42 +126,6 @@ extension GrafttyApp {
                     )
                 }
             }
-        }
-    }
-
-    nonisolated static func retryCodexAppServerDeliveryForPresenceWorktrees(
-        inbox: TeamInbox,
-        records: [TeamPresenceRecord],
-        delivery: CodexAppServerDeliveryTrigger
-    ) async {
-        var seen: Set<TeamDeliveryPresenceWorktreeKey> = []
-        var keys: [TeamDeliveryPresenceWorktreeKey] = []
-        for record in records where record.runtime == .codex {
-            let key = TeamDeliveryPresenceWorktreeKey(teamID: record.teamID, worktree: record.worktree)
-            guard seen.insert(key).inserted else { continue }
-            if Self.hasPendingUnreadMessage(inbox: inbox, key: key) {
-                keys.append(key)
-            }
-        }
-
-        await withTaskGroup(of: Void.self) { group in
-            for key in keys {
-                group.addTask {
-                    await delivery.onMessageArrival(team: key.teamID, worktree: key.worktree)
-                }
-            }
-        }
-    }
-
-    /// Gate for the Codex-only retry helper. Rows for another provider do not
-    /// suppress a later Codex or untargeted row because delivery positions can
-    /// acknowledge matching rows out of order.
-    private nonisolated static func hasPendingUnreadMessage(
-        inbox: TeamInbox,
-        key: TeamDeliveryPresenceWorktreeKey
-    ) -> Bool {
-        pendingUnreadMessages(inbox: inbox, key: key).contains {
-            $0.to.runtime == nil || $0.to.runtime == TeamHookRuntime.codex.rawValue
         }
     }
 

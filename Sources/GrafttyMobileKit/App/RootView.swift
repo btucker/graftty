@@ -25,10 +25,9 @@ public struct RootView: View {
     @AppStorage(SidebarLayoutPolicy.projectRailSettingKey) private var showsProjectRail = true
     /// Owned here (not per-screen) so a negotiated SSH connection survives
     /// navigation-stack pushes/pops on the compact path and layout
-    /// transitions on the iPad path — both `compactBody`'s
-    /// `SingleSessionView` and `IPadRootLayout` are handed the SAME
-    /// instance so a host negotiated once from either surface is cached
-    /// for the other.
+    /// transitions on the iPad path. `body` injects this one instance as
+    /// `\.remoteConnectionCoordinator` for both size classes, so a host
+    /// negotiated once from either surface is cached for the other.
     @State private var coordinator = RemoteConnectionCoordinator(
         connectionsAllowedInitially: false
     )
@@ -65,7 +64,6 @@ public struct RootView: View {
                 IPadRootLayout(
                     hostStore: hostStore,
                     appState: iPadAppState,
-                    coordinator: coordinator,
                     nearbyMacBrowser: nearbyMacBrowser
                 )
             default:
@@ -76,6 +74,10 @@ public struct RootView: View {
             }
         }
         .environment(\.biometricGate, gate)
+        .environment(\.remoteConnectionCoordinator, coordinator)
+        .environment(\.remoteWorktreeUpdates, RemoteWorktreeUpdatesProvider { [coordinator] host in
+            coordinator.isPaired(host) ? coordinator.worktreeUpdates(for: host) : nil
+        })
         .environment(\.worktreeContextActions, WorktreeContextActions { [hostID = iPadAppState.selectedHostId] path, source in
             openContextWorktree(path, source: source, hostID: hostID)
         })
@@ -110,8 +112,7 @@ public struct RootView: View {
         .onChange(of: horizontalSizeClass) { previous, current in
             retainedPanes.stopAll()
             guard previous == .regular, current != .regular else { return }
-            navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
-                                                  showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
+            syncCompactNavigationToSelection()
         }
         .onChange(of: gate.state) { _, _ in
             updateConnectionAccess()
@@ -207,16 +208,16 @@ public struct RootView: View {
             defer { if recentPaneOpeningID == openingID { recentPaneOpeningID = nil } }
             do {
                 let target = try await WorktreeContextActions.resolve(path, source: source, fetch: {
-                    if let notificationIO { return try await notificationIO.fetch(host) }
-                    return try await coordinator.worktreePanes(for: host)
+                    try await fetchWorktrees(on: host)
                 }, reopen: { path in
-                    if let notificationIO { return try await notificationIO.reopen(host, path) }
-                    guard try await coordinator.sendWorktreeManagement(.open(worktreeID: path), to: host) == .ok
-                    else { throw WorktreeContextActions.Failure.notReady }
+                    try await reopenWorktree(path, on: host, notReady: WorktreeContextActions.Failure.notReady)
                 }, isCurrent: isCurrent)
                 guard isCurrent() else { return }
                 iPadAppState.latestWorktrees = target.rows
-                applyContextWorktree(target.worktree, host: host)
+                if let path = Self.applyContextWorktree(target.worktree, host: host, appState: iPadAppState,
+                        compact: horizontalSizeClass != .regular, showsProjectRail: showsProjectRail) {
+                    navigationPath = path
+                }
             } catch is CancellationError {
             } catch {
                 guard isCurrent() else { return }
@@ -226,23 +227,45 @@ public struct RootView: View {
         return true
     }
 
-    private func applyContextWorktree(_ row: WorktreePanes, host: Host) {
+    /// Selects a worktree opened from a context link. Regular width selects
+    /// it as the sidebar does, requesting terminal focus; compact width
+    /// selects it as a picker tap does, without a focus request (IPAD-8.10),
+    /// and returns the rebuilt navigation stack.
+    static func applyContextWorktree(_ row: WorktreePanes, host: Host, appState: IPadAppState,
+                                     compact: Bool, showsProjectRail: Bool) -> NavigationPath? {
         let project = SidebarProjection.projects([row]).first
-        if let project { iPadAppState.sidebarNavigation.showProject(project.id) }
-        IPadRootLayout.applyWorktreeSelection(appState: iPadAppState, worktree: row)
-        if horizontalSizeClass != .regular {
-            var path = NavigationPath()
-            path.append(host)
-            if showsProjectRail, let project { path.append(ProjectStep(host: host, project: project)) }
-            switch MobileNavigationDecision.decide(layout: row.layout) {
-            case let .session(sessionName, title):
-                path.append(SessionStep(host: host, worktreePath: row.path, sessionName: sessionName,
-                    title: title, worktreeProject: project))
-            case .worktreeDetail:
-                path.append(WorktreeStep(host: host, worktree: row, project: project))
-            }
-            navigationPath = path
+        if let project { appState.sidebarNavigation.showProject(project.id) }
+        guard compact else {
+            IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: row)
+            return nil
         }
+        var path = NavigationPath()
+        path.append(host)
+        if showsProjectRail, let project { path.append(ProjectStep(host: host, project: project)) }
+        applyCompactWorktreeSelection(row, host: host, project: project, appState: appState, navigationPath: &path)
+        return path
+    }
+
+    /// A fresh authenticated snapshot for `host`: the interaction host's
+    /// injected I/O when present, otherwise the shared coordinator.
+    private func fetchWorktrees(on host: Host) async throws -> [WorktreePanes] {
+        if let notificationIO { return try await notificationIO.fetch(host) }
+        return try await coordinator.worktreePanes(for: host)
+    }
+
+    /// Reopens a closed worktree on `host`; a refused open throws `notReady`.
+    private func reopenWorktree(_ path: String, on host: Host, notReady: Error) async throws {
+        if let notificationIO { return try await notificationIO.reopen(host, path) }
+        guard try await coordinator.sendWorktreeManagement(.open(worktreeID: path), to: host) == .ok
+        else { throw notReady }
+    }
+
+    /// Rebuilds the compact navigation stack from the shared selection; the
+    /// regular-width layout reads the selection directly.
+    private func syncCompactNavigationToSelection() {
+        guard horizontalSizeClass != .regular else { return }
+        navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
+            showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
     }
 
     private func openRecentPane(_ entry: MobileRecentPanes.Entry, openingID: UUID) async {
@@ -265,19 +288,13 @@ public struct RootView: View {
         }
         do {
             let target = try await MobileRecentPanes.resolve(entry, fetch: {
-                if let notificationIO { return try await notificationIO.fetch(host) }
-                return try await coordinator.worktreePanes(for: host)
+                try await fetchWorktrees(on: host)
             }, reopen: { path in
-                if let notificationIO { return try await notificationIO.reopen(host, path) }
-                guard try await coordinator.sendWorktreeManagement(.open(worktreeID: path), to: host) == .ok
-                else { throw MobileNotificationActivation.Failure.notReady }
+                try await reopenWorktree(path, on: host, notReady: MobileNotificationActivation.Failure.notReady)
             }, isCurrent: isCurrent)
             guard isCurrent() else { return }
-            Self.applyRecentPaneTarget(target, host: host, to: iPadAppState)
-            if horizontalSizeClass != .regular {
-                navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
-                    showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
-            }
+            Self.applyActivationTarget(target, host: host, to: iPadAppState)
+            syncCompactNavigationToSelection()
             recordSelectedPane()
         } catch is CancellationError {
         } catch let error as MobileNotificationActivation.Failure {
@@ -294,7 +311,9 @@ public struct RootView: View {
         }
     }
 
-    static func applyRecentPaneTarget(_ target: MobileNotificationActivation.Target, host: Host, to appState: IPadAppState) {
+    /// Selects a resolved notification or recent-pane target: its host,
+    /// worktree, pane and project, with the fresh rows it was resolved from.
+    static func applyActivationTarget(_ target: MobileNotificationActivation.Target, host: Host, to appState: IPadAppState) {
         appState.latestWorktrees = target.rows
         let project = SidebarProjection.projects([target.worktree]).first
         applyCompactSession(.init(host: host, worktreePath: target.worktree.path,
@@ -334,24 +353,12 @@ public struct RootView: View {
         }
         do {
             let target = try await MobileNotificationActivation.resolve(route, fetch: {
-                if let notificationIO { return try await notificationIO.fetch(host) }
-                return try await coordinator.worktreePanes(for: host)
+                try await fetchWorktrees(on: host)
             }, reopen: { path in
-                if let notificationIO { return try await notificationIO.reopen(host, path) }
-                guard try await coordinator.sendWorktreeManagement(.open(worktreeID: path), to: host) == .ok
-                else { throw MobileNotificationActivation.Failure.notReady }
+                try await reopenWorktree(path, on: host, notReady: MobileNotificationActivation.Failure.notReady)
             }, isCurrent: isCurrent)
-            let row = target.worktree
-            let project = SidebarProjection.projects([row]).first
-            iPadAppState.selectedHostId = host.id
-            iPadAppState.latestWorktrees = target.rows
-            iPadAppState.selectedWorktreePath = row.path
-            iPadAppState.focusedPaneId = target.pane.sessionName
-            if let project { iPadAppState.sidebarNavigation.showProject(project.id) }
-            if horizontalSizeClass != .regular {
-                navigationPath = Self.compactSelection(appState: iPadAppState, hosts: hostStore.hosts,
-                    showsProjectRail: showsProjectRail)?.path ?? NavigationPath()
-            }
+            Self.applyActivationTarget(target, host: host, to: iPadAppState)
+            syncCompactNavigationToSelection()
             notificationActivationPath = horizontalSizeClass == .regular ? nil : navigationPath
             notificationPaneActivation.activate(hostID: host.id, sessionName: target.pane.sessionName)
             notifications.consume(route)
@@ -391,8 +398,7 @@ public struct RootView: View {
         NavigationStack(path: $navigationPath) {
             HostPickerView(
                 store: hostStore,
-                browser: nearbyMacBrowser,
-                coordinator: coordinator
+                browser: nearbyMacBrowser
             )
                 .navigationDestination(for: Host.self) { host in
                     compactPicker(host: host)
@@ -403,8 +409,7 @@ public struct RootView: View {
                 .navigationDestination(for: WorktreeStep.self) { step in
                     WorktreeDetailView(
                         host: step.host,
-                        worktree: step.worktree,
-                        coordinator: coordinator
+                        worktree: step.worktree
                     ) { sessionName in
                         let session = SessionStep(
                             host: step.host,
@@ -418,7 +423,7 @@ public struct RootView: View {
                     }
                 }
                 .navigationDestination(for: SessionStep.self) { step in
-                    SingleSessionView(step: step, navigationPath: $navigationPath, coordinator: coordinator,
+                    SingleSessionView(step: step, navigationPath: $navigationPath,
                                       onBackToWorktrees: {
                                           Self.applyCompactBack(step: step, appState: iPadAppState,
                                                                 navigationPath: &navigationPath,
@@ -438,44 +443,18 @@ public struct RootView: View {
     private func compactPicker(host: Host, project: SidebarProject? = nil) -> some View {
         WorktreePickerView(
             host: host,
-            coordinator: coordinator,
             onSelect: { wt in
-                iPadAppState.selectedHostId = host.id
-                iPadAppState.selectedWorktreePath = wt.path
-                iPadAppState.focusedPaneId = wt.layout?.leaves.first?.sessionName
-                switch MobileNavigationDecision.decide(layout: wt.layout) {
-                case let .session(sessionName, title):
-                    navigationPath.append(SessionStep(
-                        host: host,
-                        worktreePath: wt.path,
-                        sessionName: sessionName,
-                        title: title,
-                        worktreeProject: project ?? SidebarProjection.projects([wt]).first
-                    ))
-                case .worktreeDetail:
-                    navigationPath.append(WorktreeStep(host: host, worktree: wt, project: project))
-                }
+                Self.applyCompactWorktreeSelection(wt, host: host, project: project, appState: iPadAppState,
+                                                   navigationPath: &navigationPath)
             },
-            onSelectPaneWithWorktree: { worktree, leaf in
-                iPadAppState.selectedHostId = host.id
-                iPadAppState.selectedWorktreePath = worktree.path
-                iPadAppState.focusedPaneId = leaf.sessionName
-                if case let .session(sessionName, title) =
-                    MobileNavigationDecision.decide(paneRow: leaf) {
-                    navigationPath.append(SessionStep(
-                        host: host,
-                        worktreePath: worktree.path,
-                        sessionName: sessionName,
-                        title: title,
-                        worktreeProject: project ?? SidebarProjection.projects([worktree]).first
-                    ))
-                }
+            onSelectPane: { worktree, leaf in
+                Self.applyCompactPaneSelection(leaf, in: worktree, host: host, project: project,
+                                               appState: iPadAppState, navigationPath: &navigationPath)
             },
             navigation: iPadAppState.sidebarNavigation,
             project: project,
             onSelectWorktreeDetail: { worktree in
-                iPadAppState.selectedHostId = host.id
-                iPadAppState.selectedWorktreePath = worktree.path
+                iPadAppState.select(hostID: host.id, worktreePath: worktree.path, paneID: iPadAppState.focusedPaneId)
                 navigationPath.append(WorktreeStep(host: host, worktree: worktree, project: project))
             }
         )
@@ -526,10 +505,33 @@ public struct RootView: View {
         IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
     }
 
+    /// Compact picker row tap: select the worktree's first pane and push its
+    /// terminal, or the worktree detail when it has no single session.
+    static func applyCompactWorktreeSelection(_ wt: WorktreePanes, host: Host, project: SidebarProject?,
+                                              appState: IPadAppState, navigationPath: inout NavigationPath) {
+        appState.select(hostID: host.id, worktreePath: wt.path, paneID: wt.layout?.leaves.first?.sessionName)
+        switch MobileNavigationDecision.decide(layout: wt.layout) {
+        case let .session(sessionName, title):
+            navigationPath.append(SessionStep(host: host, worktreePath: wt.path, sessionName: sessionName, title: title,
+                worktreeProject: project ?? SidebarProjection.projects([wt]).first))
+        case .worktreeDetail:
+            navigationPath.append(WorktreeStep(host: host, worktree: wt, project: project))
+        }
+    }
+
+    /// Compact picker pane-row tap: select the pane and push its terminal.
+    static func applyCompactPaneSelection(_ leaf: PaneLayoutNode.Leaf, in worktree: WorktreePanes, host: Host,
+                                          project: SidebarProject?, appState: IPadAppState,
+                                          navigationPath: inout NavigationPath) {
+        appState.select(hostID: host.id, worktreePath: worktree.path, paneID: leaf.sessionName)
+        if case let .session(sessionName, title) = MobileNavigationDecision.decide(paneRow: leaf) {
+            navigationPath.append(SessionStep(host: host, worktreePath: worktree.path, sessionName: sessionName,
+                title: title, worktreeProject: project ?? SidebarProjection.projects([worktree]).first))
+        }
+    }
+
     static func applyCompactSession(_ step: SessionStep, to appState: IPadAppState) {
-        appState.selectedHostId = step.host.id
-        appState.selectedWorktreePath = step.worktreePath
-        appState.focusedPaneId = step.sessionName
+        appState.select(hostID: step.host.id, worktreePath: step.worktreePath, paneID: step.sessionName)
         appState.worktreePickerProject = step.worktreeProject
         if let project = step.worktreeProject {
             // Search can open another project's terminal without losing the picker.
@@ -563,26 +565,6 @@ public struct RootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.regularMaterial)
-    }
-
-    nonisolated static func makeWebSocketURL(base: URL, session: String) -> URL {
-        var components = URLComponents(url: base, resolvingAgainstBaseURL: false) ?? URLComponents()
-        components.scheme = (base.scheme?.lowercased() == "https") ? "wss" : "ws"
-        components.path = "/ws"
-        components.queryItems = [
-            URLQueryItem(name: "session", value: session),
-            // Advertise the iOS client kind through the transport the daemon
-            // trusts (`declaredDisplayClientKind`). `URLSessionWebSocketClient`
-            // connects with a bare URL (no custom header / User-Agent), so this
-            // query param is the only kind signal the server sees. Without it
-            // the connection is classified `.web`, the store stamps
-            // `ownerKind=.web`, and `SessionClient.isOwner` (which requires
-            // `.ios`) is never true — the phone becomes a permanent follower
-            // that cannot confirm ownership after Take Control or input
-            // takeover.
-            URLQueryItem(name: "client", value: "ios"),
-        ]
-        return components.url ?? base
     }
 }
 

@@ -21,7 +21,7 @@ public struct WorktreeContextActions {
     @MainActor public static func resolve(_ path: String, source: WorktreePanes,
         fetch: @MainActor () async throws -> [WorktreePanes], reopen: @MainActor (String) async throws -> Void,
         isCurrent: @MainActor () -> Bool,
-        pause: @MainActor () async throws -> Void = { try await Task.sleep(for: .milliseconds(250)) }
+        pause: @MainActor () async throws -> Void = WorktreeLayoutAwait.pauseBetweenSnapshots
     ) async throws -> (worktree: WorktreePanes, rows: [WorktreePanes]) {
         @MainActor func checkCurrent() throws {
             try Task.checkCancellation()
@@ -36,16 +36,13 @@ public struct WorktreeContextActions {
             try checkCurrent()
             rows = try await fetch()
         }
-        for attempt in 0..<12 {
-            try checkCurrent()
+        let ready = try await WorktreeLayoutAwait.poll(rows: rows, fetch: fetch, checkCurrent: checkCurrent,
+                                                       pause: pause) { rows -> (worktree: WorktreePanes, rows: [WorktreePanes])? in
             guard let row = target(path, source: source, rows: rows) else { throw Failure.unavailable }
-            if row.state == .running, row.layout?.leaves.isEmpty == false { return (row, rows) }
-            guard attempt < 11 else { throw Failure.notReady }
-            try await pause()
-            try checkCurrent()
-            rows = try await fetch()
+            return row.state == .running && row.layout?.leaves.isEmpty == false ? (row, rows) : nil
         }
-        throw Failure.notReady
+        guard let ready else { throw Failure.notReady }
+        return ready
     }
 }
 

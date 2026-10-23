@@ -4,7 +4,7 @@ import GrafttyProtocol
 @testable import GrafttyKit
 
 struct HostResourceSamplerTests {
-    @Test("@spec REMOTE-24.13: While a Linux host runs, the host shall periodically measure CPU utilization from successive kernel counters, available memory from MemAvailable, and unprivileged filesystem headroom, reporting unreadable or invalid measurements as unknown rather than zero.")
+    @Test("@spec REMOTE-31.13: While a Linux host runs, the host shall periodically measure CPU utilization from successive kernel counters, available memory from MemAvailable, and unprivileged filesystem headroom, reporting unreadable or invalid measurements as unknown rather than zero.")
     func samplesLinuxCountersWithoutDoubleCountingGuestTime() throws {
         var sampler = LinuxHostResourceMeasurements()
         let first = sampler.sample(stat: "cpu 100 0 100 800 0 0 0 0 50 0\ncpu0 1\ncpu1 1\n", meminfo: "MemTotal: 1000 kB\nMemAvailable: 400 kB\n")

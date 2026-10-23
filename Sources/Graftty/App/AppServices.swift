@@ -34,6 +34,8 @@ final class AppServices {
     let displayOwnershipStore: SessionDisplayOwnershipStore
     let teamInbox: TeamInbox
     let remoteTeamRouter = RemoteTeamRouter()
+    /// Published on every input to the sidebar and panes-state snapshots.
+    let appStateChanges = AppStateChanges()
     let teamEventDispatcher: TeamEventDispatcher
     let cliWorktreeCreations: CLIWorktreeCreationStore
     let cliWorktreeRemovals: CLIWorktreeRemovalStore
@@ -215,10 +217,9 @@ final class AppServices {
 
         // Route PRStatusStore transitions through the inbox dispatcher.
         // `appStateProvider` is set later in startup() once @State is live;
-        // before that point the guard below is a no-op.
+        // before that point the dispatch sees no repos and is a no-op.
         self.prStatusStore.onTransition = { [weak self] routable, subjectWorktreePath, attrs in
             guard let self else { return }
-            guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else { return }
             let appState = self.appStateProvider?() ?? AppState()
             let event = ChannelServerMessage.event(
                 type: routable.wireType,
@@ -531,5 +532,11 @@ final class AppServices {
         let hostName = ProcessInfo.processInfo.hostName
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return hostName.isEmpty ? "Mac" : hostName
+    }
+
+    /// Every agent presence record on disk, or none if the directory
+    /// can't be read.
+    nonisolated static func presenceRecords() -> [TeamPresenceRecord] {
+        (try? TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).listAll()) ?? []
     }
 }

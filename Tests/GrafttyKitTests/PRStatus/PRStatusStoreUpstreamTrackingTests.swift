@@ -2,6 +2,7 @@ import Testing
 import GrafttyProtocol
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 /// PR/MR association keys off the **tracked remote branch**, not the
 /// local branch name. GitHub's `gh pr list` keys results by
@@ -45,7 +46,7 @@ struct PRStatusStoreUpstreamTrackingTests {
 
         let remoteBranchStore = RemoteBranchStore(list: { _ in
             RemoteBranchSnapshot(
-                branches: ["feature/foo"],
+                remoteBranchNames: ["feature/foo"],
                 upstreams: ["local-rename": "feature/foo"]
             )
         })
@@ -85,7 +86,7 @@ struct PRStatusStoreUpstreamTrackingTests {
         let fetcher = RecordingFetcher(observer: observed, prsByBranch: [:])
         let remoteBranchStore = RemoteBranchStore(list: { _ in
             RemoteBranchSnapshot(
-                branches: ["upstream-name"],
+                remoteBranchNames: ["upstream-name"],
                 upstreams: ["local-name": "upstream-name"]
             )
         })

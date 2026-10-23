@@ -20,7 +20,7 @@ struct HostPlacementLedgerTests {
     }
     private func file() -> URL { URL.temporaryDirectory.appendingPathComponent("placement-\(UUID())/ledger.json") }
 
-    @Test("@spec REMOTE-24.8: When concurrent or retried placement requests are accepted, the application shall reserve capacity and reuse operation identities to avoid duplicate allocations.")
+    @Test("@spec REMOTE-31.8: When concurrent or retried placement requests are accepted, the application shall reserve capacity and reuse operation identities to avoid duplicate allocations.")
     func durableAdmissionAccountsForConcurrentDemandAndRetries() throws {
         let url = file(); defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let ledger = try HostPlacementLedger(fileURL: url)

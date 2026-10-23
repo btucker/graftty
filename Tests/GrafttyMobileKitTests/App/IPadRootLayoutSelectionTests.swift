@@ -74,8 +74,7 @@ struct IPadRootLayoutSelectionTests {
         let view = WorktreeListContent(
             host: sampleHost(),
             onSelect: { _ in },
-            onSelectPane: { _ in },
-            onListChanged: { _ in }
+            onSelectPane: { _, _ in }
         )
         _ = view
         #expect(true)
@@ -277,14 +276,14 @@ struct IPadRootLayoutSelectionTests {
             host: sampleHost(),
             theme: GhosttyThemeColors.fallback,
             onSelect: { _ in },
-            onSelectPane: { _ in }
+            onSelectPane: { _, _ in }
         )
         #expect(themed.theme == GhosttyThemeColors.fallback)
 
         let untyped = WorktreeListContent(
             host: sampleHost(),
             onSelect: { _ in },
-            onSelectPane: { _ in }
+            onSelectPane: { _, _ in }
         )
         #expect(untyped.theme == nil)
     }
@@ -352,7 +351,6 @@ struct IPadRootLayoutSelectionTests {
             step: step,
             navigationPath: .constant(NavigationPath()),
             isFullScreen: false,
-            coordinator: nil,
             externalPendingFocusRequests: 3
         )
 
@@ -608,7 +606,7 @@ struct IPadRootLayoutSelectionTests {
             selectedWorktreePath: "/repo/feat",
             focusedPaneId: "session-xyz",
             onSelect: { _ in },
-            onSelectPane: { _ in }
+            onSelectPane: { _, _ in }
         )
         #expect(view.selectedWorktreePath == "/repo/feat")
         #expect(view.focusedPaneId == "session-xyz")
@@ -1136,7 +1134,7 @@ instead of an empty bridge.
         ) == nil)
     }
 
-    @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
+    @Test("stale-selectedWorktreePath is cleared when a worktree list arrives without the path")
     func stalePathCleanup() {
         let appState = freshAppState()
         appState.selectedWorktreePath = "/repo/branch-deleted-out-of-band"
@@ -1251,13 +1249,6 @@ instead of an empty bridge.
         #expect(appState3.focusedPaneId == "session-a")
     }
 
-    @Test("""
-@spec IPAD-1.20: While `IPadRootLayout` is presented, iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
-""")
-    func backgroundPolicy() {
-        #expect(IPadRootLayout.paintsTerminalBackgroundBehindSidebar == true)
-    }
-
     private func leaf(_ sessionName: String) -> PaneLayoutNode {
         .leaf(
             sessionName: sessionName,
@@ -1277,14 +1268,8 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
     /// fullscreen-role mobile client that is currently a follower or ownerless
     /// shall still expose Take Control in the detail column.
     func testTakeControlVisibilityIsNotTiedToFullscreenChrome() {
-        XCTAssertTrue(SingleSessionView.shouldShowTakeControl(
-            isFullScreen: false,
-            clientCanTakeControl: true
-        ))
-        XCTAssertFalse(SingleSessionView.shouldShowTakeControl(
-            isFullScreen: false,
-            clientCanTakeControl: false
-        ))
+        XCTAssertTrue(SingleSessionView.shouldShowTakeControl(clientCanTakeControl: true))
+        XCTAssertFalse(SingleSessionView.shouldShowTakeControl(clientCanTakeControl: false))
     }
 
     /// @spec IOS-6.13: GrafttyMobile shall expose software-keyboard chrome and
@@ -1293,26 +1278,8 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
     /// showing a keyboard before ownership is confirmed sends no useful input
     /// and implies authority the client does not have.
     func testKeyboardChromeRequiresDisplayOwnership() {
-        XCTAssertFalse(SingleSessionView.shouldExposeKeyboard(
-            clientIsOwner: false,
-            keyboardAllowed: true,
-            isKeyboardVisible: false
-        ))
-        XCTAssertFalse(SingleSessionView.shouldExposeKeyboard(
-            clientIsOwner: false,
-            keyboardAllowed: false,
-            isKeyboardVisible: false
-        ))
-        XCTAssertTrue(SingleSessionView.shouldExposeKeyboard(
-            clientIsOwner: true,
-            keyboardAllowed: false,
-            isKeyboardVisible: false
-        ))
-        XCTAssertTrue(SingleSessionView.shouldExposeKeyboard(
-            clientIsOwner: true,
-            keyboardAllowed: true,
-            isKeyboardVisible: true
-        ))
+        XCTAssertFalse(SingleSessionView.shouldExposeKeyboard(clientIsOwner: false))
+        XCTAssertTrue(SingleSessionView.shouldExposeKeyboard(clientIsOwner: true))
     }
 
     /// @spec IOS-6.14: While the mobile client is the display owner, its pane

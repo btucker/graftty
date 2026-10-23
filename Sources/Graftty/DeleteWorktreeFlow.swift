@@ -22,30 +22,10 @@ import GrafttyKit
 @MainActor
 enum DeleteWorktreeFlow {
 
-    /// Successful outcome carries which branch the flow took so the
-    /// caller can label its UI (mac alert message, mobile toast).
-    /// `dismissed == true` means we ran `GitWorktreePrune` because the
-    /// worktree directory was already gone; `false` means
-    /// `git worktree remove` succeeded normally.
-    struct Outcome {
-        let dismissed: Bool
-    }
-
-    enum FlowError: Error {
-        /// `git worktree remove` failed in a way `--force` could resolve
-        /// (uncommitted/untracked files). Carries stderr + a `git status
-        /// --short` snapshot to surface in the failure UI.
-        case gitFailedForceable(stderr: String, shortStatus: String)
-        /// Failure that `--force` cannot help with: either `--force` was
-        /// already attempted, or the failure class is structural (main
-        /// checkout, non-git repo, git binary missing).
-        case gitFailedFinal(String)
-        /// `worktreePath` did not resolve to any tracked worktree.
-        case notFound
-        /// `worktreePath` resolved to the repo's main checkout, which
-        /// `git worktree remove` refuses by design.
-        case mainCheckoutRejected
-    }
+    /// Shared with the headless host (GrafttyKit). `dismissed == true`
+    /// means the directory was already gone and Git's record was pruned.
+    typealias Outcome = WorktreeRemovalOutcome
+    typealias FlowError = WorktreeRemovalError
 
     /// Run the flow. Confirmation must have already happened; this
     /// function performs the irreversible side effects unconditionally.
@@ -58,6 +38,8 @@ enum DeleteWorktreeFlow {
         prStatusStore: PRStatusStore,
         teamEventDispatcher: TeamEventDispatcher
     ) async -> Swift.Result<Outcome, FlowError> {
+        var before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         guard let (repoIdx, wtIdx) = appState.wrappedValue.indices(forWorktreePath: worktreePath) else {
             return .failure(.notFound)
         }
@@ -73,6 +55,11 @@ enum DeleteWorktreeFlow {
 
         let priorState = wt.state
         appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .deleting
+        // Mark `.deleting` before awaiting git, as the window's `.onChange`
+        // would, so a windowless removal is saved and published now
+        // (PERF-1.22). The new baseline makes the defer mark a restore too.
+        GrafttyApp.persistAppState(appState.wrappedValue)
+        before = appState.wrappedValue
 
         do {
             try await GitWorktreeRemove.remove(
@@ -139,9 +126,8 @@ enum DeleteWorktreeFlow {
         appState.wrappedValue.repos[r].worktrees[w].state = prior
     }
 
-    /// Post-remove teardown. Identical ordering to the previous
-    /// `MainWindow.finishWorktreeRemoval`: surface teardown for running
-    /// and stale worktrees, per-path cache clears BEFORE the model entry drops
+    /// Post-remove teardown: surface teardown for running and stale
+    /// worktrees, per-path cache clears BEFORE the model entry drops
     /// (GIT-4.10), then the `removeWorktree` mutation, then the
     /// TEAM-5.3 `left` event whose repo lookup must use the original
     /// `repoPath` because the worktree is gone from AppState by now.
@@ -167,7 +153,6 @@ enum DeleteWorktreeFlow {
                 leaverBranch: leaverBranch,
                 leaverPath: wt.path,
                 reason: .removed,
-                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
                 dispatcher: teamEventDispatcher
             )
         }

@@ -1,6 +1,8 @@
 import Testing
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 @testable import GrafttyKit
 
 @Suite("SplitTree — resizing")

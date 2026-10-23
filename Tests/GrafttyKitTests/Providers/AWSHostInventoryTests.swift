@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyKit
 
 struct AWSHostInventoryTests {
-    @Test("@spec REMOTE-24.11: When listing AWS provider instances, the CLI shall report account-scoped instance identity, lifecycle state, available hardware metadata, and observation time across configured regions, default to Graftty-tagged instances, and expose readiness and unmeasured load as unknown without treating tags as authenticated host ownership.")
+    @Test("@spec REMOTE-31.11: When listing AWS provider instances, the CLI shall report account-scoped instance identity, lifecycle state, available hardware metadata, and observation time across configured regions, default to Graftty-tagged instances, and expose readiness and unmeasured load as unknown without treating tags as authenticated host ownership.")
     func inventoryIncludesHostsOutsideTheCurrentPoolWithoutClaimingReadiness() async throws {
         let now = Date(timeIntervalSince1970: 1_750_000_000)
         let runner = InventoryExecutor(responses: [

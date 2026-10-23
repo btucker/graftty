@@ -41,7 +41,7 @@ struct GhosttyConfigLocatorTests {
             at: xdg.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        FileManager.default.createFile(atPath: xdg.path, contents: Data())
+        _ = FileManager.default.createFile(atPath: xdg.path, contents: Data())
 
         let url = GhosttyConfigLocator.resolveURL(home: home, environment: [:])
         #expect(url.path == xdg.path)
@@ -59,7 +59,7 @@ struct GhosttyConfigLocatorTests {
             at: xdgCfg.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        FileManager.default.createFile(atPath: xdgCfg.path, contents: Data())
+        _ = FileManager.default.createFile(atPath: xdgCfg.path, contents: Data())
 
         // Populate `~/.config/ghostty/config` too to confirm XDG wins.
         let dotConfig = home.appendingPathComponent(".config/ghostty/config")
@@ -67,7 +67,7 @@ struct GhosttyConfigLocatorTests {
             at: dotConfig.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        FileManager.default.createFile(atPath: dotConfig.path, contents: Data())
+        _ = FileManager.default.createFile(atPath: dotConfig.path, contents: Data())
 
         let url = GhosttyConfigLocator.resolveURL(
             home: home,
@@ -87,7 +87,7 @@ struct GhosttyConfigLocatorTests {
             at: dotConfig.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        FileManager.default.createFile(atPath: dotConfig.path, contents: Data())
+        _ = FileManager.default.createFile(atPath: dotConfig.path, contents: Data())
 
         let url = GhosttyConfigLocator.resolveURL(
             home: home,
@@ -107,7 +107,7 @@ struct GhosttyConfigLocatorTests {
             at: macOS.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        FileManager.default.createFile(atPath: macOS.path, contents: Data())
+        _ = FileManager.default.createFile(atPath: macOS.path, contents: Data())
 
         let url = GhosttyConfigLocator.resolveURL(home: home, environment: [:])
         #expect(url.path == macOS.path)

@@ -2,7 +2,6 @@
 import CryptoKit
 import Foundation
 import GrafttyProtocol
-import WebRTC
 import os
 
 public enum RemoteWorktreeLoadStage: Sendable, Equatable {
@@ -441,6 +440,16 @@ public final class RemoteConnectionCoordinator {
         onProgress: RemoteWorktreeLoadProgress? = nil,
         reconnect: Bool = false
     ) async throws -> [WorktreePanes] {
+        try await subscribedPanesStore(for: host, onProgress: onProgress, reconnect: reconnect).current
+    }
+
+    /// The host's panes-state store once it has applied its first snapshot,
+    /// opening the long-lived subscription on first use.
+    private func subscribedPanesStore(
+        for host: Host,
+        onProgress: RemoteWorktreeLoadProgress? = nil,
+        reconnect: Bool = false
+    ) async throws -> WorktreePanesStore {
         let clock = ContinuousClock()
         let loadStarted = clock.now
         onProgress?(.connecting)
@@ -468,29 +477,41 @@ public final class RemoteConnectionCoordinator {
         }
 
         onProgress?(.waitingForSnapshot)
-        let deadline = Date().addingTimeInterval(10)
-        while !Task.isCancelled {
-            if case .closed = await store.connectionState {
-                await discardPanesStore(store, hostID: host.id)
-                throw ConnectionError.paneChannelClosed
+        switch try await store.waitForFirstSnapshot(timeout: .seconds(10)) {
+        case .closed:
+            await discardPanesStore(store, hostID: host.id)
+            throw ConnectionError.paneChannelClosed
+        case .timedOut:
+            await discardPanesStore(store, hostID: host.id)
+            throw ConnectionError.paneSnapshotTimedOut
+        case .received:
+            if onProgress != nil {
+                let snapshotFinished = clock.now
+                Self.logger.info(
+                    "worktree load host=\(host.id, privacy: .public) stage=first-snapshot duration_ms=\(Self.milliseconds(channelFinished.duration(to: snapshotFinished)), privacy: .public) total_ms=\(Self.milliseconds(loadStarted.duration(to: snapshotFinished)), privacy: .public)"
+                )
             }
-            if await store.hasReceivedSnapshot {
-                if onProgress != nil {
-                    let snapshotFinished = clock.now
-                    Self.logger.info(
-                        "worktree load host=\(host.id, privacy: .public) stage=first-snapshot duration_ms=\(Self.milliseconds(channelFinished.duration(to: snapshotFinished)), privacy: .public) total_ms=\(Self.milliseconds(loadStarted.duration(to: snapshotFinished)), privacy: .public)"
-                    )
-                }
-                return await store.current
-            }
-            if Date() >= deadline {
-                await discardPanesStore(store, hostID: host.id)
-                throw ConnectionError.paneSnapshotTimedOut
-            }
-            try await Task.sleep(for: .milliseconds(25))
+            return store
         }
-        throw CancellationError()
     }
+
+    /// The latest applied worktree frame for `host`, then each newer one
+    /// (a slow observer skips to the newest), across reconnects, without
+    /// polling (IOS-4.51). Each subscription shares `worktreePanes(for:)`'s
+    /// connection dedup, failure cooldown and first-snapshot wait.
+    public func worktreeUpdates(for host: Host) -> AsyncStream<RemoteWorktreeUpdate> {
+        RemoteWorktreeUpdates.stream(
+            subscribe: { [weak self] in
+                guard let self else { throw ConnectionError.unavailable }
+                // Observe the store that passed the first-snapshot wait,
+                // not whatever the registry holds after the await.
+                return try await self.subscribedPanesStore(for: host).frameUpdates()
+            },
+            retryDelay: { try await Task.sleep(for: Self.worktreeUpdateRetryDelay) }
+        )
+    }
+
+    private static let worktreeUpdateRetryDelay: Duration = .seconds(1)
 
     private nonisolated static func milliseconds(
         _ duration: Duration
@@ -511,16 +532,7 @@ public final class RemoteConnectionCoordinator {
         guard let connection = await connection(for: host) else {
             throw ConnectionError.unavailable
         }
-        return try await sendWorktreeManagement(request, over: connection)
-    }
-
-    private func sendWorktreeManagement(
-        _ request: WorktreeManagementRequest,
-        over connection: RemoteHostConnection
-    ) async throws -> WorktreeManagementResponse {
-        let client = try await connection.openWorktreeManagementChannel()
-        defer { client.close() }
-        return try await client.send(request)
+        return try await connection.sendWorktreeManagement(request)
     }
 
     public func presentation(for host: Host) async
@@ -534,9 +546,8 @@ public final class RemoteConnectionCoordinator {
            cached.connectionIdentity == connectionIdentity {
             return cached.value
         }
-        guard let response = try? await sendWorktreeManagement(
-            .hostPresentation,
-            over: connection
+        guard let response = try? await connection.sendWorktreeManagement(
+            .hostPresentation
         ), case .hostPresentation(let presentation) = response else {
             return nil
         }
@@ -626,38 +637,15 @@ public final class RemoteConnectionCoordinator {
     private nonisolated static func makePanesStore(
         connection: RemoteHostConnection, hostID: UUID
     ) async -> WorktreePanesStore? {
-        for originAware in [true, false] {
-            var openedStore: WorktreePanesStore?
-            do {
-                let client = try await connection.makePanesStateClient(
-                    onSnapshot: { _ in },
-                    onClosed: { _ in },
-                    originAware: originAware,
-                    requestReply: originAware
-                )
-                let store = WorktreePanesStore(driver: client)
-                openedStore = store
-                client.setCallbacks(
-                    onSnapshot: { [weak store] snapshot in
-                        await store?.applySnapshot(snapshot)
-                        await MobileAgentNotifications.shared.receive(snapshot, hostID: hostID)
-                    },
-                    onClosed: { [weak store] reason in
-                        await store?.markClosed(reason: reason)
-                    }
-                )
-                try await store.subscribe()
-                return store
-            } catch {
-                await openedStore?.unsubscribe()
-            }
-        }
-        return nil
+        try? await PanesStateSubscription.open(on: connection, onSnapshot: { snapshot in
+            await MobileAgentNotifications.shared.receive(snapshot, hostID: hostID)
+        })
     }
 
     /// Full negotiation body: build the connection, wire the terminal-state
-    /// observer BEFORE `createOffer()` (so no drop between construction and
-    /// observation), exchange SDP via `signaling`, register, then
+    /// observer BEFORE `RemoteHostDialer.negotiate` creates the offer (so
+    /// no drop between construction and observation), exchange SDP via
+    /// `signaling`, register, then
     /// re-verify the connection is still alive post-registration. Any
     /// failure — including a `503`/busy signaling response, or the
     /// connection having died in the gap between registering and
@@ -687,40 +675,22 @@ public final class RemoteConnectionCoordinator {
         localDeviceID = clientDeviceID
         let connection = connectionFactory(clientKey, pinnedHost.fingerprint)
         let connectionIdentity = ObjectIdentifier(connection)
-        await connection.setOnStateChange { [weak self] state in
-            guard state.isTerminal else { return }
+        await connection.observeTerminalState { [weak self] _ in
             Task { await self?.evict(hostID: host.id, connectionIdentity: connectionIdentity) }
         }
 
         do {
-            let offer = try await connection.createOffer()
-            let exchange = try await signaling.authenticatedExchange(
+            let refreshedPin = try await RemoteHostDialer.negotiate(
+                connection,
+                signaling: signaling,
+                pinnedHost: pinnedHost,
                 routes: routes,
-                hostDeviceID: pinnedHost.id,
-                hostPublicKey: pinnedHost.publicKey,
-                clientDeviceID: clientDeviceID,
                 clientKey: clientKey,
-                sdp: offer.sdp,
-                replacesExistingConnection: replacingExistingConnection,
-                wakeOnLAN: pinnedHost.wakeOnLAN
+                clientDeviceID: clientDeviceID,
+                replacingExistingConnection: replacingExistingConnection,
+                connectedAt: now
             )
-            try await connection.applyAnswer(
-                RTCSessionDescription(
-                    type: .answer,
-                    sdp: exchange.answer.sdp
-                )
-            )
-            var refreshedPin = pinnedHost
-            refreshedPin.routes = exchange.answer.routes
-            refreshedPin.lastSuccessfulRoute = exchange.route
-            refreshedPin.wakeOnLAN = exchange.wakeOnLAN
-            refreshedPin.lastConnectedAt = now()
-            do {
-                try pinnedHostStore.update(refreshedPin)
-            } catch PinnedHostStore.Error.notFound {
-                // Trust was revoked while negotiation was in flight.
-                throw PinnedHostStore.Error.notFound
-            } catch {
+            try RemoteHostDialer.persistRefreshedPin(refreshedPin, using: pinnedHostStore.update) { error in
                 Self.logger.warning(
                     "connected to host \(host.id, privacy: .public), but could not persist route metadata: \(String(describing: error), privacy: .public)"
                 )
@@ -761,7 +731,7 @@ public final class RemoteConnectionCoordinator {
         // path instead of `invalidatedAttempts`. What THIS check guards
         // against is different — a connection that went terminal on its
         // own (ICE failed, DataChannel closed) in the gap between
-        // `applyAnswer` succeeding and this line, independent of any
+        // the dialer applying the answer and this line, independent of any
         // `invalidate` call.
         let state = await connection.state
         if state.isTerminal {

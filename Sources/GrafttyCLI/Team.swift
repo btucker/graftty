@@ -57,7 +57,7 @@ struct TeamSend: ParsableCommand {
                 priority: urgent ? .urgent : .normal
             )
         )
-        try CLIEnv.expectOk(response)
+        try CLIEnv.expectOk(response, for: "team send")
     }
 }
 
@@ -106,7 +106,7 @@ struct TeamReply: ParsableCommand {
             priority: urgent ? .urgent : .normal,
             fallback: fallback
         ))
-        try CLIEnv.expectOk(response)
+        try CLIEnv.expectOk(response, for: "team reply")
     }
 }
 
@@ -136,7 +136,7 @@ struct TeamBroadcast: ParsableCommand {
                 priority: urgent ? .urgent : .normal
             )
         )
-        try CLIEnv.expectOk(response)
+        try CLIEnv.expectOk(response, for: "team broadcast")
     }
 }
 
@@ -160,7 +160,7 @@ struct TeamMembers: ParsableCommand {
         let response = try CLIEnv.sendRequest(
             .teamMembers(callerWorktree: callerWorktree, worktree: worktree, repo: repo)
         )
-        try TeamOutput.printMembers(response, json: json)
+        try TeamOutput.printMembers(response, json: json, command: "team members")
     }
 }
 
@@ -309,8 +309,7 @@ struct TeamHook: ParsableCommand {
                     stageAttentionProgress()
                 }
                 print(Self.unrenderedHookOutput(runtime: runtime, event: event))
-            case .agentSkills, .placement, .remoteHosts, .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamInbox,
-                .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
+            default:
                 print(Self.unrenderedHookOutput(runtime: runtime, event: event))
             }
         } catch {
@@ -345,7 +344,7 @@ struct TeamHook: ParsableCommand {
         worktreePath: String,
         paneSessionName: String?
     ) {
-        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree(
+        guard let resolved = TeamPresenceResolution.resolveTeamAndWorktree(
             worktreePath: worktreePath
         ) else {
             return
@@ -443,7 +442,7 @@ struct TeamHook: ParsableCommand {
         guard let paneSessionName,
               let agentID = ProcessInfo.processInfo.environment["GRAFTTY_AGENT_ID"],
               TeamAgentIdentity(rawValue: agentID)?.runtime == .codex,
-              let resolved = TeamPresenceCLI.resolveTeamAndWorktree(
+              let resolved = TeamPresenceResolution.resolveTeamAndWorktree(
                   worktreePath: worktreePath
               ) else {
             return
@@ -567,45 +566,35 @@ struct TeamInbox: ParsableCommand {
                         : TeamInboxDiagnosticPage.defaultLimit
                 ))
             )
-            switch response {
-            case .teamInbox(let messages, let nextBeforeID, let nextAfterID, let responseSnapshotThroughID):
-                if readMode == .consumeUnread,
-                   !messages.allSatisfy({ Self.isDeliverable($0, to: callerAgentID) }) {
-                    writeError("Team inbox response is not scoped to this agent; update or restart the Graftty app before consuming provider-targeted messages")
-                    throw ExitCode(1)
-                }
-                guard readMode == .history || messages.isEmpty || responseSnapshotThroughID != nil else {
-                    writeError("Team inbox response is missing fixed-snapshot support; update or restart the Graftty app before reading unread messages")
-                    throw ExitCode(1)
-                }
-                pages.append(messages)
-                if snapshotThroughID == nil {
-                    snapshotThroughID = responseSnapshotThroughID
-                }
-                let nextCursor = readMode == .history ? nextBeforeID : nextAfterID
-                guard all, let nextCursor else { break }
-                guard seenCursors.insert(nextCursor).inserted else {
-                    writeError("Team inbox pagination returned a repeated cursor")
-                    throw ExitCode(1)
-                }
-                if readMode == .history {
-                    beforeID = nextCursor
-                } else {
-                    afterID = nextCursor
-                }
-                continue
-            case .error(let msg):
-                writeError(msg)
-                throw ExitCode(1)
-            case .serverBusy:
-                writeError(ResponseMessage.serverBusyMessage)
-                throw ExitCode(1)
-            case .agentSkills, .placement, .remoteHosts, .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamList, .teamHookOutput,
-                 .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
-                writeError("Unexpected response for team inbox")
+            let (messages, nextBeforeID, nextAfterID, responseSnapshotThroughID) = try CLIEnv.expect(
+                response, for: "team inbox", writeError: writeError
+            ) {
+                if case let .teamInbox(messages, before, after, snapshot) = $0 { (messages, before, after, snapshot) } else { nil }
+            }
+            if readMode == .consumeUnread,
+               !messages.allSatisfy({ Self.isDeliverable($0, to: callerAgentID) }) {
+                writeError("Team inbox response is not scoped to this agent; update or restart the Graftty app before consuming provider-targeted messages")
                 throw ExitCode(1)
             }
-            break
+            guard readMode == .history || messages.isEmpty || responseSnapshotThroughID != nil else {
+                writeError("Team inbox response is missing fixed-snapshot support; update or restart the Graftty app before reading unread messages")
+                throw ExitCode(1)
+            }
+            pages.append(messages)
+            if snapshotThroughID == nil {
+                snapshotThroughID = responseSnapshotThroughID
+            }
+            let nextCursor = readMode == .history ? nextBeforeID : nextAfterID
+            guard all, let nextCursor else { break }
+            guard seenCursors.insert(nextCursor).inserted else {
+                writeError("Team inbox pagination returned a repeated cursor")
+                throw ExitCode(1)
+            }
+            if readMode == .history {
+                beforeID = nextCursor
+            } else {
+                afterID = nextCursor
+            }
         }
 
         let messages = readMode == .history
@@ -648,22 +637,9 @@ struct TeamInbox: ParsableCommand {
             writeError("Failed to advance team inbox: \(error)")
             throw ExitCode(1)
         }
-        switch response {
-        case .ok:
-            return
-        case .error(let message):
+        try CLIEnv.expectOk(response, for: "team inbox") {
             writeError(Self.advanceFailureGuidance)
-            writeError(message)
-            throw ExitCode(1)
-        case .serverBusy:
-            writeError(Self.advanceFailureGuidance)
-            writeError(ResponseMessage.serverBusyMessage)
-            throw ExitCode(1)
-        case .agentSkills, .placement, .remoteHosts, .linuxSetupIdentity, .paneList, .paneShow, .teamList, .teamHookOutput,
-             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
-            writeError(Self.advanceFailureGuidance)
-            writeError("Unexpected response while advancing team inbox")
-            throw ExitCode(1)
+            writeError($0)
         }
     }
 
@@ -688,7 +664,8 @@ struct TeamInbox: ParsableCommand {
 struct TeamMsg: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "msg",
-        abstract: "Send a message to a worktree, provider, or exact canonical agent"
+        abstract: "Hidden alias of `team send` without --stdin or --urgent.",
+        shouldDisplay: false
     )
 
     @Argument(help: "Worktree name/path, <path>#<runtime>, or <path>#<agent-id>")
@@ -699,18 +676,17 @@ struct TeamMsg: ParsableCommand {
 
     func run() throws {
         let worktreePath = try CLIEnv.resolveWorktree()
-        let response = try CLIEnv.sendRequest(
-            .teamSend(
-                callerWorktree: worktreePath,
-                callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
-                recipient: address,
-                text: text,
-                priority: .normal
-            )
-        )
-        try CLIEnv.expectOk(response)
+        let response = try CLIEnv.sendRequest(request(
+            callerWorktree: worktreePath,
+            callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath)
+        ))
+        try CLIEnv.expectOk(response, for: "team msg")
     }
 
+    func request(callerWorktree: String, callerAgentID: String?) -> NotificationMessage {
+        .teamSend(callerWorktree: callerWorktree, callerAgentID: callerAgentID, recipient: address, text: text,
+                  priority: .normal)
+    }
 }
 
 struct TeamList: ParsableCommand {
@@ -725,7 +701,7 @@ struct TeamList: ParsableCommand {
     func run() throws {
         let worktreePath = try CLIEnv.resolveWorktree()
         let response = try CLIEnv.sendRequest(.teamList(callerWorktree: worktreePath))
-        try TeamOutput.printMembers(response, json: json)
+        try TeamOutput.printMembers(response, json: json, command: "team list")
     }
 }
 
@@ -755,7 +731,7 @@ struct TeamRegister: ParsableCommand {
             throw ValidationError("runtime must be one of: codex, claude")
         }
         let runtimeIdentity = try TeamRegisterPIDResolver.resolve(explicitPID: pid)
-        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree() else {
+        guard let resolved = TeamPresenceResolution.resolveCurrentWorktree() else {
             // No team for this cwd — silently no-op so it's safe to call
             // unconditionally from a wrapper script.
             return
@@ -788,7 +764,7 @@ struct TeamRegister: ParsableCommand {
             agentID: resolvedAgentID
         )
         try storage.write(record)
-        _ = try? TeamPresenceCLI.deleteLegacyMemberNamePresence(
+        _ = try? TeamPresenceResolution.deleteLegacyMemberNamePresence(
             storage: storage,
             teamID: teamID,
             resolved: resolved,
@@ -850,7 +826,7 @@ struct TeamUnregister: ParsableCommand {
         guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
             throw ValidationError("runtime must be one of: codex, claude")
         }
-        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree() else {
+        guard let resolved = TeamPresenceResolution.resolveCurrentWorktree() else {
             return
         }
         let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
@@ -868,7 +844,7 @@ struct TeamUnregister: ParsableCommand {
             paneSessionName: paneSessionName,
             agentID: resolvedAgentID
         )
-        let legacyPrior = try TeamPresenceCLI.deleteLegacyMemberNamePresence(
+        let legacyPrior = try TeamPresenceResolution.deleteLegacyMemberNamePresence(
             storage: storage,
             teamID: teamID,
             resolved: resolved,
@@ -924,7 +900,7 @@ struct TeamCodexAppServerRegister: ParsableCommand {
     @Option(name: .long) var ownerPid: Int32
 
     func run() throws {
-        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree() else {
+        guard let resolved = TeamPresenceResolution.resolveCurrentWorktree() else {
             return
         }
         guard let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
@@ -960,7 +936,7 @@ struct TeamCodexAppServerUnregister: ParsableCommand {
     @Option(name: .long) var appServerPid: Int32?
 
     func run() throws {
-        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree() else {
+        guard let resolved = TeamPresenceResolution.resolveCurrentWorktree() else {
             return
         }
         guard let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
@@ -996,150 +972,6 @@ enum TeamCodexAppServerPIDResolver {
             throw ValidationError("--app-server-pid must identify a running process with a readable start time")
         }
         return Identity(pid: appServerPid, processStartTimeMicroseconds: startTime)
-    }
-}
-
-enum CodexDeliveryBinaryResolver {
-    static var targetTriple: String {
-        #if os(macOS)
-        #if arch(arm64)
-        return "aarch64-apple-darwin"
-        #elseif arch(x86_64)
-        return "x86_64-apple-darwin"
-        #else
-        return ""
-        #endif
-        #elseif os(Linux)
-        #if arch(arm64)
-        return "aarch64-unknown-linux-musl"
-        #elseif arch(x86_64)
-        return "x86_64-unknown-linux-musl"
-        #else
-        return ""
-        #endif
-        #else
-        return ""
-        #endif
-    }
-
-    static var platformPackageName: String {
-        #if os(macOS)
-        #if arch(arm64)
-        return "@openai/codex-darwin-arm64"
-        #elseif arch(x86_64)
-        return "@openai/codex-darwin-x64"
-        #else
-        return ""
-        #endif
-        #elseif os(Linux)
-        #if arch(arm64)
-        return "@openai/codex-linux-arm64"
-        #elseif arch(x86_64)
-        return "@openai/codex-linux-x64"
-        #else
-        return ""
-        #endif
-        #else
-        return ""
-        #endif
-    }
-
-    static var platformPackageDirectoryName: String {
-        platformPackageName.split(separator: "/").last.map(String.init) ?? ""
-    }
-
-    static func resolve(_ realBinaryPath: String, fileManager: FileManager = .default) -> String {
-        guard !targetTriple.isEmpty, !platformPackageDirectoryName.isEmpty else {
-            return realBinaryPath
-        }
-
-        let binaryURL = URL(fileURLWithPath: realBinaryPath)
-        let scriptURL = binaryURL.resolvingSymlinksInPath()
-        guard scriptURL.lastPathComponent == "codex.js",
-              let script = try? String(contentsOf: scriptURL, encoding: .utf8),
-              script.hasPrefix("#!/usr/bin/env node")
-        else {
-            return realBinaryPath
-        }
-
-        let packageRoot = scriptURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let openAIOrgRoot = packageRoot.deletingLastPathComponent()
-        let candidateURLs = [
-            openAIOrgRoot
-                .appendingPathComponent(platformPackageDirectoryName, isDirectory: true)
-                .appendingPathComponent("vendor", isDirectory: true)
-                .appendingPathComponent(targetTriple, isDirectory: true)
-                .appendingPathComponent("bin", isDirectory: true)
-                .appendingPathComponent("codex"),
-            packageRoot
-                .appendingPathComponent("vendor", isDirectory: true)
-                .appendingPathComponent(targetTriple, isDirectory: true)
-                .appendingPathComponent("bin", isDirectory: true)
-                .appendingPathComponent("codex"),
-        ]
-
-        guard let nativeURL = candidateURLs.first(where: { fileManager.isExecutableFile(atPath: $0.path) }) else {
-            return realBinaryPath
-        }
-        return nativeURL.path
-    }
-}
-
-enum TeamCodexAppServerCore {
-    @discardableResult
-    static func register(
-        storage: CodexAppServerSessionStorage,
-        teamID: String,
-        worktree: String,
-        paneSessionName: String,
-        socketPath: String,
-        realBinaryPath: String,
-        appServerPID: Int32,
-        appServerProcessStartTimeMicroseconds: Int64,
-        ownerPID: Int32? = nil,
-        ownerProcessStartTimeMicroseconds: Int64? = nil,
-        registeredAt: Date
-    ) throws -> CodexAppServerSessionRecord {
-        let deliveryBinaryPath = CodexDeliveryBinaryResolver.resolve(realBinaryPath)
-        let record = CodexAppServerSessionRecord(
-            teamID: teamID,
-            worktree: worktree,
-            paneSessionName: paneSessionName,
-            socketPath: socketPath,
-            realBinaryPath: deliveryBinaryPath,
-            appServerPID: appServerPID,
-            appServerProcessStartTimeMicroseconds: appServerProcessStartTimeMicroseconds,
-            ownerPID: ownerPID,
-            ownerProcessStartTimeMicroseconds: ownerProcessStartTimeMicroseconds,
-            registeredAt: registeredAt
-        )
-        try storage.write(record)
-        return record
-    }
-
-    @discardableResult
-    static func unregister(
-        storage: CodexAppServerSessionStorage,
-        teamID: String,
-        worktree: String,
-        paneSessionName: String,
-        expectedSocketPath: String? = nil,
-        expectedAppServerPID: Int32? = nil
-    ) throws -> CodexAppServerSessionRecord? {
-        guard let prior = try storage.read(
-            teamID: teamID,
-            worktree: worktree,
-            paneSessionName: paneSessionName
-        ) else { return nil }
-        if let expectedSocketPath, prior.socketPath != expectedSocketPath {
-            return nil
-        }
-        if let expectedAppServerPID, prior.appServerPID != expectedAppServerPID {
-            return nil
-        }
-        return try storage.deleteIfMatching(prior) ? prior : nil
     }
 }
 
@@ -1243,110 +1075,13 @@ struct SyncCodexHome: ParsableCommand {
     }
 }
 
-/// Helpers shared by `team register` / `team unregister` / `team hook`.
-/// Presence ownership and inbox delivery use the canonical worktree path;
-/// the member name is display-only compatibility metadata.
-/// Returns nil when the cwd is not in a tracked, team-enabled worktree
-/// so the wrapper-driven CLI calls can no-op cleanly.
-enum TeamPresenceCLI {
-    struct Resolved {
-        let team: TeamView
-        let worktreePath: String
-        let memberName: String
-    }
-
-    static func resolveTeamAndWorktree() -> Resolved? {
-        guard let state = try? AppState.load(from: AppState.defaultDirectory) else {
-            return nil
-        }
+extension TeamPresenceResolution {
+    /// Resolves the team of the worktree containing the current directory.
+    static func resolveCurrentWorktree() -> Resolved? {
         guard let worktreePath = try? WorktreeResolver.resolve() else {
             return nil
         }
-        return resolveTeamAndWorktree(state: state, worktreePath: worktreePath)
-    }
-
-    static func resolveTeamAndWorktree(worktreePath: String) -> Resolved? {
-        guard let state = try? AppState.load(from: AppState.defaultDirectory) else {
-            return nil
-        }
-        return resolveTeamAndWorktree(state: state, worktreePath: worktreePath)
-    }
-
-    static func resolveTeamAndWorktree(state: AppState, worktreePath: String) -> Resolved? {
-        guard let team = TeamLookup.team(for: worktreePath, in: state.repos) else {
-            return nil
-        }
-        guard let worktreeName = team.members.first(where: { $0.worktreePath == worktreePath })?.name else {
-            return nil
-        }
-        return Resolved(team: team, worktreePath: worktreePath, memberName: worktreeName)
-    }
-
-    @discardableResult
-    static func deleteLegacyMemberNamePresence(
-        storage: TeamPresenceStorage,
-        teamID: String,
-        resolved: Resolved,
-        runtime: TeamHookRuntime,
-        paneSessionName: String?
-    ) throws -> TeamPresenceRecord? {
-        guard resolved.memberName != resolved.worktreePath else { return nil }
-        let prior = try storage.read(
-            teamID: teamID,
-            worktree: resolved.memberName,
-            runtime: runtime,
-            paneSessionName: paneSessionName
-        )
-        try storage.delete(
-            teamID: teamID,
-            worktree: resolved.memberName,
-            runtime: runtime,
-            paneSessionName: paneSessionName
-        )
-        return prior
-    }
-}
-
-enum AttentionReportIdentity {
-    struct UnmanagedAgent {
-        let agentID: String
-        let sessionID: String
-        let runtime: TeamHookRuntime
-    }
-
-    static func unmanagedAgent(environment: [String: String]) -> UnmanagedAgent? {
-        let session: (TeamHookRuntime, String)?
-        if let id = environment["CODEX_SESSION_ID"] ?? environment["CODEX_THREAD_ID"], !id.isEmpty {
-            session = (.codex, id)
-        } else if let id = environment["CLAUDE_SESSION_ID"], !id.isEmpty {
-            session = (.claude, id)
-        } else {
-            session = nil
-        }
-        guard let (runtime, sessionID) = session else { return nil }
-        return UnmanagedAgent(
-            agentID: TeamAgentIdentity(runtime: runtime, nativeSessionID: sessionID).rawValue,
-            sessionID: sessionID,
-            runtime: runtime
-        )
-    }
-
-    static func currentAgentID(worktreePath: String) -> String? {
-        let environment = ProcessInfo.processInfo.environment
-        if let explicit = environment["GRAFTTY_AGENT_ID"]
-            .flatMap(TeamAgentIdentity.init(rawValue:)) {
-            return explicit.rawValue
-        }
-        let records = (try? TeamPresenceStorage(
-            rootDirectory: TeamPresenceStorage.defaultRoot()
-        ).listAll()) ?? []
-        return TeamCallerAgentIdentityResolver.resolve(
-            explicitAgentID: nil,
-            worktree: worktreePath,
-            paneSessionName: TeamRegisterPaneResolver.paneSessionName(env: environment),
-            records: records,
-            isReachable: TeamAgentReachability.isReachable
-        )
+        return resolveTeamAndWorktree(worktreePath: worktreePath)
     }
 }
 
@@ -1381,39 +1116,27 @@ private enum TeamDiagnosticScope {
 }
 
 private enum TeamOutput {
-    static func printMembers(_ response: ResponseMessage, json: Bool) throws {
-        switch response {
-        case .teamList(let teamName, let members):
-            if json {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.sortedKeys]
-                let data = try encoder.encode(
-                    TeamListDocument(team: teamName, members: members)
-                )
-                print(String(decoding: data, as: UTF8.self))
-            } else {
-                print("team=\(teamName)  members=\(members.count)")
-                for m in members {
-                    print(memberLine(m))
-                    for agent in m.agents {
-                        let label = agent.displayName.map { "  name=\($0)" } ?? ""
-                        print("  agent=\(agent.address)  runtime=\(agent.runtime.rawValue)  reachable=\(agent.isReachable)\(label)")
-                        if let pane = agent.paneSessionName {
-                            print("    pane=\(pane)")
-                        }
-                    }
+    static func printMembers(_ response: ResponseMessage, json: Bool, command: String) throws {
+        let (teamName, members) = try CLIEnv.expect(response, for: command) {
+            if case let .teamList(teamName, members) = $0 { (teamName, members) } else { nil }
+        }
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(TeamListDocument(team: teamName, members: members))
+            print(String(decoding: data, as: UTF8.self))
+            return
+        }
+        print("team=\(teamName)  members=\(members.count)")
+        for m in members {
+            print(memberLine(m))
+            for agent in m.agents {
+                let label = agent.displayName.map { "  name=\($0)" } ?? ""
+                print("  agent=\(agent.address)  runtime=\(agent.runtime.rawValue)  reachable=\(agent.isReachable)\(label)")
+                if let pane = agent.paneSessionName {
+                    print("    pane=\(pane)")
                 }
             }
-        case .error(let msg):
-            CLIEnv.printError(msg)
-            throw ExitCode(1)
-        case .serverBusy:
-            CLIEnv.printError(ResponseMessage.serverBusyMessage)
-            throw ExitCode(1)
-        case .agentSkills, .placement, .remoteHosts, .linuxSetupIdentity, .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox,
-             .worktreeCreate, .worktreeCreateRetry, .worktreeRemove:
-            CLIEnv.printError("Unexpected response for team members")
-            throw ExitCode(1)
         }
     }
 

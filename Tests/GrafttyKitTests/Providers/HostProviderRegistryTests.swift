@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import GrafttyKit
 
-@Suite("@spec REMOTE-24.20: When connecting through a registered compute provider, the application shall select the adapter by provider identifier, preserve the enrollment operation and pinned host identity, and recheck adapter authorization without requiring AWS-specific identifiers in shared connection code.")
+@Suite("@spec REMOTE-31.20: When connecting through a registered compute provider, the application shall select the adapter by provider identifier, preserve the enrollment operation and pinned host identity, and recheck adapter authorization without requiring AWS-specific identifiers in shared connection code.")
 struct HostProviderRegistryTests {
     private let parent = LinuxHostTrustRequest(deviceID: "parent", displayName: "Mac",
         publicKey: Data(repeating: 1, count: 32).base64EncodedString(), serverPublicKey: Data(repeating: 2, count: 32).base64EncodedString())

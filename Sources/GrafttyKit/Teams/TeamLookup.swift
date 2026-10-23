@@ -10,11 +10,11 @@ public enum TeamLookup {
 
     /// Resolves the `TeamView` for the worktree located at `worktreePath`.
     /// Returns nil when the path is not in any tracked repo. Matches
-    /// `TeamView.team(for:in:teamsEnabled:)` with `teamsEnabled: true`.
+    /// `TeamView.team(for:in:)`.
     public static func team(for worktreePath: String, in repos: [RepoEntry]) -> TeamView? {
         for repo in repos {
             if let worktree = repo.worktrees.first(where: { $0.path == worktreePath }) {
-                return TeamView.team(for: worktree, in: repos, teamsEnabled: true)
+                return TeamView.team(for: worktree, in: repos)
             }
         }
         return nil
@@ -40,8 +40,7 @@ public enum TeamLookup {
             guard let first = repo.worktrees.first else { continue }
             guard let team = TeamView.team(
                 for: first,
-                in: repos,
-                teamsEnabled: true
+                in: repos
             ) else { continue }
             if let match = team.memberNamed(name) {
                 return match

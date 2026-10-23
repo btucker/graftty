@@ -8,7 +8,7 @@ Graftty should let an agent place a worktree on available remote capacity, prepa
 
 Remote work remains ordinary Git history and native Claude or Codex session data. The initiating Mac retains copies so work can return home or resume on another host. Publication to `origin` is separate from replication to that Mac.
 
-The behavioral backlog lives in [RemoteTodo.swift](../../../Tests/GrafttyTests/Specs/RemoteTodo.swift), under `REMOTE-24` through `REMOTE-30`. [SPECS.md](../../../SPECS.md) is generated from that inventory. The disabled entries describe required future behavior, not passing implementation tests.
+The behavioral backlog lives in [RemoteTodo.swift](../../../Tests/GrafttyTests/Specs/RemoteTodo.swift), under `REMOTE-25` through `REMOTE-31`. Provider preferences and placement use `REMOTE-31`; `REMOTE-24` belongs to main's remote worktree viewer. [SPECS.md](../../../SPECS.md) is generated from that inventory. The disabled entries describe required future behavior, not passing implementation tests.
 
 ## Implementation status
 
@@ -85,7 +85,7 @@ Replication permission defaults to disabled for new pairings and legacy records.
 
 Dev Container subprocesses opt into cancellation so host shutdown can terminate a running CLI command. Other CLI callers retain their existing completion behavior. A canceled Docker command can leave resources on the daemon; the placement remains uncertain and its operation labels support later inspection and cleanup.
 
-The implemented requirements are `REMOTE-24.1`, `REMOTE-24.2`, `REMOTE-24.8`, and `REMOTE-24.10` through `REMOTE-24.20`, plus `REMOTE-25.1`, `REMOTE-25.6`, `REMOTE-25.7`, `REMOTE-26.10` through `REMOTE-26.14`, `REMOTE-26.17`, `REMOTE-26.18`, `REMOTE-26.20` through `REMOTE-26.27`, `REMOTE-28.1`, `REMOTE-28.2`, `REMOTE-29.2`, `REMOTE-29.8`, and `REMOTE-29.9`. The remaining disabled inventory entries still describe future behavior.
+The implemented requirements are `REMOTE-31.1`, `REMOTE-31.2`, `REMOTE-31.8`, and `REMOTE-31.10` through `REMOTE-31.20`, plus `REMOTE-25.1`, `REMOTE-25.6`, `REMOTE-25.7`, `REMOTE-26.10` through `REMOTE-26.14`, `REMOTE-26.17`, `REMOTE-26.18`, `REMOTE-26.20` through `REMOTE-26.27`, `REMOTE-28.1`, `REMOTE-28.2`, `REMOTE-29.2`, `REMOTE-29.8`, and `REMOTE-29.9`. The remaining disabled inventory entries still describe future behavior.
 
 Both agent plugins now bundle the `remote-host` skill alongside `project-setup`. It explains the recorded parent, independently authenticated origin publication, parent fallback, separate Git/session receipts, and parent-proxied MCP execution location. It explicitly identifies runtime features still pending rather than inventing working commands. Packaging tests verify both skills remain readable after each provider caches its plugin independently and the preparation directory is removed.
 
@@ -130,7 +130,7 @@ The first implementation supports Linux Dev Containers on AWS. It does not make 
 
 ## Provider and instance preferences
 
-Requirements: `REMOTE-24.1` through `REMOTE-24.3`.
+Requirements: `REMOTE-31.1` through `REMOTE-31.3`.
 
 The provider identifier is `aws`, without a separate alias such as `aws-dev`. Its configuration refers to an existing AWS profile and stores preferences, not credential material. Multiple named account configurations can be considered later. Proposed persisted settings include:
 
@@ -164,7 +164,7 @@ The `provider` CLI implements list, show, update, clear, and removal of saved pr
 
 ## Placement uses compatibility, capacity, and price
 
-Requirements: `REMOTE-24.4` through `REMOTE-24.9`.
+Requirements: `REMOTE-31.4` through `REMOTE-31.9`.
 
 The CLI exposes observations and a placement plan so an agent can inspect or select a destination. Graftty also provides automatic selection using the same constraints. One parent service owns reservations and provisioning for its requests, preventing concurrent agents from independently allocating the same apparent free capacity.
 

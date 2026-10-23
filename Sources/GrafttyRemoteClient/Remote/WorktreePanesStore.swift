@@ -22,6 +22,16 @@ public actor WorktreePanesStore {
         case closed(reason: String)
     }
 
+    /// Only the store publishes or finishes; observers get `frameUpdates()`.
+    private nonisolated let frames = LatestValueBroadcast<PanesStateMessage>()
+
+    /// The latest applied frame, if any, then every later one: rows and
+    /// sidebar metadata together, for observers that react to changes instead
+    /// of re-reading `current`. Ends when the channel closes or the client
+    /// unsubscribes.
+    public nonisolated func frameUpdates() -> AsyncStream<PanesStateMessage> {
+        frames.updates()
+    }
     public private(set) var current: [WorktreePanes] = []
     public private(set) var sidebar: SidebarSnapshot?
     public private(set) var resourceObservation: HostResourceObservation?
@@ -34,10 +44,20 @@ public actor WorktreePanesStore {
     public func navigationSnapshot(matching worktrees: [WorktreePanes]) -> PanesStateMessage? {
         current == worktrees ? currentSnapshot : nil
     }
-    public private(set) var connectionState: ConnectionState = .idle
+    public private(set) var connectionState: ConnectionState = .idle {
+        didSet { resumeFirstSnapshotWaitersIfSettled() }
+    }
     /// Distinguishes a legitimate first empty snapshot from "the SSH
     /// subsystem is open but has not delivered its initial state yet."
-    public private(set) var hasReceivedSnapshot = false
+    public private(set) var hasReceivedSnapshot = false {
+        didSet { resumeFirstSnapshotWaitersIfSettled() }
+    }
+
+    public enum FirstSnapshotOutcome: Sendable, Equatable {
+        case received, closed, timedOut
+    }
+
+    private var firstSnapshotWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     private let driver: PanesStateChannelDriver
 
@@ -62,6 +82,7 @@ public actor WorktreePanesStore {
         driver.close()
         self.connectionState = .closed(reason: "unsubscribed")
         clearResources()
+        frames.finish()
     }
 
     /// Called by the channel driver's `onSnapshot` callback when a new
@@ -82,6 +103,53 @@ public actor WorktreePanesStore {
         } else { clearResources() }
         self.current = snapshot
         self.hasReceivedSnapshot = true
+        frames.publish(.snapshot(snapshot, sidebar: sidebar))
+    }
+
+    /// Suspends until the first snapshot is applied or the channel closes,
+    /// whichever comes first; a close is reported even if a snapshot also
+    /// arrived. Reports `.timedOut` only when `timeout` elapses first.
+    public func waitForFirstSnapshot(timeout: Duration) async throws -> FirstSnapshotOutcome {
+        try await waitForFirstSnapshot(deadline: .after(timeout))
+    }
+
+    func waitForFirstSnapshot(deadline: ReplyDeadline) async throws -> FirstSnapshotOutcome {
+        if firstSnapshotOutcome == nil {
+            let id = UUID()
+            let disarm = deadline.schedule { [weak self] in
+                Task { await self?.resumeFirstSnapshotWaiter(id) }
+            }
+            defer { disarm() }
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    if firstSnapshotOutcome != nil || Task.isCancelled {
+                        continuation.resume()
+                    } else {
+                        firstSnapshotWaiters[id] = continuation
+                    }
+                }
+            } onCancel: {
+                Task { await self.resumeFirstSnapshotWaiter(id) }
+            }
+        }
+        try Task.checkCancellation()
+        return firstSnapshotOutcome ?? .timedOut
+    }
+
+    private var firstSnapshotOutcome: FirstSnapshotOutcome? {
+        if case .closed = connectionState { return .closed }
+        return hasReceivedSnapshot ? .received : nil
+    }
+
+    private func resumeFirstSnapshotWaiter(_ id: UUID) {
+        firstSnapshotWaiters.removeValue(forKey: id)?.resume()
+    }
+
+    private func resumeFirstSnapshotWaitersIfSettled() {
+        guard firstSnapshotOutcome != nil, !firstSnapshotWaiters.isEmpty else { return }
+        let waiters = firstSnapshotWaiters.values
+        firstSnapshotWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
     }
 
     /// Called by the channel driver's `onClosed` callback when the SSH
@@ -89,6 +157,7 @@ public actor WorktreePanesStore {
     public func markClosed(reason: String) {
         self.connectionState = .closed(reason: reason)
         clearResources()
+        frames.finish()
     }
 
     private func clearResources() {

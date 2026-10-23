@@ -209,14 +209,12 @@ suggest concise instruction files when durable team structure would help, but
 to create or modify them only when authorized. Instruction files are how you
 customize agents; Graftty has no separate session prompt setting.
 
-Requires **Agent Teams** to be enabled in Settings.
-
 ## Agent teams
 
-With Agent Teams enabled, each tracked repository has a team. Agents
-running in its worktrees can register their presence, send inbox messages,
-and react to PR and CI events. A repository with one local worktree can
-also communicate with agents on a remote Mac.
+Each tracked repository has a team. Agents running in its worktrees can
+register their presence, send inbox messages, and react to PR and CI events.
+A repository with one local worktree can also communicate with agents on a
+remote Mac.
 
 Agents connect to Graftty through the Codex and Claude provider plugins.
 Graftty offers to install them on first launch; you can also install them
@@ -268,10 +266,9 @@ event and inter-agent message for the focused worktree's team.
 
 ### Message agents on another Mac
 
-Enable **Agent Teams** on both Macs, add the other Mac under **Remote Macs**,
-and connect it. Both Macs must run a version of Graftty that supports remote
-team messaging. One pairing provides messaging in both directions while
-that connection is open.
+Add the other Mac under **Remote Macs** and connect it. Both Macs must run a
+version of Graftty that supports remote team messaging. One pairing provides
+messaging in both directions while that connection is open.
 
 Run `graftty team list --json` from a tracked worktree. The roster includes
 all teams on each directly connected Mac. Copy the remote agent's `address`

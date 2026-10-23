@@ -104,7 +104,7 @@ struct RemoteSetupLinux: AsyncParsableCommand {
             FileHandle.standardError.write(Data("[\(step.completed + 1)/\(step.total)] \(step.message)\n".utf8))
         })
         try Task.checkCancellation()
-        try CLIEnv.expectOk(CLIEnv.sendRequest(.completeLinuxSetup(result)))
+        try CLIEnv.expectOk(CLIEnv.sendRequest(.completeLinuxSetup(result)), for: "remote setup-linux")
         return result
     }
 

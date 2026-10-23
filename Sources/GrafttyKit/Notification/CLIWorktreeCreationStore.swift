@@ -1,0 +1,194 @@
+import Foundation
+import GrafttyProtocol
+
+public enum CLIWorktreeCreationPolicy {
+    /// ATTN-1.27: rejects malformed `pane add --agent` requests before a
+    /// pane is split.
+    public static func paneAddError(
+        agentRuntime: TeamHookRuntime?,
+        command: String?,
+        agentPrompt: String?
+    ) -> String? {
+        if agentPrompt != nil, agentRuntime == nil {
+            return "an agent prompt requires an agent runtime"
+        }
+        if agentRuntime != nil, command != nil {
+            return "an agent runtime and a command are mutually exclusive"
+        }
+        return nil
+    }
+
+    /// An interim CLI revision put a prompt-file path inside a shell command
+    /// and relinquished ownership as soon as the app acknowledged the async
+    /// operation. The app cannot safely recover that path if Git later fails,
+    /// so reject that exact loader family before mutating the worktree. The
+    /// released base64 command and current structured prompt remain valid.
+    public static func obsoletePromptLoaderError(
+        agentRuntime: TeamHookRuntime?,
+        command: String?,
+        agentPrompt: String?
+    ) -> String? {
+        guard agentRuntime != nil,
+              agentPrompt == nil,
+              let command,
+              command.contains("_graftty_agent_prompt_file="),
+              command.contains("/bin/rm -f \"$_graftty_agent_prompt_file\"") else {
+            return nil
+        }
+        return "this request uses an obsolete agent prompt loader; use the graftty CLI bundled with the running app and retry"
+    }
+
+    /// New clients send the prompt separately so the app can stage it after
+    /// accepting the request. A bare runtime command from an older client is
+    /// upgraded to the same bootstrap path; the released client's base64
+    /// prompt command remains untouched for wire compatibility.
+    public static func shouldStageAgentPrompt(
+        agentRuntime: TeamHookRuntime?,
+        command: String?,
+        agentPrompt: String?
+    ) -> Bool {
+        WorktreeAgentLaunchCommand.shouldStagePrompt(agent: agentRuntime, command: command, prompt: agentPrompt)
+    }
+}
+
+/// In-memory rendezvous between the fast local-socket request and the async
+/// Git/surface work. Terminal results are retained briefly so a lost socket
+/// response can be retried with the same operation ID.
+@MainActor
+public final class CLIWorktreeCreationStore {
+    private struct Record {
+        var status: WorktreeCreateStatus
+        var updatedAt: Date
+        var stagedPromptFile: URL?
+    }
+
+    private var records: [String: Record] = [:]
+    private var baseCaptures: [String: Task<String, Error>] = [:]
+    private let terminalRetention: TimeInterval
+    private let baseResolver: @MainActor (String, String) async throws -> String
+
+    public init(
+        terminalRetention: TimeInterval = 10 * 60,
+        baseResolver: @escaping @MainActor (String, String) async throws -> String = {
+            try await GitWorktreeAdd.resolveStartPoint($0, at: $1)
+        }
+    ) {
+        self.terminalRetention = terminalRetention
+        self.baseResolver = baseResolver
+    }
+
+    /// Capture explicit refs before acknowledging creation. Concurrent socket
+    /// retries must share the same snapshot while Git resolves the ref.
+    public func captureBase(_ base: String?, at path: String, operationID: String) async throws -> String? {
+        guard let base else { return nil }
+        let task: Task<String, Error>
+        if let existing = baseCaptures[operationID] {
+            task = existing
+        } else {
+            task = Task { try await baseResolver(base, path) }
+            baseCaptures[operationID] = task
+        }
+        return try await task.value
+    }
+
+    public func discardBaseCapture(operationID: String) {
+        baseCaptures.removeValue(forKey: operationID)
+    }
+
+    /// The app owns this task independently of the requesting socket or CLI.
+    /// `createAndLaunch` waits for Git before starting the pane and returns a
+    /// failure message, or nil once the backend accepts the launch command.
+    public func start(
+        worktreePath: String,
+        messageAddress: String,
+        stagedPromptFile: URL? = nil,
+        operationID: String? = nil,
+        createAndLaunch: @escaping @MainActor () async -> String?
+    ) -> WorktreeCreateStatus {
+        if let operationID, let existing = status(operationID: operationID) {
+            return existing
+        }
+        let status = begin(worktreePath: worktreePath, messageAddress: messageAddress,
+            stagedPromptFile: stagedPromptFile, operationID: operationID)
+        Task { @MainActor in
+            if let error = await createAndLaunch() {
+                markFailed(operationID: status.operationID, error: error)
+            } else {
+                markReady(operationID: status.operationID)
+            }
+        }
+        return status
+    }
+
+    public func begin(
+        worktreePath: String,
+        messageAddress: String,
+        stagedPromptFile: URL? = nil,
+        operationID: String? = nil,
+        now: Date = Date()
+    ) -> WorktreeCreateStatus {
+        prune(now: now)
+        let operationID = operationID ?? UUID().uuidString.lowercased()
+        if let existing = records[operationID]?.status {
+            return existing
+        }
+        let status = WorktreeCreateStatus(
+            operationID: operationID,
+            state: .pending,
+            worktreePath: worktreePath,
+            messageAddress: messageAddress
+        )
+        records[status.operationID] = Record(
+            status: status,
+            updatedAt: now,
+            stagedPromptFile: stagedPromptFile
+        )
+        return status
+    }
+
+    public func markReady(operationID: String, now: Date = Date()) {
+        // The backend accepted the loader bytes; its shell now owns removal.
+        records[operationID]?.stagedPromptFile = nil
+        transition(operationID: operationID, state: .ready, error: nil, now: now)
+    }
+
+    public func markFailed(operationID: String, error: String, now: Date = Date()) {
+        if let promptFile = records[operationID]?.stagedPromptFile {
+            try? FileManager.default.removeItem(at: promptFile)
+            records[operationID]?.stagedPromptFile = nil
+        }
+        transition(operationID: operationID, state: .failed, error: error, now: now)
+    }
+
+    public func status(operationID: String, now: Date = Date()) -> WorktreeCreateStatus? {
+        prune(now: now)
+        return records[operationID]?.status
+    }
+
+    private func transition(
+        operationID: String,
+        state: WorktreeCreateState,
+        error: String?,
+        now: Date
+    ) {
+        guard let record = records[operationID] else { return }
+        let prior = record.status
+        records[operationID] = Record(
+            status: WorktreeCreateStatus(
+                operationID: operationID,
+                state: state,
+                worktreePath: prior.worktreePath,
+                messageAddress: prior.messageAddress,
+                error: error
+            ),
+            updatedAt: now,
+            stagedPromptFile: record.stagedPromptFile
+        )
+    }
+
+    private func prune(now: Date) {
+        records = records.filter { _, record in
+            record.status.state == .pending || now.timeIntervalSince(record.updatedAt) <= terminalRetention
+        }
+    }
+}

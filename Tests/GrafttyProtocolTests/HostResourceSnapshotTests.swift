@@ -3,7 +3,7 @@ import Testing
 @testable import GrafttyProtocol
 
 struct HostResourceSnapshotTests {
-    @Test("@spec REMOTE-24.12: When a host publishes resource observations on its authenticated panes-state channel, the protocol shall preserve optional CPU, memory, disk, and workload measurements with a sample timestamp while accepting legacy snapshots without telemetry.")
+    @Test("@spec REMOTE-31.12: When a host publishes resource observations on its authenticated panes-state channel, the protocol shall preserve optional CPU, memory, disk, and workload measurements with a sample timestamp while accepting legacy snapshots without telemetry.")
     func preservesOptionalResourceObservations() throws {
         let data = Data(#"{"projects":[],"supportsNavigationEditing":true,"hostResources":{"sampledAt":1750000000,"cpuCount":4,"cpuUtilization":0.25,"memoryTotalBytes":17179869184,"memoryAvailableBytes":8589934592,"diskPath":"/work","diskAvailableBytes":1000000000,"activeWorktrees":2}}"#.utf8)
         let snapshot = try JSONDecoder().decode(SidebarSnapshot.self, from: data)

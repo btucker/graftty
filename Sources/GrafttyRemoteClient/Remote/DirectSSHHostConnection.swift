@@ -27,7 +27,6 @@ public actor DirectSSHHostConnection {
     private let expectedHostFingerprint: RemoteIdentityFingerprint
     private var channel: Channel?
     private var handlerBox: DirectSSHHandlerBox?
-    private var group: MultiThreadedEventLoopGroup?
     private var onStateChange: (@Sendable (State) -> Void)?
 
     public init(clientKey: Curve25519.Signing.PrivateKey, expectedHostFingerprint: RemoteIdentityFingerprint) {
@@ -53,11 +52,8 @@ public actor DirectSSHHostConnection {
         guard state == .idle else { throw ConnectionError.notIdle }
         try Task.checkCancellation()
         setState(.connecting)
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        self.group = group
         let key = clientKey
         let fingerprint = expectedHostFingerprint
-        var connectingChannel: Channel?
         do {
             let initialize: @Sendable (Channel) -> EventLoopFuture<Void> = { channel in
                 // TCP Happy Eyeballs may initialize several channels. Each
@@ -75,7 +71,7 @@ public actor DirectSSHHostConnection {
             let channel: Channel
             switch transport {
             case .tcp(let host, let port):
-                channel = try await ClientBootstrap(group: group)
+                channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
                     .connectTimeout(.seconds(10))
                     .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
                     .channelInitializer(initialize).connect(host: host, port: port).get()
@@ -86,7 +82,7 @@ public actor DirectSSHHostConnection {
                 guard writer >= 0 else { closeDescriptor(reader); throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
                 let initialized = NIOLockedValueBox(false)
                 do {
-                    channel = try await NIOPipeBootstrap(group: group).channelInitializer { channel in
+                    channel = try await NIOPipeBootstrap(group: MultiThreadedEventLoopGroup.singleton).channelInitializer { channel in
                         initialized.withLockedValue { $0 = true }
                         return initialize(channel)
                     }
@@ -101,9 +97,8 @@ public actor DirectSSHHostConnection {
                     throw error
                 }
             }
-            connectingChannel = channel
-            guard !state.isTerminal else { throw CancellationError() }
             self.channel = channel
+            guard !state.isTerminal else { throw CancellationError() }
             let authentication = try await channel.pipeline.handler(type: DirectSSHAuthenticationHandler.self).get()
             handlerBox = authentication.handlerBox
             channel.closeFuture.whenComplete { [weak self] _ in Task { await self?.transportClosed() } }
@@ -114,7 +109,6 @@ public actor DirectSSHHostConnection {
             setState(.connected)
         } catch {
             setState(.failed(reason: String(describing: error)))
-            try? await connectingChannel?.close().get()
             await disposeTransport()
             throw error
         }
@@ -213,10 +207,10 @@ public actor DirectSSHHostConnection {
     }
     private func disposeTransport() async {
         let channel = channel; self.channel = nil; handlerBox = nil
-        let group = group; self.group = nil
         try? await channel?.close().get()
-        try? await group?.shutdownGracefully()
     }
+    /// The event loop serving the SSH transport, once TCP is connected.
+    var transportEventLoopForTesting: (any EventLoop)? { channel?.eventLoop }
     private func connectedTransport() throws -> (Channel, DirectSSHHandlerBox) {
         guard state == .connected, let channel, channel.isActive, let handlerBox else { throw ConnectionError.notConnected }
         return (channel, handlerBox)

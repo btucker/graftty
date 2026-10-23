@@ -24,7 +24,7 @@ struct Image: ParsableCommand {
         let urls = paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).standardizedFileURL }
         try CLIEnv.expectOk(CLIEnv.sendRequest(.previewFiles(
             path: worktree, targets: urls.map(\.path), paneSessionName: environment["ZMX_SESSION"]
-        )))
+        )), for: "preview")
         // Acknowledges a preview request, not that the user viewed it.
     }
 }

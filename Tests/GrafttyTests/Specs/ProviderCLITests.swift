@@ -5,7 +5,7 @@ import GrafttyKit
 import GrafttyProtocol
 
 struct ProviderCLITests {
-    @Test("@spec REMOTE-24.18: When an agent creates or queries a remote placement, the CLI shall require a stable operation UUID and an unambiguous connected paired host and send its pinned identity with the request.")
+    @Test("@spec REMOTE-31.18: When an agent creates or queries a remote placement, the CLI shall require a stable operation UUID and an unambiguous connected paired host and send its pinned identity with the request.")
     func placementCommandsRequireStableOperationIdentity() throws {
         let id = UUID().uuidString
         _ = try GrafttyCLI.parseAsRoot(["remote", "placement", "create", "--host", "linux", "--operation-id", id,
@@ -89,7 +89,7 @@ struct ProviderCLITests {
         _ = try GrafttyCLI.parseAsRoot(["provider", "offers", "aws", "--architecture", "arm64", "--json"])
     }
 
-    @Test("@spec REMOTE-24.1: When a user configures the aws compute provider, the CLI shall persist the selected existing AWS profile and placement preferences without copying AWS credentials.")
+    @Test("@spec REMOTE-31.1: When a user configures the aws compute provider, the CLI shall persist the selected existing AWS profile and placement preferences without copying AWS credentials.")
     func savesProfileReferenceAndPreferences() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -113,7 +113,7 @@ struct ProviderCLITests {
         #expect(!json.contains("accessKeyId"))
     }
 
-    @Test("@spec REMOTE-24.2: When a user configures an instance pool or preferred instance type, the CLI shall persist, display, update, and clear those per-user settings without hard-coding a universal preferred instance type.")
+    @Test("@spec REMOTE-31.2: When a user configures an instance pool or preferred instance type, the CLI shall persist, display, update, and clear those per-user settings without hard-coding a universal preferred instance type.")
     func updatesAndClearsWithoutResettingOtherSettings() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

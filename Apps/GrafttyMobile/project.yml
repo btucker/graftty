@@ -101,6 +101,9 @@ targets:
           - UI/ChromeTabViewerTests.swift
           - UI/RemoteBrowserButtonTests.swift
           - UI/WorktreeRowAlignmentTests.swift
+          - Auth/VirtualClock.swift
+      - path: ../../Tests/GrafttyMobileKitTests/Auth/VirtualClock.swift
+        group: SharedTestSupport
     settings:
       base:
         SWIFT_VERSION: "5.10"
@@ -109,6 +112,8 @@ targets:
     dependencies:
       - package: GrafttyMobileKit
         product: GrafttyMobileKit
+      - package: GrafttyMobileKit
+        product: GrafttyRemoteTestSupport
 
   GrafttyMobileBrowserTests:
     type: bundle.unit-test
@@ -121,6 +126,8 @@ targets:
         group: GrafttyMobileBrowserTests
       - path: ../../Tests/GrafttyMobileKitTests/UI/RemoteBrowserButtonTests.swift
         group: GrafttyMobileBrowserTests
+      - path: ../../Tests/GrafttyMobileKitTests/Auth/VirtualClock.swift
+        group: SharedTestSupport
       - path: ../../Tests/GrafttyMobileKitTests/UI/WorktreeRowAlignmentTests.swift
         group: GrafttyMobileBrowserTests
     settings:
@@ -147,6 +154,8 @@ targets:
     dependencies:
       - package: GrafttyMobileKit
         product: GrafttyRemoteClient
+      - package: GrafttyMobileKit
+        product: GrafttyRemoteTestSupport
 
 schemes:
   GrafttyBrowserInteraction:

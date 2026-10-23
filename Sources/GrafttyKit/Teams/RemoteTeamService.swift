@@ -111,11 +111,9 @@ public final class RemoteTeamService {
     public func handle(
         _ request: RemoteTeamRequest,
         from deviceID: RemoteDeviceID,
-        repos: [RepoEntry],
-        teamsEnabled: Bool
+        repos: [RepoEntry]
     ) -> RemoteTeamResponse {
         do {
-            guard teamsEnabled else { throw TeamInboxRequestError.teamModeDisabled }
             switch request {
             case .worktree:
                 return .error("Remote worktree creation is not available")
@@ -132,8 +130,7 @@ public final class RemoteTeamService {
                     text: text,
                     priority: priority,
                     from: deviceID,
-                    repos: repos,
-                    teamsEnabled: teamsEnabled
+                    repos: repos
                 )
                 return .ok
             }
@@ -151,10 +148,8 @@ public final class RemoteTeamService {
         text: String,
         priority: TeamInboxPriority,
         from deviceID: RemoteDeviceID,
-        repos: [RepoEntry],
-        teamsEnabled: Bool
+        repos: [RepoEntry]
     ) throws -> TeamInboxDelivery {
-        guard teamsEnabled else { throw TeamInboxRequestError.teamModeDisabled }
         guard RemoteTeamAddress.isAbsolutePath(senderWorktree),
               senderAgentID == nil || senderAgentID.flatMap(TeamAgentIdentity.init(rawValue:)) != nil else {
             throw RemoteTeamError.invalidSender

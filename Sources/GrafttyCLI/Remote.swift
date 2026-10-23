@@ -37,7 +37,7 @@ struct RemoteReconnectClient: ParsableCommand {
     }
 
     func run() throws {
-        try CLIEnv.expectOk(CLIEnv.sendRequest(.reconnectRemoteClient(target: target)))
+        try CLIEnv.expectOk(CLIEnv.sendRequest(.reconnectRemoteClient(target: target)), for: "remote reconnect-client")
         print("Reconnect requested from \(target). Check that Mac's Remote Hosts sidebar for status.")
     }
 }
@@ -67,7 +67,7 @@ struct RemoteReconnect: ParsableCommand {
     }
 
     func run() throws {
-        try CLIEnv.expectOk(CLIEnv.sendRequest(.reconnectRemoteMac(target: target)))
+        try CLIEnv.expectOk(CLIEnv.sendRequest(.reconnectRemoteMac(target: target)), for: "remote reconnect")
         print("Reconnect requested for \(target). Check the Remote Hosts sidebar for status.")
     }
 }
@@ -79,7 +79,7 @@ struct RemoteHosts: ParsableCommand {
     static func fetch() throws -> [RemoteMacConnectionSummary] {
         let response = try CLIEnv.sendRequest(.listRemoteHosts)
         guard case .remoteHosts(let hosts) = response else {
-            try CLIEnv.expectOk(response)
+            try CLIEnv.expectOk(response, for: "remote hosts")
             throw ValidationError("The running Graftty version does not support host telemetry.")
         }
         return hosts

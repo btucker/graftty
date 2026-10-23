@@ -1,0 +1,39 @@
+[
+  {
+    "branches" : [
+      {
+        "lastCommitDate" : 721692800.5,
+        "mountedWorktreeID" : "\/Users\/me\/repo\/.worktrees\/x",
+        "name" : "feature\/x",
+        "pullRequest" : {
+          "number" : 7,
+          "title" : "X"
+        },
+        "source" : "local"
+      },
+      {
+        "lastCommitDate" : 720692800,
+        "name" : "origin-only",
+        "source" : "remote_only"
+      }
+    ],
+    "defaultBranchStatus" : {
+      "behindCount" : 2,
+      "branchName" : "main",
+      "remoteRef" : "origin\/main"
+    },
+    "displayName" : "repo",
+    "origin" : {
+      "deviceID" : {
+        "value" : "dev-b"
+      },
+      "deviceLabel" : "Mac B",
+      "relayDepth" : 1
+    },
+    "path" : "\/Users\/me\/repo"
+  },
+  {
+    "displayName" : "other",
+    "path" : "\/Users\/me\/other"
+  }
+]

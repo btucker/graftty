@@ -25,7 +25,7 @@ enum NavigationDirection {
     }
 }
 
-enum HostManagedPaneCommand {
+enum HostManagedPaneCommand: Equatable {
     case split(PaneSplit)
     case close
     case surfaceClosed
@@ -355,12 +355,6 @@ final class TerminalManager: ObservableObject {
     /// rather than fall back to time-based heuristics.
     var onShellReady: ((PaneSlotID) -> Void)?
 
-    /// Called on OSC 9;4 progress reports from programs like `git clone`
-    /// or `apt` that advertise progress. The host updates the attention
-    /// badge so the user can keep tabs on long-running jobs without
-    /// staying on the pane.
-    var onProgressReport: ((PaneSlotID, ProgressReport) -> Void)?
-
     /// Called when libghostty dispatches `goto_split` with a spatial
     /// direction (left/right/up/down). Host navigates focus to the
     /// nearest neighbor in that direction.
@@ -442,17 +436,6 @@ final class TerminalManager: ObservableObject {
             return false
         }
         return true
-    }
-
-    /// Swift-native mirror of `ghostty_action_progress_report_s` so
-    /// callers outside the Terminal module don't need to import
-    /// GhosttyKit just to pattern-match on progress state.
-    enum ProgressReport {
-        case indeterminate
-        case paused
-        case error
-        /// 0–100 when the terminal program reported an exact percentage.
-        case percent(Int8)
     }
 
     /// Path to the Graftty control socket, exposed to spawned shells via `GRAFTTY_SOCK`.
@@ -1215,6 +1198,58 @@ final class TerminalManager: ObservableObject {
         }
     }
 
+    /// Promote the terminal's backing `NSView` to the window's first
+    /// responder so keyDown events route to libghostty. Dispatched async
+    /// because the view may have just been created by `createSurfaces` and
+    /// SwiftUI hasn't attached it to the window hierarchy yet — you can't
+    /// `makeFirstResponder` a view that isn't in a window.
+    func promoteToFirstResponder(
+        _ terminalID: PaneSlotID,
+        when shouldFocus: (() -> Bool)? = nil,
+        onFocused: (() -> Void)? = nil
+    ) {
+        attemptPromoteToFirstResponder(
+            terminalID,
+            when: shouldFocus,
+            onFocused: onFocused,
+            attemptsRemaining: 20
+        )
+    }
+
+    /// SwiftUI can take more than one run-loop turn to mount a newly selected
+    /// worktree's terminal. Retry for a bounded interval, and only force the
+    /// deferred zmx attach after AppKit has supplied a real grid. The normal
+    /// layout notifier usually wins; `startForBackgroundLaunch` is one-shot
+    /// and acts as a fallback for the UI-add path that previously left a
+    /// mounted pane with no live session.
+    private func attemptPromoteToFirstResponder(
+        _ terminalID: PaneSlotID,
+        when shouldFocus: (() -> Bool)?,
+        onFocused: (() -> Void)?,
+        attemptsRemaining: Int
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: attemptsRemaining == 20 ? .now() : .now() + 0.05) { [self] in
+            guard !NSApp.isHidden, shouldFocus?() ?? true else { return }
+            guard let view = view(for: terminalID),
+                  let window = view.window,
+                  view.bounds.width > 0,
+                  view.bounds.height > 0 else {
+                guard attemptsRemaining > 1 else { return }
+                attemptPromoteToFirstResponder(
+                    terminalID,
+                    when: shouldFocus,
+                    onFocused: onFocused,
+                    attemptsRemaining: attemptsRemaining - 1
+                )
+                return
+            }
+            _ = handle(for: terminalID)?.startForBackgroundLaunch()
+            setVisible(true, for: terminalID)
+            guard window.makeFirstResponder(view) else { return }
+            onFocused?()
+        }
+    }
+
     /// Whether any of the given terminals has a process that requires confirmation before quit.
     func needsConfirmQuit(terminalIDs: [PaneSlotID]) -> Bool {
         terminalIDs.contains { surfaces[$0]?.needsConfirmQuit == true }
@@ -1272,6 +1307,26 @@ final class TerminalManager: ObservableObject {
         return true
     }
 
+    /// Delivers a pane command: a host-managed pane's handler claims it
+    /// first (REMOTE-13.15); otherwise the matching local `on*` callback
+    /// runs. Surface-originated commands (libghostty actions, the surface
+    /// context menu, `close_surface_cb`) go through here, so callers must
+    /// not invoke those `on*` callbacks directly. Menu-bar commands route
+    /// the focused pane separately in `GrafttyApp+MenuActions`.
+    func dispatchPaneCommand(_ command: HostManagedPaneCommand, for terminalID: PaneSlotID) {
+        if routeHostManagedPaneCommand(command, for: terminalID) { return }
+        switch command {
+        case .split(let split): onSplitRequest?(terminalID, split)
+        case .close: onCloseRequest?(terminalID)
+        case .surfaceClosed: onSurfaceClosed?(terminalID)
+        case .focus(let direction): onGotoSplit?(terminalID, direction)
+        case .focusOrder(let forward): onGotoSplitOrder?(terminalID, forward)
+        case .toggleZoom: onToggleZoom?(terminalID)
+        case let .resize(direction, amount): onResizeSplit?(terminalID, direction, amount)
+        case .equalize: onEqualizeSplits?(terminalID)
+        }
+    }
+
     func recordAttachmentFailure(_ message: String, for handle: SurfaceHandle) {
         guard handle.zmxSessionName != nil, surfaces[handle.terminalID] === handle else { return }
         attachmentFailures[handle.terminalID] = message
@@ -1280,7 +1335,7 @@ final class TerminalManager: ObservableObject {
     func receiveSurfaceClosed(_ box: SurfaceUserdataBox) {
         // A delayed close from the old attachment must not remove its retry.
         guard surfaces[box.terminalID]?.ownsUserdata(box) == true else { return }
-        onSurfaceClosed?(box.terminalID)
+        dispatchPaneCommand(.surfaceClosed, for: box.terminalID)
     }
 
     @discardableResult
@@ -1702,19 +1757,6 @@ final class TerminalManager: ObservableObject {
             let finished = action.action.command_finished
             onCommandFinished?(id, finished.exit_code, finished.duration)
 
-        case GHOSTTY_ACTION_PROGRESS_REPORT:
-            guard let id = terminalID(from: target) else { return }
-            let progress = action.action.progress_report
-            let translated: ProgressReport
-            switch progress.state {
-            case GHOSTTY_PROGRESS_STATE_ERROR:         translated = .error
-            case GHOSTTY_PROGRESS_STATE_INDETERMINATE: translated = .indeterminate
-            case GHOSTTY_PROGRESS_STATE_PAUSE:         translated = .paused
-            default:
-                translated = progress.progress >= 0 ? .percent(progress.progress) : .indeterminate
-            }
-            onProgressReport?(id, translated)
-
         case GHOSTTY_ACTION_NEW_SPLIT:
             guard let id = terminalID(from: target) else { return }
             let split: PaneSplit
@@ -1725,30 +1767,30 @@ final class TerminalManager: ObservableObject {
             case GHOSTTY_SPLIT_DIRECTION_DOWN:  split = .down
             default: return
             }
-            onSplitRequest?(id, split)
+            dispatchPaneCommand(.split(split), for: id)
 
         case GHOSTTY_ACTION_CLOSE_TAB:
             // Ghostty reuses close_tab for close_surface in single-pane
             // contexts; Graftty treats pane close the same way.
             guard let id = terminalID(from: target) else { return }
-            onCloseRequest?(id)
+            dispatchPaneCommand(.close, for: id)
 
         case GHOSTTY_ACTION_GOTO_SPLIT:
             guard let id = terminalID(from: target) else { return }
             let gotoDir = action.action.goto_split
             switch gotoDir {
-            case GHOSTTY_GOTO_SPLIT_LEFT:   onGotoSplit?(id, .left)
-            case GHOSTTY_GOTO_SPLIT_RIGHT:  onGotoSplit?(id, .right)
-            case GHOSTTY_GOTO_SPLIT_UP:     onGotoSplit?(id, .up)
-            case GHOSTTY_GOTO_SPLIT_DOWN:   onGotoSplit?(id, .down)
-            case GHOSTTY_GOTO_SPLIT_NEXT:     onGotoSplitOrder?(id, true)
-            case GHOSTTY_GOTO_SPLIT_PREVIOUS: onGotoSplitOrder?(id, false)
+            case GHOSTTY_GOTO_SPLIT_LEFT:   dispatchPaneCommand(.focus(.left), for: id)
+            case GHOSTTY_GOTO_SPLIT_RIGHT:  dispatchPaneCommand(.focus(.right), for: id)
+            case GHOSTTY_GOTO_SPLIT_UP:     dispatchPaneCommand(.focus(.up), for: id)
+            case GHOSTTY_GOTO_SPLIT_DOWN:   dispatchPaneCommand(.focus(.down), for: id)
+            case GHOSTTY_GOTO_SPLIT_NEXT:     dispatchPaneCommand(.focusOrder(forward: true), for: id)
+            case GHOSTTY_GOTO_SPLIT_PREVIOUS: dispatchPaneCommand(.focusOrder(forward: false), for: id)
             default: return
             }
 
         case GHOSTTY_ACTION_TOGGLE_SPLIT_ZOOM:
             guard let id = terminalID(from: target) else { return }
-            onToggleZoom?(id)
+            dispatchPaneCommand(.toggleZoom, for: id)
 
         case GHOSTTY_ACTION_RESIZE_SPLIT:
             guard let id = terminalID(from: target) else { return }
@@ -1761,11 +1803,11 @@ final class TerminalManager: ObservableObject {
             case GHOSTTY_RESIZE_SPLIT_RIGHT: direction = .right
             default: return
             }
-            onResizeSplit?(id, direction, r.amount)
+            dispatchPaneCommand(.resize(direction: direction, amount: r.amount), for: id)
 
         case GHOSTTY_ACTION_EQUALIZE_SPLITS:
             guard let id = terminalID(from: target) else { return }
-            onEqualizeSplits?(id)
+            dispatchPaneCommand(.equalize, for: id)
 
         case GHOSTTY_ACTION_RELOAD_CONFIG:
             onReloadConfig?()
@@ -1787,7 +1829,8 @@ final class TerminalManager: ObservableObject {
              GHOSTTY_ACTION_TOGGLE_FULLSCREEN,
              GHOSTTY_ACTION_TOGGLE_MAXIMIZE,
              GHOSTTY_ACTION_TOGGLE_WINDOW_DECORATIONS,
-             GHOSTTY_ACTION_CHECK_FOR_UPDATES:
+             GHOSTTY_ACTION_CHECK_FOR_UPDATES,
+             GHOSTTY_ACTION_PROGRESS_REPORT:
             break
 
         default:

@@ -53,7 +53,7 @@ struct RemotePlacementTarget: ParsableArguments {
             throw error
         }
         guard case .placement(let record) = response else {
-            try CLIEnv.expectOk(response)
+            try CLIEnv.expectOk(response, for: "remote placement")
             throw ValidationError("The running Graftty version did not return a placement result.")
         }
         guard record.operationID == (try uuid()) else { throw ValidationError("Host returned a different placement operation.") }

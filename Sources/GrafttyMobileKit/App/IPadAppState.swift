@@ -115,6 +115,19 @@ public final class IPadAppState {
         focusRequestCount &+= 1
     }
 
+    /// Writes the selected host, worktree and pane together; pane moves
+    /// within the selected worktree write `focusedPaneId` alone. Only a
+    /// regular-width selection requests terminal focus: its detail column
+    /// consumes `pendingFocusRequests`, while a compact terminal focuses
+    /// itself and never consumes them, so a compact request would linger and
+    /// summon the keyboard after a later regular-width transition (IPAD-8.10).
+    func select(hostID: UUID?, worktreePath: String?, paneID: String?, requestsTerminalFocus: Bool = false) {
+        selectedHostId = hostID
+        selectedWorktreePath = worktreePath
+        focusedPaneId = paneID
+        if requestsTerminalFocus { requestActiveTerminal() }
+    }
+
     private enum Keys {
         static let selectedHostId = "iPadAppState.selectedHostId"
         static let sidebarWidth = "iPadAppState.sidebarWidth"
@@ -122,7 +135,8 @@ public final class IPadAppState {
 
     // Per-host `RemoteHostConnection`s live in `RemoteConnectionCoordinator`
     // (negotiate-on-demand, in-flight dedup, eviction), not here — `RootView`
-    // holds and reads the coordinator directly on both size classes. This
-    // type owns only sidebar/detail selection and layout state.
+    // owns the coordinator and provides it to both size classes through
+    // `\.remoteConnectionCoordinator`. This type owns only sidebar/detail
+    // selection and layout state.
 }
 #endif

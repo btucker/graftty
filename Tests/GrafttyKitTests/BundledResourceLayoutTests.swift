@@ -1,17 +1,19 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("""
 @spec CONFIG-2.7: If GrafttyKit's resource bundle uses either SwiftPM's flat \
 layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's \
 build system, then the application shall locate the bundled web client assets, \
-agent plugin payload, and vendored ghostty runtime resources.
+agent plugin payload, Codex wrapper template, and vendored ghostty runtime resources.
 """)
 struct BundledResourceLayoutTests {
     private enum Layout { case flat, standard }
 
-    /// Mirrors what `.copy("Web/Resources")`, `.copy("AgentPlugins")`, and
+    /// Mirrors what `.copy("Web/Resources")`, `.copy("AgentPlugins")`,
+    /// `.copy("Teams/Resources/codex-wrapper.sh")`, and
     /// `.copy("GhosttyResources/ghostty")` produce: a directory literally
     /// named `Resources` holding the web client, beside the other payloads.
     private func makeBundle(_ layout: Layout) throws -> Bundle {
@@ -40,6 +42,7 @@ struct BundledResourceLayoutTests {
                 withIntermediateDirectories: true
             )
         }
+        try Data("#!/bin/sh\n".utf8).write(to: resources.appendingPathComponent("codex-wrapper.sh"))
         return try #require(Bundle(url: root))
     }
 
@@ -57,6 +60,12 @@ struct BundledResourceLayoutTests {
         let bundle = try makeBundle(layout)
         let root = try #require(AgentPluginInstaller.bundledResourceRoot(in: bundle))
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("claude").path))
+    }
+
+    @Test(arguments: [Layout.flat, .standard])
+    private func codexWrapperTemplateResolves(_ layout: Layout) throws {
+        let bundle = try makeBundle(layout)
+        #expect(try AgentHookInstaller.codexWrapperTemplate(in: bundle) == "#!/bin/sh")
     }
 
     @Test(arguments: [Layout.flat, .standard])

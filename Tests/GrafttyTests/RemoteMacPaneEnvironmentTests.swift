@@ -51,31 +51,41 @@ struct RemoteMacPaneEnvironmentTests {
     }
 }
 
-private actor PaneEnvironmentHost: RemoteMacPaneEnvironmentHost {
-    private let panesDriver: any PanesStateChannelDriver
+private actor PaneEnvironmentHost: RemoteHostLinkFake {
+    var state: RemoteHostConnection.State { .connected }
+    func setOnStateChange(_ handler: (@Sendable (RemoteHostConnection.State) -> Void)?) {}
+    private let panesDriver: any PanesStateSubscriptionDriver
     private let controlDriver: any PaneControlChannelDriver
 
     init(
-        panesDriver: any PanesStateChannelDriver,
+        panesDriver: any PanesStateSubscriptionDriver,
         controlDriver: any PaneControlChannelDriver
     ) {
         self.panesDriver = panesDriver
         self.controlDriver = controlDriver
     }
 
-    func makePanesStateDriver(
-        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
-        onClosed: @escaping @Sendable (String) async -> Void
-    ) async throws -> any PanesStateChannelDriver {
+    func makePanesStateDriver(originAware _: Bool) -> any PanesStateSubscriptionDriver {
         panesDriver
     }
 
     func makePaneControlDriver() async throws -> any PaneControlChannelDriver {
         controlDriver
     }
+
+    func openTerminalClient(sessionName: String, preferPaged: Bool) throws -> any WebSocketClient & Sendable {
+        throw RemoteHostLinkChannelUnavailable()
+    }
+
+    func close() {}
 }
 
-private final class RecordingPanesStateDriver: PanesStateChannelDriver, @unchecked Sendable {
+private final class RecordingPanesStateDriver: PanesStateSubscriptionDriver, @unchecked Sendable {
+    func setCallbacks(
+        onSnapshot _: @escaping PanesStateChannelClient.OnSnapshot,
+        onClosed _: @escaping PanesStateChannelClient.OnClosed
+    ) {}
+
     private let lock = NSLock()
     private var _openCount = 0
 
@@ -116,7 +126,12 @@ private final class RecordingPaneControlDriver: PaneControlChannelDriver, @unche
     }
 }
 
-private struct ThrowingPanesStateDriver: PanesStateChannelDriver {
+private struct ThrowingPanesStateDriver: PanesStateSubscriptionDriver {
+    func setCallbacks(
+        onSnapshot _: @escaping PanesStateChannelClient.OnSnapshot,
+        onClosed _: @escaping PanesStateChannelClient.OnClosed
+    ) {}
+
     func open() async throws {
         throw NSError(domain: "RemoteMacPaneEnvironmentTests", code: 1)
     }

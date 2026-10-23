@@ -198,9 +198,7 @@ struct GrafttyApp: App {
 
         // Must run before any UserDefaults read so non-binding readers see
         // the same defaults as @AppStorage. TEAM-1.6.
-        var registeredDefaults = DefaultPrompts.registrations
-        registeredDefaults[SettingsKeys.agentTeamsEnabled] = true
-        UserDefaults.standard.register(defaults: registeredDefaults)
+        UserDefaults.standard.register(defaults: DefaultPrompts.registrations)
 
         let loaded = AppState.loadOrFreshBackingUpCorruption(from: AppState.defaultDirectory)
         _appState = State(initialValue: loaded)
@@ -215,24 +213,15 @@ struct GrafttyApp: App {
         )
         services = appServices
 
-        // Web access server — reconstruct the same zmx paths that `startup()`
-        // computes so the WebServerController's child `zmx attach` invocations
-        // hit the same ZMX_DIR as panes spawned from the app UI. Keeping the
-        // path derivation here (rather than routing it through AppServices)
-        // keeps the controller's lifetime tied to the SwiftUI App via
-        // @StateObject, which is what Settings scene re-entry expects.
-        let appSupport = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let zmxDir = appSupport
-            .appendingPathComponent("Graftty", isDirectory: true)
-            .appendingPathComponent("zmx", isDirectory: true)
-        let zmxExe = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/zmx")
+        // Web access server. It uses the same `ZmxPaths` as `startup()` so its
+        // child `zmx attach` invocations hit the same ZMX_DIR as panes spawned
+        // from the app UI. Building it here (rather than in AppServices) keeps
+        // the controller's lifetime tied to the SwiftUI App via @StateObject,
+        // which is what Settings scene re-entry expects.
         let webController = WebServerController(
             settings: WebAccessSettings.shared,
-            zmxExecutable: zmxExe,
-            zmxDir: zmxDir,
+            zmxExecutable: ZmxPaths.executable,
+            zmxDir: ZmxPaths.directory,
             displayOwnershipStore: appServices.displayOwnershipStore
         )
         _webController = StateObject(wrappedValue: webController)
@@ -268,6 +257,7 @@ struct GrafttyApp: App {
                 teamEventDispatcher: services.teamEventDispatcher,
                 hostPairingCoordinator: services.hostPairingCoordinator,
                 remoteMacsModel: services.remoteMacsModel,
+                appStateChanges: services.appStateChanges,
                 makeRemoteMacPairingDriver: services.remoteMacPairingDriverFactory
             )
                 .environmentObject(webController)
@@ -306,12 +296,8 @@ struct GrafttyApp: App {
 
             CommandGroup(after: .newItem) {
                 // "Add Repository..." keeps its hardcoded Cmd+Shift+O —
-                // it's an Graftty-specific action with no Ghostty equivalent.
-                Button("Add Repository...") {
-                    // MainWindow handles the file picker via its own button.
-                    // This menu item is a placeholder for the standard shortcut.
-                }
-                .keyboardShortcut("o", modifiers: [.command, .shift])
+                // it's a Graftty-specific action with no Ghostty equivalent.
+                AddRepositoryCommandButton()
 
                 AddWorktreeCommandButton()
 
@@ -375,9 +361,8 @@ struct GrafttyApp: App {
             }
 
             // TEAM-7.1: *Window → Team Activity Log* opens the activity
-            // window for the focused worktree's team. Disabled when the
-            // current selection has no team (single-worktree repo or
-            // teams disabled). The button is hosted inside a tiny View
+            // window for the focused worktree's team. Disabled when no
+            // tracked worktree is focused. The button is hosted inside a tiny View
             // wrapper so it can read the `\.openWindow` environment
             // value, which is unavailable directly inside `.commands`.
             CommandGroup(after: .windowList) {
@@ -461,20 +446,6 @@ struct GrafttyApp: App {
         }
     }
 
-    /// Window-scoped `.onChange` handles normal UI mutations. Background
-    /// services also call this directly because they remain active after the
-    /// last window closes and therefore cannot rely on a live view observer.
-    static func persistAppState(_ state: AppState) {
-        do {
-            try state.save(to: AppState.defaultDirectory)
-        } catch {
-            // Silently dropping this error means a full disk, read-only
-            // `$HOME`, or permissions clash silently stops persistence.
-            // STATE-6.2 / PERSIST-2.2.
-            NSLog("[Graftty] AppState.save failed: %@", String(describing: error))
-        }
-    }
-
     /// @spec URL-2.1: When the macOS app opens a `graftty://open` URL
     /// that resolves to a tracked worktree, the application shall select
     /// that worktree, focus the resolved pane when one is present and the
@@ -520,14 +491,8 @@ struct GrafttyApp: App {
     }
 
     private func startup() {
-        let zmxBinary = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/zmx")
-        let appSupport = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let zmxDir = appSupport
-            .appendingPathComponent("Graftty", isDirectory: true)
-            .appendingPathComponent("zmx", isDirectory: true)
+        let zmxBinary = ZmxPaths.executable
+        let zmxDir = ZmxPaths.directory
         try? FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
         let zmxLauncher = ZmxLauncher(executable: zmxBinary, zmxDir: zmxDir)
         terminalManager.zmxLauncher = zmxLauncher
@@ -566,6 +531,22 @@ struct GrafttyApp: App {
             }
         }
 
+        // PERF-1.18: every input folded into sidebar and panes-state
+        // snapshots. AppState publishes on each persister mark, from
+        // `.onChange(of: appState)` or a windowless mutator (PERF-1.22).
+        let changes = services.appStateChanges
+        changes.publish(onMarkDirtyOf: Self.appStatePersister)
+        changes.publish(on: terminalManager.paneTitleInvalidations.$generation.dropFirst())
+        changes.publish(on: portBindingsModel.objectWillChange)
+        changes.publish(on: services.remoteMacsModel.objectWillChange)
+        changes.publish(on: SidebarHostController.shared.objectWillChange)
+        changes.publish(onChangeOf: { [services] in
+            _ = services.prStatusStore.infos
+            _ = services.statsStore.stats
+            _ = services.claudeSessionRegistry.livenessBySession
+            _ = services.remoteBranchStore.branchesByRepo
+        })
+
         // 2s cadence for port-binding scans. Cheap (one batched lsof
         // across all registered shell PIDs per tick) and only meaningful
         // while the app is up, including while a mobile client is using it.
@@ -573,8 +554,7 @@ struct GrafttyApp: App {
             await portScanner.tick()
         }
 
-        // Wrappers always go on PATH; the Agent Teams toggle is read inside
-        // the wrapper at request time.
+        // Wrappers always go on PATH.
         Self.installAgentHookAssets()
 
         // Refresh previously installed plugins after app updates. First-time
@@ -639,13 +619,7 @@ struct GrafttyApp: App {
         // right-clicks an unfocused pane.
         terminalManager.onSplitRequest = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .split(direction),
-                    for: terminalID
-                ) {
-                    return
-                }
-                _ = Self.splitPane(
+                _ = PaneCommands.splitPane(
                     appState: appState,
                     terminalManager: tm,
                     targetID: terminalID,
@@ -656,7 +630,7 @@ struct GrafttyApp: App {
 
         terminalManager.onOpenInEditorPane = { [appState = $appState, tm = terminalManager] terminalID, initialInput in
             Task { @MainActor in
-                _ = Self.splitPane(
+                _ = PaneCommands.splitPane(
                     appState: appState,
                     terminalManager: tm,
                     targetID: terminalID,
@@ -671,7 +645,7 @@ struct GrafttyApp: App {
         // PWD-2.x reassignment pipeline.
         terminalManager.onMovePane = { [appState = $appState, tm = terminalManager] terminalID, destinationPath in
             MainActor.assumeIsolated {
-                Self.reassignPaneByPWD(
+                PaneCommands.reassignPaneByPWD(
                     appState: appState,
                     terminalManager: tm,
                     terminalID: terminalID,
@@ -703,12 +677,9 @@ struct GrafttyApp: App {
         // A user-issued close action targets the pane that emitted it.
         terminalManager.onCloseRequest = { [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(.close, for: terminalID) {
-                    return
-                }
                 switch paneCloseAction() {
                 case .closePane:
-                    Self.closePane(
+                    PaneCommands.closePane(
                         appState: appState,
                         terminalManager: tm,
                         targetID: terminalID,
@@ -724,13 +695,7 @@ struct GrafttyApp: App {
         terminalManager.onSurfaceClosed = {
             [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .surfaceClosed,
-                    for: terminalID
-                ) {
-                    return
-                }
-                Self.closePane(
+                PaneCommands.closePane(
                     appState: appState,
                     terminalManager: tm,
                     targetID: terminalID
@@ -740,13 +705,7 @@ struct GrafttyApp: App {
 
         terminalManager.onGotoSplit = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .focus(direction),
-                    for: terminalID
-                ) {
-                    return
-                }
-                Self.navigatePane(
+                PaneCommands.navigatePane(
                     appState: appState,
                     terminalManager: tm,
                     from: terminalID,
@@ -757,13 +716,7 @@ struct GrafttyApp: App {
 
         terminalManager.onGotoSplitOrder = { [appState = $appState, tm = terminalManager] terminalID, forward in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .focusOrder(forward: forward),
-                    for: terminalID
-                ) {
-                    return
-                }
-                Self.navigatePaneInTreeOrder(
+                PaneCommands.navigatePaneInTreeOrder(
                     appState: appState,
                     terminalManager: tm,
                     from: terminalID,
@@ -772,27 +725,15 @@ struct GrafttyApp: App {
             }
         }
 
-        terminalManager.onToggleZoom = { [appState = $appState, tm = terminalManager] terminalID in
+        terminalManager.onToggleZoom = { [appState = $appState] terminalID in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .toggleZoom,
-                    for: terminalID
-                ) {
-                    return
-                }
-                Self.toggleZoom(appState: appState, on: terminalID)
+                PaneCommands.toggleZoom(appState: appState, on: terminalID)
             }
         }
 
-        terminalManager.onResizeSplit = { [appState = $appState, tm = terminalManager] terminalID, direction, amount in
+        terminalManager.onResizeSplit = { [appState = $appState] terminalID, direction, amount in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .resize(direction: direction, amount: amount),
-                    for: terminalID
-                ) {
-                    return
-                }
-                Self.resizeSplit(
+                _ = PaneCommands.resizeSplit(
                     appState: appState,
                     target: terminalID,
                     direction: direction,
@@ -801,15 +742,9 @@ struct GrafttyApp: App {
             }
         }
 
-        terminalManager.onEqualizeSplits = { [appState = $appState, tm = terminalManager] terminalID in
+        terminalManager.onEqualizeSplits = { [appState = $appState] terminalID in
             MainActor.assumeIsolated {
-                if tm.routeHostManagedPaneCommand(
-                    .equalize,
-                    for: terminalID
-                ) {
-                    return
-                }
-                Self.equalizeSplits(appState: appState, around: terminalID)
+                PaneCommands.equalizeSplits(appState: appState, around: terminalID)
             }
         }
 
@@ -843,7 +778,7 @@ struct GrafttyApp: App {
                    let session = appState.wrappedValue.repos[indices.repo].worktrees[indices.worktree].paneSessions[terminalID] {
                     registry.removePane(ZmxLauncher.sessionName(for: session))
                 }
-                Self.setAttentionForTerminal(
+                PaneCommands.setAttentionForTerminal(
                     appState: appState,
                     terminalID: terminalID,
                     text: exitCode == 0 ? "✓" : "!",
@@ -852,12 +787,11 @@ struct GrafttyApp: App {
                 )
             }
         }
-        // PROGRESS_REPORT intentionally unhandled — shell-integration
+        // PROGRESS_REPORT is intentionally unhandled: shell-integration
         // progress pings (OSC 9;4 from tools emitting indeterminate or
         // percent status) were too loud relative to the urgency they
-        // convey. The underlying plumbing in TerminalManager stays
-        // wired; we can revisit with a dedicated, less-aggressive
-        // visual if the need comes back.
+        // convey. TerminalManager ignores the action; add a dedicated,
+        // less-aggressive visual if the need comes back.
 
         // First prompt on a newly-ready pane → maybe type the user's
         // default command. `maybeRunDefaultCommand` consults UserDefaults
@@ -865,7 +799,7 @@ struct GrafttyApp: App {
         // decide; most of the time it's a no-op.
         terminalManager.onShellReady = { [tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
-                Self.maybeRunDefaultCommand(
+                PaneCommands.maybeRunDefaultCommand(
                     terminalManager: tm,
                     terminalID: terminalID
                 )
@@ -891,14 +825,21 @@ struct GrafttyApp: App {
             sleepCoordinator.wakeForInput(session: session)
         }
         let teamInbox = services.teamInbox
-        let teamEventDispatcher = services.teamEventDispatcher
         let remoteTeamRouter = services.remoteTeamRouter
+        let localWorktreeOrigin = WorktreeOrigin(
+            deviceID: AppServices.localRemoteDeviceID(),
+            deviceLabel: AppServices.localHostDisplayName(),
+            relayDepth: 0
+        )
+        let worktreeManagement = WorktreeManagement(
+            appState: binding, terminalManager: tm, services: services, localOrigin: localWorktreeOrigin
+        )
         tm.agentCompletionLoader = { currentWorktreePath, update in
             let repos = binding.wrappedValue.repos
             async let remote = remoteTeamRouter.members()
             let local = await OffMainIO.run {
                 AgentCompletionCatalog.local(repos: repos,
-                    records: (try? TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).listAll()) ?? [],
+                    records: AppServices.presenceRecords(),
                     isReachable: TeamAgentReachability.isReachable)
             }
             update?(AgentCompletionCatalog.contextualized(local, worktreePath: currentWorktreePath, repos: repos))
@@ -919,40 +860,21 @@ struct GrafttyApp: App {
             do {
                 let request = try JSONDecoder().decode(RemoteTeamRequest.self, from: data)
                 if case .worktree(let operation) = request {
-                    let remoteOrigin: WorktreeHistory.Origin?
-                    if case .create(let creation) = operation { remoteOrigin = creation.historyOrigin() }
-                    else { remoteOrigin = nil }
                     let response = await RemoteCLIWorktreeService.handle(
                         operation, from: deviceID, repos: binding.wrappedValue.repos,
-                        status: { services.cliWorktreeCreations.status(operationID: $0) },
-                        create: { message in
-                            guard case let .createWorktree(caller, name, branch, existing, base, command, runtime, prompt, id) = message else {
-                                return .error("Expected local worktree creation")
-                            }
-                            return await SocketRequestRouter.beginCLIWorktreeCreation(
-                                callerPath: caller, worktreeName: name, branchName: branch,
-                                existing: existing, base: base, command: command,
-                                agentRuntime: runtime, agentPrompt: prompt, operationID: id,
-                                creationOrigin: remoteOrigin, appState: binding, terminalManager: tm,
-                                teamInbox: teamInbox,
-                                teamEventDispatcher: teamEventDispatcher,
-                                worktreeMonitor: services.worktreeMonitor,
-                                statsStore: services.statsStore,
-                                worktreeCreations: services.cliWorktreeCreations)
-                        })
+                        platform: worktreeManagement)
                     return try JSONEncoder().encode(response)
                 }
                 let repos = binding.wrappedValue.repos
-                let enabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
                 let handler = RemoteTeamService(
                     inbox: teamInbox,
                     agentRecords: {
-                        (try? TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).listAll()) ?? []
+                        AppServices.presenceRecords()
                     },
                     agentReachability: { TeamAgentReachability.isReachable($0) }
                 )
                 let response = await OffMainIO.run {
-                    handler.handle(request, from: deviceID, repos: repos, teamsEnabled: enabled)
+                    handler.handle(request, from: deviceID, repos: repos)
                 }
                 return try JSONEncoder().encode(response)
             } catch {
@@ -990,50 +912,50 @@ struct GrafttyApp: App {
 
         let attentionHandoff = AttentionFileHandoff()
         let attentionObserver = AttentionFileHandoffObserver(handoff: attentionHandoff)
+        let attentionDrain = AttentionHandoffDrain(
+            handoff: attentionHandoff,
+            apply: { activity in
+                switch activity {
+                case .progress(let event):
+                    guard let index = binding.wrappedValue.indices(forWorktreePath: event.worktree) else { return }
+                    if let input = event.userInput {
+                        binding.wrappedValue.repos[index.repo].worktrees[index.worktree].recordUserInput(input)
+                    }
+                    Self.clearAgentAttention(
+                        callerPath: event.worktree,
+                        callerAgentID: event.agentID,
+                        runtime: event.runtime,
+                        sessionID: event.sessionID,
+                        progressedAt: event.progressedAt,
+                        appState: binding
+                    )
+                case .stop(let event):
+                    guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
+                    if let pane = event.paneSessionName,
+                       binding.wrappedValue.worktree(forPath: event.worktree)?
+                        .paneSlot(forSessionName: pane) != nil {
+                        services.claudeSessionRegistry.recordHook(
+                            runtime: event.runtime, event: .stop,
+                            sessionID: event.sessionID ?? event.agentID,
+                            paneSessionName: pane, attentionReason: nil
+                        )
+                    }
+                    Self.recordStoppedTurn(
+                        callerPath: event.worktree, runtime: event.runtime,
+                        callerAgentID: event.agentID, sessionID: event.sessionID,
+                        paneSessionName: event.paneSessionName, recap: event.recap,
+                        stoppedAt: event.stoppedAt, appState: binding,
+                        terminalManager: tm
+                    )
+                }
+            },
+            // One off-main write per batch; files are deleted only after it
+            // lands (REMOTE-23.10).
+            persist: { try await Self.persistAppStateNow(binding.wrappedValue) }
+        )
         do {
             try attentionObserver.start {
-                Task { @MainActor in
-                    do {
-                        try attentionHandoff.consumeActivities { activity in
-                            switch activity {
-                            case .progress(let event):
-                                guard let index = binding.wrappedValue.indices(forWorktreePath: event.worktree) else { return }
-                                if let input = event.userInput {
-                                    binding.wrappedValue.repos[index.repo].worktrees[index.worktree].recordUserInput(input)
-                                }
-                                Self.clearAgentAttention(
-                                    callerPath: event.worktree,
-                                    callerAgentID: event.agentID,
-                                    runtime: event.runtime,
-                                    sessionID: event.sessionID,
-                                    progressedAt: event.progressedAt,
-                                    appState: binding
-                                )
-                            case .stop(let event):
-                                guard binding.wrappedValue.worktree(forPath: event.worktree) != nil else { return }
-                                if let pane = event.paneSessionName,
-                                   binding.wrappedValue.worktree(forPath: event.worktree)?
-                                    .paneSlot(forSessionName: pane) != nil {
-                                    services.claudeSessionRegistry.recordHook(
-                                        runtime: event.runtime, event: .stop,
-                                        sessionID: event.sessionID ?? event.agentID,
-                                        paneSessionName: pane, attentionReason: nil
-                                    )
-                                }
-                                Self.recordStoppedTurn(
-                                    callerPath: event.worktree, runtime: event.runtime,
-                                    callerAgentID: event.agentID, sessionID: event.sessionID,
-                                    paneSessionName: event.paneSessionName, recap: event.recap,
-                                    stoppedAt: event.stoppedAt, appState: binding,
-                                    terminalManager: tm
-                                )
-                            }
-                            try binding.wrappedValue.save(to: AppState.defaultDirectory)
-                        }
-                    } catch {
-                        NSLog("[Graftty] Attention file handoff failed: %@", String(describing: error))
-                    }
-                }
+                Task { @MainActor in await attentionDrain.drain() }
             }
             services.attentionFileObserver = attentionObserver
         } catch {
@@ -1252,17 +1174,7 @@ struct GrafttyApp: App {
             }
         }
         webController.setSessionWorktreeProvider { sessionName in
-            await MainActor.run { () -> String? in
-                for repo in appStateBinding.wrappedValue.repos {
-                    for wt in repo.worktrees where wt.state == .running {
-                        for leafID in wt.splitTree.allLeaves
-                        where wt.paneSessions[leafID].map(ZmxLauncher.sessionName(for:)) == sessionName {
-                            return wt.path
-                        }
-                    }
-                }
-                return nil
-            }
+            await MainActor.run { worktreeManagement.worktreePath(forSessionName: sessionName) }
         }
 
         // IOS-4.10: per-worktree pane trees + titles for the mobile
@@ -1280,11 +1192,6 @@ struct GrafttyApp: App {
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
         let panesClaudeRegistry = services.claudeSessionRegistry
-        let localWorktreeOrigin = WorktreeOrigin(
-            deviceID: AppServices.localRemoteDeviceID(),
-            deviceLabel: AppServices.localHostDisplayName(),
-            relayDepth: 0
-        )
         let buildWorktreePanesSnapshot: @Sendable @MainActor () -> [WorktreePanes] = {
             var out: [WorktreePanes] = []
             for repo in appStateBinding.wrappedValue.repos {
@@ -1327,150 +1234,40 @@ struct GrafttyApp: App {
             await services.remoteMacsModel.promotedWorktreesForRelay()
         }
 
-        let statsStore = services.statsStore
-
         // WEB-7.1: feed the web server the repo list for the "Add
         // Worktree" picker. Mirrors the native sidebar's top-level
         // repos.
         webController.setReposProvider {
-            await MainActor.run { () -> [WebServer.RepoInfo] in
-                appStateBinding.wrappedValue.repos.map { repo in
-                    WebServer.RepoInfo(
-                        path: repo.path,
-                        displayName: repo.displayName,
-                        defaultBranchStatus: defaultBranchStatus(
-                            for: repo,
-                            stats: statsStore.stats[repo.path]
-                        ),
-                        origin: localWorktreeOrigin
-                    )
-                }
+            await MainActor.run {
+                worktreeManagement.repositories(includingBranches: false).map { WebServer.RepoInfo($0, includingBranches: false) }
             }
         }
         webController.setRelayedReposProvider {
             await services.remoteMacsModel
                 .promotedRepositoriesForRelay()
-                .map { repository in
-                    WebServer.RepoInfo(
-                        path: repository.id,
-                        displayName: repository.displayName,
-                        defaultBranchStatus: repository.defaultBranchStatus.map {
-                            .init(
-                                branchName: $0.branchName,
-                                remoteRef: $0.remoteRef,
-                                behindCount: $0.behindCount
-                            )
-                        },
-                        branches: repository.branches,
-                        origin: repository.origin
-                    )
-                }
+                .map { WebServer.RepoInfo($0, includingBranches: true) }
+        }
+        webController.setDefaultBranchPuller { req in
+            await .init(worktreeManagement.pullDefaultBranch(repoPath: req.repoPath))
         }
 
         // WEB-7.2: drive `POST /worktrees` into the shared
-        // `AddWorktreeFlow`. `AddWorktreeFlow.add` is itself
-        // `@MainActor`; calling it from this non-isolated async closure
-        // inserts an implicit hop, so every write to appState and every
-        // terminal-surface creation happens on the main actor — same
-        // isolation as the native sidebar's "+" button.
-        let worktreeMonitor = services.worktreeMonitor
-        let dispatcherForWeb = services.teamEventDispatcher
-        webController.setDefaultBranchPuller { req in
-            let pullTarget = await MainActor.run {
-                guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
-                    return (tracked: false, status: nil as WebServer.RepoInfo.DefaultBranchStatus?)
-                }
-                return (tracked: true, status: defaultBranchStatus(
-                    for: repo,
-                    stats: statsStore.stats[repo.path]
-                ))
-            }
-            guard pullTarget.tracked else {
-                return .invalid("repository not tracked")
-            }
-            guard let status = pullTarget.status else {
-                return .invalid("default checkout is not behind origin")
-            }
-            do {
-                try await GitDefaultBranchPull.pull(repoPath: req.repoPath, branchName: status.branchName)
-            } catch GitDefaultBranchPull.Error.gitFailed(_, let stderr) {
-                return .gitFailed(stderr)
-            } catch {
-                return .internalFailure("\(error)")
-            }
-            await MainActor.run {
-                guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
-                    return
-                }
-                let branch = repo.worktrees.first(where: { $0.path == repo.path })?.branch ?? ""
-                statsStore.refresh(worktreePath: repo.path, repoPath: repo.path, branch: branch)
-            }
-            return .success(WebServer.PullDefaultBranchResponse(ok: true))
-        }
+        // `AddWorktreeFlow` through `WorktreeManagement`, which is
+        // `@MainActor`: every write to appState and every terminal-surface
+        // creation happens on the main actor, as from the sidebar's "+".
         webController.setWorktreeCreator { req in
-            let branch: BranchSelection
-            if req.existing {
-                branch = .useExisting(name: req.branchName, source: .local)
-            } else {
-                branch = .createNew(name: req.branchName)
-            }
-            let result = await AddWorktreeFlow.add(
-                repoPath: req.repoPath,
-                worktreeName: req.worktreeName,
-                branch: branch,
-                appState: appStateBinding,
-                worktreeMonitor: worktreeMonitor,
-                statsStore: statsStore,
-                terminalManager: tm,
-                teamEventDispatcher: dispatcherForWeb
-            )
-            switch result {
-            case .success(let outcome):
-                return .success(WebServer.CreateWorktreeResponse(
-                    sessionName: outcome.sessionName,
-                    worktreePath: outcome.worktreePath
-                ))
-            case .failure(let err):
-                switch err {
-                case .gitFailed(let msg): return .gitFailed(msg)
-                case .repoNotFound: return .invalid("repository not tracked")
-                case .pathCollision: return .invalid("a worktree at that name already exists")
-                case .branchAlreadyMounted:
-                    return .conflict(message: err.userMessage ?? "branch already mounted")
-                case .invalidInput(let msg): return .invalid(msg)
-                case .discoveryFailed(let msg): return .internalFailure(msg)
-                }
-            }
+            let branch: BranchSelection = req.existing
+                ? .useExisting(name: req.branchName, source: .local)
+                : .createNew(name: req.branchName)
+            return await .init(worktreeManagement.create(
+                repoPath: req.repoPath, worktreeName: req.worktreeName, branch: branch, entryPoint: .web
+            ))
         }
 
         // WEB-7.8: drive `POST /worktrees/delete` into the shared
-        // `DeleteWorktreeFlow`. Mirrors the create wiring above —
-        // closure runs on `MainActor` via `DeleteWorktreeFlow.delete`'s
-        // `@MainActor` isolation, so every `appState` mutation and
-        // surface teardown lands on the main actor, same as the native
-        // sidebar's "Delete Worktree" path.
+        // `DeleteWorktreeFlow` through `WorktreeManagement`.
         webController.setWorktreeRemover { req in
-            let result = await DeleteWorktreeFlow.delete(
-                worktreePath: req.worktreePath,
-                force: req.force,
-                appState: appStateBinding,
-                terminalManager: tm,
-                statsStore: statsStore,
-                prStatusStore: prStatusStore,
-                teamEventDispatcher: dispatcherForWeb
-            )
-            switch result {
-            case .success(let outcome):
-                return .success(WebServer.DeleteWorktreeResponse(dismissed: outcome.dismissed))
-            case .failure(.notFound):
-                return .notFound("unknown worktree path")
-            case .failure(.mainCheckoutRejected):
-                return .invalid("cannot delete the repo's main checkout")
-            case .failure(.gitFailedForceable(let stderr, let status)):
-                return .gitFailedForceable(stderr: stderr, shortStatus: status)
-            case .failure(.gitFailedFinal(let msg)):
-                return .gitFailedFinal(msg)
-            }
+            await .init(worktreeManagement.delete(worktreePath: req.worktreePath, force: req.force))
         }
 
         // Build the paired-device pool before starting the paired-access
@@ -1478,51 +1275,35 @@ struct GrafttyApp: App {
         services.hostPairingCoordinator.setStartupError(
             "Paired access is still starting. Try again in a moment."
         )
-        if let hostKey = services.hostKey() {
-            let hostAgentPool = Self.makeHostAgentPool(
+        let hostAgentPool = services.hostKey().map { hostKey in
+            Self.makeHostAgentPool(
                 hostKey: hostKey,
                 appState: appStateBinding,
                 terminalManager: terminalManager,
                 services: services,
+                worktreeManagement: worktreeManagement,
                 buildWorktreePanesSnapshot: buildWorktreePanesSnapshot,
                 localWorktreeOrigin: localWorktreeOrigin,
                 portScanner: portScanner,
                 zmxBinary: zmxBinary,
                 zmxDir: zmxDir
             )
-            services.hostAgentPool = hostAgentPool
-            Task { @MainActor in
-                do {
-                    try await services.startRemoteMacAccessServices(
-                        hostAgentPool: hostAgentPool
-                    )
-                    services.hostPairingCoordinator.setStartupError(nil)
-                } catch {
-                    services.hostPairingCoordinator.setStartupError(
-                        Self.remoteAccessStartupMessage(for: error)
-                    )
-                    NSLog(
-                        "[Graftty] failed to start LAN remote access services: %@",
-                        String(describing: error)
-                    )
-                }
-            }
-        } else {
-            Task { @MainActor in
-                do {
-                    try await services.startRemoteMacAccessServices(
-                        hostAgentPool: nil
-                    )
-                    services.hostPairingCoordinator.setStartupError(nil)
-                } catch {
-                    services.hostPairingCoordinator.setStartupError(
-                        Self.remoteAccessStartupMessage(for: error)
-                    )
-                    NSLog(
-                        "[Graftty] failed to start LAN remote access services: %@",
-                        String(describing: error)
-                    )
-                }
+        }
+        services.hostAgentPool = hostAgentPool
+        Task { @MainActor in
+            do {
+                try await services.startRemoteMacAccessServices(
+                    hostAgentPool: hostAgentPool
+                )
+                services.hostPairingCoordinator.setStartupError(nil)
+            } catch {
+                services.hostPairingCoordinator.setStartupError(
+                    Self.remoteAccessStartupMessage(for: error)
+                )
+                NSLog(
+                    "[Graftty] failed to start LAN remote access services: %@",
+                    String(describing: error)
+                )
             }
         }
 
@@ -1547,7 +1328,7 @@ struct GrafttyApp: App {
                 // main window (and its `.onChange` observer) is closed.
                 stateBinding.wrappedValue.capturePaneTitleMetadata(tm.paneTitleMetadata)
                 tm.autoSleep.shutdown()
-                Self.persistAppState(stateBinding.wrappedValue)
+                try? Self.persistAppStateSynchronously(stateBinding.wrappedValue)
                 appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
                 appServices.prStatusStore.stop()

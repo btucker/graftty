@@ -9,44 +9,6 @@ import UIKit
 @MainActor
 @Suite("RootView size-class router — IPAD-1.1 + IPAD-7.1")
 struct RootViewSizeClassTests {
-    @Test(arguments: [false, true])
-    func compactPanePreviewsDoNotBecomeRecentTerminalVisits(isRegularWidth: Bool) async throws {
-        let defaults = try #require(UserDefaults(suiteName: "visible-recent-pane-\(UUID())"))
-        let state = IPadAppState(defaults: defaults)
-        let host = Host(label: "Mac", baseURL: URL(string: "https://fixture.invalid")!)
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let store = HostStore(storeURL: directory.appendingPathComponent("hosts.json"))
-        try store.add(host)
-        let row = WorktreePanes(path: "/split", displayName: "Split", repoDisplayName: "Project", displayBranch: "split",
-            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
-            layout: .split(direction: .horizontal, ratio: 0.5,
-                left: .leaf(sessionName: "first", title: "First", attentionText: nil, isBusy: false, attentionSource: nil),
-                right: .leaf(sessionName: "second", title: "Second", attentionText: nil, isBusy: false, attentionSource: nil)))
-        state.selectedHostId = host.id
-        state.latestWorktrees = [row]
-        let gate = BiometricGate(authenticator: RecentPaneAuthenticator())
-        gate.applicationWillEnterForeground()
-        await gate.authenticateOnActivation()
-        let root = RootView(hostStore: store, gate: gate, notifications: MobileAgentNotifications(defaults: defaults),
-            appState: state, notificationIO: .init(fetch: { _ in [row] }, reopen: { _, _ in }))
-        let controller = UIHostingController(rootView: root
-            .environment(\.horizontalSizeClass, isRegularWidth ? .regular : .compact)
-            .environment(\.scenePhase, .inactive))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: isRegularWidth ? 834 : 390, height: 844))
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        controller.view.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(100))
-        // Compact selection opens pane previews. Regular selection mounts
-        // the terminal tree. Merely preselecting a leaf is not a compact visit.
-        state.selectedWorktreePath = row.path
-        state.focusedPaneId = "first"
-        controller.view.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(state.recentPanes.entries.isEmpty == !isRegularWidth)
-    }
     @Test func recentPaneChoiceUpdatesTheActualHostWorktreeAndPaneRoute() throws {
         let state = IPadAppState(defaults: try #require(UserDefaults(suiteName: "recent-selection-\(UUID())")))
         let host = Host(label: "Other Mac", baseURL: URL(string: "https://other.invalid")!)
@@ -58,7 +20,7 @@ struct RootViewSizeClassTests {
             sidebar: .init(id: "stable-target", projectID: "other-project"))
         state.selectedHostId = UUID()
         state.selectedWorktreePath = "/old"
-        RootView.applyRecentPaneTarget(.init(rows: [row], worktree: row, pane: row.layout!.leaves[1]), host: host, to: state)
+        RootView.applyActivationTarget(.init(rows: [row], worktree: row, pane: row.layout!.leaves[1]), host: host, to: state)
         let selection = try #require(RootView.compactSelection(appState: state, hosts: [host]))
         #expect(selection.host.id == host.id)
         #expect(selection.worktree?.path == row.path)
@@ -120,7 +82,7 @@ struct RootViewSizeClassTests {
     func ipad_1_1_regularRendersIPadRootLayout() {
         let store = HostStore(storeURL: URL(fileURLWithPath: "/tmp/RootViewSizeClassTests-\(UUID()).json"))
         let appState = IPadAppState(defaults: UserDefaults(suiteName: "RootViewSizeClassTests-\(UUID().uuidString)")!)
-        let layout = IPadRootLayout(hostStore: store, appState: appState, coordinator: RemoteConnectionCoordinator())
+        let layout = IPadRootLayout(hostStore: store, appState: appState)
         _ = layout
         #expect(true)
     }
@@ -142,55 +104,20 @@ struct RootViewSizeClassTests {
         #expect(appState.selectedHostId != nil)
     }
 
-    /// W3 Task 4 (Task-3 finding 4, LOW): this test exercises the SAME
-    /// construction call sites `RootView.body` itself uses
-    /// (`IPadRootLayout(... coordinator: coordinator)` and
-    /// `SingleSessionView(..., coordinator: coordinator)`) but never
-    /// actually renders `RootView.body` — `ipad_7_1_compactRendersExistingFlow`
-    /// above does call `.body` but only for the `.compact` branch, so
-    /// there's no single test that walks `.body` and captures the
-    /// coordinator instance handed to `IPadRootLayout` on the `.regular`
-    /// branch specifically.
-    ///
-    /// Strengthening this to actually assert on `RootView.body`'s output
-    /// would need either (a) reading `@Environment(\.horizontalSizeClass)`
-    /// from a real `UIHostingController` hosted in a UI-testable
-    /// environment (there's no `ViewInspector`-style dependency in this
-    /// package, and adding one is out of scope for this task), or (b)
-    /// reflecting over the opaque `some View` tree `body` returns, which
-    /// SwiftUI does not expose a stable, non-fragile API for. Both are
-    /// disproportionate to what this test is actually protecting against
-    /// (a copy-paste construction site handing `IPadRootLayout` or
-    /// `SingleSessionView` a DIFFERENT coordinator instance than the
-    /// other) — the construction-level assertion below already fails
-    /// loudly if either call site's argument changes from `coordinator`
-    /// to e.g. `RemoteConnectionCoordinator()`, which is the actual
-    /// regression this guards against.
-    @Test("""
-W3 Task 3: `RootView` owns a single `RemoteConnectionCoordinator` and hands the SAME instance to both size classes — `IPadRootLayout` (regular width) and `SingleSessionView` (compact width) — so a host negotiated from either surface is cached for the other.
-""")
-    func bothSizeClassesReceiveTheSameCoordinatorInstance() {
-        let host = Host(
-            id: UUID(),
-            label: "test",
-            baseURL: URL(string: "https://test.local")!,
-            addedAt: Date(),
-            lastUsedAt: nil
-        )
-        let step = SessionStep(host: host, sessionName: "s", title: "s")
-        let coordinator = RemoteConnectionCoordinator()
+    /// Views built without a coordinator (previews, focused tests) get no
+    /// remote wiring rather than a fresh coordinator.
+    @Test("Without an injected coordinator, a worktree list gets no remote providers")
+    func absentCoordinatorBuildsNoRemoteProviders() {
+        let host = Host(label: "test", baseURL: URL(string: "https://test.local")!)
+        let none = RemoteWorktreeProviders(coordinator: nil, host: host, worktreeUpdates: nil)
+        #expect(!none.includeRemoteWorktrees)
+        #expect(none.connection == nil && none.snapshot == nil && none.sidebar == nil && none.updates == nil)
 
-        let store = HostStore(storeURL: URL(fileURLWithPath: "/tmp/RootViewSizeClassTests-\(UUID()).json"))
-        let appState = IPadAppState(defaults: UserDefaults(suiteName: "RootViewSizeClassTests-\(UUID().uuidString)")!)
-        let ipadLayout = IPadRootLayout(hostStore: store, appState: appState, coordinator: coordinator)
-        let compactSession = SingleSessionView(step: step, navigationPath: .constant(NavigationPath()), coordinator: coordinator)
-
-        #expect(ipadLayout.coordinator === coordinator)
-        #expect(compactSession.coordinator === coordinator)
+        // An unpaired host gets no push stream even when a feed is injected.
+        let wired = RemoteWorktreeProviders(coordinator: RemoteConnectionCoordinator(connectionsAllowedInitially: false),
+                                            host: host, worktreeUpdates: RemoteWorktreeUpdatesProvider { _ in nil })
+        #expect(wired.connection != nil && wired.snapshot != nil && wired.sidebar != nil && wired.updates == nil)
     }
 }
 
-private struct RecentPaneAuthenticator: BiometricAuthenticator {
-    func authenticate() async -> Result<Void, Error> { .success(()) }
-}
 #endif

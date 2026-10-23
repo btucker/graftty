@@ -2,7 +2,6 @@ import Foundation
 import GrafttyProtocol
 
 public enum TeamInboxRequestError: Error, Equatable, CustomStringConvertible {
-    case teamModeDisabled
     case callerNotTracked
     case notInTeam
     case senderNotInTeam
@@ -14,8 +13,6 @@ public enum TeamInboxRequestError: Error, Equatable, CustomStringConvertible {
 
     public var description: String {
         switch self {
-        case .teamModeDisabled:
-            return "team mode is disabled"
         case .callerNotTracked:
             return "not inside a tracked worktree"
         case .notInTeam:
@@ -159,10 +156,9 @@ public final class TeamInboxRequestHandler {
         recipient: String,
         text: String,
         priority: TeamInboxPriority,
-        repos: [RepoEntry],
-        teamsEnabled: Bool
+        repos: [RepoEntry]
     ) throws -> TeamInboxDelivery {
-        let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
+        let context = try teamContext(callerWorktree: callerWorktree, repos: repos)
         let addressed = splitAgentAddress(recipient, in: context.team, repos: repos)
         guard let target = TeamLookup.recipient(named: addressed.member, from: context.team, in: repos) else {
             let available = context.team.members
@@ -205,7 +201,6 @@ public final class TeamInboxRequestHandler {
             text: text,
             priority: priority,
             repos: repos,
-            teamsEnabled: teamsEnabled,
             senderRuntime: senderIdentity?.runtime,
             senderAgentID: senderIdentity?.rawValue,
             recipientRuntime: selectedAgent?.runtime ?? addressed.runtime,
@@ -220,10 +215,9 @@ public final class TeamInboxRequestHandler {
         callerAgentID: String? = nil,
         text: String,
         priority: TeamInboxPriority,
-        repos: [RepoEntry],
-        teamsEnabled: Bool
+        repos: [RepoEntry]
     ) throws -> [TeamInboxDelivery] {
-        let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
+        let context = try teamContext(callerWorktree: callerWorktree, repos: repos)
         let recipients = context.team.members.filter { $0.worktreePath != context.sender.worktreePath }
         let senderIdentity = callerAgentID.flatMap(TeamAgentIdentity.init(rawValue:))
         let messages = try dispatcher.dispatchTeamBroadcast(
@@ -231,7 +225,6 @@ public final class TeamInboxRequestHandler {
             text: text,
             priority: priority,
             repos: repos,
-            teamsEnabled: teamsEnabled,
             senderRuntime: senderIdentity?.runtime,
             senderAgentID: senderIdentity?.rawValue
         )
@@ -245,13 +238,11 @@ public final class TeamInboxRequestHandler {
         callerWorktree: String,
         callerAgentID: String? = nil,
         throughID: String,
-        repos: [RepoEntry],
-        teamsEnabled: Bool
+        repos: [RepoEntry]
     ) throws {
         let context = try teamContext(
             callerWorktree: callerWorktree,
-            repos: repos,
-            teamsEnabled: teamsEnabled
+            repos: repos
         )
         let resolvedTeamID = teamID(context.team)
         let allMessages = try inbox.messages(teamID: resolvedTeamID)
@@ -292,15 +283,13 @@ public final class TeamInboxRequestHandler {
         callerWorktree: String?,
         worktree: String?,
         repo: String?,
-        repos: [RepoEntry],
-        teamsEnabled: Bool
+        repos: [RepoEntry]
     ) throws -> (teamName: String, members: [TeamListMember]) {
         let context = try scopedTeamContext(
             callerWorktree: callerWorktree,
             worktree: worktree,
             repo: repo,
-            repos: repos,
-            teamsEnabled: teamsEnabled
+            repos: repos
         )
         // One presence scan and one directory for the whole team; the
         // production `agentRecords` closure walks and decodes every presence
@@ -349,8 +338,7 @@ public final class TeamInboxRequestHandler {
         snapshotThroughID: String? = nil,
         forwardPagination: Bool? = nil,
         limit: Int?,
-        repos: [RepoEntry],
-        teamsEnabled: Bool
+        repos: [RepoEntry]
     ) throws -> TeamInboxDiagnosticPage {
         // `beforeID` is naturally absent on the first page, so `limit` is the
         // pagination capability signal. Refuse older clients explicitly: a
@@ -363,8 +351,7 @@ public final class TeamInboxRequestHandler {
             callerWorktree: callerWorktree,
             worktree: worktree,
             repo: repo,
-            repos: repos,
-            teamsEnabled: teamsEnabled
+            repos: repos
         )
         let resolvedTeamID = teamID(context.team)
         let pageLimit = min(
@@ -477,11 +464,10 @@ public final class TeamInboxRequestHandler {
         sessionID: String?,
         paneSessionName: String?,
         repos: [RepoEntry],
-        teamsEnabled: Bool,
         instructions: String = "",
         agentID: String? = nil
     ) throws -> String {
-        let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
+        let context = try teamContext(callerWorktree: callerWorktree, repos: repos)
         let sessionID = sessionID ?? "\(runtime.rawValue):\(context.sender.name):\(context.sender.worktreePath)"
         let agentID = agentID
             ?? TeamAgentIdentity(runtime: runtime, nativeSessionID: sessionID).rawValue
@@ -622,14 +608,12 @@ public final class TeamInboxRequestHandler {
 
     private func teamContext(
         callerWorktree: String,
-        repos: [RepoEntry],
-        teamsEnabled: Bool
+        repos: [RepoEntry]
     ) throws -> Context {
-        guard teamsEnabled else { throw TeamInboxRequestError.teamModeDisabled }
         guard let caller = worktree(path: callerWorktree, in: repos) else {
             throw TeamInboxRequestError.callerNotTracked
         }
-        guard let team = TeamView.team(for: caller, in: repos, teamsEnabled: true) else {
+        guard let team = TeamView.team(for: caller, in: repos) else {
             throw TeamInboxRequestError.notInTeam
         }
         guard let sender = team.members.first(where: { $0.worktreePath == callerWorktree }) else {
@@ -642,14 +626,12 @@ public final class TeamInboxRequestHandler {
         callerWorktree: String?,
         worktree: String?,
         repo repoPath: String?,
-        repos: [RepoEntry],
-        teamsEnabled: Bool
+        repos: [RepoEntry]
     ) throws -> ScopedContext {
-        guard teamsEnabled else { throw TeamInboxRequestError.teamModeDisabled }
         guard let viewer = resolveScopedWorktree(callerWorktree: callerWorktree, worktree: worktree, repo: repoPath, repos: repos) else {
             throw TeamInboxRequestError.callerNotTracked
         }
-        guard let team = TeamView.team(for: viewer, in: repos, teamsEnabled: true) else {
+        guard let team = TeamView.team(for: viewer, in: repos) else {
             throw TeamInboxRequestError.notInTeam
         }
         guard let member = team.members.first(where: { $0.worktreePath == viewer.path }) else {

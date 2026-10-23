@@ -45,10 +45,15 @@ struct PinnedWorktreeRemovalTests {
             #expect(throws: (any Error).self) {
                 try command.requirePinnedRemovalSupport(send: { probes.append($0); return .error("unknown message type") })
             }
-            #expect(probes == [.worktreePinnedRemovalCapability])
+            #expect(probes == [.capabilities, .worktreePinnedRemovalCapability])
+            probes = []
+            #expect(throws: (any Error).self) {
+                try command.requirePinnedRemovalSupport(send: { probes.append($0); return .capabilities(["worktree_pin"]) })
+            }
+            #expect(probes == [.capabilities])
             try command.requirePinnedRemovalSupport(send: { request in
-                #expect(request == .worktreePinnedRemovalCapability)
-                return .ok
+                #expect(request == .capabilities)
+                return .capabilities(["worktree_pinned_removal"])
             })
         }
     }
@@ -58,11 +63,11 @@ struct PinnedWorktreeRemovalTests {
     func appRejectsPinnedRemovalBeforeWakingOrDeleting(force: Bool, worktreeState: WorktreeState) {
         var role = WorktreeEntry(path: "/repo/.worktrees/role", branch: "role", state: worktreeState)
         role.isPinned = true
-        var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [role])])
+        let state = AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [role])])
         let store = CLIWorktreeRemovalStore()
         let response = CLIWorktreeRemovalRequestHandler.begin(
             worktreePath: role.path, force: force, pinned: false,
-            appState: Binding(get: { state }, set: { state = $0 }), worktreeRemovals: store,
+            state: { state }, worktreeRemovals: store,
             wakeWorktree: { _ in Issue.record("rejected removal must not wake processes"); return true },
             deleteWorktree: { _, _ in Issue.record("rejected removal must not run Git or dismiss"); return .success(.init(dismissed: true)) }
         )
@@ -76,10 +81,10 @@ struct PinnedWorktreeRemovalTests {
     @Test(arguments: [false, true])
     func defaultCheckoutRemainsProtected(pinned: Bool) {
         let home = WorktreeEntry(path: "/repo", branch: "main")
-        var state = AppState(repos: [RepoEntry(path: home.path, displayName: "Repo", worktrees: [home])])
+        let state = AppState(repos: [RepoEntry(path: home.path, displayName: "Repo", worktrees: [home])])
         let response = CLIWorktreeRemovalRequestHandler.begin(
             worktreePath: home.path, force: true, pinned: pinned,
-            appState: Binding(get: { state }, set: { state = $0 }), worktreeRemovals: CLIWorktreeRemovalStore(),
+            state: { state }, worktreeRemovals: CLIWorktreeRemovalStore(),
             wakeWorktree: { _ in Issue.record("main checkout must not wake"); return true },
             deleteWorktree: { _, _ in Issue.record("main checkout must survive"); return .success(.init(dismissed: false)) }
         )
@@ -92,12 +97,12 @@ struct PinnedWorktreeRemovalTests {
         let (force, dismissed) = options
         var role = WorktreeEntry(path: "/repo/.worktrees/role", branch: "role", state: dismissed ? .stale : .closed)
         role.isPinned = isPinned
-        var state = AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [role])])
+        let state = AppState(repos: [RepoEntry(path: "/repo", displayName: "Repo", worktrees: [role])])
         let store = CLIWorktreeRemovalStore()
         var deleted = false
         let response = CLIWorktreeRemovalRequestHandler.begin(
             worktreePath: role.path, force: force, pinned: isPinned,
-            appState: Binding(get: { state }, set: { state = $0 }), worktreeRemovals: store,
+            state: { state }, worktreeRemovals: store,
             wakeWorktree: { path in #expect(path == role.path); return true },
             deleteWorktree: { path, requestedForce in
                 #expect(path == role.path)
@@ -119,7 +124,7 @@ struct PinnedWorktreeRemovalTests {
         let store = CLIWorktreeRemovalStore()
         let response = CLIWorktreeRemovalRequestHandler.begin(
             worktreePath: role.path, force: true, pinned: false,
-            appState: Binding(get: { state }, set: { state = $0 }), worktreeRemovals: store,
+            state: { state }, worktreeRemovals: store,
             wakeWorktree: { _ in true },
             deleteWorktree: { _, _ in Issue.record("pin added after admission must prevent deletion"); return .success(.init(dismissed: false)) }
         )
@@ -157,7 +162,7 @@ struct PinnedWorktreeRemovalTests {
         let dispatcher = TeamEventDispatcher(inbox: TeamInbox(rootDirectory: directory.appendingPathComponent("inbox")),
             preferencesProvider: { .init() }, templateProvider: { "" })
         let response = CLIWorktreeRemovalRequestHandler.begin(
-            worktreePath: role.path, force: false, pinned: true, appState: binding, worktreeRemovals: store,
+            worktreePath: role.path, force: false, pinned: true, state: { binding.wrappedValue }, worktreeRemovals: store,
             wakeWorktree: { _ in true },
             deleteWorktree: { path, force in
                 await DeleteWorktreeFlow.delete(worktreePath: path, force: force, appState: binding,

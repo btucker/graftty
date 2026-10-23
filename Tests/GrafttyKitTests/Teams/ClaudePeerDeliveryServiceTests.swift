@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("Claude native peer delivery")
 struct ClaudePeerDeliveryServiceTests {
@@ -39,7 +40,7 @@ struct ClaudePeerDeliveryServiceTests {
 
     @Test("Transport failure leaves exact row unread.")
     func failureLeavesRowUnread() async throws {
-        let fixture = try Fixture(error: StubError.failed)
+        let fixture = try Fixture(error: StubError())
         _ = try fixture.append(body: "please review")
 
         await fixture.service.onMessageArrival(
@@ -136,7 +137,7 @@ struct ClaudePeerDeliveryServiceTests {
             if body.contains("\n\n") {
                 return ClaudePeerMessagingError.messageTooLarge(bytes: 99_999, maxBytes: 1)
             }
-            return body.contains("first") ? StubError.failed : nil
+            return body.contains("first") ? StubError() : nil
         })
         let first = try fixture.append(body: "first")
         _ = try fixture.append(body: "second")
@@ -343,8 +344,7 @@ struct ClaudePeerDeliveryServiceTests {
         let message = try #require(try dispatcher.dispatchTeamMessage(
             fromWorktree: "/source", to: fixture.worktree,
             text: "cross repository brief", priority: .normal,
-            repos: repos, teamsEnabled: true,
-            senderRuntime: .codex, senderAgentID: "codex-0123456789ab"
+            repos: repos, senderRuntime: .codex, senderAgentID: "codex-0123456789ab"
         ))
         #expect(message.repoPath == fixture.teamID)
         #expect(try fixture.inbox.messages(teamID: "/source").isEmpty)
@@ -399,8 +399,8 @@ struct ClaudePeerDeliveryServiceTests {
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("graftty-claude-delivery-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let counter = IDCounter()
-            let inbox = TeamInbox(rootDirectory: root, idGenerator: { counter.next() })
+            let ids = TeamTestFixtures.SequentialMessageIDs()
+            let inbox = TeamInbox(rootDirectory: root, idGenerator: { ids.next() })
             let client = StubClient(error: error, errorForBody: errorForBody)
             let agentID = TeamAgentIdentity(runtime: .claude, nativeSessionID: "session-1").rawValue
             let presence = TeamPresenceRecord(
@@ -442,15 +442,7 @@ struct ClaudePeerDeliveryServiceTests {
         }
 
         func deliveryEvents() throws -> [TeamEvent] {
-            let url = root
-                .appendingPathComponent(TeamInbox.fileComponent(teamID), isDirectory: true)
-                .appendingPathComponent("events.jsonl")
-            guard let data = try? Data(contentsOf: url) else { return [] }
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return String(decoding: data, as: UTF8.self)
-                .split(separator: "\n")
-                .compactMap { try? decoder.decode(TeamEvent.self, from: Data($0.utf8)) }
+            try TeamTestFixtures.events(root: root, teamID: teamID)
         }
 
         func append(
@@ -474,19 +466,6 @@ struct ClaudePeerDeliveryServiceTests {
                 body: body,
                 source: source
             )
-        }
-    }
-
-    private enum StubError: Error { case failed }
-
-    private final class IDCounter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var n = 0
-        func next() -> String {
-            lock.lock()
-            defer { lock.unlock() }
-            n += 1
-            return "message-\(n)"
         }
     }
 

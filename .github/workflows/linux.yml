@@ -48,6 +48,11 @@ jobs:
           path: .build
           key: linux-${{ matrix.arch }}-swift623-${{ hashFiles('Package.resolved', 'Package.swift') }}
           restore-keys: linux-${{ matrix.arch }}-swift623-
+      - name: Cache zmx compilation
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/zmx
+          key: zmx-v1-${{ matrix.arch }}-${{ hashFiles('scripts/linux/build-zmx.sh', 'scripts/zmx/ZIG_VERSION', 'scripts/zmx/UPSTREAM_COMMIT', 'scripts/zmx/*.patch') }}
       - name: Run portable tests
         run: |
           python3 scripts/generate-specs.py --check
@@ -56,6 +61,7 @@ jobs:
       - name: Build archive
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
+          GRAFTTY_ZMX_CACHE_DIR: ${{ github.workspace }}/.ci-cache/zmx
         run: |
           version="${REQUESTED_VERSION#v}"
           if [ -z "$version" ]; then version="ci-${GITHUB_SHA:0:12}"; fi

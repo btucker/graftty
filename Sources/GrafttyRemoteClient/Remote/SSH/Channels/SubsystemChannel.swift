@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 import GrafttyTunnel
 import NIOConcurrencyHelpers
 import NIOCore
@@ -290,7 +291,7 @@ final class SubsystemRPCChannel<Request: Encodable & Sendable, Response: Sendabl
     }
 
     func send(_ request: Request) async throws -> Response {
-        try await send(encoded: JSONEncoder().encode(request))
+        try await send(encoded: JSONEncoder.shared.encode(request))
     }
 
     /// Sends an already-encoded request, for callers that bound its size.

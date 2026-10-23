@@ -150,18 +150,18 @@ struct NotificationMessagePaneTests {
     @Test func decodeAddPane() throws {
         let json = #"{"type":"add_pane","path":"/tmp/wt","direction":"left","command":"htop"}"#
         let msg = try JSONDecoder().decode(NotificationMessage.self, from: json.data(using: .utf8)!)
-        if case .addPane(let path, let direction, let command, _, _) = msg {
-            #expect(path == "/tmp/wt")
-            #expect(direction == .left)
-            #expect(command == "htop")
+        if case .addPane(let request) = msg {
+            #expect(request.path == "/tmp/wt")
+            #expect(request.direction == .left)
+            #expect(request.command == "htop")
         } else { Issue.record("Expected .addPane") }
     }
 
     @Test func decodeAddPaneWithoutCommand() throws {
         let json = #"{"type":"add_pane","path":"/tmp/wt","direction":"right"}"#
         let msg = try JSONDecoder().decode(NotificationMessage.self, from: json.data(using: .utf8)!)
-        if case .addPane(_, _, let command, _, _) = msg {
-            #expect(command == nil)
+        if case .addPane(let request) = msg {
+            #expect(request.command == nil)
         } else { Issue.record("Expected .addPane") }
     }
 

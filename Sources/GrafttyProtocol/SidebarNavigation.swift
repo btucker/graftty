@@ -94,6 +94,18 @@ public struct SidebarSnapshot: Codable, Sendable, Equatable {
 /// @spec AGENT-3.17: When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.
 /// @spec AGENT-3.18: When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.
 public struct AttentionRecap: Codable, Sendable, Hashable {
+    /// A change worth remembering, authored separately from the current status.
+    /// @spec CONTEXT-23: When a report includes an explicit history entry, the application shall retain its headline and optional detail independently of the current brief, suppress consecutive identical entries without moving their timestamps, and preserve distinct entries and entries separated by user input.
+    public struct HistoryEntry: Codable, Sendable, Hashable {
+        public var headline: String
+        public var detail: String?
+
+        public init(headline: String, detail: String? = nil) {
+            self.headline = headline
+            self.detail = detail
+        }
+    }
+
     public var title: String
     public var context: String?
     public var completed: String
@@ -103,14 +115,17 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
     public var emojiAlternatives: [String]?
     /// Rename the worktree's purpose only when the task itself changes.
     public var purposeChanged: Bool?
-    /// A meaningful milestone for the expandable worktree history.
+    /// Legacy checkpoint heading. New agents should provide historyEntry instead.
     public var checkpoint: String?
+    /// Omit for routine updates; takes precedence over a legacy checkpoint.
+    public var historyEntry: HistoryEntry?
     /// The current accumulated decisions; nil preserves previously reported decisions.
     public var decisions: [String]?
 
     public init(title: String, context: String? = nil, completed: String, next: String, need: String? = nil,
                 emoji: String? = nil, emojiAlternatives: [String]? = nil,
-                purposeChanged: Bool? = nil, checkpoint: String? = nil, decisions: [String]? = nil) {
+                purposeChanged: Bool? = nil, checkpoint: String? = nil, decisions: [String]? = nil,
+                historyEntry: HistoryEntry? = nil) {
         self.title = title
         self.context = context
         self.completed = completed
@@ -121,6 +136,7 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
         self.purposeChanged = purposeChanged
         self.checkpoint = checkpoint
         self.decisions = decisions
+        self.historyEntry = historyEntry
     }
 
     public static func isSingleEmoji(_ value: String) -> Bool {
@@ -147,7 +163,10 @@ public struct AttentionRecap: Codable, Sendable, Hashable {
             && candidates.allSatisfy(Self.isSingleEmoji)
         let checkpointValid = checkpoint.map { validText($0, limit: 100) } ?? true
         let decisionsValid = decisions.map { $0.count <= 8 && $0.allSatisfy { validText($0, limit: 200) } } ?? true
-        return requiredValid && contextValid && needValid && emojiValid && checkpointValid && decisionsValid
+        let historyValid = historyEntry.map {
+            validText($0.headline, limit: 160) && ($0.detail.map { validText($0, limit: 300) } ?? true)
+        } ?? true
+        return requiredValid && contextValid && needValid && emojiValid && checkpointValid && decisionsValid && historyValid
     }
 }
 
@@ -492,10 +511,13 @@ public enum SidebarProjection {
                     projectName: wt.repoDisplayName, worktreeName: wt.displayName, title: stop.title,
                     occurrence: stop.occurrence, isBusy: false, agentStop: stop, worktreeEmoji: wt.effectiveEmoji))
             }
-            if let text = wt.attentionText {
+            if var occurrence = wt.attention {
+                if let exact = wt.sidebar?.attentionTimestamps?["worktree"] {
+                    occurrence.timestamp = Date(timeIntervalSinceReferenceDate: exact)
+                }
                 items.append(.init(id: stable, projectID: projectID, worktreeID: wt.path, paneID: nil,
-                                   projectName: wt.repoDisplayName, worktreeName: wt.displayName, title: text,
-                                   occurrence: .init(timestamp: wt.sidebar?.attentionTimestamps?["worktree"].map(Date.init(timeIntervalSinceReferenceDate:)) ?? wt.attentionTimestamp, text: text, source: wt.attentionSource), isBusy: false, worktreeEmoji: wt.effectiveEmoji))
+                                   projectName: wt.repoDisplayName, worktreeName: wt.displayName, title: occurrence.text,
+                                   occurrence: occurrence, isBusy: false, worktreeEmoji: wt.effectiveEmoji))
             }
             for leaf in wt.layout?.leaves ?? [] where leaf.attentionText != nil || leaf.isBusy {
                 items.append(.init(id: "\(stable):\(wt.sidebar?.paneIDs?[leaf.sessionName] ?? leaf.sessionName)", projectID: projectID, worktreeID: wt.path,

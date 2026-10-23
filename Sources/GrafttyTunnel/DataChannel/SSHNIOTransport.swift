@@ -523,8 +523,8 @@ internal final class OutboundRelayHandler: ChannelDuplexHandler, @unchecked Send
                   UInt64(length) <= bufferedByteLimit - buffered else {
                 return
             }
-            let bytes = pending[offset: 0].buffer.readBytes(length: length)!
-            guard sink.sinkSend(RTCDataBuffer(data: Data(bytes), isBinary: true)) else {
+            let slice = pending[offset: 0].buffer.readSlice(length: length)!
+            guard sink.sinkSend(RTCDataBuffer(data: Data(slice.readableBytesView), isBinary: true)) else {
                 abort(context: context)
                 return
             }

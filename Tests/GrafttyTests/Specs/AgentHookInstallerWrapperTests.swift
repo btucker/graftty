@@ -2,12 +2,13 @@ import Testing
 import Foundation
 import Darwin
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("AgentHookInstaller — wrapper script shapes", .serialized)
 struct AgentHookInstallerWrapperTests {
     @Test("Codex wrapper sets CODEX_HOME and runs sync-codex-home before launch.")
-    func codexWrapperSetsCodexHome() {
-        let script = AgentHookInstaller.codexWrapperScript(
+    func codexWrapperSetsCodexHome() throws {
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
@@ -306,7 +307,7 @@ struct AgentHookInstallerWrapperTests {
 
     @Test("Codex wrapper starts an app-server, registers metadata, runs remote TUI, and cleans up.")
     func codexWrapperStartsAppServerAndRegistersMetadata() throws {
-        let script = AgentHookInstaller.codexWrapperScript(
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
@@ -356,8 +357,8 @@ struct AgentHookInstallerWrapperTests {
     @Test("""
     @spec TEAM-10.14: When the installed Codex command is a Node shim, the application shall launch its app-server from the native executable so the tracked PID belongs to the server itself.
     """)
-    func codexWrapperResolvesNativeBinaryForAppServer() {
-        let script = AgentHookInstaller.codexWrapperScript(
+    func codexWrapperResolvesNativeBinaryForAppServer() throws {
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
@@ -370,8 +371,8 @@ struct AgentHookInstallerWrapperTests {
     }
 
     @Test("@spec TEAM-PRESENCE-1.3: When the graftty wrapper launches an agent runtime, the wrapper shall register a PID whose lifetime covers the foreground runtime process, not the short-lived registration helper PID.")
-    func wrapperRegistersRuntimeLifetimePIDBeforeLaunch() {
-        let script = AgentHookInstaller.codexWrapperScript(
+    func wrapperRegistersRuntimeLifetimePIDBeforeLaunch() throws {
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
@@ -391,8 +392,8 @@ struct AgentHookInstallerWrapperTests {
     }
 
     @Test("Wrapper launches the runtime in the foreground.")
-    func wrapperLaunchesRuntimeInForeground() {
-        let script = AgentHookInstaller.codexWrapperScript(
+    func wrapperLaunchesRuntimeInForeground() throws {
+        let script = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
@@ -409,7 +410,7 @@ struct AgentHookInstallerWrapperTests {
 
     @Test("Generated wrapper registers its own PID while the runtime is running.")
     func wrapperRegistersOwnPIDWhileRuntimeIsRunning() throws {
-        let root = try makeTempDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
         let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
@@ -491,7 +492,7 @@ struct AgentHookInstallerWrapperTests {
 
     @Test("Generated Codex wrapper preserves terminal stdin for the runtime child.")
     func codexWrapperRuntimeChildKeepsTerminalStdin() throws {
-        let root = try makeTempDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
         let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
@@ -632,7 +633,7 @@ struct AgentHookInstallerWrapperTests {
 
     @Test("Generated wrapper preserves runtime exit status after cleanup.")
     func wrapperPreservesRuntimeExitStatusAfterCleanup() throws {
-        let root = try makeTempDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
         let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
@@ -675,13 +676,6 @@ struct AgentHookInstallerWrapperTests {
         #expect(process.terminationStatus == 37)
     }
 
-    private func makeTempDirectory() throws -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("graftty-wrapper-signal-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
     private func writeExecutable(_ contents: String, to url: URL) throws {
         try Data(contents.utf8).write(to: url, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: url.path)
@@ -697,7 +691,7 @@ struct AgentHookInstallerWrapperTests {
     private func runCodexWrapperClassifier(
         _ arguments: [String]
     ) throws -> (terminationStatus: Int32, mode: String, forwardedArgs: [String]) {
-        let root = try makeTempDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
         let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
@@ -774,7 +768,7 @@ struct AgentHookInstallerWrapperTests {
         wasBlockedByManagedHomeLock: Bool,
         retainedServerLogs: [String]
     ) {
-        let root = try makeTempDirectory()
+        let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         // Keep Unix socket paths below sockaddr_un's length limit.
         let socketRoot = URL(fileURLWithPath: "/private/tmp/gw-\(UUID().uuidString)")

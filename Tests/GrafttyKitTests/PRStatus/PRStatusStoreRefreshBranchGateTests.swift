@@ -2,6 +2,7 @@ import Testing
 import GrafttyProtocol
 import Foundation
 @testable import GrafttyKit
+import GrafttyKitTestSupport
 
 /// Refresh paths must skip git sentinel branches (`(detached)` etc.)
 /// and must avoid host detection / fetch when no remote branch
@@ -59,7 +60,7 @@ struct PRStatusStoreRefreshBranchGateTests {
 
     @MainActor
     @Test func refreshWithoutLocalRemoteBranchDoesNotDetectHostOrFetch() async throws {
-        let remoteBranchStore = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(branches: []) })
+        let remoteBranchStore = RemoteBranchStore(list: { _ in RemoteBranchSnapshot() })
         let detectCount = LockedCounter()
         let fetcher = RemoteGateCountingFetcher(response: nil)
         let store = PRStatusStore(
@@ -83,7 +84,7 @@ struct PRStatusStoreRefreshBranchGateTests {
 
     @MainActor
     @Test func refreshWithLocalRemoteBranchFetchesPRStatus() async throws {
-        let remoteBranchStore = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(branches: ["feature"]) })
+        let remoteBranchStore = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(remoteBranchNames: ["feature"]) })
         remoteBranchStore.refresh(repoPath: "/repo")
         try await waitUntil(timeout: 1.0) {
             remoteBranchStore.hasRemote(repoPath: "/repo", branch: "feature")
@@ -284,7 +285,7 @@ private actor MutableRemoteBranchLister {
     }
 
     func list(repoPath: String) async throws -> RemoteBranchSnapshot {
-        RemoteBranchSnapshot(branches: branches)
+        RemoteBranchSnapshot(remoteBranchNames: branches)
     }
 }
 

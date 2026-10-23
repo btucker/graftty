@@ -129,20 +129,20 @@ public extension HeadlessHostRuntime {
         try handoff.consumeActivities(acceptingWorktree: { state.worktree(forPath: $0) != nil }) { event in
             switch event {
             case .stop(let stop):
-                guard let index = state.indices(forWorktreePath: stop.worktree) else { return }
-                let key = AgentHookAttentionIdentity.key(runtime: stop.runtime, sessionID: stop.sessionID, callerAgentID: stop.agentID)
-                let slot = stop.paneSessionName.flatMap { state.repos[index.repo].worktrees[index.worktree].paneSlot(forSessionName: $0) }
-                state.repos[index.repo].worktrees[index.worktree].recordAgentStop(SidebarAgentStop(agentName: stop.runtime.rawValue,
-                    stoppedAt: stop.stoppedAt, recap: stop.recap, paneSlotID: slot?.id.uuidString, providerSessionKey: key))
-                SidebarHostNavigation.adoptReportedEmoji(stop.recap, worktreePath: stop.worktree, in: &state.repos)
-                if let pane = stop.paneSessionName { busyAgents.remove(pane) }
+                guard state.worktree(forPath: stop.worktree) != nil else { return }
+                ControlRequestCore.recordHookLiveness(callerPath: stop.worktree, runtime: stop.runtime, event: .stop,
+                    sessionID: stop.sessionID ?? stop.agentID, paneSessionName: stop.paneSessionName,
+                    attentionReason: nil, platform: controlPlatform)
+                ControlRequestCore.recordStoppedTurn(callerPath: stop.worktree, runtime: stop.runtime,
+                    callerAgentID: stop.agentID, sessionID: stop.sessionID, paneSessionName: stop.paneSessionName,
+                    recap: stop.recap, stoppedAt: stop.stoppedAt, platform: controlPlatform)
             case .progress(let progress):
                 guard let index = state.indices(forWorktreePath: progress.worktree) else { return }
                 if let input = progress.userInput {
                     state.repos[index.repo].worktrees[index.worktree].recordUserInput(input)
                 }
-                let key = AgentHookAttentionIdentity.key(runtime: progress.runtime, sessionID: progress.sessionID, callerAgentID: progress.agentID)
-                state.clearAgentStopAttention(worktreePath: progress.worktree, providerSessionKey: key, progressedAt: progress.progressedAt)
+                state.clearAgentAttention(callerPath: progress.worktree, callerAgentID: progress.agentID,
+                    runtime: progress.runtime, sessionID: progress.sessionID, progressedAt: progress.progressedAt)
             }
             try save()
         }

@@ -5,6 +5,13 @@ import Testing
 
 @Suite("Native agent plugin installer")
 struct AgentPluginInstallerTests {
+    @Test("Plugin providers are the hook runtimes, so every runtime has exactly one plugin provider and display name.")
+    func pluginProvidersAreHookRuntimes() {
+        let providers: [AgentPluginProvider] = TeamHookRuntime.allCases
+        #expect(providers.map(\.rawValue) == ["codex", "claude"])
+        #expect(providers.map(\.displayName) == ["Codex", "Claude"])
+    }
+
     @Test("@spec AGENT-6.40: When a development build's bundled plugin content changes without a new app build number, the application shall give the plugin a distinct cache version.")
     func developmentPluginContentChangesCacheVersion() throws {
         let root = FileManager.default.temporaryDirectory
@@ -794,7 +801,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents to lead with the stable problem being solved and why it matters, followed by verified progress, next steps, retained decisions, meaningful checkpoints, and task-related emoji choices, with a user question only when input is needed.
+    @spec AGENT-6.38: When Graftty installs the recap skill, the application shall ask agents to lead with the stable problem being solved and why it matters, followed by verified progress, next steps, retained decisions, optional history entries describing what changed and why without repeating current state, and task-related emoji choices, with a user question only when input is needed.
     """)
     func materializedRecapSkillRequestsTaskContext() throws {
         for skill in try preparedSkillTexts(named: "graftty") {
@@ -807,9 +814,11 @@ struct AgentPluginInstallerTests {
             #expect(Set(alternatives).count == alternatives.count)
             #expect(!alternatives.contains(try #require(recap["emoji"] as? String)))
             #expect(recap["need"] == nil)
-            let checkpoint = try #require(recap["checkpoint"] as? String)
+            let entry = try #require(recap["historyEntry"] as? [String: String])
             let decisions = try #require(recap["decisions"] as? [String])
-            #expect(!checkpoint.isEmpty)
+            #expect(entry["headline"]?.isEmpty == false)
+            #expect(recap["checkpoint"] == nil)
+            #expect(skill.contains("Omit it for routine updates"))
             #expect(!decisions.isEmpty)
             let data = try JSONSerialization.data(withJSONObject: recap)
             let report = try JSONDecoder().decode(AttentionRecap.self, from: data)

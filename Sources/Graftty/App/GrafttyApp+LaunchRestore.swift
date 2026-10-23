@@ -181,8 +181,8 @@ extension GrafttyApp {
 
         // STATE-2.12: resume auto-clear timers for any persisted attention
         // that carried a `clearAfter`. The timer is in-memory only when
-        // first set (handleNotification / setAttentionForTerminal schedule
-        // a `DispatchQueue.main.asyncAfter`), so a force-quit mid-window
+        // first set (ControlRequestCore / setAttentionForTerminal schedule
+        // an in-process timer), so a force-quit mid-window
         // leaves the attention stuck in state.json with no live timer.
         // Without this resume step, the badge persists until the user
         // clicks the worktree (STATE-2.4).
@@ -199,36 +199,25 @@ extension GrafttyApp {
 
                 if let attention = wt.attention,
                    let remaining = AttentionResumePolicy.remainingTime(for: attention, now: now) {
-                    let stamp = attention.timestamp
-                    let appStateBinding = $appState
-                    DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
-                        for ri in appStateBinding.wrappedValue.repos.indices {
-                            for wi in appStateBinding.wrappedValue.repos[ri].worktrees.indices {
-                                if appStateBinding.wrappedValue.repos[ri].worktrees[wi].path == path {
-                                    appStateBinding.wrappedValue.repos[ri].worktrees[wi]
-                                        .clearAttentionIfTimestamp(stamp)
-                                }
-                            }
-                        }
-                    }
+                    AttentionAutoClear.schedule(
+                        after: remaining,
+                        appState: $appState,
+                        worktreePath: path,
+                        stamp: attention.timestamp
+                    )
                 }
 
                 for (terminalID, attention) in wt.paneAttention {
                     guard let remaining = AttentionResumePolicy.remainingTime(for: attention, now: now) else {
                         continue
                     }
-                    let stamp = attention.timestamp
-                    let appStateBinding = $appState
-                    DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
-                        for ri in appStateBinding.wrappedValue.repos.indices {
-                            for wi in appStateBinding.wrappedValue.repos[ri].worktrees.indices {
-                                if appStateBinding.wrappedValue.repos[ri].worktrees[wi].path == path {
-                                    appStateBinding.wrappedValue.repos[ri].worktrees[wi]
-                                        .clearPaneAttentionIfTimestamp(stamp, for: terminalID)
-                                }
-                            }
-                        }
-                    }
+                    AttentionAutoClear.schedule(
+                        after: remaining,
+                        appState: $appState,
+                        worktreePath: path,
+                        pane: terminalID,
+                        stamp: attention.timestamp
+                    )
                 }
             }
         }

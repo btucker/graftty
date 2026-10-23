@@ -71,34 +71,8 @@ enum AddWorktreeFlow {
         let worktreePath: String
     }
 
-    enum FlowError: Error, Equatable {
-        /// `git worktree add` returned non-zero. Holds the stderr text to
-        /// display verbatim ("branch 'foo' already exists", "fatal: …").
-        case gitFailed(String)
-        /// The repo at `repoPath` was not in `AppState.repos` when the
-        /// flow ran (e.g. the user removed the repo on the Mac while a
-        /// web client kept its picker open). Surfaced as a plain string
-        /// to the HTTP client; no git call is attempted.
-        case repoNotFound
-        /// A worktree already exists at the target path. Surfaced from
-        /// `beginCreate` so two rapid submits with the same name don't
-        /// produce two placeholders racing one git invocation.
-        case pathCollision
-        /// The flow succeeded on the git side but the new worktree
-        /// entry couldn't be discovered back. This is the
-        /// "create-but-can't-attach" edge: we don't have a session to
-        /// return. Holds the message.
-        case discoveryFailed(String)
-        /// @spec GIT-5.11
-        /// `.useExisting(name, _)` was submitted but the same repo already
-        /// has the branch mounted in another worktree. Holds the colliding
-        /// worktree's path so the caller can surface it.
-        case branchAlreadyMounted(at: String)
-        /// A raw CLI/HTTP client supplied a name that the interactive UI
-        /// would never emit (for example `../outside`). Holds the validation
-        /// message so every surface reports the same rejection.
-        case invalidInput(String)
-    }
+    /// Shared with the headless host and every transport (GrafttyKit).
+    typealias FlowError = WorktreeCreationError
 
     /// Phase one: validate the request and insert a `.creating`
     /// placeholder. Returns the resolved worktree path on success — the
@@ -116,44 +90,12 @@ enum AddWorktreeFlow {
         creationOrigin: WorktreeHistory.Origin? = nil,
         appState: Binding<AppState>
     ) -> Swift.Result<String, FlowError> {
-        let usesExistingBranch: Bool
-        if case .useExisting = branch {
-            usesExistingBranch = true
-        } else {
-            usesExistingBranch = false
-        }
-        if let message = WorktreeCreationInput.validationError(
-            worktreeName: worktreeName,
-            branchName: branch.branchName,
-            existing: usesExistingBranch,
-            base: base
-        ) {
-            return .failure(.invalidInput(message))
-        }
-        guard let repoIdx = appState.wrappedValue.repos
-            .firstIndex(where: { $0.path == repoPath }) else {
-            return .failure(.repoNotFound)
-        }
-
-        let worktreePath = repoPath + "/.worktrees/" + worktreeName
-
-        // `git worktree add` would also reject the collision, but only
-        // after we'd left a duplicate row in the sidebar — fail fast.
-        if appState.wrappedValue.worktree(forPath: worktreePath) != nil {
-            return .failure(.pathCollision)
-        }
-
-        if case .useExisting(let name, _) = branch,
-           let existing = appState.wrappedValue.repos[repoIdx].branchMountedPath(name) {
-            return .failure(.branchAlreadyMounted(at: existing))
-        }
-
-        let createdAt = Date()
-        var placeholder = WorktreeEntry(path: worktreePath, branch: branch.branchName, createdAt: createdAt,
-            creationOrigin: creationOrigin ?? .init(date: createdAt, source: .user))
-        placeholder.state = .creating
-        appState.wrappedValue.repos[repoIdx].worktrees.append(placeholder)
-        return .success(worktreePath)
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
+        return appState.wrappedValue.insertCreatingWorktree(
+            repoPath: repoPath, worktreeName: worktreeName, branch: branch,
+            base: base, creationOrigin: creationOrigin
+        )
     }
 
     /// Phase two: run `git worktree add`, discover the result, arm
@@ -178,24 +120,18 @@ enum AddWorktreeFlow {
         initialCommand: String? = nil,
         terminalStartTiming: TerminalStartTiming
     ) async -> Swift.Result<Result, FlowError> {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         // For .useExisting, the start point is the existing branch itself;
         // git takes it from argv. For .createNew, an explicit CLI base wins;
         // otherwise default to origin's main.
-        let startPoint: String?
-        switch branch {
-        case .createNew:
-            if let base {
-                startPoint = base
-            } else {
-                startPoint = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
-            }
-        case .useExisting:
+        if case .useExisting = branch {
             precondition(
                 base == nil,
                 "AddWorktreeFlow: base must be nil when reusing an existing branch"
             )
-            startPoint = nil
         }
+        let startPoint = await GitWorktreeAdd.startPoint(for: branch, base: base, repoPath: repoPath)
 
         do {
             try await GitWorktreeAdd.add(
@@ -208,13 +144,9 @@ enum AddWorktreeFlow {
                 // worktree before running the mutation from the repo root.
                 startPointResolutionPath: base == nil ? nil : baseResolutionPath
             )
-        } catch GitWorktreeAdd.Error.gitFailed(_, let stderr) {
-            removePlaceholder(at: worktreePath, appState: appState)
-            let msg = stderr.isEmpty ? "git worktree add failed" : stderr
-            return .failure(.gitFailed(msg))
         } catch {
             removePlaceholder(at: worktreePath, appState: appState)
-            return .failure(.gitFailed("\(error)"))
+            return .failure(WorktreeCreationError(gitAddFailure: error))
         }
 
         // Eager discovery so the new entry is in appState before we
@@ -258,14 +190,12 @@ enum AddWorktreeFlow {
         for (path, branch) in pathsToWire {
             worktreeMonitor.watchWorktreePath(path)
             worktreeMonitor.watchHeadRef(worktreePath: path, repoPath: repoPath)
-            worktreeMonitor.watchWorktreeContents(worktreePath: path)
             statsStore.refresh(worktreePath: path, repoPath: repoPath, branch: branch)
         }
 
         TeamMembershipEvents.fireJoined(
             repo: appState.wrappedValue.repos[repoIdx],
             joinerWorktreePath: worktreePath,
-            teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
             dispatcher: teamEventDispatcher
         )
 
@@ -404,8 +334,9 @@ enum AddWorktreeFlow {
         statsStore: WorktreeStatsStore,
         terminalManager: TerminalManager,
         teamEventDispatcher: TeamEventDispatcher,
-        entryPoint: CreationEntryPoint = .web
+        entryPoint: CreationEntryPoint
     ) async -> Swift.Result<Result, FlowError> {
+        // Both phases save their own changes (#604).
         let worktreePath: String
         switch beginCreate(
             repoPath: repoPath,
@@ -439,24 +370,5 @@ enum AddWorktreeFlow {
         appState: Binding<AppState>
     ) {
         appState.wrappedValue.removeWorktree(atPath: worktreePath)
-    }
-}
-
-extension AddWorktreeFlow.FlowError {
-    /// User-facing message for surfacing in the sheet, an alert, or an
-    /// HTTP response. `discoveryFailed` returns nil because callers log
-    /// it (the worktree IS on disk; we just couldn't confirm it back)
-    /// rather than display it — see `GIT-3.12`.
-    var userMessage: String? {
-        switch self {
-        case .gitFailed(let m): return m
-        case .repoNotFound: return "repository no longer tracked"
-        case .pathCollision: return "a worktree at that name already exists"
-        case .branchAlreadyMounted(let path):
-            let base = (path as NSString).lastPathComponent
-            return "branch is already mounted at " + base
-        case .invalidInput(let message): return message
-        case .discoveryFailed: return nil
-        }
     }
 }

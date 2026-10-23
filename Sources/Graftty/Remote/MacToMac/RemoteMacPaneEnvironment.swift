@@ -2,15 +2,6 @@ import Foundation
 import GrafttyProtocol
 import GrafttyRemoteClient
 
-protocol RemoteMacPaneEnvironmentHost: Sendable {
-    func makePanesStateDriver(
-        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
-        onClosed: @escaping @Sendable (String) async -> Void
-    ) async throws -> any PanesStateChannelDriver
-
-    func makePaneControlDriver() async throws -> any PaneControlChannelDriver
-}
-
 struct RemoteMacPaneEnvironment: Sendable {
     let worktreePanesStore: WorktreePanesStore?
     let paneControlClient: PaneControlClient?
@@ -30,33 +21,18 @@ struct RemoteMacPaneEnvironment: Sendable {
     }
 
     static func build(
-        remoteHost: RemoteMacPaneEnvironmentHost?,
+        remoteHost: any RemoteHostLink,
         onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void = { _ in },
         onClosed: @escaping @Sendable (String) async -> Void = { _ in }
     ) async -> RemoteMacPaneEnvironment {
-        guard let remoteHost else { return .empty }
-
         var worktreePanesStore: WorktreePanesStore?
         do {
-            let panesDriver = try await remoteHost.makePanesStateDriver(
+            let panesStore = try await PanesStateSubscription.open(
+                on: remoteHost,
                 onSnapshot: onSnapshot,
                 onClosed: onClosed
             )
-            let panesStore = WorktreePanesStore(driver: panesDriver)
             worktreePanesStore = panesStore
-            if let panesClient = panesDriver as? PanesStateCallbacksConfigurable {
-                panesClient.setCallbacks(
-                    onSnapshot: { [weak panesStore] snapshot in
-                        await panesStore?.applySnapshot(snapshot)
-                        await onSnapshot(snapshot)
-                    },
-                    onClosed: { [weak panesStore] reason in
-                        await panesStore?.markClosed(reason: reason)
-                        await onClosed(reason)
-                    }
-                )
-            }
-            try await panesStore.subscribe()
 
             let controlDriver = try await remoteHost.makePaneControlDriver()
             let paneControlClient = PaneControlClient(driver: controlDriver)

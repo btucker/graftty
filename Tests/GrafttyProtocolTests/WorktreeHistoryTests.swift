@@ -151,7 +151,7 @@ struct WorktreeHistoryTests {
         #expect(try JSONDecoder().decode(WorktreeHistory.self, from: JSONEncoder().encode(history)) == history)
     }
 
-    @Test("@spec CONTEXT-14: While a worktree history has more than eight events, the application shall fold only consecutive runs of at least two older agent checkpoints, retain creation, every user input, and the latest two checkpoints, and expand each run or all events in chronological order.")
+    @Test("@spec CONTEXT-14: While a worktree history has more than eight events, the application shall fold only consecutive runs of at least two older legacy checkpoints, retain creation, every user input, and the latest two checkpoints, and expand each run or all events in chronological order.")
     func foldsOnlyOlderAgentRuns() throws {
         var history = WorktreeHistory(origin: .init(date: start, source: .user))
         let input = WorktreeHistory.UserInput(text: "yes", at: start.addingTimeInterval(35))
@@ -172,6 +172,32 @@ struct WorktreeHistoryTests {
         let short = WorktreeTimeline(history: history, brief: brief(count: 3))
         #expect(short.rows(showAll: false).allSatisfy { !$0.isGroup })
         #expect(try JSONDecoder().decode(WorktreeHistory.self, from: JSONEncoder().encode(history)) == history)
+    }
+
+    @Test("@spec CONTEXT-24: When a history contains explicit entries and legacy snapshots, the application shall keep explicit headlines visible in the shared timeline and show only decisions newly introduced relative to the previous legacy snapshot.")
+    func explicitHeadlinesStayVisibleAndLegacyDecisionsDoNotRepeat() throws {
+        var brief = brief(count: 10)
+        for index in 0..<10 {
+            let data = try JSONSerialization.data(withJSONObject: ["title": "Context", "completed": "Routine status", "next": "Review", "historyEntry": ["headline": "Discovery \(index)"]])
+            brief.update(try JSONDecoder().decode(AttentionRecap.self, from: data), at: start.addingTimeInterval(Double(200 + index)))
+        }
+        let timeline = WorktreeTimeline(history: nil, brief: brief)
+        let explicit = timeline.rows(showAll: false).filter { $0.events.contains { $0.title.hasPrefix("Discovery") } }
+        #expect(explicit.count == 10)
+        #expect(explicit.allSatisfy { !$0.isGroup && $0.events[0].completed.isEmpty })
+
+        // Restore snapshots written before explicit history entries existed.
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(brief)) as? [String: Any])
+        var snapshots = try #require(object["history"] as? [[String: Any]])
+        snapshots = Array(snapshots.prefix(3))
+        snapshots[0]["decisions"] = ["Keep source text"]
+        snapshots[1]["decisions"] = ["Keep source text", "Generate on host"]
+        snapshots[2]["decisions"] = ["Generate on host"]
+        object["history"] = snapshots
+        let restored = try JSONDecoder().decode(WorktreeBrief.self, from: JSONSerialization.data(withJSONObject: object))
+        let events = WorktreeTimeline(history: nil, brief: restored).events
+        #expect(events.map(\.decisions) == [["Keep source text"], ["Generate on host"], []])
+        #expect(restored.history[1].decisions == ["Keep source text", "Generate on host"], "Projection must preserve the saved source")
     }
 
     @Test func inputRemainsChronologicalAndBounded() {

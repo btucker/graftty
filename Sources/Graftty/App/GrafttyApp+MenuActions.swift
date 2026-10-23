@@ -23,13 +23,13 @@ extension GrafttyApp {
     private func handleSplit(_ split: PaneSplit) {
         if routeFocusedHostManagedPaneCommand(.split(split)) { return }
         guard let id = focusedPaneSlotID else { return }
-        _ = Self.splitPane(appState: $appState, terminalManager: terminalManager, targetID: id, split: split)
+        _ = PaneCommands.splitPane(appState: $appState, terminalManager: terminalManager, targetID: id, split: split)
     }
 
     private func handleNavigate(_ dir: NavigationDirection) {
         if routeFocusedHostManagedPaneCommand(.focus(dir)) { return }
         guard let id = focusedPaneSlotID else { return }
-        Self.navigatePane(appState: $appState, terminalManager: terminalManager, from: id, direction: dir)
+        PaneCommands.navigatePane(appState: $appState, terminalManager: terminalManager, from: id, direction: dir)
     }
 
     func handleNavigateTreeOrder(forward: Bool) {
@@ -39,25 +39,25 @@ extension GrafttyApp {
             return
         }
         guard let id = focusedPaneSlotID else { return }
-        Self.navigatePaneInTreeOrder(appState: $appState, terminalManager: terminalManager, from: id, forward: forward)
+        PaneCommands.navigatePaneInTreeOrder(appState: $appState, terminalManager: terminalManager, from: id, forward: forward)
     }
 
     private func handleToggleZoom() {
         if routeFocusedHostManagedPaneCommand(.toggleZoom) { return }
         guard let id = focusedPaneSlotID else { return }
-        Self.toggleZoom(appState: $appState, on: id)
+        PaneCommands.toggleZoom(appState: $appState, on: id)
     }
 
     private func handleEqualizeSplits() {
         if routeFocusedHostManagedPaneCommand(.equalize) { return }
         guard let id = focusedPaneSlotID else { return }
-        Self.equalizeSplits(appState: $appState, around: id)
+        PaneCommands.equalizeSplits(appState: $appState, around: id)
     }
 
     private func handleClosePane() {
         if routeFocusedHostManagedPaneCommand(.close) { return }
         guard let id = focusedPaneSlotID else { return }
-        Self.closePane(
+        PaneCommands.closePane(
             appState: $appState,
             terminalManager: terminalManager,
             targetID: id,
@@ -181,6 +181,8 @@ extension GrafttyApp {
             terminalManager.destroySurfaces(terminalIDs: entry.terminalIDs)
             appState.repos[entry.repoIdx].worktrees[entry.worktreeIdx].prepareForStop()
         }
+        // The menu bar stays usable with no window open (#604).
+        Self.persistAppState(appState)
     }
 
     /// Resolve the user's Ghostty config file path, create it if missing,

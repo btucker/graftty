@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 /// Reproduces the 2026-04-22 stuck-stats bug (`DIVERGE-4.x-stuck-recovery`):
 /// a refresh's compute invocation hangs (e.g., a `git` subprocess blocked
@@ -24,9 +25,9 @@ struct WorktreeStatsStoreInFlightRecoveryTests {
     @MainActor
     @Test func inFlightRefreshRunsOneTrailingComputeWithLatestBranch() async throws {
         let firstResume = AsyncStream<Void>.makeStream()
-        let firstIterator = Box(firstResume.stream.makeAsyncIterator())
+        let firstIterator = MutableBox(firstResume.stream.makeAsyncIterator())
         let secondResume = AsyncStream<Void>.makeStream()
-        let secondIterator = Box(secondResume.stream.makeAsyncIterator())
+        let secondIterator = MutableBox(secondResume.stream.makeAsyncIterator())
         let calls = BranchCallRecorder()
 
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, branch, _ in
@@ -72,7 +73,7 @@ struct WorktreeStatsStoreInFlightRecoveryTests {
     @MainActor
     @Test func clearDiscardsQueuedTrailingRefresh() async throws {
         let firstResume = AsyncStream<Void>.makeStream()
-        let firstIterator = Box(firstResume.stream.makeAsyncIterator())
+        let firstIterator = MutableBox(firstResume.stream.makeAsyncIterator())
         let calls = BranchCallRecorder()
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, branch, _ in
             let invocation = calls.record(branch)
@@ -102,7 +103,7 @@ struct WorktreeStatsStoreInFlightRecoveryTests {
     @MainActor
     @Test func abandonmentSupersessionReplacesQueuedTrailingRefresh() async throws {
         let firstResume = AsyncStream<Void>.makeStream()
-        let firstIterator = Box(firstResume.stream.makeAsyncIterator())
+        let firstIterator = MutableBox(firstResume.stream.makeAsyncIterator())
         let calls = BranchCallRecorder()
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, branch, _ in
             let invocation = calls.record(branch)
@@ -148,7 +149,7 @@ struct WorktreeStatsStoreInFlightRecoveryTests {
         // on `next()` forever. Models a git subprocess hung on a ref-lock
         // waiting for a concurrent push's transaction to complete.
         let hang = AsyncStream<Void>.makeStream()
-        let hangIterator = Box(hang.stream.makeAsyncIterator())
+        let hangIterator = MutableBox(hang.stream.makeAsyncIterator())
 
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
             let n = callCount.incrementAndGet()
@@ -213,14 +214,6 @@ struct WorktreeStatsStoreInFlightRecoveryTests {
         }
         #expect(condition(), "waitUntil timed out")
     }
-}
-
-/// Swift 6 doesn't let an AsyncStream.Iterator cross actor boundaries
-/// directly — wrap in a Sendable box. Mirrors the pattern in
-/// `WorktreeStatsStoreClearTests`.
-private final class Box<T>: @unchecked Sendable {
-    var value: T
-    init(_ value: T) { self.value = value }
 }
 
 /// Thread-safe counter shared with the `@Sendable` compute closure.

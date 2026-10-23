@@ -15,37 +15,37 @@ struct RemoteTodo {
 """, .disabled("awaits upstream swift-nio-ssh algorithm-allowlist feature"))
     func remote_8_1() async throws { }
 
-    // MARK: - REMOTE-24.x — Provider preferences and placement
+    // MARK: - REMOTE-31.x — Provider preferences and placement
 
     @Test("""
-@spec REMOTE-24.3: When resolving placement preferences, the application shall report effective values and their sources without silently relaxing configured spending or host-count limits.
+@spec REMOTE-31.3: When resolving placement preferences, the application shall report effective values and their sources without silently relaxing configured spending or host-count limits.
 """, .disabled("not yet implemented"))
-    func remote_24_3() async throws { }
+    func remote_31_3() async throws { }
 
     @Test("""
-@spec REMOTE-24.4: When an agent lists remote hosts, the CLI shall report host identity, readiness, architecture, CPU capacity and utilization, available memory, free disk, pending placements, and observation timestamps.
+@spec REMOTE-31.4: When an agent lists remote hosts, the CLI shall report host identity, readiness, architecture, CPU capacity and utilization, available memory, free disk, pending placements, and observation timestamps.
 """, .disabled("not yet implemented"))
-    func remote_24_4() async throws { }
+    func remote_31_4() async throws { }
 
     @Test("""
-@spec REMOTE-24.5: When placing a worktree, the application shall evaluate compatible existing hosts using current resource headroom and pending reservations before allocating another instance.
+@spec REMOTE-31.5: When placing a worktree, the application shall evaluate compatible existing hosts using current resource headroom and pending reservations before allocating another instance.
 """, .disabled("not yet implemented"))
-    func remote_24_5() async throws { }
+    func remote_31_5() async throws { }
 
     @Test("""
-@spec REMOTE-24.6: When selecting new AWS Spot capacity, the application shall compare eligible instance-type and Availability Zone prices with timestamps, compatibility, configured preferences, and limits.
+@spec REMOTE-31.6: When selecting new AWS Spot capacity, the application shall compare eligible instance-type and Availability Zone prices with timestamps, compatibility, configured preferences, and limits.
 """, .disabled("not yet implemented"))
-    func remote_24_6() async throws { }
+    func remote_31_6() async throws { }
 
     @Test("""
-@spec REMOTE-24.7: If host telemetry or price observations are stale or absent, then the application shall expose the uncertainty rather than treating unknown capacity as idle or unknown prices as zero.
+@spec REMOTE-31.7: If host telemetry or price observations are stale or absent, then the application shall expose the uncertainty rather than treating unknown capacity as idle or unknown prices as zero.
 """, .disabled("not yet implemented"))
-    func remote_24_7() async throws { }
+    func remote_31_7() async throws { }
 
     @Test("""
-@spec REMOTE-24.9: When an AWS instance starts, the application shall verify trusted Graftty connectivity and project readiness before reporting the requested worktree ready.
+@spec REMOTE-31.9: When an AWS instance starts, the application shall verify trusted Graftty connectivity and project readiness before reporting the requested worktree ready.
 """, .disabled("not yet implemented"))
-    func remote_24_9() async throws { }
+    func remote_31_9() async throws { }
 
     // MARK: - REMOTE-25.x — Dev Container environments
 

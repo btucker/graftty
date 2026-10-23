@@ -157,9 +157,6 @@ struct MultiPaneDetailViewTests {
                 lastUsedAt: nil
             ),
             worktree: worktree,
-            coordinator: RemoteConnectionCoordinator(
-                connectionsAllowedInitially: false
-            ),
             theme: .fallback,
             focusedPaneId: focusedPaneId,
             pendingFocusRequests: 0,
