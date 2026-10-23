@@ -226,6 +226,53 @@ struct WorktreeListContentTests {
         #expect(await observed.next() == .published(pushed))
     }
 
+    @Test("@spec IOS-4.54: If a pulled worktree list completes after a newer pushed panes-state frame was applied, then the application shall keep the pushed frame rather than replace it with the pulled rows.", .timeLimit(.minutes(1)))
+    func lateInitialLoadDoesNotOverwriteNewerPushedFrames() async throws {
+        enum Event: Equatable { case fetched, published([WorktreePanes]) }
+        let suite = "worktree-late-load-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let stale = [sampleWorktree(path: "/repo/a")]
+        func frame(_ paths: String...) -> [WorktreePanes] { paths.map { sampleWorktree(path: "/repo/\($0)") } }
+        let events = AsyncStream<Event>.makeStream()
+        let frames = AsyncStream<RemoteWorktreeUpdate>.makeStream()
+        let load = HeldLoad()
+        let controller = UIHostingController(rootView: WorktreeListContent(
+            host: sampleHost(),
+            remote: RemoteWorktreeProviders(
+                includeRemoteWorktrees: true,
+                snapshot: { _, _ in
+                    events.continuation.yield(.fetched)
+                    await load.wait()
+                    return stale
+                },
+                updates: { frames.stream }
+            ),
+            onSelect: { _ in }, onSelectPane: { _, _ in },
+            onListChanged: { events.continuation.yield(.published($0)) },
+            navigation: SidebarNavigationState(prefix: "test", defaults: defaults, collapsed: true)
+        ))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 700))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; load.release() }
+
+        var observed = events.stream.makeAsyncIterator()
+        // The initial load is in flight; pushed frames still render.
+        try #require(await observed.next() == .fetched)
+        frames.continuation.yield(.frame(.snapshot(frame("b"))))
+        try #require(await observed.next() == .published(frame("b")))
+        frames.continuation.yield(.frame(.snapshot(frame("b", "c"))))
+        try #require(await observed.next() == .published(frame("b", "c")))
+
+        // The load now completes with rows older than the pushed frames.
+        load.release()
+        frames.continuation.yield(.frame(.snapshot(frame("b", "c", "d"))))
+        #expect(await observed.next() == .published(frame("b", "c", "d")))
+        frames.continuation.yield(.frame(.snapshot(frame("b", "c", "d", "e"))))
+        #expect(await observed.next() == .published(frame("b", "c", "d", "e")))
+    }
+
     @Test("@spec IOS-4.53: When the host whose worktree list is displayed becomes paired, the application shall begin applying the host's pushed panes-state frames without requiring Refresh.", .timeLimit(.minutes(1)))
     func pairingTheDisplayedHostStartsApplyingPushedFrames() async throws {
         struct NotPaired: Error {}
@@ -427,6 +474,23 @@ struct WorktreeListContentTests {
             attentionText: nil,
             layout: nil
         )
+    }
+}
+/// An initial load the test completes by hand.
+@MainActor
+private final class HeldLoad {
+    private var waiter: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    func wait() async {
+        guard !released else { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func release() {
+        released = true
+        waiter?.resume()
+        waiter = nil
     }
 }
 #endif

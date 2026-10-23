@@ -39,6 +39,9 @@ public struct WorktreeListContent: View {
     @State private var worktreeCreation = MobileWorktreeCreation()
     @State private var loadedHostID: UUID?
     @State private var presentedHostID: UUID?
+    /// Counts applied pushed frames. A pull that started before the count
+    /// changed returns rows no newer than the push, so it is dropped (IOS-4.54).
+    @State private var appliedPushCount: UInt64 = 0
     @State private var remoteMacConnections: [RemoteMacConnectionSummary] = []
     @State private var reconnectingRemoteMacIDs:
         Set<RemoteMacConnectionSummary.ID> = []
@@ -413,6 +416,9 @@ public struct WorktreeListContent: View {
     /// the worktree array unchanged.
     private func observeRemoteWorktrees() async {
         guard isReadyToLoad, let updates = remoteUpdatesProvider?() else { return }
+        // The sibling load task also sets this; a first frame must not find
+        // it unset if this task happens to run first.
+        presentedHostID = host.id
         let requestHostID = host.id
         for await update in updates {
             guard Self.shouldApplyLoadResult(
@@ -426,6 +432,7 @@ public struct WorktreeListContent: View {
                 // still surface transport errors to the user.
                 continue
             case let .frame(.snapshot(list, metadata)):
+                appliedPushCount &+= 1
                 applyLoadedList(list)
                 await applyNavigationMetadata(list, metadata: metadata, requestHostID: requestHostID)
             }
@@ -712,9 +719,10 @@ public struct WorktreeListContent: View {
                     guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { throw CancellationError() }
                 }
                 func fetch() async throws -> [WorktreePanes] {
+                    let pushes = appliedPushCount
                     let list = try await fetchWorktrees(host: host, remoteSnapshotProvider: remoteSnapshotProvider, includeRemoteWorktrees: includeRemoteWorktrees)
                     try checkCurrent()
-                    applyLoadedList(list)
+                    if appliedPushCount == pushes { applyLoadedList(list) }
                     return list
                 }
                 let path = target.path
@@ -945,6 +953,7 @@ public struct WorktreeListContent: View {
             onProgress = nil
         }
 
+        let pushes = appliedPushCount
         do {
             let list = try await fetchWorktrees(
                 host: host,
@@ -957,7 +966,7 @@ public struct WorktreeListContent: View {
                 requestHostID: requestHostID,
                 presentedHostID: presentedHostID,
                 isCancelled: Task.isCancelled
-            ) else { return }
+            ), appliedPushCount == pushes else { return }
             applyLoadedList(list)
             await updateNavigationMetadata(list, requestHostID: requestHostID)
         } catch is CancellationError {
@@ -1286,14 +1295,17 @@ public struct WorktreeListContent: View {
                 guard !Task.isCancelled, selectionIsCurrent() else { throw CancellationError() }
             }
             func fetch() async throws -> [WorktreePanes] {
+                let pushes = appliedPushCount
                 let list = try await fetchWorktrees(
                     host: selectionHost,
                     remoteSnapshotProvider: remoteSnapshotProvider,
                     includeRemoteWorktrees: includeRemoteWorktrees
                 )
                 try checkCurrent()
-                state = .loaded(list)
-                onListChanged(list)
+                if appliedPushCount == pushes {
+                    state = .loaded(list)
+                    onListChanged(list)
+                }
                 return list
             }
             if let opened = try await WorktreeLayoutAwait.poll(rows: try await fetch(), fetch: fetch, checkCurrent: checkCurrent,
