@@ -10,7 +10,6 @@ fixture into a failure.
 """
 import os
 import pathlib
-import re
 import signal
 import subprocess
 import tempfile
@@ -21,7 +20,6 @@ import unittest
 # Not a timing budget: a healthy run never comes near it.
 HANG_GUARD = 120
 # build.sh runs `/usr/bin/lockf -k LOCK_FILE env ...`; captures LOCK_FILE.
-LOCKF = re.compile(r"\S*/lockf (?:-\S+ )*(.+?) env ")
 
 
 class BuildLockTests(unittest.TestCase):
@@ -101,25 +99,38 @@ class BuildLockTests(unittest.TestCase):
     def exists(self, name):
         return (self.root / name).exists()
 
-    def waiting_on_lock(self, waiter, holder):
-        """True once every leaf process in `waiter`'s session is a `lockf`
-        naming a lock file that a `lockf` in `holder`'s session holds, so it is
-        blocked on that lock and has not started its command. Matching the
-        lock file keeps an uncontended `lockf`, childless for a moment between
-        taking its lock and forking, from passing for a blocked one."""
-        table = subprocess.run(["/bin/ps", "-A", "-ww", "-o", "pid=,ppid=,pgid=,args="],
-                               capture_output=True, text=True, check=True).stdout
+    def waiting_on_lock(self, waiter, holder, lock_files):
+        """True once every leaf process in `waiter`'s session is a `lockf` on a
+        lock file that a `lockf` in `holder`'s session holds, so it is blocked
+        on that lock and has not started its command. Matching the holder's
+        lock keeps an uncontended `lockf`, childless for a moment between
+        taking its lock and forking, from passing for a blocked one. Lock
+        files are compared as complete paths in build.sh's exact command, so
+        no directory name can make two of them look alike."""
+        try:
+            table = subprocess.run(["/bin/ps", "-A", "-ww", "-o", "pid=,ppid=,pgid=,args="],
+                                   capture_output=True, text=True, check=True, timeout=30).stdout
+        except subprocess.TimeoutExpired:
+            self.fail("ps did not list processes within 30 s")
         rows = [row for row in (line.split(None, 3) for line in table.splitlines()) if len(row) == 4]
+        prefixes = {path: "/usr/bin/lockf -k " + str(path) + " env " for path in lock_files}
 
-        def lock_file(args):
-            match = LOCKF.match(args)
-            return match and match.group(1)
+        def lock_of(args):
+            return next((path for path, prefix in prefixes.items() if args.startswith(prefix)), None)
 
-        held = {lock_file(args) for _, _, pgid, args in rows if int(pgid) == holder.pid} - {None}
+        held = {lock_of(args) for _, _, pgid, args in rows if int(pgid) == holder.pid} - {None}
         group = [row for row in rows if int(row[2]) == waiter.pid]
         parents = {row[1] for row in group}
         leaves = [args for pid, _, _, args in group if pid not in parents]
-        return bool(leaves) and all(lock_file(args) in held for args in leaves)
+        return bool(leaves) and all(lock_of(args) in held for args in leaves)
+
+    def lock_files(self, caches, outputs):
+        """Every lock file build.sh can take for these directories, spelled as
+        build.sh spells them (`cd DIR && pwd` keeps the logical path)."""
+        files = {pathlib.Path(os.path.abspath(output)) / ".build.lock" for output in outputs}
+        for cache in caches:
+            files.update(pathlib.Path(os.path.abspath(cache)).glob("*.lock"))
+        return files
 
     def assert_no_overlap(self):
         self.assertFalse(self.exists("overlap-second"),
@@ -141,7 +152,8 @@ class BuildLockTests(unittest.TestCase):
         # Contended: the second build waits in lockf on the first's lock.
         # Unprotected, it would enter instead and record the overlap.
         self.wait_until("second build waiting on the first's lock", second,
-                        lambda: self.exists("entered-second") or self.waiting_on_lock(second, first))
+                        lambda: self.exists("entered-second") or self.waiting_on_lock(
+                            second, first, self.lock_files({first_cache, second_cache}, {first_output, second_output})))
         self.assert_no_overlap()
         (self.root / "release-first").touch()
         first_log = first.communicate(timeout=HANG_GUARD)[0]
