@@ -546,6 +546,59 @@ struct RemoteConnectionCoordinatorTests {
         }
     }
 
+    @Test("@spec REMOTE-2.29: While a mobile dial awaits post-connect validation, concurrent callers shall await that attempt's final result rather than receive its provisional connection.", .timeLimit(.minutes(1)))
+    func waitersDoNotReceiveProvisionalConnection() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: hostKey)
+        let store = PinnedHostStore(directory: dir)
+        let original = try #require(store.get(id: #require(host.remoteDeviceID)))
+        try await ConnectionBox.withFixture { box in
+            let gate = Gate()
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(transport: Self.successTransport(box: box, host: host, hostKey: hostKey)),
+                connectionFactory: { key, fingerprint in
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
+                    box.set(connection)
+                    return connection
+                }
+            )
+            coordinator.stateAfterRegistration = { connection in
+                await gate.wait()
+                return await connection.state
+            }
+            let first = Task { await coordinator.connection(for: host) }
+            do { try await gate.waitUntilEntered() }
+            catch { await gate.open(); _ = await first.value; throw error }
+            let replacement = PinnedHost(
+                id: original.id, kind: original.kind,
+                publicKey: try RemoteIdentityPublicKey(rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation),
+                displayName: "Repaired", pinnedAt: original.pinnedAt, pairingURL: original.pairingURL
+            )
+            do { try store.upsertAfterPairing(replacement) }
+            catch { await gate.open(); _ = await first.value; throw error }
+            var secondEntered = false
+            var secondFinished = false
+            let second = Task {
+                secondEntered = true
+                let result = await coordinator.connection(for: host)
+                secondFinished = true
+                return result
+            }
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: .seconds(10))
+            while !secondEntered, clock.now < deadline { await Task.yield() }
+            #expect(secondEntered)
+            #expect(!secondFinished)
+            await gate.open()
+            #expect(await first.value == nil)
+            #expect(await second.value == nil)
+            #expect(try store.get(id: original.id) == replacement)
+        }
+    }
+
     // MARK: - Register-then-verify (A2(i))
 
     /// Best-effort regression test, NOT a deterministic RED reproduction:
@@ -936,12 +989,7 @@ struct RemoteConnectionCoordinatorTests {
             // WHILE the negotiation is genuinely in flight, not after it
             // already completed.
             do {
-                let clock = ContinuousClock()
-                let deadline = clock.now.advanced(by: .seconds(10))
-                while await gate.enteredCount < 1 {
-                    guard clock.now < deadline else { throw RemoteConnectionTestSupport.PollTimeout(timeout: .seconds(10), stage: "waiting for signaling gate") }
-                    await Task.yield()
-                }
+                try await gate.waitUntilEntered()
             } catch {
                 // Release the cancellation-unaware child before async-let scope exit.
                 await gate.open()
@@ -1313,6 +1361,15 @@ private actor Gate {
         if opened { return }
         await withCheckedContinuation { continuation in
             waiters.append(continuation)
+        }
+    }
+
+    func waitUntilEntered() async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while enteredCount == 0 {
+            guard clock.now < deadline else { throw URLError(.timedOut) }
+            await Task.yield()
         }
     }
 

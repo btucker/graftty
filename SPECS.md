@@ -3014,6 +3014,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.27** If a mobile connection becomes terminal or loses registration during post-connect verification, then the client shall discard it without saving connection metadata.
 
+**REMOTE-2.28** While multiple pinned-host store instances access the same file, the client shall serialize their read-modify-write operations so each completed update is retained.
+
+**REMOTE-2.29** While a mobile dial awaits post-connect validation, concurrent callers shall await that attempt's final result rather than receive its provisional connection.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.

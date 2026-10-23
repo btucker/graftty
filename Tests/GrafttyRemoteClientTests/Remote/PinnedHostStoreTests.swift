@@ -86,6 +86,20 @@ struct PinnedHostStoreTests {
         #expect(try store.get(id: original.id) == nil)
     }
 
+    @Test("@spec REMOTE-2.28: While multiple pinned-host store instances access the same file, the client shall serialize their read-modify-write operations so each completed update is retained.")
+    func connectionRefreshSerializesSeparateStoreHandles() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let hosts = (0..<32).map { makeHost(name: "Host \($0)") }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for host in hosts {
+                group.addTask { try PinnedHostStore(directory: dir).add(host) }
+            }
+            try await group.waitForAll()
+        }
+        #expect(Set(try PinnedHostStore(directory: dir).list().map(\.id)) == Set(hosts.map(\.id)))
+    }
+
     func makeTempDir() throws -> URL {
         let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
