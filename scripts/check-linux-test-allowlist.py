@@ -23,6 +23,11 @@ expresses Linux test membership in three ways; each gets its own check:
 - `sources: [ ... ]` on a Linux-only target (GrafttyDirectSSHTests): every
   listed path must exist and must not be wrapped in an Apple-only `#if`.
 
+A file that compiles on Linux, in any test target the Linux build keeps
+(including targets with default membership or a fixed `sources:` list), must
+not declare a `@MainActor` XCTestCase class or test method: Linux XCTest
+discovery aborts on it.
+
 Comments are ignored. Any other `isLinux` expression inside a target
 (grouping, another shape, a second argument), or a referenced constant that
 is not a single array literal, is an error, so a target cannot drop out of
@@ -53,11 +58,20 @@ _NAME_RE = re.compile(r'name:\s*"(?P<name>[^"]+)"')
 _PATH_RE = re.compile(r'\bpath:\s*"(?P<path>[^"]+)"')
 _LINUX_SOURCES_RE = re.compile(r"\bsources:\s*isLinux\s*\?\s*\[(?P<entries>[^\]]*)\]\s*:\s*nil(?=\s*[,)])")
 _FIXED_SOURCES_RE = re.compile(r"\bsources:\s*\[(?P<entries>[^\]]*)\]")
+_FIXED_EXCLUDE_RE = re.compile(r"\bexclude:\s*\[(?P<entries>[^\]]*)\]")
 _LINUX_EXCLUDE_RE = re.compile(
     r"\bexclude:\s*isLinux\s*\?\s*"
     r"(?:\[(?P<entries>[^\]]*)\]\s*(?:\+\s*(?P<ref>\w+)\s*)?|(?P<bare_ref>\w+)\s*)"
     r":\s*\[\s*\](?=\s*[,)])"
 )
+# Linux XCTest discovery aborts (signal 6) on a @MainActor XCTestCase class or
+# test method, which takes the whole Linux test run down with it. Declarations
+# may carry other attributes and modifiers in any order around `@MainActor`.
+_DECL_PREFIX = r"(?P<prefix>(?:(?:@\w+(?:\([^)]*\))?|public|package|internal|fileprivate|private|final|open|override|nonisolated)\s+)*)"
+_XCTEST_CLASS_RE = re.compile(_DECL_PREFIX + r"class\s+(?P<name>\w+)\s*:[^{]*\bXCTestCase\b[^{]*\{")
+_EXTENSION_RE = re.compile(_DECL_PREFIX + r"extension\s+(?P<name>\w+)\b[^{]*\{")
+_TEST_METHOD_RE = re.compile(_DECL_PREFIX + r"func\s+test\w*\s*\(")
+_LINUX_TARGET_FILTER_RE = re.compile(r"!\s*isLinux\s*\|\|\s*!\s*(?:\[(?P<entries>[^\]]*)\]|(?P<ref>\w+))\s*\.contains\(\s*\$0\.name\s*\)")
 _APPLE_CONDITION_RE = re.compile(r"(?:os\((?:macOS|iOS)\)|canImport\((?:AppKit|UIKit)\))")
 _IF_RE = re.compile(r"#if\s+(?P<condition>.+)")
 _IMPORT_RE = re.compile(r"(?:@\w+(?:\([^)]*\))?\s+)*import\s")
@@ -70,27 +84,44 @@ _COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
 class TargetLinuxMembership:
     name: str
     directory: str
+    kind: str = "target"
     linux_sources: list[str] | None = None
     linux_exclude: list[str] = field(default_factory=list)
     fixed_sources: list[str] | None = None
+    # `exclude: [...]` on every platform (fixtures, READMEs): never compiled.
+    always_exclude: list[str] = field(default_factory=list)
 
 
-def strip_swift_comments(text: str) -> str:
+def strip_swift_comments(text: str, blank_strings: bool = False) -> str:
     """Blank out `//` and (nested) `/* */` comments, leaving string literals,
-    including multi-line ones, intact. Newlines survive, so offsets and line
-    structure are preserved."""
+    including multi-line and `#"…"#` raw ones, intact (or blanked too, with
+    `blank_strings`). Newlines survive, so offsets and line structure are
+    preserved."""
     out: list[str] = []
+
+    def literal(start: int, end: int) -> None:
+        chunk = text[start:end]
+        out.append(re.sub(r"[^\n]", " ", chunk) if blank_strings else chunk)
+
     i, n = 0, len(text)
     while i < n:
-        if text.startswith('"""', i):
+        raw = re.match(r'(#+)("""|")', text[i:i + 64]) if text[i] == "#" else None
+        if raw:
+            close, escape = raw[2] + raw[1], "\\" + raw[1]
+            j = i + len(raw[0])
+            while j < n and not text.startswith(close, j) and not (raw[2] == '"' and text[j] == "\n"):
+                j += len(escape) + 1 if text.startswith(escape, j) else 1
+            end = min(j + len(close), n) if text.startswith(close, j) else j
+            literal(i, end); i = end
+        elif text.startswith('"""', i):
             end = text.find('"""', i + 3)
             end = n if end == -1 else end + 3
-            out.append(text[i:end]); i = end
+            literal(i, end); i = end
         elif text[i] == '"':
             j = i + 1
             while j < n and text[j] not in '"\n':
                 j += 2 if text[j] == "\\" else 1
-            out.append(text[i:j + 1]); i = j + 1
+            literal(i, min(j + 1, n)); i = j + 1
         elif text.startswith("//", i):
             end = text.find("\n", i)
             end = n if end == -1 else end
@@ -150,7 +181,32 @@ def parse_array_constants(package_text: str) -> dict[str, list[str] | None]:
 
 
 def parse_targets(package_text: str) -> list[TargetLinuxMembership]:
-    """Every target that declares how its files compile on Linux. Comments are
+    """Every target that declares how its files compile on Linux."""
+    return [
+        t for t in _parse_all_targets(package_text)
+        if t.linux_sources is not None or t.fixed_sources is not None or t.linux_exclude
+    ]
+
+
+def linux_test_targets(package_text: str) -> list[TargetLinuxMembership]:
+    """Every test target that builds on Linux: all of them, including those
+    with default membership and Linux-only fixed-source targets, minus the
+    names a `.filter { !isLinux || !names.contains($0.name) }` drops."""
+    stripped = strip_swift_comments(package_text)
+    constants = parse_array_constants(stripped)
+    dropped: set[str] = set()
+    for m in _LINUX_TARGET_FILTER_RE.finditer(stripped):
+        if m["ref"]:
+            if (values := constants.get(m["ref"])) is None:
+                raise ValueError(f"Linux target filter references `{m['ref']}`, which is not a single array literal")
+            dropped.update(values)
+        else:
+            dropped.update(_strings(m["entries"]))
+    return [t for t in _parse_all_targets(package_text) if t.kind == "testTarget" and t.name not in dropped]
+
+
+def _parse_all_targets(package_text: str) -> list[TargetLinuxMembership]:
+    """Every named target with its Linux membership. Comments are
     ignored, a target's block runs to its closing parenthesis (so a nested
     `.target(name:)` dependency stays inside its owner), and an `isLinux`
     membership expression this parser does not understand is an error rather
@@ -169,13 +225,15 @@ def parse_targets(package_text: str) -> list[TargetLinuxMembership]:
             continue
         path = _PATH_RE.search(block)
         default_root = "Tests" if match["kind"] == "testTarget" else "Sources"
-        target = TargetLinuxMembership(name["name"], path["path"] if path else f"{default_root}/{name['name']}")
+        target = TargetLinuxMembership(name["name"], path["path"] if path else f"{default_root}/{name['name']}", match["kind"])
         recognized: list[re.Match[str]] = []
         if linux_sources := _LINUX_SOURCES_RE.search(block):
             target.linux_sources = _strings(linux_sources["entries"])
             recognized.append(linux_sources)
         elif fixed := _FIXED_SOURCES_RE.search(block):
             target.fixed_sources = _strings(fixed["entries"])
+        if always := _FIXED_EXCLUDE_RE.search(block):
+            target.always_exclude = _strings(always["entries"])
         if exclude := _LINUX_EXCLUDE_RE.search(block):
             recognized.append(exclude)
             target.linux_exclude = _strings(exclude["entries"] or "")
@@ -192,8 +250,7 @@ def parse_targets(package_text: str) -> list[TargetLinuxMembership]:
             remainder = remainder[:m.start()] + remainder[m.end():]
         if re.search(r"\bisLinux\b", remainder):
             raise ValueError(f"{name['name']}: unsupported `isLinux` expression in target; see scripts/check-linux-test-allowlist.py")
-        if target.linux_sources is not None or target.fixed_sources is not None or target.linux_exclude:
-            targets.append(target)
+        targets.append(target)
     return targets
 
 
@@ -223,6 +280,69 @@ def has_apple_only_guard(swift_text: str) -> bool:
         elif depth == 1 and line.startswith("#else"):
             return False
     return False
+
+
+def has_main_actor_xctest(swift_text: str) -> bool:
+    """True when the file declares a @MainActor XCTestCase subclass, or a
+    MainActor-isolated `test…` method that is a direct member of an XCTestCase
+    subclass or of an extension of one declared in the same file. A method is
+    isolated by its own `@MainActor` or by a `@MainActor extension` (SE-0316),
+    unless it is `nonisolated`. Swift Testing functions and methods of nested
+    helper types are not XCTest discovery candidates."""
+    code = strip_swift_comments(swift_text, blank_strings=True)
+    classes = list(_XCTEST_CLASS_RE.finditer(code))
+    if any("@MainActor" in m["prefix"] for m in classes):
+        return True
+    names = {m["name"] for m in classes}
+    scopes = [(m.end() - 1, False) for m in classes]
+    scopes += [(m.end() - 1, "@MainActor" in m["prefix"]) for m in _EXTENSION_RE.finditer(code) if m["name"] in names]
+    for open_index, isolated_scope in scopes:
+        for method in _TEST_METHOD_RE.finditer(_direct_members(code, open_index)):
+            prefix = method["prefix"]
+            if "@MainActor" in prefix or (isolated_scope and not re.search(r"\bnonisolated\b", prefix)):
+                return True
+    return False
+
+
+def _direct_members(code: str, open_index: int) -> str:
+    """The body of the `{` at `open_index`, with everything nested deeper
+    (method bodies, nested types) blanked out."""
+    out: list[str] = []
+    depth = 0
+    for ch in code[open_index:]:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        out.append(ch if (depth == 1 and ch not in "{}") or ch == "\n" else " ")
+    return "".join(out)
+
+
+def _linux_compiled_files(target: TargetLinuxMembership, target_dir: Path) -> list[Path]:
+    excluded = set(target.linux_exclude) | set(target.always_exclude)
+    listed_entries = target.fixed_sources if target.fixed_sources is not None else target.linux_sources
+    listed = set(listed_entries) if listed_entries is not None else None
+    return [
+        f for f in sorted(target_dir.rglob("*.swift"))
+        if not _covers(rel := f.relative_to(target_dir).as_posix(), excluded) and (listed is None or _covers(rel, listed))
+    ]
+
+
+def check_main_actor_xctests(target: TargetLinuxMembership, root: Path) -> list[str]:
+    target_dir = root / target.directory
+    if not target_dir.is_dir():
+        return []
+    problems: list[str] = []
+    for file in _linux_compiled_files(target, target_dir):
+        text = file.read_text()
+        if not has_apple_only_guard(text) and has_main_actor_xctest(text):
+            problems.append(
+                f"{target.directory}/{file.relative_to(target_dir).as_posix()}: compiles on Linux and has a @MainActor XCTestCase class or test method, "
+                f"which aborts Linux XCTest discovery; convert it to Swift Testing or keep it out of the Linux build"
+            )
+    return problems
 
 
 def _under_apple_dir(rel: str) -> bool:
@@ -296,9 +416,12 @@ def check_target(target: TargetLinuxMembership, root: Path) -> list[str]:
 
 def check_tree(root: Path) -> list[str]:
     """Return one human-readable problem per offending path (empty = clean)."""
+    package_text = (root / "Package.swift").read_text()
     problems: list[str] = []
-    for target in parse_targets((root / "Package.swift").read_text()):
+    for target in parse_targets(package_text):
         problems += check_target(target, root)
+    for target in linux_test_targets(package_text):
+        problems += check_main_actor_xctests(target, root)
     return problems
 
 
