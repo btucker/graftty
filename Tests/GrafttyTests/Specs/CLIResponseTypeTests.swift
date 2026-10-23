@@ -4,7 +4,7 @@ import Testing
 import GrafttyKit
 @testable import GrafttyCLI
 
-@Suite("@spec ATTN-1.29: If the application answers a CLI request that expects a response with a response of a different type, then the CLI shall print `Unexpected <type> response for <command>` naming the wire type it received, and exit with code 1.")
+@Suite("@spec ATTN-1.29: If the application answers a CLI request that expects a response with a response of a different type, then the CLI shall print `Unexpected <type> response for <command>` naming the wire type it received, and exit with code 1. `team hook` keeps its unrendered-output fallback, and `remote setup-linux` keeps its update-the-app error.")
 struct CLIResponseTypeTests {
     private static func inboxErrors(
         page: ResponseMessage,
@@ -12,7 +12,7 @@ struct CLIResponseTypeTests {
     ) throws -> [String] {
         let command = try TeamInbox.parse([])
         var errors: [String] = []
-        #expect(throws: ExitCode.self) {
+        #expect(throws: ExitCode(1)) {
             try command.execute(
                 callerWorktree: "/repo/.worktrees/alice",
                 sendRequest: { request in
@@ -45,7 +45,7 @@ struct CLIResponseTypeTests {
 
     @Test func wrongResponseToAnOkCommandNamesItsType() {
         var errors: [String] = []
-        #expect(throws: ExitCode.self) {
+        #expect(throws: ExitCode(1)) {
             try CLIEnv.expectOk(.paneList([]), for: "team send", writeError: { errors.append($0) })
         }
         #expect(errors == ["Unexpected pane_list response for team send"])
