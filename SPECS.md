@@ -1502,6 +1502,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-4.7** If Linux zmx builds encounter a transient dependency download failure, then the release scripts shall retry at most three times, preserve exhausted failures, and stop immediately for compiler or test failures.
 
+**DIST-4.8** When building Linux zmx, the release scripts shall run its complete test suite in the same ReleaseSafe mode as the shipped executable, retaining runtime safety checks for large-history tests.
+
 ## WEB — Web Access
 
 ### WEB-1.x — Binding

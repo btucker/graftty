@@ -40,7 +40,9 @@ zig_build_with_download_retry() {
     cd "$stage/source"
     zig fmt --check src
     # Use musl so zmx itself does not need a particular glibc version.
-    zig_build_with_download_retry build test -j2 "-Dtarget=$arch-linux-musl"
+    # Exercise the shipped safety mode. Unoptimized terminal validation makes
+    # the 100,000-row history fixtures prohibitively slow on development hosts.
+    zig_build_with_download_retry build test -j2 "-Dtarget=$arch-linux-musl" -Doptimize=ReleaseSafe
     zig_build_with_download_retry build -j2 "-Dtarget=$arch-linux-musl" -Doptimize=ReleaseSafe \
         "-Dversion=$version-g${commit:0:7}-graftty7" --prefix "$stage/install"
 )

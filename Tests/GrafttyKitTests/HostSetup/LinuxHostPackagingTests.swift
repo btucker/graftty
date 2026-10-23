@@ -13,6 +13,17 @@ struct LinuxHostPackagingTests {
         #expect(process.terminationStatus == 0)
     }
 
+    @Test("@spec DIST-4.8: When building Linux zmx, the release scripts shall run its complete test suite in the same ReleaseSafe mode as the shipped executable, retaining runtime safety checks for large-history tests.")
+    func terminalTestsMatchShippedSafetyMode() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", repository.appendingPathComponent("scripts/linux/test-packaging.py").path,
+                             "ZmxBuildTests.test_tests_use_the_shipped_safety_mode"]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+    }
+
     private var repository: URL {
         var path = URL(fileURLWithPath: #filePath)
         for _ in 0..<4 { path.deleteLastPathComponent() }
