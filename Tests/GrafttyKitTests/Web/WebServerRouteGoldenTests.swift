@@ -4,12 +4,13 @@ import GrafttyProtocol
 @testable import GrafttyKit
 
 #if os(macOS)
-/// Byte-level characterization of every REST route the web client uses:
-/// status, content type and body for each provider route and for every
-/// outcome, 405, 503 and 400 path of the three POST routes. The golden
-/// transcript was recorded from the server before the #483 route table, so
-/// any wire change shows up as a diff. JSON bodies are compared with sorted
-/// keys (see `normalized`).
+/// Characterization of every REST route the web client uses: status,
+/// content type and body for each provider route and for every outcome,
+/// 405, 503 and 400 path of the three POST routes. The golden transcript was
+/// recorded from the server before the #483 route table. JSON bodies are
+/// compared as parsed values with sorted keys (see `normalized`), so a change
+/// that only re-escapes or reformats equal JSON, other headers, and the SPA
+/// index beyond its length are not covered.
 ///
 /// Re-record with `GRAFTTY_RECORD_REST_GOLDEN=1` only for an intended wire
 /// change. Skipped in CI like the other endpoint suites.

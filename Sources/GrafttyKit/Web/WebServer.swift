@@ -654,8 +654,8 @@ public final class WebServer {
         }
 
         /// The local rows followed by the one-hop relayed rows, which only
-        /// reach clients that advertise relay support. The two providers run
-        /// concurrently: the relayed one asks each connected remote Mac.
+        /// reach clients that advertise relay support. The local provider
+        /// runs first; the relayed one then asks each connected remote Mac.
         private func answerLocalThenRelayed<Item: Encodable & Sendable>(
             _ context: ChannelHandlerContext,
             _ head: HTTPRequestHead,
