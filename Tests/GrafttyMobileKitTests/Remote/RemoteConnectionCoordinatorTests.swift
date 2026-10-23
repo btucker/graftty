@@ -1075,12 +1075,11 @@ struct RemoteConnectionCoordinatorTests {
 // `makeTempDirectory`/`makePairedHost`/`pollUntil`/`PollTimeout` were
 // byte-identical copies duplicated across `RemoteConnectionCoordinatorTests.swift`
 // and `RemoteConnectionReconnectTests.swift` — consolidated here so both
-// files reference one definition. `LoopbackPeer`/`ConnectionBox`/
-// `httpResponseSuccess` etc. are NOT consolidated: they're
-// `RemoteConnectionReconnectTests`' own SSH-flavored variants of ideas
-// that also appear here in a WebRTC-only flavor, not true duplicates —
-// see that file's own doc comment on `LoopbackPeer` (deferred to a W5
-// sweep).
+// files reference one definition. `ConnectionBox`/`httpResponseSuccess`
+// etc. are NOT consolidated: they're `RemoteConnectionReconnectTests`' own
+// SSH-flavored variants of ideas that also appear here in a WebRTC-only
+// flavor, not true duplicates. That file's SSH-speaking answerer is the
+// shared `LoopbackPeer` from GrafttyRemoteTestSupport.
 enum RemoteConnectionTestSupport {
     static func makeTempDirectory() throws -> URL {
         let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)

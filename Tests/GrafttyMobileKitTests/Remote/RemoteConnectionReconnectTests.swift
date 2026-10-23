@@ -6,6 +6,7 @@ import GrafttyTunnel
 import NIOCore
 import NIOSSH
 import Testing
+import GrafttyRemoteTestSupport
 import WebRTC
 @testable import GrafttyMobileKit
 
@@ -381,7 +382,7 @@ struct RemoteConnectionReconnectTests {
                 AuthenticatedSignalingOffer.self,
                 from: body
             )
-            let answerer = LoopbackPeer(role: .answerer)
+            let answerer = LoopbackPeer(role: .answerer, inbound: .keepInbox)
             let rtcAnswer = try await answerer.accept(offer: RTCSessionDescription(type: .offer, sdp: offer.sdp))
             if let connection = box.get() {
                 await connection.bindIceCandidates(to: answerer)
@@ -404,7 +405,9 @@ struct RemoteConnectionReconnectTests {
             // IPAD-5.2 CI flake (the second cause, after REMOTE-11.2's
             // dropped early ICE candidates).
             Task {
-                guard let (dc, inbox) = try? await answerer.arrivedDataChannel() else {
+                guard let (dc, inbox) = try? await answerer.arrivedDataChannel(
+                    label: GrafttyWebRTC.dataChannelLabel
+                ) else {
                     trace.record(negotiation, "arrival-failed")
                     return
                 }
@@ -603,289 +606,11 @@ private struct CountingServerUserAuthDelegate: NIOSSHServerUserAuthenticationDel
     enum FingerprintError: Error { case unsupportedKeyFormat }
 }
 
-// MARK: - LoopbackPeer (copy of R2/R3's LoopbackPeer — copy-don't-extract precedent)
-// Left duplicated deliberately (unlike this file's other consolidated
-// helpers above) — a real extraction is a W5 test-consolidation sweep,
-// not part of this review-fix wave.
-
-private actor LoopbackPeer: WebRTCIceCandidateReceiver {
-    enum Role { case offerer, answerer }
-
-    private let role: Role
-    private let factory: RTCPeerConnectionFactory
-    private var peerConnection: RTCPeerConnection?
-    private var dataChannel: RTCDataChannel?
-    private nonisolated let pcDelegate = LoopbackPeerConnectionDelegate()
-
-    private var pendingLocalCandidates: [RTCIceCandidate] = []
-    private var iceCandidateTarget: WebRTCIceCandidateReceiver?
-
-    private var gatheringContinuation: CheckedContinuation<Void, Never>?
-    private var gatheringTimeoutTask: Task<Void, Never>?
-    private var openContinuation: CheckedContinuation<RTCDataChannel, Error>?
-    private var arrivalContinuation: CheckedContinuation<(RTCDataChannel, DataChannelInbox), Error>?
-    private var resolvedOpenDataChannel: RTCDataChannel?
-    private var dataChannelInbox: DataChannelInbox?
-
-    private static let gatheringTimeout: Duration = .seconds(5)
-
-    init(role: Role) {
-        self.role = role
-        self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
-        pcDelegate.onIceCandidate = { [weak self] candidate in
-            Task { await self?.routeLocalIceCandidate(candidate) }
-        }
-        pcDelegate.onDataChannel = { [weak self] dc, inbox in
-            Task { await self?.adoptInboundDataChannel(dc, inbox: inbox) }
-        }
-    }
-
-    func createOffer() async throws -> RTCSessionDescription {
-        precondition(role == .offerer)
-        let config = RemoteHostConnection.defaultConfig()
-        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
-        guard let pc = factory.peerConnection(with: config, constraints: constraints, delegate: pcDelegate) else {
-            throw NSError(domain: "LoopbackPeer", code: 1)
-        }
-        self.peerConnection = pc
-
-        let dcConfig = RTCDataChannelConfiguration()
-        dcConfig.isOrdered = true
-        guard let dc = pc.dataChannel(forLabel: "graftty-ssh", configuration: dcConfig) else {
-            throw NSError(domain: "LoopbackPeer", code: 2)
-        }
-        self.dataChannel = dc
-        installOpenTracker(on: dc)
-
-        let offer = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
-            pc.offer(for: constraints) { sdp, error in
-                if let error { continuation.resume(throwing: error); return }
-                guard let sdp else { continuation.resume(throwing: NSError(domain: "LoopbackPeer", code: 3)); return }
-                continuation.resume(returning: sdp)
-            }
-        }
-        try await Self.setLocalDescription(pc, offer)
-        await waitForIceGatheringComplete(pc)
-        return pc.localDescription ?? offer
-    }
-
-    func accept(offer: RTCSessionDescription) async throws -> RTCSessionDescription {
-        precondition(role == .answerer)
-        let config = RemoteHostConnection.defaultConfig()
-        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
-        guard let pc = factory.peerConnection(with: config, constraints: constraints, delegate: pcDelegate) else {
-            throw NSError(domain: "LoopbackPeer", code: 4)
-        }
-        self.peerConnection = pc
-
-        try await Self.setRemoteDescription(pc, offer)
-        let answer = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
-            pc.answer(for: constraints) { sdp, error in
-                if let error { continuation.resume(throwing: error); return }
-                guard let sdp else { continuation.resume(throwing: NSError(domain: "LoopbackPeer", code: 5)); return }
-                continuation.resume(returning: sdp)
-            }
-        }
-        try await Self.setLocalDescription(pc, answer)
-        await waitForIceGatheringComplete(pc)
-        return pc.localDescription ?? answer
-    }
-
-    func applyAnswer(_ answer: RTCSessionDescription) async throws {
-        precondition(role == .offerer)
-        guard let pc = peerConnection else { throw NSError(domain: "LoopbackPeer", code: 6) }
-        try await Self.setRemoteDescription(pc, answer)
-    }
-
-    func openedDataChannel() async throws -> RTCDataChannel {
-        if let dc = resolvedOpenDataChannel { return dc }
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCDataChannel, Error>) in
-            self.openContinuation = continuation
-        }
-    }
-
-    /// Resolves as soon as the DataChannel OBJECT and its lossless inbox
-    /// exist (for the answerer: when `didOpen dataChannel` is delivered
-    /// — the inbox was attached synchronously inside that callback).
-    /// Callers wrap the pair in `SSHNIOTransport(dataChannel:inbox:)`;
-    /// any bytes the peer sent in the meantime replay from the inbox.
-    func arrivedDataChannel() async throws -> (RTCDataChannel, DataChannelInbox) {
-        if let dc = dataChannel, let inbox = dataChannelInbox { return (dc, inbox) }
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(RTCDataChannel, DataChannelInbox), Error>) in
-            self.arrivalContinuation = continuation
-        }
-    }
-
-    func bindIceCandidates(to peer: WebRTCIceCandidateReceiver) {
-        self.iceCandidateTarget = peer
-        let drained = pendingLocalCandidates
-        pendingLocalCandidates.removeAll()
-        Task {
-            for candidate in drained {
-                try? await peer.addRemoteIceCandidate(candidate)
-            }
-        }
-    }
-
-    private func routeLocalIceCandidate(_ candidate: RTCIceCandidate) {
-        if let target = iceCandidateTarget {
-            Task { try? await target.addRemoteIceCandidate(candidate) }
-        } else {
-            pendingLocalCandidates.append(candidate)
-        }
-    }
-
-    func addRemoteIceCandidate(_ candidate: RTCIceCandidate) async throws {
-        guard let pc = peerConnection else { return }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            pc.add(candidate) { error in
-                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-            }
-        }
-    }
-
-    private func adoptInboundDataChannel(_ dc: RTCDataChannel, inbox: DataChannelInbox) {
-        self.dataChannel = dc
-        self.dataChannelInbox = inbox
-        if let continuation = arrivalContinuation {
-            arrivalContinuation = nil
-            continuation.resume(returning: (dc, inbox))
-        }
-    }
-
-    private nonisolated(unsafe) var currentOpenTracker: OpenTrackerDelegate?
-
-    private func installOpenTracker(on dc: RTCDataChannel) {
-        let tracker = OpenTrackerDelegate()
-        tracker.onOpen = { [weak self] in
-            Task { await self?.handleDataChannelOpen(dc) }
-        }
-        if dc.readyState == .open {
-            Task { self.handleDataChannelOpen(dc) }
-        }
-        dc.delegate = tracker
-        self.currentOpenTracker = tracker
-    }
-
-    private func handleDataChannelOpen(_ dc: RTCDataChannel) {
-        guard resolvedOpenDataChannel == nil else { return }
-        resolvedOpenDataChannel = dc
-        if let continuation = openContinuation {
-            openContinuation = nil
-            continuation.resume(returning: dc)
-        }
-        currentOpenTracker = nil
-    }
-
-    private func waitForIceGatheringComplete(_ pc: RTCPeerConnection) async {
-        if pc.iceGatheringState == .complete { return }
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            self.gatheringContinuation = continuation
-            pcDelegate.onIceGatheringComplete = { [weak self] in
-                Task { await self?.handleIceGatheringComplete() }
-            }
-            if pc.iceGatheringState == .complete {
-                handleIceGatheringComplete()
-                return
-            }
-            self.gatheringTimeoutTask = Task { [weak self] in
-                try? await Task.sleep(for: Self.gatheringTimeout)
-                await self?.handleIceGatheringComplete()
-            }
-        }
-    }
-
-    private func handleIceGatheringComplete() {
-        let pending = gatheringContinuation
-        gatheringContinuation = nil
-        pcDelegate.onIceGatheringComplete = nil
-        gatheringTimeoutTask?.cancel()
-        gatheringTimeoutTask = nil
-        pending?.resume()
-    }
-
-    func close() {
-        if let pending = gatheringContinuation {
-            gatheringContinuation = nil
-            pcDelegate.onIceGatheringComplete = nil
-            gatheringTimeoutTask?.cancel()
-            gatheringTimeoutTask = nil
-            pending.resume()
-        }
-        if let pending = openContinuation {
-            openContinuation = nil
-            pending.resume(throwing: LoopbackError.dataChannelNeverOpened)
-        }
-        if let pending = arrivalContinuation {
-            arrivalContinuation = nil
-            pending.resume(throwing: LoopbackError.dataChannelNeverOpened)
-        }
-        dataChannel?.close()
-        peerConnection?.close()
-        iceCandidateTarget = nil
-        pendingLocalCandidates.removeAll()
-    }
-
-    private static func setLocalDescription(_ pc: RTCPeerConnection, _ sdp: RTCSessionDescription) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            pc.setLocalDescription(sdp) { error in
-                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-            }
-        }
-    }
-
-    private static func setRemoteDescription(_ pc: RTCPeerConnection, _ sdp: RTCSessionDescription) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            pc.setRemoteDescription(sdp) { error in
-                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-            }
-        }
-    }
-}
-
 private enum LoopbackError: Error {
-    case dataChannelNeverOpened
     /// Task 5 E2E test: the host-side `inboundChildChannelInitializer`
     /// only ever expects a `.session` channel (what `TerminalSessionClient`
     /// opens) — anything else is a test-harness bug, not a product path.
     case unexpectedChannelType
-}
-
-private final class LoopbackPeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
-    nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
-    nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel, DataChannelInbox) -> Void)?
-    nonisolated(unsafe) var onIceGatheringComplete: (@Sendable () -> Void)?
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
-    func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
-        if newState == .complete { onIceGatheringComplete?() }
-    }
-    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
-        onIceCandidate?(candidate)
-    }
-    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
-        // Attach the lossless inbox SYNCHRONOUSLY on WebRTC's delegate
-        // thread: message delivery is serialized behind this callback,
-        // so a delegate attached before it returns can never miss a
-        // byte. Everything after this line (actor hops, transport
-        // construction) can take as long as it likes — the inbox
-        // buffers and replays.
-        let inbox = DataChannelInbox()
-        dataChannel.delegate = inbox
-        onDataChannel?(dataChannel, inbox)
-    }
-}
-
-private final class OpenTrackerDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
-    nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
-    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
-        if dataChannel.readyState == .open { onOpen?() }
-    }
-    func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {}
 }
 
 // MARK: - Task 5 host-side terminal echo (own minimal mirror; see doc

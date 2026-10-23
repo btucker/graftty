@@ -120,7 +120,8 @@ let cryptoDependencies: [Target.Dependency] = [.product(name: "Crypto", package:
 let linuxKitExclusions = ["Updater", "Editor", "Model/PNGThumbnail.swift",
                           "Ports/PortBindingsModel.swift"]
 let appleTargets: Set<String> = ["AppcastUpdater", "appcast-updater", "AppcastUpdaterTests", "Graftty", "GrafttyCommandUI", "GrafttyCommandUITests", "GrafttyMobileKit",
-                               "GrafttyMobileKitTests", "GrafttyTests", "OwnershipModelTests", "GrafttyRemoteClientTests"]
+                               "GrafttyMobileKitTests", "GrafttyTests", "OwnershipModelTests", "GrafttyRemoteClientTests",
+                               "GrafttyRemoteTestSupport"]
 
 let package = Package(
     name: "Graftty",
@@ -142,7 +143,10 @@ let package = Package(
         .library(name: "GrafttyRemoteClient", targets: ["GrafttyRemoteClient"]),
         .library(name: "GrafttyCommandUI", targets: ["GrafttyCommandUI"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
-    ] as [Product]).filter { !isLinux || !["appcast-updater", "Graftty", "GrafttyCommandUI", "GrafttyMobileKit"].contains($0.name) },
+        // Test-only: the iOS test bundles (Apps/GrafttyMobile/project.yml)
+        // can link a package product, not a bare target.
+        .library(name: "GrafttyRemoteTestSupport", targets: ["GrafttyRemoteTestSupport"]),
+    ] as [Product]).filter { !isLinux || !["appcast-updater", "Graftty", "GrafttyCommandUI", "GrafttyMobileKit", "GrafttyRemoteTestSupport"].contains($0.name) },
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
@@ -271,6 +275,14 @@ let package = Package(
             path: "Tests/GrafttyTestSupport",
             swiftSettings: strictWarnings
         ),
+        // The loopback WebRTC peer shared by the GrafttyRemoteClient and
+        // GrafttyMobileKit test targets (#477).
+        .target(
+            name: "GrafttyRemoteTestSupport",
+            dependencies: ["GrafttyRemoteClient", "GrafttyTunnel"] + webRTCDependencies,
+            path: "Tests/GrafttyRemoteTestSupport",
+            swiftSettings: strictWarnings
+        ),
         .target(
             name: "GrafttyKitTestSupport",
             dependencies: ["GrafttyKit"],
@@ -338,13 +350,14 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyMobileKitTests",
-            dependencies: ["GrafttyMobileKit"],
+            dependencies: ["GrafttyMobileKit", "GrafttyRemoteTestSupport"],
             swiftSettings: strictWarnings
         ),
         .testTarget(
             name: "GrafttyRemoteClientTests",
             dependencies: [
                 "GrafttyRemoteClient",
+                "GrafttyRemoteTestSupport",
                 "GrafttyTunnel",
                 "GrafttyProtocol",
                 .product(name: "NIO", package: "swift-nio"),
