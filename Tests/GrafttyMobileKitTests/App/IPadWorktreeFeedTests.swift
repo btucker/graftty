@@ -9,32 +9,32 @@ import UIKit
 @MainActor
 @Suite("IPadRootLayout worktree feed")
 struct IPadWorktreeFeedTests {
-    // Only the collapsed sidebar is hosted. With the sidebar shown, the
-    // iPhone simulators CI runs on can leave the split view relaying out on
-    // every frame (#646, #648); the feed's task identity has no column
-    // state, so a shown sidebar cannot change what it applies.
-    @Test("@spec IPAD-1.24: While the iPad layout displays a paired host with the sidebar column collapsed, the application shall apply the host's pushed panes-state frames to the shared worktree state, so the collapsed-sidebar attention indicator (IPAD-1.11) stays current without the sidebar list on screen.", .timeLimit(.minutes(1)))
-    func pushedFramesReachSharedStateWithTheSidebarCollapsed() async throws {
-        let layout = try MountedLayout()
-        defer { layout.unmount() }
+    // The feed is hosted without the layout's NavigationSplitView: on the
+    // iPhone simulators CI runs on, a hosted split view can relayout on
+    // every frame with the sidebar shown or collapsed (#646, #648, #657).
+    @Test("@spec IPAD-1.24: While the iPad layout displays a paired host, the application shall apply the host's pushed panes-state frames to the shared worktree state from outside the split view's columns, so the collapsed-sidebar attention indicator (IPAD-1.11) stays current without the sidebar list on screen.", .timeLimit(.minutes(1)))
+    func pushedFramesReachSharedStateOutsideTheSplitView() async throws {
+        let feed = try MountedFeed()
+        defer { feed.unmount() }
 
-        layout.frames.publish(.snapshot(Self.rows))
-        try await waitUntil("pushed frame applied with the sidebar collapsed") { layout.appState.latestWorktrees == Self.rows }
-        #expect(layout.appState.anyWorktreeHasAttention)
+        feed.frames.publish(.snapshot(Self.rows))
+        try await waitUntil("pushed frame applied") { feed.appState.latestWorktrees == Self.rows }
+        #expect(feed.appState.anyWorktreeHasAttention)
+        #expect(feed.applied == [Self.rows])
     }
 
     @Test("@spec IPAD-1.25: When the iPad layout starts observing a paired host's pushed panes-state frames, the application shall recompute the shared worktree state from the first frame even if its rows equal the rows already stored, such as rows seeded by a notification or recent-pane activation, so the collapsed-sidebar attention indicator (IPAD-1.11) reflects them.", .timeLimit(.minutes(1)))
     func firstFrameRecomputesRowsSeededBeforeObservation() async throws {
         // RootView.applyActivationTarget stores fresh rows without
         // recomputing the indicator; the host's latest frame repeats them.
-        let layout = try MountedLayout { appState in
+        let feed = try MountedFeed { appState in
             appState.latestWorktrees = Self.rows
             appState.anyWorktreeHasAttention = false
         }
-        defer { layout.unmount() }
+        defer { feed.unmount() }
 
-        layout.frames.publish(.snapshot(Self.rows))
-        try await waitUntil("attention recomputed from the seeded rows") { layout.appState.anyWorktreeHasAttention }
+        feed.frames.publish(.snapshot(Self.rows))
+        try await waitUntil("attention recomputed from the seeded rows") { feed.appState.anyWorktreeHasAttention }
     }
 
     @Test("@spec IPAD-1.26: When the iPad layout applies a pushed panes-state frame whose rows equal the shared worktree state, the application shall leave the shared rows and attention indicator unwritten, so views observing them are not invalidated by a repeated frame.")
@@ -75,34 +75,27 @@ struct IPadWorktreeFeedTests {
         attentionText: "Needs review", layout: .leaf(sessionName: "s", title: "shell",
             attentionText: nil, isBusy: false, attentionSource: nil))]
 
-    /// An `IPadRootLayout` with its sidebar collapsed, hosted in a
-    /// regular-width window whose selected host's pushed frames come from
-    /// `frames`.
+    /// The layout's worktree feed on an otherwise empty hosted view, for a
+    /// selected host whose pushed frames come from `frames`.
     @MainActor
-    private struct MountedLayout {
+    private final class MountedFeed {
         let appState: IPadAppState
         /// One source, a separate stream per subscriber.
-        let frames: LatestValueBroadcast<PanesStateMessage>
-        private let window: UIWindow
-        private let defaults: UserDefaults
-        private let defaultsSuite: String
-        private let hostStoreURL: URL
+        let frames = LatestValueBroadcast<PanesStateMessage>()
+        /// The rows handed to the layout after each applied frame.
+        private(set) var applied: [[WorktreePanes]] = []
+        private let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 400))
+        private let defaultsSuite = "ipad-feed-\(UUID())"
 
         init(prepare: (IPadAppState) -> Void = { _ in }) throws {
-            defaultsSuite = "ipad-feed-\(UUID())"
-            defaults = try #require(UserDefaults(suiteName: defaultsSuite))
-            hostStoreURL = FileManager.default.temporaryDirectory.appendingPathComponent("ipad-feed-\(UUID()).json")
-            let hostStore = HostStore(storeURL: hostStoreURL)
-            // A refused port, so the list's HTTP fallback fails at once.
-            let host = try hostStore.add(Host(label: "mac", baseURL: URL(string: "http://127.0.0.1:9")!))
+            let defaults = try #require(UserDefaults(suiteName: defaultsSuite))
+            let host = Host(label: "mac", baseURL: URL(string: "http://127.0.0.1:9")!)
             appState = IPadAppState(defaults: defaults)
             appState.select(hostID: host.id, worktreePath: nil, paneID: nil)
-            appState.columnVisibility = .detailOnly
             prepare(appState)
 
-            let frames = LatestValueBroadcast<PanesStateMessage>()
-            self.frames = frames
-            let feed = RemoteWorktreeUpdatesProvider { _ in
+            let frames = frames
+            let pushed = RemoteWorktreeUpdatesProvider { _ in
                 AsyncStream { continuation in
                     let task = Task {
                         for await frame in frames.updates() { continuation.yield(.frame(frame)) }
@@ -111,13 +104,16 @@ struct IPadWorktreeFeedTests {
                     continuation.onTermination = { _ in task.cancel() }
                 }
             }
-            // A hosted controller has no active scene; live loading waits for one.
-            let controller = UIHostingController(rootView: IPadRootLayout(hostStore: hostStore, appState: appState)
-                .environment(\.remoteWorktreeUpdates, feed)
+            // Wired as the layout wires it: without a coordinator, the
+            // injected feed stands in for pairing.
+            let remote = RemoteWorktreeProviders(coordinator: nil, host: host, worktreeUpdates: pushed)
+            let feed = IPadWorktreeFeed(host: host, updates: remote.updates, appState: appState) { [weak self] list in
+                self?.applied.append(list)
+            }
+            // A hosted controller has no active scene; the feed waits for one.
+            window.rootViewController = UIHostingController(rootView: Color.clear
+                .modifier(feed)
                 .environment(\.scenePhase, .active))
-            window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1194, height: 834))
-            window.traitOverrides.horizontalSizeClass = .regular
-            window.rootViewController = controller
             window.makeKeyAndVisible()
         }
 
@@ -125,8 +121,7 @@ struct IPadWorktreeFeedTests {
             window.isHidden = true
             window.rootViewController = nil
             frames.finish()
-            defaults.removePersistentDomain(forName: defaultsSuite)
-            try? FileManager.default.removeItem(at: hostStoreURL)
+            UserDefaults.standard.removePersistentDomain(forName: defaultsSuite)
         }
     }
 
