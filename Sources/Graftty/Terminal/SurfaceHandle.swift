@@ -1405,7 +1405,7 @@ final class SurfaceNSView: NSView {
         // Forward ALL keys to libghostty — including Cmd-modified ones —
         // so its default keybinds (Cmd+C → copy, Cmd+V → paste, Cmd+A →
         // select all, etc.) fire. App-level menu shortcuts (Cmd+D split,
-        // Cmd+W close pane, Cmd+O add repo, …) don't reach this method:
+        // Cmd+W close pane, Cmd+Shift+O add repo, …) don't reach this method:
         // AppKit's menu-keyEquivalent interception runs before keyDown
         // dispatch, so the menu fires first and libghostty never sees
         // them. If libghostty returns "not handled", bubble up the
