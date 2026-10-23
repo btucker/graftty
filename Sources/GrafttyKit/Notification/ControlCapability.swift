@@ -13,7 +13,7 @@ public enum ControlCapability: String, CaseIterable, Sendable {
     case worktreePin = "worktree_pin"
 
     /// The capability an older single-capability probe asks about.
-    public init?(legacyProbe: NotificationMessage) {
+    init?(legacyProbe: NotificationMessage) {
         guard let capability = Self.allCases.first(where: { $0.legacyProbe == legacyProbe }) else { return nil }
         self = capability
     }

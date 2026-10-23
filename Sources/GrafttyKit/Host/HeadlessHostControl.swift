@@ -95,9 +95,9 @@ public extension HeadlessHostRuntime {
         } catch { return .error(code: "host_operation_failed", message: String(describing: error), forceAllowed: false, shortStatus: nil) }
     }
 
-    /// Control-socket entry point. Attention, recap, and team messages go
-    /// through the dispatcher shared with the Mac app; the rest reach
-    /// `hostRequest`.
+    /// Control-socket entry point. Attention, recap, team, and capability
+    /// messages go through the dispatcher shared with the Mac app; the rest
+    /// reach `hostRequest`.
     func handle(_ message: NotificationMessage) async -> ResponseMessage {
         if ControlRequestCore.handleMessage(message, platform: controlPlatform) { return .ok }
         return await ControlRequestCore.handleRequest(message, platform: controlPlatform) ?? .ok

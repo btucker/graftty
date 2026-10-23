@@ -920,7 +920,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.29** If the application answers a CLI request that expects a response with a response of a different type, then the CLI shall print `Unexpected <type> response for <command>` naming the wire type it received, and exit with code 1. `team hook` keeps its unrendered-output fallback, and `remote setup-linux` keeps its update-the-app error.
 
-**ATTN-1.30** When a CLI command needs app capabilities, the CLI shall check all of them with one `capabilities` request, and if the running app answers that request with anything other than a capability list, then the CLI shall fall back to the single-capability probes that older apps answer.
+**ATTN-1.30** When a CLI command needs app capabilities, the CLI shall check all of them with one `capabilities` request, and if the running app closes that request without a response or answers it with anything other than a capability list, then the CLI shall fall back to the single-capability probes that older apps answer.
 
 ### ATTN-2.x — Communication Protocol
 

@@ -2,8 +2,8 @@ import Foundation
 import GrafttyProtocol
 
 /// The control-socket dispatcher shared by the Mac app and the headless
-/// host. It owns attention, recap, and team messages; every other request
-/// goes to `ControlPlatform.handlePlatformRequest`.
+/// host. It owns attention, recap, team, and capability messages; every
+/// other request goes to `ControlPlatform.handlePlatformRequest`.
 @MainActor
 public enum ControlRequestCore {
     /// Fire-and-forget path. Returns false for messages that expect a

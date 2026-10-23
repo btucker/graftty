@@ -3,7 +3,7 @@ import Testing
 import GrafttyKit
 @testable import GrafttyCLI
 
-@Suite("@spec ATTN-1.30: When a CLI command needs app capabilities, the CLI shall check all of them with one `capabilities` request, and if the running app answers that request with anything other than a capability list, then the CLI shall fall back to the single-capability probes that older apps answer.")
+@Suite("@spec ATTN-1.30: When a CLI command needs app capabilities, the CLI shall check all of them with one `capabilities` request, and if the running app closes that request without a response or answers it with anything other than a capability list, then the CLI shall fall back to the single-capability probes that older apps answer.")
 struct CLICapabilityProbeTests {
     @Test func oneRequestCoversEveryNeededCapability() throws {
         let command = try WorktreeAdd.parse(["fix", "--remote", "Studio", "--agent", "codex", "--base", "main"])

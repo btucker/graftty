@@ -265,6 +265,8 @@ struct SocketRouterCharacterizationTests {
         ] {
             #expect(await router.route(probe, box) == .ok)
         }
+        #expect(await router.route(.capabilities, box)
+            == .capabilities(ControlCapability.allCases.map(\.rawValue)))
     }
 
     @Test("listPanes reports untracked and non-running worktrees as errors")

@@ -221,16 +221,18 @@ struct CLIWorktreeCreationTests {
         let command = try WorktreeAdd.parse(["fix", "--remote", "Studio"])
         #expect(command.requiredCapabilities.first == .remoteWorktree)
         #expect(try WorktreeAdd.parse(["fix"]).requiredCapabilities.contains(.remoteWorktree) == false)
-        var attempts = 0
+        var probes: [NotificationMessage] = []
         #expect(throws: ExitCode(1)) {
             try CapabilityProbe.require(command.requiredCapabilities, retryTransportFailuresUntil: .distantPast,
-                                        send: { _ in
-                attempts += 1
+                                        send: { request in
+                probes.append(request)
                 throw CLIError.socketClosedWithoutResponse
             })
         }
-        // A past deadline bounds the probe, so it never consumes the creation timeout.
-        #expect(attempts <= 2)
+        // An app that drops `capabilities` still gets the remote probe, and a
+        // past deadline stops it after one attempt so it never consumes the
+        // creation timeout.
+        #expect(probes == [.capabilities, .remoteWorktreeCapability])
     }
 
     @Test("Retry responses for a different operation remain terminal")
