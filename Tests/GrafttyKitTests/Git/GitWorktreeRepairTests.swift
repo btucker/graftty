@@ -9,7 +9,7 @@ import Foundation
 /// on a real repo layout. The wrapper is thin — the contract worth
 /// pinning is "the right command is assembled and non-zero becomes
 /// `gitFailed`".
-@Suite("GitWorktreeRepair Tests", .serialized)
+@Suite("GitWorktreeRepair Tests")
 struct GitWorktreeRepairTests {
 
     @Test func repairInvokesGitWithExpectedArgs() async throws {

@@ -6,7 +6,7 @@ import Testing
 struct RepoTeardownTests {
     @MainActor
     @Test func clearsRemoteBranchSnapshotForRepo() async throws {
-        let remoteBranchStore = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(remoteBranches: [BranchRef(name: "feature", lastCommitDate: .distantPast)]) })
+        let remoteBranchStore = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(remoteBranchNames: ["feature"]) })
         remoteBranchStore.refresh(repoPath: "/repo")
         try await waitUntil(timeout: 1.0) {
             remoteBranchStore.hasRemote(repoPath: "/repo", branch: "feature")

@@ -96,7 +96,7 @@ struct GitOriginHostParseTests {
     }
 }
 
-@Suite("GitOriginHost.detect", .serialized)
+@Suite("GitOriginHost.detect")
 struct GitOriginHostDetectTests {
     @Test(
         "Blocked repository metadata is terminated during origin detection.",

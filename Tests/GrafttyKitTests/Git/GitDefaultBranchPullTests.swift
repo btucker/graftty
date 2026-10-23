@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("GitDefaultBranchPull Tests", .serialized)
+@Suite("GitDefaultBranchPull Tests")
 struct GitDefaultBranchPullTests {
 
     @Test func pullTargetsAdvertisedOriginBranch() async throws {

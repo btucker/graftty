@@ -128,7 +128,7 @@ struct RemoteBranchStoreTests {
     @Test func upstreamRemoteBranchExposesTrackedMapping() async throws {
         let store = RemoteBranchStore(list: { _ in
             RemoteBranchSnapshot(
-                remoteBranches: ["main", "feature/bar"].map { BranchRef(name: $0, lastCommitDate: .distantPast) },
+                remoteBranchNames: ["main", "feature/bar"],
                 upstreams: ["main": "main", "local-name": "feature/bar"]
             )
         })
@@ -146,7 +146,7 @@ struct RemoteBranchStoreTests {
     @Test func hasRemoteIsTrueWhenUpstreamSetEvenIfLocalNameNotInBranches() async throws {
         let store = RemoteBranchStore(list: { _ in
             RemoteBranchSnapshot(
-                remoteBranches: ["feature/bar"].map { BranchRef(name: $0, lastCommitDate: .distantPast) },
+                remoteBranchNames: ["feature/bar"],
                 upstreams: ["local-rename": "feature/bar"]
             )
         })
@@ -174,7 +174,7 @@ struct RemoteBranchStoreTests {
 
     @MainActor
     @Test func hasRemoteRejectsEmptyWhitespaceAndSentinelBranches() async throws {
-        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(remoteBranches: [BranchRef(name: "main", lastCommitDate: .distantPast)]) })
+        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(remoteBranchNames: ["main"]) })
         store.refresh(repoPath: "/repo")
         try await waitUntil(timeout: 1.0) {
             store.hasRemote(repoPath: "/repo", branch: "main")
@@ -205,7 +205,7 @@ struct RemoteBranchStoreTests {
 
     @MainActor
     @Test func clearDropsSnapshot() async throws {
-        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(remoteBranches: [BranchRef(name: "main", lastCommitDate: .distantPast)]) })
+        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(remoteBranchNames: ["main"]) })
         store.refresh(repoPath: "/repo")
         try await waitUntil(timeout: 1.0) {
             store.hasRemote(repoPath: "/repo", branch: "main")
@@ -879,7 +879,7 @@ private final class RecordingRemoteBranchLister: @unchecked Sendable {
             invocations[repoPath, default: 0] += 1
             switch results[repoPath] ?? .success([]) {
             case .success(let branches):
-                return .success(RemoteBranchSnapshot(remoteBranches: branches.map { BranchRef(name: $0, lastCommitDate: .distantPast) }))
+                return .success(RemoteBranchSnapshot(remoteBranchNames: branches))
             case .failure(let error):
                 return .failure(error)
             }
@@ -944,5 +944,15 @@ private final class ConcurrencyRecordingRemoteBranchLister: @unchecked Sendable 
             activeCount -= 1
             _completedCount += 1
         }
+    }
+}
+
+extension RemoteBranchSnapshot {
+    /// Test fixture: remote branches by name, with no commit-date ordering.
+    init(remoteBranchNames names: some Sequence<String>, upstreams: [String: String] = [:]) {
+        self.init(
+            remoteBranches: names.map { BranchRef(name: $0, lastCommitDate: .distantPast) },
+            upstreams: upstreams
+        )
     }
 }

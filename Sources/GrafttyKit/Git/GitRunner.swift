@@ -19,9 +19,9 @@ public enum GitRunner {
         args: [String],
         at directory: String,
         timeout: Duration? = nil,
-        using executorOverride: CLIExecutor? = nil
+        using executor: CLIExecutor? = nil
     ) async throws -> String {
-        let out = try await (executorOverride ?? CLIRunner()).run(
+        let out = try await (executor ?? CLIRunner()).run(
             command: "git",
             args: args,
             at: directory,
@@ -36,9 +36,9 @@ public enum GitRunner {
         args: [String],
         at directory: String,
         timeout: Duration? = nil,
-        using executorOverride: CLIExecutor? = nil
+        using executor: CLIExecutor? = nil
     ) async throws -> (stdout: String, exitCode: Int32) {
-        let out = try await (executorOverride ?? CLIRunner()).capture(
+        let out = try await (executor ?? CLIRunner()).capture(
             command: "git",
             args: args,
             at: directory,
@@ -53,9 +53,9 @@ public enum GitRunner {
         args: [String],
         at directory: String,
         timeout: Duration? = nil,
-        using executorOverride: CLIExecutor? = nil
+        using executor: CLIExecutor? = nil
     ) async throws -> CLIOutput {
-        try await (executorOverride ?? CLIRunner()).capture(
+        try await (executor ?? CLIRunner()).capture(
             command: "git",
             args: args,
             at: directory,
