@@ -1,10 +1,9 @@
 #if canImport(UIKit)
 import Foundation
-import GrafttyProtocol
 
 public enum CreateWorktreeClient {
 
-    public struct Request: Encodable, Sendable, Equatable {
+    public struct Request: Sendable, Equatable {
         public let repoPath: String
         public let worktreeName: String
         public let branchName: String
@@ -20,16 +19,6 @@ public enum CreateWorktreeClient {
             self.worktreeName = worktreeName
             self.branchName = branchName
             self.existing = existing
-        }
-    }
-
-    public struct Response: Decodable, Sendable, Equatable {
-        public let sessionName: String
-        public let worktreePath: String
-
-        public init(sessionName: String, worktreePath: String) {
-            self.sessionName = sessionName
-            self.worktreePath = worktreePath
         }
     }
 
