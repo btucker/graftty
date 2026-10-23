@@ -698,8 +698,8 @@ extension SocketRequestRouter {
     }
 
     /// The `.showPane` route's read-and-tail step, after the worktree and
-    /// pane guards have resolved `sessionName`. Runs off the main actor
-    /// because the reader spawns `zmx history`.
+    /// pane guards have resolved `sessionName`. Nonisolated so the route can
+    /// run it off the main actor while the reader spawns `zmx history`.
     nonisolated static func showPaneResponse(
         sessionName: String, lines: Int,
         reader: ZmxHistoryReader

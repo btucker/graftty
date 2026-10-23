@@ -8,8 +8,7 @@ import ArgumentParser
 @Suite("@spec ATTN-1.15: When `pane show <addr>` is invoked against a running pane, the application shall return the last `--lines` lines (default 100) of that pane's `zmx` scrollback as plain text on the CLI's stdout.")
 struct PaneShowHandlerTests {
     @Test("Tails 200 lines to the requested 50")
-    @MainActor
-    func tails200To50() async throws {
+    func tails200To50() {
         let body = (1...200).map { "line\($0)" }.joined(separator: "\n")
         let stubReader = StubZmxHistoryReader(output: body)
         let response = SocketRequestRouter.showPaneResponse(
@@ -26,8 +25,7 @@ struct PaneShowHandlerTests {
     }
 
     @Test("Large scrollback (>64KB) does not deadlock the stub+tail path")
-    @MainActor
-    func largeScrollbackNoDeadlock() async throws {
+    func largeScrollbackNoDeadlock() {
         // Each line is ~100 bytes; 1000 lines ≈ 100KB, well past the macOS
         // pipe buffer. This exercises only the stub reader, so the actual
         // deadlock fix in `ZmxHistorySubprocessReader` isn't directly
