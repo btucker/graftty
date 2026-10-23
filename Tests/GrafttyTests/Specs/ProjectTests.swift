@@ -155,7 +155,6 @@ private actor ListCallCounter {
     func snapshot() -> [String] { calls }
 }
 
-// Test-only manual ticker. Mirrors `PollingTickerLike` shape from GrafttyKit.
 @Suite("@spec PROJECT-2.1: When the Open on GitHub…/Open on GitLab… context-menu item is chosen, the application shall open https://<host>/<owner>/<repo> in the default browser.")
 struct HostingOriginWebURLTests {
     @Test("github.com origin composes the canonical project URL")

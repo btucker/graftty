@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("Team Inbox Request Handler")
 struct TeamInboxRequestHandlerTests {
@@ -30,7 +31,7 @@ struct TeamInboxRequestHandlerTests {
     }
 
     @Test func sendAppendsAddressedMessage() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let handler = Self.makeHandler(
             inbox: TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
@@ -52,7 +53,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("A plain worktree send stays unpinned; an explicit #agent-id send still pins.")
     func sendPinsAgentOnlyForExplicitAddressing() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let alice = "/repo/.worktrees/alice"
         let claude = TeamPresenceRecord(
@@ -106,7 +107,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("A plain worktree send remains deliverable after the send-time default agent exits.")
     func plainSendRemainsDeliverableAfterDefaultAgentExits() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let alice = "/repo/.worktrees/alice"
         let claude = TeamPresenceRecord(
@@ -168,7 +169,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("@spec AGENT-6.24: When a sender addresses `<canonical-worktree-path>#<runtime>`, the application shall durably queue the row for that provider without requiring a currently reachable agent or binding the row to one exact session, allow other runtimes to consume later deliverable rows without discarding or blocking on it, and permit only an agent of the addressed runtime to consume the targeted row.")
     func runtimeAddressQueuesAcrossProviderTurns() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(
             path: "/repo",
             displayName: "repo",
@@ -235,7 +236,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("Explicit canonical recipient rejects stale identity without appending.")
     func explicitRecipientFailsClosed() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let alice = "/repo/.worktrees/alice"
         let stale = TeamPresenceRecord(
@@ -266,7 +267,7 @@ struct TeamInboxRequestHandlerTests {
     }
 
     @Test func sendUsesCanonicalPathToDisambiguateCollidingMemberNames() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(
             path: "/repo",
             displayName: "repo",
@@ -306,7 +307,7 @@ struct TeamInboxRequestHandlerTests {
     }
 
     @Test func broadcastExcludesSenderAndDeliversToAllOthers() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice", "bob"])
         let handler = Self.makeHandler(
             inbox: TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001", "0002"]), now: { Self.fixedDate })
@@ -326,7 +327,7 @@ struct TeamInboxRequestHandlerTests {
     }
 
     @Test func sendRejectsUnknownRecipient() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let handler = Self.makeHandler(inbox: TeamInbox(rootDirectory: root))
 
@@ -343,7 +344,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("@spec TEAM-4.5: When team inbox diagnostics contain more than one page, the application shall return a newest-first page selection bounded by both message count and encoded size, preserve chronological order within each page, and provide an opaque cursor whose traversal neither duplicates nor omits messages.")
     func diagnosticInboxPaginatesBackwardFromNewestMessage() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(
             path: "/repo",
             displayName: "repo",
@@ -439,7 +440,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("@spec TEAM-4.7: When a team inbox request omits pagination support required for its read direction, the application shall reject it with an instruction to use the bundled CLI rather than return an oversized response or silently discard later pages.")
     func diagnosticInboxRequestWithoutPaginationIsRejected() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(
             path: "/repo",
             displayName: "repo",
@@ -522,7 +523,7 @@ struct TeamInboxRequestHandlerTests {
     @spec AGENT-6.9: When a SessionStart hook fires, with or without the legacy `--skill-managed` flag, the application shall render no team primer of its own, leaving team guidance to the provider plugin's Graftty skills, while still delivering any queued exact-agent messages as separate transient context.
     """)
     func sessionStartOmitsPrimerButKeepsQueuedMessages() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(
             path: "/repo",
             displayName: "repo",
@@ -562,7 +563,7 @@ struct TeamInboxRequestHandlerTests {
     """)
     func sessionStartDeliversQueuedMessagesAndAdvancesCursor() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
-            let root = try Self.temporaryDirectory()
+            let root = try makeTempDir()
             let repo = TeamTestFixtures.makeRepo(
                 path: "/repo",
                 displayName: "repo",
@@ -609,7 +610,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("A non-owner SessionStart receives the skill context without consuming the owner's queue.")
     func nonOwnerSessionStartDoesNotRenderOrAdvanceQueuedMessages() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(
             path: "/repo",
             displayName: "repo",
@@ -665,7 +666,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("An unbound hook row is consumed only by the earliest reachable agent across runtimes.")
     func hookDefaultRespectsCrossRuntimeAgentOrder() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(
             path: "/repo",
             displayName: "repo",
@@ -740,7 +741,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("SessionStart skips a message targeted to another runtime without consuming it or blocking later rows.")
     func sessionStartSkipsRuntimeTargetWithoutBlockingLaterRows() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(
             path: "/repo",
             displayName: "repo",
@@ -796,7 +797,7 @@ struct TeamInboxRequestHandlerTests {
     }
 
     @Test func claudePostToolUseRetainsUndeliveredNormalMessageBehindUrgentDelivery() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let ids = Self.fixedIDs(["0001", "0002"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: ids, now: { Self.fixedDate })
@@ -877,7 +878,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("Codex owner PostToolUse does not render, advance delivery state, or fire delivery callbacks.")
     func codexOwnerPostToolUseDoesNotRenderAdvanceOrFireCallback() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
         let handler = Self.makeHandler(
@@ -911,7 +912,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("Claude owner PostToolUse renders urgent inbox messages and advances delivery state.")
     func claudeOwnerPostToolUseRendersUrgentMessagesAndAdvancesCursor() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
         let handler = Self.makeHandler(
@@ -948,7 +949,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("@spec TEAM-11.7: If the worktree watermark cannot be advanced during hook delivery, then the application shall leave the session cursor unadvanced so the undelivered messages are redelivered by a later hook.")
     func watermarkTimeoutDuringHookDeliveryDoesNotSkipMessages() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let aliceWorktree = "/repo/.worktrees/alice"
         let inbox = TeamInbox(
@@ -1007,7 +1008,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("An existing Claude session honors later worktree watermark advances.")
     func existingClaudeSessionHonorsLaterWorktreeWatermark() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001", "0002"]), now: { Self.fixedDate })
         let handler = Self.makeHandler(inbox: inbox)
@@ -1071,7 +1072,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("Non-owner PostToolUse does not render urgent inbox messages or advance delivery state.")
     func nonOwnerPostToolUseDoesNotRenderOrAdvance() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
         let handler = Self.makeHandler(
@@ -1105,7 +1106,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("Claude PostToolUse without ownership closure remains backward-compatible.")
     func claudePostToolUseWithoutOwnershipClosureStillRendersAndAdvances() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
         let handler = Self.makeHandler(inbox: inbox)
@@ -1137,7 +1138,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("Resolver-gated secondary Claude PostToolUse does not render or advance.")
     func resolverGatedSecondaryClaudePostToolUseDoesNotRenderOrAdvance() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
         let records = [
@@ -1196,7 +1197,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("Stop hook returns {} without firing delivery callbacks.")
     func stopHookDoesNotFireDeliveryCallback() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
         let handler = Self.makeHandler(inbox: inbox)
@@ -1216,7 +1217,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("Stop hook returns {}.")
     func stopHookReturnsEmptyObject() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
         let handler = Self.makeHandler(inbox: inbox)
@@ -1230,7 +1231,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("SessionStart hook returns rendered context.")
     func sessionStartReturnsRenderedContext() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
         let handler = Self.makeHandler(inbox: inbox)
@@ -1246,7 +1247,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("PostToolUse hook returns rendered context without firing delivery callbacks.")
     func postToolUseDoesNotFireDeliveryCallback() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
         let handler = Self.makeHandler(inbox: inbox)
@@ -1262,7 +1263,7 @@ struct TeamInboxRequestHandlerTests {
 
     @Test("Non-owner PostToolUse skips automatic delivery without firing delivery callbacks.")
     func nonOwnerPostToolUseSkipsWithoutFiringCallback() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
         let handler = Self.makeHandler(
@@ -1302,13 +1303,6 @@ struct TeamInboxRequestHandlerTests {
             guard !ids.isEmpty else { return "overflow" }
             return ids.removeFirst()
         }
-    }
-
-    private static func temporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-team-inbox-request-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
     }
 
     private static func presenceRecord(

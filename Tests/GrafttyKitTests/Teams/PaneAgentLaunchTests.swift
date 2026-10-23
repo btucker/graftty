@@ -139,7 +139,6 @@ struct PaneAgentLaunchTests {
         try PaneAgentLaunch.withdrawInitialPrompt(saved, inbox: inbox)
         #expect(try inbox.worktreePendingMessages(teamID: repo.path, recipientWorktree: worktree).isEmpty)
     }
-
 }
 
 private struct PaneAgentFakeLiveness: TeamDeliveryLivenessChecking {

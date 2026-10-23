@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("Claude native peer delivery")
 struct ClaudePeerDeliveryServiceTests {
@@ -39,7 +40,7 @@ struct ClaudePeerDeliveryServiceTests {
 
     @Test("Transport failure leaves exact row unread.")
     func failureLeavesRowUnread() async throws {
-        let fixture = try Fixture(error: StubError.failed)
+        let fixture = try Fixture(error: StubError())
         _ = try fixture.append(body: "please review")
 
         await fixture.service.onMessageArrival(
@@ -136,7 +137,7 @@ struct ClaudePeerDeliveryServiceTests {
             if body.contains("\n\n") {
                 return ClaudePeerMessagingError.messageTooLarge(bytes: 99_999, maxBytes: 1)
             }
-            return body.contains("first") ? StubError.failed : nil
+            return body.contains("first") ? StubError() : nil
         })
         let first = try fixture.append(body: "first")
         _ = try fixture.append(body: "second")
@@ -467,8 +468,6 @@ struct ClaudePeerDeliveryServiceTests {
             )
         }
     }
-
-    private enum StubError: Error { case failed }
 
     private actor StubClient: ClaudePeerClienting {
         struct Call: Sendable {

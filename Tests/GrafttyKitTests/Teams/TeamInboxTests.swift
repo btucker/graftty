@@ -345,7 +345,6 @@ struct TeamInboxTests {
         // The call must give up promptly — this is the whole point.
         #expect(Date().timeIntervalSince(start) < 5)
     }
-
 }
 
 private final class IncrementingIDGenerator {

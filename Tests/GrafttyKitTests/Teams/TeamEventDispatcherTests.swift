@@ -1,19 +1,13 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("TeamEventDispatcher")
 struct TeamEventDispatcherTests {
-    static func temporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("teamEventDispatcherTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
     @Test("@spec TEAM-5.1: When team_message is dispatched, the application shall append exactly one inbox row addressed to the named recipient.")
     func teamMessageWritesOneRowToRecipient() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root)
         let dispatcher = TeamEventDispatcher(
@@ -41,7 +35,7 @@ struct TeamEventDispatcherTests {
 
     @Test("@spec TEAM-5.5: When PRStatusStore fires pr_state_changed (non-merged), the dispatcher shall write one inbox row per recipient resolved via the prStateChanged matrix row.")
     func prStateChangedFansOutPerMatrix() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice", "bob"])
         let inbox = TeamInbox(rootDirectory: root)
         let prefs = TeamEventRoutingPreferences(
@@ -79,7 +73,7 @@ struct TeamEventDispatcherTests {
 
     @Test("@spec TEAM-5.9: When pr_state_changed fires in a single-worktree repo, the dispatcher shall write the row to the subject worktree iff .worktree is in the matrix row.")
     func prStateChangedSingleWorktreeRepo() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main"])
         let inbox = TeamInbox(rootDirectory: root)
         let prefs = TeamEventRoutingPreferences(
@@ -109,7 +103,7 @@ struct TeamEventDispatcherTests {
 
     @Test("@spec TEAM-5.6: When pr_state_changed has attrs.to == 'merged', the dispatcher shall use the prMerged matrix row.")
     func prMergedUsesMergedRow() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root)
         let prefs = TeamEventRoutingPreferences(
@@ -144,7 +138,7 @@ struct TeamEventDispatcherTests {
 
     @Test("@spec TEAM-5.7: When a worktree joins a team-enabled repo, the dispatcher shall append one team_member_joined inbox row addressed to the main worktree.")
     func memberJoinedAddressesMainWorktree() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root)
         let dispatcher = TeamEventDispatcher(
@@ -168,7 +162,7 @@ struct TeamEventDispatcherTests {
 
     @Test("@spec TEAM-5.10: When a team_message is dispatched, the application shall store its authored body verbatim and shall not apply the automated-event teamPrompt template.")
     func teamMessageBypassesTeamPromptTemplate() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root)
         let dispatcher = TeamEventDispatcher(
@@ -192,7 +186,7 @@ struct TeamEventDispatcherTests {
 
     @Test("@spec TEAM-5.12: When a routable event is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall write the inbox row with the original event body intact and the rendered per-recipient prompt stored separately as agentPrompt.")
     func routableEventStoresBodyAndAgentPromptSeparately() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root)
         let prefs = TeamEventRoutingPreferences(
@@ -236,7 +230,7 @@ struct TeamEventDispatcherTests {
 
     @Test("@spec TEAM-5.11: When a team_broadcast is dispatched, the application shall write one authored team_message row per non-sender team member without applying the automated-event teamPrompt template.")
     func teamBroadcastFansOutPerRecipient() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice", "bob"])
         let inbox = TeamInbox(rootDirectory: root)
         let dispatcher = TeamEventDispatcher(
@@ -264,7 +258,7 @@ struct TeamEventDispatcherTests {
 
     @Test("@spec TEAM-5.8: When a worktree is removed from a team-enabled repo (collapsing to one worktree), the dispatcher shall still append one team_member_left inbox row addressed to the main worktree.")
     func memberLeftAddressesMainWorktreeEvenWhenTeamShrinks() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main"])  // alice is gone
         let inbox = TeamInbox(rootDirectory: root)
         let dispatcher = TeamEventDispatcher(
@@ -291,7 +285,7 @@ struct TeamEventDispatcherTests {
     @spec AGENT-6.20: When the dispatcher writes a routable-event system row that carries a provider attribute, the application shall persist that provider on the inbox row as its source.
     """)
     func routableEventPersistsProviderSource() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root)
         let prefs = TeamEventRoutingPreferences(

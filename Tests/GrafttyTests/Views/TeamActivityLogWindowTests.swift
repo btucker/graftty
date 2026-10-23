@@ -55,5 +55,4 @@ final class TeamActivityLogViewModelTests: XCTestCase {
         XCTAssertEqual(window.messagesFileURL, expected)
         XCTAssertEqual(window.messagesFileURL.lastPathComponent, "messages.jsonl")
     }
-
 }

@@ -1,16 +1,10 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("Team membership events")
 struct TeamMembershipEventsTests {
-
-    private static func temporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("teamMembershipEventsTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
 
     private static func makeDispatcher(rootDirectory: URL) -> (TeamEventDispatcher, TeamInbox) {
         let inbox = TeamInbox(rootDirectory: rootDirectory)
@@ -27,7 +21,7 @@ struct TeamMembershipEventsTests {
     }
 
     @Test func joiningAddsRoutedEventForMainWorktree() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let (dispatcher, inbox) = Self.makeDispatcher(rootDirectory: root)
         let repo = makeRepo(branches: ["main", "feature/login"])
 
@@ -45,7 +39,7 @@ struct TeamMembershipEventsTests {
     }
 
     @Test func joinDoesNotFireWhenJoinerIsMainWorktree() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let (dispatcher, inbox) = Self.makeDispatcher(rootDirectory: root)
         let repo = makeRepo(branches: ["main"])  // main worktree would be alone
 
@@ -60,7 +54,7 @@ struct TeamMembershipEventsTests {
     }
 
     @Test func leaveFiresEventForMainWorktree() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let (dispatcher, inbox) = Self.makeDispatcher(rootDirectory: root)
         // Repo state after removal: main worktree remains; leaver is already gone.
         let repo = makeRepo(branches: ["main"])
@@ -80,7 +74,7 @@ struct TeamMembershipEventsTests {
     }
 
     @Test func leaveDoesNotFireIfMainWorktreeIsGone() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let (dispatcher, inbox) = Self.makeDispatcher(rootDirectory: root)
         // Main-worktree removal edge case: if it is gone too, nobody to notify.
         // Repo state after removal: empty worktrees array.
@@ -100,7 +94,7 @@ struct TeamMembershipEventsTests {
 
     @Test("@spec TEAM-2.5: TeamMembershipEvents.fireJoined writes a team_member_joined inbox row through the dispatcher.")
     func fireJoinedRoutesThroughDispatcher() throws {
-        let root = try Self.temporaryDirectory()
+        let root = try makeTempDir()
         let (dispatcher, inbox) = Self.makeDispatcher(rootDirectory: root)
         let repo = TeamTestFixtures.makeRepo(
             path: "/repo",

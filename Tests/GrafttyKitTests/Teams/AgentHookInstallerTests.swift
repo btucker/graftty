@@ -245,5 +245,4 @@ struct AgentHookInstallerTests {
         #expect(!script.contains(#"if [ -z "${GRAFTTY_AGENT_ID:-}" ]; then"#))
         #expect(!script.contains("(runtime.rawValue)"))
     }
-
 }

@@ -707,7 +707,7 @@ struct SocketIntegrationTests {
         let gate = AsyncGate()
         let handlersStarted = MutableBox(0)
         server.onAsyncRequest = { _ in
-            handlersStarted.value += 1
+            handlersStarted.withValue { $0 += 1 }
             await gate.wait()
             return .ok
         }

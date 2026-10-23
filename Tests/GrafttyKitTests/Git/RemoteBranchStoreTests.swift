@@ -2,6 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 import GrafttyKitTestSupport
+import GrafttyTestSupport
 
 @Suite("RemoteBranchStore")
 struct RemoteBranchStoreTests {
@@ -197,7 +198,7 @@ struct RemoteBranchStoreTests {
             store.hasRemote(repoPath: "/repo", branch: "main")
         }
 
-        lister.set(result: .failure(TestError.boom), for: "/repo")
+        lister.set(result: .failure(StubError()), for: "/repo")
         store.refresh(repoPath: "/repo")
         try await Task.sleep(for: .milliseconds(100))
 
@@ -743,10 +744,6 @@ private final class CombinedRefScanExecutor: CLIExecutor, @unchecked Sendable {
             ))
         }
     }
-}
-
-private enum TestError: Error {
-    case boom
 }
 
 private final class CompletionToken {}
