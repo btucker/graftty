@@ -100,17 +100,7 @@ struct TeamCLITests {
         #expect(json["team_name"] as? String == "repo")
     }
 
-    // MARK: - NotificationMessage.teamMessage and .teamList encoding
-
-    @Test func teamMessageEncodesCorrectly() throws {
-        let msg = NotificationMessage.teamMessage(callerWorktree: "/repo", recipient: "alice", text: "hello")
-        let data = try JSONEncoder().encode(msg)
-        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        #expect(json["type"] as? String == "team_message")
-        #expect(json["caller_worktree"] as? String == "/repo")
-        #expect(json["recipient"] as? String == "alice")
-        #expect(json["text"] as? String == "hello")
-    }
+    // MARK: - NotificationMessage.teamList encoding
 
     @Test func teamListEncodesCorrectly() throws {
         let msg = NotificationMessage.teamList(callerWorktree: "/repo/.worktrees/feature-x")
@@ -118,19 +108,6 @@ struct TeamCLITests {
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         #expect(json["type"] as? String == "team_list")
         #expect(json["caller_worktree"] as? String == "/repo/.worktrees/feature-x")
-    }
-
-    @Test func teamMessageRoundTrips() throws {
-        let original = NotificationMessage.teamMessage(callerWorktree: "/r/wt", recipient: "bob", text: "ready?")
-        let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
-        if case .teamMessage(let path, let recipient, let text) = decoded {
-            #expect(path == "/r/wt")
-            #expect(recipient == "bob")
-            #expect(text == "ready?")
-        } else {
-            Issue.record("Expected .teamMessage, got \(decoded)")
-        }
     }
 
     @Test func teamListRoundTrips() throws {

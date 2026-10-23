@@ -61,9 +61,6 @@ public enum ControlRequestCore {
         case .teamSend(let callerPath, let callerAgentID, let recipient, let text, let priority):
             return await teamSend(callerPath: callerPath, callerAgentID: callerAgentID, recipient: recipient,
                                   text: text, priority: priority, platform: platform)
-        case .teamMessage(let callerPath, let recipient, let text):
-            return await teamSend(callerPath: callerPath, callerAgentID: nil, recipient: recipient,
-                                  text: text, priority: .normal, platform: platform)
         case .teamReply:
             return await teamReply(message, platform: platform)
         case .teamBroadcast(let callerPath, let callerAgentID, let text, let priority):

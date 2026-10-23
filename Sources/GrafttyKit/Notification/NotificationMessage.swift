@@ -112,7 +112,6 @@ public enum NotificationMessage: Sendable, Equatable {
     case closePane(path: String, index: Int)
     case showPane(path: String, index: Int, lines: Int)
     case sendPane(path: String, index: Int, text: String, pressEnter: Bool)
-    case teamMessage(callerWorktree: String, recipient: String, text: String)
     case teamSend(
         callerWorktree: String,
         callerAgentID: String? = nil,
@@ -309,11 +308,6 @@ extension NotificationMessage: Codable {
             try container.encode(index, forKey: .index)
             try container.encode(text, forKey: .text)
             try container.encode(pressEnter, forKey: .pressEnter)
-        case .teamMessage(let path, let recipient, let text):
-            try container.encode("team_message", forKey: .type)
-            try container.encode(path, forKey: .callerWorktree)
-            try container.encode(recipient, forKey: .recipient)
-            try container.encode(text, forKey: .text)
         case .teamSend(let path, let callerAgentID, let recipient, let text, let priority):
             try container.encode("team_send", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
@@ -521,10 +515,14 @@ extension NotificationMessage: Codable {
             let pressEnter = try container.decode(Bool.self, forKey: .pressEnter)
             self = .sendPane(path: path, index: index, text: text, pressEnter: pressEnter)
         case "team_message":
-            let path = try container.decode(String.self, forKey: .callerWorktree)
-            let recipient = try container.decode(String.self, forKey: .recipient)
-            let text = try container.decode(String.self, forKey: .text)
-            self = .teamMessage(callerWorktree: path, recipient: recipient, text: text)
+            // ATTN-2.26: CLIs before `team send` existed sent this; it is a
+            // normal-priority send with no caller agent.
+            self = .teamSend(
+                callerWorktree: try container.decode(String.self, forKey: .callerWorktree),
+                recipient: try container.decode(String.self, forKey: .recipient),
+                text: try container.decode(String.self, forKey: .text),
+                priority: .normal
+            )
         case "team_send":
             let path = try container.decode(String.self, forKey: .callerWorktree)
             let callerAgentID = try container.decodeIfPresent(String.self, forKey: .callerAgentID)

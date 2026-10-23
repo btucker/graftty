@@ -331,7 +331,7 @@ struct SocketIntegrationTests {
                 slowStartContinuation.yield(())
                 await slowGate.wait()
                 return .paneList([])
-            case .teamMessage:
+            case .teamSend:
                 return .ok
             default:
                 return .error("unexpected")
@@ -413,7 +413,7 @@ struct SocketIntegrationTests {
                 slowStartContinuation.yield(())
                 await slowGate.wait()
                 return .paneList([])
-            case .teamMessage:
+            case .teamSend:
                 return .ok
             default:
                 return .error("unexpected")
@@ -480,7 +480,7 @@ struct SocketIntegrationTests {
             case .listPanes:
                 try? await Task.sleep(for: .milliseconds(100))
                 return .error("slow-first")
-            case .teamMessage:
+            case .teamSend:
                 return .ok
             default:
                 return .error("unexpected")
@@ -519,7 +519,7 @@ struct SocketIntegrationTests {
             case .listPanes:
                 try? await Task.sleep(for: .milliseconds(500))
                 return .error("too late")
-            case .teamMessage:
+            case .teamSend:
                 laterRequestsHandled.value += 1
                 return .ok
             default:
@@ -878,7 +878,7 @@ struct SocketIntegrationTests {
                 slowStartContinuation.yield(())
                 try? await Task.sleep(for: .milliseconds(500))
                 return .paneList([])
-            case .teamMessage:
+            case .teamSend:
                 teamRequestsHandled.value += 1
                 return .ok
             default:

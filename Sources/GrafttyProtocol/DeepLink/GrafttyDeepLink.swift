@@ -8,7 +8,7 @@ public enum DeepLinkTarget: Equatable, Sendable {
     /// A zmx session name, e.g. `"graftty-ab12cd34"`.
     case session(String)
     /// `repo` matches a repo display name; `worktree` is the sanitized
-    /// worktree address (same form as `graftty team msg` / `pane`).
+    /// worktree address (same form as `graftty team send` / `pane`).
     case worktree(repo: String, worktree: String)
 }
 

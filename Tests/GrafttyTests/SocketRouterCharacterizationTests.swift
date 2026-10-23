@@ -353,7 +353,7 @@ struct SocketRouterCharacterizationTests {
         let address = "graftty-mac://peer-device/Users/peer/api"
         #expect(await router.route(.teamSend(callerWorktree: Self.worktreePath, callerAgentID: "codex-test",
             recipient: address, text: "hello", priority: .urgent), box) == .ok)
-        #expect(await router.route(.teamMessage(callerWorktree: Self.worktreePath, recipient: address, text: "hi"), box) == .ok)
+        #expect(await router.route(.teamSend(callerWorktree: Self.worktreePath, recipient: address, text: "hi", priority: .normal), box) == .ok)
         #expect(peer.sent == [
             .send(senderWorktree: Self.worktreePath, senderAgentID: "codex-test", recipientWorktree: "/Users/peer/api",
                   recipientSuffix: nil, text: "hello", priority: .urgent),
@@ -361,7 +361,7 @@ struct SocketRouterCharacterizationTests {
                   recipientSuffix: nil, text: "hi", priority: .normal),
         ])
         router.teamsEnabled = false
-        #expect(await router.route(.teamMessage(callerWorktree: Self.worktreePath, recipient: address, text: "x"), box)
+        #expect(await router.route(.teamSend(callerWorktree: Self.worktreePath, recipient: address, text: "x", priority: .normal), box)
             == .error(TeamInboxRequestError.teamModeDisabled.description))
         #expect(peer.sent.count == 2)
     }

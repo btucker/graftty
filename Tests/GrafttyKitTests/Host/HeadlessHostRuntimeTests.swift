@@ -409,14 +409,14 @@ struct HeadlessHostRuntimeTests {
         var forwarded: [NotificationMessage] = []
         runtime.remoteTeamSender = { message in forwarded.append(message); return .ok }
         let address = "graftty-mac://peer-device/Users/me/project"
-        #expect(await runtime.handle(.teamMessage(callerWorktree: root.path, recipient: address, text: "hi")) == .ok)
+        #expect(await runtime.handle(.teamSend(callerWorktree: root.path, recipient: address, text: "hi", priority: .normal)) == .ok)
         #expect(await runtime.handle(.teamSend(callerWorktree: root.path, callerAgentID: "codex-test", recipient: address,
             text: "urgent", priority: .urgent)) == .ok)
         #expect(forwarded == [
             .teamSend(callerWorktree: root.path, callerAgentID: nil, recipient: address, text: "hi", priority: .normal),
             .teamSend(callerWorktree: root.path, callerAgentID: "codex-test", recipient: address, text: "urgent", priority: .urgent),
         ])
-        #expect(await runtime.handle(.teamMessage(callerWorktree: "/untracked", recipient: address, text: "x"))
+        #expect(await runtime.handle(.teamSend(callerWorktree: "/untracked", recipient: address, text: "x", priority: .normal))
             == .error(TeamInboxRequestError.callerNotTracked.description))
         #expect(forwarded.count == 2)
     }

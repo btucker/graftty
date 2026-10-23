@@ -2,7 +2,7 @@ import Foundation
 import GrafttyProtocol
 
 /// Single producer-side fan-out for every team event. `PRStatusStore`,
-/// `TeamMembershipEvents`, and the `graftty team msg`/`team broadcast`
+/// `TeamMembershipEvents`, and the `graftty team send`/`team broadcast`
 /// CLI handlers all flow through here, writing one `TeamInbox` row per
 /// matrix-resolved (or addressed) recipient.
 public final class TeamEventDispatcher {
