@@ -519,7 +519,8 @@ struct RemoteConnectionCoordinatorTests {
         let hostKey = Curve25519.Signing.PrivateKey()
         let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: hostKey)
         let store = PinnedHostStore(directory: dir)
-        let before = try #require(store.get(id: #require(host.remoteDeviceID)))
+        let deviceID = try #require(host.remoteDeviceID)
+        let before = try #require(store.get(id: deviceID))
         try await ConnectionBox.withFixture { box in
             let coordinator = RemoteConnectionCoordinator(
                 directory: dir,
@@ -542,7 +543,8 @@ struct RemoteConnectionCoordinatorTests {
             }
 
             #expect(await coordinator.connection(for: host) == nil)
-            #expect(try store.get(id: before.id) == before)
+            let persisted = try store.get(id: before.id)
+            #expect(persisted == before)
         }
     }
 
@@ -553,7 +555,8 @@ struct RemoteConnectionCoordinatorTests {
         let hostKey = Curve25519.Signing.PrivateKey()
         let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: hostKey)
         let store = PinnedHostStore(directory: dir)
-        let original = try #require(store.get(id: #require(host.remoteDeviceID)))
+        let deviceID = try #require(host.remoteDeviceID)
+        let original = try #require(store.get(id: deviceID))
         try await ConnectionBox.withFixture { box in
             let gate = Gate()
             let coordinator = RemoteConnectionCoordinator(
@@ -595,7 +598,8 @@ struct RemoteConnectionCoordinatorTests {
             await gate.open()
             #expect(await first.value == nil)
             #expect(await second.value == nil)
-            #expect(try store.get(id: original.id) == replacement)
+            let persisted = try store.get(id: original.id)
+            #expect(persisted == replacement)
         }
     }
 
@@ -959,7 +963,8 @@ struct RemoteConnectionCoordinatorTests {
             serverKey: hostKey
         )
         let store = PinnedHostStore(directory: dir)
-        let before = try #require(store.get(id: #require(host.remoteDeviceID)))
+        let deviceID = try #require(host.remoteDeviceID)
+        let before = try #require(store.get(id: deviceID))
         let counter = CallCounter()
         try await ConnectionBox.withFixture { box in
             let gate = Gate()
@@ -999,7 +1004,8 @@ struct RemoteConnectionCoordinatorTests {
             await gate.open()
 
             let result = await negotiated
-            #expect(try store.get(id: before.id) == before)
+            let persisted = try store.get(id: before.id)
+            #expect(persisted == before)
             #expect(result == nil, "a connection invalidated mid-negotiation must never be handed back to the caller")
             #expect(counter.count == 1, "exactly one negotiation attempt — invalidate must not have started a second one")
 
