@@ -20,7 +20,7 @@ struct GitWorktreeRemoveTests {
         try FileManager.default.createDirectory(at: repoDir, withIntermediateDirectories: true)
         let worktreeDir = dir.appendingPathComponent("wt-feature")
 
-        try runShell("""
+        try shellInRepo("""
             git init && \
             git commit --allow-empty -m 'init' && \
             git worktree add \(worktreeDir.path) -b feature
@@ -60,7 +60,7 @@ struct GitWorktreeRemoveTests {
         try FileManager.default.createDirectory(at: repoDir, withIntermediateDirectories: true)
         let worktreeDir = dir.appendingPathComponent("wt-feature")
 
-        try runShell("""
+        try shellInRepo("""
             git init && \
             git commit --allow-empty -m 'init' && \
             git worktree add \(worktreeDir.path) -b feature && \
@@ -98,7 +98,7 @@ struct GitWorktreeRemoveTests {
         let repoDir = dir.appendingPathComponent("repo")
         try FileManager.default.createDirectory(at: repoDir, withIntermediateDirectories: true)
 
-        try runShell("git init && git commit --allow-empty -m 'init'", at: repoDir)
+        #expect(try shellInRepo("git init && git commit --allow-empty -m 'init'", at: repoDir) == 0)
 
         do {
             try await GitWorktreeRemove.remove(repoPath: repoDir.path, worktreePath: repoDir.path)
@@ -109,20 +109,4 @@ struct GitWorktreeRemoveTests {
         }
     }
 
-    private func runShell(_ command: String, at directory: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = directory
-        process.environment = [
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "HOME": NSHomeDirectory(),
-            "GIT_AUTHOR_NAME": "Test",
-            "GIT_AUTHOR_EMAIL": "test@test.com",
-            "GIT_COMMITTER_NAME": "Test",
-            "GIT_COMMITTER_EMAIL": "test@test.com",
-        ]
-        try process.run()
-        process.waitUntilExit()
-    }
 }

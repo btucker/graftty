@@ -7,22 +7,9 @@ import GrafttyTestSupport
 struct GitRepoDetectorTests {
 
     func shell(_ command: String, at dir: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = dir
-        process.environment = [
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "HOME": NSHomeDirectory(),
-            "GIT_AUTHOR_NAME": "Test",
-            "GIT_AUTHOR_EMAIL": "test@test.com",
-            "GIT_COMMITTER_NAME": "Test",
-            "GIT_COMMITTER_EMAIL": "test@test.com",
-        ]
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw GitRepoDetectorTestError.shellFailed(command, process.terminationStatus)
+        let status = try shellInRepo(command, at: dir)
+        guard status == 0 else {
+            throw GitRepoDetectorTestError.shellFailed(command, status)
         }
     }
 
@@ -84,7 +71,7 @@ struct GitRepoDetectorTests {
     /// don't accidentally convert it into a silent `.notARepo` return.
     @Test("""
     @spec GIT-1.3: When the pre-`discover` step `GitRepoDetector.detect(path:)` throws while resolving the user-picked folder (e.g. the `.git` file exists but is unreadable due to permissions or a truncated write), the application shall present an `NSAlert` mirroring `GIT-1.2` rather than swallowing the throw via `try?`. Pre-fix the sync-detect path was the one remaining silent-return in the Add Repository flow — the async discover path (`GIT-1.2`) and the Delete Worktree path (`GIT-4.11`) already alert on throws, so the sync-detect throw stood out as the odd silent failure.
-    """)
+    """, .enabled(if: geteuid() != 0, "Root reads files regardless of their permission bits."))
     func throwsWhenGitFileIsUnreadable() throws {
         let dir = try makeTempDir()
         defer {
