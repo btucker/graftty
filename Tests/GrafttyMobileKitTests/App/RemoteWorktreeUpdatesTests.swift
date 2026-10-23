@@ -30,7 +30,7 @@ struct RemoteWorktreeUpdatesTests {
     }
 
     @Test func shortLivedChannelsWaitBetweenSubscriptionsWithoutBlankingTheHost() async throws {
-        let channels = (0..<4).map { _ in LatestValueBroadcast<PanesStateMessage>() }
+        let channels = (0..<6).map { _ in LatestValueBroadcast<PanesStateMessage>() }
         for (index, channel) in channels.enumerated() { channel.publish(.snapshot(rows("\(index)"))) }
         let host = FakeSubscriptions(channels.map { .success($0) })
         let retry = ManualRetry()
@@ -62,6 +62,22 @@ struct RemoteWorktreeUpdatesTests {
         channels[2].finish()
         try #require(await updates.next() == .frame(.snapshot(rows("3"))))
         #expect(retry.waitCount == 2)
+
+        // Each channel's lifetime is its own: the quick successor of a mature
+        // channel waits again.
+        channels[3].finish()
+        try #require(await retry.waitUntilPending())
+        #expect(host.calls == 4)
+
+        // Time spent opening the channel is not time open: a subscribe that
+        // takes longer than the lifetime, then a quick close, still waits.
+        host.beforeReturning = { clock.advance(by: .seconds(6)) }
+        retry.release()
+        try #require(await updates.next() == .frame(.snapshot(rows("4"))))
+        channels[4].finish()
+        try #require(await retry.waitUntilPending())
+        #expect(host.calls == 5)
+        #expect(retry.waitCount == 4)
     }
 
     @Test func reportsASubscriptionThatEndsBeforeAnyFrameAndRetries() async throws {
@@ -150,8 +166,13 @@ private final class FakeSubscriptions {
         self.results = results
     }
 
+    /// Runs inside each subscribe before it returns, so a test can spend
+    /// time opening the channel.
+    var beforeReturning: () -> Void = {}
+
     func subscribe() async throws -> AsyncStream<PanesStateMessage> {
         calls += 1
+        beforeReturning()
         guard !results.isEmpty else { throw FakeError() }
         return try results.removeFirst().get().updates()
     }
