@@ -69,6 +69,8 @@ struct ControlSocketWireFixtureTests {
 
     static func requests() throws -> [(NotificationMessage, String)] {
         [
+            (.mcpBridge(.init(parent: try host(), request: .close(sessionID: operationID))),
+             #"{"request":{"parent":{"deviceID":{"value":"worker"},"fingerprint":{"rawBytes":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},"request":{"close":{"sessionID":"00000000-0000-0000-0000-000000000001"}}},"type":"mcp_bridge"}"#),
             (.listRemoteHosts,
              #"{"type":"list_remote_hosts"}"#),
             (.remoteSkills(host: try host(), request: .finish(operationID: operationID)),
@@ -169,6 +171,7 @@ struct ControlSocketWireFixtureTests {
              #"{"members":[{"agents":[],"branch":"main","is_main_worktree":true,"is_running":false,"name":"main","worktree_path":"/r"}],"team_name":"t","type":"team_list"}"#),
             (.teamList(teamName: "t", members: [memberWithAgent]),
              #"{"members":[{"agents":[{"address":"/r/wt#codex-1","display_name":"Codex","id":"codex-1","is_reachable":true,"pane_session_name":"s","runtime":"codex"}],"branch":"wt","is_main_worktree":false,"is_running":true,"name":"wt","project_name":"app","project_path":"/r","worktree_path":"/r/wt"}],"team_name":"t","type":"team_list"}"#),
+            (.mcpProxy(.accepted), #"{"mcpProxy":{"accepted":{}},"type":"mcp_proxy"}"#),
             (.teamHookOutput("{}"), #"{"output":"{}","type":"team_hook_output"}"#),
             (.teamInbox(messages: [inboxMessage], nextBeforeID: "b", nextAfterID: "a", snapshotThroughID: "s"),
              #"{"messages":[{"agent_prompt":"prompt","batch_id":"batch","body":"hi","created_at":-978307200,"from":{"agentID":"codex-1","member":"a","runtime":"codex","worktree":"/r/a"},"id":"0001","kind":"team_message","priority":"normal","repo_path":"/r","source":"github","team":"t","to":{"member":"b","worktree":"/r/b"}}],"next_after_id":"a","next_before_id":"b","snapshot_through_id":"s","type":"team_inbox"}"#),
@@ -194,11 +197,11 @@ struct ControlSocketWireFixtureTests {
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability, .worktreeCreateStatus, .removeWorktree,
              .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability, .setWorktreePinned,
-             .worktreeRemoveStatus, .capabilities, .remoteSkills, .remotePlacement, .listRemoteHosts: break
+             .worktreeRemoveStatus, .capabilities, .mcpBridge, .remoteSkills, .remotePlacement, .listRemoteHosts: break
         }
         switch response {
         case .linuxSetupIdentity, .ok, .error, .serverBusy, .paneList, .paneShow, .teamList, .teamHookOutput,
-             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove, .capabilities, .agentSkills, .placement, .remoteHosts: break
+             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove, .capabilities, .mcpProxy, .agentSkills, .placement, .remoteHosts: break
         }
     }
 

@@ -199,6 +199,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.22.0"),
         .package(url: "https://github.com/stencilproject/Stencil.git", from: "0.15.1"),
         .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "1.0.0"),
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", revision: "72a09adb79e0b7112df92949612533c013c6c664"),
     ] + appleDependencies,
     targets: ([
         .target(
@@ -220,6 +221,7 @@ let package = Package(
             name: "GrafttyKit",
             dependencies: [
                 "GrafttyProtocol",
+                .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOWebSocket", package: "swift-nio"),

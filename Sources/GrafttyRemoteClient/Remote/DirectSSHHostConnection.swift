@@ -147,6 +147,12 @@ public actor DirectSSHHostConnection {
         let (channel, handler) = try connectedTransport()
         return WorktreeManagementChannelClient(parentChannel: channel, parentHandler: handler.handler)
     }
+    public func makeMCPControlClient(handler: @escaping TeamRPCSession.Handler,
+                                     onClose: @escaping @Sendable () async -> Void = {}) throws -> TeamChannelClient {
+        let (channel, ssh) = try connectedTransport()
+        return TeamChannelClient(parentChannel: channel, parentHandler: ssh.handler,
+            subsystemName: SSHChannelTypeNames.mcpControl, handler: handler, onClose: onClose)
+    }
     public func makeGitControlClient(handler: @escaping TeamRPCSession.Handler,
                                      onClose: @escaping @Sendable () async -> Void = {}) throws -> TeamChannelClient {
         let (channel, ssh) = try connectedTransport()

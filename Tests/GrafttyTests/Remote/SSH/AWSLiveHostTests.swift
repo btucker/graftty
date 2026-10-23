@@ -44,6 +44,12 @@ struct AWSLiveHostTests {
             #expect(observation.isFresh())
             #expect(observation.sample.cpuCount.map { $0 > 0 } == true)
             #expect(observation.sample.memoryAvailableBytes.map { $0 > 0 } == true)
+            if ProcessInfo.processInfo.environment["GRAFTTY_LIVE_AWS_MCP"] == "1" {
+                let worker = RemoteMacConnectionSummary.ID(deviceID: .init(value: identity.deviceID), fingerprint: fingerprint)
+                let parentIdentity = RemoteMacConnectionSummary.ID(deviceID: .init(value: parent.deviceID),
+                    fingerprint: RemoteIdentityFingerprint(of: try RemoteIdentityPublicKey(rawRepresentation: clientKey.publicKey.rawRepresentation)))
+                try await exerciseMCP(connection: connection, target: target, root: root, worker: worker, parent: parentIdentity)
+            }
             if let repository = ProcessInfo.processInfo.environment["GRAFTTY_LIVE_AWS_REPOSITORY"] {
                 try await exercisePlacements(connection: connection, target: target, repository: repository, root: root)
             }
@@ -164,6 +170,13 @@ struct AWSLiveHostTests {
         \(python)
         GRAFTTY_NATIVE_PROBE_PY
         """
+        let output = try await runRemoteProbe(script, target: target, root: root)
+        if let file = ProcessInfo.processInfo.environment["GRAFTTY_LIVE_AWS_RESULT"] {
+            try Data(output.utf8).write(to: URL(fileURLWithPath: file + (retainedOnly ? ".retention" : ".native")))
+        }
+    }
+
+    func runRemoteProbe(_ script: String, target: AWSHostEnrollmentTarget, root: URL) async throws -> String {
         let parameters = root.appendingPathComponent("native-check.json")
         try JSONSerialization.data(withJSONObject: ["commands": [script], "executionTimeout": ["120"]]).write(to: parameters)
         let runner = CLIRunner(terminatesOnCancellation: true)
@@ -180,10 +193,8 @@ struct AWSLiveHostTests {
             let status = value["Status"] as? String
             if status == "Pending" || status == "InProgress" || status == "Delayed" { continue }
             try #require(status == "Success", "Native verification failed: \(value["StandardErrorContent"] ?? "unknown")")
-            if let file = ProcessInfo.processInfo.environment["GRAFTTY_LIVE_AWS_RESULT"] {
-                try Data((value["StandardOutputContent"] as? String ?? "").utf8).write(to: URL(fileURLWithPath: file + (retainedOnly ? ".retention" : ".native")))
-            }
-            return
+            return value["StandardOutputContent"] as? String ?? ""
+
         }
         throw ProviderError("Native verification deadline exceeded")
     }

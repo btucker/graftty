@@ -9,6 +9,7 @@ import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
 import Testing
+import MCP
 #if canImport(Network)
 import Network
 #endif
@@ -251,6 +252,102 @@ struct DirectSSHLoopbackTests {
             #expect(code == "skills-forbidden")
         } catch { await client.close(); await server.close(); throw error }
         await client.close(); await server.close()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func mcpSubsystemRequiresWorktreePermission() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey, managementAllowed: false))
+        let server = f.server()
+        await server.setMCPControl(.init(handler: { _, _ in Issue.record("Unpermitted parent reached MCP"); return Data() }))
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            let channel = try await client.makeMCPControlClient(handler: { $0 })
+            await #expect(throws: (any Error).self) { try await channel.open() }
+            channel.close()
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec REMOTE-30.11: When a parent opens the MCP subsystem on a managed host, the application shall authenticate both peers and carry standard MCP tool calls back to the parent without granting the worker terminal access to the parent.", .timeLimit(.minutes(1)))
+    func mcpReverseProxyExecutesOnParent() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let parentPeer = try f.peer(key: f.clientKey)
+        try f.store.add(parentPeer)
+        let parent = RemoteMacConnectionSummary.ID(deviceID: parentPeer.id, fingerprint: parentPeer.fingerprint)
+        let worker = RemoteMacConnectionSummary.ID(deviceID: .init(value: "worker"), fingerprint: try f.fingerprint)
+        let bridge = MCPWorkerBridge()
+        let scope = MCPProxyScope(grantID: UUID(), generation: 1, repositoryID: UUID(), worktreePath: "/work/project", serverID: "fixture")
+        let marker = f.directory.appendingPathComponent("parent-tool-ran")
+        let script = f.directory.appendingPathComponent("server.py")
+        try #"""
+        import json, sys, pathlib
+        for line in sys.stdin:
+            request = json.loads(line)
+            if "id" not in request: continue
+            method = request.get("method")
+            if method == "initialize":
+                result = {"protocolVersion": request["params"]["protocolVersion"], "capabilities": {"tools": {}}, "serverInfo": {"name":"fixture","version":"1"}}
+            elif method == "tools/list":
+                result = {"tools":[{"name":"touch_parent","description":"Record execution on parent","inputSchema":{"type":"object","properties":{}}}]}
+            elif method == "tools/call":
+                pathlib.Path(sys.argv[1]).write_text("parent executed")
+                result = {"content":[{"type":"text","text":"parent executed"}]}
+            else: result = {}
+            print(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":result}), flush=True)
+        """#.write(to: script, atomically: true, encoding: .utf8)
+        let policy = MCPProxyPolicy(servers: ["fixture": .stdio(executable: "/usr/bin/python3", arguments: [script.path, marker.path], environmentKeys: [])],
+            grants: [.init(scope: scope, host: worker, expiresAt: Date().addingTimeInterval(60))])
+        let broker = MCPProxyBroker(peer: worker, authorize: { try policy.authorize($0, peer: $1) })
+        let server = f.server()
+        await server.setMCPControl(.init(handler: { _, bytes in bytes }, onConnect: { identity, session in
+            #expect(identity == parent)
+            await bridge.connected(identity, session: session)
+        }, onDisconnect: { _, id in await bridge.disconnected(id) }))
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let connection = try f.client()
+        let transports = await InMemoryTransport.createConnectedPair()
+        let nativeClient = MCP.Client(name: "worker-client", version: "1")
+        var bridgeTask: Task<Void, Error>?
+        // Hard cleanup also bounds SDK requests if an assertion path fails.
+        let deadline = Task {
+            try? await Task.sleep(for: .seconds(15))
+            if !Task.isCancelled { await broker.close(); await nativeClient.disconnect(); await transports.server.disconnect() }
+        }
+        defer { deadline.cancel() }
+        do {
+            try await connection.connect(host: "127.0.0.1", port: port)
+            let channel = try await connection.makeMCPControlClient(handler: { await broker.handle($0) }, onClose: { await broker.close() })
+            try await channel.open()
+            #expect(try await channel.send(MCPProxyControl.ready) == MCPProxyControl.ready)
+            try await transports.server.connect()
+            bridgeTask = Task {
+                try await MCPStdioBridge.run(scope: scope, transport: transports.server) {
+                    await bridge.handle(.init(parent: parent, request: $0))
+                }
+            }
+            let initialized = try await nativeClient.connect(transport: transports.client)
+            #expect(initialized.serverInfo.name == "fixture")
+            let tools = try await nativeClient.listTools()
+            #expect(tools.tools.map(\.name) == ["touch_parent"])
+            let result = try await nativeClient.callTool(name: "touch_parent")
+            #expect(result.isError != true)
+            #expect(try String(contentsOf: marker, encoding: .utf8) == "parent executed")
+            let unauthorized = await bridge.handle(.init(parent: parent, request: .open(sessionID: UUID(), scope:
+                .init(grantID: scope.grantID, generation: 2, repositoryID: scope.repositoryID, worktreePath: scope.worktreePath, serverID: scope.serverID))))
+            #expect(unauthorized == .error(.unauthorized))
+            channel.close()
+        } catch {
+            bridgeTask?.cancel(); await nativeClient.disconnect(); await transports.server.disconnect()
+            await broker.close(); await connection.close(); await server.close()
+            _ = try? await bridgeTask?.value
+            throw error
+        }
+        bridgeTask?.cancel(); await nativeClient.disconnect(); await transports.server.disconnect()
+        await broker.close(); await connection.close(); await server.close()
+        _ = try? await bridgeTask?.value
     }
 
     @Test("@spec REMOTE-26.14: When a peer opens the Git control subsystem, the host shall require replication permission, derive the device and key fingerprint from SSH authentication, and keep bidirectional requests on that authenticated connection.", .timeLimit(.minutes(1)), arguments: [true, false], [true, false])

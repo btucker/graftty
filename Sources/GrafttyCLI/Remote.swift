@@ -6,7 +6,7 @@ import GrafttyProtocol
 struct Remote: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Set up and manage remote hosts",
-        subcommands: [RemoteSkills.self, RemotePlacement.self, RemotePlacementPlan.self, RemoteHosts.self, RemoteReconnect.self, RemoteReconnectClient.self, RemoteSetupLinux.self]
+        subcommands: [RemoteMCP.self, RemoteSkills.self, RemotePlacement.self, RemotePlacementPlan.self, RemoteHosts.self, RemoteReconnect.self, RemoteReconnectClient.self, RemoteSetupLinux.self]
     )
 }
 

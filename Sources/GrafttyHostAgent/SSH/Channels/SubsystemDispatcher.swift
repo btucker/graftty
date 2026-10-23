@@ -58,6 +58,9 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     /// Authenticated transport kind. The control envelope's kind remains
     /// caller-controlled and must not decide ownership eligibility.
     private let displayKindProvider: @Sendable () -> DisplayClientKind
+    private let mcpControlHandler: TeamChannelHandler.Handler?
+    private let mcpControlOnConnect: TeamChannelHandler.OnConnect
+    private let mcpControlOnDisconnect: TeamChannelHandler.OnDisconnect
     private let gitControlHandler: TeamChannelHandler.Handler?
     private let gitControlOnConnect: TeamChannelHandler.OnConnect
     private let gitControlOnDisconnect: TeamChannelHandler.OnDisconnect
@@ -85,6 +88,9 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         terminalControlAllowed: @escaping @Sendable () -> Bool = { true },
         replicationAllowed: @escaping @Sendable () -> Bool = { false },
         displayKindProvider: @escaping @Sendable () -> DisplayClientKind = { .ios },
+        mcpControlHandler: TeamChannelHandler.Handler? = nil,
+        mcpControlOnConnect: @escaping TeamChannelHandler.OnConnect = { _, _ in },
+        mcpControlOnDisconnect: @escaping TeamChannelHandler.OnDisconnect = { _, _ in },
         gitControlHandler: TeamChannelHandler.Handler? = nil,
         gitControlOnConnect: @escaping TeamChannelHandler.OnConnect = { _, _ in },
         gitControlOnDisconnect: @escaping TeamChannelHandler.OnDisconnect = { _, _ in },
@@ -97,6 +103,9 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     ) {
         self.bulkChannels = bulkChannels
         self.isBulkTransport = isBulkTransport
+        self.mcpControlHandler = mcpControlHandler
+        self.mcpControlOnConnect = mcpControlOnConnect
+        self.mcpControlOnDisconnect = mcpControlOnDisconnect
         self.gitControlHandler = gitControlHandler
         self.gitControlOnConnect = gitControlOnConnect
         self.gitControlOnDisconnect = gitControlOnDisconnect
@@ -263,6 +272,12 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     }
 
     private static let framedSubsystems: [String: SubsystemSpec] = [
+        SSHChannelTypeNames.mcpControl: SubsystemSpec(maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes) { dispatcher in
+            guard dispatcher.terminalControlAllowed(), dispatcher.worktreeManagementAllowed(),
+                  let deviceID = dispatcher.deviceIDProvider(), let handler = dispatcher.mcpControlHandler else { return nil }
+            return TeamChannelHandler(deviceID: deviceID, handler: handler,
+                onConnect: dispatcher.mcpControlOnConnect, onDisconnect: dispatcher.mcpControlOnDisconnect)
+        },
         SSHChannelTypeNames.gitControl: SubsystemSpec(maximumBufferSize: TeamRPCSession.maximumEnvelopeBytes) { dispatcher in
             guard dispatcher.replicationAllowed(),
                   let deviceID = dispatcher.deviceIDProvider(), let handler = dispatcher.gitControlHandler else { return nil }

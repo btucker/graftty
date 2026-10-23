@@ -137,7 +137,7 @@ public enum ControlRequestCore {
         case .listPanes, .addPane, .closePane, .showPane, .sendPane,
              .previewFiles, .previewImage, .offerResource, .setWorktreePinned,
              .remoteWorktree, .reconnectRemoteMac, .reconnectRemoteClient,
-             .remoteSkills, .remotePlacement, .listRemoteHosts,
+             .mcpBridge, .remoteSkills, .remotePlacement, .listRemoteHosts,
              .linuxSetupIdentity, .completeLinuxSetup:
             return await platform.handlePlatformRequest(message)
         }

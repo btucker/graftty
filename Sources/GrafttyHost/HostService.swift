@@ -20,6 +20,7 @@ final class HostService {
     private let runtime: HeadlessHostRuntime
     private let socket: SocketServer
     private let ssh: DirectSSHHostServer
+    private let mcpBridge: MCPWorkerBridge
     private var admin: HostAdministrationServer?
     private var http: LANRemoteAccessServer?
     private let pairing: HostPairingServer
@@ -77,6 +78,11 @@ final class HostService {
         runtime.origin = WorktreeOrigin(deviceID: id, deviceLabel: identity.displayName, relayDepth: 0)
         let identityStore = HostIdentityStore(directory: configuration.identityDirectory)
         let trusted = TrustedPeerStore(directory: configuration.identityDirectory)
+        mcpBridge = MCPWorkerBridge(authorize: { identity in
+            guard let peer = try? trusted.get(id: identity.deviceID) else { return false }
+            return peer.fingerprint == identity.fingerprint && (peer.kind == .mac || peer.kind == .linux)
+                && peer.capabilities.terminalControl == .allowed && peer.capabilities.worktreeManagement == .allowed
+        })
         guard let kind = RemoteDeviceKind(rawValue: "linux") else { throw HostRuntimeError.invalid("Linux host identity is not supported by this protocol build") }
         let base = URL(string: "http://127.0.0.1:\(configuration.httpPort)")!
         pairing = HostPairingServer(session: HostPairingSession(identityStore: identityStore, peerStore: trusted,
@@ -120,8 +126,12 @@ final class HostService {
             authenticatedPlacementMutator: { await runtime.place($0, owner: $1) },
             authenticatedSkillMutator: { await runtime.receiveSkills($0, owner: $1) },
             displayOwnershipStore: ownership)
+        let mcpBridge = self.mcpBridge
         socket = SocketServer(socketPath: configuration.socketPath)
-        socket.onAsyncRequest = { await runtime.handle($0) }
+        socket.onAsyncRequest = { message in
+            if case .mcpBridge(let request) = message { return .mcpProxy(await mcpBridge.handle(request)) }
+            return await runtime.handle(message)
+        }
         socket.onMessage = { message in
             // Request-style messages are dispatched once by onAsyncRequest.
             if !message.expectsResponse { Task { _ = await runtime.handle(message) } }
@@ -214,6 +224,16 @@ final class HostService {
             runtime.startMaintenance()
             try socket.start()
             try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: configuration.socketPath)
+            let mcpBridge = self.mcpBridge
+            await ssh.setMCPControl(.init(handler: { _, bytes in
+                if bytes == MCPProxyControl.ready { return bytes }
+                // The worker forwards only local requests to its parent.
+                return (try? JSONEncoder().encode(MCPProxyResponse.error(.unauthorized))) ?? Data()
+            }, onConnect: { identity, session in
+                await mcpBridge.connected(identity, session: session)
+            }, onDisconnect: { _, sessionID in
+                await mcpBridge.disconnected(sessionID)
+            }))
             await ssh.setTeamMessaging(handler: { [runtime] device, bytes in
                 guard let request = try? JSONDecoder().decode(RemoteTeamRequest.self, from: bytes) else { return Data() }
                 let response = await runtime.remoteTeam(request, deviceID: device)

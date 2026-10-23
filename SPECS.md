@@ -3732,6 +3732,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-30.9** When configuring granted MCP servers for a remote agent, the application shall preserve their logical server names and upstream tool definitions through separate Graftty bridge entries without requiring an agent-facing forwarding tool.
 
+**REMOTE-30.10** When an MCP bridge forwards protocol messages, the application shall preserve request IDs, notifications and callbacks within one authorized session without replaying a call after a transport failure.
+
+**REMOTE-30.11** When a parent opens the MCP subsystem on a managed host, the application shall authenticate both peers and carry standard MCP tool calls back to the parent without granting the worker terminal access to the parent.
+
+**REMOTE-30.12** While proxying MCP, the application shall bound outstanding requests in each direction and expire each unanswered call even if other messages continue arriving.
+
 ### REMOTE-31.x — Provider preferences and placement
 
 **REMOTE-31.1** When a user configures the aws compute provider, the CLI shall persist the selected existing AWS profile and placement preferences without copying AWS credentials.

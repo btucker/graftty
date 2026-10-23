@@ -97,6 +97,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case clear(path: String, paneSessionName: String? = nil)
     case listPanes(path: String)
     case listRemoteHosts
+    case mcpBridge(MCPBridgeRequest)
     case remoteSkills(host: RemoteMacConnectionSummary.ID, request: RemoteSkillTransferRequest)
     case remotePlacement(host: RemoteMacConnectionSummary.ID, request: HostPlacementRequest)
     case reconnectRemoteMac(target: String)
@@ -266,6 +267,9 @@ extension NotificationMessage: Codable {
         case .listPanes(let path):
             try container.encode("list_panes", forKey: .type)
             try container.encode(path, forKey: .path)
+        case .mcpBridge(let request):
+            try container.encode("mcp_bridge", forKey: .type)
+            try container.encode(request, forKey: .request)
         case .remoteSkills(let host, let request):
             try container.encode("remote_skills", forKey: .type)
             try container.encode(host, forKey: .host)
@@ -431,6 +435,8 @@ extension NotificationMessage: Codable {
         case "list_panes":
             let path = try container.decode(String.self, forKey: .path)
             self = .listPanes(path: path)
+        case "mcp_bridge":
+            self = .mcpBridge(try container.decode(MCPBridgeRequest.self, forKey: .request))
         case "remote_skills":
             self = .remoteSkills(host: try container.decode(RemoteMacConnectionSummary.ID.self, forKey: .host), request: try container.decode(RemoteSkillTransferRequest.self, forKey: .request))
         case "remote_placement":
@@ -848,6 +854,7 @@ public enum ResponseMessage: Sendable, Equatable {
         "Control socket is busy; retry the command."
 
     case linuxSetupIdentity(LinuxHostTrustRequest)
+    case mcpProxy(MCPProxyResponse)
     case agentSkills(RemoteSkillTransferStatus)
     case placement(HostPlacementRecord)
     case remoteHosts([RemoteMacConnectionSummary])
@@ -870,6 +877,7 @@ public extension ResponseMessage {
     /// The `type` tag this response carries on the wire.
     var wireType: String {
         switch self {
+        case .mcpProxy: "mcp_proxy"
         case .agentSkills: "agent_skills"
         case .placement: "placement"
         case .remoteHosts: "remote_hosts"
@@ -891,7 +899,7 @@ public extension ResponseMessage {
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, code, message, panes, output, messages, text, operation, identity, capabilities, hosts, placement, agentSkills
+        case type, code, message, panes, output, messages, text, operation, identity, capabilities, hosts, placement, agentSkills, mcpProxy
         case operationID = "operation_id"
         case teamName = "team_name"
         case members
@@ -904,6 +912,8 @@ extension ResponseMessage: Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(wireType, forKey: .type)
         switch self {
+        case .mcpProxy(let response):
+            try container.encode(response, forKey: .mcpProxy)
         case .agentSkills(let status):
             try container.encode(status, forKey: .agentSkills)
         case .placement(let record):
@@ -948,6 +958,8 @@ extension ResponseMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
+        case "mcp_proxy":
+            self = .mcpProxy(try container.decode(MCPProxyResponse.self, forKey: .mcpProxy))
         case "agent_skills":
             self = .agentSkills(try container.decode(RemoteSkillTransferStatus.self, forKey: .agentSkills))
         case "placement":

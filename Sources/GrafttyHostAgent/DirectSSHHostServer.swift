@@ -65,6 +65,8 @@ public actor DirectSSHHostServer {
     }
 
     /// Configure replication control before starting the listener.
+    public func setMCPControl(_ callbacks: AuthenticatedMCPControl?) { configuration.mcpControl = callbacks }
+
     public func setGitControl(_ callbacks: AuthenticatedGitControl?) { configuration.gitControl = callbacks }
 
     /// Configure messaging before starting the listener.
@@ -76,7 +78,7 @@ public actor DirectSSHHostServer {
             streamFactory: c.streamFactory, pagedFactory: c.pagedFactory,
             panesStateSubscribe: c.panesStateSubscribe, panesStateV2Subscribe: c.panesStateV2Subscribe,
             paneControlMutator: c.paneControlMutator, worktreeManagementMutator: c.worktreeManagementMutator,
-            authenticatedPlacementMutator: c.authenticatedPlacementMutator, authenticatedSkillMutator: c.authenticatedSkillMutator, gitControl: c.gitControl,
+            authenticatedPlacementMutator: c.authenticatedPlacementMutator, authenticatedSkillMutator: c.authenticatedSkillMutator, mcpControl: c.mcpControl, gitControl: c.gitControl,
             chromeTabMutator: c.chromeTabMutator, chromeTabOnDisconnect: c.chromeTabOnDisconnect,
             ownershipStore: c.ownershipStore, ownershipBroadcaster: c.ownershipBroadcaster,
             teamHandler: handler, teamOnConnect: onConnect, teamOnDisconnect: onDisconnect

@@ -99,6 +99,8 @@ Hosts configured with `graftty-host serve --compute-provider aws` now poll IMDSv
 
 An interruption starts one durable drain operation containing the managed placement records. It rejects new admission, direct worktree creation, and pane startup after interrupted setup, survives restart, retains existing request results, and only shortens the deadline when another warning arrives. Resource observations mark the host as no longer accepting placements, so shared Mac/Mobile placement models reject it. This currently establishes the drain barrier and operation record. Writer coordination, WIP commits, Git/session transfer acknowledgements, and replacement-host recovery are still pending; a drain record is not a claim that work has been saved.
 
+A foreground parent MCP connection now supports explicitly granted stdio servers over the provider's authenticated SSH tunnel. It preserves native server names and protocol messages, checks current grants and pairing, bounds outstanding calls, and closes sessions without replay after disconnection. Native Claude/Codex configuration staging and a live Spot probe are included. Automatic profile installation, persistent app ownership, HTTP/auth adapters and full settings/plugin parity remain pending. See [parent MCP proxy](../plans/2026-10-23-parent-mcp-proxy.md).
+
 ## Agreed direction
 
 The implementation must support additional providers after AWS. Shared placement, parent trust, Git/session replication, recovery, and progress models must depend on provider contracts. AWS CLI pricing, instance lifecycle, IAM/SSM bootstrap, and proxy construction belong to the AWS adapter. Exercise the contract with a fake second provider; AWS instance IDs, regions, and SSM documents must not become shared recovery identifiers.
@@ -298,7 +300,7 @@ Acceptance tests must cover both Claude and Codex, user and local skill discover
 
 ## MCP access through the parent
 
-Requirements: `REMOTE-30.1` through `REMOTE-30.9`. The proxy approach is agreed; implementation is pending.
+Requirements: `REMOTE-30.1` through `REMOTE-30.9`. The foreground stdio bridge is implemented; automatic placement integration and HTTP authentication remain pending.
 
 A Linux agent uses standard MCP through a local Graftty stdio bridge. The bridge connects through the existing authenticated parent connection to a parent-owned MCP client. That client talks to the selected upstream server. No public MCP listener or inbound Mac port is required. This is independent of AWS and works over the same authenticated connection whether its transport is WebRTC or SSH through a provider.
 

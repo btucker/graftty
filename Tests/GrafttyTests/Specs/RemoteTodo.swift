@@ -215,16 +215,6 @@ struct RemoteTodo {
     func remote_30_1() async throws { }
 
     @Test("""
-@spec REMOTE-30.2: When forwarding a worker MCP request, the parent shall require a current grant bound to the authenticated worker, repository, worktree, assignment generation, server ID, and expiry without accepting worker-supplied upstream commands, URLs, or credential configuration.
-""", .disabled("not yet implemented"))
-    func remote_30_2() async throws { }
-
-    @Test("""
-@spec REMOTE-30.3: When an MCP grant expires, is revoked, or is superseded by reassignment, the application shall reject new calls and close its sessions without transferring that authority through copied session data.
-""", .disabled("not yet implemented"))
-    func remote_30_3() async throws { }
-
-    @Test("""
 @spec REMOTE-30.4: While proxying MCP sessions, the application shall isolate messages and negotiated capabilities by delegation and enforce bounded messages, queues, concurrency, and deadlines.
 """, .disabled("not yet implemented"))
     func remote_30_4() async throws { }
@@ -248,10 +238,5 @@ struct RemoteTodo {
 @spec REMOTE-30.8: When preparing or recovering a worktree, the application shall generate scoped MCP bridge configuration from current parent grants and check MCP readiness separately from container readiness and agent-runtime authentication.
 """, .disabled("not yet implemented"))
     func remote_30_8() async throws { }
-
-    @Test("""
-@spec REMOTE-30.9: When configuring granted MCP servers for a remote agent, the application shall preserve their logical server names and upstream tool definitions through separate Graftty bridge entries without requiring an agent-facing forwarding tool.
-""", .disabled("not yet implemented"))
-    func remote_30_9() async throws { }
 
 }
