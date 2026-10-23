@@ -282,11 +282,25 @@ This establishes which paired host submitted the work and which delegation it ma
 
 Graftty identity keys remain local to their devices. Public-key pairing is compatible with this design. Copying the parent's SSH private keys, Git authentication stores, AWS credentials, or agent authentication stores to a worker is not.
 
+## Remote agent skills and configuration
+
+Requirements: `REMOTE-28.3` through `REMOTE-28.6`. Implementation is pending.
+
+Remote provisioning includes the parent's user-installed skills and enabled plugins for the selected runtime. Project setup also includes project-level and worktree-local skills, including local files that are not present in the Git checkout. Preserve each runtime's discovery scope and precedence. Prepare these files where the agent actually runs, including inside the Dev Container, rather than only installing them in the host user's home. Reuse the runtime's supported plugin installation mechanism and record the resolved versions and content revisions. Do not copy Mac binary caches to Linux.
+
+Scope configuration by parent and project so multiple parents or projects sharing a host do not overwrite one another. User-level configuration can be cached during host preparation; project and worktree configuration is prepared just in time for placement. Reconcile the snapshot before each new launch or resume, including on reused or replacement hosts. Stage a complete revision before activation, leave existing agents on their current revision, and remove obsolete entries only from Graftty-managed configuration. Do not require a new instance to pick up changed skills.
+
+Transfer skill content and required supporting files as configuration, separately from native session replication. Do not mirror entire agent home directories: authentication stores, keys, runtime state, and arbitrary credential-bearing settings are excluded. Skills and plugins can depend on local executables, absolute paths, hooks, or authentication; report incompatibilities and missing prerequisites rather than silently claiming parity. Match portable settings using runtime-specific adapters, preserve project scope, and keep model-service authentication separate. MCP settings are regenerated as authorized bridge entries, not copied with their credentials.
+
+Acceptance tests must cover both Claude and Codex, user and local skill discovery, supporting files, runtime precedence, plugin versions, container visibility, incompatible Mac dependencies, updates and removals on a reused host, interrupted refresh, and isolation between two projects and two parents.
+
 ## MCP access through the parent
 
-Requirements: `REMOTE-30.1` through `REMOTE-30.8`. The proxy approach is agreed; implementation is pending.
+Requirements: `REMOTE-30.1` through `REMOTE-30.9`. The proxy approach is agreed; implementation is pending.
 
 A Linux agent uses standard MCP through a local Graftty stdio bridge. The bridge connects through the existing authenticated parent connection to a parent-owned MCP client. That client talks to the selected upstream server. No public MCP listener or inbound Mac port is required. This is independent of AWS and works over the same authenticated connection whether its transport is WebRTC or SSH through a provider.
+
+Preserve one logical remote configuration entry per granted upstream server, with its original server name and tool definitions. Each entry launches the Graftty bridge for that server ID. The agent discovers and calls tools normally; it does not need a Graftty forwarding tool or special routing instructions. Verify discovery and runtime-generated tool namespaces with actual Claude and Codex clients.
 
 Reuse the [official Swift MCP SDK](https://github.com/modelcontextprotocol/swift-sdk) for client/server behavior and supported transports. Pin a tested version and negotiate its supported protocol version. Graftty owns delegation and transport integration, not a new OAuth implementation. The SDK exposes authorization and token-storage integration, but does not by itself unlock another application's credential store. Validate the chosen SDK release and each authentication adapter before claiming compatibility.
 

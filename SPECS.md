@@ -3522,6 +3522,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-28.2** When an agent uses the remote-host skill, the skill shall explain its recorded parent and direct or parent-mediated publication workflow without treating skill instructions as authentication or authorization enforcement.
 
+**REMOTE-28.3** When preparing a managed remote agent environment, the application shall install the parent's compatible user-level skills and enabled plugins for the selected agent runtime before launching that agent, without copying keys or authentication stores.
+
+**REMOTE-28.4** When preparing a project or worktree on a remote host, the application shall make its project-level and worktree-local skills available in the agent's execution environment while preserving runtime discovery precedence and isolation from other projects and parents.
+
+**REMOTE-28.5** When launching or resuming a managed remote agent, the application shall reconcile its installed skill and plugin revision with the parent snapshot and report missing or incompatible dependencies without silently claiming configuration parity.
+
+**REMOTE-28.6** When refreshing remote agent configuration, the application shall stage a complete revision before activating it for a new launch, preserve running agents' configuration, and remove obsolete Graftty-managed entries without deleting unrelated remote configuration.
+
 ### REMOTE-29.x — AWS Spot evacuation
 
 **REMOTE-29.1** When configuring AWS compute, the application shall support Spot instances in the initial AWS provider implementation.
@@ -3559,6 +3567,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-30.7** When presenting MCP access in the CLI, Mac, or Mobile, the application shall identify the server, execution location, delegation, and readiness without exposing authentication material or recording tool payloads by default.
 
 **REMOTE-30.8** When preparing or recovering a worktree, the application shall generate scoped MCP bridge configuration from current parent grants and check MCP readiness separately from container readiness and agent-runtime authentication.
+
+**REMOTE-30.9** When configuring granted MCP servers for a remote agent, the application shall preserve their logical server names and upstream tool definitions through separate Graftty bridge entries without requiring an agent-facing forwarding tool.
 
 ## CHROME — Dedicated Chrome tabs
 

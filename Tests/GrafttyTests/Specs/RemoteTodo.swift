@@ -153,6 +153,28 @@ struct RemoteTodo {
 """, .disabled("not yet implemented"))
     func remote_27_4() async throws { }
 
+    // MARK: - REMOTE-28.x - Remote agent configuration
+
+    @Test("""
+@spec REMOTE-28.3: When preparing a managed remote agent environment, the application shall install the parent's compatible user-level skills and enabled plugins for the selected agent runtime before launching that agent, without copying keys or authentication stores.
+""", .disabled("not yet implemented"))
+    func remote_28_3() async throws { }
+
+    @Test("""
+@spec REMOTE-28.4: When preparing a project or worktree on a remote host, the application shall make its project-level and worktree-local skills available in the agent's execution environment while preserving runtime discovery precedence and isolation from other projects and parents.
+""", .disabled("not yet implemented"))
+    func remote_28_4() async throws { }
+
+    @Test("""
+@spec REMOTE-28.5: When launching or resuming a managed remote agent, the application shall reconcile its installed skill and plugin revision with the parent snapshot and report missing or incompatible dependencies without silently claiming configuration parity.
+""", .disabled("not yet implemented"))
+    func remote_28_5() async throws { }
+
+    @Test("""
+@spec REMOTE-28.6: When refreshing remote agent configuration, the application shall stage a complete revision before activating it for a new launch, preserve running agents' configuration, and remove obsolete Graftty-managed entries without deleting unrelated remote configuration.
+""", .disabled("not yet implemented"))
+    func remote_28_6() async throws { }
+
     // MARK: - REMOTE-29.x — AWS Spot evacuation
 
     @Test("""
@@ -226,5 +248,10 @@ struct RemoteTodo {
 @spec REMOTE-30.8: When preparing or recovering a worktree, the application shall generate scoped MCP bridge configuration from current parent grants and check MCP readiness separately from container readiness and agent-runtime authentication.
 """, .disabled("not yet implemented"))
     func remote_30_8() async throws { }
+
+    @Test("""
+@spec REMOTE-30.9: When configuring granted MCP servers for a remote agent, the application shall preserve their logical server names and upstream tool definitions through separate Graftty bridge entries without requiring an agent-facing forwarding tool.
+""", .disabled("not yet implemented"))
+    func remote_30_9() async throws { }
 
 }
