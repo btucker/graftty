@@ -36,6 +36,10 @@ jobs:
           git diff --exit-code Sources/GrafttyKit/Web/Resources/ \
             || { echo "::error::web-client/ changed but the committed bundle is stale. Run ./scripts/build-web.sh locally and recommit."; exit 1; }
 
+      - name: Test web-client (vitest, including the host wire fixture)
+        timeout-minutes: 5
+        run: pnpm --dir web-client test
+
   verify-specs:
     runs-on: ubuntu-latest
     steps:
