@@ -24,7 +24,7 @@ public final class HeadlessHostRuntime {
     var projectIconLoads: [UUID: HostProjectIconLoad] = [:]
     var busyPaths: Set<String> = []
     /// `graftty worktree add` / `remove` operations, shared with the Mac app.
-    var worktreeCreations = CLIWorktreeCreationStore()
+    let worktreeCreations = CLIWorktreeCreationStore()
     let worktreeRemovals = CLIWorktreeRemovalStore()
     /// Provider hook busy/idle state per pane session, fed by the shared
     /// control core. The headless host does not poll `claude agents`.
@@ -191,6 +191,10 @@ public final class HeadlessHostRuntime {
     public func createWorktree(repository: String, name: String, branch: String,
         existing: Bool = false, remoteOnly: Bool = false, command: String? = nil) async throws -> (path: String, session: String) {
         guard let repo = state.repos.first(where: { $0.path == repository }) else { throw HostRuntimeError.notFound("repository is not registered") }
+        // Validate the name before probing the destination it names.
+        if let error = WorktreeCreationInput.validationError(worktreeName: name, branchName: branch, existing: existing) {
+            throw HostRuntimeError.invalid(error)
+        }
         let selection: BranchSelection = existing ? .useExisting(name: branch, source: remoteOnly ? .remoteOnly : .local) : .createNew(name: branch)
         let path = AppState.linkedWorktreePath(repoPath: repo.path, worktreeName: name)
         if let error = creationDestinationError(worktreePath: path, repo: repo) { throw HostRuntimeError.invalid(error) }
@@ -236,12 +240,7 @@ public final class HeadlessHostRuntime {
         defer { busyPaths.remove(path) }
         do {
             if let agent = plan.agentRuntime { try await agentSetup.ensure(agent) }
-            // As on the Mac: a new branch without `--base` starts from the
-            // branch origin names as its default (GitOriginDefaultBranch).
-            var startPoint: String?
-            if case .createNew = plan.branch {
-                if let base = plan.base { startPoint = base } else { startPoint = await GitOriginDefaultBranch.resolve(repoPath: plan.repoPath) }
-            }
+            let startPoint = await GitWorktreeAdd.startPoint(for: plan.branch, base: plan.base, repoPath: plan.repoPath)
             try await GitWorktreeAdd.add(repoPath: plan.repoPath, worktreePath: path, branch: plan.branch, startPoint: startPoint)
         } catch {
             _ = state.removeWorktree(atPath: path)
@@ -278,24 +277,12 @@ public final class HeadlessHostRuntime {
         let priorState = worktree.state
         state.repos[index.repo].worktrees[index.worktree].state = .deleting
         try? save()
-        do {
-            try await GitWorktreeRemove.remove(repoPath: repo.path, worktreePath: path, force: force)
-        } catch GitWorktreeRemove.Error.gitFailed(_, let stderr) {
-            if !FileManager.default.fileExists(atPath: path) {
-                try? await GitWorktreePrune.run(repoPath: repo.path)
-                await finishRemoval(worktree, repoPath: repo.path)
-                return .success(WorktreeRemovalOutcome(dismissed: true))
-            }
-            restoreState(priorState, of: path)
-            if force { return .failure(.gitFailedFinal(stderr.isEmpty ? "git worktree remove --force failed" : stderr)) }
-            return .failure(.gitFailedForceable(stderr: stderr.isEmpty ? "git worktree remove failed" : stderr,
-                                                shortStatus: await GitStatusCapture.shortStatus(at: path)))
-        } catch {
-            restoreState(priorState, of: path)
-            return .failure(.gitFailedFinal("\(error)"))
+        let result = await GitWorktreeRemove.removeOrPrune(repoPath: repo.path, worktreePath: path, force: force)
+        switch result {
+        case .success: await finishRemoval(worktree, repoPath: repo.path)
+        case .failure: restoreState(priorState, of: path)
         }
-        await finishRemoval(worktree, repoPath: repo.path)
-        return .success(WorktreeRemovalOutcome(dismissed: false))
+        return result
     }
 
     private func restoreState(_ prior: WorktreeState, of path: String) {
@@ -306,6 +293,7 @@ public final class HeadlessHostRuntime {
 
     private func finishRemoval(_ worktree: WorktreeEntry, repoPath: String) async {
         for session in worktree.paneSessions.values { try? await terminals.kill(launcher.sessionName(for: session)) }
+        worktreeStats[worktree.path] = nil
         state.removeWorktree(atPath: worktree.path)
         try? save()
         if let repo = state.repo(forWorktreePath: repoPath) {
@@ -315,9 +303,8 @@ public final class HeadlessHostRuntime {
         await refreshPortBindings()
     }
 
-    public func deleteWorktree(_ path: String, force: Bool = false, allowPinned: Bool = false) async throws {
-        let worktree = try requireWorktree(path)
-        guard !worktree.isPinned || allowPinned else { throw HostRuntimeError.invalid("unpin the worktree before deleting it") }
+    public func deleteWorktree(_ path: String, force: Bool = false) async throws {
+        guard try !requireWorktree(path).isPinned else { throw HostRuntimeError.invalid("unpin the worktree before deleting it") }
         if case .failure(let error) = await removeWorktree(path, force: force) { throw error }
     }
 

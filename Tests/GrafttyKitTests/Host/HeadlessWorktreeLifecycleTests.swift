@@ -169,9 +169,10 @@ struct HeadlessWorktreeLifecycleTests {
         try await commit("topic work", at: clone)
         let configuration = HostConfiguration(stateDirectory: scratch.appendingPathComponent("state"),
             runtimeDirectory: scratch.appendingPathComponent("run"), zmxExecutable: URL(fileURLWithPath: "/bin/true"))
-        let runtime = try HeadlessHostRuntime(configuration: configuration, terminals: LifecycleTerminals(), initialState: AppState())
+        let terminals = LifecycleTerminals()
+        let runtime = try HeadlessHostRuntime(configuration: configuration, terminals: terminals, initialState: AppState())
         _ = try await runtime.registerRepository(clone)
-        let host = Host(root: URL(fileURLWithPath: clone), runtime: runtime, terminals: LifecycleTerminals())
+        let host = Host(root: URL(fileURLWithPath: clone), runtime: runtime, terminals: terminals)
 
         let status = try await finished(host, await create(host, name: "feature"))
 
@@ -215,12 +216,89 @@ struct HeadlessWorktreeLifecycleTests {
             == .error("Unknown or expired remote worktree operation"))
         #expect(await host.runtime.handle(.worktreeCreateStatus(operationID: "shared-id"))
             == .error("unknown or expired worktree creation operation"))
-        guard case .worktreeCreate(let polled) = await host.runtime.remoteTeam(.worktree(.status(operationID: "shared-id")), deviceID: owner) else {
+        guard case .worktreeCreate(var polled) = await host.runtime.remoteTeam(.worktree(.status(operationID: "shared-id")), deviceID: owner) else {
             Issue.record("the owning peer could not poll its operation")
             return
         }
         #expect(polled.operationID == "shared-id")
         #expect(polled.worktreePath == host.repo + "/.worktrees/remote")
+        // Let Git finish before the fixture directory is removed.
+        let deadline = ContinuousClock.now + .seconds(20)
+        while polled.state == .pending, ContinuousClock.now < deadline,
+              case .worktreeCreate(let next) = await host.runtime.remoteTeam(.worktree(.status(operationID: "shared-id")), deviceID: owner) {
+            polled = next
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(polled.state == .ready, "\(polled.error ?? "")")
+    }
+
+    @Test("@spec REMOTE-22.60: If a paired client asks a headless host to delete a worktree that is still being created or removed, then the application shall reject the request and leave the row to the operation that owns it.")
+    func pairedDeleteLeavesInFlightRowsAlone() async throws {
+        let host = try await host()
+        defer { try? FileManager.default.removeItem(at: host.root) }
+        // `graftty worktree add` inserts its row at admission, before its Git
+        // task takes the worktree lease.
+        let path = AppState.linkedWorktreePath(repoPath: host.repo, worktreeName: "admitted")
+        _ = host.runtime.state.insertCreatingWorktree(repoPath: host.repo, worktreeName: "admitted",
+            branch: .createNew(name: "admitted"))
+
+        let response = await host.runtime.manage(.delete(worktreeID: path, force: false))
+
+        guard case .error = response else {
+            Issue.record("an in-flight row was deleted: \(response)")
+            return
+        }
+        #expect(host.runtime.state.worktree(forPath: path)?.state == .creating)
+        #expect(try host.runtime.inbox.messages(teamID: TeamLookup.id(forRepoPath: host.repo)).isEmpty)
+    }
+
+    @Test("@spec REMOTE-22.61: If a headless host cannot save a new worktree's initial agent task, then the application shall reject the creation and drop its creating row from saved state as well as from the live model.")
+    func unsavedInitialTaskLeavesNoSavedRow() async throws {
+        let host = try await host()
+        defer { try? FileManager.default.removeItem(at: host.root) }
+        // A file where the team inbox directory belongs fails the task write.
+        let inbox = host.runtime.configuration.stateDirectory.appendingPathComponent("team-inbox")
+        try? FileManager.default.removeItem(at: inbox)
+        try Data().write(to: inbox)
+
+        let response = await create(host, name: "tasked", agent: .codex, prompt: "Ship it")
+
+        guard case .error(let message) = response else {
+            Issue.record("creation was acknowledged without its task: \(response)")
+            return
+        }
+        #expect(message.hasPrefix("could not save initial agent task:"), "\(message)")
+        let path = host.repo + "/.worktrees/tasked"
+        #expect(host.runtime.state.worktree(forPath: path) == nil)
+        #expect(try AppState.load(from: host.runtime.configuration.stateDirectory).worktree(forPath: path) == nil)
+    }
+
+    @Test("@spec REMOTE-22.62: When a headless host removes a worktree, the application shall drop the worktree's cached diff statistics, so a worktree created later at the same path starts without them.")
+    func removalDropsCachedStatistics() async throws {
+        let host = try await host()
+        defer { try? FileManager.default.removeItem(at: host.root) }
+        let path = try await createdWorktree(host, name: "counted")
+        host.runtime.worktreeStats[path] = WorktreeWireStats(ahead: 3, behind: 0, hasUncommittedChanges: true, baseRef: "main")
+
+        let removal = try await finished(removal: await host.runtime.handle(.removeWorktree(worktreePath: path, force: true)), host)
+
+        #expect(removal.state == .removed, "\(removal.error ?? "")")
+        #expect(host.runtime.worktreeStats[path] == nil)
+    }
+
+    @Test("A paired client's invalid worktree name reports the name rule even when the worktree container exists")
+    func pairedCreationValidatesTheNameBeforeTheDestination() async throws {
+        let host = try await host()
+        defer { try? FileManager.default.removeItem(at: host.root) }
+        try FileManager.default.createDirectory(atPath: host.repo + "/.worktrees", withIntermediateDirectories: true)
+        let rule = try #require(WorktreeCreationInput.validationError(worktreeName: "", branchName: "empty"))
+
+        do {
+            _ = try await host.runtime.createWorktree(repository: host.repo, name: "", branch: "empty")
+            Issue.record("an empty worktree name was accepted")
+        } catch {
+            #expect("\(error)".contains(rule), "\(error)")
+        }
     }
 
     @Test("@spec REMOTE-22.56: When a headless host creates or removes a linked worktree, the application shall send the team's member-joined or member-left event to the main checkout, as the Mac app does.")

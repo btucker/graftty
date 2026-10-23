@@ -53,7 +53,8 @@ public extension HeadlessHostRuntime {
                 let worktree = try requireWorktree(path)
                 guard path != state.repo(forWorktreePath: path)?.path else { throw HostRuntimeError.invalid("cannot delete the main checkout") }
                 guard !worktree.isPinned else { throw HostRuntimeError.invalid("unpin the worktree before deleting it") }
-                guard !busyPaths.contains(path) else { throw HostRuntimeError.busy("worktree operation in progress: \(path)") }
+                // A CLI creation's row exists before its Git task takes the lease.
+                guard !busyPaths.contains(path), !worktree.state.isInFlight else { throw HostRuntimeError.busy("worktree operation in progress: \(path)") }
                 switch await removeWorktree(path, force: force) {
                 case .success(let outcome): return .deleted(dismissed: outcome.dismissed)
                 case .failure(.gitFailedForceable(let stderr, let status)):
@@ -102,9 +103,9 @@ public extension HeadlessHostRuntime {
         } catch { return .error(code: "host_operation_failed", message: String(describing: error), forceAllowed: false, shortStatus: nil) }
     }
 
-    /// Control-socket entry point. Attention, recap, team, and capability
-    /// messages go through the dispatcher shared with the Mac app; the rest
-    /// reach `hostRequest`.
+    /// Control-socket entry point. Attention, recap, team, capability, and
+    /// worktree create/remove messages go through the dispatcher shared with
+    /// the Mac app; the rest reach `hostRequest`.
     func handle(_ message: NotificationMessage) async -> ResponseMessage {
         if ControlRequestCore.handleMessage(message, platform: controlPlatform) { return .ok }
         return await ControlRequestCore.handleRequest(message, platform: controlPlatform) ?? .ok
@@ -144,16 +145,8 @@ public extension HeadlessHostRuntime {
 
     func remoteTeam(_ request: RemoteTeamRequest, deviceID: RemoteDeviceID) async -> RemoteTeamResponse {
         if case .worktree(let operation) = request {
-            let remoteOrigin: WorktreeHistory.Origin?
-            if case .create(let creation) = operation { remoteOrigin = creation.historyOrigin() } else { remoteOrigin = nil }
-            let creations = worktreeCreations
             return await RemoteCLIWorktreeService.handle(operation, from: deviceID, repos: state.repos,
-                status: { creations.status(operationID: $0) },
-                create: { [self] message in
-                    guard case .createWorktree(let request) = message else { return .error("Expected local worktree creation") }
-                    return await CLIWorktreeCreationRequestHandler.begin(request, creationOrigin: remoteOrigin,
-                        platform: HeadlessWorktreeLifecycle(runtime: self))
-                })
+                platform: HeadlessWorktreeLifecycle(runtime: self))
         }
         let presence = presence
         return RemoteTeamService(inbox: inbox, agentRecords: { (try? presence.listAll()) ?? [] },

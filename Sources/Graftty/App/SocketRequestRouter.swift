@@ -90,9 +90,10 @@ final class SocketRequestRouter {
     }
 
     /// Request/response path (`SocketServer.onAsyncRequest`). The shared
-    /// core answers attention, recap, team, and capability messages (routing
-    /// `graftty-mac:` recipients through `remoteTeamRouter`) and hands the
-    /// rest to `handlePaneRequest`; team lists then gain remote members.
+    /// core answers attention, recap, team, capability, and worktree
+    /// create/remove messages (routing `graftty-mac:` recipients through
+    /// `remoteTeamRouter`) and hands the rest to `handlePaneRequest`; team
+    /// lists then gain remote members.
     func handleRequest(_ message: NotificationMessage) async -> ResponseMessage? {
         let response = await ControlRequestCore.handleRequest(message, platform: self)
         return await remoteTeamRouter.includingRemoteMembers(in: response, for: message)
@@ -255,42 +256,6 @@ extension SocketRequestRouter {
             // platform dispatch.
             return .error("This request is not handled by the Mac app")
         }
-    }
-
-    /// `graftty worktree add` from a paired Mac, which has no router.
-    @MainActor
-    static func beginCLIWorktreeCreation(
-        callerPath: String,
-        worktreeName: String,
-        branchName: String,
-        existing: Bool,
-        base: String?,
-        command: String?,
-        agentRuntime: TeamHookRuntime?,
-        agentPrompt: String?,
-        operationID: String?,
-        creationOrigin: WorktreeHistory.Origin? = nil,
-        appState: Binding<AppState>,
-        terminalManager: TerminalManager,
-        teamInbox: TeamInbox,
-        teamEventDispatcher: TeamEventDispatcher,
-        worktreeMonitor: WorktreeMonitor,
-        statsStore: WorktreeStatsStore,
-        worktreeCreations: CLIWorktreeCreationStore
-    ) async -> ResponseMessage {
-        await CLIWorktreeCreationRequestHandler.begin(
-            CreateWorktreeRequest(
-                callerWorktree: callerPath, worktreeName: worktreeName, branchName: branchName,
-                existing: existing, base: base, command: command, agentRuntime: agentRuntime,
-                agentPrompt: agentPrompt, operationID: operationID
-            ),
-            creationOrigin: creationOrigin,
-            platform: MacCLIWorktreeCreation(
-                appState: appState, terminalManager: terminalManager, teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher, worktreeMonitor: worktreeMonitor,
-                statsStore: statsStore, worktreeCreations: worktreeCreations
-            )
-        )
     }
 
     @MainActor

@@ -159,7 +159,9 @@ public enum CLIWorktreeCreationRequestHandler {
                 // Save the launch expectation before its first hook can arrive.
                 try platform.saveStateNow()
             } catch {
-                _ = platform.state.removeWorktree(atPath: worktreePath)
+                platform.state.removeWorktree(atPath: worktreePath)
+                // The placeholder was already recorded above.
+                try? platform.stateDidChange()
                 launch.discardPromptFile()
                 return .error("could not save initial agent task: \(error.localizedDescription)")
             }

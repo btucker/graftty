@@ -853,28 +853,14 @@ struct GrafttyApp: App {
             do {
                 let request = try JSONDecoder().decode(RemoteTeamRequest.self, from: data)
                 if case .worktree(let operation) = request {
-                    let remoteOrigin: WorktreeHistory.Origin?
-                    if case .create(let creation) = operation { remoteOrigin = creation.historyOrigin() }
-                    else { remoteOrigin = nil }
                     let response = await RemoteCLIWorktreeService.handle(
                         operation, from: deviceID, repos: binding.wrappedValue.repos,
-                        status: { services.cliWorktreeCreations.status(operationID: $0) },
-                        create: { message in
-                            guard case .createWorktree(let request) = message else {
-                                return .error("Expected local worktree creation")
-                            }
-                            return await SocketRequestRouter.beginCLIWorktreeCreation(
-                                callerPath: request.callerWorktree, worktreeName: request.worktreeName,
-                                branchName: request.branchName, existing: request.existing, base: request.base,
-                                command: request.command, agentRuntime: request.agentRuntime,
-                                agentPrompt: request.agentPrompt, operationID: request.operationID,
-                                creationOrigin: remoteOrigin, appState: binding, terminalManager: tm,
-                                teamInbox: teamInbox,
-                                teamEventDispatcher: teamEventDispatcher,
-                                worktreeMonitor: services.worktreeMonitor,
-                                statsStore: services.statsStore,
-                                worktreeCreations: services.cliWorktreeCreations)
-                        })
+                        platform: MacCLIWorktreeCreation(
+                            appState: binding, terminalManager: tm, teamInbox: teamInbox,
+                            teamEventDispatcher: teamEventDispatcher,
+                            worktreeMonitor: services.worktreeMonitor,
+                            statsStore: services.statsStore,
+                            worktreeCreations: services.cliWorktreeCreations))
                     return try JSONEncoder().encode(response)
                 }
                 let repos = binding.wrappedValue.repos

@@ -125,21 +125,13 @@ enum AddWorktreeFlow {
         // For .useExisting, the start point is the existing branch itself;
         // git takes it from argv. For .createNew, an explicit CLI base wins;
         // otherwise default to origin's main.
-        let startPoint: String?
-        switch branch {
-        case .createNew:
-            if let base {
-                startPoint = base
-            } else {
-                startPoint = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
-            }
-        case .useExisting:
+        if case .useExisting = branch {
             precondition(
                 base == nil,
                 "AddWorktreeFlow: base must be nil when reusing an existing branch"
             )
-            startPoint = nil
         }
+        let startPoint = await GitWorktreeAdd.startPoint(for: branch, base: base, repoPath: repoPath)
 
         do {
             try await GitWorktreeAdd.add(

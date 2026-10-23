@@ -5,6 +5,25 @@ import GrafttyProtocol
 /// supply another remote target or reach the rest of the CLI dispatcher.
 @MainActor
 public enum RemoteCLIWorktreeService {
+    /// A paired Mac's request, admitted on `platform` like a local
+    /// `graftty worktree add` and recorded with the peer as its origin.
+    public static func handle(
+        _ request: RemoteWorktreeRequest,
+        from device: RemoteDeviceID,
+        repos: [RepoEntry],
+        platform: any CLIWorktreeCreationPlatform
+    ) async -> RemoteTeamResponse {
+        let origin: WorktreeHistory.Origin?
+        if case .create(let creation) = request { origin = creation.historyOrigin() } else { origin = nil }
+        let creations = platform.worktreeCreations
+        return await handle(request, from: device, repos: repos,
+            status: { creations.status(operationID: $0) },
+            create: { message in
+                guard case .createWorktree(let local) = message else { return .error("Expected local worktree creation") }
+                return await CLIWorktreeCreationRequestHandler.begin(local, creationOrigin: origin, platform: platform)
+            })
+    }
+
     public static func handle(
         _ request: RemoteWorktreeRequest,
         from device: RemoteDeviceID,

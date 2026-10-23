@@ -3486,6 +3486,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.59** While a headless host removes a worktree, the application shall show it as deleting, and if Git refuses the removal, the application shall restore the worktree's prior state.
 
+**REMOTE-22.60** If a paired client asks a headless host to delete a worktree that is still being created or removed, then the application shall reject the request and leave the row to the operation that owns it.
+
+**REMOTE-22.61** If a headless host cannot save a new worktree's initial agent task, then the application shall reject the creation and drop its creating row from saved state as well as from the live model.
+
+**REMOTE-22.62** When a headless host removes a worktree, the application shall drop the worktree's cached diff statistics, so a worktree created later at the same path starts without them.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.
