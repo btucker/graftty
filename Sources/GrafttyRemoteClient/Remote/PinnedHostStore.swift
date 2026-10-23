@@ -87,6 +87,8 @@ public final class PinnedHostStore: @unchecked Sendable {
         case duplicateFingerprint
         /// No host with the given ID was found.
         case notFound
+        /// Pairing replaced the key used by an in-flight connection.
+        case identityChanged
     }
 
     // MARK: Storage layout
@@ -101,7 +103,10 @@ public final class PinnedHostStore: @unchecked Sendable {
     // MARK: Properties
 
     private let file: JSONFileStore<Envelope>
-    private let lock = NSLock()
+    // Pairing and dialing hold separate store handles. Serialize their
+    // transactions so a refresh cannot overwrite a newer pairing.
+    private static let sharedLock = NSLock()
+    private let lock = PinnedHostStore.sharedLock
 
     // MARK: Init
 
@@ -158,6 +163,26 @@ public final class PinnedHostStore: @unchecked Sendable {
             throw Error.notFound
         }
         envelope.hosts[idx] = host
+        try _save(envelope)
+    }
+
+    /// Merges a successful connection's metadata into the current pairing.
+    /// Pairing fields are never copied from the dial's earlier snapshot.
+    /// A removed or replaced identity cannot be refreshed by an old dial.
+    public func refreshConnectionMetadata(_ refreshed: PinnedHost) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        var envelope = _load()
+        guard let idx = envelope.hosts.firstIndex(where: { $0.id == refreshed.id }) else {
+            throw Error.notFound
+        }
+        guard envelope.hosts[idx].publicKey == refreshed.publicKey else {
+            throw Error.identityChanged
+        }
+        envelope.hosts[idx].routes = refreshed.routes
+        envelope.hosts[idx].lastSuccessfulRoute = refreshed.lastSuccessfulRoute
+        envelope.hosts[idx].wakeOnLAN = refreshed.wakeOnLAN
+        envelope.hosts[idx].lastConnectedAt = refreshed.lastConnectedAt
         try _save(envelope)
     }
 

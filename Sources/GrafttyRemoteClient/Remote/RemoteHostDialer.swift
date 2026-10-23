@@ -53,8 +53,8 @@ public enum RemoteHostDialer {
         return refreshed
     }
 
-    /// Saves a pin refreshed by a successful connection. A missing pin means
-    /// trust was revoked while negotiation was in flight, so that error is
+    /// Saves a pin refreshed by a successful connection. A missing or replaced pin means
+    /// trust changed while negotiation was in flight, so that error is
     /// rethrown to fail the connection; any other store failure is only
     /// reported, because the connection itself is usable.
     public static func persistRefreshedPin(
@@ -64,8 +64,8 @@ public enum RemoteHostDialer {
     ) throws {
         do {
             try update(pin)
-        } catch PinnedHostStore.Error.notFound {
-            throw PinnedHostStore.Error.notFound
+        } catch let error as PinnedHostStore.Error where error == .notFound || error == .identityChanged {
+            throw error
         } catch {
             onFailure(error)
         }
