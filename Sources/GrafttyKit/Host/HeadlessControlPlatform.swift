@@ -91,15 +91,24 @@ final class HeadlessWorktreeLifecycle: CLIWorktreeCreationPlatform, CLIWorktreeR
         do {
             _ = try await runtime.finishCreatingWorktree(plan)
             return nil
-        } catch let error as WorktreeCreationError {
-            return error.operationFailureMessage
+        } catch let error as GitWorktreeAdd.Error {
+            return WorktreeCreationError(gitAddFailure: error).operationFailureMessage
         } catch {
             return String(describing: error)
         }
     }
     /// Headless panes never sleep.
     func wakeWorktree(_ path: String) -> Bool { true }
+    /// The Mac's `DeleteWorktreeFlow` results, from the runtime's raw errors.
     func removeWorktree(_ path: String, force: Bool) async -> Result<WorktreeRemovalOutcome, WorktreeRemovalError> {
-        await runtime.removeWorktree(path, force: force)
+        do {
+            return .success(try await runtime.removeWorktree(path, force: force, pruneVanished: true))
+        } catch GitWorktreeRemove.Error.gitFailed(_, let stderr) {
+            if force { return .failure(.gitFailedFinal(stderr.isEmpty ? "git worktree remove --force failed" : stderr)) }
+            return .failure(.gitFailedForceable(stderr: stderr.isEmpty ? "git worktree remove failed" : stderr,
+                                                shortStatus: await GitStatusCapture.shortStatus(at: path)))
+        } catch {
+            return .failure(.gitFailedFinal(String(describing: error)))
+        }
     }
 }

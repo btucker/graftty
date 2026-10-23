@@ -197,6 +197,9 @@ public final class HeadlessHostRuntime {
         }
         let selection: BranchSelection = existing ? .useExisting(name: branch, source: remoteOnly ? .remoteOnly : .local) : .createNew(name: branch)
         let path = AppState.linkedWorktreePath(repoPath: repo.path, worktreeName: name)
+        // The paired-client envelope has always reported a tracked
+        // destination as an invalid one.
+        if state.worktree(forPath: path) != nil { throw HostRuntimeError.invalid("worktree destination already exists or is invalid") }
         if let error = creationDestinationError(worktreePath: path, repo: repo) { throw HostRuntimeError.invalid(error) }
         switch state.insertCreatingWorktree(repoPath: repo.path, worktreeName: name, branch: selection) {
         case .success: try? save()
@@ -245,67 +248,85 @@ public final class HeadlessHostRuntime {
         } catch {
             _ = state.removeWorktree(atPath: path)
             try? save()
-            throw error is GitWorktreeAdd.Error ? WorktreeCreationError(gitAddFailure: error) : error
+            throw error
         }
-        try? save() // Retain successful Git creation even if shell startup fails.
+        do {
+            try save() // Retain successful Git creation even if shell startup fails.
+        } catch {
+            closeCreatingRow(path)
+            throw error
+        }
         if let repo = state.repo(forWorktreePath: path) {
             TeamMembershipEvents.fireJoined(repo: repo, joinerWorktreePath: path, dispatcher: controlPlatform.teamEventDispatcher)
         }
         do {
             return try await openUnlocked(path, command: plan.initialCommand)
         } catch {
-            if let index = state.indices(forWorktreePath: path), state.repos[index.repo].worktrees[index.worktree].state == .creating {
-                state.repos[index.repo].worktrees[index.worktree].state = .closed
-                try? save()
-            }
+            closeCreatingRow(path)
             throw error
         }
     }
 
-    /// Removes a linked worktree with the Mac's `DeleteWorktreeFlow`
-    /// semantics: the row reads `.deleting` while Git runs, a vanished
-    /// directory is pruned, and a refusal `--force` could resolve carries
-    /// `git status --short`.
-    func removeWorktree(_ path: String, force: Bool) async -> Result<WorktreeRemovalOutcome, WorktreeRemovalError> {
-        guard let index = state.indices(forWorktreePath: path) else { return .failure(.notFound) }
+    /// A worktree Git created whose first pane did not start stays registered, closed.
+    private func closeCreatingRow(_ path: String) {
+        guard let index = state.indices(forWorktreePath: path),
+              state.repos[index.repo].worktrees[index.worktree].state == .creating else { return }
+        state.repos[index.repo].worktrees[index.worktree].state = .closed
+        try? save()
+    }
+
+    /// Removes a linked worktree. The row reads `.deleting` while Git runs
+    /// and gets its prior state back if Git refuses. Git's and the final
+    /// save's errors are thrown unchanged, so each caller keeps its own wire:
+    /// `graftty worktree remove` maps them like the Mac's `DeleteWorktreeFlow`
+    /// (`HeadlessWorktreeLifecycle`), the paired-client envelope as it always
+    /// has. `pruneVanished` is GIT-4.13: when Git refuses a worktree whose
+    /// directory is already gone, prune Git's record and report a dismissal.
+    func removeWorktree(_ path: String, force: Bool, pruneVanished: Bool = false) async throws -> WorktreeRemovalOutcome {
+        let index = try indices(path)
         let repo = state.repos[index.repo]
         let worktree = repo.worktrees[index.worktree]
-        guard path != repo.path else { return .failure(.mainCheckoutRejected) }
-        guard repo.isGitTracked else { return .failure(.gitFailedFinal("not a git repository")) }
-        do { try acquire(path) } catch { return .failure(.gitFailedFinal(String(describing: error))) }
+        guard path != repo.path else { throw HostRuntimeError.invalid("cannot delete the main checkout") }
+        try acquire(path)
         defer { busyPaths.remove(path) }
         let priorState = worktree.state
         state.repos[index.repo].worktrees[index.worktree].state = .deleting
         try? save()
-        let result = await GitWorktreeRemove.removeOrPrune(repoPath: repo.path, worktreePath: path, force: force)
-        switch result {
-        case .success: await finishRemoval(worktree, repoPath: repo.path)
-        case .failure: restoreState(priorState, of: path)
+        var dismissed = false
+        do {
+            try await GitWorktreeRemove.remove(repoPath: repo.path, worktreePath: path, force: force)
+        } catch GitWorktreeRemove.Error.gitFailed where pruneVanished && !FileManager.default.fileExists(atPath: path) {
+            try? await GitWorktreePrune.run(repoPath: repo.path)
+            dismissed = true
+        } catch {
+            // Restore before the caller captures `git status --short`, as
+            // `DeleteWorktreeFlow` does, so a retry sees the prior state.
+            if let current = state.indices(forWorktreePath: path) {
+                state.repos[current.repo].worktrees[current.worktree].state = priorState
+                try? save()
+            }
+            throw error
         }
-        return result
-    }
-
-    private func restoreState(_ prior: WorktreeState, of path: String) {
-        guard let index = state.indices(forWorktreePath: path) else { return }
-        state.repos[index.repo].worktrees[index.worktree].state = prior
-        try? save()
-    }
-
-    private func finishRemoval(_ worktree: WorktreeEntry, repoPath: String) async {
         for session in worktree.paneSessions.values { try? await terminals.kill(launcher.sessionName(for: session)) }
-        worktreeStats[worktree.path] = nil
-        state.removeWorktree(atPath: worktree.path)
-        try? save()
-        if let repo = state.repo(forWorktreePath: repoPath) {
-            TeamMembershipEvents.fireLeft(repo: repo, leaverBranch: worktree.branch, leaverPath: worktree.path,
+        worktreeStats[path] = nil
+        state.removeWorktree(atPath: path)
+        if let repo = state.repo(forWorktreePath: repo.path) {
+            TeamMembershipEvents.fireLeft(repo: repo, leaverBranch: worktree.branch, leaverPath: path,
                 reason: .removed, dispatcher: controlPlatform.teamEventDispatcher)
         }
+        try save()
         await refreshPortBindings()
+        return WorktreeRemovalOutcome(dismissed: dismissed)
     }
 
-    public func deleteWorktree(_ path: String, force: Bool = false) async throws {
-        guard try !requireWorktree(path).isPinned else { throw HostRuntimeError.invalid("unpin the worktree before deleting it") }
-        if case .failure(let error) = await removeWorktree(path, force: force) { throw error }
+    public func deleteWorktree(_ path: String, force: Bool = false, allowPinned: Bool = false) async throws {
+        let index = try indices(path)
+        let repo = state.repos[index.repo]
+        guard path != repo.path else { throw HostRuntimeError.invalid("cannot delete the main checkout") }
+        guard !repo.worktrees[index.worktree].isPinned || allowPinned else {
+            throw HostRuntimeError.invalid("unpin the worktree before deleting it")
+        }
+        _ = try await removeWorktree(path, force: force)
     }
 
     public func shutdown() throws { deliveryTask?.cancel(); deliveryTask = nil; maintenance?.stop(); maintenance = nil; try save(); terminals.detachAll() }

@@ -61,28 +61,54 @@ enum DeleteWorktreeFlow {
         GrafttyApp.persistAppState(appState.wrappedValue)
         before = appState.wrappedValue
 
-        // GIT-4.13: a vanished directory is pruned and reported as a
-        // dismissal; Force Delete is never offered for it.
-        let result = await GitWorktreeRemove.removeOrPrune(
-            repoPath: repoPath,
-            worktreePath: worktreePath,
-            force: force
-        )
-        switch result {
-        case .success:
-            finishRemoval(
-                worktree: wt,
+        do {
+            try await GitWorktreeRemove.remove(
                 repoPath: repoPath,
-                appState: appState,
-                terminalManager: terminalManager,
-                statsStore: statsStore,
-                prStatusStore: prStatusStore,
-                teamEventDispatcher: teamEventDispatcher
+                worktreePath: worktreePath,
+                force: force
             )
-        case .failure:
+        } catch GitWorktreeRemove.Error.gitFailed(_, let stderr) {
+            // GIT-4.13: directory vanished but admin entry survives.
+            // `--force` can't bypass git's path validation, so we
+            // never offer Force Delete for this branch — we silently
+            // prune and treat it as a dismiss.
+            if !FileManager.default.fileExists(atPath: worktreePath) {
+                try? await GitWorktreePrune.run(repoPath: repoPath)
+                finishRemoval(
+                    worktree: wt,
+                    repoPath: repoPath,
+                    appState: appState,
+                    terminalManager: terminalManager,
+                    statsStore: statsStore,
+                    prStatusStore: prStatusStore,
+                    teamEventDispatcher: teamEventDispatcher
+                )
+                return .success(Outcome(dismissed: true))
+            }
             restoreState(priorState, worktreePath: worktreePath, appState: appState)
+            if force {
+                return .failure(.gitFailedFinal(stderr.isEmpty ? "git worktree remove --force failed" : stderr))
+            }
+            let status = await GitStatusCapture.shortStatus(at: worktreePath)
+            return .failure(.gitFailedForceable(
+                stderr: stderr.isEmpty ? "git worktree remove failed" : stderr,
+                shortStatus: status
+            ))
+        } catch {
+            restoreState(priorState, worktreePath: worktreePath, appState: appState)
+            return .failure(.gitFailedFinal("\(error)"))
         }
-        return result
+
+        finishRemoval(
+            worktree: wt,
+            repoPath: repoPath,
+            appState: appState,
+            terminalManager: terminalManager,
+            statsStore: statsStore,
+            prStatusStore: prStatusStore,
+            teamEventDispatcher: teamEventDispatcher
+        )
+        return .success(Outcome(dismissed: false))
     }
 
     /// Restores the worktree's pre-`.deleting` state after a failed

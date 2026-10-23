@@ -50,18 +50,15 @@ public extension HeadlessHostRuntime {
                 return .created(worktreeID: result.path, paneID: result.session)
             case .open(let path): _ = try await openWorktree(path)
             case .delete(let path, let force):
-                let worktree = try requireWorktree(path)
-                guard path != state.repo(forWorktreePath: path)?.path else { throw HostRuntimeError.invalid("cannot delete the main checkout") }
-                guard !worktree.isPinned else { throw HostRuntimeError.invalid("unpin the worktree before deleting it") }
-                // A CLI creation's row exists before its Git task takes the lease.
-                guard !busyPaths.contains(path), !worktree.state.isInFlight else { throw HostRuntimeError.busy("worktree operation in progress: \(path)") }
-                switch await removeWorktree(path, force: force) {
-                case .success(let outcome): return .deleted(dismissed: outcome.dismissed)
-                case .failure(.gitFailedForceable(let stderr, let status)):
-                    return .error(code: "git_failed", message: stderr, forceAllowed: true, shortStatus: status)
-                case .failure(.gitFailedFinal(let message)):
-                    return .error(code: "git_failed", message: message, forceAllowed: false, shortStatus: nil)
-                case .failure(let error): throw error
+                // REMOTE-22.60: a CLI creation's row exists before its Git
+                // task takes the worktree lease.
+                if state.worktree(forPath: path)?.state.isInFlight == true {
+                    throw HostRuntimeError.busy("worktree operation in progress: \(path)")
+                }
+                do { try await deleteWorktree(path, force: force); return .deleted(dismissed: false) }
+                catch let GitWorktreeRemove.Error.gitFailed(_, stderr) {
+                    let status = try? await GitRunner.run(args: ["status", "--short"], at: path)
+                    return .error(code: "git_failed", message: stderr, forceAllowed: !force, shortStatus: status)
                 }
             case .acknowledge(let path, let pane):
                 let index = try indices(path)

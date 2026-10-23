@@ -383,4 +383,75 @@ struct HeadlessWorktreeLifecycleTests {
         #expect(status.state == .failed)
         #expect(host.runtime.state.worktree(forPath: path)?.state == .running)
     }
+
+    @Test("@spec REMOTE-22.63: If Git refuses a headless worktree creation, then the application shall report Git's message as the operation's error, as the Mac app does.")
+    func gitRefusalReportsGitsMessage() async throws {
+        let host = try await host()
+        defer { try? FileManager.default.removeItem(at: host.root) }
+
+        let status = try await finished(host, await create(host, name: "missing", branch: "no-such-branch", existing: true))
+
+        #expect(status.state == .failed)
+        let error = try #require(status.error)
+        #expect(error.contains("no-such-branch") && !error.hasPrefix("gitFailed("), "\(error)")
+    }
+
+    /// The paired-client envelope keeps the responses it gave before #481:
+    /// its codes, messages and raw `git status --short` output.
+    @Test("A paired client's delete keeps its envelope responses")
+    func pairedClientDeleteKeepsItsWire() async throws {
+        let host = try await host()
+        defer { try? FileManager.default.removeItem(at: host.root) }
+
+        #expect(await host.runtime.manage(.delete(worktreeID: "/missing", force: false)) == .error(
+            code: "host_operation_failed", message: "worktree is not registered: /missing", forceAllowed: false, shortStatus: nil))
+        #expect(await host.runtime.manage(.delete(worktreeID: host.repo, force: false)) == .error(
+            code: "host_operation_failed", message: "cannot delete the main checkout", forceAllowed: false, shortStatus: nil))
+
+        let dirty = try await createdWorktree(host, name: "dirty")
+        try "draft".write(toFile: dirty + "/notes.txt", atomically: true, encoding: .utf8)
+        let rawStatus = try await git(["status", "--short"], at: dirty)
+        guard case .error(let code, let message, let forceAllowed, let shortStatus) =
+                await host.runtime.manage(.delete(worktreeID: dirty, force: false)) else {
+            Issue.record("a dirty worktree was deleted without force")
+            return
+        }
+        #expect(code == "git_failed" && forceAllowed && shortStatus == rawStatus && message.contains("untracked"))
+
+        // `--force` does not override a lock, so Git refuses again.
+        try await git(["worktree", "lock", dirty], at: host.repo)
+        guard case .error(let forcedCode, _, let forcedAllowed, let forcedStatus) =
+                await host.runtime.manage(.delete(worktreeID: dirty, force: true)) else {
+            Issue.record("a locked worktree was deleted")
+            return
+        }
+        #expect(forcedCode == "git_failed" && !forcedAllowed && forcedStatus == rawStatus)
+        #expect(host.runtime.state.worktree(forPath: dirty)?.state == .running)
+
+        #expect(await host.runtime.manage(.create(repositoryID: host.repo, worktreeName: "dirty", branchName: "other",
+            existingSource: nil)) == .error(code: "host_operation_failed",
+            message: "worktree destination already exists or is invalid", forceAllowed: false, shortStatus: nil))
+    }
+
+    @Test("A removal whose final save fails is not reported as done")
+    func removalSaveFailureIsReported() async throws {
+        let host = try await host()
+        defer { try? FileManager.default.removeItem(at: host.root) }
+        let viaEnvelope = try await createdWorktree(host, name: "envelope")
+        let viaCLI = try await createdWorktree(host, name: "cli")
+        // A directory where state.json belongs makes every save fail.
+        let stateFile = host.runtime.configuration.stateDirectory.appendingPathComponent("state.json")
+        try FileManager.default.removeItem(at: stateFile)
+        try FileManager.default.createDirectory(at: stateFile.appendingPathComponent("blocked"), withIntermediateDirectories: true)
+
+        guard case .error(let code, _, _, _) = await host.runtime.manage(.delete(worktreeID: viaEnvelope, force: false)) else {
+            Issue.record("an unsaved removal was acknowledged")
+            return
+        }
+        #expect(code == "host_operation_failed")
+
+        let status = try await finished(removal: await host.runtime.handle(.removeWorktree(worktreePath: viaCLI, force: false)), host)
+        #expect(status.state == .failed)
+        #expect(!status.forceAllowed)
+    }
 }

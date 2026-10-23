@@ -44,34 +44,4 @@ public enum GitWorktreeRemove {
         }
     }
 
-    /// The Git side of removing a tracked worktree, shared by the Mac app's
-    /// `DeleteWorktreeFlow` and the headless host. GIT-4.13: when the
-    /// directory has already vanished but its admin entry survives,
-    /// `--force` cannot bypass Git's path validation, so prune instead and
-    /// report a dismissal. A refusal without `--force` carries
-    /// `git status --short` so the caller can offer a forced retry.
-    public static func removeOrPrune(
-        repoPath: String,
-        worktreePath: String,
-        force: Bool
-    ) async -> Result<WorktreeRemovalOutcome, WorktreeRemovalError> {
-        do {
-            try await remove(repoPath: repoPath, worktreePath: worktreePath, force: force)
-            return .success(WorktreeRemovalOutcome(dismissed: false))
-        } catch Error.gitFailed(_, let stderr) {
-            if !FileManager.default.fileExists(atPath: worktreePath) {
-                try? await GitWorktreePrune.run(repoPath: repoPath)
-                return .success(WorktreeRemovalOutcome(dismissed: true))
-            }
-            if force {
-                return .failure(.gitFailedFinal(stderr.isEmpty ? "git worktree remove --force failed" : stderr))
-            }
-            return .failure(.gitFailedForceable(
-                stderr: stderr.isEmpty ? "git worktree remove failed" : stderr,
-                shortStatus: await GitStatusCapture.shortStatus(at: worktreePath)
-            ))
-        } catch {
-            return .failure(.gitFailedFinal("\(error)"))
-        }
-    }
 }
