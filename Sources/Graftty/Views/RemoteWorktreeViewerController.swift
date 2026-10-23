@@ -158,6 +158,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
     private var pendingRemotePaneControls: [PendingRemotePaneControl] = []
     private var pendingRemoteMutationOrder: [UUID] = []
     private var remoteMutationInFlight: UUID?
+    private var remotePaneControlDeadlines: [UUID: Task<Void, Never>] = [:]
     private var remotePaneIntentGeneration: UInt64 = 0
 
     var selectedRemoteMac: RemoteMac? {
@@ -1141,8 +1142,13 @@ final class RemoteWorktreeViewerController: ObservableObject {
             on: remoteMac,
             request: request
         )
-        Task { @MainActor in
-            let response = await operation.value
+        // Each dispatch owns a generation. A timeout consumes it before
+        // releasing the queue, so a late result cannot complete newer work.
+        let generation = UUID()
+        let finish: @MainActor (PaneControlResponse) -> Void = { [weak self] response in
+            guard let self,
+                  let deadline = remotePaneControlDeadlines.removeValue(forKey: generation) else { return }
+            deadline.cancel()
             defer { completion?(response) }
             switch response {
             case .splitCreated(let sessionName):
@@ -1317,6 +1323,18 @@ final class RemoteWorktreeViewerController: ObservableObject {
                 }
             }
         }
+        remotePaneControlDeadlines[generation] = Task { @MainActor [sleep] in
+            await sleep(.seconds(30))
+            guard !Task.isCancelled else { return }
+            operation.cancel()
+            finish(.error(
+                code: "downstream-unavailable",
+                message: "The remote pane operation on \(remoteMac.label) timed out. Queued commands for this worktree were cancelled."
+            ))
+        }
+        Task { @MainActor in
+            finish(await operation.value)
+        }
     }
 
     private func scheduleLegacyRemoteSplitTimeout(
@@ -1433,8 +1451,8 @@ final class RemoteWorktreeViewerController: ObservableObject {
                     pending.restoreViewerZoomOnError,
                 deferBehindPendingSplits: false,
                 viewerEffectGeneration: pending.focusGeneration
-            ) { [self] response in
-                completeRemotePaneControl(
+            ) { [weak self] response in
+                self?.completeRemotePaneControl(
                     pending,
                     response: response
                 )
