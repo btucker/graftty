@@ -845,24 +845,21 @@ struct SingleSessionView: View {
     private func observeAttention() async {
         guard isFullScreen, isPaneFocused, let coordinator,
               LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
-        while !Task.isCancelled {
-            do {
-                let rows = try await coordinator.worktreePanes(for: step.host)
-                let snapshot = await coordinator.navigationSnapshot(for: step.host, matching: rows)
-                guard !Task.isCancelled else { return }
-                let projects: [SidebarProject]
-                if case let .snapshot(snapshotRows, metadata)? = snapshot, snapshotRows == rows {
-                    projects = metadata?.projects ?? SidebarProjection.projects(rows)
-                } else { projects = SidebarProjection.projects(rows) }
+        for await update in coordinator.worktreeUpdates(for: step.host) {
+            // An update already handed over when SwiftUI cancelled this task
+            // belongs to an observation that has ended.
+            guard !Task.isCancelled else { return }
+            switch update {
+            case .unavailable:
+                // Do not present a stale count while the host is unreachable.
+                attentionWorktrees = []
+            case let .frame(.snapshot(rows, metadata)):
+                let projects = metadata?.projects ?? SidebarProjection.projects(rows)
                 sidebarNavigation?.reconcile(worktrees: rows, projects: projects)
                 recentPaneActions?.history.reconcile(hostID: step.host.id, worktrees: rows, projects: projects)
                 attentionWorktrees = rows
                 recordRecentVisit()
-            } catch {
-                // Do not present a stale count while the host is unreachable.
-                attentionWorktrees = []
             }
-            do { try await Task.sleep(for: .seconds(1)) } catch { return }
         }
     }
 

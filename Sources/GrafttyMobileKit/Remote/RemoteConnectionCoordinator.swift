@@ -440,6 +440,16 @@ public final class RemoteConnectionCoordinator {
         onProgress: RemoteWorktreeLoadProgress? = nil,
         reconnect: Bool = false
     ) async throws -> [WorktreePanes] {
+        try await subscribedPanesStore(for: host, onProgress: onProgress, reconnect: reconnect).current
+    }
+
+    /// The host's panes-state store once it has applied its first snapshot,
+    /// opening the long-lived subscription on first use.
+    private func subscribedPanesStore(
+        for host: Host,
+        onProgress: RemoteWorktreeLoadProgress? = nil,
+        reconnect: Bool = false
+    ) async throws -> WorktreePanesStore {
         let clock = ContinuousClock()
         let loadStarted = clock.now
         onProgress?(.connecting)
@@ -481,9 +491,27 @@ public final class RemoteConnectionCoordinator {
                     "worktree load host=\(host.id, privacy: .public) stage=first-snapshot duration_ms=\(Self.milliseconds(channelFinished.duration(to: snapshotFinished)), privacy: .public) total_ms=\(Self.milliseconds(loadStarted.duration(to: snapshotFinished)), privacy: .public)"
                 )
             }
-            return await store.current
+            return store
         }
     }
+
+    /// The latest applied worktree frame for `host`, then each newer one
+    /// (a slow observer skips to the newest), across reconnects, without
+    /// polling (IOS-4.51). Each subscription shares `worktreePanes(for:)`'s
+    /// connection dedup, failure cooldown and first-snapshot wait.
+    public func worktreeUpdates(for host: Host) -> AsyncStream<RemoteWorktreeUpdate> {
+        RemoteWorktreeUpdates.stream(
+            subscribe: { [weak self] in
+                guard let self else { throw ConnectionError.unavailable }
+                // Observe the store that passed the first-snapshot wait,
+                // not whatever the registry holds after the await.
+                return try await self.subscribedPanesStore(for: host).frameUpdates()
+            },
+            retryDelay: { try await Task.sleep(for: Self.worktreeUpdateRetryDelay) }
+        )
+    }
+
+    private static let worktreeUpdateRetryDelay: Duration = .seconds(1)
 
     private nonisolated static func milliseconds(
         _ duration: Duration
