@@ -425,31 +425,35 @@ struct CodexHomeMirrorTests {
             ofItemAtPath: holderScript.path
         )
 
-        let holder = Process()
-        holder.executableURL = URL(fileURLWithPath: "/usr/bin/lockf")
-        holder.arguments = [
-            "-k",
-            dst.appendingPathComponent(".graftty-mirror.lock").path,
-            holderScript.path,
-        ]
-        holder.environment = [
-            "GRAFTTY_TEST_LOCK_READY": ready.path,
-            "GRAFTTY_TEST_LOCK_RELEASE": release.path,
-        ]
-        try holder.run()
+        // Spawned and reaped directly rather than through Process, whose exit
+        // handling runs on a GCD source and so needs a free worker.
+        let holder = try spawn(
+            [
+                "/usr/bin/lockf",
+                "-k",
+                dst.appendingPathComponent(".graftty-mirror.lock").path,
+                holderScript.path,
+            ],
+            environment: [
+                "GRAFTTY_TEST_LOCK_READY": ready.path,
+                "GRAFTTY_TEST_LOCK_RELEASE": release.path,
+            ]
+        )
+        var holderExit: Int32?
         defer {
-            try? Data().write(to: release, options: .atomic)
-            if holder.isRunning {
-                holder.terminate()
-                holder.waitUntilExit()
+            if holderExit == nil {
+                try? Data().write(to: release, options: .atomic)
+                if exitStatus(of: holder, timeout: 10) == nil {
+                    kill(holder, SIGKILL)
+                    _ = exitStatus(of: holder, timeout: 5)
+                }
             }
         }
         try #require(waitForFile(ready, timeout: 2.0))
 
-        // The test body is synchronous and rebuild() runs on its own thread,
-        // so neither the rebuild nor the release waits for a free
-        // cooperative or GCD worker. The semaphore waits time out, and the
-        // holder's own poll budget bounds holder.waitUntilExit().
+        // The test body is synchronous, rebuild() runs on its own thread, and
+        // the holder is reaped with waitpid, so nothing here waits for a free
+        // cooperative or GCD worker, and every wait has a timeout.
         let mirror = CodexHomeMirror(
             sourceDirectory: src,
             mirrorDirectory: dst
@@ -474,9 +478,9 @@ struct CodexHomeMirrorTests {
             try #require(finished.wait(timeout: .now() + .seconds(10)) == .success)
         }
         try #require(outcome.result).get()
-        holder.waitUntilExit()
+        holderExit = exitStatus(of: holder, timeout: 10)
         // 0 means the release freed the lock; 3 means the holder gave up.
-        #expect(holder.terminationStatus == 0)
+        #expect(holderExit == 0)
         #expect(FileManager.default.fileExists(
             atPath: dst.appendingPathComponent(".graftty-mirror-version").path
         ))
@@ -588,6 +592,34 @@ struct CodexHomeMirrorTests {
     private func writeFile(_ url: URL, _ content: String) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try content.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func spawn(_ argv: [String], environment: [String: String]) throws -> pid_t {
+        let cArgv = argv.map { strdup($0) } + [nil]
+        let cEnvironment = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        defer { (cArgv + cEnvironment).forEach { free($0) } }
+        var pid: pid_t = 0
+        let result = posix_spawn(&pid, argv[0], nil, nil, cArgv, cEnvironment)
+        guard result == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: result) ?? .EIO)
+        }
+        return pid
+    }
+
+    /// The exit code of `pid` once it exits, -1 if a signal ended it, or nil
+    /// if it is still running at the deadline.
+    private func exitStatus(of pid: pid_t, timeout: TimeInterval) -> Int32? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var status: Int32 = 0
+        while true {
+            let reaped = waitpid(pid, &status, WNOHANG)
+            if reaped == pid {
+                return status & 0x7f == 0 ? (status >> 8) & 0xff : -1
+            }
+            if reaped == -1, errno != EINTR { return nil }
+            guard Date() < deadline else { return nil }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
     }
 
     private func waitForFile(_ url: URL, timeout: TimeInterval) -> Bool {
