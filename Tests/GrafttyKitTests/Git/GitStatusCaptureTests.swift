@@ -14,7 +14,7 @@ struct GitStatusCaptureTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try runShell("""
+        try shellInRepo("""
             git init && \
             git commit --allow-empty -m 'init' && \
             echo 'tracked' > tracked.txt && \
@@ -40,7 +40,7 @@ struct GitStatusCaptureTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try runShell("git init && git commit --allow-empty -m 'init'", at: dir)
+        #expect(try shellInRepo("git init && git commit --allow-empty -m 'init'", at: dir) == 0)
 
         let status = await GitStatusCapture.shortStatus(at: dir.path)
         #expect(status.isEmpty)
@@ -55,20 +55,4 @@ struct GitStatusCaptureTests {
         #expect(status.isEmpty)
     }
 
-    private func runShell(_ command: String, at directory: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = directory
-        process.environment = [
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "HOME": NSHomeDirectory(),
-            "GIT_AUTHOR_NAME": "Test",
-            "GIT_AUTHOR_EMAIL": "test@test.com",
-            "GIT_COMMITTER_NAME": "Test",
-            "GIT_COMMITTER_EMAIL": "test@test.com",
-        ]
-        try process.run()
-        process.waitUntilExit()
-    }
 }

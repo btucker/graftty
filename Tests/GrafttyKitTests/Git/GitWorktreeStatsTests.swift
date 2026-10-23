@@ -263,9 +263,11 @@ struct GitWorktreeStatsResolveUpstreamRefsTests {
         let (root, clone, _) = try makeClonedRepo()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        try shellInRepo("git checkout -b scratch", at: clone)
+        // Create without checking out: git refuses a second worktree on a
+        // branch the main checkout already has.
+        #expect(try shellInRepo("git branch scratch", at: clone) == 0)
         let wtPath = root.appendingPathComponent("scratch-wt").path
-        try shellInRepo("git worktree add \(wtPath) scratch", at: clone)
+        #expect(try shellInRepo("git worktree add \(wtPath) scratch", at: clone) == 0)
 
         let refs = await GitWorktreeStats.resolveUpstreamRefs(
             worktreePath: wtPath,

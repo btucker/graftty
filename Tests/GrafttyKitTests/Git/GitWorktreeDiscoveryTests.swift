@@ -98,24 +98,11 @@ struct GitWorktreeDiscoveryTests {
         let repoDir = dir.appendingPathComponent("repo")
         try FileManager.default.createDirectory(at: repoDir, withIntermediateDirectories: true)
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", """
+        try shellInRepo("""
             git init && \
             git commit --allow-empty -m 'init' && \
             git worktree add ../wt-feature -b feature
-            """]
-        process.currentDirectoryURL = repoDir
-        process.environment = [
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "HOME": NSHomeDirectory(),
-            "GIT_AUTHOR_NAME": "Test",
-            "GIT_AUTHOR_EMAIL": "test@test.com",
-            "GIT_COMMITTER_NAME": "Test",
-            "GIT_COMMITTER_EMAIL": "test@test.com",
-        ]
-        try process.run()
-        process.waitUntilExit()
+            """, at: repoDir)
 
         let entries = try await GitWorktreeDiscovery.discover(repoPath: repoDir.path)
         #expect(entries.count == 2)

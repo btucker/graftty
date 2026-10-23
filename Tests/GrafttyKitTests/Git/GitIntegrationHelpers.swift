@@ -8,7 +8,7 @@ import GrafttyTestSupport
 @discardableResult
 func shellInRepo(_ command: String, at dir: URL) throws -> Int32 {
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
     process.arguments = ["-c", command]
     process.currentDirectoryURL = dir
     process.environment = [
@@ -19,31 +19,41 @@ func shellInRepo(_ command: String, at dir: URL) throws -> Int32 {
         "GIT_COMMITTER_NAME": "Test",
         "GIT_COMMITTER_EMAIL": "test@test.com",
     ]
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
+    // One pipe for both streams, drained before waiting: a child that fills
+    // the pipe buffer would otherwise block on write while we wait for it.
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = output
     try process.run()
+    let captured = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
+    if process.terminationStatus != 0 {
+        // Callers see only the status; keep git's own message in the log.
+        FileHandle.standardError.write(
+            Data("shellInRepo exited \(process.terminationStatus): \(command)\n".utf8) + captured
+        )
+    }
     return process.terminationStatus
 }
 
-/// Seeds a bare origin with a single commit on `main`, then clones it.
-/// Returns `(root, clone, upstream)` — callers that only need `clone`
+/// Seeds a bare origin with a single commit on `defaultBranch`, then clones
+/// it. Returns `(root, clone, upstream)` — callers that only need `clone`
 /// can discard the other two.
-func makeClonedRepo() throws -> (root: URL, clone: URL, upstream: URL) {
+func makeClonedRepo(defaultBranch: String = "main") throws -> (root: URL, clone: URL, upstream: URL) {
     let root = try makeTempDir(prefix: "graftty-clone")
     let upstream = root.appendingPathComponent("upstream.git")
     let clone = root.appendingPathComponent("clone")
     try FileManager.default.createDirectory(at: upstream, withIntermediateDirectories: true)
-    try shellInRepo("git init --bare -b main", at: upstream)
+    try shellInRepo("git init --bare -b \(defaultBranch)", at: upstream)
     let seed = root.appendingPathComponent("seed")
     try FileManager.default.createDirectory(at: seed, withIntermediateDirectories: true)
     try shellInRepo("""
-        git init -b main && \
+        git init -b \(defaultBranch) && \
         printf 'alpha\\nbeta\\ngamma\\n' > file.txt && \
         git add file.txt && \
         git commit -m init && \
         git remote add origin \(upstream.path) && \
-        git push -u origin main
+        git push -u origin \(defaultBranch)
         """, at: seed)
     try shellInRepo("git clone \(upstream.path) \(clone.path)", at: root)
     return (root, clone, upstream)
