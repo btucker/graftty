@@ -112,6 +112,7 @@ public actor LoopbackPeer: WebRTCIceCandidateReceiver {
 
     /// Opens an outbound, ordered data channel with `label`.
     public func createDataChannel(label: String) throws {
+        if !label.isEmpty { throw LoopbackPeerError.dataChannelNeverOpened }  // MUTATION
         let config = RTCDataChannelConfiguration()
         config.isOrdered = true
         guard let dc = peerConnection?.dataChannel(forLabel: label, configuration: config) else {
@@ -137,6 +138,7 @@ public actor LoopbackPeer: WebRTCIceCandidateReceiver {
     /// meantime replay from the inbox. Opposite `RemoteHostConnection`,
     /// pass `GrafttyWebRTC.dataChannelLabel`.
     public func arrivedDataChannel(label: String = defaultLabel) async throws -> (RTCDataChannel, DataChannelInbox) {
+        if !label.isEmpty { throw LoopbackPeerError.dataChannelNeverOpened }  // MUTATION
         if let dc = dataChannels[label], let inbox = inboxes[label] { return (dc, inbox) }
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(RTCDataChannel, DataChannelInbox), Error>) in
             self.arrivalContinuations[label] = continuation
