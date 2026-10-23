@@ -178,19 +178,14 @@ struct SingleSessionView: View {
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
-    static func shouldShowTakeControl(
-        isFullScreen: Bool,
-        clientCanTakeControl: Bool
-    ) -> Bool {
-        // Fullscreen controls navigation chrome, not display ownership.
+    /// IPAD-1.18: fullscreen controls navigation chrome, not display
+    /// ownership, so Take Control depends only on the client.
+    static func shouldShowTakeControl(clientCanTakeControl: Bool) -> Bool {
         clientCanTakeControl
     }
 
-    static func shouldExposeKeyboard(
-        clientIsOwner: Bool,
-        keyboardAllowed: Bool,
-        isKeyboardVisible: Bool
-    ) -> Bool {
+    /// IOS-6.13: keyboard chrome appears only for the display owner.
+    static func shouldExposeKeyboard(clientIsOwner: Bool) -> Bool {
         clientIsOwner
     }
 
@@ -752,7 +747,6 @@ struct SingleSessionView: View {
             return
         }
         let makeClient = { SessionClient.live(
-            baseURL: step.host.baseURL,
             sessionName: step.sessionName,
             role: Self.sessionRole,
             // REMOTE-2.1 (substance; the spec ID itself lands in W4):
@@ -919,17 +913,10 @@ struct SingleSessionView: View {
     @ViewBuilder
     private var terminalChrome: some View {
         let shouldShowTakeControl = client.map {
-            Self.shouldShowTakeControl(
-                isFullScreen: isFullScreen,
-                clientCanTakeControl: $0.canTakeControl
-            )
+            Self.shouldShowTakeControl(clientCanTakeControl: $0.canTakeControl)
         } ?? false
         let shouldExposeKeyboard = client.map {
-            Self.shouldExposeKeyboard(
-                clientIsOwner: $0.isOwner,
-                keyboardAllowed: keyboardAllowed,
-                isKeyboardVisible: isKeyboardVisible
-            )
+            Self.shouldExposeKeyboard(clientIsOwner: $0.isOwner)
         } ?? false
         if shouldShowTakeControl || shouldExposeKeyboard {
             VStack(spacing: 8) {

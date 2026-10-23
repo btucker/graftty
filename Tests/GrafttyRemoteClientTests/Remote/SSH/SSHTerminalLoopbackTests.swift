@@ -500,8 +500,8 @@ struct SSHTerminalLoopbackTests {
 
     /// `send(.text)` used to write the envelope JSON as `.channel` PTY
     /// bytes — asymmetric with `receive()` (which surfaces control frames
-    /// as `.text`) and with `URLSessionWebSocketClient` (where `.text` IS
-    /// the control encoding): a polymorphic caller sending a control
+    /// as `.text`) and with the `/ws` transport (where `.text` IS the
+    /// control encoding): a polymorphic caller sending a control
     /// envelope through the generic `WebSocketClient.send` surface would
     /// have had its JSON typed into the shared PTY instead of reaching the
     /// server's control parser. Proven end-to-end here: a hello delivered

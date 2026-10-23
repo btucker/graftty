@@ -12,6 +12,11 @@ import GrafttyRemoteClient
 @MainActor
 struct SessionClientTests {
 
+    @Test("The production reconnect backoff doubles from 1s to a 30s cap over six attempts")
+    func productionBackoffScheduleDoublesToCap() {
+        #expect(SessionClient.productionBackoffSchedule() == [1, 2, 4, 8, 16, 30])
+    }
+
     @Test("@spec IOS-5.13: When a follower receives output after a viewport resize callback, the application shall confirm native parser grid readiness before parsing that output, even if the callback already reports the target dimensions.")
     func resizeCallbackDoesNotBypassNativeGridReadiness() async throws {
         let ws = DelayedReceiveWS()

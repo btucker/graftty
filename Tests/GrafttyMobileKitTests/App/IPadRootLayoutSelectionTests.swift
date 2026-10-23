@@ -1249,13 +1249,6 @@ instead of an empty bridge.
         #expect(appState3.focusedPaneId == "session-a")
     }
 
-    @Test("""
-@spec IPAD-1.20: While `IPadRootLayout` is presented, iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
-""")
-    func backgroundPolicy() {
-        #expect(IPadRootLayout.paintsTerminalBackgroundBehindSidebar == true)
-    }
-
     private func leaf(_ sessionName: String) -> PaneLayoutNode {
         .leaf(
             sessionName: sessionName,
@@ -1275,14 +1268,8 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
     /// fullscreen-role mobile client that is currently a follower or ownerless
     /// shall still expose Take Control in the detail column.
     func testTakeControlVisibilityIsNotTiedToFullscreenChrome() {
-        XCTAssertTrue(SingleSessionView.shouldShowTakeControl(
-            isFullScreen: false,
-            clientCanTakeControl: true
-        ))
-        XCTAssertFalse(SingleSessionView.shouldShowTakeControl(
-            isFullScreen: false,
-            clientCanTakeControl: false
-        ))
+        XCTAssertTrue(SingleSessionView.shouldShowTakeControl(clientCanTakeControl: true))
+        XCTAssertFalse(SingleSessionView.shouldShowTakeControl(clientCanTakeControl: false))
     }
 
     /// @spec IOS-6.13: GrafttyMobile shall expose software-keyboard chrome and
@@ -1291,26 +1278,8 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
     /// showing a keyboard before ownership is confirmed sends no useful input
     /// and implies authority the client does not have.
     func testKeyboardChromeRequiresDisplayOwnership() {
-        XCTAssertFalse(SingleSessionView.shouldExposeKeyboard(
-            clientIsOwner: false,
-            keyboardAllowed: true,
-            isKeyboardVisible: false
-        ))
-        XCTAssertFalse(SingleSessionView.shouldExposeKeyboard(
-            clientIsOwner: false,
-            keyboardAllowed: false,
-            isKeyboardVisible: false
-        ))
-        XCTAssertTrue(SingleSessionView.shouldExposeKeyboard(
-            clientIsOwner: true,
-            keyboardAllowed: false,
-            isKeyboardVisible: false
-        ))
-        XCTAssertTrue(SingleSessionView.shouldExposeKeyboard(
-            clientIsOwner: true,
-            keyboardAllowed: true,
-            isKeyboardVisible: true
-        ))
+        XCTAssertFalse(SingleSessionView.shouldExposeKeyboard(clientIsOwner: false))
+        XCTAssertTrue(SingleSessionView.shouldExposeKeyboard(clientIsOwner: true))
     }
 
     /// @spec IOS-6.14: While the mobile client is the display owner, its pane

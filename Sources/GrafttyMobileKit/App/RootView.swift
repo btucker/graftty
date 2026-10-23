@@ -566,26 +566,6 @@ public struct RootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.regularMaterial)
     }
-
-    nonisolated static func makeWebSocketURL(base: URL, session: String) -> URL {
-        var components = URLComponents(url: base, resolvingAgainstBaseURL: false) ?? URLComponents()
-        components.scheme = (base.scheme?.lowercased() == "https") ? "wss" : "ws"
-        components.path = "/ws"
-        components.queryItems = [
-            URLQueryItem(name: "session", value: session),
-            // Advertise the iOS client kind through the transport the daemon
-            // trusts (`declaredDisplayClientKind`). `URLSessionWebSocketClient`
-            // connects with a bare URL (no custom header / User-Agent), so this
-            // query param is the only kind signal the server sees. Without it
-            // the connection is classified `.web`, the store stamps
-            // `ownerKind=.web`, and `SessionClient.isOwner` (which requires
-            // `.ios`) is never true — the phone becomes a permanent follower
-            // that cannot confirm ownership after Take Control or input
-            // takeover.
-            URLQueryItem(name: "client", value: "ios"),
-        ]
-        return components.url ?? base
-    }
 }
 
 /// @spec IOS-4.38: When a compact mobile project is selected, the application shall push its worktrees as a separate native navigation destination so the system Back button and edge swipe return to the project list.

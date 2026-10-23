@@ -316,7 +316,6 @@ struct SessionReconnectTests {
         let clock = VirtualClock()
         let provider = ProviderRecorder()
         let client = SessionClient.live(
-            baseURL: URL(string: "http://example.invalid")!,
             sessionName: "s",
             remoteConnectionProvider: { await provider.provide() },
             clock: clock,

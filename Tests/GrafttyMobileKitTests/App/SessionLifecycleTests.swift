@@ -35,8 +35,13 @@ struct PairedTransportDowngradeTests {
 unavailable, GrafttyMobile shall fail closed and shall not downgrade the \
 terminal to the legacy unauthenticated `/ws` transport.
 """)
-    func productionPolicyFailsClosed() {
-        #expect(SessionClient.legacyWebSocketFallbackEnabledByDefault == false)
+    func productionPolicyFailsClosed() async {
+        await #expect(throws: RemoteSessionTransportError.pairedConnectionUnavailable) {
+            _ = try await SessionClient.dialTransport(sessionName: "s", role: .fullscreen, remoteHost: nil)
+        }
+        await #expect(throws: RemoteSessionTransportError.relayRequiresPairedConnection) {
+            _ = try await SessionClient.dialTransport(sessionName: "relay-pane-1", role: .preview, remoteHost: nil)
+        }
     }
 }
 #endif
