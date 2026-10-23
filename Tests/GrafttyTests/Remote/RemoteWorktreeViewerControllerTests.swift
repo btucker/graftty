@@ -324,11 +324,18 @@ struct RemoteWorktreeViewerControllerTests {
         #expect(rezoomed.controller.splitTree.zoomed == rezoomedB)
     }
 
-    @Test("@spec REMOTE-24.8: When a remote surface closes unexpectedly, the viewer shall recreate a surface for the same session; if opening the session or creating its surface fails, the viewer shall retry after 750 ms while its worktree is still selected and the host still lists that pane.")
+    @Test("@spec REMOTE-24.8: When a remote surface closes unexpectedly or fails to open, the viewer shall wait 750 ms before retrying, double successive retry delays up to thirty seconds, reset the delay after a surface survives thirty seconds, and retry only while its worktree is selected and the host still lists the pane.")
     func surfacesAreRecreatedAndRetried() async throws {
         let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
         let original = try viewer.terminal("a")
         viewer.surfaces.closeUnexpectedly(original)
+        await viewer.settle()
+        #expect(viewer.surfaces.live.isEmpty)
+        viewer.publish(.leaf("a"))
+        await viewer.settle()
+        #expect(viewer.surfaces.live.isEmpty)
+        #expect(viewer.clock.requested == [.milliseconds(750)])
+        viewer.clock.fire(.milliseconds(750))
         await viewer.settle()
         let replacement = try viewer.terminal("a")
         #expect(replacement != original)
@@ -341,6 +348,121 @@ struct RemoteWorktreeViewerControllerTests {
         retry.clock.fire(.milliseconds(750))
         await retry.settle()
         #expect(retry.surfaces.live.count == 1)
+    }
+
+    @Test func repeatedTerminalClosesBackOffAndResetAfterAStableStream() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
+        for delay in [750, 1_500, 3_000, 6_000, 12_000, 24_000, 30_000, 30_000] {
+            let terminal = try viewer.terminal("a")
+            viewer.surfaces.closeUnexpectedly(terminal)
+            await viewer.settle()
+            #expect(viewer.surfaces.live.isEmpty)
+            #expect(viewer.clock.requested.last == .milliseconds(delay))
+            viewer.publish(.leaf("a"))
+            await viewer.settle()
+            #expect(viewer.surfaces.live.isEmpty)
+            viewer.clock.fire(.milliseconds(delay))
+            await viewer.settle()
+            #expect(viewer.surfaces.live.count == 1)
+        }
+        // Only this surviving surface may reset its failure history.
+        viewer.clock.fire(.seconds(30))
+        await viewer.settle()
+        viewer.surfaces.closeUnexpectedly(try viewer.terminal("a"))
+        await viewer.settle()
+        #expect(viewer.clock.requested.last == .milliseconds(750))
+        #expect(viewer.surfaces.live.isEmpty)
+    }
+
+    @Test func terminalRetryCannotOutliveSelectionOrPaneRemoval() async throws {
+        let removed = try await ViewerHarness.opened(layout: .leaf("a"))
+        removed.surfaces.closeUnexpectedly(try removed.terminal("a"))
+        await removed.settle()
+        removed.publish(nil)
+        removed.clock.fire(.milliseconds(750))
+        await removed.settle()
+        #expect(removed.surfaces.live.isEmpty)
+        #expect(removed.controller.splitTree.root == nil)
+
+        let selected = try await ViewerHarness.opened(layout: .leaf("a"))
+        selected.surfaces.closeUnexpectedly(try selected.terminal("a"))
+        await selected.settle()
+        selected.controller.leaveForLocalSelection()
+        selected.controller.selectRemoteWorktree(selected.mac, worktreePath: ViewerHarness.path, acknowledging: false)
+        await selected.settle()
+        selected.surfaces.closeUnexpectedly(try selected.terminal("a"))
+        await selected.settle()
+        // The first selection's sleeper must not consume the new retry.
+        selected.clock.fireNext(.milliseconds(750))
+        await selected.settle()
+        #expect(selected.surfaces.live.isEmpty)
+        selected.clock.fireNext(.milliseconds(750))
+        await selected.settle()
+        #expect(selected.surfaces.live.count == 1)
+    }
+
+    @Test func staleTerminalOpenFailureCannotScheduleANewSelectionsRetry() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
+        viewer.model.holdNextTerminalOpen = true
+        viewer.controller.destroyAllRemoteSurfaces()
+        viewer.publish(.leaf("a"))
+        try await viewer.until("terminal open is suspended") { viewer.model.heldTerminalOpen != nil }
+        viewer.controller.leaveForLocalSelection()
+        viewer.controller.selectRemoteWorktree(viewer.mac, worktreePath: ViewerHarness.path, acknowledging: false)
+        await viewer.settle()
+        #expect(viewer.surfaces.live.count == 1)
+        viewer.model.heldTerminalOpen?.resume(throwing: CancellationError())
+        viewer.model.heldTerminalOpen = nil
+        await viewer.settle()
+        #expect(viewer.clock.requested.isEmpty)
+        viewer.surfaces.closeUnexpectedly(try viewer.terminal("a"))
+        await viewer.settle()
+        #expect(viewer.clock.requested == [.milliseconds(750)])
+        #expect(viewer.surfaces.live.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func removedPaneCannotLeaveOrphanRetryState(fireOldRetryFirst: Bool) async throws {
+        let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
+        let a = try viewer.terminal("a")
+        // Model publication can precede the view's reconcile callback.
+        viewer.model.worktreePanesByRemote[viewer.identity] = []
+        viewer.surfaces.closeUnexpectedly(a)
+        await viewer.settle()
+        if fireOldRetryFirst {
+            viewer.clock.fire(.milliseconds(750))
+            await viewer.settle()
+        }
+        viewer.publish(.leaf("a"))
+        await viewer.settle()
+        #expect(viewer.surfaces.live.count == 1)
+        viewer.surfaces.closeUnexpectedly(try viewer.terminal("a"))
+        await viewer.settle()
+        #expect(viewer.surfaces.live.isEmpty)
+        #expect(viewer.clock.requested.last == .milliseconds(750))
+        if !fireOldRetryFirst {
+            viewer.clock.fireNext(.milliseconds(750))
+            await viewer.settle()
+            #expect(viewer.surfaces.live.isEmpty)
+        }
+        viewer.clock.fire(.milliseconds(750))
+        await viewer.settle()
+        #expect(viewer.surfaces.live.count == 1)
+    }
+
+    @Test func failedReopenContinuesTheTerminalBackoff() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
+        viewer.model.failingTerminalOpens = 1
+        viewer.surfaces.closeUnexpectedly(try viewer.terminal("a"))
+        await viewer.settle()
+        #expect(viewer.surfaces.live.isEmpty)
+        viewer.clock.fire(.milliseconds(750))
+        await viewer.settle()
+        #expect(viewer.surfaces.live.isEmpty)
+        #expect(viewer.clock.requested.last == .milliseconds(1_500))
+        viewer.clock.fire(.milliseconds(1_500))
+        await viewer.settle()
+        #expect(viewer.surfaces.live.count == 1)
     }
 
     @Test("@spec REMOTE-24.9: When the window disappears, the viewer shall destroy every remote surface and empty its layout while keeping the selection, so that the next snapshot recreates the surfaces; the panes' registered command handlers shall not keep the viewer alive.")
@@ -623,6 +745,11 @@ private final class ManualViewerClock {
         await withCheckedContinuation { sleepers.append((duration, $0)) }
     }
 
+    func fireNext(_ duration: Duration) {
+        guard let index = sleepers.firstIndex(where: { $0.0 == duration }) else { return }
+        sleepers.remove(at: index).1.resume()
+    }
+
     func fire(_ duration: Duration) {
         let due = sleepers.filter { $0.0 == duration }
         sleepers.removeAll { $0.0 == duration }
@@ -657,6 +784,9 @@ private final class FakeViewerModel: RemoteWorktreeViewerModel {
     var savedRemoteMacs: [RemoteMac]
     var worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]] = [:]
     var openWorktreeResponse: WorktreeManagementResponse = .ok
+    var failingTerminalOpens = 0
+    var holdNextTerminalOpen = false
+    var heldTerminalOpen: CheckedContinuation<Void, Error>?
     private(set) var paneControls: [FakePaneControl] = []
     private(set) var operationTasks: [Task<PaneControlResponse, Never>] = []
     private(set) var openedWorktrees: [String] = []
@@ -679,7 +809,17 @@ private final class FakeViewerModel: RemoteWorktreeViewerModel {
 
     func openViewerTerminalSession(identity: RemoteMacIdentity, sessionName: String) async throws
         -> any WebSocketClient & Sendable {
-        FakeViewerTerminalClient(sessionName: sessionName)
+        if holdNextTerminalOpen {
+            holdNextTerminalOpen = false
+            try await withCheckedThrowingContinuation { continuation in
+                heldTerminalOpen = continuation
+            }
+        }
+        if failingTerminalOpens > 0 {
+            failingTerminalOpens -= 1
+            throw CancellationError()
+        }
+        return FakeViewerTerminalClient(sessionName: sessionName)
     }
 
     func openWorktree(on remoteMac: RemoteMac, worktreePath: String) async -> WorktreeManagementResponse {
