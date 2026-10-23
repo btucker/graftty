@@ -121,9 +121,10 @@ let linuxKitExclusions = ["Updater", "Editor", "Model/PNGThumbnail.swift",
                           "Ports/PortBindingsModel.swift"]
 // GrafttyKitTests compiles every file on Linux except `Apple/` (tests that
 // need AppKit, macOS-only APIs or GrafttyKit code excluded from Linux) and
-// this list of files not yet ported (#477). Shrink it as files are ported or
-// moved under `Apple/`; do not add to it. scripts/check-linux-test-allowlist.py
-// checks both.
+// this list of files not yet ported, each annotated with what blocks it (an
+// open issue, or a tool or API the Linux build lacks; #687 tracks the rest).
+// Shrink it as files are ported or moved under `Apple/`; do not add to it.
+// scripts/check-linux-test-allowlist.py checks both.
 let linuxPendingKitTests = [
     "CLI/CLIRunnerTests.swift", // #666: GNU env not-found message
     "Git/WorktreeMonitorTests.swift", // contentStreamCountForTesting is macOS-only (FSEvents)
