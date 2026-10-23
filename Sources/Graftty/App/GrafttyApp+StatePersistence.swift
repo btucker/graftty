@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import GrafttyKit
 
 extension GrafttyApp {
@@ -6,7 +7,17 @@ extension GrafttyApp {
     /// never touch the real `~/Library/Application Support/Graftty`.
     @TaskLocal static var appStatePersisterOverride: AppStatePersister?
 
-    private static let sharedAppStatePersister = AppStatePersister(directory: AppState.defaultDirectory)
+    /// A test host (XCTest is loaded) gets a per-process temp directory, so a
+    /// test that forgets `$appStatePersisterOverride` cannot overwrite the
+    /// developer's live `state.json` once the trailing save fires.
+    static let sharedAppStatePersisterDirectory: URL = {
+        guard NSClassFromString("XCTestCase") != nil else { return AppState.defaultDirectory }
+        return FileManager.default.temporaryDirectory.appendingPathComponent(
+            "graftty-test-host-state-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true
+        )
+    }()
+
+    private static let sharedAppStatePersister = AppStatePersister(directory: sharedAppStatePersisterDirectory)
 
     /// Process-wide owner of `state.json` writes (PERSIST-2.3).
     static var appStatePersister: AppStatePersister {
@@ -29,6 +40,25 @@ extension GrafttyApp {
         let persister = appStatePersister
         persister.markDirty(state)
         try await persister.flushNow()
+    }
+
+    /// Schedules a save when `appState` no longer equals `before`. Mutators
+    /// reachable with no window open (socket, paired devices, terminal
+    /// callbacks, timers) capture `before` and call this from a `defer`,
+    /// because the window's `.onChange` does not exist then (#604).
+    static func persistAppStateIfChanged(_ appState: Binding<AppState>, from before: AppState) {
+        let after = appState.wrappedValue
+        if after != before { persistAppState(after) }
+    }
+
+    /// Runs `body` and schedules a save if it changed `appState`. For
+    /// mutations a paired device makes while no Mac window may be open
+    /// (#604).
+    @discardableResult
+    static func persistingChanges<T>(to appState: Binding<AppState>, _ body: () -> T) -> T {
+        let before = appState.wrappedValue
+        defer { persistAppStateIfChanged(appState, from: before) }
+        return body()
     }
 
     /// Writes `state` (after any in-flight write) on the calling thread. For

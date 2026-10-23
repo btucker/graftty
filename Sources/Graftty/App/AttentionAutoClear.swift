@@ -16,12 +16,22 @@ enum AttentionAutoClear {
         pane: PaneSlotID? = nil,
         stamp: Date
     ) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            appState.wrappedValue.mutateWorktrees(atPath: worktreePath) { worktree in
-                if let pane {
-                    worktree.clearPaneAttentionIfTimestamp(stamp, for: pane)
-                } else {
-                    worktree.clearAttentionIfTimestamp(stamp)
+        // A main-actor Task rather than asyncAfter so the save below reaches
+        // the same persister as the caller (task-locals carry into it). The
+        // deadline is fixed now, as asyncAfter's was, because the task can
+        // start late while the main actor is busy. A persisted `clearAfter`
+        // past the STATE-2.9 cap is clamped so `Duration` cannot overflow.
+        let deadline = ContinuousClock.now + .seconds(min(delay, Attention.clearAfterMaxSeconds))
+        Task { @MainActor in
+            try? await Task.sleep(until: deadline, clock: .continuous)
+            // Fires with or without a window open (#604).
+            GrafttyApp.persistingChanges(to: appState) {
+                appState.wrappedValue.mutateWorktrees(atPath: worktreePath) { worktree in
+                    if let pane {
+                        worktree.clearPaneAttentionIfTimestamp(stamp, for: pane)
+                    } else {
+                        worktree.clearAttentionIfTimestamp(stamp)
+                    }
                 }
             }
         }

@@ -394,13 +394,15 @@ extension GrafttyApp {
 
             case let .moveProject(id, relativeTo, after):
                 return await MainActor.run {
-                    var navigation = appStateBinding.wrappedValue.sidebarNavigation ?? .init()
-                    navigation.order.discover(SidebarHostController.shared.localProjects(appStateBinding.wrappedValue.repos, owner: localWorktreeOrigin).map(\.id))
-                    guard navigation.order.move(id, relativeTo: relativeTo, after: after) else {
-                        return .error(code: "invalid-move", message: "Project order changed; refresh and try again.", forceAllowed: false, shortStatus: nil)
+                    GrafttyApp.persistingChanges(to: appStateBinding) {
+                        var navigation = appStateBinding.wrappedValue.sidebarNavigation ?? .init()
+                        navigation.order.discover(SidebarHostController.shared.localProjects(appStateBinding.wrappedValue.repos, owner: localWorktreeOrigin).map(\.id))
+                        guard navigation.order.move(id, relativeTo: relativeTo, after: after) else {
+                            return .error(code: "invalid-move", message: "Project order changed; refresh and try again.", forceAllowed: false, shortStatus: nil)
+                        }
+                        appStateBinding.wrappedValue.sidebarNavigation = navigation
+                        return .ok
                     }
-                    appStateBinding.wrappedValue.sidebarNavigation = navigation
-                    return .ok
                 }
             case let .setWorktreeOrder(repositoryID, mode):
                 return await MainActor.run {
@@ -408,10 +410,12 @@ extension GrafttyApp {
                 }
             case let .moveWorktree(repositoryID, worktreeID, relativeTo, after):
                 return await MainActor.run {
-                    guard SidebarHostNavigation.moveWorktree(in: &appStateBinding.wrappedValue, repositoryID: repositoryID, worktreeID: worktreeID, relativeTo: relativeTo, after: after) else {
-                        return .error(code: "invalid-move", message: "Move worktrees within their folder, after the main checkout, while the repository uses manual order.", forceAllowed: false, shortStatus: nil)
+                    GrafttyApp.persistingChanges(to: appStateBinding) {
+                        guard SidebarHostNavigation.moveWorktree(in: &appStateBinding.wrappedValue, repositoryID: repositoryID, worktreeID: worktreeID, relativeTo: relativeTo, after: after) else {
+                            return .error(code: "invalid-move", message: "Move worktrees within their folder, after the main checkout, while the repository uses manual order.", forceAllowed: false, shortStatus: nil)
+                        }
+                        return .ok
                     }
-                    return .ok
                 }
             case let .projectIcon(repositoryID, revision):
                 return await MainActor.run {
@@ -422,10 +426,12 @@ extension GrafttyApp {
                 }
             case let .acknowledgeOccurrence(worktreeID, paneID, occurrence):
                 return await MainActor.run {
-                    guard SidebarHostNavigation.acknowledge(in: &appStateBinding.wrappedValue, worktreeID: worktreeID, paneID: paneID, occurrence: occurrence) else {
-                        return .error(code: "occurrence-changed", message: "This request has changed or already cleared.", forceAllowed: false, shortStatus: nil)
+                    GrafttyApp.persistingChanges(to: appStateBinding) {
+                        guard SidebarHostNavigation.acknowledge(in: &appStateBinding.wrappedValue, worktreeID: worktreeID, paneID: paneID, occurrence: occurrence) else {
+                            return .error(code: "occurrence-changed", message: "This request has changed or already cleared.", forceAllowed: false, shortStatus: nil)
+                        }
+                        return .ok
                     }
-                    return .ok
                 }
             case .hostPresentation:
                 let presentation = await MainActor.run {
@@ -664,39 +670,41 @@ extension GrafttyApp {
 
             case let .acknowledge(worktreeID, paneID):
                 return await MainActor.run {
-                    for repoIndex in appStateBinding.wrappedValue.repos.indices {
-                        for worktreeIndex in appStateBinding.wrappedValue
-                            .repos[repoIndex].worktrees.indices
-                        where appStateBinding.wrappedValue.repos[repoIndex]
-                            .worktrees[worktreeIndex].path == worktreeID {
-                            if let paneID {
-                                guard let slot = appStateBinding.wrappedValue
-                                    .repos[repoIndex].worktrees[worktreeIndex]
-                                    .paneSlot(forSessionName: paneID) else {
-                                    return .error(
-                                        code: "not-found",
-                                        message: "unknown pane in worktree",
-                                        forceAllowed: false,
-                                        shortStatus: nil
-                                    )
+                    GrafttyApp.persistingChanges(to: appStateBinding) {
+                        for repoIndex in appStateBinding.wrappedValue.repos.indices {
+                            for worktreeIndex in appStateBinding.wrappedValue
+                                .repos[repoIndex].worktrees.indices
+                            where appStateBinding.wrappedValue.repos[repoIndex]
+                                .worktrees[worktreeIndex].path == worktreeID {
+                                if let paneID {
+                                    guard let slot = appStateBinding.wrappedValue
+                                        .repos[repoIndex].worktrees[worktreeIndex]
+                                        .paneSlot(forSessionName: paneID) else {
+                                        return .error(
+                                            code: "not-found",
+                                            message: "unknown pane in worktree",
+                                            forceAllowed: false,
+                                            shortStatus: nil
+                                        )
+                                    }
+                                    appStateBinding.wrappedValue.repos[repoIndex]
+                                        .worktrees[worktreeIndex]
+                                        .acknowledgePaneAttention(slot)
+                                } else {
+                                    appStateBinding.wrappedValue.repos[repoIndex]
+                                        .worktrees[worktreeIndex]
+                                        .acknowledgeAttention()
                                 }
-                                appStateBinding.wrappedValue.repos[repoIndex]
-                                    .worktrees[worktreeIndex]
-                                    .acknowledgePaneAttention(slot)
-                            } else {
-                                appStateBinding.wrappedValue.repos[repoIndex]
-                                    .worktrees[worktreeIndex]
-                                    .acknowledgeAttention()
+                                return .ok
                             }
-                            return .ok
                         }
+                        return .error(
+                            code: "not-found",
+                            message: "unknown worktree",
+                            forceAllowed: false,
+                            shortStatus: nil
+                        )
                     }
-                    return .error(
-                        code: "not-found",
-                        message: "unknown worktree",
-                        forceAllowed: false,
-                        shortStatus: nil
-                    )
                 }
             }
         }

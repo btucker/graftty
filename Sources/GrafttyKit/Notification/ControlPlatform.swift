@@ -9,8 +9,9 @@ public protocol ControlPlatform: ControlTeamPlatform {
     var attentionRecaps: AttentionRecapCoordinator { get }
     var instructionsDirectory: URL { get }
 
-    /// Called after the core mutates `state`. The Mac persists through
-    /// its state observers; the headless host saves here.
+    /// Called after the core mutates `state`. The Mac schedules a coalesced
+    /// save here, since no window may be observing state; the headless host
+    /// saves immediately.
     func stateDidChange() throws
     func providerActivity(path: String, paneSessionName: String?, sessionID: String?,
                           activity: ProviderSleepActivity, runtime: TeamHookRuntime)

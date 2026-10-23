@@ -58,6 +58,19 @@ struct AttentionAutoClearTests {
         #expect(box.worktree.attention?.text == "newer")
     }
 
+    /// A legacy or hand-edited `state.json` can carry a `clearAfter` past
+    /// the STATE-2.9 cap; resuming it must not overflow `Duration` and trap.
+    @Test("an out-of-range resumed delay neither traps nor clears early")
+    func outOfRangeDelayIsClamped() async {
+        let stamp = Date()
+        let box = Self.box(attention: Attention(text: "done", timestamp: stamp, clearAfter: 1e30))
+
+        AttentionAutoClear.schedule(after: 1e30, appState: box.binding, worktreePath: Self.path, stamp: stamp)
+        await Self.drainMainQueue()
+
+        #expect(box.worktree.attention?.text == "done")
+    }
+
     @Test("clears only the targeted pane attention")
     func clearsOnlyTargetedPane() async {
         let stamp = Date()

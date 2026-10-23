@@ -272,7 +272,10 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let match = discovered.first(where: { $0.path == worktreePath }) else { return }
             guard let repoIdx = binding.wrappedValue.repos.firstIndex(where: { $0.path == repoPath }),
                   let wtIdx = binding.wrappedValue.repos[repoIdx].worktrees.firstIndex(where: { $0.path == worktreePath }) else { return }
-            binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
+            // FSEvents delegate: runs with no window open (#604).
+            GrafttyApp.persistingChanges(to: binding) {
+                binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
+            }
             store.refreshAutoTracking(repoPath: repoPath)
             if binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state.hasOnDiskWorktree {
                 store.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)

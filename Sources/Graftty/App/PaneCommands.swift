@@ -27,6 +27,8 @@ enum PaneCommands {
         terminalManager: TerminalManager,
         startSurfacesInBackground: Bool = false
     ) -> WorktreeStartResult {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices
             where appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path
@@ -102,6 +104,8 @@ enum PaneCommands {
         activateNewPane: Bool = true,
         preserveZoom: Bool = false
     ) -> PaneSlotID? {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let candidate = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
@@ -178,6 +182,8 @@ enum PaneCommands {
         clearAfter: TimeInterval,
         source: AttentionSource
     ) {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         // Pin a single Date so the stored attention AND the closure
         // share the same generation token (same shape as the
         // worktree-scoped `AttentionAutoClear` in ControlRequestCore). The closure
@@ -213,6 +219,8 @@ enum PaneCommands {
         terminalID: PaneSlotID,
         newPWD: String
     ) {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         // Find the currently-hosting worktree (by scanning splitTrees) so
         // we can compare against the target worktree and short-circuit if
         // nothing has changed.
@@ -380,6 +388,8 @@ enum PaneCommands {
         from terminalID: PaneSlotID,
         direction: NavigationDirection
     ) {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
@@ -416,6 +426,8 @@ enum PaneCommands {
         from terminalID: PaneSlotID,
         forward: Bool
     ) {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
@@ -440,6 +452,8 @@ enum PaneCommands {
     }
 
     static func toggleZoom(appState: Binding<AppState>, on terminalID: PaneSlotID) {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         appState.wrappedValue.mutateWorktree(containing: terminalID) { wt in
             wt.splitTree = wt.splitTree.togglingZoom(at: terminalID)
         }
@@ -450,6 +464,8 @@ enum PaneCommands {
         around terminalID: PaneSlotID,
         preserveZoom: Bool = false
     ) {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         appState.wrappedValue.mutateWorktree(containing: terminalID) { wt in
             let zoomed = wt.splitTree.zoomed
             wt.splitTree = wt.splitTree.equalizing()
@@ -468,6 +484,8 @@ enum PaneCommands {
         ancestorBounds: CGRect? = nil,
         preserveZoom: Bool = false
     ) -> Bool {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         // MVP: use the key window's content-area bounds as a proxy for the
         // ancestor split bounds. Accurate for single-split layouts; for nested
         // splits the delta will be slightly off. A follow-up can capture
@@ -516,6 +534,8 @@ enum PaneCommands {
         userInitiated: Bool = false,
         activateReplacement: Bool = true
     ) {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let candidate = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]

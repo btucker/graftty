@@ -58,6 +58,8 @@ enum DeleteWorktreeFlow {
         prStatusStore: PRStatusStore,
         teamEventDispatcher: TeamEventDispatcher
     ) async -> Swift.Result<Outcome, FlowError> {
+        let before = appState.wrappedValue
+        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         guard let (repoIdx, wtIdx) = appState.wrappedValue.indices(forWorktreePath: worktreePath) else {
             return .failure(.notFound)
         }
