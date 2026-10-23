@@ -397,13 +397,20 @@ struct LANRemoteAccessServerTests {
             return
         }
 
+        // A raw socket rather than URLSession: on Linux, cancelling a
+        // FoundationNetworking upload while the server closes its connection
+        // deadlocks inside `Task.cancel()`. The socket also lets the test see
+        // the server close the in-flight child channel.
         let body = try JSONEncoder.iso8601().encode(PairingAwaitOutcomeRequest(nonce: payload.nonce))
-        let requestTask = Task {
-            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v2/pairing/await-outcome")!)
-            request.httpMethod = "POST"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            _ = try? await URLSession.shared.upload(for: request, from: body)
-        }
+        let client = try Self.connectAndSendRawHTTPRequest("""
+        POST /v2/pairing/await-outcome HTTP/1.1\r
+        Host: 127.0.0.1:\(port)\r
+        Content-Type: application/json\r
+        Content-Length: \(body.count)\r
+        \r
+        \(String(decoding: body, as: UTF8.self))
+        """, port: port)
+        defer { close(client) }
 
         let waiterRegistered = await Self.waitUntil(timeout: 1.0) {
             await fixture.server.pendingWaiterCount == 1
@@ -412,17 +419,16 @@ struct LANRemoteAccessServerTests {
         let start = Date()
         server.stop()
         let elapsed = Date().timeIntervalSince(start)
-        requestTask.cancel()
         let waiterRemoved = await Self.waitUntil(timeout: 1.0) {
             await fixture.server.pendingWaiterCount == 0
         }
         if !waiterRemoved {
             await fixture.server.cancel()
         }
-        _ = await requestTask.result
 
         #expect(elapsed < 1.0)
         #expect(waiterRemoved)
+        #expect(Self.readRawHTTPResponse(from: client).peerClosed)
         #expect(server.listeningPort == nil)
         #expect(Self.canConnectToLocalhost(port: port) == false)
     }
@@ -595,11 +601,18 @@ struct LANRemoteAccessServerTests {
     }
 
     private static func sendRawHTTPRequest(_ request: String, port: Int) throws -> String {
+        let descriptor = try connectAndSendRawHTTPRequest(request, port: port)
+        defer { close(descriptor) }
+        return readRawHTTPResponse(from: descriptor).response
+    }
+
+    /// Connects to 127.0.0.1, sends `request`, and returns the open socket,
+    /// whose reads time out after 2 s. The caller closes it.
+    private static func connectAndSendRawHTTPRequest(_ request: String, port: Int) throws -> Int32 {
         let descriptor = socket(AF_INET, GrafttyPOSIX.streamSocket, 0)
         guard descriptor >= 0 else {
             throw POSIXError(.init(rawValue: errno) ?? .EIO)
         }
-        defer { close(descriptor) }
 
         var timeout = timeval(tv_sec: 2, tv_usec: 0)
         setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
@@ -616,7 +629,9 @@ struct LANRemoteAccessServerTests {
             }
         }
         guard connectResult == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            let error = POSIXError(.init(rawValue: errno) ?? .EIO)
+            close(descriptor)
+            throw error
         }
 
         let bytes = Array(request.utf8)
@@ -624,9 +639,15 @@ struct LANRemoteAccessServerTests {
             GrafttyPOSIX.send(descriptor, buffer.baseAddress, buffer.count, 0)
         }
         guard sent == bytes.count else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            let error = POSIXError(.init(rawValue: errno) ?? .EIO)
+            close(descriptor)
+            throw error
         }
+        return descriptor
+    }
 
+    /// Reads until the peer closes (`peerClosed`) or the read times out.
+    private static func readRawHTTPResponse(from descriptor: Int32) -> (response: String, peerClosed: Bool) {
         var response = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
@@ -634,10 +655,9 @@ struct LANRemoteAccessServerTests {
             if received > 0 {
                 response.append(buffer, count: received)
             } else {
-                break
+                return (String(data: response, encoding: .utf8) ?? "", received == 0)
             }
         }
-        return String(data: response, encoding: .utf8) ?? ""
     }
 
     private static func httpResponseCount(in response: String) -> Int {
