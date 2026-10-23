@@ -2042,7 +2042,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.30** When a paired host's worktree list mounts before the biometric gate has made authenticated connections available, the application shall keep the initial loading state pending and automatically start the load when the active, unlocked readiness state arrives. A successful list shall remain mounted across transient inactive/active cycles, while changing hosts shall automatically load the new host without requiring Refresh.
 
-**IOS-4.31** When authenticated worktree polling receives a snapshot equal to the list already rendered, the application shall not republish `onListChanged` or replace the list state. It shall publish a genuinely changed snapshot so pane metadata and topology still update promptly.
+**IOS-4.31** When an authenticated worktree push or refresh delivers rows equal to the list already rendered, the application shall not republish `onListChanged` or replace the list state. It shall publish a genuinely changed snapshot so pane metadata and topology still update promptly.
 
 **IOS-4.32** When a follower takes control without typing, the application shall lay out and confirm its physical viewport before sending the owner resize, including while rendering is reduced.
 
@@ -2081,6 +2081,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-4.50** While a mobile terminal is displayed, long-pressing Back shall offer the most recently opened distinct panes with host, project, worktree, and pane labels, retain visits across relaunches, and open the selected stable pane identity without changing ordinary Back taps or allowing stale targets or superseded navigation to redirect the user.
 
 **IOS-4.51** While a mobile view observes a paired host's worktrees, the application shall deliver the newest pushed panes-state frame without polling. When a subscription that delivered frames ends after staying open for at least a minimum lifetime, the application shall subscribe again immediately; when it ends sooner, the application shall wait a retry delay first without reporting the host unavailable. If subscribing fails or a subscription ends before delivering a frame, then the application shall report the host unavailable and subscribe again only after a retry delay, stopping once the view stops observing.
+
+**IOS-4.52** While a paired host's worktree list is displayed, when the host pushes a changed panes-state frame, the application shall render it and publish it through onListChanged without fetching the list again.
+
+**IOS-4.53** When the host whose worktree list is displayed becomes paired, the application shall begin applying the host's pushed panes-state frames without requiring Refresh.
+
+**IOS-4.54** If a pulled worktree list completes after a newer pushed panes-state frame was applied, then the application shall keep the pushed frame rather than replace it with the pulled rows.
 
 ### IOS-5.x — Multi-pane layout
 

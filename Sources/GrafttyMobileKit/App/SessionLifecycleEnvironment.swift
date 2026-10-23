@@ -218,24 +218,36 @@ public struct RemoteWorktreeProviders {
     public var connection: RemoteConnectionProvider?
     public var snapshot: RemoteWorktreeSnapshotProvider?
     public var sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)?
+    /// Pushed frames for the host, so the list never polls (IOS-4.52).
+    public var updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)?
 
     public init(
         includeRemoteWorktrees: Bool = false,
         connection: RemoteConnectionProvider? = nil,
         snapshot: RemoteWorktreeSnapshotProvider? = nil,
-        sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil
+        sidebar: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)? = nil,
+        updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)? = nil
     ) {
         self.includeRemoteWorktrees = includeRemoteWorktrees
         self.connection = connection
         self.snapshot = snapshot
         self.sidebar = sidebar
+        self.updates = updates
     }
 
     @MainActor
     init(coordinator: RemoteConnectionCoordinator?, host: Host) {
         guard let coordinator else { self.init(); return }
+        // `isPaired` reads the pin file, and this runs on every render.
+        let paired = coordinator.isPaired(host)
+        // Not a ternary: Swift 6.4 fails to type-check `cond ? { … } : nil`
+        // for a main-actor closure ("failed to produce diagnostic").
+        var updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)?
+        if paired {
+            updates = { coordinator.worktreeUpdates(for: host) }
+        }
         self.init(
-            includeRemoteWorktrees: coordinator.isPaired(host),
+            includeRemoteWorktrees: paired,
             connection: makeRemoteConnectionProvider(
                 coordinator: coordinator,
                 host: host,
@@ -245,7 +257,8 @@ public struct RemoteWorktreeProviders {
             sidebar: { rows in
                 guard coordinator.isPaired(host) else { return .snapshot(rows) }
                 return await coordinator.navigationSnapshot(for: host, matching: rows)
-            }
+            },
+            updates: updates
         )
     }
 }

@@ -28,7 +28,6 @@ public struct IPadRootLayout: View {
     @Environment(\.biometricGate) private var gate
     @Environment(\.remoteConnectionCoordinator) private var coordinator
     @State private var paneEnvironment: PaneEnvironment = .empty
-    @State private var worktreeListRefreshToken: Int = 0
     @State private var explicitSelectionGeneration: UInt64 = 0
     @State private var pendingMobileSplits: [PendingMobileSplit] = []
     @State private var pendingMobileMutationOrder: [UUID] = []
@@ -135,7 +134,6 @@ public struct IPadRootLayout: View {
                                 resolveLegacyMobileSplit(in: list)
                                 applyPendingMobileCreatedFocus(in: list)
                             },
-                            externalRefreshToken: worktreeListRefreshToken,
                             navigation: appState.sidebarNavigation,
                             navigationWindowWidth: appState.navigationWindowWidth
                         )
@@ -280,7 +278,7 @@ public struct IPadRootLayout: View {
             if !leaves.contains(where: { $0.sessionName == pane }) {
                 let fallback = leaves.first?.sessionName
                 // Guard the write so unchanged values don't bump
-                // `@Observable` invalidation on every polling snapshot.
+                // `@Observable` invalidation on every pushed snapshot.
                 if appState.focusedPaneId != fallback {
                     appState.focusedPaneId = fallback
                 }
@@ -632,14 +630,12 @@ public struct IPadRootLayout: View {
                     createdSessionName: sessionName,
                     worktrees: appState.latestWorktrees
                 )
-                worktreeListRefreshToken &+= 1
                 dispatchNextMobileMutation()
             case .ok:
                 // Released hosts cannot return the created session. Keep
                 // this split as the sole in-flight mutation until a panes
                 // snapshot identifies its new leaf.
                 pendingMobileSplits[index].legacySucceeded = true
-                worktreeListRefreshToken &+= 1
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(10))
                     guard mobileMutationInFlight == pending.id,
@@ -648,7 +644,7 @@ public struct IPadRootLayout: View {
                           }) else {
                         return
                     }
-                    // A host switch, failed polling connection, or a peer
+                    // A host switch, failed panes connection, or a peer
                     // that never publishes the mutation must not block all
                     // later pane controls forever. Only this worktree's
                     // batch is unsafe to rebase; commands for another
@@ -1043,7 +1039,7 @@ public struct IPadRootLayout: View {
                     )
                     // Match local focus immediately, including disabling
                     // controls when the final pane closed. The token stays
-                    // alive until polling proves the closed pane is absent.
+                    // alive until a pushed snapshot proves the closed pane is absent.
                     appState.focusedPaneId = projectedTarget
                     applyPendingMobileCreatedFocus(
                         in: appState.latestWorktrees
@@ -1103,7 +1099,6 @@ public struct IPadRootLayout: View {
                         doomedIDs.contains($0)
                     }
                 }
-                worktreeListRefreshToken &+= 1
             }
             dispatchNextMobileMutation()
         }

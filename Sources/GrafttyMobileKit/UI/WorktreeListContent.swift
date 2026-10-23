@@ -39,6 +39,10 @@ public struct WorktreeListContent: View {
     @State private var worktreeCreation = MobileWorktreeCreation()
     @State private var loadedHostID: UUID?
     @State private var presentedHostID: UUID?
+    /// Counts applied pushed frames. A pull whose count changed while it was
+    /// in flight is dropped in favour of the pushed rows (IOS-4.54); this can
+    /// also drop a pull that read a newer frame, which the stream then delivers.
+    @State private var appliedPushCount: UInt64 = 0
     @State private var remoteMacConnections: [RemoteMacConnectionSummary] = []
     @State private var reconnectingRemoteMacIDs:
         Set<RemoteMacConnectionSummary.ID> = []
@@ -60,6 +64,7 @@ public struct WorktreeListContent: View {
     // when RootView chose the iPad layout. Follow the navigation container.
     private let isSidebar: Bool
     private var remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)?
+    private var remoteUpdatesProvider: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)?
     private var navigationWindowWidth: Double
 
     private struct PendingDelete: Identifiable, Equatable {
@@ -116,7 +121,6 @@ public struct WorktreeListContent: View {
     public let onSelectPane: (WorktreePanes, PaneLayoutNode.Leaf) -> Void
     private let onSelectWorktreeDetail: ((WorktreePanes) -> Void)?
     public let onListChanged: ([WorktreePanes]) -> Void
-    public let externalRefreshToken: Int
 
     public init(
         host: Host,
@@ -129,7 +133,6 @@ public struct WorktreeListContent: View {
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void,
         onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in },
-        externalRefreshToken: Int = 0,
         navigation: SidebarNavigationState? = nil,
         navigationWindowWidth: Double = 1100,
         project: SidebarProject? = nil,
@@ -149,15 +152,20 @@ public struct WorktreeListContent: View {
         self.onSelectPane = onSelectPane
         self.onSelectWorktreeDetail = onSelectWorktreeDetail
         self.onListChanged = onListChanged
-        self.externalRefreshToken = externalRefreshToken
         self.navigation = navigation ?? SidebarNavigationState(prefix: "sidebar.mobile", collapsed: true)
         self.navigationWindowWidth = navigationWindowWidth
         self.remoteSidebarProvider = remote.sidebar
+        self.remoteUpdatesProvider = remote.updates
     }
 
     private struct PendingWorktreeRouteKey: Hashable {
         let item: SidebarActivityItem?
         let loaded: Bool
+    }
+
+    private var displayedRows: [WorktreePanes]? {
+        if case .loaded(let rows) = state { return rows }
+        return nil
     }
 
     private var isLoaded: Bool {
@@ -188,10 +196,6 @@ public struct WorktreeListContent: View {
         .task(id: PendingWorktreeRouteKey(item: MobilePaneAttention.pendingRoute(for: navigation), loaded: isLoaded)) {
             consumePendingWorktreeRoute()
         }
-        .task(id: externalRefreshToken) {
-            guard externalRefreshToken != 0 else { return }
-            await refresh()
-        }
         .onChange(of: selectedWorktreePath) { _, path in
             selectionIntentGeneration &+= 1
             if let path, case .loaded(let rows) = state, let worktree = rows.first(where: { $0.path == path }) {
@@ -217,12 +221,14 @@ public struct WorktreeListContent: View {
             MobilePaneAttention.consumePendingRoute(for: navigation)
             showsRemoteMacManagement = false
         }
-        .task(id: RemotePollingKey(
+        // Pairing a displayed host in place keeps its ID, so the push stream
+        // appearing must restart observation too (IOS-4.53).
+        .task(id: RemoteUpdatesKey(
             hostID: host.id,
-            enabled: includeRemoteWorktrees || !worktreeCreation.isEmpty,
-            isReady: isReadyToLoad
+            isReady: isReadyToLoad,
+            hasUpdates: remoteUpdatesProvider != nil
         )) {
-            await pollRemoteWorktrees()
+            await observeRemoteWorktrees()
         }
         .task(id: RemoteMacConnectionPollingKey(
             hostID: host.id,
@@ -411,31 +417,30 @@ public struct WorktreeListContent: View {
         await load()
     }
 
-    private func pollRemoteWorktrees() async {
-        guard includeRemoteWorktrees || !worktreeCreation.isEmpty, isReadyToLoad else { return }
+    /// Applies each frame the paired host pushes (IOS-4.52). Sidebar-only
+    /// changes (order, availability and icons) arrive as frames too, with
+    /// the worktree array unchanged.
+    private func observeRemoteWorktrees() async {
+        guard isReadyToLoad, let updates = remoteUpdatesProvider?() else { return }
+        // The sibling load task also sets this; a first frame must not find
+        // it unset if this task happens to run first.
+        presentedHostID = host.id
         let requestHostID = host.id
-        while !Task.isCancelled {
-            do {
-                try await Task.sleep(for: .seconds(1))
-                let list = try await fetchWorktrees(
-                    host: host,
-                    remoteSnapshotProvider: remoteSnapshotProvider,
-                    includeRemoteWorktrees: includeRemoteWorktrees
-                )
-                guard Self.shouldApplyLoadResult(
-                    requestHostID: requestHostID,
-                    presentedHostID: presentedHostID,
-                    isCancelled: Task.isCancelled
-                ) else { return }
+        for await update in updates {
+            guard Self.shouldApplyLoadResult(
+                requestHostID: requestHostID,
+                presentedHostID: presentedHostID,
+                isCancelled: Task.isCancelled
+            ) else { return }
+            switch update {
+            case .unavailable:
+                // Keep the last usable list. The primary load/refresh paths
+                // still surface transport errors to the user.
+                continue
+            case let .frame(.snapshot(list, metadata)):
+                appliedPushCount &+= 1
                 applyLoadedList(list)
-                // Sidebar-only changes (order, availability, and icons) may
-                // arrive while the worktree array itself is unchanged.
-                await updateNavigationMetadata(list, requestHostID: requestHostID)
-            } catch is CancellationError {
-                return
-            } catch {
-                // Keep the last usable list. The primary load/refresh
-                // paths still surface transport errors to the user.
+                await applyNavigationMetadata(list, metadata: metadata, requestHostID: requestHostID)
             }
         }
     }
@@ -720,8 +725,12 @@ public struct WorktreeListContent: View {
                     guard presentedHostID == requestHostID, generation == selectionIntentGeneration else { throw CancellationError() }
                 }
                 func fetch() async throws -> [WorktreePanes] {
+                    let pushes = appliedPushCount
                     let list = try await fetchWorktrees(host: host, remoteSnapshotProvider: remoteSnapshotProvider, includeRemoteWorktrees: includeRemoteWorktrees)
                     try checkCurrent()
+                    // A newer push supersedes these rows for display and for
+                    // deciding what to open.
+                    guard appliedPushCount == pushes else { return displayedRows ?? list }
                     applyLoadedList(list)
                     return list
                 }
@@ -780,13 +789,20 @@ public struct WorktreeListContent: View {
         return snapshotRows == rows
     }
 
-    private func updateNavigationMetadata(_ list: [WorktreePanes], requestHostID: UUID) async {
+    /// `pushes` is the applied-push count the pulled `list` was accepted
+    /// under; a push that lands while the metadata is fetched supersedes it.
+    private func updateNavigationMetadata(_ list: [WorktreePanes], requestHostID: UUID, pushes: UInt64) async {
         let snapshot: PanesStateMessage?
         if let remoteSidebarProvider { snapshot = await remoteSidebarProvider(list) }
         else { snapshot = .snapshot(list) }
-        guard presentedHostID == requestHostID,
+        guard appliedPushCount == pushes,
               Self.shouldApplyNavigationSnapshot(snapshot, matching: list),
               case let .snapshot(_, metadata)? = snapshot else { return }
+        await applyNavigationMetadata(list, metadata: metadata, requestHostID: requestHostID)
+    }
+
+    private func applyNavigationMetadata(_ list: [WorktreePanes], metadata: SidebarSnapshot?, requestHostID: UUID) async {
+        guard presentedHostID == requestHostID else { return }
         if sidebarSnapshot != metadata { sidebarSnapshot = metadata }
         let projects = metadata?.projects ?? SidebarProjection.projects(list)
         navigation.reconcile(worktrees: list, projects: projects)
@@ -949,6 +965,7 @@ public struct WorktreeListContent: View {
             onProgress = nil
         }
 
+        let pushes = appliedPushCount
         do {
             let list = try await fetchWorktrees(
                 host: host,
@@ -961,9 +978,9 @@ public struct WorktreeListContent: View {
                 requestHostID: requestHostID,
                 presentedHostID: presentedHostID,
                 isCancelled: Task.isCancelled
-            ) else { return }
+            ), appliedPushCount == pushes else { return }
             applyLoadedList(list)
-            await updateNavigationMetadata(list, requestHostID: requestHostID)
+            await updateNavigationMetadata(list, requestHostID: requestHostID, pushes: pushes)
         } catch is CancellationError {
             return
         } catch WorktreePanesFetcher.FetchError.forbidden {
@@ -1110,10 +1127,11 @@ public struct WorktreeListContent: View {
     }
 
     /// @spec IOS-4.31
-    /// The authenticated panes subscription is sampled once per second, but
-    /// most samples are identical. Suppressing those no-op writes keeps the
-    /// live multi-pane hierarchy and its `SessionClient`s out of SwiftUI's
-    /// update path until pane metadata or topology actually changes.
+    /// A refresh or reconnect re-reads rows the host already pushed, and a
+    /// sidebar-only frame repeats the worktree array. Suppressing those no-op
+    /// writes keeps the live multi-pane hierarchy and its `SessionClient`s
+    /// out of SwiftUI's update path until pane metadata or topology actually
+    /// changes.
     private func applyLoadedList(_ list: [WorktreePanes]) {
         if let reportWorktreeID, !list.contains(where: { $0.path == reportWorktreeID }) { closeReport() }
         let next = LoadState.loaded(list)
@@ -1289,12 +1307,14 @@ public struct WorktreeListContent: View {
                 guard !Task.isCancelled, selectionIsCurrent() else { throw CancellationError() }
             }
             func fetch() async throws -> [WorktreePanes] {
+                let pushes = appliedPushCount
                 let list = try await fetchWorktrees(
                     host: selectionHost,
                     remoteSnapshotProvider: remoteSnapshotProvider,
                     includeRemoteWorktrees: includeRemoteWorktrees
                 )
                 try checkCurrent()
+                guard appliedPushCount == pushes else { return displayedRows ?? list }
                 state = .loaded(list)
                 onListChanged(list)
                 return list
@@ -1373,8 +1393,8 @@ public struct WorktreeListContent: View {
                 }
                 guard presentedHostID == requestHost.id else { return }
                 worktreeCreation.complete(id, worktreePath: response.worktreePath)
-                // Polling may already have received the ready layout while
-                // the management response was still in flight.
+                // A pushed frame may already have delivered the ready layout
+                // while the management response was still in flight.
                 if case .loaded(let list) = state { applyLoadedList(list) }
                 await refresh()
             } catch {
@@ -1518,12 +1538,6 @@ public struct WorktreeListContent: View {
 
 }
 
-private struct RemotePollingKey: Hashable {
-    let hostID: UUID
-    let enabled: Bool
-    let isReady: Bool
-}
-
 private struct RemoteMacConnectionPollingKey: Hashable {
     let hostID: UUID
     let enabled: Bool
@@ -1533,5 +1547,11 @@ private struct RemoteMacConnectionPollingKey: Hashable {
 private struct WorktreeListLoadKey: Hashable {
     let hostID: UUID
     let isReady: Bool
+}
+
+private struct RemoteUpdatesKey: Hashable {
+    let hostID: UUID
+    let isReady: Bool
+    let hasUpdates: Bool
 }
 #endif
