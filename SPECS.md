@@ -3012,6 +3012,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.26** When a mobile dial is invalidated before it becomes usable, the application shall discard its connection without saving refreshed connection metadata.
 
+**REMOTE-2.27** If a mobile connection becomes terminal or loses registration during post-connect verification, then the client shall discard it without saving connection metadata.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
