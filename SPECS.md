@@ -2072,7 +2072,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.50** While a mobile terminal is displayed, long-pressing Back shall offer the most recently opened distinct panes with host, project, worktree, and pane labels, retain visits across relaunches, and open the selected stable pane identity without changing ordinary Back taps or allowing stale targets or superseded navigation to redirect the user.
 
-**IOS-4.51** While a mobile view observes a paired host's worktrees, the application shall deliver the newest pushed panes-state frame without polling and shall subscribe again immediately when a subscription that delivered frames ends, unless the previous replacement also ended after a single frame, in which case it shall wait a retry delay first. If subscribing fails or a subscription ends before delivering a frame, then the application shall report the host unavailable and subscribe again only after a retry delay, stopping once the view stops observing.
+**IOS-4.51** While a mobile view observes a paired host's worktrees, the application shall deliver the newest pushed panes-state frame without polling. When a subscription that delivered frames ends after staying open for at least a minimum lifetime, the application shall subscribe again immediately; when it ends sooner, the application shall wait a retry delay first without reporting the host unavailable. If subscribing fails or a subscription ends before delivering a frame, then the application shall report the host unavailable and subscribe again only after a retry delay, stopping once the view stops observing.
 
 ### IOS-5.x — Multi-pane layout
 

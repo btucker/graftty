@@ -4,15 +4,15 @@ import Testing
 @testable import GrafttyMobileKit
 
 @MainActor
-@Suite("@spec IOS-4.51: While a mobile view observes a paired host's worktrees, the application shall deliver the newest pushed panes-state frame without polling and shall subscribe again immediately when a subscription that delivered frames ends, unless the previous replacement also ended after a single frame, in which case it shall wait a retry delay first. If subscribing fails or a subscription ends before delivering a frame, then the application shall report the host unavailable and subscribe again only after a retry delay, stopping once the view stops observing.", .timeLimit(.minutes(1)))
+@Suite("@spec IOS-4.51: While a mobile view observes a paired host's worktrees, the application shall deliver the newest pushed panes-state frame without polling. When a subscription that delivered frames ends after staying open for at least a minimum lifetime, the application shall subscribe again immediately; when it ends sooner, the application shall wait a retry delay first without reporting the host unavailable. If subscribing fails or a subscription ends before delivering a frame, then the application shall report the host unavailable and subscribe again only after a retry delay, stopping once the view stops observing.", .timeLimit(.minutes(1)))
 struct RemoteWorktreeUpdatesTests {
-    @Test func forwardsFramesAndResubscribesAfterTheChannelEnds() async throws {
+    @Test func replacesALongLivedChannelImmediately() async throws {
         let first = LatestValueBroadcast<PanesStateMessage>()
         let second = LatestValueBroadcast<PanesStateMessage>()
         let host = FakeSubscriptions([.success(first), .success(second)])
         let retry = ManualRetry()
-        var updates = RemoteWorktreeUpdates.stream(subscribe: host.subscribe, retryDelay: retry.wait)
-            .makeAsyncIterator()
+        let clock = TestClock()
+        var updates = observe(host, retry, clock).makeAsyncIterator()
 
         first.publish(.snapshot(rows("a")))
         try #require(await updates.next() == .frame(.snapshot(rows("a"))))
@@ -21,6 +21,7 @@ struct RemoteWorktreeUpdatesTests {
 
         // A replaced or reopened channel is not an outage: the next store's
         // frame follows with no unavailable gap and no retry delay.
+        clock.advance(by: .seconds(5))
         second.publish(.snapshot(rows("c")))
         first.finish()
         try #require(await updates.next() == .frame(.snapshot(rows("c"))))
@@ -28,33 +29,39 @@ struct RemoteWorktreeUpdatesTests {
         #expect(retry.waitCount == 0)
     }
 
-    @Test func repeatedFrameThenCloseChannelsWaitBetweenSubscriptions() async throws {
+    @Test func shortLivedChannelsWaitBetweenSubscriptionsWithoutBlankingTheHost() async throws {
         let channels = (0..<4).map { _ in LatestValueBroadcast<PanesStateMessage>() }
         for (index, channel) in channels.enumerated() { channel.publish(.snapshot(rows("\(index)"))) }
         let host = FakeSubscriptions(channels.map { .success($0) })
         let retry = ManualRetry()
-        var updates = RemoteWorktreeUpdates.stream(subscribe: host.subscribe, retryDelay: retry.wait)
-            .makeAsyncIterator()
+        let clock = TestClock()
+        // Unbounded, so an unavailable event cannot hide behind a later frame.
+        var updates = observe(host, retry, clock).makeAsyncIterator()
 
+        // A single frame, then a quick close: wait before reopening.
         try #require(await updates.next() == .frame(.snapshot(rows("0"))))
         channels[0].finish()
-        // One replacement is immediate.
+        try #require(await retry.waitUntilPending())
+        #expect(host.calls == 1)
+        retry.release()
         try #require(await updates.next() == .frame(.snapshot(rows("1"))))
+
+        // Two frames do not make a quick close healthy, and a completed delay
+        // earns no immediate reopen.
+        clock.advance(by: .seconds(1))
+        channels[1].publish(.snapshot(rows("1b")))
+        try #require(await updates.next() == .frame(.snapshot(rows("1b"))))
         channels[1].finish()
-        // A second consecutive one-frame channel waits, without blanking the
-        // host as unavailable: it is still delivering frames.
         try #require(await retry.waitUntilPending())
         #expect(host.calls == 2)
         retry.release()
         try #require(await updates.next() == .frame(.snapshot(rows("2"))))
 
-        // A channel that delivers a second frame has proved itself live and
-        // earns the next replacement immediately again.
-        channels[2].publish(.snapshot(rows("2b")))
-        try #require(await updates.next() == .frame(.snapshot(rows("2b"))))
+        // Staying open for the minimum lifetime earns an immediate reopen.
+        clock.advance(by: .seconds(5))
         channels[2].finish()
         try #require(await updates.next() == .frame(.snapshot(rows("3"))))
-        #expect(retry.waitCount == 1)
+        #expect(retry.waitCount == 2)
     }
 
     @Test func reportsASubscriptionThatEndsBeforeAnyFrameAndRetries() async throws {
@@ -111,6 +118,23 @@ struct RemoteWorktreeUpdatesTests {
 }
 
 private struct FakeError: Error {}
+
+@MainActor
+private func observe(_ host: FakeSubscriptions, _ retry: ManualRetry, _ clock: TestClock)
+    -> AsyncStream<RemoteWorktreeUpdate> {
+    RemoteWorktreeUpdates.stream(
+        subscribe: host.subscribe, retryDelay: retry.wait,
+        minimumChannelLifetime: .seconds(5), now: clock.now, bufferingPolicy: .unbounded
+    )
+}
+
+@MainActor
+private final class TestClock {
+    private let start = ContinuousClock.now
+    private var elapsed: Duration = .zero
+    func now() -> ContinuousClock.Instant { start.advanced(by: elapsed) }
+    func advance(by duration: Duration) { elapsed += duration }
+}
 
 private func rows(_ name: String) -> [WorktreePanes] {
     [WorktreePanes(path: "/repo/\(name)", displayName: name, repoDisplayName: "repo", displayBranch: name,
