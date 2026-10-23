@@ -491,7 +491,7 @@ extension SocketRequestRouter {
                 )
                 // A background CLI request may have no window observing state.
                 // Save the launch expectation before its first hook can arrive.
-                try appState.wrappedValue.save(to: AppState.defaultDirectory)
+                try GrafttyApp.persistAppStateSynchronously(appState.wrappedValue)
             } catch {
                 appState.wrappedValue.removeWorktree(atPath: worktreePath)
                 launch.discardPromptFile()
@@ -684,7 +684,7 @@ extension SocketRequestRouter {
             appState.wrappedValue.repos[index.repo].worktrees[index.worktree]
                 .expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(agentPrompt), runtime: agentRuntime)
             // As in `createWorktree`: no window may be observing state.
-            try? appState.wrappedValue.save(to: AppState.defaultDirectory)
+            try? GrafttyApp.persistAppStateSynchronously(appState.wrappedValue)
         }
         return .ok
     }

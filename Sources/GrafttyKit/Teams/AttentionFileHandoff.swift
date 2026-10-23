@@ -211,11 +211,51 @@ public struct AttentionFileHandoff: Sendable {
         try consumeFiles(includeProgress: true, acceptingWorktree: acceptingWorktree, handle)
     }
 
+    /// Like `consumeActivities`, but leaves each handled event's file in
+    /// place and returns it, so a caller that persists asynchronously can
+    /// `remove(_:)` the files only once the result is on disk (REMOTE-23.10).
+    public func takeActivities(
+        acceptingWorktree: (String) -> Bool = { _ in true },
+        _ handle: (AttentionFileActivityEvent) throws -> Void
+    ) throws -> [URL] {
+        try processFiles(
+            includeProgress: true, removeHandled: false,
+            acceptingWorktree: acceptingWorktree, handle
+        )
+    }
+
+    /// Deletes event files returned by `takeActivities` once their result
+    /// is persisted. Attempts every file, then throws the first failure, so
+    /// an undeletable event is reported rather than silently replayed on
+    /// every scan.
+    public func remove(_ files: [URL]) throws {
+        var firstFailure: (any Error)?
+        for file in files {
+            do { try FileManager.default.removeItem(at: file) } catch { firstFailure = firstFailure ?? error }
+        }
+        if let firstFailure { throw firstFailure }
+    }
+
     private func consumeFiles(
         includeProgress: Bool,
         acceptingWorktree: (String) -> Bool = { _ in true },
         _ handle: (AttentionFileActivityEvent) throws -> Void
     ) throws -> Int {
+        try processFiles(
+            includeProgress: includeProgress, removeHandled: true,
+            acceptingWorktree: acceptingWorktree, handle
+        ).count
+    }
+
+    /// Returns the files of the events `handle` accepted. Invalid, oversized
+    /// and undecodable files are always deleted; handled ones only when
+    /// `removeHandled`.
+    private func processFiles(
+        includeProgress: Bool,
+        removeHandled: Bool,
+        acceptingWorktree: (String) -> Bool,
+        _ handle: (AttentionFileActivityEvent) throws -> Void
+    ) throws -> [URL] {
         try ensureDirectory()
         let files = try FileManager.default.contentsOfDirectory(
             at: rootDirectory,
@@ -254,7 +294,7 @@ public struct AttentionFileHandoff: Sendable {
             events.append((file, event))
         }
         events.sort { $0.1.occurredAt < $1.1.occurredAt }
-        var count = 0
+        var handled: [URL] = []
         for (file, event) in events.prefix(100) {
             let isValid: Bool
             switch event {
@@ -266,10 +306,10 @@ public struct AttentionFileHandoff: Sendable {
                 continue
             }
             try handle(event)
-            try FileManager.default.removeItem(at: file)
-            count += 1
+            if removeHandled { try FileManager.default.removeItem(at: file) }
+            handled.append(file)
         }
-        return count
+        return handled
     }
 
     private func reportURL(worktree: String, agentID: String) -> URL {
