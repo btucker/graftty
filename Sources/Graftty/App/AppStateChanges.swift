@@ -89,15 +89,20 @@ final class AppStateChanges {
                 for await _ in ticks { wake.yield(nil) }
             }
             let clock = ContinuousClock()
-            var refreshed: UInt64?
-            var lastRebuild = clock.now
-            for await woken in wakes {
-                if woken != nil, refreshed != nil, revisions.latest == refreshed { continue }
-                if refreshed != nil { await settle(clock.now - lastRebuild) }
-                guard !Task.isCancelled else { break }
-                refreshed = revisions.latest
-                lastRebuild = clock.now
+            // Read on the main actor as the rebuild starts, not before the hop:
+            // a congested main actor could otherwise run a rebuild that already
+            // covers a newer revision, or start it long after the recorded time.
+            let rebuild: @MainActor () async -> (revision: UInt64?, start: ContinuousClock.Instant) = { [revisions] in
+                let started = (revisions.latest, clock.now)
                 await refresh()
+                return started
+            }
+            var last: (revision: UInt64?, start: ContinuousClock.Instant)?
+            for await woken in wakes {
+                if woken != nil, let last, revisions.latest == last.revision { continue }
+                if let last { await settle(clock.now - last.start) }
+                guard !Task.isCancelled else { break }
+                last = await rebuild()
             }
             group.cancelAll()
         }
