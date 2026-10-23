@@ -111,10 +111,11 @@ public extension HeadlessHostRuntime {
                 return .paneList(worktree.splitTree.allLeaves.enumerated().map { offset, slot in
                     PaneInfo(id: offset + 1, title: worktree.paneTitleMetadata[slot]?.title, focused: worktree.focusedPaneSlotID == slot)
                 })
-            case .addPane(let path, let direction, let command, let agentRuntime, let agentPrompt):
+            case .addPane(let request):
                 // The CLI probes `.paneAgentCapability` first, which this
                 // host does not advertise; refuse rather than run a plain split.
-                guard agentRuntime == nil, agentPrompt == nil else { throw HostRuntimeError.invalid("pane add --agent is not supported on this host") }
+                guard request.agentRuntime == nil, request.agentPrompt == nil else { throw HostRuntimeError.invalid("pane add --agent is not supported on this host") }
+                let (path, direction, command) = (request.path, request.direction, request.command)
                 let worktree = try requireWorktree(path)
                 if let slot = worktree.focusedPaneSlotID ?? worktree.splitTree.allLeaves.first, let session = worktree.paneSessions[slot] {
                     _ = try await splitPane(target: launcher.sessionName(for: session), direction: PaneControlRequest.SplitDirection(rawValue: direction.rawValue) ?? .right, command: command)
@@ -127,7 +128,10 @@ public extension HeadlessHostRuntime {
                 return .paneShow(try await terminals.show(paneSession(path, index: index), lines: lines))
             case .agentPromptStagingCapability, .worktreeBaseCapability, .worktreeCreateIdempotencyCapability,
                  .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability: return .ok
-            case .createWorktree(let caller, let name, let branch, let existing, let base, let command, let runtime, let prompt, let suppliedID):
+            case .createWorktree(let request):
+                let (caller, name, branch, existing, base, command, runtime, prompt, suppliedID) = (
+                    request.callerWorktree, request.worktreeName, request.branchName, request.existing, request.base,
+                    request.command, request.agentRuntime, request.agentPrompt, request.operationID)
                 guard let repo = state.repo(forWorktreePath: caller) else { throw HostRuntimeError.notFound("caller is not registered") }
                 let id = suppliedID ?? UUID().uuidString
                 if let operation = creations[id] { return .worktreeCreate(operation) }

@@ -865,13 +865,14 @@ struct GrafttyApp: App {
                         operation, from: deviceID, repos: binding.wrappedValue.repos,
                         status: { services.cliWorktreeCreations.status(operationID: $0) },
                         create: { message in
-                            guard case let .createWorktree(caller, name, branch, existing, base, command, runtime, prompt, id) = message else {
+                            guard case .createWorktree(let request) = message else {
                                 return .error("Expected local worktree creation")
                             }
                             return await SocketRequestRouter.beginCLIWorktreeCreation(
-                                callerPath: caller, worktreeName: name, branchName: branch,
-                                existing: existing, base: base, command: command,
-                                agentRuntime: runtime, agentPrompt: prompt, operationID: id,
+                                callerPath: request.callerWorktree, worktreeName: request.worktreeName,
+                                branchName: request.branchName, existing: request.existing, base: request.base,
+                                command: request.command, agentRuntime: request.agentRuntime,
+                                agentPrompt: request.agentPrompt, operationID: request.operationID,
                                 creationOrigin: remoteOrigin, appState: binding, terminalManager: tm,
                                 teamInbox: teamInbox,
                                 teamEventDispatcher: teamEventDispatcher,

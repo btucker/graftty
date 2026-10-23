@@ -330,26 +330,16 @@ struct CLIWorktreeCreationTests {
             operationID: "create-review"
         )
 
-        guard case let .createWorktree(
-            callerWorktree,
-            worktreeName,
-            branchName,
-            existing,
-            base,
-            _,
-            _,
-            _,
-            operationID
-        ) = request else {
+        guard case .createWorktree(let creation) = request else {
             Issue.record("expected createWorktree request")
             return
         }
-        #expect(callerWorktree == "/repo/.worktrees/caller")
-        #expect(worktreeName == "review")
-        #expect(branchName == "review-branch")
-        #expect(existing == false)
-        #expect(base == "HEAD~2")
-        #expect(operationID == "create-review")
+        #expect(creation.callerWorktree == "/repo/.worktrees/caller")
+        #expect(creation.worktreeName == "review")
+        #expect(creation.branchName == "review-branch")
+        #expect(creation.existing == false)
+        #expect(creation.base == "HEAD~2")
+        #expect(creation.operationID == "create-review")
     }
 
     @Test("Capability probes retry transient timeout and saturation errors")
