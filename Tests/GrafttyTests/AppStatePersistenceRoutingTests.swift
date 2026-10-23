@@ -666,14 +666,12 @@ struct WindowlessWorktreeLifecycleSaveTests {
             stats.clear(worktreePath: path)
         }
 
+        let service = WorktreeManagement(appState: box.binding, terminalManager: manager, teamInbox: TeamInbox(rootDirectory: root.appendingPathComponent("inbox")),
+            teamEventDispatcher: testDispatcher(root), worktreeMonitor: monitor, statsStore: stats, prStatusStore: PRStatusStore(),
+            worktreeCreations: CLIWorktreeCreationStore(), worktreeRemovals: CLIWorktreeRemovalStore())
         let result = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
-            await AddWorktreeFlow.add(
-                repoPath: repo, worktreeName: "feature",
-                branch: .useExisting(name: "feature", source: .local),
-                appState: box.binding, worktreeMonitor: monitor, statsStore: stats,
-                terminalManager: manager, teamEventDispatcher: testDispatcher(root),
-                entryPoint: .pairedClient
-            )
+            await service.create(repoPath: repo, worktreeName: "feature",
+                branch: .useExisting(name: "feature", source: .local), entryPoint: .pairedClient)
         }
         guard case .success = result else {
             Issue.record("creation failed: \(result)")
@@ -698,12 +696,11 @@ struct WindowlessWorktreeLifecycleSaveTests {
         let probe = PersistenceProbe()
         let manager = TerminalManager(socketPath: root.appendingPathComponent("control.sock").path)
 
+        let service = WorktreeManagement(appState: box.binding, terminalManager: manager, teamInbox: TeamInbox(rootDirectory: root.appendingPathComponent("inbox")),
+            teamEventDispatcher: testDispatcher(root), worktreeMonitor: WorktreeMonitor(), statsStore: WorktreeStatsStore(),
+            prStatusStore: PRStatusStore(), worktreeCreations: CLIWorktreeCreationStore(), worktreeRemovals: CLIWorktreeRemovalStore())
         let result = await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
-            await DeleteWorktreeFlow.delete(
-                worktreePath: vanished.path, force: false, appState: box.binding,
-                terminalManager: manager, statsStore: WorktreeStatsStore(),
-                prStatusStore: PRStatusStore(), teamEventDispatcher: testDispatcher(root)
-            )
+            await service.delete(worktreePath: vanished.path, force: false)
         }
         guard case .success = result else {
             Issue.record("removal failed: \(result)")

@@ -83,7 +83,7 @@ public final class WebServer {
     /// session name to steer the client to; failure carries the
     /// user-visible message (typically `git worktree add`'s stderr) and
     /// a coarse reason so the handler can pick the right HTTP status.
-    public enum CreateWorktreeOutcome: Sendable {
+    public enum CreateWorktreeOutcome: Sendable, Equatable {
         case success(CreateWorktreeResponse)
         case invalid(String)       // 400 — bad input (empty names, unknown repo)
         case gitFailed(String)     // 409 — `git worktree add` rejected the request
@@ -146,7 +146,7 @@ public final class WebServer {
     /// holds the trimmed `git status --short` snapshot captured at the
     /// failure point — that's what the iOS Force Delete dialog shows
     /// the user, matching ForceDeleteAlert's macOS behavior.
-    public enum DeleteWorktreeOutcome: Sendable {
+    public enum DeleteWorktreeOutcome: Sendable, Equatable {
         case success(DeleteWorktreeResponse)
         case invalid(String)                       // 400 — empty/main checkout
         case notFound(String)                      // 404 — unknown worktree path
