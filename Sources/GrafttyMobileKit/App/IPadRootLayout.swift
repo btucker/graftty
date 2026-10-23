@@ -208,8 +208,9 @@ public struct IPadRootLayout: View {
         )) {
             await refreshHostPresentationState()
         }
-        // IPAD-1.24: the layout owns the shared worktree rows, so they stay
-        // current whether or not the sidebar list is on screen.
+        // The layout owns the shared worktree rows, so they stay current
+        // whether or not the sidebar list is on screen. IPAD-1.24 pins the
+        // collapsed-sidebar case; #648 tracks the shown one.
         .task(id: WorktreeFeedKey(
             hostID: selectedHost?.id,
             isReady: LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked),
