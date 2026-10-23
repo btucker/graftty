@@ -46,10 +46,10 @@ public final class HeadlessHostRuntime {
 
     public init(configuration: HostConfiguration, terminals: (any HostTerminalDriver)? = nil,
                 initialState: AppState? = nil, portScanner: PortScanner? = nil,
-                agentSetup: HostAgentSetup? = nil, devContainers: DevContainerPreparer = .init()) throws {
+                agentSetup: HostAgentSetup? = nil, devContainers: DevContainerPreparer? = nil) throws {
         placements = try HostPlacementLedger(fileURL: configuration.stateDirectory.appendingPathComponent("placements.json"))
         skillTransfers = RemoteSkillTransferReceiver(directory: configuration.stateDirectory.appendingPathComponent("agent-skills"))
-        self.devContainers = devContainers
+        self.devContainers = devContainers ?? DevContainerPreparer(profileDirectory: configuration.stateDirectory.appendingPathComponent("agent-profiles"))
         self.configuration = configuration
         self.portScanner = portScanner ?? PortScanner()
         self.agentSetup = agentSetup ?? HostAgentSetup(configuration: configuration)

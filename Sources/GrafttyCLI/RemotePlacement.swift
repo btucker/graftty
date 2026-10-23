@@ -5,7 +5,7 @@ import GrafttyProtocol
 
 struct RemotePlacement: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "placement", abstract: "Admit a workload and create a worktree on a paired Linux host",
-        discussion: "Requires an already registered repository. Creation returns a preparing operation while the host continues setup; query status with the same UUID. Use --dev-container on create to prepare an image or Dockerfile environment and open its shell. Use --skill-revision to install already-synced skills and --agent to start its native executable in an isolated container home. Plugin/settings replication and durable agent-session mounts remain pending. Agent login and AWS instance launch are not automatic. Reuse the same operation UUID when retrying, including after a lost reply. No credentials are copied.",
+        discussion: "Requires an already registered repository. Creation returns a preparing operation while the host continues setup; query status with the same UUID. Use --dev-container on create to prepare an image or Dockerfile environment and open its shell. Use --skill-revision to install already-synced skills and --agent to start its native executable in an isolated container home. Managed profiles persist on the host across container removal; session replication and plugin/settings parity remain pending. Agent login and AWS instance launch are not automatic. Reuse the same operation UUID when retrying, including after a lost reply. No credentials are copied.",
         subcommands: [RemotePlacementCreate.self, RemotePlacementStatus.self])
 }
 

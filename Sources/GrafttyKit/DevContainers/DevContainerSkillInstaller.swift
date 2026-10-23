@@ -5,7 +5,7 @@ import Foundation
 public enum DevContainerSkillInstaller {
     public static func install(_ snapshots: [RemoteSkillSnapshot], workspace: String,
                                execArguments: [String], operationID: UUID,
-                               executor: any CLIExecutor) async throws -> String {
+                               executor: any CLIExecutor, profileDirectory: String? = nil) async throws -> String {
         try RemoteSkillTransferReceiver.validate(try snapshots.map { .init(runtime: $0.runtime.rawValue, revision: try $0.revision) })
         func run(_ script: String) async throws -> String {
             try Task.checkCancellation()
@@ -18,7 +18,9 @@ public enum DevContainerSkillInstaller {
         let quote = WorktreeAgentLaunchCommand.shellLiteral
         // Native exec chooses the remote user and working directory. Neither
         // the Mac's home nor the host-side worktree path is valid here.
-        let home = try await run("printf '%s' \"$HOME\"")
+        let home: String
+        if let profileDirectory { home = profileDirectory }
+        else { home = try await run("printf '%s' \"$HOME\"") }
         guard home.hasPrefix("/"), home.utf8.count < 4096,
               !home.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
             throw RemoteSkillError("Container did not report a usable home directory")

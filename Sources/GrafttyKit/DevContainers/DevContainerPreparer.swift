@@ -10,8 +10,11 @@ import Crypto
 /// tools, add credential mounts, forward agents, or declare an agent authenticated.
 public actor DevContainerPreparer {
     private let executor: any CLIExecutor
+    private let profileDirectory: URL?
     private var preparing: Set<String> = []
-    public init(executor: any CLIExecutor = CLIRunner(terminatesOnCancellation: true)) { self.executor = executor }
+    public init(executor: any CLIExecutor = CLIRunner(terminatesOnCancellation: true), profileDirectory: URL? = nil) {
+        self.executor = executor; self.profileDirectory = profileDirectory
+    }
 
     public func checkRelativeWorktreeSupport(at workspace: String) async throws {
         for command in ["read-configuration", "up", "exec"] {
@@ -56,7 +59,10 @@ public actor DevContainerPreparer {
         }
         let label = "graftty.placement=\(operationID.uuidString.lowercased())"
         let workspaceLabel = "graftty.workspace=" + SHA256.hash(data: Data(workspace.utf8)).map { String(format: "%02x", $0) }.joined()
-        let up = try await run(["up"] + common + ["--id-label", label, "--id-label", workspaceLabel], at: workspace, stage: "lifecycle", timeout: .seconds(1800))
+        let profileMount = try skills.isEmpty ? nil : profileDirectory.map { try DevContainerProfileMount(directory: $0, operationID: operationID) }
+        defer { profileMount?.removeProbe() }
+        let mounts = profileMount.map { ["--mount", $0.argument] } ?? []
+        let up = try await run(["up"] + common + ["--id-label", label, "--id-label", workspaceLabel] + mounts, at: workspace, stage: "lifecycle", timeout: .seconds(1800))
         let output = try json(up.stdout, stage: "lifecycle")
         guard output["outcome"] as? String == "success", let containerID = output["containerId"] as? String,
               containerID.count == 64, containerID.allSatisfy({ "0123456789abcdef".contains($0) }), let remoteFolder = output["remoteWorkspaceFolder"] as? String,
@@ -70,6 +76,10 @@ public actor DevContainerPreparer {
         guard try Data(contentsOf: URL(fileURLWithPath: config)) == contents else {
             throw DevContainerPreparationError(stage: "configuration-changed", message: "Configuration changed while preparing; the container is not reported prepared")
         }
+        if let profileMount {
+            _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", profileMount.verificationScript],
+                at: workspace, stage: "agent-profile-mount", timeout: .seconds(30))
+        }
         if let agent {
             _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", "command -v " + agent.rawValue + " >/dev/null"],
                 at: workspace, stage: "agent-runtime (install \(agent.rawValue) in the Dev Container)", timeout: .seconds(30))
@@ -78,7 +88,8 @@ public actor DevContainerPreparer {
         if skills.isEmpty { agentHome = nil }
         else {
             agentHome = try await DevContainerSkillInstaller.install(skills, workspace: workspace,
-                execArguments: ["exec"] + common + ["--container-id", containerID], operationID: operationID, executor: executor)
+                execArguments: ["exec"] + common + ["--container-id", containerID], operationID: operationID, executor: executor,
+                profileDirectory: profileMount?.directory)
         }
         return PreparedDevContainer(containerID: containerID, workspace: workspace, configurationPath: config,
             configurationDigest: SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined(),

@@ -3678,6 +3678,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-28.17** When a skill-bearing container placement selects an agent, the application shall require a matching runtime revision, check the agent executable in that container, and launch with the retained isolated skill home without claiming authentication readiness.
 
+**REMOTE-28.18** When a managed placement installs agent skills, the application shall bind-mount a private placement directory at the same host and container path, verify its visibility and matching user identity before launch, and retain native profile files when the container is removed.
+
 ### REMOTE-29.x — AWS Spot evacuation
 
 **REMOTE-29.1** When configuring AWS compute, the application shall support Spot instances in the initial AWS provider implementation.
