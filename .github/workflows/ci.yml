@@ -84,7 +84,10 @@ jobs:
         run: |
           swift --version
           xcodebuild -version
-          echo "id=$( { swift --version; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          # The id also hashes the absolute workspace: SwiftPM metadata and DerivedData
+          # record absolute paths, so caches from another workspace (hosted vs
+          # self-hosted, or two runner installs) must not be restored here.
+          echo "id=$( { swift --version; xcodebuild -version; echo "$GITHUB_WORKSPACE"; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - name: Test shared SwiftPM wrapper
         timeout-minutes: 2
@@ -106,7 +109,7 @@ jobs:
             .build/repositories
             .build/artifacts
             .build/workspace-state.json
-          key: macos-deps-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          key: macos-deps-v3-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
 
       # workspace-state.json records which checkouts and binary artifacts are
       # extracted, so it lives with the dependency cache above. Restoring it
@@ -121,9 +124,9 @@ jobs:
             .build/*-apple-macosx
             .build/build.db
             .build/debug.yaml
-          key: macos-build-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
+          key: macos-build-v3-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
           restore-keys: |
-            macos-build-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-
+            macos-build-v3-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'scripts/ghostty-paging/**') }}-
 
       - name: Resolve Swift dependencies
         timeout-minutes: 5
@@ -202,7 +205,10 @@ jobs:
         run: |
           swift --version
           xcodebuild -version
-          echo "id=$( { swift --version; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          # The id also hashes the absolute workspace: SwiftPM metadata and DerivedData
+          # record absolute paths, so caches from another workspace (hosted vs
+          # self-hosted, or two runner installs) must not be restored here.
+          echo "id=$( { swift --version; xcodebuild -version; echo "$GITHUB_WORKSPACE"; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/paging-renderer
         env:
@@ -225,16 +231,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .spm
-          key: ios-deps-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml') }}
+          key: ios-deps-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml') }}
 
       - name: Restore iOS compiled build
         id: ios-build-cache
         uses: actions/cache/restore@v4
         with:
           path: .derivedData
-          key: ios-build-v4-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
+          key: ios-build-v5-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-${{ github.sha }}
           restore-keys: |
-            ios-build-v4-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-
+            ios-build-v5-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Apps/GrafttyMobile/project.yml', 'scripts/ghostty-paging/**') }}-
 
       - name: Build GrafttyMobile for testing (iOS Simulator SDK)
         timeout-minutes: 10
