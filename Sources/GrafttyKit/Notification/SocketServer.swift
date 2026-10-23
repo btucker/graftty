@@ -344,43 +344,39 @@ public final class SocketServer: @unchecked Sendable {
             // notify/clear clients close as soon as their one-way write
             // completes. Waiting on the app's response dispatcher for those
             // messages cannot produce a useful reply and, during hook bursts,
-            // can needlessly occupy every bounded request slot.
-            guard message.expectsResponse else {
+            // can needlessly occupy every bounded request slot. Without a
+            // request handler there is likewise no reply to wait for.
+            guard message.expectsResponse, let onAsyncRequest else {
                 index += 1
                 continue
             }
             let nextIndex = index + 1
 
-            if let onAsyncRequest {
-                guard let requestID = registerRequest(fd: fd, lease: lease) else {
-                    finishClient(fd: fd, lease: lease)
-                    return
-                }
-                scheduleRequestTimeout(
+            guard let requestID = registerRequest(fd: fd, lease: lease) else {
+                finishClient(fd: fd, lease: lease)
+                return
+            }
+            scheduleRequestTimeout(
+                fd: fd,
+                lease: lease,
+                requestID: requestID
+            )
+            Task { @MainActor [weak self] in
+                guard self?.isConnectionActive(
                     fd: fd,
-                    lease: lease,
-                    requestID: requestID
-                )
-                Task { @MainActor [weak self] in
-                    guard self?.isConnectionActive(
+                    lease: lease
+                ) == true else { return }
+                let response = await onAsyncRequest(message)
+                self?.clientQueue.async { [weak self] in
+                    self?.completeRequest(
                         fd: fd,
-                        lease: lease
-                    ) == true else { return }
-                    let response = await onAsyncRequest(message)
-                    self?.clientQueue.async { [weak self] in
-                        self?.completeRequest(
-                            fd: fd,
-                            lease: lease,
-                            requestID: requestID,
-                            response: response,
-                            messages: messages,
-                            nextIndex: nextIndex
-                        )
-                    }
+                        lease: lease,
+                        requestID: requestID,
+                        response: response,
+                        messages: messages,
+                        nextIndex: nextIndex
+                    )
                 }
-            } else {
-                index += 1
-                continue
             }
             return
         }

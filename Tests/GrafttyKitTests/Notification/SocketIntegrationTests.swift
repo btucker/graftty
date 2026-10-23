@@ -3,9 +3,9 @@ import Foundation
 @testable import GrafttyKit
 
 // `.serialized` because `slowRequestHandlerClosesClientFDAtTimeout` and
-// `silentClientDoesNotBlockOtherClients` both deliberately block the
-// main dispatch queue for a handful of seconds to simulate the hang
-// conditions they cover. Letting them run in parallel with peer
+// `stopDoesNotWaitForCallbackAndSuppressesQueuedHandler` both deliberately
+// block the main dispatch queue to simulate the stall conditions they
+// cover. Letting them run in parallel with peer
 // tests in this suite causes those peers' `DispatchQueue.main.async`
 // callbacks to stall past their `try await Task.sleep` windows and
 // fail spuriously.
@@ -891,6 +891,41 @@ struct SocketIntegrationTests {
         _ = try await expectMessage(from: messages)
     }
 
+    @Test func requestLineWithoutAsyncHandlerIsSkippedWithoutResponse() async throws {
+        let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("graftty-nohandler-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let (messages, messageContinuation) = AsyncStream.makeStream(of: NotificationMessage.self)
+        defer { messageContinuation.finish() }
+        let server = SocketServer(socketPath: socketPath)
+        server.onMessage = { messageContinuation.yield($0) }
+        try server.start()
+        defer { server.stop() }
+
+        // The unanswerable request must neither reply nor stop the server
+        // from processing the connection's later lines.
+        let responseBytes = try Self.exchangeRequests(
+            socketPath: socketPath,
+            jsonLines: [
+                #"{"type":"team_list","caller_worktree":"/tmp/wt"}"#,
+                #"{"type":"notify","path":"/tmp/wt","text":"after"}"#,
+            ]
+        )
+        #expect(responseBytes.isEmpty)
+
+        guard case .teamList = try await expectMessage(from: messages) else {
+            Issue.record("Expected the request line to reach onMessage first")
+            return
+        }
+        guard case .notify(_, let text, _, _) = try await expectMessage(from: messages) else {
+            Issue.record("Expected the later notify line to be processed")
+            return
+        }
+        #expect(text == "after")
+    }
+
     @Test("""
     @spec ATTN-2.20: When the application receives a one-way `notify` or `clear` socket message, it shall dispatch the notification without registering or waiting on a response handler, so notification bursts cannot consume request-client capacity.
     """, arguments: [
@@ -1036,20 +1071,21 @@ struct SocketIntegrationTests {
 
         let server = SocketServer(socketPath: socketPath)
         server.onRequestTimeout = .seconds(1)
-        // The handler suspends on a gate the test releases at the end,
-        // emulating a handler that cannot finish in time without pinning
-        // main past the end of this test (peer tests in the suite also
-        // dispatch to main). Releasing it lets the handler complete late,
-        // which must not write to the already-closed connection.
-        let (gate, gateContinuation) = AsyncStream.makeStream(of: Void.self)
+        // The handler stalls the main actor itself (not just its own task)
+        // on a gate the test releases at the end. This emulates a stalled
+        // main queue (modal / heavy work), so the timeout must fire without
+        // any main-actor help, and it avoids Thread.sleep-ing for the full
+        // duration — which would pin main past the end of this test and
+        // interfere with peer tests in the suite that also dispatch to main.
+        let gate = DispatchSemaphore(value: 0)
         let (handlerStarts, handlerStartContinuation) = AsyncStream.makeStream(
             of: Void.self
         )
         defer { handlerStartContinuation.finish() }
-        defer { gateContinuation.finish() }
+        defer { gate.signal() }
         server.onAsyncRequest = { _ in
             handlerStartContinuation.yield(())
-            for await _ in gate {}
+            Self.blockCurrentThread(on: gate, timeout: .now() + 10)
             return .ok
         }
         try server.start()
@@ -1197,6 +1233,15 @@ struct SocketIntegrationTests {
     }
 
     private struct MessageTimeoutError: Error {}
+
+    /// `DispatchSemaphore.wait` is unavailable from async contexts; this
+    /// synchronous hop lets an async handler deliberately stall its thread.
+    private static func blockCurrentThread(
+        on gate: DispatchSemaphore,
+        timeout: DispatchTime
+    ) {
+        _ = gate.wait(timeout: timeout)
+    }
 
     private static func sendRequest(
         socketPath: String,
