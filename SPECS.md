@@ -1688,6 +1688,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-7.15** When a REST worktree create, delete or default-branch pull finishes, the application shall answer success with 200 and its JSON result, invalid input with 400, an unknown worktree with 404, a Git refusal or conflict with 409, and any other failure with 500, each failure carrying a JSON error message and a delete 409 also carrying whether a forced retry is allowed.
 
+**WEB-7.16** If a web or paired-device client asks to delete a worktree whose creation or removal is still in progress, then the application shall refuse it as a failure that a forced retry cannot resolve, without running Git or changing the worktree's row.
+
 ### WEB-8.x — Web TLS (HTTPS)
 
 **WEB-8.1** When binding the HTTPS server, the application shall read `Self.DNSName` from Tailscale LocalAPI `/status`, strip the trailing dot, and use the resulting FQDN as the TLS SNI name and as the hostname in every composed Base URL / session URL. If `DNSName` is absent or empty, the application shall enter `.magicDNSDisabled` status and not bind. Settings shall render a "MagicDNS must be enabled on your tailnet" message plus a link to `https://login.tailscale.com/admin/dns`.
