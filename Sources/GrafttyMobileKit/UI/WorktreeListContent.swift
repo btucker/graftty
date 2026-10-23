@@ -64,7 +64,7 @@ public struct WorktreeListContent: View {
     // when RootView chose the iPad layout. Follow the navigation container.
     private let isSidebar: Bool
     private var remoteSidebarProvider: (@MainActor ([WorktreePanes]) async -> PanesStateMessage?)?
-    private var remoteUpdatesProvider: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)?
+    private var remoteUpdatesProvider: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>?)?
     private var navigationWindowWidth: Double
 
     private struct PendingDelete: Identifiable, Equatable {
@@ -120,7 +120,6 @@ public struct WorktreeListContent: View {
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (WorktreePanes, PaneLayoutNode.Leaf) -> Void
     private let onSelectWorktreeDetail: ((WorktreePanes) -> Void)?
-    public let onListChanged: ([WorktreePanes]) -> Void
 
     public init(
         host: Host,
@@ -132,7 +131,6 @@ public struct WorktreeListContent: View {
         remote: RemoteWorktreeProviders = RemoteWorktreeProviders(),
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (WorktreePanes, PaneLayoutNode.Leaf) -> Void,
-        onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in },
         navigation: SidebarNavigationState? = nil,
         navigationWindowWidth: Double = 1100,
         project: SidebarProject? = nil,
@@ -151,7 +149,6 @@ public struct WorktreeListContent: View {
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onSelectWorktreeDetail = onSelectWorktreeDetail
-        self.onListChanged = onListChanged
         self.navigation = navigation ?? SidebarNavigationState(prefix: "sidebar.mobile", collapsed: true)
         self.navigationWindowWidth = navigationWindowWidth
         self.remoteSidebarProvider = remote.sidebar
@@ -1141,10 +1138,7 @@ public struct WorktreeListContent: View {
         )
         loadedHostID = host.id
         refreshError = nil
-        if changed {
-            state = next
-            onListChanged(list)
-        }
+        if changed { state = next }
         if let created = worktreeCreation.takeReadySelection(in: list, generation: selectionIntentGeneration) {
             rememberWorktree(created)
             onSelect(created)
@@ -1316,7 +1310,6 @@ public struct WorktreeListContent: View {
                 try checkCurrent()
                 guard appliedPushCount == pushes else { return displayedRows ?? list }
                 state = .loaded(list)
-                onListChanged(list)
                 return list
             }
             if let opened = try await WorktreeLayoutAwait.poll(rows: try await fetch(), fetch: fetch, checkCurrent: checkCurrent,

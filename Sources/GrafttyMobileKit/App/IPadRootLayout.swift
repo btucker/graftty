@@ -27,6 +27,7 @@ public struct IPadRootLayout: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
     @Environment(\.remoteConnectionCoordinator) private var coordinator
+    @Environment(\.remoteWorktreeUpdates) private var worktreeUpdates
     @State private var paneEnvironment: PaneEnvironment = .empty
     @State private var explicitSelectionGeneration: UInt64 = 0
     @State private var pendingMobileSplits: [PendingMobileSplit] = []
@@ -95,6 +96,8 @@ public struct IPadRootLayout: View {
     }
 
     public var body: some View {
+        // Built once per render: `isPaired` reads the pin file.
+        let remote = selectedHost.map { (host: $0, providers: remoteProviders(for: $0)) }
         // `.balanced` locks in column-style (sidebar permanently to the
         // left of the detail) rather than letting iPad heuristics pick
         // `.prominentDetail` (overlay). `columnVisibility` is bound to
@@ -108,9 +111,9 @@ public struct IPadRootLayout: View {
                 set: { appState.columnVisibility = $0 }
             )) {
                 Group {
-                    if let host = selectedHost {
+                    if let remote {
                         WorktreeListContent(
-                            host: host,
+                            host: remote.host,
                             isSidebar: true,
                             theme: appState.theme,
                             selectedWorktreePath: appState.selectedWorktreePath,
@@ -119,20 +122,11 @@ public struct IPadRootLayout: View {
                                 scene: scenePhase,
                                 gateUnlocked: gate.isUnlocked
                             ),
-                            remote: RemoteWorktreeProviders(coordinator: coordinator, host: host),
+                            remote: remote.providers,
                             onSelect: { wt in selectWorktree(wt) },
                             onSelectPane: { worktree, leaf in
                                 selectWorktree(worktree)
                                 selectPane(leaf)
-                            },
-                            onListChanged: { list in
-                                Self.onWorktreeListChanged(
-                                    appState: appState,
-                                    list: list
-                                )
-                                reconcileMobileCloseProjections(in: list)
-                                resolveLegacyMobileSplit(in: list)
-                                applyPendingMobileCreatedFocus(in: list)
                             },
                             navigation: appState.sidebarNavigation,
                             navigationWindowWidth: appState.navigationWindowWidth
@@ -213,6 +207,15 @@ public struct IPadRootLayout: View {
         )) {
             await refreshHostPresentationState()
         }
+        // IPAD-1.24: the layout owns the shared worktree rows, so they stay
+        // current whether or not the sidebar list is on screen.
+        .task(id: WorktreeFeedKey(
+            hostID: selectedHost?.id,
+            isReady: LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked),
+            hasUpdates: remote?.providers.updates != nil
+        )) {
+            await observeWorktrees()
+        }
         .task(id: PaneEnvironmentRefreshKey(
             hostID: selectedHost?.id,
             isReady: LiveSessionReadiness.isActive(
@@ -259,7 +262,39 @@ public struct IPadRootLayout: View {
         appState.anyWorktreeHasAttention = false
     }
 
+    private func remoteProviders(for host: Host) -> RemoteWorktreeProviders {
+        RemoteWorktreeProviders(coordinator: coordinator, host: host, worktreeUpdates: worktreeUpdates)
+    }
+
+    /// Applies the selected host's pushed frames to the shared worktree rows
+    /// and settles pane mutations waiting on them (IPAD-1.24).
+    private func observeWorktrees() async {
+        guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked),
+              let host = selectedHost,
+              let updates = remoteProviders(for: host).updates?() else { return }
+        // Compare with what this observation applied, not with
+        // `latestWorktrees`: RootView seeds that from activation fetches
+        // without recomputing what derives from it (IPAD-1.25).
+        var applied: [WorktreePanes]?
+        for await update in updates {
+            guard !Task.isCancelled, appState.selectedHostId == host.id else { return }
+            guard case let .frame(.snapshot(list, _)) = update else {
+                // Keep the last rows while the host is unreachable.
+                continue
+            }
+            // A sidebar-only frame repeats the rows (IOS-4.31).
+            guard list != applied else { continue }
+            applied = list
+            Self.onWorktreeListChanged(appState: appState, list: list)
+            reconcileMobileCloseProjections(in: list)
+            resolveLegacyMobileSplit(in: list)
+            applyPendingMobileCreatedFocus(in: list)
+        }
+    }
+
     static func onWorktreeListChanged(appState: IPadAppState, list: [WorktreePanes]) {
+        // @Observable skips a write of an equal value, so a repeated frame
+        // leaves views observing these rows alone (IPAD-1.26).
         appState.latestWorktrees = list
 
         // Clear a stale selection whose path vanished server-side.
@@ -288,7 +323,8 @@ public struct IPadRootLayout: View {
         // worktree-scoped and pane-scoped attention, including unseen agent
         // stops. The detail column toolbar reads this to decide whether to show a
         // collapsed-sidebar attention indicator.
-        appState.anyWorktreeHasAttention = list.contains(where: IPadWorktreeNavigation.hasAttention)
+        let hasAttention = list.contains(where: IPadWorktreeNavigation.hasAttention)
+        appState.anyWorktreeHasAttention = hasAttention
     }
 
     static func applyWorktreeSelection(appState: IPadAppState, worktree: WorktreePanes) {
@@ -1202,6 +1238,12 @@ public struct IPadRootLayout: View {
         paneEnvironment = .empty
         await current.close()
     }
+}
+
+private struct WorktreeFeedKey: Hashable {
+    let hostID: UUID?
+    let isReady: Bool
+    let hasUpdates: Bool
 }
 
 private struct PaneEnvironmentRefreshKey: Hashable {
