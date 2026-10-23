@@ -128,7 +128,7 @@ struct RemoteBranchStoreTests {
     @Test func upstreamRemoteBranchExposesTrackedMapping() async throws {
         let store = RemoteBranchStore(list: { _ in
             RemoteBranchSnapshot(
-                branches: ["main", "feature/bar"],
+                remoteBranches: ["main", "feature/bar"].map { BranchRef(name: $0, lastCommitDate: .distantPast) },
                 upstreams: ["main": "main", "local-name": "feature/bar"]
             )
         })
@@ -146,7 +146,7 @@ struct RemoteBranchStoreTests {
     @Test func hasRemoteIsTrueWhenUpstreamSetEvenIfLocalNameNotInBranches() async throws {
         let store = RemoteBranchStore(list: { _ in
             RemoteBranchSnapshot(
-                branches: ["feature/bar"],
+                remoteBranches: ["feature/bar"].map { BranchRef(name: $0, lastCommitDate: .distantPast) },
                 upstreams: ["local-rename": "feature/bar"]
             )
         })
@@ -174,7 +174,7 @@ struct RemoteBranchStoreTests {
 
     @MainActor
     @Test func hasRemoteRejectsEmptyWhitespaceAndSentinelBranches() async throws {
-        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(branches: ["main"]) })
+        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(remoteBranches: [BranchRef(name: "main", lastCommitDate: .distantPast)]) })
         store.refresh(repoPath: "/repo")
         try await waitUntil(timeout: 1.0) {
             store.hasRemote(repoPath: "/repo", branch: "main")
@@ -205,7 +205,7 @@ struct RemoteBranchStoreTests {
 
     @MainActor
     @Test func clearDropsSnapshot() async throws {
-        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(branches: ["main"]) })
+        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(remoteBranches: [BranchRef(name: "main", lastCommitDate: .distantPast)]) })
         store.refresh(repoPath: "/repo")
         try await waitUntil(timeout: 1.0) {
             store.hasRemote(repoPath: "/repo", branch: "main")
@@ -589,7 +589,7 @@ struct RemoteBranchStoreTests {
     @MainActor
     @Test func pulseForwardsToActiveTickerAndDoesNothingAfterStop() {
         let ticker = CapturingTicker()
-        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(branches: []) })
+        let store = RemoteBranchStore(list: { _ in RemoteBranchSnapshot() })
 
         store.start(ticker: ticker, getRepos: { [] })
         store.pulse()
@@ -824,7 +824,7 @@ private final class RecordingRemoteBranchLister: @unchecked Sendable {
 
     var list: RemoteBranchStore.ListFunction {
         { [weak self] repoPath in
-            guard let self else { return RemoteBranchSnapshot(branches: []) }
+            guard let self else { return RemoteBranchSnapshot() }
             return try await self.list(repoPath: repoPath)
         }
     }
@@ -879,7 +879,7 @@ private final class RecordingRemoteBranchLister: @unchecked Sendable {
             invocations[repoPath, default: 0] += 1
             switch results[repoPath] ?? .success([]) {
             case .success(let branches):
-                return .success(RemoteBranchSnapshot(branches: branches))
+                return .success(RemoteBranchSnapshot(remoteBranches: branches.map { BranchRef(name: $0, lastCommitDate: .distantPast) }))
             case .failure(let error):
                 return .failure(error)
             }

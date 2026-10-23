@@ -8,18 +8,6 @@ public enum GitRunner {
 
     public typealias Error = CLIError
 
-    /// Injected in tests via `configure`. Defaults to a fresh `CLIRunner`.
-    private static var executor: CLIExecutor = CLIRunner()
-
-    /// Test seam. Restore to `CLIRunner()` at the end of a test suite.
-    public static func configure(executor: CLIExecutor) {
-        self.executor = executor
-    }
-
-    public static func resetForTests() {
-        self.executor = CLIRunner()
-    }
-
     /// Runs `git <args>` and returns stdout. Throws `CLIError.nonZeroExit`
     /// on non-zero exit. Use when non-zero means "the call failed."
     ///
@@ -33,7 +21,7 @@ public enum GitRunner {
         timeout: Duration? = nil,
         using executorOverride: CLIExecutor? = nil
     ) async throws -> String {
-        let out = try await (executorOverride ?? executor).run(
+        let out = try await (executorOverride ?? CLIRunner()).run(
             command: "git",
             args: args,
             at: directory,
@@ -50,7 +38,7 @@ public enum GitRunner {
         timeout: Duration? = nil,
         using executorOverride: CLIExecutor? = nil
     ) async throws -> (stdout: String, exitCode: Int32) {
-        let out = try await (executorOverride ?? executor).capture(
+        let out = try await (executorOverride ?? CLIRunner()).capture(
             command: "git",
             args: args,
             at: directory,
@@ -67,7 +55,7 @@ public enum GitRunner {
         timeout: Duration? = nil,
         using executorOverride: CLIExecutor? = nil
     ) async throws -> CLIOutput {
-        try await (executorOverride ?? executor).capture(
+        try await (executorOverride ?? CLIRunner()).capture(
             command: "git",
             args: args,
             at: directory,

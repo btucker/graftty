@@ -45,7 +45,7 @@ struct PRStatusStoreUpstreamTrackingTests {
 
         let remoteBranchStore = RemoteBranchStore(list: { _ in
             RemoteBranchSnapshot(
-                branches: ["feature/foo"],
+                remoteBranches: ["feature/foo"].map { BranchRef(name: $0, lastCommitDate: .distantPast) },
                 upstreams: ["local-rename": "feature/foo"]
             )
         })
@@ -85,7 +85,7 @@ struct PRStatusStoreUpstreamTrackingTests {
         let fetcher = RecordingFetcher(observer: observed, prsByBranch: [:])
         let remoteBranchStore = RemoteBranchStore(list: { _ in
             RemoteBranchSnapshot(
-                branches: ["upstream-name"],
+                remoteBranches: ["upstream-name"].map { BranchRef(name: $0, lastCommitDate: .distantPast) },
                 upstreams: ["local-name": "upstream-name"]
             )
         })

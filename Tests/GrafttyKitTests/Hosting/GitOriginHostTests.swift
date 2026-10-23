@@ -142,10 +142,8 @@ struct GitOriginHostDetectTests {
             args: ["remote", "get-url", "origin"],
             output: CLIOutput(stdout: "git@github.com:btucker/graftty.git\n", stderr: "", exitCode: 0)
         )
-        GitRunner.configure(executor: fake)
-        defer { GitRunner.resetForTests() }
 
-        let origin = try await GitOriginHost.detect(repoPath: "/tmp/repo")
+        let origin = try await GitOriginHost.detect(repoPath: "/tmp/repo", using: fake)
         #expect(origin?.provider == .github)
         #expect(origin?.slug == "btucker/graftty")
     }
@@ -157,10 +155,8 @@ struct GitOriginHostDetectTests {
             args: ["remote", "get-url", "origin"],
             error: .nonZeroExit(command: "git", exitCode: 128, stderr: "no such remote")
         )
-        GitRunner.configure(executor: fake)
-        defer { GitRunner.resetForTests() }
 
-        let origin = try await GitOriginHost.detect(repoPath: "/tmp/repo")
+        let origin = try await GitOriginHost.detect(repoPath: "/tmp/repo", using: fake)
         #expect(origin == nil)
     }
 
@@ -182,11 +178,9 @@ struct GitOriginHostDetectTests {
             args: ["remote", "get-url", "origin"],
             error: .nonZeroExit(command: "git", exitCode: 128, stderr: "fatal: unable to read tree")
         )
-        GitRunner.configure(executor: fake)
-        defer { GitRunner.resetForTests() }
 
         await #expect(throws: (any Error).self) {
-            _ = try await GitOriginHost.detect(repoPath: "/tmp/repo")
+            _ = try await GitOriginHost.detect(repoPath: "/tmp/repo", using: fake)
         }
     }
 }

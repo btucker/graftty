@@ -125,10 +125,8 @@ struct GitWorktreeDiscoveryTests {
 
     @Test func discoverBoundsTheGitSubprocess() async throws {
         let recorder = DiscoveryTimeoutRecorder()
-        GitRunner.configure(executor: recorder)
-        defer { GitRunner.resetForTests() }
 
-        _ = try await GitWorktreeDiscovery.discover(repoPath: "/repo")
+        _ = try await GitWorktreeDiscovery.discover(repoPath: "/repo", using: recorder)
 
         #expect(recorder.receivedTimeout == GitWorktreeDiscovery.discoveryTimeout)
     }
@@ -145,10 +143,8 @@ struct GitWorktreeDiscoveryTests {
         prunable gitdir file points to non-existent location
 
         """)
-        GitRunner.configure(executor: recorder)
-        defer { GitRunner.resetForTests() }
 
-        let discovered = try await GitWorktreeDiscovery.discover(repoPath: "/repo")
+        let discovered = try await GitWorktreeDiscovery.discover(repoPath: "/repo", using: recorder)
 
         #expect(discovered.map(\.path) == ["/repo"])
     }

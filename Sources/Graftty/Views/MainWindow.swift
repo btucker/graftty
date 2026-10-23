@@ -827,14 +827,13 @@ struct MainWindow: View {
             }
         }
         // `GIT-3.15`: `stopWatchingWorktree` ran on the stale
-        // transition, so the resurrected worktree has no path / head /
-        // content watchers. Re-arm now so real-time stats and PR
+        // transition, so the resurrected worktree has no path / head
+        // watchers. Re-arm now so real-time stats and PR
         // refreshes work without waiting for the next `.git/worktrees/`
         // FSEvents tick (which a user-click resurrection never fires).
         if let repoPath = resurrectedRepoPath {
             worktreeMonitor.watchWorktreePath(path)
             worktreeMonitor.watchHeadRef(worktreePath: path, repoPath: repoPath)
-            worktreeMonitor.watchWorktreeContents(worktreePath: path)
         }
 
         for repoIdx in appState.repos.indices {

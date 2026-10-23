@@ -17,10 +17,8 @@ struct GitDefaultBranchPullTests {
             args: ["pull", "--ff-only", "origin", "main"],
             output: CLIOutput(stdout: "", stderr: "", exitCode: 0)
         )
-        GitRunner.configure(executor: fake)
-        defer { GitRunner.resetForTests() }
 
-        try await GitDefaultBranchPull.pull(repoPath: "/tmp/repo", branchName: "main")
+        try await GitDefaultBranchPull.pull(repoPath: "/tmp/repo", branchName: "main", using: fake)
 
         #expect(fake.invocations.map { $0.args } == [
             ["branch", "--show-current"],
@@ -36,11 +34,9 @@ struct GitDefaultBranchPullTests {
             args: ["branch", "--show-current"],
             output: CLIOutput(stdout: "develop\n", stderr: "", exitCode: 0)
         )
-        GitRunner.configure(executor: fake)
-        defer { GitRunner.resetForTests() }
 
         do {
-            try await GitDefaultBranchPull.pull(repoPath: "/tmp/repo", branchName: "main")
+            try await GitDefaultBranchPull.pull(repoPath: "/tmp/repo", branchName: "main", using: fake)
             Issue.record("expected GitDefaultBranchPull.Error.gitFailed")
         } catch GitDefaultBranchPull.Error.gitFailed(let exitCode, let stderr) {
             #expect(exitCode == 1)
@@ -64,11 +60,9 @@ struct GitDefaultBranchPullTests {
             args: ["pull", "--ff-only", "origin", "main"],
             output: CLIOutput(stdout: "", stderr: "fatal: Not possible to fast-forward", exitCode: 128)
         )
-        GitRunner.configure(executor: fake)
-        defer { GitRunner.resetForTests() }
 
         do {
-            try await GitDefaultBranchPull.pull(repoPath: "/tmp/repo", branchName: "main")
+            try await GitDefaultBranchPull.pull(repoPath: "/tmp/repo", branchName: "main", using: fake)
             Issue.record("expected GitDefaultBranchPull.Error.gitFailed")
         } catch GitDefaultBranchPull.Error.gitFailed(let exitCode, let stderr) {
             #expect(exitCode == 128)
