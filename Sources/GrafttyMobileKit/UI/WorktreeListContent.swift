@@ -212,7 +212,13 @@ public struct WorktreeListContent: View {
             MobilePaneAttention.consumePendingRoute(for: navigation)
             showsRemoteMacManagement = false
         }
-        .task(id: WorktreeListLoadKey(hostID: host.id, isReady: isReadyToLoad)) {
+        // Pairing a displayed host in place keeps its ID, so the push stream
+        // appearing must restart observation too (IOS-4.53).
+        .task(id: RemoteUpdatesKey(
+            hostID: host.id,
+            isReady: isReadyToLoad,
+            hasUpdates: remoteUpdatesProvider != nil
+        )) {
             await observeRemoteWorktrees()
         }
         .task(id: RemoteMacConnectionPollingKey(
@@ -1364,8 +1370,8 @@ public struct WorktreeListContent: View {
                 }
                 guard presentedHostID == requestHost.id else { return }
                 worktreeCreation.complete(id, worktreePath: response.worktreePath)
-                // Polling may already have received the ready layout while
-                // the management response was still in flight.
+                // A pushed frame may already have delivered the ready layout
+                // while the management response was still in flight.
                 if case .loaded(let list) = state { applyLoadedList(list) }
                 await refresh()
             } catch {
@@ -1518,5 +1524,11 @@ private struct RemoteMacConnectionPollingKey: Hashable {
 private struct WorktreeListLoadKey: Hashable {
     let hostID: UUID
     let isReady: Bool
+}
+
+private struct RemoteUpdatesKey: Hashable {
+    let hostID: UUID
+    let isReady: Bool
+    let hasUpdates: Bool
 }
 #endif

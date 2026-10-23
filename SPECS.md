@@ -2082,6 +2082,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.52** While a paired host's worktree list is displayed, when the host pushes a changed panes-state frame, the application shall render it and publish it through onListChanged without fetching the list again.
 
+**IOS-4.53** When the host whose worktree list is displayed becomes paired, the application shall begin applying the host's pushed panes-state frames without requiring Refresh.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.

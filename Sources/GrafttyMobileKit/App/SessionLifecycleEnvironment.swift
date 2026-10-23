@@ -238,8 +238,16 @@ public struct RemoteWorktreeProviders {
     @MainActor
     init(coordinator: RemoteConnectionCoordinator?, host: Host) {
         guard let coordinator else { self.init(); return }
+        // `isPaired` reads the pin file, and this runs on every render.
+        let paired = coordinator.isPaired(host)
+        // Not a ternary: Swift 6.4 fails to type-check `cond ? { … } : nil`
+        // for a main-actor closure ("failed to produce diagnostic").
+        var updates: (@MainActor () -> AsyncStream<RemoteWorktreeUpdate>)?
+        if paired {
+            updates = { coordinator.worktreeUpdates(for: host) }
+        }
         self.init(
-            includeRemoteWorktrees: coordinator.isPaired(host),
+            includeRemoteWorktrees: paired,
             connection: makeRemoteConnectionProvider(
                 coordinator: coordinator,
                 host: host,
@@ -250,7 +258,7 @@ public struct RemoteWorktreeProviders {
                 guard coordinator.isPaired(host) else { return .snapshot(rows) }
                 return await coordinator.navigationSnapshot(for: host, matching: rows)
             },
-            updates: coordinator.isPaired(host) ? { coordinator.worktreeUpdates(for: host) } : nil
+            updates: updates
         )
     }
 }
