@@ -69,6 +69,25 @@ def main():
         (root / directory).mkdir(exist_ok=True, mode=0o700)
     (root / '.codex/config.toml').write_bytes((root / 'codex-mcp.toml').read_bytes())
     configuration = next(root.glob('????????-????-????-????-????????????.json'))
+    if '--expect-revoked' in sys.argv[3:]:
+        rejected = subprocess.run(
+            [cli, 'remote', 'mcp', 'bridge', '--config', str(configuration)],
+            input=b'', stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            env=environment, cwd=workspace, timeout=15)
+        assert rejected.returncode != 0 and not rejected.stdout, 'Revoked grant was accepted'
+        print(json.dumps({'revokedGrant': 'rejected'}), flush=True)
+        return
+    # A copied grant address must not authorize a different assignment.
+    changed = json.loads(configuration.read_text())
+    changed['scope']['generation'] += 1
+    wrong_generation = root / 'wrong-generation.json'
+    wrong_generation.write_text(json.dumps(changed))
+    rejected = subprocess.run(
+        [cli, 'remote', 'mcp', 'bridge', '--config', str(wrong_generation)],
+        input=b'', stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        env=environment, cwd=workspace, timeout=15)
+    assert rejected.returncode != 0 and not rejected.stdout, 'Changed assignment was accepted'
+    print(json.dumps({'changedAssignment': 'rejected'}), flush=True)
     raw = RPC([cli, 'remote', 'mcp', 'bridge', '--config', str(configuration)], environment, workspace)
     try:
         raw.send({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {

@@ -94,3 +94,16 @@ the Mac, and queries both native agents for MCP discovery. It makes no model
 turn and never transfers the parent's credential fixture. The test does not
 provision infrastructure; resource lifecycle and cleanup belong to the live
 harness.
+
+Live validation passed on 2026-10-23 using an ARM64 m7g.xlarge Spot instance,
+Ubuntu 24.04, the packaged Linux host/CLI, AWS SSM, Codex 0.164.0, and Claude
+Code 2.1.309. Both native clients discovered `touch_parent` under the original
+server entry. A standard MCP call through the worker CLI executed exactly once
+on the Mac using a credential fixture that remained there. Altered assignment
+generation and subsequently revoked grant addresses were rejected. The native
+clients used fresh homes without model credentials; this validates MCP discovery
+and transport, not a model turn or automatic container profile installation.
+
+Focused proxy and SSH tests passed. The full local suite had one Chrome
+navigation timing failure; that test passed in isolation alongside the proxy
+checks. No Chrome product code changed in this work.

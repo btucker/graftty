@@ -22,7 +22,8 @@ extension AWSLiveHostTests {
         let policy = MCPProxyPolicy(servers: ["fixture": .stdio(executable: "/usr/bin/python3",
             arguments: [repository.appendingPathComponent("scripts/linux/mcp-fixture-server.py").path, marker.path, credential.path], environmentKeys: [])],
             grants: [.init(scope: scope, host: worker, expiresAt: Date().addingTimeInterval(240))])
-        let broker = MCPProxyBroker(peer: worker, authorize: { try policy.authorize($0, peer: $1) })
+        let current = LiveMCPPolicy(policy)
+        let broker = MCPProxyBroker(peer: worker, authorize: { try current.authorize($0, peer: $1) })
         let channel = try await connection.makeMCPControlClient(handler: { await broker.handle($0) }, onClose: { await broker.close() })
         try await channel.open()
         do {
@@ -50,7 +51,11 @@ extension AWSLiveHostTests {
             chown -R ubuntu:ubuntu '\(remoteDirectory)'
             runuser -u ubuntu -- env HOME='\(remoteDirectory)' PATH=/usr/local/bin:/usr/bin:/bin GRAFTTY_SOCK=/run/user/1000/graftty/graftty.sock python3 '\(remoteDirectory)/probe.py' '\(remoteDirectory)' /home/ubuntu/.local/bin/graftty
             """
-            let output = try await runRemoteProbe(script, target: target, root: root)
+            var output = try await runRemoteProbe(script, target: target, root: root)
+            current.revoke()
+            // Stage the same grant address again. It must no longer start an
+            // upstream server, even though its identity and generation match.
+            output += try await runRemoteProbe(script + " --expect-revoked\n", target: target, root: root)
             #expect(!output.contains(secret))
             #expect(try String(contentsOf: marker, encoding: .utf8) == "parent executed\n")
             if let file = ProcessInfo.processInfo.environment["GRAFTTY_LIVE_AWS_RESULT"] {
@@ -59,4 +64,14 @@ extension AWSLiveHostTests {
             channel.close(); await broker.close()
         } catch { channel.close(); await broker.close(); throw error }
     }
+}
+
+private final class LiveMCPPolicy: @unchecked Sendable {
+    private let lock = NSLock()
+    private var policy: MCPProxyPolicy
+    init(_ policy: MCPProxyPolicy) { self.policy = policy }
+    func authorize(_ scope: MCPProxyScope, peer: RemoteMacConnectionSummary.ID) throws -> MCPProxyPolicy.Server {
+        try lock.withLock { try policy.authorize(scope, peer: peer) }
+    }
+    func revoke() { lock.withLock { policy.grants[0].revoked = true } }
 }
