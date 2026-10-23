@@ -122,20 +122,30 @@ struct MobileAgentCompletionTests {
     }
 
     @Test func heldPickerArrowStopsWhenCompletionCloses() async throws {
+        let repeatScheduler = ManualArrowRepeat()
         let (container, model, _) = setup()
         container.terminalView.insertText("%")
         await model.waitForLoad()
+        container.terminalView.startArrowRepeat = repeatScheduler.start
         let down = CompletionPress(UIKeyCommand.inputDownArrow, usage: .keyboardDownArrow)
         container.terminalView.pressesBegan([down], with: nil)
+        defer { container.terminalView.pressesEnded([down], with: nil) }
+        try #require(repeatScheduler.isRepeating)
+        repeatScheduler.fire()
+        try #require(repeatScheduler.isRepeating)
+        try #require(model.isActive)
         model.accept(Self.candidate.id)
+        try #require(!model.isActive)
         var forwardedArrows = 0
         container.hardwareKeyboardCommands = [.init(
             id: "arrow", title: "Arrow", input: UIKeyCommand.inputDownArrow, modifierFlags: [],
             perform: { forwardedArrows += 1 }
         )]
-        try await Task.sleep(for: .milliseconds(550))
+        repeatScheduler.fire()
         #expect(forwardedArrows == 0)
-        container.terminalView.pressesEnded([down], with: nil)
+        #expect(!repeatScheduler.isRepeating)
+        repeatScheduler.fire()
+        #expect(forwardedArrows == 0)
     }
 
     @Test func loadingOrEmptyPickerCannotSubmit() async {
