@@ -448,10 +448,15 @@ final class RemoteMacConnectionRegistry {
         var paneEnvironment: RemoteMacPaneEnvironment?
         do {
             guard let pinnedHost = pinnedHostProvider(remoteMac.id) else { throw ConnectionError.notConnected(identity) }
+            guard pinnedHost.fingerprint == identity.fingerprint else {
+                throw PinnedHostKeyError.hostKeyMismatch(
+                    expected: identity.fingerprint,
+                    offered: pinnedHost.fingerprint
+                )
+            }
             let refreshedPinnedHost: PinnedHost
             switch dialLink {
             case .direct(let direct):
-                guard pinnedHost.fingerprint == identity.fingerprint else { throw ConnectionError.notConnected(identity) }
                 guard let endpoint = remoteMac.directEndpoint else { throw ConnectionError.missingDirectEndpoint(identity) }
                 try await direct.connect(host: endpoint.host, port: endpoint.port)
                 try ensureCurrentAttempt(attemptID, identity: identity)
