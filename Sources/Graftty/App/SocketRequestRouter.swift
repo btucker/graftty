@@ -251,12 +251,7 @@ extension SocketRequestRouter {
             let reader = ZmxHistorySubprocessReader(launcher: launcher)
             let sessionName = ZmxLauncher.sessionName(for: sessionID)
             return await Task.detached(priority: .utility) {
-                do {
-                    let body = try reader.history(sessionName: sessionName)
-                    return .paneShow(ScrollbackTail.tail(body, lines: lines))
-                } catch {
-                    return .error("zmx history failed: \(error.localizedDescription)")
-                }
+                showPaneResponse(sessionName: sessionName, lines: lines, reader: reader)
             }.value
         case .sendPane(let path, let index, let text, let pressEnter):
             return await handleSendPane(
@@ -702,16 +697,15 @@ extension SocketRequestRouter {
         return .ok
     }
 
-    /// Test seam: lets the spec test exercise the `.showPane` route's
-    /// read+tail logic without constructing a full `AppState`. Skips
-    /// worktree lookup / state checks and goes straight to the reader.
-    @MainActor
-    internal static func handleShowPane_forTesting(
-        path: String, index: Int, lines: Int,
+    /// The `.showPane` route's read-and-tail step, after the worktree and
+    /// pane guards have resolved `sessionName`. Nonisolated so the route can
+    /// run it off the main actor while the reader spawns `zmx history`.
+    nonisolated static func showPaneResponse(
+        sessionName: String, lines: Int,
         reader: ZmxHistoryReader
     ) -> ResponseMessage {
         do {
-            let body = try reader.history(sessionName: "graftty-stub")
+            let body = try reader.history(sessionName: sessionName)
             return .paneShow(ScrollbackTail.tail(body, lines: lines))
         } catch {
             return .error("zmx history failed: \(error.localizedDescription)")

@@ -8,13 +8,11 @@ import ArgumentParser
 @Suite("@spec ATTN-1.15: When `pane show <addr>` is invoked against a running pane, the application shall return the last `--lines` lines (default 100) of that pane's `zmx` scrollback as plain text on the CLI's stdout.")
 struct PaneShowHandlerTests {
     @Test("Tails 200 lines to the requested 50")
-    @MainActor
-    func tails200To50() async throws {
+    func tails200To50() {
         let body = (1...200).map { "line\($0)" }.joined(separator: "\n")
         let stubReader = StubZmxHistoryReader(output: body)
-        let response = SocketRequestRouter.handleShowPane_forTesting(
-            path: "/wt", index: 1, lines: 50,
-            reader: stubReader
+        let response = SocketRequestRouter.showPaneResponse(
+            sessionName: "graftty-stub", lines: 50, reader: stubReader
         )
         guard case .paneShow(let text) = response else {
             Issue.record("expected .paneShow, got \(response)")
@@ -27,8 +25,7 @@ struct PaneShowHandlerTests {
     }
 
     @Test("Large scrollback (>64KB) does not deadlock the stub+tail path")
-    @MainActor
-    func largeScrollbackNoDeadlock() async throws {
+    func largeScrollbackNoDeadlock() {
         // Each line is ~100 bytes; 1000 lines ≈ 100KB, well past the macOS
         // pipe buffer. This exercises only the stub reader, so the actual
         // deadlock fix in `ZmxHistorySubprocessReader` isn't directly
@@ -38,8 +35,8 @@ struct PaneShowHandlerTests {
             .map { String(repeating: "x", count: 100) + "\($0)" }
             .joined(separator: "\n")
         let stub = StubZmxHistoryReader(output: body)
-        let response = SocketRequestRouter.handleShowPane_forTesting(
-            path: "/wt", index: 1, lines: 50, reader: stub
+        let response = SocketRequestRouter.showPaneResponse(
+            sessionName: "graftty-stub", lines: 50, reader: stub
         )
         guard case .paneShow(let text) = response else {
             Issue.record("expected .paneShow, got \(response)")
