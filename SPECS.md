@@ -3540,6 +3540,24 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-29.9** When a host begins draining for a provider interruption, it shall durably retain one operation and its managed placements, reject new admission across restarts, preserve existing retries, and never extend the earliest observed deadline.
 
+### REMOTE-30.x — MCP access through the parent
+
+**REMOTE-30.1** When a managed Linux agent uses a granted parent MCP server, the application shall proxy standard MCP messages over the authenticated parent connection while retaining upstream authentication and refresh on the parent.
+
+**REMOTE-30.2** When forwarding a worker MCP request, the parent shall require a current grant bound to the authenticated worker, repository, worktree, assignment generation, server ID, and expiry without accepting worker-supplied upstream commands, URLs, or credential configuration.
+
+**REMOTE-30.3** When an MCP grant expires, is revoked, or is superseded by reassignment, the application shall reject new calls and close its sessions without transferring that authority through copied session data.
+
+**REMOTE-30.4** While proxying MCP sessions, the application shall isolate messages and negotiated capabilities by delegation and enforce bounded messages, queues, concurrency, and deadlines.
+
+**REMOTE-30.5** If the parent connection is lost during an MCP call, then the application shall report unavailable or unknown outcome without automatically replaying the call, copying credentials, or falling back to an unconfigured direct connection.
+
+**REMOTE-30.6** If an existing MCP authentication source lacks a supported parent integration, then the application shall report authentication required or unsupported without scraping or exporting private authentication stores.
+
+**REMOTE-30.7** When presenting MCP access in the CLI, Mac, or Mobile, the application shall identify the server, execution location, delegation, and readiness without exposing authentication material or recording tool payloads by default.
+
+**REMOTE-30.8** When preparing or recovering a worktree, the application shall generate scoped MCP bridge configuration from current parent grants and check MCP readiness separately from container readiness and agent-runtime authentication.
+
 ## CHROME — Dedicated Chrome tabs
 
 ### CHROME-1.x — Host profiles and ownership

@@ -8,7 +8,7 @@ Graftty should let an agent place a worktree on available remote capacity, prepa
 
 Remote work remains ordinary Git history and native Claude or Codex session data. The initiating Mac retains copies so work can return home or resume on another host. Publication to `origin` is separate from replication to that Mac.
 
-The behavioral backlog lives in [RemoteTodo.swift](../../../Tests/GrafttyTests/Specs/RemoteTodo.swift), under `REMOTE-24` through `REMOTE-29`. [SPECS.md](../../../SPECS.md) is generated from that inventory. The disabled entries describe required future behavior, not passing implementation tests.
+The behavioral backlog lives in [RemoteTodo.swift](../../../Tests/GrafttyTests/Specs/RemoteTodo.swift), under `REMOTE-24` through `REMOTE-30`. [SPECS.md](../../../SPECS.md) is generated from that inventory. The disabled entries describe required future behavior, not passing implementation tests.
 
 ## Implementation status
 
@@ -105,6 +105,7 @@ The implementation must support additional providers after AWS. Shared placement
 - Regularly replicate commits and native agent session data to the initiating Mac, including unfinished work that has no PR or MR.
 - Allow remote hosts to push directly to `origin` using credentials already configured there. Otherwise, let the agent push to its parent and request publication from the parent.
 - Do not move private keys, copy authentication stores, or automatically forward credentials between machines.
+- Let workers use granted MCP servers through a proxy on their parent Mac. Keep upstream authentication and refresh on the Mac; do not export MCP credentials to workers.
 - Authenticate incoming work against the host and delegation the parent expects. A claimed hostname, branch, or Git author is not sufficient.
 - On a Spot interruption warning, immediately drain the host and attempt to commit and transfer every affected worktree and its sessions to its parent before interruption.
 - Add a remote-host skill that explains the parent relationship and publication fallback.
@@ -277,6 +278,43 @@ This establishes which paired host submitted the work and which delegation it ma
 
 Graftty identity keys remain local to their devices. Public-key pairing is compatible with this design. Copying the parent's SSH private keys, Git authentication stores, AWS credentials, or agent authentication stores to a worker is not.
 
+## MCP access through the parent
+
+Requirements: `REMOTE-30.1` through `REMOTE-30.8`. The proxy approach is agreed; implementation is pending.
+
+A Linux agent uses standard MCP through a local Graftty stdio bridge. The bridge connects through the existing authenticated parent connection to a parent-owned MCP client. That client talks to the selected upstream server. No public MCP listener or inbound Mac port is required. This is independent of AWS and works over the same authenticated connection whether its transport is WebRTC or SSH through a provider.
+
+Reuse the [official Swift MCP SDK](https://github.com/modelcontextprotocol/swift-sdk) for client/server behavior and supported transports. Pin a tested version and negotiate its supported protocol version. Graftty owns delegation and transport integration, not a new OAuth implementation. The SDK exposes authorization and token-storage integration, but does not by itself unlock another application's credential store. Validate the chosen SDK release and each authentication adapter before claiming compatibility.
+
+### Configuration and authority
+
+The parent stores stable server IDs and reviewed upstream definitions. A worker selects an authorized ID; it cannot supply a parent command, environment override, credential reference, or upstream URL. Project setup records required server IDs without secrets. Per-user parent policy grants those servers to a project, and each placement receives a grant bound to the authenticated worker identity, repository, worktree, assignment generation, and expiry. Saved policy can authorize subsequent placements without repeated prompts. Discovering a server or pairing a host alone grants no MCP access.
+
+Check current pairing and delegation before opening a session and before forwarding each request. Revocation, expiry, and reassignment stop new calls and close affected sessions. Replacement hosts need new grants; copied agent history and old bridge configuration confer no authority. Keep sessions, request IDs, notifications, and server-initiated requests isolated by delegation. Scope the worker-local bridge to its managed worktree/container. Processes controlling the entire worker remain within that worker's trust boundary.
+
+The proxy authenticates upstream as the parent's configured client. It never sends upstream access tokens, refresh tokens, cookies, credential files, or credential-bearing configuration to Linux. A worker's transport identity is not an upstream bearer token. Upstream discovery and redirects must not let a worker redirect authenticated traffic to a destination of its choosing. [MCP security guidance](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices)
+
+### Compatibility and execution location
+
+| Server or authentication source | Intended behavior |
+| --- | --- |
+| Parent-local stdio server | Run the approved command on the Mac with its local authentication; proxy MCP messages. |
+| Remote HTTP server | Connect from the Mac using its configured authentication and refresh mechanism. |
+| Authentication owned by Claude, Codex, or an app connector | Reuse only through a supported integration with the owning client. Otherwise report setup required or unsupported; do not scrape or export private stores. |
+| Tool that needs the Linux worktree, filesystem, or shell | Configure a Linux-local server separately; a parent-local tool still operates on Mac resources. |
+
+Support stdio and Streamable HTTP through upstream implementations. Preserve negotiated cancellation, progress, notifications, and supported server-to-client requests. Do not silently grant sampling, elicitation, or roots access on the Mac to compensate for a worker capability that is missing. Any credential entry or renewed upstream consent stays on the parent. [MCP transports](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+
+MCP access is distinct from the agent runtime's own model-service login. The proxy does not establish a Claude or Codex subscription/API session on Linux. Tool output may itself contain sensitive data, even though Graftty does not forward its authentication material.
+
+### Failure handling and visibility
+
+Bound message sizes, concurrent calls, queues, and deadlines per delegation. Parent disconnection makes proxied servers unavailable; it never triggers credential copying or an unconfigured direct connection. Reconnect checks current authority and establishes a fresh session. A call whose reply was lost may already have changed upstream state. Report its outcome as unknown and do not automatically replay it. Cancellation and revocation cannot undo an upstream side effect already performed.
+
+The CLI, Mac, and Mobile show server ID, execution location, delegation, readiness, and sanitized failure reason. Distinguish ready, parent unavailable, authentication required, unsupported, and revoked. Audit routing and outcomes without recording tokens, credential-bearing URLs, or tool payloads by default. Project setup checks MCP requirements separately from container build success. The remote-host skill explains which tools act on the Mac and how to handle unavailable or uncertain calls.
+
+Acceptance tests must cover two parents and multiple projects, unauthorized server IDs, hostile URL/command substitutions, stale generations, expiry and revocation during a session, token refresh confined to the Mac, reconnect after a lost mutating reply, and supported callbacks. An integration test must exercise actual Claude and Codex MCP clients through the bridge using fixture credentials and verify that those credentials never reach worker configuration or protocol messages.
+
 ## Native session replication and restore
 
 Requirements: `REMOTE-27.1` through `REMOTE-27.4`.
@@ -287,7 +325,7 @@ Each adapter needs a versioned support contract for stable reads, associated fil
 
 The parent reports Git and session replication separately: latest received commit, latest session progress, timestamps, failures, and whether a writer was still active. These are synchronization records, not Graftty-specific checkpoint artifacts. Independent copies do not automatically form an atomic snapshot.
 
-To resume elsewhere, prepare a compatible project environment, restore the selected Git state and native session data, and use the runtime's native resume mechanism. Regenerate live Graftty registrations on the destination. Authentication must already be available there or be completed independently.
+To resume elsewhere, prepare a compatible project environment, restore the selected Git state and native session data, and use the runtime's native resume mechanism. Regenerate live Graftty registrations and authorized MCP bridge configuration on the destination. Agent-runtime authentication must already be available there or be completed independently; proxied MCP authentication stays on the parent.
 
 Cross-host native resume is not yet validated. An absolute path embedded in history, a missing auxiliary file, or a runtime-version mismatch may prevent it. Preserve the copied data and explain incompatibility rather than presenting a new conversation as a successful resume. Normal migration must stop or hand off the old writer before continuing the same session on another host.
 
@@ -352,6 +390,7 @@ Proposed state families remain separate:
 | Project environment | Absent, preparing, ready, failed, incompatible |
 | Worktree | Placement, creation, agent readiness, replication progress |
 | Git publication | Requested, accepted, succeeded, rejected, outcome unknown |
+| MCP access | Server ID, execution location, delegation, ready, parent unavailable, authentication required, unsupported, revoked |
 | Spot drain | Deadline, per-worktree commit result, Git acknowledgement, session acknowledgement |
 
 Provider-running state is not equivalent to Graftty-ready state. Show stale timestamps instead of interpreting a disconnected host as empty. Mac and Mobile display these shared facts without requiring either client to infer success from an agent's prose.
@@ -376,6 +415,7 @@ These are implementation slices, not permission to omit Spot recovery from the f
 2. Build provider preferences and read-only host/price discovery. Test per-user persistence, preference clearing, architecture filtering, price freshness, and spending limits.
 3. Add placement reservations, AWS lifecycle operations, and Dev Container preparation. Test concurrent placement, ambiguous launch outcomes, incompatible images, and two projects sharing one host.
 4. Implement native session adapters and both skills. Prove actual Claude and Codex resume on another host using supported versions, including different filesystem paths.
+   Implement the parent MCP proxy and regenerate scoped bridge configuration during placement and recovery. Validate supported authentication sources and real agent clients without exporting credentials.
 5. Add Spot interruption monitoring and evacuation. Simulate interruption during edits, a running tool, a locked index, a conflict, session writes, and an in-flight replication. Verify every worktree is accounted for, including partial failures and an offline parent.
 6. Exercise the complete workflow from Mac and Mobile, including capacity expansion and recovery onto a replacement host.
 
@@ -392,5 +432,6 @@ Before implementation, promote the relevant disabled inventory entries into fail
 - Session adapter version support, related files, stable-read boundaries, and path remapping.
 - Parent-offline durability and whether users can select another durable destination.
 - Native agent authentication on new hosts without copying existing credentials.
+- Supported integrations for MCP authentication owned by existing agent clients or app connectors; compatibility must be demonstrated per integration.
 - Exact SSM launch-template prerequisites and least-privilege IAM permissions for provider-mediated public-key enrollment.
 - Parent reassignment when the initiating Mac is permanently unavailable, and lifecycle policy for idle machines.

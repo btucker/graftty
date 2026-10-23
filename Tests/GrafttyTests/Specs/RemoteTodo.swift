@@ -192,4 +192,46 @@ struct RemoteTodo {
 """, .disabled("not yet implemented"))
     func remote_29_7() async throws { }
 
+    // MARK: - REMOTE-30.x - MCP access through the parent
+
+    @Test("""
+@spec REMOTE-30.1: When a managed Linux agent uses a granted parent MCP server, the application shall proxy standard MCP messages over the authenticated parent connection while retaining upstream authentication and refresh on the parent.
+""", .disabled("not yet implemented"))
+    func remote_30_1() async throws { }
+
+    @Test("""
+@spec REMOTE-30.2: When forwarding a worker MCP request, the parent shall require a current grant bound to the authenticated worker, repository, worktree, assignment generation, server ID, and expiry without accepting worker-supplied upstream commands, URLs, or credential configuration.
+""", .disabled("not yet implemented"))
+    func remote_30_2() async throws { }
+
+    @Test("""
+@spec REMOTE-30.3: When an MCP grant expires, is revoked, or is superseded by reassignment, the application shall reject new calls and close its sessions without transferring that authority through copied session data.
+""", .disabled("not yet implemented"))
+    func remote_30_3() async throws { }
+
+    @Test("""
+@spec REMOTE-30.4: While proxying MCP sessions, the application shall isolate messages and negotiated capabilities by delegation and enforce bounded messages, queues, concurrency, and deadlines.
+""", .disabled("not yet implemented"))
+    func remote_30_4() async throws { }
+
+    @Test("""
+@spec REMOTE-30.5: If the parent connection is lost during an MCP call, then the application shall report unavailable or unknown outcome without automatically replaying the call, copying credentials, or falling back to an unconfigured direct connection.
+""", .disabled("not yet implemented"))
+    func remote_30_5() async throws { }
+
+    @Test("""
+@spec REMOTE-30.6: If an existing MCP authentication source lacks a supported parent integration, then the application shall report authentication required or unsupported without scraping or exporting private authentication stores.
+""", .disabled("not yet implemented"))
+    func remote_30_6() async throws { }
+
+    @Test("""
+@spec REMOTE-30.7: When presenting MCP access in the CLI, Mac, or Mobile, the application shall identify the server, execution location, delegation, and readiness without exposing authentication material or recording tool payloads by default.
+""", .disabled("not yet implemented"))
+    func remote_30_7() async throws { }
+
+    @Test("""
+@spec REMOTE-30.8: When preparing or recovering a worktree, the application shall generate scoped MCP bridge configuration from current parent grants and check MCP readiness separately from container readiness and agent-runtime authentication.
+""", .disabled("not yet implemented"))
+    func remote_30_8() async throws { }
+
 }
