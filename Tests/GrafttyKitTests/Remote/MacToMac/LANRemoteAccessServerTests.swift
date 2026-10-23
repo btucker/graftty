@@ -9,13 +9,56 @@ import Darwin
 import Glibc
 #endif
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import GrafttyProtocol
+import NIOCore
 import Testing
 
 @testable import GrafttyKit
 
 @Suite("LANRemoteAccessServer", .serialized)
 struct LANRemoteAccessServerTests {
+    /// Runs a test that binds the `::` wildcard only where the kernel serves
+    /// a dual-stack listener. The probe uses raw sockets and literal
+    /// addresses, never a resolver or `LANRemoteAccessServer`, so a failure
+    /// in the server's own `::` bind fails these tests instead of skipping
+    /// them. Linux containers with IPv6 disabled lack dual-stack.
+    static let requiresDualStack = ConditionTrait.enabled(
+        if: kernelServesDualStack,
+        "The kernel cannot serve a dual-stack :: listener here."
+    )
+
+    /// #678: glibc's `getaddrinfo` applies `AI_ADDRCONFIG` to `::`, so NIO's
+    /// `bind(host:port:)` rejects it on hosts with no global IPv6 address
+    /// even where the kernel serves dual-stack (a Docker bridge container).
+    static let resolverRejectsWildcard = (try? SocketAddress.makeAddressResolvingHost("::", port: 0)) == nil
+
+    private static let kernelServesDualStack: Bool = {
+        let descriptor = socket(AF_INET6, GrafttyPOSIX.streamSocket, 0)
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+        var v6Only: Int32 = 0
+        guard setsockopt(descriptor, Int32(IPPROTO_IPV6), IPV6_V6ONLY, &v6Only, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+            return false
+        }
+
+        var address = sockaddr_in6()
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_addr = in6addr_any
+        var length = socklen_t(MemoryLayout<sockaddr_in6>.size)
+        let listening = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                bind(descriptor, sockaddrPointer, length) == 0
+                    && listen(descriptor, 2) == 0
+                    && getsockname(descriptor, sockaddrPointer, &length) == 0
+            }
+        }
+        guard listening else { return false }
+        let port = Int(UInt16(bigEndian: address.sin6_port))
+        return canConnectToLocalhost(port: port) && canConnectToIPv6Loopback(port: port)
+    }()
 
     @Test("server starts on an ephemeral localhost port and reports the actual listener port")
     func startsAndReportsActualPort() throws {
@@ -44,37 +87,46 @@ struct LANRemoteAccessServerTests {
     HTTP listener on port 8800 for LAN and Tailscale-IP routes. \
     Browser Web Access shall remain an independent HTTPS service and shall not \
     be used for native signaling.
-    """)
+    """, Self.requiresDualStack)
     func wildcardListenerIsDualStack() throws {
-        let server = Self.makeServer(
-            config: .init(port: 0, bindHost: "::")
-        )
-        try server.start()
-        defer { server.stop() }
-        let port = try #require(server.listeningPort)
+        try withKnownIssue("#678: glibc rejects :: without a global IPv6 address") {
+            let server = Self.makeServer(
+                config: .init(port: 0, bindHost: "::")
+            )
+            try server.start()
+            defer { server.stop() }
+            let port = try #require(server.listeningPort)
 
-        #expect(Self.canConnectToLocalhost(port: port))
-        #expect(Self.canConnectToIPv6Loopback(port: port))
+            #expect(Self.canConnectToLocalhost(port: port))
+            #expect(Self.canConnectToIPv6Loopback(port: port))
+        } when: {
+            Self.resolverRejectsWildcard
+        }
     }
 
-    @Test("a stopped stable listener can be rebound on the same port")
+    @Test("a stopped stable listener can be rebound on the same port", Self.requiresDualStack)
     func stoppedListenerCanRebindSamePort() throws {
-        let first = Self.makeServer(
-            config: .init(port: 0, bindHost: "::")
-        )
-        try first.start()
-        let port = try #require(first.listeningPort)
-        first.stop()
+        try withKnownIssue("#678: glibc rejects :: without a global IPv6 address") {
+            let first = Self.makeServer(
+                config: .init(port: 0, bindHost: "::")
+            )
+            try first.start()
+            defer { first.stop() }
+            let port = try #require(first.listeningPort)
+            first.stop()
 
-        let rebound = Self.makeServer(
-            config: .init(port: port, bindHost: "::")
-        )
-        try rebound.start()
-        defer { rebound.stop() }
+            let rebound = Self.makeServer(
+                config: .init(port: port, bindHost: "::")
+            )
+            try rebound.start()
+            defer { rebound.stop() }
 
-        #expect(rebound.listeningPort == port)
-        #expect(Self.canConnectToLocalhost(port: port))
-        #expect(Self.canConnectToIPv6Loopback(port: port))
+            #expect(rebound.listeningPort == port)
+            #expect(Self.canConnectToLocalhost(port: port))
+            #expect(Self.canConnectToIPv6Loopback(port: port))
+        } when: {
+            Self.resolverRejectsWildcard
+        }
     }
 
     @Test("POST /v2/pairing/begin returns JSON through a real socket")
