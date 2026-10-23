@@ -25,7 +25,8 @@ public actor DevContainerPreparer {
         }
     }
 
-    public func prepare(workspace rawWorkspace: String, configuration: String? = nil, operationID: UUID, skills: [RemoteSkillSnapshot] = [], agent: TeamHookRuntime? = nil) async throws -> PreparedDevContainer {
+    public func prepare(workspace rawWorkspace: String, configuration: String? = nil, operationID: UUID, skills: [RemoteSkillSnapshot] = [], agent: TeamHookRuntime? = nil, mcp: MCPProfileMount? = nil) async throws -> PreparedDevContainer {
+        if mcp != nil && (profileDirectory == nil || skills.isEmpty) { throw DevContainerPreparationError(stage: "mcp", message: "MCP requires a durable private profile and selected skill revisions") }
         if !skills.isEmpty {
             try RemoteSkillTransferReceiver.validate(try skills.map { .init(runtime: $0.runtime.rawValue, revision: try $0.revision) })
         }
@@ -61,9 +62,9 @@ public actor DevContainerPreparer {
         }
         let label = "graftty.placement=\(operationID.uuidString.lowercased())"
         let workspaceLabel = "graftty.workspace=" + SHA256.hash(data: Data(workspace.utf8)).map { String(format: "%02x", $0) }.joined()
-        let profileMount = try skills.isEmpty ? nil : profileDirectory.map { try DevContainerProfileMount(directory: $0, operationID: operationID) }
+        let profileMount = try skills.isEmpty && mcp == nil ? nil : profileDirectory.map { try DevContainerProfileMount(directory: $0, operationID: operationID) }
         defer { profileMount?.removeProbe() }
-        let mounts = profileMount.map { ["--mount", $0.argument] } ?? []
+        let mounts = (profileMount.map { ["--mount", $0.argument] } ?? []) + (mcp?.mountArguments ?? [])
         let up = try await run(["up"] + common + ["--id-label", label, "--id-label", workspaceLabel] + mounts, at: workspace, stage: "lifecycle", timeout: .seconds(1800))
         let output = try json(up.stdout, stage: "lifecycle")
         guard output["outcome"] as? String == "success", let containerID = output["containerId"] as? String,
@@ -86,16 +87,34 @@ public actor DevContainerPreparer {
             _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", "command -v " + agent.rawValue + " >/dev/null"],
                 at: workspace, stage: "agent-runtime (install \(agent.rawValue) in the Dev Container)", timeout: .seconds(30))
         }
+        if mcp != nil {
+            _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c",
+                "test -S /run/graftty-mcp/bridge.sock && /opt/graftty-mcp/bin/graftty remote mcp bridge --help >/dev/null"],
+                at: workspace, stage: "mcp-runtime (requires a compatible Linux container)", timeout: .seconds(30))
+        }
         let agentHome: String?
-        if skills.isEmpty { agentHome = nil }
+        if skills.isEmpty && mcp == nil { agentHome = nil }
         else {
             agentHome = try await DevContainerSkillInstaller.install(skills, workspace: workspace,
                 execArguments: ["exec"] + common + ["--container-id", containerID], operationID: operationID, executor: executor,
                 profileDirectory: profileMount?.directory)
         }
+        if let mcp, let agentHome {
+            let script = try mcp.installationScript(home: agentHome)
+            // Each generated line is bounded; split scripts below Linux's argv limit.
+            var batch = "set -eu\numask 077\n"
+            for line in script.split(separator: "\n", omittingEmptySubsequences: false) {
+                if batch.utf8.count + line.utf8.count > 48_000 {
+                    _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", batch], at: workspace, stage: "mcp-config", timeout: .seconds(30))
+                    batch = "set -eu\numask 077\n"
+                }
+                batch += line + "\n"
+            }
+            _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", batch], at: workspace, stage: "mcp-config", timeout: .seconds(30))
+        }
         return PreparedDevContainer(containerID: containerID, workspace: workspace, configurationPath: config,
             configurationDigest: SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined(),
-            remoteWorkspaceFolder: remoteFolder, remoteUser: output["remoteUser"] as? String, usesRelativeGitWorktree: relativeGit, agentSkillHome: agentHome)
+            remoteWorkspaceFolder: remoteFolder, remoteUser: output["remoteUser"] as? String, usesRelativeGitWorktree: relativeGit, agentSkillHome: agentHome, mcpConfigured: mcp == nil ? nil : true)
     }
 
     public nonisolated static func shellCommand(for environment: PreparedDevContainer, command: String? = nil) -> String {

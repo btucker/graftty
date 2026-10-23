@@ -14,8 +14,10 @@ public struct HostDevContainerRequest: Codable, Sendable, Equatable {
     public let configuration: String?
     public let skills: [HostAgentSkillRevision]?
     public let agentRuntime: String?
-    public init(configuration: String? = nil, skills: [HostAgentSkillRevision]? = nil, agentRuntime: String? = nil) {
+    public let mcpGrants: [MCPProxyScope]?
+    public init(configuration: String? = nil, skills: [HostAgentSkillRevision]? = nil, agentRuntime: String? = nil, mcpGrants: [MCPProxyScope]? = nil) {
         self.configuration = configuration; self.skills = skills; self.agentRuntime = agentRuntime
+        self.mcpGrants = mcpGrants
     }
 }
 
@@ -45,6 +47,7 @@ public enum HostPlacementRequest: Codable, Sendable, Equatable {
     case createInDevContainer(operationID: UUID, intent: HostPlacementIntent)
     // A distinct case prevents older workers from silently ignoring skill selections.
     case createWithAgentSkills(operationID: UUID, intent: HostPlacementIntent)
+    case createWithMCP(operationID: UUID, intent: HostPlacementIntent)
     case status(operationID: UUID)
 }
 

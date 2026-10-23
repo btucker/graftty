@@ -127,6 +127,10 @@ final class HostService {
             authenticatedSkillMutator: { await runtime.receiveSkills($0, owner: $1) },
             displayOwnershipStore: ownership)
         let mcpBridge = self.mcpBridge
+        runtime.mcpProfiles = MCPProfileService(
+            directory: URL(fileURLWithPath: configuration.socketPath).deletingLastPathComponent().appendingPathComponent("mcp"),
+            runtime: URL(fileURLWithPath: Self.cliPath).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent(),
+            send: { await mcpBridge.handle($0) })
         socket = SocketServer(socketPath: configuration.socketPath)
         socket.onAsyncRequest = { message in
             if case .mcpBridge(let request) = message { return .mcpProxy(await mcpBridge.handle(request)) }

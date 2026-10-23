@@ -26,6 +26,7 @@ public final class HeadlessHostRuntime {
     let devContainers: DevContainerPreparer
     let placements: HostPlacementLedger
     let skillTransfers: RemoteSkillTransferReceiver
+    public var mcpProfiles: MCPProfileService?
     var placementTasks: [UUID: Task<Void, Never>] = [:]
     var isShuttingDown = false
     /// `graftty worktree add` / `remove` operations, shared with the Mac app.
@@ -91,6 +92,12 @@ public final class HeadlessHostRuntime {
     }
 
     public func restore() async throws {
+        for record in placements.retainedRecords where record.state == .created && record.environment?.mcpConfigured == true {
+            guard FileManager.default.fileExists(atPath: record.intent.worktreePath),
+                  let grants = record.intent.devContainer?.mcpGrants else { continue }
+            guard let mcpProfiles else { throw HostRuntimeError.invalid("Managed MCP profile service is unavailable") }
+            _ = try mcpProfiles.prepare(operationID: record.operationID, configurations: grants.map { .init(parent: record.owner, scope: $0) })
+        }
         let live = try await terminals.sessions()
         for ri in state.repos.indices {
             for wi in state.repos[ri].worktrees.indices {
@@ -348,6 +355,7 @@ public final class HeadlessHostRuntime {
             }
             throw error
         }
+        if let placement { await mcpProfiles?.stop(operationID: placement.operationID) }
         for session in worktree.paneSessions.values { try? await terminals.kill(launcher.sessionName(for: session)) }
         worktreeStats[path] = nil
         state.removeWorktree(atPath: path)
@@ -386,6 +394,7 @@ public final class HeadlessHostRuntime {
         let jobs = Array(placementTasks.values)
         for job in jobs { job.cancel() }
         for job in jobs { await job.value }
+        await mcpProfiles?.stop()
         try save()
         terminals.detachAll()
     }

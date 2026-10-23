@@ -18,16 +18,23 @@ public extension HeadlessHostRuntime {
                     throw HostRuntimeError.notFound("Placement not found")
                 }
                 return .placement(record)
-            case .create(let id, let intent), .createInDevContainer(let id, let intent), .createWithAgentSkills(let id, let intent):
+            case .create(let id, let intent), .createInDevContainer(let id, let intent), .createWithAgentSkills(let id, let intent), .createWithMCP(let id, let intent):
                 let containerRequest: Bool
                 let skillRequest: Bool
+                let mcpRequest: Bool
+                if case .createWithMCP = request { mcpRequest = true } else { mcpRequest = false }
                 switch request {
-                case .createWithAgentSkills: containerRequest = true; skillRequest = true
+                case .createWithAgentSkills, .createWithMCP: containerRequest = true; skillRequest = true
                 case .createInDevContainer: containerRequest = true; skillRequest = false
                 default: containerRequest = false; skillRequest = false
                 }
-                guard containerRequest == (intent.devContainer != nil), skillRequest == (intent.devContainer?.skills != nil) else {
+                guard containerRequest == (intent.devContainer != nil), skillRequest == (intent.devContainer?.skills != nil),
+                      mcpRequest == (intent.devContainer?.mcpGrants != nil) else {
                     throw HostRuntimeError.invalid("Container placement requires the explicit container request type")
+                }
+                if let grants = intent.devContainer?.mcpGrants {
+                    try MCPProfileMount.validate(grants, worktree: intent.worktreePath)
+                    guard mcpProfiles != nil else { throw HostRuntimeError.invalid("Managed MCP profile service is unavailable") }
                 }
                 // Check ownership and immutable arguments before any filesystem or Git work.
                 if try placements.status(operationID: id, owner: owner) != nil {
@@ -72,7 +79,7 @@ public extension HeadlessHostRuntime {
                 // Persist admission and retain the task without suspending in between.
                 placementTasks[id] = Task { [self] in
                     defer { placementTasks[id] = nil }
-                    await performPlacement(id: id, intent: intent, skills: skills)
+                    await performPlacement(id: id, intent: intent, skills: skills, owner: owner)
                 }
                 return .placement(admitted)
             }
@@ -81,14 +88,19 @@ public extension HeadlessHostRuntime {
         }
     }
 
-    private func performPlacement(id: UUID, intent: HostPlacementIntent, skills: [RemoteSkillSnapshot]) async {
+    private func performPlacement(id: UUID, intent: HostPlacementIntent, skills: [RemoteSkillSnapshot], owner: RemoteMacConnectionSummary.ID) async {
         do {
             try Task.checkCancellation()
             let prepare: (@MainActor @Sendable (String) async throws -> Void)?
             if let request = intent.devContainer {
                 prepare = { [self] path in
+                    let mcp: MCPProfileMount?
+                    if let grants = request.mcpGrants {
+                        guard let mcpProfiles else { throw HostRuntimeError.invalid("Managed MCP profile service is unavailable") }
+                        mcp = try mcpProfiles.prepare(operationID: id, configurations: grants.map { .init(parent: owner, scope: $0) })
+                    } else { mcp = nil }
                     let environment = try await devContainers.prepare(workspace: path, configuration: request.configuration, operationID: id, skills: skills,
-                        agent: request.agentRuntime.flatMap(TeamHookRuntime.init(rawValue:)))
+                        agent: request.agentRuntime.flatMap(TeamHookRuntime.init(rawValue:)), mcp: mcp)
                     try placements.recordEnvironment(operationID: id, environment: environment)
                 }
             } else { prepare = nil }
@@ -97,6 +109,7 @@ public extension HeadlessHostRuntime {
                 relativeGitPaths: intent.devContainer != nil, prepareEnvironment: prepare)
             try placements.complete(operationID: id, worktreeID: created.path, paneID: created.session)
         } catch {
+            await mcpProfiles?.stop(operationID: id)
             // Git may have succeeded even if setup or persistence failed. If the
             // failure itself cannot be saved, keep the original preparing claim;
             // restart recovery marks it uncertain without repeating any mutation.

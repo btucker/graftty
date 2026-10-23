@@ -3738,6 +3738,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-30.12** While proxying MCP, the application shall bound outstanding requests in each direction and expire each unanswered call even if other messages continue arriving.
 
+**REMOTE-30.13** While serving a managed profile MCP socket, the application shall reject general host commands, other parents, unselected grants and sessions opened through another profile, and close its sessions when the endpoint stops.
+
+**REMOTE-30.14** When a managed container installs MCP configuration, the application shall generate native entries in its fresh private profile, preserve existing files, and mount only its dedicated socket directory and the bridge runtime read-only.
+
+**REMOTE-30.15** When a managed MCP endpoint stops, the application shall remove its socket while retaining the mount directory, and shall recreate the endpoint only from host-supplied assignment configuration.
+
 ### REMOTE-31.x — Provider preferences and placement
 
 **REMOTE-31.1** When a user configures the aws compute provider, the CLI shall persist the selected existing AWS profile and placement preferences without copying AWS credentials.

@@ -23,6 +23,7 @@ public final class HostPlacementLedger {
     private var document: Document
     public var pendingCount: Int { document.records.filter { $0.state == .preparing || $0.state == .outcomeUnknown }.count }
     public var drain: HostDrainRecord? { document.drain }
+    public var retainedRecords: [HostPlacementRecord] { document.records.filter { $0.state != .released } }
 
     public init(fileURL: URL) throws {
         file = JSONFileStore(fileURL: fileURL, outputFormatting: [.sortedKeys], posixPermissions: 0o600)
@@ -192,6 +193,7 @@ public final class HostPlacementLedger {
             }
         }
         if let skills = intent.devContainer?.skills { try RemoteSkillTransferReceiver.validate(skills) }
+        if let grants = intent.devContainer?.mcpGrants { try MCPProfileMount.validate(grants, worktree: intent.worktreePath) }
         if let agent = intent.devContainer?.agentRuntime {
             guard TeamHookRuntime(rawValue: agent) != nil, intent.devContainer?.skills?.contains(where: { $0.runtime == agent }) == true else {
                 throw HostRuntimeError.invalid("Agent launch requires a matching staged skill revision")

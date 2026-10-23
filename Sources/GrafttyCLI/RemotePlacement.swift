@@ -58,9 +58,10 @@ struct RemotePlacementTarget: ParsableArguments {
         }
         guard record.operationID == (try uuid()) else { throw ValidationError("Host returned a different placement operation.") }
         switch request {
-        case .create(_, let intent), .createInDevContainer(_, let intent), .createWithAgentSkills(_, let intent):
+        case .create(_, let intent), .createInDevContainer(_, let intent), .createWithAgentSkills(_, let intent), .createWithMCP(_, let intent):
             guard record.intent == intent, intent.devContainer == nil || record.state != .created || record.environment != nil,
-                  intent.devContainer?.skills == nil || record.state != .created || record.environment?.agentSkillHome != nil else {
+                  intent.devContainer?.skills == nil || record.state != .created || record.environment?.agentSkillHome != nil,
+                  intent.devContainer?.mcpGrants == nil || record.state != .created || record.environment?.mcpConfigured == true else {
                 throw ValidationError("Host returned a different placement configuration. Inspect the retained operation before retrying.")
             }
         case .status: break
@@ -72,6 +73,7 @@ struct RemotePlacementTarget: ParsableArguments {
             print("\(record.operationID.uuidString): \(record.state.rawValue)")
             if let path = record.worktreeID { print(String(reflecting: path)) }
             if let environment = record.environment { print("Container: \(environment.containerID); agent authentication not checked") }
+            if record.environment?.mcpConfigured == true { print("Parent MCP configuration installed; live access requires a current grant and parent connection") }
             if let message = record.message { print(String(reflecting: message)) }
         }
         if record.state == .outcomeUnknown { throw ExitCode(1) }
@@ -89,6 +91,16 @@ struct RemotePlacementCreate: ParsableCommand {
     @Option(help: "Selected Dev Container JSON path relative to the new worktree; requires --dev-container") var devContainerConfig: String?
     @Option(help: "Staged runtime:revision, e.g. codex:<sha256>; repeat for claude. Requires --dev-container") var skillRevision: [String] = []
     @Option(help: "Start codex or claude in the container; requires its skill revision and an installed native executable") var agent: String?
+    @Option(help: "JSON array of current MCPProxyScope grant addresses; requires --dev-container and --skill-revision") var mcpGrants: String?
+    func grants() throws -> [MCPProxyScope]? {
+        guard let mcpGrants else { return nil }
+        guard devContainer, !skillRevision.isEmpty else { throw ValidationError("--mcp-grants requires --dev-container and --skill-revision") }
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: mcpGrants))
+        guard bytes.count <= 128 * 1024 else { throw ValidationError("MCP grant selection exceeds 128 KiB") }
+        let scopes = try JSONDecoder().decode([MCPProxyScope].self, from: bytes)
+        try MCPProfileMount.validate(scopes, worktree: (repository as NSString).appendingPathComponent(".worktrees/" + name))
+        return scopes
+    }
     func skills() throws -> [HostAgentSkillRevision]? {
         guard !skillRevision.isEmpty else { return nil }
         guard devContainer else { throw ValidationError("--skill-revision requires --dev-container") }
@@ -103,6 +115,7 @@ struct RemotePlacementCreate: ParsableCommand {
     func validate() throws {
         guard devContainer || devContainerConfig == nil else { throw ValidationError("--dev-container-config requires --dev-container") }
         let selected = try skills()
+        _ = try grants()
         if let agent {
             guard TeamHookRuntime(rawValue: agent) != nil, selected?.contains(where: { $0.runtime == agent }) == true else {
                 throw ValidationError("--agent requires a matching --skill-revision and --dev-container")
@@ -115,8 +128,9 @@ struct RemotePlacementCreate: ParsableCommand {
     func run() throws {
         let id = try target.uuid()
         let intent = HostPlacementIntent(repositoryID: repository, worktreeName: name, branchName: branch ?? name,
-            demand: try resources.demand(), devContainer: devContainer ? .init(configuration: devContainerConfig, skills: try skills(), agentRuntime: agent) : nil)
-        if intent.devContainer?.skills != nil { try target.run(.createWithAgentSkills(operationID: id, intent: intent)) }
+            demand: try resources.demand(), devContainer: devContainer ? .init(configuration: devContainerConfig, skills: try skills(), agentRuntime: agent, mcpGrants: try grants()) : nil)
+        if intent.devContainer?.mcpGrants != nil { try target.run(.createWithMCP(operationID: id, intent: intent)) }
+        else if intent.devContainer?.skills != nil { try target.run(.createWithAgentSkills(operationID: id, intent: intent)) }
         else { try target.run(devContainer ? .createInDevContainer(operationID: id, intent: intent) : .create(operationID: id, intent: intent)) }
     }
 }

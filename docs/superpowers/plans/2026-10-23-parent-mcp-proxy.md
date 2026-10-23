@@ -17,6 +17,29 @@ that same authenticated connection. No inbound port on the Mac is required.
   destination and does not overwrite an agent's settings. Installation into a
   prepared container remains a separate step.
 
+Managed placement also accepts `graftty remote placement create ...
+--dev-container --skill-revision <runtime:revision> --mcp-grants <file>`. The
+file is a JSON array of `MCPProxyScope` addresses from explicit parent grants.
+All selections must identify the new worktree, one repository and one assignment
+generation. The host derives the parent identity from the authenticated placement
+request. A distinct protocol request prevents old hosts from ignoring MCP setup.
+
+This path installs native Codex and Claude user configuration into the new private
+profile. It mounts a dedicated socket directory at `/run/graftty-mcp` and the
+installed Linux Graftty runtime at `/opt/graftty-mcp`, both read-only. It does not
+mount the host's general control socket. The endpoint admits only selected grants
+and successfully opened sessions belonging to that profile. General host commands
+are rejected. Native tools still use the original server names.
+
+Container setup verifies the socket mount and executes the packaged bridge's
+help command before reporting `mcpConfigured`. The image must be compatible with
+the packaged Linux runtime, and its remote user must match the host UID. This
+status describes installation; it does not establish current parent connectivity,
+upstream authentication, or model login. The foreground parent connection must
+still be running. Host restart recreates endpoints from completed placement
+records; deletion and shutdown remove their sockets and close active sessions.
+Native profiles remain on the host after container deletion.
+
 The original logical MCP server names remain in native agent configuration. The
 proxy forwards JSON-RPC messages, including notifications, cancellation and
 server requests. It does not advertise a forwarding tool or add capabilities to
@@ -73,8 +96,8 @@ worker is also separate.
 ## Remaining integration
 
 Persistent app ownership and reconnect, automatic policy/grant creation during
-placement, per-profile bridge socket mounts, configuration installation and
-refresh, HTTP/OAuth adapters, and shared Mac/Mobile readiness UI remain pending.
+placement, configuration refresh for existing profiles, HTTP/OAuth adapters, and
+shared Mac/Mobile readiness UI remain pending.
 The foreground command and native configuration artifacts do not claim full
 settings or plugin parity. Git/session replication and Spot recovery remain
 separate unfinished work.

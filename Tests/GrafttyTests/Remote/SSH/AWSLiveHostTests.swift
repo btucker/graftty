@@ -44,11 +44,15 @@ struct AWSLiveHostTests {
             #expect(observation.isFresh())
             #expect(observation.sample.cpuCount.map { $0 > 0 } == true)
             #expect(observation.sample.memoryAvailableBytes.map { $0 > 0 } == true)
-            if ProcessInfo.processInfo.environment["GRAFTTY_LIVE_AWS_MCP"] == "1" {
+            if ProcessInfo.processInfo.environment["GRAFTTY_LIVE_AWS_MCP"] == "1" || ProcessInfo.processInfo.environment["GRAFTTY_LIVE_AWS_MCP_CONTAINER"] != nil {
                 let worker = RemoteMacConnectionSummary.ID(deviceID: .init(value: identity.deviceID), fingerprint: fingerprint)
                 let parentIdentity = RemoteMacConnectionSummary.ID(deviceID: .init(value: parent.deviceID),
                     fingerprint: RemoteIdentityFingerprint(of: try RemoteIdentityPublicKey(rawRepresentation: clientKey.publicKey.rawRepresentation)))
-                try await exerciseMCP(connection: connection, target: target, root: root, worker: worker, parent: parentIdentity)
+                if let repository = ProcessInfo.processInfo.environment["GRAFTTY_LIVE_AWS_MCP_CONTAINER"] {
+                    try await exerciseManagedMCP(connection: connection, target: target, root: root, worker: worker, parent: parentIdentity, remoteRepository: repository)
+                } else {
+                    try await exerciseMCP(connection: connection, target: target, root: root, worker: worker, parent: parentIdentity)
+                }
             }
             if let repository = ProcessInfo.processInfo.environment["GRAFTTY_LIVE_AWS_REPOSITORY"] {
                 try await exercisePlacements(connection: connection, target: target, repository: repository, root: root)

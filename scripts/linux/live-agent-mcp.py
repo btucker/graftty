@@ -60,15 +60,31 @@ class RPC:
 def main():
     root = pathlib.Path(sys.argv[1])
     cli = sys.argv[2]
-    workspace = root / 'workspace'
+    installed = '--installed-profile' in sys.argv[3:]
+    workspace = pathlib.Path.cwd() if installed else root / 'workspace'
     workspace.mkdir(exist_ok=True)
     environment = {'PATH': os.environ['PATH'], 'HOME': str(root),
                    'CODEX_HOME': str(root / '.codex'), 'CLAUDE_CONFIG_DIR': str(root / '.claude'),
                    'GRAFTTY_SOCK': os.environ['GRAFTTY_SOCK']}
     for directory in ['.codex', '.claude']:
         (root / directory).mkdir(exist_ok=True, mode=0o700)
-    (root / '.codex/config.toml').write_bytes((root / 'codex-mcp.toml').read_bytes())
-    configuration = next(root.glob('????????-????-????-????-????????????.json'))
+    if installed:
+        # The production placement must have installed these files itself.
+        assert (root / '.codex/config.toml').is_file()
+        assert (root / '.claude/.claude.json').is_file()
+        for directory in ['/run/graftty-mcp', '/opt/graftty-mcp']:
+            try:
+                (pathlib.Path(directory) / 'must-not-write').write_text('unexpected')
+            except OSError as error:
+                assert error.errno == 30, 'Mount must be read-only'
+            else:
+                raise AssertionError('MCP mount was writable')
+        forbidden = subprocess.run([cli, 'pane', 'list'], env=environment, cwd=workspace,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+        assert forbidden.returncode != 0 and b"only serves this profile" in forbidden.stderr
+    else:
+        (root / '.codex/config.toml').write_bytes((root / 'codex-mcp.toml').read_bytes())
+    configuration = next((root / '.graftty-mcp' if installed else root).glob('????????-????-????-????-????????????.json'))
     if '--expect-revoked' in sys.argv[3:]:
         rejected = subprocess.run(
             [cli, 'remote', 'mcp', 'bridge', '--config', str(configuration)],
@@ -106,8 +122,9 @@ def main():
 
     for runtime in ['codex', 'claude']:
         command = ['codex', 'app-server'] if runtime == 'codex' else [
-            'claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-            '--strict-mcp-config', '--mcp-config', str(root / 'claude-mcp.json')]
+            'claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
+        if runtime == 'claude' and not installed:
+            command += ['--strict-mcp-config', '--mcp-config', str(root / 'claude-mcp.json')]
         client = RPC(command, environment, workspace)
         try:
             if runtime == 'codex':
