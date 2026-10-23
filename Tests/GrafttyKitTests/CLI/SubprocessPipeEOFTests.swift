@@ -7,11 +7,12 @@ struct SubprocessPipeEOFTests {
     @Test("@spec CLI-1.4: When a piped subprocess exits, the application shall return its captured output without waiting for a pipe's end-of-file, even when a background child still holds that pipe open.")
     func exitDoesNotWaitForAHeldPipe() async throws {
         // `sleep` inherits stdout and stderr, so neither pipe reaches EOF
-        // until it exits, long after `sh` has.
+        // until it exits, long after `sh` has. Before CLI-1.4 the call waited
+        // out a five-second EOF timeout (and, on macOS, lost the output).
         let started = ContinuousClock.now
         let output = try await Subprocess.run(SubprocessLaunch(
             executable: "/bin/sh",
-            arguments: ["-c", "echo out; echo err >&2; sleep 8 &"],
+            arguments: ["-c", "echo out; echo err >&2; sleep 30 &"],
             timeoutLabel: "sh"
         ))
         let elapsed = ContinuousClock.now - started
@@ -19,7 +20,7 @@ struct SubprocessPipeEOFTests {
         #expect(output.status == 0)
         #expect(String(decoding: output.stdout, as: UTF8.self) == "out\n")
         #expect(String(decoding: output.stderr, as: UTF8.self) == "err\n")
-        #expect(elapsed < .seconds(2), "returned after \(elapsed)")
+        #expect(elapsed < .milliseconds(4500), "returned after \(elapsed)")
     }
 
     @Test("Output written just before exit is captured in full")
