@@ -568,15 +568,11 @@ public final class WebServer {
                     guard let self else { return }
                     let allowed = (try? result.get()) ?? false
                     if !allowed {
-                        Self.respond(context: context, status: .forbidden, body: Data("forbidden\n".utf8), contentType: "text/plain; charset=utf-8")
+                        Self.respond(context: context, .text("forbidden\n", status: .forbidden))
                         return
                     }
                     if wasTooLarge {
-                        Self.respondJSON(
-                            context: context,
-                            status: .payloadTooLarge,
-                            error: "request body exceeds \(Self.maxBodyBytes) bytes"
-                        )
+                        Self.respond(context: context, .error(.payloadTooLarge, "request body exceeds \(Self.maxBodyBytes) bytes"))
                         return
                     }
                     self.serveStatic(context: context, head: head, body: body)
@@ -636,36 +632,42 @@ public final class WebServer {
         /// WEB-5.4: session list for the client's minimal picker.
         private func serveSessions(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
             let provider = config.sessionsProvider
-            answer(context, fallback: .json([SessionInfo]())) { .json(await provider()) }
+            answer(context) { .json(await provider()) }
         }
 
         private func serveAgentCompletions(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
             let provider = config.agentCompletionsProvider
             let worktreeID = URLComponents(string: head.uri)?.queryItems?.first { $0.name == "worktree" }?.value
-            answer(context, fallback: .json([AgentCompletionCandidate]())) { .json(await provider(worktreeID)) }
+            answer(context) { .json(await provider(worktreeID)) }
         }
 
-        /// WEB-7.1: repo list for the "Add Worktree" picker. Relayed
-        /// repositories only reach clients that advertise relay support.
+        /// WEB-7.1: repo list for the "Add Worktree" picker.
         private func serveRepos(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
-            let provider = config.reposProvider
-            let relayedProvider = config.relayedReposProvider
-            let includeRelayed = Self.requestsRemoteWorktrees(head)
-            answer(context, fallback: .json([RepoInfo]())) {
-                let relayed = includeRelayed ? await relayedProvider() : []
-                return .json(await provider() + relayed)
-            }
+            answerLocalThenRelayed(context, head, local: config.reposProvider, relayed: config.relayedReposProvider)
         }
 
         /// IOS-4.10: worktrees + split-faithful pane trees for the mobile
         /// client's worktree → pane drilldown.
         private func serveWorktreePanes(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
-            let provider = config.worktreePanesProvider
-            let relayedProvider = config.relayedWorktreePanesProvider
+            answerLocalThenRelayed(context, head, local: config.worktreePanesProvider,
+                                   relayed: config.relayedWorktreePanesProvider)
+        }
+
+        /// The local rows followed by the one-hop relayed rows, which only
+        /// reach clients that advertise relay support. The two providers run
+        /// concurrently: the relayed one asks each connected remote Mac.
+        private func answerLocalThenRelayed<Item: Encodable & Sendable>(
+            _ context: ChannelHandlerContext,
+            _ head: HTTPRequestHead,
+            local: @escaping @Sendable () async -> [Item],
+            relayed: @escaping @Sendable () async -> [Item]
+        ) {
             let includeRelayed = Self.requestsRemoteWorktrees(head)
-            answer(context, fallback: .json([WorktreePanes]())) {
-                let relayed = includeRelayed ? await relayedProvider() : []
-                return .json(await provider() + relayed)
+            answer(context) {
+                // Local first, then the one-hop relay, as before #483.
+                let localItems = await local()
+                let relayedItems = includeRelayed ? await relayed() : []
+                return .json(localItems + relayedItems)
             }
         }
 
@@ -673,7 +675,7 @@ public final class WebServer {
         /// can render terminals identically to the desktop.
         private func serveGhosttyConfig(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
             let provider = config.ghosttyConfigProvider
-            answer(context, fallback: .text("")) { .text(await provider()) }
+            answer(context) { .text(await provider()) }
         }
 
         private func serveGhosttyKeybindings(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
@@ -684,16 +686,13 @@ public final class WebServer {
                 Self.respond(context: context, .error(.serviceUnavailable, "keybindings provider not ready"))
                 return
             }
-            answer(context, fallback: .json(GhosttyKeybindingsResponse(chords: [:]))) {
-                .json(GhosttyKeybindingsResponse(chords: await provider()))
-            }
+            answer(context) { .json(GhosttyKeybindingsResponse(chords: await provider())) }
         }
 
         /// WEB-7.2: create a new worktree.
         private func serveCreateWorktree(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
             servePost(context: context, head: head, body: body, handler: config.worktreeCreator,
                       unavailable: "worktree creation not available",
-                      dispatchFailure: CreateWorktreeOutcome.internalFailure("creator dispatch failed"),
                       response: \.restResponse) { (request: CreateWorktreeRequest) in
                 // Reject empty inputs here rather than letting git produce a
                 // cryptic error. The name sanitizer runs client-side, but a
@@ -710,7 +709,6 @@ public final class WebServer {
         private func servePullDefaultBranch(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
             servePost(context: context, head: head, body: body, handler: config.defaultBranchPuller,
                       unavailable: "default branch pull not available",
-                      dispatchFailure: PullDefaultBranchOutcome.internalFailure("puller dispatch failed"),
                       response: \.restResponse) { (request: PullDefaultBranchRequest) in
                 request.repoPath.trimmingCharacters(in: .whitespaces).isEmpty ? "repoPath is required" : nil
             }
@@ -720,7 +718,6 @@ public final class WebServer {
         private func serveDeleteWorktree(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
             servePost(context: context, head: head, body: body, handler: config.worktreeRemover,
                       unavailable: "worktree deletion not available",
-                      dispatchFailure: DeleteWorktreeOutcome.internalFailure("remover dispatch failed"),
                       response: \.restResponse) { (request: DeleteWorktreeRequest) in
                 request.worktreePath.trimmingCharacters(in: .whitespaces).isEmpty ? "worktreePath is required" : nil
             }
@@ -736,7 +733,6 @@ public final class WebServer {
             body: Data,
             handler: (@Sendable (Request) async -> Outcome)?,
             unavailable: String,
-            dispatchFailure: Outcome,
             response: @escaping @Sendable (Outcome) -> RESTResponse,
             missingField: (Request) -> String?
         ) {
@@ -759,19 +755,19 @@ public final class WebServer {
                 Self.respond(context: context, .error(.badRequest, message))
                 return
             }
-            answer(context, fallback: response(dispatchFailure)) { response(await handler(request)) }
+            answer(context) { response(await handler(request)) }
         }
 
         /// Produces the answer off the event loop and writes it back on the
-        /// event loop, so NIO's handler lifecycle stays predictable.
+        /// event loop, so NIO's handler lifecycle stays predictable. The
+        /// promise is only ever succeeded, so there is no failure branch.
         private func answer(
             _ context: ChannelHandlerContext,
-            fallback: RESTResponse,
             _ produce: @escaping @Sendable () async -> RESTResponse
         ) {
             let promise = context.eventLoop.makePromise(of: RESTResponse.self)
-            promise.futureResult.whenComplete { result in
-                Self.respond(context: context, (try? result.get()) ?? fallback)
+            promise.futureResult.whenSuccess { response in
+                Self.respond(context: context, response)
             }
             Task { promise.succeed(await produce()) }
         }
@@ -790,25 +786,6 @@ public final class WebServer {
                     feature.trimmingCharacters(in: .whitespacesAndNewlines)
                         == RemoteWorktreeFeatures.oneHopRelay
                 }
-        }
-
-        /// Respond with `{"error": "<msg>"}`. The client always gets
-        /// JSON even for 4xx/5xx so it can render the error inline next
-        /// to the form field without special-casing content type.
-        static func respondJSON(
-            context: ChannelHandlerContext,
-            status: HTTPResponseStatus,
-            error: String
-        ) {
-            struct ErrorBody: Codable { let error: String }
-            let body = (try? JSONEncoder().encode(ErrorBody(error: error)))
-                ?? Data(#"{"error":"unknown"}"#.utf8)
-            Self.respond(
-                context: context,
-                status: status,
-                body: body,
-                contentType: "application/json; charset=utf-8"
-            )
         }
 
         static func respond(context: ChannelHandlerContext, status: HTTPResponseStatus, body: Data, contentType: String) {

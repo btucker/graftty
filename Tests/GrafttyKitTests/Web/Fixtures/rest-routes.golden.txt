@@ -1,10 +1,11 @@
 ws 404 text/plain; charset=utf-8 not found
 
 sessions 200 application/json; charset=utf-8 [{"name":"graftty-1","repoDisplayName":"r","worktreeDisplayName":"wt","worktreePath":"\/r\/wt"}]
-agent-completions 200 application/json; charset=utf-8 []
+agent-completions 200 application/json; charset=utf-8 [{"address":"a","hostName":"h","projectName":"r","projectPath":"\/r","runtime":"claude","worktreeName":"wt","worktreePath":"\/r\/wt"}]
 repos-local 200 application/json; charset=utf-8 [{"defaultBranchStatus":{"behindCount":2,"branchName":"main","remoteRef":"origin\/main"},"displayName":"r","origin":{"deviceID":{"value":"mac"},"deviceLabel":"Mac","relayDepth":0},"path":"\/r"}]
 repos-relayed 200 application/json; charset=utf-8 [{"defaultBranchStatus":{"behindCount":2,"branchName":"main","remoteRef":"origin\/main"},"displayName":"r","origin":{"deviceID":{"value":"mac"},"deviceLabel":"Mac","relayDepth":0},"path":"\/r"},{"branches":[],"displayName":"relay","path":"relay-r"}]
-panes 200 application/json; charset=utf-8 []
+panes 200 application/json; charset=utf-8 [{"displayBranch":"wt","displayName":"wt","isMainCheckout":false,"path":"\/r\/wt","ports":[],"repoDisplayName":"r","state":"closed"}]
+panes-relayed 200 application/json; charset=utf-8 [{"displayBranch":"wt","displayName":"wt","isMainCheckout":false,"path":"\/r\/wt","ports":[],"repoDisplayName":"r","state":"closed"},{"displayBranch":"wt","displayName":"wt","isMainCheckout":false,"path":"relay-wt","ports":[],"repoDisplayName":"r","state":"closed"}]
 ghostty-config 200 text/plain; charset=utf-8 font-size = 13
 
 keybindings 200 application/json; charset=utf-8 {"bindings":{}}

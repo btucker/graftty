@@ -1684,7 +1684,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-7.14** When a web or paired-device client pulls a repository's default branch, the application shall fast-forward the main checkout and then refresh its divergence stats.
 
-**WEB-7.15** When a REST worktree route finishes, the application shall answer each outcome with its existing status and JSON body.
+**WEB-7.15** When a REST worktree create, delete or default-branch pull finishes, the application shall answer success with 200 and its JSON result, invalid input with 400, an unknown worktree with 404, a Git refusal or conflict with 409, and any other failure with 500, each failure carrying a JSON error message and a delete 409 also carrying whether a forced retry is allowed.
 
 ### WEB-8.x — Web TLS (HTTPS)
 

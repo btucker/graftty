@@ -35,7 +35,11 @@ struct WebServerRouteGoldenTests {
         reposProvider: { [RepoInfo(path: "/r", displayName: "r",
                                    defaultBranchStatus: .init(branchName: "main", remoteRef: "origin/main", behindCount: 2),
                                    origin: WorktreeOrigin(deviceID: .init(value: "mac"), deviceLabel: "Mac", relayDepth: 0))] },
-        agentCompletionsProvider: { worktree in worktree == nil ? [] : [] },
+        // Echoes the `worktree` query item so the transcript pins its parsing.
+        agentCompletionsProvider: { worktree in
+            [AgentCompletionCandidate(address: "a", projectPath: "/r", projectName: "r", worktreePath: worktree ?? "<nil>",
+                                      worktreeName: "wt", hostName: "h", runtime: "claude")]
+        },
         relayedReposProvider: { [RepoInfo(path: "relay-r", displayName: "relay", branches: [])] },
         worktreeCreator: { request in
             switch request.worktreeName {
@@ -66,8 +70,14 @@ struct WebServerRouteGoldenTests {
         },
         ghosttyConfigProvider: { "font-size = 13\n" },
         ghosttyKeybindingsProvider: { [:] },
-        worktreePanesProvider: { [] }
+        worktreePanesProvider: { [panes("/r/wt")] },
+        relayedWorktreePanesProvider: { [panes("relay-wt")] }
     )
+
+    private static func panes(_ path: String) -> WorktreePanes {
+        WorktreePanes(path: path, displayName: "wt", repoDisplayName: "r", displayBranch: "wt", state: .closed,
+                      isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil)
+    }
 
     private struct Call {
         let label: String
@@ -85,6 +95,8 @@ struct WebServerRouteGoldenTests {
         Call(label: "repos-relayed", method: "GET", path: "/repos",
              headers: [RemoteWorktreeFeatures.headerName: RemoteWorktreeFeatures.oneHopRelay]),
         Call(label: "panes", method: "GET", path: "/worktrees/panes"),
+        Call(label: "panes-relayed", method: "GET", path: "/worktrees/panes",
+             headers: [RemoteWorktreeFeatures.headerName: RemoteWorktreeFeatures.oneHopRelay]),
         Call(label: "ghostty-config", method: "GET", path: "/ghostty-config"),
         Call(label: "keybindings", method: "GET", path: "/ghostty-keybindings"),
         Call(label: "create-get", method: "GET", path: "/worktrees"),
@@ -152,8 +164,10 @@ struct WebServerRouteGoldenTests {
     }
 
     /// `JSONEncoder` does not fix key order between encodings of the same
-    /// value, so JSON bodies are compared with sorted keys; every other
-    /// byte (status, content type, values, escaping) is compared as sent.
+    /// value, so JSON bodies are re-serialized with sorted keys. That pins
+    /// status, content type, keys and values, but not the server's own
+    /// escaping or number formatting: `JSONSerialization` re-escapes the
+    /// body. Non-JSON bodies are compared as sent.
     private static func normalized(_ data: Data) -> String {
         guard let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
               let sorted = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .fragmentsAllowed]) else {
