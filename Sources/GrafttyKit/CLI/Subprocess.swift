@@ -167,8 +167,8 @@ enum Subprocess {
     /// `FileHandle` reads raise an *uncatchable* `NSFileHandleOperationException`
     /// ("Bad file descriptor") when the fd is already closed (CLI-1.1); a raw
     /// `read` reports EBADF as -1, which reads as EOF here.
-    static func drainChunk(fd: Int32) -> Data? {
-        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+    static func drainChunk(fd: Int32, upTo limit: Int = 64 * 1024) -> Data? {
+        var buffer = [UInt8](repeating: 0, count: min(limit, 64 * 1024))
         while true {
             let count = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
             if count > 0 { return Data(buffer[0..<count]) }
@@ -177,15 +177,35 @@ enum Subprocess {
         }
     }
 
-    /// Everything `fd` can return right now, up to EOF. The descriptor is
-    /// switched to non-blocking first, so a pipe whose writer is still open
-    /// ends the read instead of blocking. A closed descriptor reads as empty.
+    /// Bytes waiting in a pipe right now (`FIONREAD`), or nil if unknown.
+    static func pendingByteCount(_ fd: Int32) -> Int? {
+        var count: Int32 = 0
+        #if canImport(Darwin)
+        // `FIONREAD` is `_IOR('f', 127, int)`, a macro Swift does not import.
+        let request: UInt = 0x4004_667F
+        #else
+        let request = UInt(FIONREAD)
+        #endif
+        guard ioctl(fd, request, &count) >= 0, count >= 0 else { return nil }
+        return Int(count)
+    }
+
+    /// What `fd` held when called, without blocking: at most the bytes
+    /// `FIONREAD` reported, stopping early at EOF or when the pipe empties.
+    /// A closed descriptor reads as empty.
     static func readWithoutBlocking(_ fd: Int32) -> Data {
         let flags = fcntl(fd, F_GETFL)
         guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0 else { return Data() }
+        // Once the child has exited, everything it wrote is already in the
+        // pipe. Read only that much: a background writer refilling the pipe
+        // would otherwise keep this loop, and the caller, going (CLI-1.4).
+        var remaining = pendingByteCount(fd) ?? 1 << 20
         var result = Data()
         // Stops at EOF, or at EAGAIN when the pipe is empty but still open.
-        while let chunk = drainChunk(fd: fd) { result.append(chunk) }
+        while remaining > 0, let chunk = drainChunk(fd: fd, upTo: remaining) {
+            result.append(chunk)
+            remaining -= chunk.count
+        }
         return result
     }
 

@@ -26,6 +26,48 @@ struct SubprocessPipeEOFTests {
         }
     }
 
+    /// The exit drain reads what the pipe held when the child exited. A
+    /// background writer that keeps refilling the pipe must not extend it:
+    /// unbounded, it captured tens of megabytes of a descendant's output and
+    /// kept the caller waiting on that writer's schedule.
+    @Test("The exit drain stops at what the pipe held, however fast a writer refills it")
+    func exitDrainIsBoundedByPendingBytes() throws {
+        let pipe = Pipe()
+        let writer = pipe.fileHandleForWriting.fileDescriptor
+        // Non-blocking, so the writer notices `stop` even with the pipe full.
+        _ = fcntl(writer, F_SETFL, fcntl(writer, F_GETFL) | O_NONBLOCK)
+        let stop = ManagedAtomicFlag()
+        let finished = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            let chunk = [UInt8](repeating: 0x61, count: 4096)
+            while !stop.isSet {
+                _ = chunk.withUnsafeBytes { write(writer, $0.baseAddress, $0.count) }
+            }
+            finished.signal()
+        }
+        thread.start()
+        defer {
+            stop.set()
+            _ = finished.wait(timeout: .now() + 5)
+            try? pipe.fileHandleForReading.close()
+            try? pipe.fileHandleForWriting.close()
+        }
+        // Let the writer fill the pipe before draining.
+        let filled = Date().addingTimeInterval(2)
+        var pending: Int32 = 0
+        while pending == 0, Date() < filled {
+            _ = Subprocess.pendingByteCount(pipe.fileHandleForReading.fileDescriptor).map { pending = Int32($0) }
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+
+        let drained = Subprocess.readWithoutBlocking(pipe.fileHandleForReading.fileDescriptor)
+
+        // A pipe holds at most a few hundred kilobytes; an unbounded drain
+        // keeps up with the writer for megabytes.
+        #expect(drained.count > 0)
+        #expect(drained.count <= 1 << 20, "drained \(drained.count) bytes")
+    }
+
     #if canImport(Darwin)
     /// A background child that inherits the pipes keeps them open after the
     /// command exits. The callback used to block in `read(upToCount:)` until
@@ -49,4 +91,12 @@ struct SubprocessPipeEOFTests {
         #expect(elapsed < .milliseconds(4500), "returned after \(elapsed)")
     }
     #endif
+}
+
+/// A set-once flag shared with the writer thread.
+private final class ManagedAtomicFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    var isSet: Bool { lock.withLock { value } }
+    func set() { lock.withLock { value = true } }
 }
