@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-// `.serialized` because `slowOnRequestClosesClientFDAtTimeout` and
+// `.serialized` because `slowRequestHandlerClosesClientFDAtTimeout` and
 // `silentClientDoesNotBlockOtherClients` both deliberately block the
 // main dispatch queue for a handful of seconds to simulate the hang
 // conditions they cover. Letting them run in parallel with peer
@@ -208,65 +208,6 @@ struct SocketIntegrationTests {
         try good.start()
         defer { good.stop() }
         #expect(good.lastStartError == nil)
-    }
-
-    @Test func serverWritesResponseWhenOnRequestSet() async throws {
-        let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("graftty-resp-\(UUID().uuidString.prefix(8))")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let socketPath = dir.appendingPathComponent("s").path
-        let server = SocketServer(socketPath: socketPath)
-        server.onRequest = { msg in
-            guard case .listPanes = msg else { return .error("unexpected") }
-            return .paneList([
-                PaneInfo(id: 1, title: "zsh", focused: true),
-                PaneInfo(id: 2, title: nil, focused: false),
-            ])
-        }
-        try server.start()
-        defer { server.stop() }
-        try await Task.sleep(for: .milliseconds(100))
-
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        #expect(fd >= 0)
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        socketPath.withCString { ptr in
-            withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
-                pathPtr.withMemoryRebound(to: CChar.self, capacity: 104) { dest in _ = strlcpy(dest, ptr, 104) }
-            }
-        }
-        let connectResult = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-        }
-        #expect(connectResult == 0)
-
-        let req = #"{"type":"list_panes","path":"/tmp/wt"}"# + "\n"
-        req.withCString { ptr in _ = Darwin.write(fd, ptr, strlen(ptr)) }
-
-        // Half-close the write side so the server's read-until-EOF terminates
-        // and proceeds to send the response. Without SHUT_WR, the server would
-        // block waiting for more bytes.
-        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
-
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        let bytesRead = Darwin.read(fd, &buffer, 4096)
-        close(fd)
-        #expect(bytesRead > 0)
-
-        let data = Data(buffer[0..<bytesRead])
-        let line = String(data: data, encoding: .utf8)!
-            .components(separatedBy: "\n")
-            .first(where: { !$0.isEmpty })!
-        let response = try JSONDecoder().decode(ResponseMessage.self, from: line.data(using: .utf8)!)
-        guard case .paneList(let panes) = response else {
-            Issue.record("Expected .paneList")
-            return
-        }
-        #expect(panes.count == 2)
-        #expect(panes[0].title == "zsh")
-        #expect(panes[0].focused == true)
     }
 
     @Test("Async request handler may suspend without blocking the main actor")
@@ -677,7 +618,7 @@ struct SocketIntegrationTests {
             callbackStartContinuation.yield(())
             releaseCallback.wait()
         }
-        server.onRequest = { _ in
+        server.onAsyncRequest = { _ in
             handlerCalls.value += 1
             return .ok
         }
@@ -839,7 +780,7 @@ struct SocketIntegrationTests {
         first?.stop()
 
         let successor = SocketServer(socketPath: socketPath)
-        successor.onRequest = { _ in .ok }
+        successor.onAsyncRequest = { _ in .ok }
         try successor.start()
         defer { successor.stop() }
 
@@ -911,7 +852,7 @@ struct SocketIntegrationTests {
         #expect(teamRequestsHandled.value == 1)
     }
 
-    @Test func serverOmitsResponseWhenOnRequestUnset() async throws {
+    @Test func serverOmitsResponseWhenOnAsyncRequestUnset() async throws {
         // Fire-and-forget path must still work — notify/clear don't expect replies.
         let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("graftty-fnf-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -922,7 +863,7 @@ struct SocketIntegrationTests {
         defer { messageContinuation.finish() }
         let server = SocketServer(socketPath: socketPath)
         server.onMessage = { messageContinuation.yield($0) }
-        // Intentionally no onRequest.
+        // Intentionally no onAsyncRequest.
         try server.start()
         defer { server.stop() }
 
@@ -1073,7 +1014,7 @@ struct SocketIntegrationTests {
         )
     }
 
-    /// `onRequest` runs on the main queue; if the main actor stalls (modal
+    /// `onAsyncRequest` runs on the main actor; if the main actor stalls (modal
     /// dialog, long synchronous work, a reentrancy bug), its connection would
     /// otherwise remain open forever. The handler no longer occupies a socket
     /// worker while suspended, but every request still needs a bounded terminal
@@ -1082,11 +1023,11 @@ struct SocketIntegrationTests {
     /// The server shall cap its wait with a bounded timeout and, on expiry,
     /// close the client fd without a response. Observable: the client's
     /// `read()` sees EOF within the server's timeout window + small margin,
-    /// not after onRequest's full duration.
+    /// not after the handler's full duration.
     @Test("""
     @spec ATTN-2.10: When a request-style socket message hands its handler to the main actor, the application shall wait at most `SocketServer.onRequestTimeout` (5 seconds in production) before terminating that client connection without a response, and neither later request lines nor a handler that completes late shall write to the closed connection.
     """)
-    func slowOnRequestClosesClientFDAtTimeout() async throws {
+    func slowRequestHandlerClosesClientFDAtTimeout() async throws {
         let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("graftty-slow-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -1095,20 +1036,20 @@ struct SocketIntegrationTests {
 
         let server = SocketServer(socketPath: socketPath)
         server.onRequestTimeout = .seconds(1)
-        // onRequest blocks main on a gate the test releases at the
-        // end. This emulates a stalled main queue (modal / heavy work)
-        // without Thread.sleep-ing for the full duration — which
-        // would pin main past the end of this test and interfere with
-        // peer tests in the suite that also dispatch to main.
-        let gate = DispatchSemaphore(value: 0)
+        // The handler suspends on a gate the test releases at the end,
+        // emulating a handler that cannot finish in time without pinning
+        // main past the end of this test (peer tests in the suite also
+        // dispatch to main). Releasing it lets the handler complete late,
+        // which must not write to the already-closed connection.
+        let (gate, gateContinuation) = AsyncStream.makeStream(of: Void.self)
         let (handlerStarts, handlerStartContinuation) = AsyncStream.makeStream(
             of: Void.self
         )
         defer { handlerStartContinuation.finish() }
-        defer { gate.signal() }
-        server.onRequest = { _ in
+        defer { gateContinuation.finish() }
+        server.onAsyncRequest = { _ in
             handlerStartContinuation.yield(())
-            _ = gate.wait(timeout: .now() + 10)
+            for await _ in gate {}
             return .ok
         }
         try server.start()
@@ -1147,11 +1088,11 @@ struct SocketIntegrationTests {
         let elapsed = Date().timeIntervalSince(start)
 
         // EOF = 0 means server closed the fd. Pre-fix: wait the full
-        // 10s for onRequest to finish (or client-side 3s timeout
+        // 10s for the handler to finish (or client-side 3s timeout
         // fires first as EAGAIN). Post-fix: server times out at 1s
         // and closes fd, so n == 0 within ~1.5s.
-        #expect(n == 0, "Server must close fd at timeout, not wait for onRequest")
-        #expect(elapsed < 2.0, "Server must honor its 1s timeout, not wait for onRequest's 10s (elapsed: \(elapsed)s)")
+        #expect(n == 0, "Server must close fd at timeout, not wait for the handler")
+        #expect(elapsed < 2.0, "Server must honor its 1s timeout, not wait for the handler's 10s (elapsed: \(elapsed)s)")
     }
 
     /// A silent client that connects but never writes or closes must not
