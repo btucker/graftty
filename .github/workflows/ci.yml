@@ -71,7 +71,11 @@ jobs:
     # The older swift-testing (124.4) on macos-latest (→ macos-15) has
     # an exit-path hang: all tests pass, then the process blocks ~10 min
     # without emitting the final summary. macos-26 sidesteps it.
-    runs-on: macos-26
+    # Same-repo pushes and pull requests run on the self-hosted Mac
+    # (mini-m1: self-hosted, macOS, ARM64) to avoid the hosted macOS
+    # runner queue. Fork pull requests stay on the hosted image so
+    # untrusted code never runs on the self-hosted machine.
+    runs-on: ${{ github.event.pull_request.head.repo.fork == true && 'macos-26' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -176,7 +180,7 @@ jobs:
 
   ios-test-shards:
     name: ios-test (${{ matrix.shard }})
-    runs-on: macos-26
+    runs-on: ${{ github.event.pull_request.head.repo.fork == true && 'macos-26' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 50
     strategy:
       fail-fast: false
