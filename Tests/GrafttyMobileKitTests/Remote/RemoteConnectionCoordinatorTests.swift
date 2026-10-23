@@ -520,7 +520,8 @@ struct RemoteConnectionCoordinatorTests {
         let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: hostKey)
         let store = PinnedHostStore(directory: dir)
         let deviceID = try #require(host.remoteDeviceID)
-        let before = try #require(store.get(id: deviceID))
+        let stored = try store.get(id: deviceID)
+        let before = try #require(stored)
         try await ConnectionBox.withFixture { box in
             let coordinator = RemoteConnectionCoordinator(
                 directory: dir,
@@ -556,7 +557,8 @@ struct RemoteConnectionCoordinatorTests {
         let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: hostKey)
         let store = PinnedHostStore(directory: dir)
         let deviceID = try #require(host.remoteDeviceID)
-        let original = try #require(store.get(id: deviceID))
+        let stored = try store.get(id: deviceID)
+        let original = try #require(stored)
         try await ConnectionBox.withFixture { box in
             let gate = Gate()
             let coordinator = RemoteConnectionCoordinator(
@@ -964,7 +966,8 @@ struct RemoteConnectionCoordinatorTests {
         )
         let store = PinnedHostStore(directory: dir)
         let deviceID = try #require(host.remoteDeviceID)
-        let before = try #require(store.get(id: deviceID))
+        let stored = try store.get(id: deviceID)
+        let before = try #require(stored)
         let counter = CallCounter()
         try await ConnectionBox.withFixture { box in
             let gate = Gate()
