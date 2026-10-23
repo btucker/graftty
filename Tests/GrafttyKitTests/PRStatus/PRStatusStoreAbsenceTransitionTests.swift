@@ -1,4 +1,5 @@
-import XCTest
+import Foundation
+import Testing
 import GrafttyProtocol
 @testable import GrafttyKit
 import GrafttyKitTestSupport
@@ -12,7 +13,8 @@ import GrafttyKitTestSupport
 /// worktree cache is cleared, or PR identity changes, the application shall
 /// seed a new baseline without comparing distinct PR observations.
 @MainActor
-final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
+@Suite
+struct PRStatusStoreAbsenceTransitionTests {
     private struct CapturedTransition {
         let event: RoutableEvent
         let attrs: [String: String]
@@ -77,7 +79,8 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
     private func refresh(
         _ store: PRStatusStore,
         fetcher: SequencedPRFetcher,
-        expectedFetchCount: Int
+        expectedFetchCount: Int,
+        sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         store.refresh(
             worktreePath: Self.worktreePath,
@@ -85,20 +88,22 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
             branch: Self.branch
         )
 
+        var finished = false
         for _ in 0..<200 {
             if await fetcher.fetchCount >= expectedFetchCount,
                !store.isInFlightForTesting(Self.repoPath) {
-                return
+                finished = true
+                break
             }
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTFail("fetch \(expectedFetchCount) did not finish")
+        try #require(finished, "fetch \(expectedFetchCount) did not finish", sourceLocation: sourceLocation)
     }
 
     /// Bug A: a run heading to green briefly reports an empty / all-neutral
     /// rollup (`.none`) between the pending phase and the success phase.
     /// `pending → none` must not fire `ciConclusionChanged`.
-    func testChecksPendingToNoneDoesNotFire() {
+    @Test func checksPendingToNoneDoesNotFire() {
         let store = PRStatusStore()
         var events: [RoutableEvent] = []
         store.onTransition = { event, _, _ in events.append(event) }
@@ -109,13 +114,13 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
             current: info(checks: .none, mergeable: .mergeable),
             origin: Self.origin
         )
-        XCTAssertEqual(events, [], "pending → none is a transient, not a CI conclusion")
+        #expect(events == [], "pending → none is a transient, not a CI conclusion")
     }
 
     /// Bug B: GitHub reports `mergeable: UNKNOWN` transiently while it
     /// recomputes mergeability. `mergeable → unknown` must not fire
     /// `mergabilityChanged`.
-    func testMergeableToUnknownDoesNotFire() {
+    @Test func mergeableToUnknownDoesNotFire() {
         let store = PRStatusStore()
         var events: [RoutableEvent] = []
         store.onTransition = { event, _, _ in events.append(event) }
@@ -126,13 +131,13 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
             current: info(checks: .success, mergeable: .unknown),
             origin: Self.origin
         )
-        XCTAssertEqual(events, [], "mergeable → unknown is GitHub recomputing, not a real change")
+        #expect(events == [], "mergeable → unknown is GitHub recomputing, not a real change")
     }
 
     /// A direct absence observation has no meaningful conclusion to
     /// compare against, so the first meaningful value seeds rather than
     /// claiming a change.
-    func testFirstMeaningfulValuesAfterInitialAbsenceSeedWithoutFiring() {
+    @Test func firstMeaningfulValuesAfterInitialAbsenceSeedWithoutFiring() {
         let store = PRStatusStore()
         var events: [RoutableEvent] = []
         store.onTransition = { event, _, _ in events.append(event) }
@@ -144,7 +149,7 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
             current: info(checks: .success, mergeable: .mergeable),
             origin: Self.origin
         )
-        XCTAssertEqual(events, [])
+        #expect(events == [])
 
         // unknown → conflicting also seeds the first meaningful verdict.
         events.removeAll()
@@ -154,10 +159,10 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
             current: info(checks: .success, mergeable: .conflicting),
             origin: Self.origin
         )
-        XCTAssertEqual(events, [])
+        #expect(events == [])
     }
 
-    func testTransientMergeabilityAbsenceDoesNotReannounceSameVerdict() async throws {
+    @Test func transientMergeabilityAbsenceDoesNotReannounceSameVerdict() async throws {
         let mergeable = info(checks: .success, mergeable: .mergeable)
         let unknown = info(checks: .success, mergeable: .unknown)
         let harness = makeStore(snapshots: [
@@ -173,14 +178,14 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
 
         try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 1)
         try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 2)
-        XCTAssertEqual(harness.store.infos[Self.worktreePath]?.mergeable, .unknown)
+        #expect(harness.store.infos[Self.worktreePath]?.mergeable == .unknown)
         try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 3)
 
-        XCTAssertTrue(events.isEmpty)
-        XCTAssertEqual(harness.store.infos[Self.worktreePath]?.mergeable, .mergeable)
+        #expect(events.isEmpty)
+        #expect(harness.store.infos[Self.worktreePath]?.mergeable == .mergeable)
     }
 
-    func testMeaningfulMergeabilityChangeAfterAbsenceUsesLastMeaningfulVerdict() async throws {
+    @Test func meaningfulMergeabilityChangeAfterAbsenceUsesLastMeaningfulVerdict() async throws {
         let harness = makeStore(snapshots: [
             snapshot(info(checks: .success, mergeable: .mergeable)),
             snapshot(info(checks: .success, mergeable: .unknown)),
@@ -196,13 +201,13 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
             try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: count)
         }
 
-        XCTAssertEqual(events.count, 1)
-        XCTAssertEqual(events.first?.event, .mergabilityChanged)
-        XCTAssertEqual(events.first?.attrs["from"], PRInfo.Mergeable.mergeable.rawValue)
-        XCTAssertEqual(events.first?.attrs["to"], PRInfo.Mergeable.conflicting.rawValue)
+        #expect(events.count == 1)
+        #expect(events.first?.event == .mergabilityChanged)
+        #expect(events.first?.attrs["from"] == PRInfo.Mergeable.mergeable.rawValue)
+        #expect(events.first?.attrs["to"] == PRInfo.Mergeable.conflicting.rawValue)
     }
 
-    func testRepeatedMergeabilityAbsenceAndRecoveryEmitsOneRealChange() async throws {
+    @Test func repeatedMergeabilityAbsenceAndRecoveryEmitsOneRealChange() async throws {
         let harness = makeStore(snapshots: [
             snapshot(info(checks: .success, mergeable: .mergeable)),
             snapshot(info(checks: .success, mergeable: .unknown)),
@@ -220,13 +225,13 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
             try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: count)
         }
 
-        XCTAssertEqual(events.count, 1)
-        XCTAssertEqual(events.first?.event, .mergabilityChanged)
-        XCTAssertEqual(events.first?.attrs["from"], PRInfo.Mergeable.mergeable.rawValue)
-        XCTAssertEqual(events.first?.attrs["to"], PRInfo.Mergeable.conflicting.rawValue)
+        #expect(events.count == 1)
+        #expect(events.first?.event == .mergabilityChanged)
+        #expect(events.first?.attrs["from"] == PRInfo.Mergeable.mergeable.rawValue)
+        #expect(events.first?.attrs["to"] == PRInfo.Mergeable.conflicting.rawValue)
     }
 
-    func testChecksAbsenceAndRecoveryUsesLastMeaningfulConclusion() async throws {
+    @Test func checksAbsenceAndRecoveryUsesLastMeaningfulConclusion() async throws {
         let harness = makeStore(snapshots: [
             snapshot(info(checks: .success, mergeable: .mergeable)),
             snapshot(info(checks: .none, mergeable: .mergeable)),
@@ -242,18 +247,18 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
 
         try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 1)
         try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 2)
-        XCTAssertEqual(harness.store.infos[Self.worktreePath]?.checks, PRInfo.Checks.none)
+        #expect(harness.store.infos[Self.worktreePath]?.checks == PRInfo.Checks.none)
         for count in 3...5 {
             try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: count)
         }
 
-        XCTAssertEqual(events.count, 1)
-        XCTAssertEqual(events.first?.event, .ciConclusionChanged)
-        XCTAssertEqual(events.first?.attrs["from"], PRInfo.Checks.success.rawValue)
-        XCTAssertEqual(events.first?.attrs["to"], PRInfo.Checks.failure.rawValue)
+        #expect(events.count == 1)
+        #expect(events.first?.event == .ciConclusionChanged)
+        #expect(events.first?.attrs["from"] == PRInfo.Checks.success.rawValue)
+        #expect(events.first?.attrs["to"] == PRInfo.Checks.failure.rawValue)
     }
 
-    func testInitialAbsenceThenMeaningfulVerdictSeedsWithoutFiring() async throws {
+    @Test func initialAbsenceThenMeaningfulVerdictSeedsWithoutFiring() async throws {
         let harness = makeStore(snapshots: [
             snapshot(info(checks: .none, mergeable: .unknown)),
             snapshot(info(checks: .success, mergeable: .mergeable)),
@@ -268,10 +273,10 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
             try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: count)
         }
 
-        XCTAssertTrue(events.isEmpty)
+        #expect(events.isEmpty)
     }
 
-    func testPRDisappearanceResetsMeaningfulBaselines() async throws {
+    @Test func prDisappearanceResetsMeaningfulBaselines() async throws {
         let harness = makeStore(snapshots: [
             snapshot(info(checks: .success, mergeable: .mergeable)),
             snapshot(nil),
@@ -287,10 +292,10 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
             try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: count)
         }
 
-        XCTAssertTrue(events.isEmpty)
+        #expect(events.isEmpty)
     }
 
-    func testClearResetsMeaningfulBaselines() async throws {
+    @Test func clearResetsMeaningfulBaselines() async throws {
         let harness = makeStore(snapshots: [
             snapshot(info(checks: .success, mergeable: .mergeable)),
             snapshot(info(checks: .failure, mergeable: .conflicting)),
@@ -305,10 +310,10 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
         harness.store.clear(worktreePath: Self.worktreePath)
         try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 2)
 
-        XCTAssertTrue(events.isEmpty)
+        #expect(events.isEmpty)
     }
 
-    func testPRIdentityChangeSeedsBeforeLaterTransitions() async throws {
+    @Test func prIdentityChangeSeedsBeforeLaterTransitions() async throws {
         let harness = makeStore(snapshots: [
             snapshot(info(number: 5, checks: .success, mergeable: .mergeable)),
             snapshot(info(number: 6, checks: .failure, mergeable: .conflicting)),
@@ -322,17 +327,17 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
 
         try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 1)
         try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 2)
-        XCTAssertTrue(events.isEmpty, "different PR identities must not be compared")
-        XCTAssertEqual(harness.store.infos[Self.worktreePath]?.number, 6)
+        #expect(events.isEmpty, "different PR identities must not be compared")
+        #expect(harness.store.infos[Self.worktreePath]?.number == 6)
 
         try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 3)
-        XCTAssertEqual(events.count, 2)
-        XCTAssertTrue(events.contains { $0.event == .ciConclusionChanged })
-        XCTAssertTrue(events.contains { $0.event == .mergabilityChanged })
-        XCTAssertTrue(events.allSatisfy { $0.attrs["pr_number"] == "6" })
+        #expect(events.count == 2)
+        #expect(events.contains { $0.event == .ciConclusionChanged })
+        #expect(events.contains { $0.event == .mergabilityChanged })
+        #expect(events.allSatisfy { $0.attrs["pr_number"] == "6" })
     }
 
-    func testCanonicalURLChangeDoesNotChangePRIdentity() async throws {
+    @Test func canonicalURLChangeDoesNotChangePRIdentity() async throws {
         let oldURL = URL(string: "https://github.com/acme/web/pull/5")!
         let canonicalURL = URL(string: "https://github.com/acme/renamed-web/pull/5")!
         let harness = makeStore(snapshots: [
@@ -356,10 +361,10 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
         try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 1)
         try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 2)
 
-        XCTAssertEqual(events.count, 2)
-        XCTAssertTrue(events.contains { $0.event == .ciConclusionChanged })
-        XCTAssertTrue(events.contains { $0.event == .mergabilityChanged })
-        XCTAssertTrue(events.allSatisfy { $0.attrs["pr_url"] == canonicalURL.absoluteString })
+        #expect(events.count == 2)
+        #expect(events.contains { $0.event == .ciConclusionChanged })
+        #expect(events.contains { $0.event == .mergabilityChanged })
+        #expect(events.allSatisfy { $0.attrs["pr_url"] == canonicalURL.absoluteString })
     }
 }
 

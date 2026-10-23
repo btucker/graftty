@@ -1,10 +1,12 @@
-import XCTest
+import Foundation
+import Testing
 import GrafttyProtocol
 @testable import GrafttyKit
 
 @MainActor
-final class PRStatusStoreTransitionTests: XCTestCase {
-    func testStateOpenToMergedFiresEvent() {
+@Suite
+struct PRStatusStoreTransitionTests {
+    @Test func stateOpenToMergedFiresEvent() throws {
         let store = PRStatusStore()
         var events: [(RoutableEvent, String, [String: String])] = []
         store.onTransition = { event, path, attrs in events.append((event, path, attrs)) }
@@ -25,24 +27,24 @@ final class PRStatusStoreTransitionTests: XCTestCase {
         )
 
         // Expect BOTH prMerged (state=>merged) and ciConclusionChanged (both differ).
-        XCTAssertEqual(events.count, 2)
+        #expect(events.count == 2)
         let routables = events.map(\.0)
-        XCTAssertTrue(routables.contains(.prMerged))
-        XCTAssertTrue(routables.contains(.ciConclusionChanged))
+        #expect(routables.contains(.prMerged))
+        #expect(routables.contains(.ciConclusionChanged))
 
         // Check attrs on the merged event.
-        let merged = events.first { $0.0 == .prMerged }!
-        XCTAssertEqual(merged.1, "/wt/a")
-        XCTAssertEqual(merged.2["from"], "open")
-        XCTAssertEqual(merged.2["to"], "merged")
-        XCTAssertEqual(merged.2["pr_number"], "42")
-        XCTAssertEqual(merged.2["provider"], "github")
-        XCTAssertEqual(merged.2["repo"], "acme/web")
-        XCTAssertEqual(merged.2["worktree"], "/wt/a")
-        XCTAssertEqual(merged.2["pr_url"], url.absoluteString)
+        let merged = try #require(events.first { $0.0 == .prMerged })
+        #expect(merged.1 == "/wt/a")
+        #expect(merged.2["from"] == "open")
+        #expect(merged.2["to"] == "merged")
+        #expect(merged.2["pr_number"] == "42")
+        #expect(merged.2["provider"] == "github")
+        #expect(merged.2["repo"] == "acme/web")
+        #expect(merged.2["worktree"] == "/wt/a")
+        #expect(merged.2["pr_url"] == url.absoluteString)
     }
 
-    func testIdempotentSamePRInfoFiresNothing() {
+    @Test func idempotentSamePRInfoFiresNothing() {
         let store = PRStatusStore()
         var count = 0
         store.onTransition = { _, _, _ in count += 1 }
@@ -59,10 +61,10 @@ final class PRStatusStoreTransitionTests: XCTestCase {
             current: same,
             origin: origin
         )
-        XCTAssertEqual(count, 0)
+        #expect(count == 0)
     }
 
-    func testChecksPendingToFailureFiresOnlyCiEvent() {
+    @Test func checksPendingToFailureFiresOnlyCiEvent() throws {
         let store = PRStatusStore()
         var events: [(RoutableEvent, [String: String])] = []
         store.onTransition = { event, _, attrs in events.append((event, attrs)) }
@@ -80,16 +82,16 @@ final class PRStatusStoreTransitionTests: XCTestCase {
             previous: prev, current: next, origin: origin
         )
 
-        XCTAssertEqual(events.count, 1)
-        let (routable, attrs) = events[0]
-        XCTAssertEqual(routable, .ciConclusionChanged)
-        XCTAssertEqual(attrs["from"], "pending")
-        XCTAssertEqual(attrs["to"], "failure")
-        XCTAssertEqual(attrs["provider"], "gitlab")
-        XCTAssertEqual(attrs["repo"], "acme/docs")
+        #expect(events.count == 1)
+        let (routable, attrs) = try #require(events.first)
+        #expect(routable == .ciConclusionChanged)
+        #expect(attrs["from"] == "pending")
+        #expect(attrs["to"] == "failure")
+        #expect(attrs["provider"] == "gitlab")
+        #expect(attrs["repo"] == "acme/docs")
     }
 
-    func testNilPreviousDoesNotFireOnInitialDiscovery() {
+    @Test func nilPreviousDoesNotFireOnInitialDiscovery() {
         let store = PRStatusStore()
         var events: [(RoutableEvent, String, [String: String])] = []
         store.onTransition = { event, path, attrs in events.append((event, path, attrs)) }
@@ -107,6 +109,6 @@ final class PRStatusStoreTransitionTests: XCTestCase {
 
         // Initial discovery: should not fire (no "from" value) — discovery of a
         // new PR is not a transition. Transitions require a previous state.
-        XCTAssertEqual(events.count, 0)
+        #expect(events.count == 0)
     }
 }
