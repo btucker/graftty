@@ -57,7 +57,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
         defer { lock.unlock() }
         let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
         defer { withExtendedLifetime(fileLock) {} }
-        var envelope = _load()
+        var envelope = try _load()
         let fingerprint = peer.fingerprint
         guard !envelope.peers.contains(where: { $0.fingerprint == fingerprint }) else {
             throw Error.duplicateFingerprint
@@ -76,7 +76,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
         defer { lock.unlock() }
         let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
         defer { withExtendedLifetime(fileLock) {} }
-        var envelope = _load()
+        var envelope = try _load()
         guard !envelope.peers.contains(where: {
             $0.id != peer.id && $0.fingerprint == peer.fingerprint
         }) else {
@@ -113,7 +113,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
         defer { lock.unlock() }
         let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
         defer { withExtendedLifetime(fileLock) {} }
-        var envelope = _load()
+        var envelope = try _load()
         guard let idx = envelope.peers.firstIndex(where: { $0.id == id }) else {
             throw Error.notFound
         }
@@ -128,7 +128,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
         defer { lock.unlock() }
         let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
         defer { withExtendedLifetime(fileLock) {} }
-        var envelope = _load()
+        var envelope = try _load()
         guard let idx = envelope.peers.firstIndex(where: { $0.id == peer.id }) else {
             throw Error.notFound
         }
@@ -142,7 +142,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
         defer { lock.unlock() }
         let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
         defer { withExtendedLifetime(fileLock) {} }
-        let envelope = _load()
+        let envelope = try _load()
         return envelope.peers.first(where: { $0.id == id })
     }
 
@@ -152,7 +152,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
         defer { lock.unlock() }
         let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
         defer { withExtendedLifetime(fileLock) {} }
-        let envelope = _load()
+        let envelope = try _load()
         return envelope.peers.contains(where: { $0.fingerprint == fingerprint })
     }
 
@@ -165,7 +165,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
         defer { lock.unlock() }
         let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
         defer { withExtendedLifetime(fileLock) {} }
-        let envelope = _load()
+        let envelope = try _load()
         return envelope.peers.first(where: { $0.fingerprint == fingerprint })
     }
 
@@ -177,7 +177,7 @@ public final class TrustedPeerStore: @unchecked Sendable {
         defer { lock.unlock() }
         let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
         defer { withExtendedLifetime(fileLock) {} }
-        let envelope = _load()
+        let envelope = try _load()
         return envelope.peers.sorted { lhs, rhs in
             switch (lhs.lastSeenAt, rhs.lastSeenAt) {
             case (.some(let l), .some(let r)):
@@ -207,8 +207,8 @@ public final class TrustedPeerStore: @unchecked Sendable {
     /// Read failures and foreign protocol versions yield an empty envelope, so
     /// operations like revocation remain possible after corruption; malformed
     /// contents are first moved aside.
-    private func _load() -> Envelope {
-        guard let envelope = file.loadMovingAsideCorruptFile(),
+    private func _load() throws -> Envelope {
+        guard let envelope = try file.loadMovingAsideCorruptFile(),
               envelope.version == RemoteAccessProtocol.version else {
             return Envelope(version: RemoteAccessProtocol.version, peers: [])
         }

@@ -120,7 +120,7 @@ public final class PinnedHostStore: @unchecked Sendable {
     public func add(_ host: PinnedHost) throws {
         lock.lock()
         defer { lock.unlock() }
-        var envelope = _load()
+        var envelope = try _load()
         let fingerprint = host.fingerprint
         guard !envelope.hosts.contains(where: { $0.fingerprint == fingerprint }) else {
             throw Error.duplicateFingerprint
@@ -137,7 +137,7 @@ public final class PinnedHostStore: @unchecked Sendable {
     public func upsertAfterPairing(_ host: PinnedHost) throws {
         lock.lock()
         defer { lock.unlock() }
-        var envelope = _load()
+        var envelope = try _load()
         guard !envelope.hosts.contains(where: {
             $0.id != host.id && $0.fingerprint == host.fingerprint
         }) else {
@@ -153,7 +153,7 @@ public final class PinnedHostStore: @unchecked Sendable {
     public func update(_ host: PinnedHost) throws {
         lock.lock()
         defer { lock.unlock() }
-        var envelope = _load()
+        var envelope = try _load()
         guard let idx = envelope.hosts.firstIndex(where: { $0.id == host.id }) else {
             throw Error.notFound
         }
@@ -165,7 +165,7 @@ public final class PinnedHostStore: @unchecked Sendable {
     public func remove(id: RemoteDeviceID) throws {
         lock.lock()
         defer { lock.unlock() }
-        var envelope = _load()
+        var envelope = try _load()
         guard let idx = envelope.hosts.firstIndex(where: { $0.id == id }) else {
             throw Error.notFound
         }
@@ -177,7 +177,7 @@ public final class PinnedHostStore: @unchecked Sendable {
     public func get(id: RemoteDeviceID) throws -> PinnedHost? {
         lock.lock()
         defer { lock.unlock() }
-        let envelope = _load()
+        let envelope = try _load()
         return envelope.hosts.first(where: { $0.id == id })
     }
 
@@ -185,7 +185,7 @@ public final class PinnedHostStore: @unchecked Sendable {
     public func get(fingerprint: RemoteIdentityFingerprint) throws -> PinnedHost? {
         lock.lock()
         defer { lock.unlock() }
-        let envelope = _load()
+        let envelope = try _load()
         return envelope.hosts.first(where: { $0.fingerprint == fingerprint })
     }
 
@@ -194,7 +194,7 @@ public final class PinnedHostStore: @unchecked Sendable {
     public func list() throws -> [PinnedHost] {
         lock.lock()
         defer { lock.unlock() }
-        let envelope = _load()
+        let envelope = try _load()
         return envelope.hosts.sorted { lhs, rhs in
             switch (lhs.lastConnectedAt, rhs.lastConnectedAt) {
             case (.some(let l), .some(let r)):
@@ -222,8 +222,8 @@ public final class PinnedHostStore: @unchecked Sendable {
 
     /// Read failures and foreign protocol versions yield an empty envelope;
     /// malformed contents are first moved aside so callers can recover.
-    private func _load() -> Envelope {
-        guard let envelope = file.loadMovingAsideCorruptFile(),
+    private func _load() throws -> Envelope {
+        guard let envelope = try file.loadMovingAsideCorruptFile(),
               envelope.version == RemoteAccessProtocol.version else {
             return Envelope(version: RemoteAccessProtocol.version, hosts: [])
         }
