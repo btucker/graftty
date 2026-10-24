@@ -512,6 +512,99 @@ struct RemoteConnectionCoordinatorTests {
         }
     }
 
+    @Test("@spec REMOTE-2.27: If a mobile connection becomes terminal or loses registration during post-connect verification, then the client shall discard it without saving connection metadata.", .timeLimit(.minutes(1)), arguments: [false, true])
+    func rejectedPostConnectVerificationDoesNotRefreshPin(invalidate: Bool) async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: hostKey)
+        let store = PinnedHostStore(directory: dir)
+        let deviceID = try #require(host.remoteDeviceID)
+        let stored = try store.get(id: deviceID)
+        let before = try #require(stored)
+        try await ConnectionBox.withFixture { box in
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(transport: Self.successTransport(box: box, host: host, hostKey: hostKey)),
+                connectionFactory: { key, fingerprint in
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
+                    box.set(connection)
+                    return connection
+                }
+            )
+            coordinator.stateAfterRegistration = { [weak coordinator] connection in
+                if invalidate {
+                    await coordinator?.invalidate(host: host)
+                    // Model a nonterminal snapshot taken before the invalidation
+                    // was processed by the main actor.
+                    return .connected
+                }
+                await connection.close()
+                return await connection.state
+            }
+
+            #expect(await coordinator.connection(for: host) == nil)
+            let persisted = try store.get(id: before.id)
+            #expect(persisted == before)
+        }
+    }
+
+    @Test("@spec REMOTE-2.29: While a mobile dial awaits post-connect validation, concurrent callers shall await that attempt's final result rather than receive its provisional connection.", .timeLimit(.minutes(1)))
+    func waitersDoNotReceiveProvisionalConnection() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: hostKey)
+        let store = PinnedHostStore(directory: dir)
+        let deviceID = try #require(host.remoteDeviceID)
+        let stored = try store.get(id: deviceID)
+        let original = try #require(stored)
+        try await ConnectionBox.withFixture { box in
+            let gate = Gate()
+            let coordinator = RemoteConnectionCoordinator(
+                directory: dir,
+                signaling: SignalingClient(transport: Self.successTransport(box: box, host: host, hostKey: hostKey)),
+                connectionFactory: { key, fingerprint in
+                    let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
+                    box.set(connection)
+                    return connection
+                }
+            )
+            coordinator.stateAfterRegistration = { connection in
+                await gate.wait()
+                return await connection.state
+            }
+            let first = Task { await coordinator.connection(for: host) }
+            do { try await gate.waitUntilEntered() }
+            catch { await gate.open(); _ = await first.value; throw error }
+            let replacement = PinnedHost(
+                id: original.id, kind: original.kind,
+                publicKey: try RemoteIdentityPublicKey(rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation),
+                displayName: "Repaired", pinnedAt: original.pinnedAt, pairingURL: original.pairingURL
+            )
+            do { try store.upsertAfterPairing(replacement) }
+            catch { await gate.open(); _ = await first.value; throw error }
+            var secondEntered = false
+            var secondFinished = false
+            let second = Task {
+                secondEntered = true
+                let result = await coordinator.connection(for: host)
+                secondFinished = true
+                return result
+            }
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: .seconds(10))
+            while !secondEntered, clock.now < deadline { await Task.yield() }
+            #expect(secondEntered)
+            #expect(!secondFinished)
+            await gate.open()
+            #expect(await first.value == nil)
+            #expect(await second.value == nil)
+            let persisted = try store.get(id: original.id)
+            #expect(persisted == replacement)
+        }
+    }
+
     // MARK: - Register-then-verify (A2(i))
 
     /// Best-effort regression test, NOT a deterministic RED reproduction:
@@ -863,7 +956,7 @@ struct RemoteConnectionCoordinatorTests {
     /// released, and the chosen "let it finish, then evict" behavior
     /// means the negotiation's own result — even though it's a
     /// successful one — must never be registered as a live connection.
-    @Test(.timeLimit(.minutes(2)))
+    @Test("@spec REMOTE-2.26: When a mobile dial is invalidated before it becomes usable, the application shall discard its connection without saving refreshed connection metadata.", .timeLimit(.minutes(2)))
     func invalidateDuringInFlightNegotiationEvictsOnCompletionRatherThanRegistering() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
         let hostKey = Curve25519.Signing.PrivateKey()
@@ -871,6 +964,10 @@ struct RemoteConnectionCoordinatorTests {
             directory: dir,
             serverKey: hostKey
         )
+        let store = PinnedHostStore(directory: dir)
+        let deviceID = try #require(host.remoteDeviceID)
+        let stored = try store.get(id: deviceID)
+        let before = try #require(stored)
         let counter = CallCounter()
         try await ConnectionBox.withFixture { box in
             let gate = Gate()
@@ -900,7 +997,7 @@ struct RemoteConnectionCoordinatorTests {
             // WHILE the negotiation is genuinely in flight, not after it
             // already completed.
             do {
-                try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
+                try await gate.waitUntilEntered()
             } catch {
                 // Release the cancellation-unaware child before async-let scope exit.
                 await gate.open()
@@ -910,6 +1007,8 @@ struct RemoteConnectionCoordinatorTests {
             await gate.open()
 
             let result = await negotiated
+            let persisted = try store.get(id: before.id)
+            #expect(persisted == before)
             #expect(result == nil, "a connection invalidated mid-negotiation must never be handed back to the caller")
             #expect(counter.count == 1, "exactly one negotiation attempt — invalidate must not have started a second one")
 
@@ -1271,6 +1370,15 @@ private actor Gate {
         if opened { return }
         await withCheckedContinuation { continuation in
             waiters.append(continuation)
+        }
+    }
+
+    func waitUntilEntered() async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while enteredCount == 0 {
+            guard clock.now < deadline else { throw URLError(.timedOut) }
+            await Task.yield()
         }
     }
 
