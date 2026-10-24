@@ -17,14 +17,12 @@ struct RemoteIdentityFileStoreTests {
         let original = try store.loadOrGenerateAndPersist()
         let url = dir.appendingPathComponent(DeviceFile.fileName)
         let bytes = try Data(contentsOf: url)
-        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path) }
+        // Inject the read failure so this also exercises EACCES when Linux CI runs as root.
+        let denied = RemoteDeviceIDStore<DeviceFile>(directory: dir, readData: { _ in
+            throw CocoaError(.fileReadNoPermission)
+        })
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.loadOrGenerateAndPersist() }
 
-        // Prove the fixture actually denies reads on the executing platform.
-        #expect(throws: (any Error).self) { try Data(contentsOf: url) }
-        #expect(throws: (any Error).self) { try store.loadOrGenerateAndPersist() }
-
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         #expect(try Data(contentsOf: url) == bytes)
         #expect(try store.loadOrGenerateAndPersist() == original)
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == [DeviceFile.fileName])

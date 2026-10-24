@@ -149,9 +149,15 @@ public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @u
     private static var currentVersion: Int { 1 }
 
     private let file: JSONFileStore<StoredID>
+    private let readData: @Sendable (URL) throws -> Data
     private let lock = NSLock()
 
-    public init(directory: URL) {
+    public convenience init(directory: URL) {
+        self.init(directory: directory, readData: { try Data(contentsOf: $0) })
+    }
+
+    init(directory: URL, readData: @escaping @Sendable (URL) throws -> Data) {
+        self.readData = readData
         file = JSONFileStore(
             fileURL: directory.appendingPathComponent(Location.fileName),
             backupNaming: .dashSeconds
@@ -176,7 +182,7 @@ public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @u
 
     private func _load() throws -> RemoteDeviceID? {
         do {
-            guard let stored = try file.load() else {
+            guard let stored = try file.load(readData: readData) else {
                 return nil
             }
             guard stored.version == Self.currentVersion, !stored.deviceID.value.isEmpty else {
