@@ -33,18 +33,25 @@ public struct PairedDeviceCapabilities: Codable, Sendable, Equatable, Hashable {
         case disabled
     }
 
+    public enum Replication: String, Codable, Sendable, Equatable {
+        case allowed
+        case disabled
+    }
+
     public var terminalControl: TerminalControl
     public var portTunnel: PortTunnel
     public var screenView: ScreenView
     public var screenControl: ScreenControl
     public var worktreeManagement: WorktreeManagement
+    public var replication: Replication
 
     public init(
         terminalControl: TerminalControl,
         portTunnel: PortTunnel,
         screenView: ScreenView,
         screenControl: ScreenControl,
-        worktreeManagement: WorktreeManagement? = nil
+        worktreeManagement: WorktreeManagement? = nil,
+        replication: Replication = .disabled
     ) {
         self.terminalControl = terminalControl
         self.portTunnel = portTunnel
@@ -52,6 +59,7 @@ public struct PairedDeviceCapabilities: Codable, Sendable, Equatable, Hashable {
         self.screenControl = screenControl
         self.worktreeManagement = worktreeManagement
             ?? (terminalControl == .allowed ? .allowed : .disabled)
+        self.replication = replication
     }
 
     /// The default capability set granted immediately after a successful pairing.
@@ -67,7 +75,7 @@ public struct PairedDeviceCapabilities: Codable, Sendable, Equatable, Hashable {
 
     private enum CodingKeys: String, CodingKey {
         case terminalControl, portTunnel, screenView, screenControl,
-             worktreeManagement
+             worktreeManagement, replication
     }
 
     public init(from decoder: Decoder) throws {
@@ -82,6 +90,7 @@ public struct PairedDeviceCapabilities: Codable, Sendable, Equatable, Hashable {
             WorktreeManagement.self,
             forKey: .worktreeManagement
         ) ?? (terminalControl == .allowed ? .allowed : .disabled)
+        replication = try c.decodeIfPresent(Replication.self, forKey: .replication) ?? .disabled
     }
 }
 

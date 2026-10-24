@@ -6,7 +6,7 @@ import GrafttyKit
 struct GrafttyHostCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "graftty-host",
         abstract: "Persistent Graftty terminal and worktree host.",
-        subcommands: [Serve.self, TrustClient.self, Status.self, Project.self, Setup.self, Pair.self])
+        subcommands: [Serve.self, TrustClient.self, EnrollParent.self, Status.self, Project.self, Setup.self, Pair.self])
 }
 
 struct HostOptions: ParsableArguments {
@@ -30,6 +30,7 @@ struct Serve: AsyncParsableCommand {
     @Option var sshPort: Int = 8801
     @Option(help: "Path to zmx executable.") var zmx: String?
     @Option(help: "Shell for new panes.") var shell: String?
+    @Option(help: "Compute provider interruption monitor: aws.") var computeProvider: String?
     @Flag(help: "Enable pairing HTTP routes. Trust still requires local confirmation.") var enablePairing = false
 
     mutating func run() async throws {
@@ -37,6 +38,7 @@ struct Serve: AsyncParsableCommand {
         config.bindAddress = bindAddress; config.httpPort = httpPort; config.sshPort = sshPort
         if let zmx { config.zmxExecutable = URL(fileURLWithPath: zmx) }
         if let shell { config.shell = shell }
+        if let computeProvider { config.computeProvider = computeProvider }
         let service = try await HostService(configuration: config, enablePairing: enablePairing)
         try await service.run()
     }
@@ -76,6 +78,25 @@ struct TrustClient: AsyncParsableCommand {
               let data = Data(base64Encoded: request.publicKey) else { throw ValidationError("invalid trust request") }
         try HostService.trust(request, publicKeyData: data, configuration: config)
         try printJSON(HostService.identity(configuration: config))
+    }
+}
+
+struct EnrollParent: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "enroll-parent",
+        abstract: "Exchange public identities over an authenticated provider administration channel.")
+    @OptionGroup var paths: HostOptions
+    @Flag var stdin = false
+    func validate() throws {
+        guard stdin else { throw ValidationError("enroll-parent requires --stdin") }
+    }
+    mutating func run() async throws {
+        var bytes = Data()
+        while let chunk = try FileHandle.standardInput.read(upToCount: 4096), !chunk.isEmpty {
+            bytes.append(chunk)
+            guard bytes.count <= 8192 else { throw ValidationError("enrollment request exceeds 8 KiB") }
+        }
+        let request = try JSONDecoder().decode(ProviderHostEnrollmentRequest.self, from: bytes)
+        try printJSON(ProviderHostEnrollment.accept(request, configuration: paths.resolved()))
     }
 }
 

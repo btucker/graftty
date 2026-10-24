@@ -4,17 +4,258 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
+#if canImport(Graftty)
+@testable import Graftty
+#endif
 import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
 import GrafttyRemoteClient
 import Testing
+import MCP
 #if canImport(Network)
 import Network
 #endif
 
 @Suite(.serialized)
 struct DirectSSHLoopbackTests {
+    @Test(.timeLimit(.minutes(1)), arguments: [true, false])
+    func replicationOnlyRejectsMobilePeersAndMissingReceiver(configured: Bool) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let peer = TrustedPeer(id: .init(value: "worker"), kind: configured ? .iphone : .linux,
+            publicKey: try .init(rawRepresentation: f.clientKey.publicKey.rawRepresentation), displayName: "worker",
+            capabilities: .init(terminalControl: .disabled, portTunnel: .disabled, screenView: .disabled,
+                                screenControl: .disabled, worktreeManagement: .disabled, replication: .allowed),
+            pairedAt: Date(), lastSeenAt: nil)
+        try f.store.add(peer)
+        let server = f.server()
+        if configured { await server.setGitControl(.init(handler: { _, _ in Issue.record("Unauthorized worker reached Git"); return Data() })) }
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        await #expect(throws: (any Error).self) { try await client.connect(host: "127.0.0.1", port: port) }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec REMOTE-26.22: When SSH uses a provider proxy's standard streams, the application shall retain host-key pinning, public-key client authentication, and bidirectional control without exposing a local TCP listener.", .timeLimit(.minutes(1)), arguments: [true, false])
+    func authenticatesProxyStreams(pinned: Bool) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        var peer = try f.peer(key: f.clientKey)
+        peer.capabilities.replication = .allowed
+        try f.store.add(peer)
+        let server = f.server()
+        let callback = AsyncStream<Data>.makeStream()
+        await server.setGitControl(.init(handler: { _, data in data }, onConnect: { _, session in
+            do { callback.continuation.yield(try await session.send(Data("worker callback".utf8))) }
+            catch { callback.continuation.finish() }
+        }))
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        // nc is only the loopback fixture. The production proxy will be aws.
+        // Use the production process owner: Foundation's termination callback
+        // can miss an exited child after other tests change signal handling.
+        let proxy = try DuplexSubprocess(command: "/bin/sh", arguments: ["-c",
+            "printf 'Starting session with SessionId: fixture\\n'; exec /usr/bin/nc 127.0.0.1 \(port)"])
+        let fingerprint = pinned ? try f.fingerprint : try RemoteIdentityFingerprint(rawBytes: Data(repeating: 7, count: 32))
+        let client = try f.client(fingerprint: fingerprint)
+        do {
+            if pinned {
+                try await client.connect(input: proxy.output, output: proxy.input)
+                let channel = try await client.makeGitControlClient(handler: { bytes in bytes })
+                try await channel.open()
+                #expect(try await channel.send(Data("parent request".utf8)) == Data("parent request".utf8))
+                var iterator = callback.stream.makeAsyncIterator()
+                #expect(await iterator.next() == Data("worker callback".utf8))
+                channel.close()
+            } else {
+                await #expect(throws: (any Error).self) { try await client.connect(input: proxy.output, output: proxy.input) }
+            }
+        } catch { await client.close(); await server.close(); await proxy.stop(); throw error }
+        await client.close(); await server.close(); await proxy.stop()
+    }
+
+    @Test("@spec REMOTE-26.26: When a host resource probe receives its first authenticated sidebar snapshot, the application shall timestamp the observation locally, preserve unknown metrics, and fail on timeout or disconnect.", .timeLimit(.minutes(1)), arguments: ["sample", "unknown", "timeout", "disconnect"])
+    func probesAuthenticatedResources(mode: String) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey))
+        let sample = HostResourceSnapshot(sampledAt: Date().timeIntervalSince1970, cpuCount: 4, cpuUtilization: 0.25, diskPath: "/workspace")
+        let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
+            streamFactory: { _ in DirectEchoTerminalStream() }, panesStateSubscribe: { _ in .init {} },
+            panesStateV2Subscribe: { onChange in
+                if mode == "sample" || mode == "unknown" {
+                    await onChange(.snapshot([], sidebar: .init(projects: [], hostResources: mode == "sample" ? sample : nil)))
+                }
+                return .init {}
+            }, paneControlMutator: { _ in .ok }, displayOwnershipStore: SessionDisplayOwnershipStore())
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            if mode == "sample" {
+                let observation = try #require(try await client.resourceObservation())
+                #expect(observation.sample == sample)
+                #expect(observation.isFresh())
+            } else if mode == "unknown" {
+                #expect(try await client.resourceObservation() == nil)
+            } else if mode == "disconnect" {
+                await server.close()
+                await #expect(throws: (any Error).self) { _ = try await client.resourceObservation() }
+            } else {
+                await #expect(throws: (any Error).self) { _ = try await client.resourceObservation(timeout: .milliseconds(50)) }
+            }
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test(.timeLimit(.minutes(1))) func pipeBootstrapRejectsFilesWithoutClosingCallerHandles() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try FileManager.default.createDirectory(at: f.directory, withIntermediateDirectories: true)
+        let file = f.directory.appendingPathComponent("not-a-pipe")
+        try Data("original".utf8).write(to: file)
+        let input = try FileHandle(forReadingFrom: file)
+        defer { try? input.close() }
+        let output = Pipe()
+        let client = try f.client()
+        await #expect(throws: (any Error).self) { try await client.connect(input: input, output: output.fileHandleForWriting) }
+        #expect(try input.readToEnd() == Data("original".utf8))
+        await client.close()
+    }
+
+    #if canImport(Graftty)
+    @Test("@spec REMOTE-30.20: When an app-owned parent MCP transport disconnects, the application shall authenticate a fresh connection, invalidate old worker sessions without replay, and stop reconnecting if provider authorization is revoked.", .timeLimit(.minutes(1)), arguments: [false, true])
+    @MainActor func appOwnedMCPReconnectsWithFreshAuthorization(proxy: Bool) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let parentPeer = try f.peer(key: f.clientKey)
+        try f.store.add(parentPeer)
+        let parent = LinuxHostTrustRequest(deviceID: parentPeer.id.value, displayName: "parent",
+            publicKey: f.clientKey.publicKey.rawRepresentation.base64EncodedString())
+        let parentID = RemoteMacConnectionSummary.ID(deviceID: parentPeer.id, fingerprint: parentPeer.fingerprint)
+        let workerID = RemoteMacConnectionSummary.ID(deviceID: .init(value: "worker"), fingerprint: try f.fingerprint)
+        let bridge = MCPWorkerBridge()
+        let server = f.server()
+        await server.setMCPControl(.init(handler: { _, bytes in bytes }, onConnect: { identity, session in
+            await bridge.connected(identity, session: session)
+        }, onDisconnect: { _, id in await bridge.disconnected(id) }))
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let operation = UUID()
+        let provider = ReconnectingMCPProvider(plan: .init(binding: .init(provider: "fixture", operationID: operation),
+            target: "loopback", identity: .init(deviceID: "worker", displayName: "worker",
+                publicKey: f.hostKey.publicKey.rawRepresentation.base64EncodedString(), port: port),
+            transport: proxy ? .proxy(command: "/usr/bin/nc", arguments: ["127.0.0.1", String(port)]) : .directSSH(host: "127.0.0.1", port: port)))
+        let registry = try HostProviderRegistry(providers: [provider])
+        let policyFile = f.directory.appendingPathComponent("policy.json")
+        let scope = MCPProxyScope(grantID: UUID(), generation: 1, repositoryID: UUID(), worktreePath: "/work", serverID: "fixture")
+        var repository = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 { repository.deleteLastPathComponent() }
+        let credential = f.directory.appendingPathComponent("credential")
+        let marker = f.directory.appendingPathComponent("marker")
+        try Data("graftty-parent-only-fixture".utf8).write(to: credential)
+        let policy = MCPProxyPolicy(servers: ["fixture": .stdio(executable: "/usr/bin/python3",
+            arguments: [repository.appendingPathComponent("scripts/linux/mcp-fixture-server.py").path, marker.path, credential.path], environmentKeys: [])],
+            grants: [.init(scope: scope, host: workerID, expiresAt: Date().addingTimeInterval(60))])
+        try JSONEncoder().encode(policy).write(to: policyFile)
+        let service = MCPConnectionSupervisor(directory: f.directory, retryDelay: .milliseconds(10)) { configuration, ready in
+            try await ParentMCPConnection.run(configuration, registry: registry, identity: { (parent, f.clientKey) }, ready: ready)
+        }
+        func waitFor(_ phase: String, _ condition: () -> Bool) async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            try #require(condition(), "\(phase): state=\(service.statuses.first?.state.rawValue ?? "none"), attempts=\(provider.attempts)")
+        }
+        func callTool(session: UUID, waitForToolReply: Bool = true) async throws {
+            for (index, json) in [
+                #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}}}"#,
+                #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"touch_parent","arguments":{}}}"#
+            ].enumerated() {
+                #expect(await bridge.handle(.init(parent: parentID, request: .send(sessionID: session, message: Data(json.utf8)))) == .accepted)
+                if index == 1 && !waitForToolReply { return }
+                let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+                var received = false
+                while ContinuousClock.now < deadline && !received {
+                    let response = await bridge.handle(.init(parent: parentID, request: .receive(sessionID: session)))
+                    if case .messages(let messages) = response { received = !messages.isEmpty }
+                    else { Issue.record("Unexpected MCP response: \(response)"); break }
+                    if !received { try await Task.sleep(for: .milliseconds(10)) }
+                }
+                try #require(received)
+                if index == 0 {
+                    let initialized = Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8)
+                    #expect(await bridge.handle(.init(parent: parentID, request: .send(sessionID: session, message: initialized))) == .accepted)
+                }
+            }
+        }
+        do {
+            try service.start(.init(provider: "fixture", operationID: operation, policyPath: policyFile.path))
+            try await waitFor("initial connection") { service.statuses.first?.state == .connected }
+            let old = UUID()
+            #expect(await bridge.handle(.init(parent: parentID, request: .open(sessionID: old, scope: scope))) == .opened)
+            // The mutation runs, but its result is never received by the worker.
+            try await callTool(session: old, waitForToolReply: false)
+            try await waitFor("unacknowledged tool execution") { FileManager.default.fileExists(atPath: marker.path) }
+            #expect(await f.registry.count == 1)
+            await f.registry.revoke(deviceID: parentPeer.id)
+            #expect(await f.registry.count == 0)
+            try await waitFor("reconnection") { provider.attempts >= 2 && service.statuses.first?.state == .connected }
+            #expect(await bridge.handle(.init(parent: parentID, request: .receive(sessionID: old))) == .error(.outcomeUnknown))
+            #expect(try String(contentsOf: marker, encoding: .utf8) == "parent executed\n")
+            let fresh = UUID()
+            #expect(await bridge.handle(.init(parent: parentID, request: .open(sessionID: fresh, scope: scope))) == .opened)
+            try await callTool(session: fresh)
+            #expect(try String(contentsOf: marker, encoding: .utf8) == "parent executed\nparent executed\n")
+            provider.revoke()
+            try await waitFor("revocation") { service.statuses.first?.state == .blocked }
+            let attempts = provider.attempts
+            try await Task.sleep(for: .milliseconds(100))
+            #expect(provider.attempts == attempts)
+            #expect(await bridge.handle(.init(parent: parentID, request: .receive(sessionID: fresh))) == .error(.outcomeUnknown))
+        } catch { await service.shutdown(); await server.close(); throw error }
+        await service.shutdown(); await server.close()
+    }
+
+    @Test("@spec REMOTE-30.23: While an authenticated interactive connection to the enrolled worker exists, the parent MCP service shall reuse that connection and shall leave its terminal and control channels open when MCP stops.", .timeLimit(.minutes(1)))
+    @MainActor func mcpBorrowsInteractiveConnectionWithoutClosingIt() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let peer = try f.peer(key: f.clientKey)
+        try f.store.add(peer)
+        let parent = LinuxHostTrustRequest(deviceID: peer.id.value, displayName: "parent", publicKey: f.clientKey.publicKey.rawRepresentation.base64EncodedString())
+        let bridge = MCPWorkerBridge()
+        let server = f.server()
+        await server.setMCPControl(.init(handler: { _, bytes in bytes }, onConnect: { identity, session in
+            await bridge.connected(identity, session: session)
+        }, onDisconnect: { _, id in await bridge.disconnected(id) }))
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let interactive = try f.client()
+        let operation = UUID()
+        let plan = HostProviderConnection(binding: .init(provider: "fixture", operationID: operation), target: "loopback",
+            identity: .init(deviceID: "worker", displayName: "worker", publicKey: f.hostKey.publicKey.rawRepresentation.base64EncodedString(), port: port),
+            transport: .directSSH(host: "127.0.0.1", port: port))
+        let registry = try HostProviderRegistry(providers: [ReconnectingMCPProvider(plan: plan)])
+        let policy = f.directory.appendingPathComponent("policy.json")
+        try JSONEncoder().encode(MCPProxyPolicy(servers: [:], grants: [])).write(to: policy)
+        let fingerprint = try f.fingerprint
+        let service = MCPConnectionSupervisor(directory: f.directory) { configuration, ready in
+            try await ParentMCPConnection.run(configuration, registry: registry, existingConnection: { identity in
+                #expect(identity.deviceID.value == "worker" && identity.fingerprint == fingerprint)
+                return interactive
+            }, identity: { (parent, f.clientKey) }, ready: ready)
+        }
+        do {
+            try await interactive.connect(host: "127.0.0.1", port: port)
+            let control = try await interactive.makePaneControlClient()
+            defer { control.close() }
+            try await control.open()
+            try service.start(.init(provider: "fixture", operationID: operation, policyPath: policy.path))
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while service.statuses.first?.state != .connected && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            try #require(service.statuses.first?.state == .connected)
+            #expect(try await control.send(.equalize(target: "before-stop")) == .ok)
+            try await service.remove(provider: "fixture", operationID: operation)
+            #expect(await interactive.state == .connected)
+            #expect(try await control.send(.equalize(target: "after-stop")) == .ok)
+        } catch { await service.shutdown(); await interactive.close(); await server.close(); throw error }
+        await service.shutdown(); await interactive.close(); await server.close()
+    }
+
+    #endif
+
     private struct Fixture {
         let directory = URL.temporaryDirectory.appendingPathComponent("direct-ssh-\(UUID())")
         let hostKey = Curve25519.Signing.PrivateKey()
@@ -46,6 +287,255 @@ struct DirectSSHLoopbackTests {
             try DirectSSHHostConnection(clientKey: key ?? clientKey, expectedHostFingerprint: fingerprint ?? self.fingerprint)
         }
         func cleanup() { try? FileManager.default.removeItem(at: directory) }
+    }
+
+    @Test("@spec REMOTE-31.16: When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and recheck current pairing and worktree-management permission before each request.", .timeLimit(.minutes(1)), arguments: [true, false])
+    func placementUsesAuthenticatedIdentity(allowed: Bool) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let peer = try f.peer(key: f.clientKey, managementAllowed: allowed)
+        try f.store.add(peer)
+        let expected = RemoteMacConnectionSummary.ID(deviceID: peer.id, fingerprint: peer.fingerprint)
+        let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
+            streamFactory: { _ in DirectEchoTerminalStream() },
+            panesStateSubscribe: { _ in .init(cancel: {}) }, paneControlMutator: { _ in .ok },
+            authenticatedPlacementMutator: { _, owner in
+                #expect(allowed)
+                #expect(owner == expected)
+                return .error(code: "test-identity", message: "authenticated", forceAllowed: false, shortStatus: nil)
+            }, displayOwnershipStore: SessionDisplayOwnershipStore())
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            if allowed {
+                let channel = try await client.makeWorktreeManagementClient()
+                try await channel.open()
+                let response = try await channel.send(.placement(.status(operationID: UUID())))
+                #expect(response == .error(code: "test-identity", message: "authenticated", forceAllowed: false, shortStatus: nil))
+                var managementDisabled = peer
+                managementDisabled.capabilities.worktreeManagement = .disabled
+                var terminalDisabled = peer
+                terminalDisabled.capabilities.terminalControl = .disabled
+                let changedKey = try f.peer(key: Curve25519.Signing.PrivateKey())
+                for changed in [managementDisabled, terminalDisabled, changedKey] {
+                    try f.store.update(changed)
+                    let rejected = try await channel.send(.placement(.status(operationID: UUID())))
+                    #expect(rejected == .error(code: "placement-forbidden", message: "Placement requires current pairing and worktree-management permission.", forceAllowed: false, shortStatus: nil))
+                    try f.store.update(peer)
+                }
+                try f.store.remove(id: peer.id)
+                let revoked = try await channel.send(.placement(.status(operationID: UUID())))
+                #expect(revoked == .error(code: "placement-forbidden", message: "Placement requires current pairing and worktree-management permission.", forceAllowed: false, shortStatus: nil))
+            } else {
+                await #expect(throws: (any Error).self) {
+                    let channel = try await client.makeWorktreeManagementClient()
+                    try await channel.open()
+                    _ = try await channel.send(.placement(.status(operationID: UUID())))
+                }
+            }
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func skillSnapshotTransfersOverActualSSHFrames() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey, managementAllowed: true))
+        let receiver = RemoteSkillTransferReceiver(directory: f.directory.appendingPathComponent("skills"))
+        let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
+            streamFactory: { _ in DirectEchoTerminalStream() }, panesStateSubscribe: { _ in .init(cancel: {}) },
+            paneControlMutator: { _ in .ok }, authenticatedSkillMutator: { request, owner in
+                do { return .agentSkills(try await receiver.handle(request, owner: owner, repositories: ["/repo"])) }
+                catch { return .error(code: "fixture", message: String(describing: error), forceAllowed: false, shortStatus: nil) }
+            }, displayOwnershipStore: SessionDisplayOwnershipStore())
+        // Team setup rebuilds SSH configuration; it must retain the skill callback.
+        await server.setTeamMessaging(handler: { _, _ in Data() }, onConnect: { _, _ in }, onDisconnect: { _, _ in })
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            let channel = try await client.makeWorktreeManagementClient()
+            try await channel.open()
+            let snapshot = RemoteSkillSnapshot(runtime: .claude, files: [.init(scope: .project, path: ".claude/skills/demo/SKILL.md", contents: Data(repeating: 97, count: 700_000))])
+            let id = UUID()
+            let result = try await RemoteSkillTransferSender.transfer(snapshot, repositoryID: "/repo", operationID: id) { request in
+                let response = try await channel.send(.agentSkills(request))
+                guard case .agentSkills(let status) = response else { throw RemoteSkillError("Unexpected SSH fixture response") }
+                return status
+            }
+            #expect(result.phase == .staged)
+            #expect(result.descriptor.revision == (try snapshot.revision))
+            let peer = try f.peer(key: f.clientKey, managementAllowed: true)
+            let parentID = "\(peer.id.value.utf8.count):\(peer.id.value):\(peer.fingerprint.display)"
+            // A second stage verifies every byte in the tree written by the RPC receiver.
+            _ = try RemoteSkillStore(directory: f.directory.appendingPathComponent("skills"))
+                .stage(snapshot, parentID: parentID, projectID: "/repo")
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec REMOTE-28.13: When a peer transfers agent skills over SSH, the host shall derive its device and fingerprint from authentication and recheck current pairing and worktree-management permission before each request.", .timeLimit(.minutes(1)))
+    func skillTransferChecksCurrentAuthenticatedPeer() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let peer = try f.peer(key: f.clientKey, managementAllowed: true)
+        try f.store.add(peer)
+        let expected = RemoteMacConnectionSummary.ID(deviceID: peer.id, fingerprint: peer.fingerprint)
+        let descriptor = RemoteSkillTransferDescriptor(operationID: UUID(), repositoryID: "/repo", runtime: "codex", revision: String(repeating: "0", count: 64), byteCount: 1)
+        let server = DirectSSHHostServer(hostKey: f.hostKey, trustedPeerStore: f.store,
+            streamFactory: { _ in DirectEchoTerminalStream() },
+            panesStateSubscribe: { _ in .init(cancel: {}) }, paneControlMutator: { _ in .ok },
+            authenticatedSkillMutator: { request, owner in
+                #expect(owner == expected)
+                #expect(request == .begin(descriptor))
+                return .agentSkills(.init(descriptor: descriptor, receivedBytes: 0, phase: .receiving))
+            }, displayOwnershipStore: SessionDisplayOwnershipStore())
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            let channel = try await client.makeWorktreeManagementClient()
+            try await channel.open()
+            #expect(try await channel.send(.agentSkills(.begin(descriptor))) == .agentSkills(.init(descriptor: descriptor, receivedBytes: 0, phase: .receiving)))
+            // Keep the existing SSH channel open to exercise the per-request
+            // store check rather than relying on connection teardown alone.
+            try f.store.remove(id: peer.id)
+            let rejected = try await channel.send(.agentSkills(.finish(operationID: descriptor.operationID)))
+            guard case .error(let code, _, _, _) = rejected else { Issue.record("Revoked peer reached skill receiver"); await client.close(); await server.close(); return }
+            #expect(code == "skills-forbidden")
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func mcpSubsystemRequiresWorktreePermission() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        try f.store.add(f.peer(key: f.clientKey, managementAllowed: false))
+        let server = f.server()
+        await server.setMCPControl(.init(handler: { _, _ in Issue.record("Unpermitted parent reached MCP"); return Data() }))
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            let channel = try await client.makeMCPControlClient(handler: { $0 })
+            await #expect(throws: (any Error).self) { try await channel.open() }
+            channel.close()
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
+    }
+
+    @Test("@spec REMOTE-30.11: When a parent opens the MCP subsystem on a managed host, the application shall authenticate both peers and carry standard MCP tool calls back to the parent without granting the worker terminal access to the parent.", .timeLimit(.minutes(1)))
+    func mcpReverseProxyExecutesOnParent() async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        let parentPeer = try f.peer(key: f.clientKey)
+        try f.store.add(parentPeer)
+        let parent = RemoteMacConnectionSummary.ID(deviceID: parentPeer.id, fingerprint: parentPeer.fingerprint)
+        let worker = RemoteMacConnectionSummary.ID(deviceID: .init(value: "worker"), fingerprint: try f.fingerprint)
+        let bridge = MCPWorkerBridge()
+        let scope = MCPProxyScope(grantID: UUID(), generation: 1, repositoryID: UUID(), worktreePath: "/work/project", serverID: "fixture")
+        let marker = f.directory.appendingPathComponent("parent-tool-ran")
+        let script = f.directory.appendingPathComponent("server.py")
+        try #"""
+        import json, sys, pathlib
+        for line in sys.stdin:
+            request = json.loads(line)
+            if "id" not in request: continue
+            method = request.get("method")
+            if method == "initialize":
+                result = {"protocolVersion": request["params"]["protocolVersion"], "capabilities": {"tools": {}}, "serverInfo": {"name":"fixture","version":"1"}}
+            elif method == "tools/list":
+                result = {"tools":[{"name":"touch_parent","description":"Record execution on parent","inputSchema":{"type":"object","properties":{}}}]}
+            elif method == "tools/call":
+                pathlib.Path(sys.argv[1]).write_text("parent executed")
+                result = {"content":[{"type":"text","text":"parent executed"}]}
+            else: result = {}
+            print(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":result}), flush=True)
+        """#.write(to: script, atomically: true, encoding: .utf8)
+        let policy = MCPProxyPolicy(servers: ["fixture": .stdio(executable: "/usr/bin/python3", arguments: [script.path, marker.path], environmentKeys: [])],
+            grants: [.init(scope: scope, host: worker, expiresAt: Date().addingTimeInterval(60))])
+        let broker = MCPProxyBroker(peer: worker, authorize: { try policy.authorize($0, peer: $1) })
+        let server = f.server()
+        await server.setMCPControl(.init(handler: { _, bytes in bytes }, onConnect: { identity, session in
+            #expect(identity == parent)
+            await bridge.connected(identity, session: session)
+        }, onDisconnect: { _, id in await bridge.disconnected(id) }))
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let connection = try f.client()
+        let transports = await InMemoryTransport.createConnectedPair()
+        let nativeClient = MCP.Client(name: "worker-client", version: "1")
+        var bridgeTask: Task<Void, Error>?
+        // Hard cleanup also bounds SDK requests if an assertion path fails.
+        let deadline = Task {
+            try? await Task.sleep(for: .seconds(15))
+            if !Task.isCancelled { await broker.close(); await nativeClient.disconnect(); await transports.server.disconnect() }
+        }
+        defer { deadline.cancel() }
+        do {
+            try await connection.connect(host: "127.0.0.1", port: port)
+            let channel = try await connection.makeMCPControlClient(handler: { await broker.handle($0) }, onClose: { await broker.close() })
+            try await channel.open()
+            #expect(try await channel.send(MCPProxyControl.ready) == MCPProxyControl.ready)
+            try await transports.server.connect()
+            bridgeTask = Task {
+                try await MCPStdioBridge.run(scope: scope, transport: transports.server) {
+                    await bridge.handle(.init(parent: parent, request: $0))
+                }
+            }
+            let initialized = try await nativeClient.connect(transport: transports.client)
+            #expect(initialized.serverInfo.name == "fixture")
+            let tools = try await nativeClient.listTools()
+            #expect(tools.tools.map(\.name) == ["touch_parent"])
+            let result = try await nativeClient.callTool(name: "touch_parent")
+            #expect(result.isError != true)
+            #expect(try String(contentsOf: marker, encoding: .utf8) == "parent executed")
+            let unauthorized = await bridge.handle(.init(parent: parent, request: .open(sessionID: UUID(), scope:
+                .init(grantID: scope.grantID, generation: 2, repositoryID: scope.repositoryID, worktreePath: scope.worktreePath, serverID: scope.serverID))))
+            #expect(unauthorized == .error(.unauthorized))
+            channel.close()
+        } catch {
+            bridgeTask?.cancel(); await nativeClient.disconnect(); await transports.server.disconnect()
+            await broker.close(); await connection.close(); await server.close()
+            _ = try? await bridgeTask?.value
+            throw error
+        }
+        bridgeTask?.cancel(); await nativeClient.disconnect(); await transports.server.disconnect()
+        await broker.close(); await connection.close(); await server.close()
+        _ = try? await bridgeTask?.value
+    }
+
+    @Test("@spec REMOTE-26.14: When a peer opens the Git control subsystem, the host shall require replication permission, derive the device and key fingerprint from SSH authentication, and keep bidirectional requests on that authenticated connection.", .timeLimit(.minutes(1)), arguments: [true, false], [true, false])
+    func gitControlUsesAuthenticatedIdentity(allowed: Bool, configured: Bool) async throws {
+        let f = Fixture(); defer { f.cleanup() }
+        var peer = try f.peer(key: f.clientKey, managementAllowed: false)
+        peer.capabilities.replication = allowed ? .allowed : .disabled
+        try f.store.add(peer)
+        let expected = RemoteMacConnectionSummary.ID(deviceID: peer.id, fingerprint: peer.fingerprint)
+        let server = f.server()
+        if configured { await server.setGitControl(.init(handler: { identity, bytes in
+            #expect(allowed && configured && identity == expected)
+            return bytes
+        }, onConnect: { identity, session in
+            #expect(allowed && configured && identity == expected)
+            do { #expect(try await session.send(Data("reverse request".utf8)) == Data("reverse reply".utf8)) }
+            catch { Issue.record(error) }
+        })) }
+        // Updating team callbacks must retain the independently configured Git subsystem.
+        await server.setTeamMessaging(handler: { _, bytes in bytes }, onConnect: { _, _ in }, onDisconnect: { _, _ in })
+        let port = try await server.start(host: "127.0.0.1", port: 0)
+        let client = try f.client()
+        do {
+            try await client.connect(host: "127.0.0.1", port: port)
+            let channel = try await client.makeGitControlClient(handler: { bytes in
+                #expect(allowed && configured && bytes == Data("reverse request".utf8))
+                return Data("reverse reply".utf8)
+            })
+            if allowed && configured {
+                try await channel.open()
+                let claimedIdentity = Data(#"{"deviceID":"forged-host","fingerprint":"forged-key"}"#.utf8)
+                #expect(try await channel.send(claimedIdentity) == claimedIdentity)
+            } else { await #expect(throws: (any Error).self) { try await channel.open() } }
+            channel.close()
+        } catch { await client.close(); await server.close(); throw error }
+        await client.close(); await server.close()
     }
 
     #if canImport(Network)
@@ -317,6 +807,8 @@ struct DirectSSHLoopbackTests {
             #expect(await f.registry.count == 2)
             try f.store.remove(id: .init(value: "client"))
             await f.registry.revoke(deviceID: .init(value: "client"))
+            for _ in 0..<100 where await first.state == .connected { try await Task.sleep(for: .milliseconds(10)) }
+            #expect(await first.state.isTerminal)
             let control = try await other.makePaneControlClient()
             try await control.open(); control.close()
             let retry = try f.client()
@@ -397,3 +889,22 @@ private final class ForwardEchoServer: @unchecked Sendable {
     }
 }
 #endif
+
+private final class ReconnectingMCPProvider: HostProvider, @unchecked Sendable {
+    let identifier = "fixture"
+    let plan: HostProviderConnection
+    private let lock = NSLock()
+    private var revoked = false
+    private var count = 0
+    var attempts: Int { lock.withLock { count } }
+    init(plan: HostProviderConnection) { self.plan = plan }
+    func revoke() { lock.withLock { revoked = true } }
+    func prepareConnection(operationID: UUID, parent: LinuxHostTrustRequest) async throws -> HostProviderConnection {
+        lock.withLock { count += 1 }
+        try authorize(plan, parent: parent)
+        return plan
+    }
+    func authorize(_ connection: HostProviderConnection, parent: LinuxHostTrustRequest) throws {
+        guard lock.withLock({ !revoked }) else { throw HostProviderConnectionError.authorization }
+    }
+}

@@ -40,6 +40,8 @@ public actor WebRTCHostAgent {
     private var panesStateSubscribe: PanesStateChannelHandler.Subscribe
     private var panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
     private var paneControlMutator: PaneControlChannelHandler.Mutator
+    private var mcpControl: AuthenticatedMCPControl?
+    private var gitControl: AuthenticatedGitControl?
     private var teamHandler: TeamChannelHandler.Handler?
     private var teamOnConnect: TeamChannelHandler.OnConnect = { _, _ in }
     private var teamOnDisconnect: TeamChannelHandler.OnDisconnect = { _, _ in }
@@ -241,6 +243,11 @@ public actor WebRTCHostAgent {
     public func setPaneControlMutator(_ mutator: @escaping PaneControlChannelHandler.Mutator) {
         self.paneControlMutator = mutator
     }
+
+    /// Configure replication control before accepting a new SSH session.
+    public func setMCPControl(_ callbacks: AuthenticatedMCPControl?) { mcpControl = callbacks }
+
+    public func setGitControl(_ callbacks: AuthenticatedGitControl?) { gitControl = callbacks }
 
     public func setTeamMessaging(
         handler: @escaping TeamChannelHandler.Handler,
@@ -681,6 +688,8 @@ public actor WebRTCHostAgent {
         let panesStateV2Subscribe = self.panesStateV2Subscribe
         let paneControlMutator = self.paneControlMutator
         let worktreeManagementMutator = self.worktreeManagementMutator
+        let mcpControl = self.mcpControl
+        let gitControl = self.gitControl
         let teamHandler = self.teamHandler
         let teamOnConnect = self.teamOnConnect
         let teamOnDisconnect = self.teamOnDisconnect
@@ -708,6 +717,8 @@ public actor WebRTCHostAgent {
                     streamFactory: factory, pagedFactory: pagedFactory,
                     panesStateSubscribe: panesStateSubscribe, panesStateV2Subscribe: panesStateV2Subscribe,
                     paneControlMutator: paneControlMutator, worktreeManagementMutator: worktreeManagementMutator,
+                    mcpControl: mcpControl,
+                    gitControl: gitControl,
                     chromeTabMutator: chromeTabMutator, chromeTabOnDisconnect: chromeTabOnDisconnect,
                     ownershipStore: ownershipStore, ownershipBroadcaster: ownershipBroadcaster,
                     teamHandler: teamHandler, teamOnConnect: teamOnConnect, teamOnDisconnect: teamOnDisconnect
@@ -867,7 +878,7 @@ public actor WebRTCHostAgent {
     /// hangs headless mac CI — see `factory`'s lazy-init comment). `internal`
     /// so `@testable import GrafttyHostAgent` can reach it directly.
     internal func shouldCloseAfterRegister(peer: TrustedPeer) -> Bool {
-        !SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: trustedPeerStore)
+        !SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: trustedPeerStore, allowReplicationOnly: gitControl != nil)
     }
 
     private func startAuthenticationDeadline(

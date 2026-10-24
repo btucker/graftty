@@ -17,11 +17,17 @@ public struct HostStatus: Codable, Sendable, Equatable {
     public let paneCount: Int
     public let sshPort: Int
     public let httpPort: Int
-    public init(running: Bool, configuration: HostConfiguration, repositoryCount: Int, paneCount: Int) {
+    public let drain: HostDrainRecord?
+    public let interruptionObservedAt: Date?
+    public let interruptionError: String?
+    public init(running: Bool, configuration: HostConfiguration, repositoryCount: Int, paneCount: Int, drain: HostDrainRecord? = nil,
+                interruptionObservedAt: Date? = nil, interruptionError: String? = nil) {
         self.running = running; socketPath = configuration.socketPath
         stateDirectory = configuration.stateDirectory.path
         self.repositoryCount = repositoryCount; self.paneCount = paneCount
         sshPort = configuration.sshPort; httpPort = configuration.httpPort
+        self.drain = drain
+        self.interruptionObservedAt = interruptionObservedAt; self.interruptionError = interruptionError
     }
 }
 

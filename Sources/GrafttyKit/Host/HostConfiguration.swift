@@ -11,6 +11,7 @@ public struct HostConfiguration: Codable, Sendable, Equatable {
     public var runtimeDirectory: URL
     public var zmxExecutable: URL
     public var shell: String
+    public var computeProvider: String?
 
     public init(
         bindAddress: String = "127.0.0.1",
@@ -19,7 +20,8 @@ public struct HostConfiguration: Codable, Sendable, Equatable {
         stateDirectory: URL = Self.defaultStateDirectory(),
         runtimeDirectory: URL = Self.defaultRuntimeDirectory(),
         zmxExecutable: URL = Self.defaultZmxExecutable(),
-        shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/bash"
+        shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/bash",
+        computeProvider: String? = nil
     ) {
         self.bindAddress = bindAddress
         self.httpPort = httpPort
@@ -28,6 +30,7 @@ public struct HostConfiguration: Codable, Sendable, Equatable {
         self.runtimeDirectory = runtimeDirectory
         self.zmxExecutable = zmxExecutable
         self.shell = shell
+        self.computeProvider = computeProvider
     }
 
     public var socketPath: String { runtimeDirectory.appendingPathComponent("graftty.sock").path }

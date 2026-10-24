@@ -489,6 +489,20 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         )
     }
 
+    public func makeMCPControlClient(handler: @escaping TeamRPCSession.Handler,
+                                     onClose: @escaping @Sendable () async -> Void = {}) throws -> TeamChannelClient {
+        guard let transport = sshTransport, let box = sshHandlerBox else { throw ConnectionError.notConnected }
+        return TeamChannelClient(parentChannel: transport.channel, parentHandler: box.handler,
+            subsystemName: SSHChannelTypeNames.mcpControl, handler: handler, onClose: onClose)
+    }
+
+    public func makeGitControlClient(handler: @escaping TeamRPCSession.Handler,
+                                     onClose: @escaping @Sendable () async -> Void = {}) throws -> TeamChannelClient {
+        guard let transport = sshTransport, let box = sshHandlerBox else { throw ConnectionError.notConnected }
+        return TeamChannelClient(parentChannel: transport.channel, parentHandler: box.handler,
+            subsystemName: SSHChannelTypeNames.gitControl, handler: handler, onClose: onClose)
+    }
+
     public func makeTeamClient(
         handler: @escaping TeamRPCSession.Handler,
         onClose: @escaping @Sendable () async -> Void = {}

@@ -9,11 +9,11 @@ private final class HostTerminalFake: HostTerminalDriver {
     var starts: [ZmxSpawnConfiguration] = []
     var killed: [String] = []
     var failStart = false
-    var duringStart: (@MainActor () async -> Void)?
+    var duringStart: (@MainActor () async throws -> Void)?
     func sessions() async throws -> Set<String> { live }
     func start(_ configuration: ZmxSpawnConfiguration) async throws {
         if failStart { throw CocoaError(.fileReadUnknown) }
-        await duringStart?()
+        try await duringStart?()
         starts.append(configuration)
         live.insert(configuration.sessionName)
     }
@@ -47,6 +47,42 @@ private actor HostPluginExecutor: CLIExecutor {
     }
 }
 
+private actor HostDevContainerFake: CLIExecutor {
+    let failure: String?
+    init(failure: String? = nil) { self.failure = failure }
+    var calls: [[String]] = []
+    var successfulRestarts = 0
+    var containerRunning = true
+    private var nextStop: (@Sendable () async throws -> Void)?
+    func onNextStop(_ callback: @escaping @Sendable () async throws -> Void) { nextStop = callback }
+    private var nextHelp: (@Sendable () async -> Void)?
+    func onNextHelp(_ callback: @escaping @Sendable () async -> Void) { nextHelp = callback }
+    func run(command: String, args: [String], at directory: String) async throws -> CLIOutput {
+        calls.append([command] + args)
+        if command == "docker", args.first == "stop" {
+            containerRunning = false
+            if let callback = nextStop { nextStop = nil; try await callback() }
+        }
+        if command == "docker", args.first == "start" {
+            try Task.checkCancellation()
+            successfulRestarts += 1
+            containerRunning = true
+        }
+        if args.contains("--help"), let callback = nextHelp { nextHelp = nil; await callback() }
+        if (command == "devcontainer" && !args.contains("--help") && args.first == failure) || (command == "docker" && args.first == "rm" && failure == "cleanup") {
+            throw CLIError.nonZeroExit(command: command, exitCode: 1, stderr: "simulated failure")
+        }
+        let text: String
+        if command == "docker" { text = args.first == "inspect" ? String(containerRunning) : args.first == "ps" ? String(repeating: "a", count: 64) : "" }
+        else if args.contains("--help") { text = failure == "compatibility" ? "old CLI" : "--mount-git-worktree-common-dir" }
+        else if args.first == "read-configuration" { text = #"{"configuration":{"image":"example:test"}}"# }
+        else if args.first == "up" { text = #"{"outcome":"success","containerId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","remoteWorkspaceFolder":"/workspace","remoteUser":"dev"}"# }
+        else { text = "" }
+        return CLIOutput(stdout: text, stderr: "", exitCode: 0)
+    }
+    func capture(command: String, args: [String], at directory: String) async throws -> CLIOutput { try await run(command: command, args: args, at: directory) }
+}
+
 @Suite @MainActor
 struct HeadlessHostRuntimeTests {
     private func fixture() throws -> (URL, HostConfiguration, AppState) {
@@ -56,6 +92,428 @@ struct HeadlessHostRuntimeTests {
         let configuration = HostConfiguration(stateDirectory: root, runtimeDirectory: root.appendingPathComponent("run"), zmxExecutable: URL(fileURLWithPath: "/bin/true"))
         let state = AppState(repos: [RepoEntry(path: root.path, displayName: "project", worktrees: [WorktreeEntry(path: root.path, branch: "main")])])
         return (root, configuration, state)
+    }
+
+    private func completedPlacement(_ runtime: HeadlessHostRuntime, id: UUID, owner: RemoteMacConnectionSummary.ID) async throws -> WorktreeManagementResponse {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while ContinuousClock.now < deadline {
+            let response = await runtime.place(.status(operationID: id), owner: owner)
+            if case .placement(let record) = response, record.state == .preparing {
+                try await Task.sleep(for: .milliseconds(10))
+            } else { return response }
+        }
+        throw HostRuntimeError.busy("Placement did not finish")
+    }
+
+    private struct ContainerDeletionFixture: Sendable {
+        let root: URL
+        let runtime: HeadlessHostRuntime
+        let executor: HostDevContainerFake
+        let owner: RemoteMacConnectionSummary.ID
+        let operationID: UUID
+        var path: String { root.appendingPathComponent(".worktrees/container").path }
+    }
+
+    /// Retain an already-prepared environment so deletion tests do not depend
+    /// on Docker or on the Git version required for container creation.
+    private func containerDeletionFixture(names: [String] = ["container"]) async throws -> ContainerDeletionFixture {
+        let (root, configuration, _) = try fixture()
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid", "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let executor = HostDevContainerFake()
+        let runtime = try HeadlessHostRuntime(configuration: configuration, terminals: HostTerminalFake(), devContainers: .init(executor: executor))
+        _ = try await runtime.registerRepository(root.path)
+        for name in names {
+            _ = try await runtime.createWorktree(repository: root.path, name: name, branch: name)
+        }
+        let owner = RemoteMacConnectionSummary.ID(deviceID: .init(value: "parent"), fingerprint: try .init(rawBytes: Data(repeating: 1, count: 32)))
+        let operationID = UUID()
+        let intent = HostPlacementIntent(repositoryID: root.path, worktreeName: "container", branchName: "container",
+            demand: .init(architecture: "arm64", cpus: 1, memoryBytes: 1 << 30, diskBytes: 1 << 20), devContainer: .init())
+        let sample = HostResourceSnapshot(sampledAt: Date().timeIntervalSince1970, architecture: "arm64", operatingSystem: "linux",
+            cpuCount: 8, cpuUtilization: 0.1, memoryTotalBytes: 16 << 30, memoryAvailableBytes: 12 << 30,
+            diskPath: root.path, diskAvailableBytes: 100 << 30, pendingWorktreeOperations: 0)
+        _ = try runtime.placements.admit(operationID: operationID, owner: owner, intent: intent, sample: sample)
+        try runtime.placements.recordEnvironment(operationID: operationID, environment: .init(containerID: String(repeating: "a", count: 64),
+            workspace: intent.worktreePath, configurationPath: intent.worktreePath + "/.devcontainer/devcontainer.json",
+            configurationDigest: "fixture", remoteWorkspaceFolder: "/workspace", remoteUser: "dev", usesRelativeGitWorktree: false))
+        try runtime.placements.complete(operationID: operationID, worktreeID: intent.worktreePath, paneID: "fixture")
+        return .init(root: root, runtime: runtime, executor: executor, owner: owner, operationID: operationID)
+    }
+
+    @Test("@spec REMOTE-25.8: When worktree deletion suspends for container cleanup, the host shall resolve the worktree by its current path before changing its state so concurrent deletion or reordering cannot affect another worktree.")
+    func containerDeletionRechecksIndexAfterConcurrentRemoval() async throws {
+        let fixture = try await containerDeletionFixture(names: ["earlier", "container", "following"])
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let earlier = fixture.root.appendingPathComponent(".worktrees/earlier").path
+        let following = fixture.root.appendingPathComponent(".worktrees/following").path
+        await fixture.executor.onNextStop {
+            try await fixture.runtime.deleteWorktree(earlier)
+        }
+        try await fixture.runtime.deleteWorktree(fixture.path)
+        #expect(fixture.runtime.state.worktree(forPath: earlier) == nil)
+        #expect(fixture.runtime.state.worktree(forPath: fixture.path) == nil)
+        #expect(fixture.runtime.state.worktree(forPath: following)?.state == .running)
+        #expect(FileManager.default.fileExists(atPath: following))
+        #expect(try fixture.runtime.placements.status(operationID: fixture.operationID, owner: fixture.owner)?.state == .released)
+    }
+
+    @Test("Vanished container worktrees retain the GIT-4.13 prune and dismissal behavior")
+    func vanishedContainerWorktreeCanBeDismissedWithoutForce() async throws {
+        let fixture = try await containerDeletionFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try FileManager.default.removeItem(atPath: fixture.path)
+        _ = try await fixture.runtime.removeWorktree(fixture.path, force: false, pruneVanished: true)
+        #expect(fixture.runtime.state.worktree(forPath: fixture.path) == nil)
+        #expect(try fixture.runtime.placements.status(operationID: fixture.operationID, owner: fixture.owner)?.state == .released)
+        let calls = await fixture.executor.calls
+        #expect(calls.contains { $0.starts(with: ["docker", "stop"]) })
+        #expect(calls.contains { $0.starts(with: ["docker", "rm"]) })
+        let discovered = try await GitWorktreeDiscovery.discover(repoPath: fixture.root.path)
+        #expect(!discovered.contains { $0.path == fixture.path })
+    }
+
+    @Test("A failed container stop restores its running environment before rejecting deletion", arguments: ["cancel", "timeout", "caller-cancel"])
+    func ambiguousContainerStopRestoresRunningEnvironment(failure: String) async throws {
+        let fixture = try await containerDeletionFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let stopping = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingOldest(1))
+        let finishStop = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingOldest(1))
+        defer { stopping.continuation.finish(); finishStop.continuation.finish() }
+        await fixture.executor.onNextStop {
+            if failure == "caller-cancel" {
+                stopping.continuation.yield(())
+                for await _ in finishStop.stream { break }
+                try Task.checkCancellation()
+                return
+            }
+            if failure == "cancel" {
+                withUnsafeCurrentTask { $0?.cancel() }
+                throw CancellationError()
+            }
+            throw CLIError.timedOut(command: "docker", seconds: 30)
+        }
+        let deletion = Task { try await fixture.runtime.deleteWorktree(fixture.path) }
+        defer { deletion.cancel() }
+        if failure == "caller-cancel" {
+            do {
+                try await withThrowingTaskGroup(of: Bool.self) { group in
+                    group.addTask {
+                        var iterator = stopping.stream.makeAsyncIterator()
+                        return await iterator.next() != nil
+                    }
+                    group.addTask {
+                        try await Task.sleep(for: .seconds(5))
+                        return false
+                    }
+                    defer { group.cancelAll() }
+                    guard try await group.next() == true else {
+                        throw CLIError.timedOut(command: "container stop signal", seconds: 5)
+                    }
+                }
+            } catch {
+                deletion.cancel()
+                stopping.continuation.finish()
+                finishStop.continuation.finish()
+                _ = await deletion.result
+                throw error
+            }
+            deletion.cancel()
+            finishStop.continuation.yield(())
+        }
+        await #expect(throws: (any Error).self) { try await deletion.value }
+        #expect(await fixture.executor.successfulRestarts == 1)
+        #expect(await fixture.executor.containerRunning)
+        #expect(fixture.runtime.state.worktree(forPath: fixture.path)?.state == .running)
+        #expect(FileManager.default.fileExists(atPath: fixture.path))
+        #expect(try fixture.runtime.placements.status(operationID: fixture.operationID, owner: fixture.owner)?.state == .created)
+        #expect(await !fixture.executor.calls.contains { $0.starts(with: ["docker", "rm"]) })
+    }
+
+    @Test func drainRejectsDirectAndAdmittedWorktreeCreation() async throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid", "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals)
+        _ = try await runtime.registerRepository(root.path)
+        runtime.hostResources = .init(sampledAt: Date().timeIntervalSince1970, diskPath: root.path)
+        try runtime.beginDrain(.init(provider: "test-cloud", eventID: "notice", action: .terminate, deadline: Date().addingTimeInterval(120)))
+        #expect(runtime.hostResources?.acceptingPlacements == false)
+        await #expect(throws: (any Error).self) {
+            _ = try await runtime.createWorktree(repository: root.path, name: "direct", branch: "direct")
+        }
+        guard case .error = await runtime.handle(.createWorktree(callerWorktree: root.path,
+            worktreeName: "cli", branchName: "cli", existing: false, base: nil, command: nil,
+            agentRuntime: nil, agentPrompt: nil, operationID: UUID().uuidString)) else {
+            Issue.record("Shared CLI creation bypassed drain admission"); return
+        }
+        #expect(runtime.state.worktree(forPath: root.appendingPathComponent(".worktrees/cli").path) == nil)
+        let owner = RemoteMacConnectionSummary.ID(deviceID: .init(value: "parent"), fingerprint: try .init(rawBytes: Data(repeating: 1, count: 32)))
+        let intent = HostPlacementIntent(repositoryID: root.path, worktreeName: "admitted", branchName: "admitted",
+            demand: .init(architecture: "arm64", cpus: 1, memoryBytes: 1 << 30, diskBytes: 1 << 20))
+        guard case .error = await runtime.place(.create(operationID: UUID(), intent: intent), owner: owner) else {
+            Issue.record("Draining host admitted new work"); return
+        }
+        #expect(terminals.starts.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".worktrees/direct").path))
+        #expect(!FileManager.default.fileExists(atPath: intent.worktreePath))
+        try await runtime.shutdown()
+    }
+
+    @Test("@spec REMOTE-29.10: When a host starts draining during environment preparation, the application shall retain the created worktree and refuse to start its new pane or agent after preparation finishes.")
+    func drainDuringPreparationPreventsNewAgentLaunch() async throws {
+        let (root, config, _) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid", "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals)
+        _ = try await runtime.registerRepository(root.path)
+        await #expect(throws: (any Error).self) {
+            try await runtime.createWorktree(repository: root.path, name: "interrupted", branch: "interrupted", command: "codex", prepareEnvironment: { _ in
+                try runtime.beginDrain(.init(provider: "test-cloud", eventID: "notice", action: .terminate, deadline: Date().addingTimeInterval(120)))
+            })
+        }
+        #expect(terminals.starts.isEmpty)
+        let created = root.appendingPathComponent(".worktrees/interrupted").path
+        #expect(FileManager.default.fileExists(atPath: created))
+        #expect(runtime.state.worktree(forPath: created)?.state == .closed)
+    }
+
+    @Test func skillPlacementUsesAuthenticatedOwnerAndContainerProfile() async throws {
+        let (root, config, _) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appendingPathComponent("container-home")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let devConfig = root.appendingPathComponent(".devcontainer/devcontainer.json")
+        try FileManager.default.createDirectory(at: devConfig.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"image":"fixture"}"#.utf8).write(to: devConfig)
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["add", ".devcontainer"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid", "commit", "-m", "initial"], at: root.path)
+        let help = try await GitRunner.captureAll(args: ["worktree", "add", "-h"], at: root.path)
+        guard (help.stdout + help.stderr).contains("relative-paths") else { return }
+        let destination = root.appendingPathComponent(".worktrees/skills")
+        let executor = SkillContainerExecutor(home: home, workspace: destination)
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, devContainers: .init(executor: executor))
+        _ = try await runtime.registerRepository(root.path)
+        runtime.hostResources = .init(sampledAt: Date().timeIntervalSince1970, architecture: "arm64", operatingSystem: "linux", cpuCount: 8, cpuUtilization: 0,
+            memoryTotalBytes: 16 << 30, memoryAvailableBytes: 16 << 30, diskPath: root.path, diskAvailableBytes: 100 << 30,
+            activeWorktrees: 0, pendingWorktreeOperations: 0)
+        let owner = RemoteMacConnectionSummary.ID(deviceID: .init(value: "parent"), fingerprint: try .init(rawBytes: Data(repeating: 1, count: 32)))
+        let other = RemoteMacConnectionSummary.ID(deviceID: owner.deviceID, fingerprint: try .init(rawBytes: Data(repeating: 2, count: 32)))
+        let snapshot = RemoteSkillSnapshot(runtime: .codex, files: [.init(scope: .user, path: ".agents/skills/personal/SKILL.md", contents: Data("personal".utf8))])
+        _ = try await RemoteSkillTransferSender.transfer(snapshot, repositoryID: root.path, operationID: UUID()) { request in
+            guard case .agentSkills(let status) = await runtime.receiveSkills(request, owner: owner) else { throw RemoteSkillError("Transfer rejected") }
+            return status
+        }
+        let intent = HostPlacementIntent(repositoryID: root.path, worktreeName: "skills", branchName: "skills",
+            demand: .init(architecture: "arm64", cpus: 1, memoryBytes: 1 << 30, diskBytes: 1 << 20),
+            devContainer: .init(skills: [.init(runtime: "codex", revision: try snapshot.revision)], agentRuntime: "codex"))
+        let id = UUID()
+        guard case .error = await runtime.place(.createWithAgentSkills(operationID: id, intent: intent), owner: other) else {
+            Issue.record("Another key selected the parent's skills"); return
+        }
+        #expect(runtime.placements.pendingCount == 0 && terminals.starts.isEmpty)
+        #expect(await executor.commands.isEmpty)
+        let admitted = await runtime.place(.createWithAgentSkills(operationID: id, intent: intent), owner: owner)
+        guard case .placement = admitted else { Issue.record("Admission failed: \(admitted)"); return }
+        guard case .placement(let record) = try await completedPlacement(runtime, id: id, owner: owner) else { Issue.record("No retained placement"); return }
+        #expect(record.state == .created)
+        let profile = try #require(record.environment?.agentSkillHome)
+        #expect(try String(contentsOfFile: profile + "/.agents/skills/personal/SKILL.md", encoding: .utf8) == "personal")
+        let launch = try #require(terminals.starts.first)
+        let command = launch.env["GRAFTTY_INITIAL_COMMAND"] ?? launch.argv.joined(separator: " ")
+        #expect(command.contains("devcontainer") && command.contains("CODEX_HOME=" + profile + "/.codex") && command.contains("codex\nexec /bin/sh"))
+    }
+
+    @Test("@spec REMOTE-31.19: When a placement is admitted, the host shall return its preparing status without waiting for setup, continue independently of the request lifetime, and finish canceling owned jobs before shutdown returns.", arguments: [false, true])
+    func placementOutlivesRequestButNotShutdown(stop: Bool) async throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid", "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let terminals = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals)
+        _ = try await runtime.registerRepository(root.path)
+        runtime.hostResources = .init(sampledAt: Date().timeIntervalSince1970, architecture: "arm64", operatingSystem: "linux",
+            cpuCount: 8, cpuUtilization: 0.1, memoryTotalBytes: 16 << 30, memoryAvailableBytes: 12 << 30,
+            diskPath: root.path, diskAvailableBytes: 100 << 30, activeWorktrees: 0, pendingWorktreeOperations: 0)
+        let owner = RemoteMacConnectionSummary.ID(deviceID: .init(value: "parent"), fingerprint: try .init(rawBytes: Data(repeating: 1, count: 32)))
+        let id = UUID()
+        let intent = HostPlacementIntent(repositoryID: root.path, worktreeName: "background", branchName: "background",
+            demand: .init(architecture: "arm64", cpus: 1, memoryBytes: 1 << 30, diskBytes: 1 << 20))
+        var entered = false
+        var exited = false
+        var caller: Task<WorktreeManagementResponse, Never>?
+        terminals.duringStart = {
+            entered = true
+            defer { exited = true }
+            caller?.cancel()
+            #expect(!Task.isCancelled)
+            try await Task.sleep(for: stop ? .seconds(1) : .milliseconds(100))
+        }
+        caller = Task { await runtime.place(.create(operationID: id, intent: intent), owner: owner) }
+        let response = await caller!.value
+        guard case .placement(let pending) = response else { Issue.record("No admission"); return }
+        #expect(pending.state == .preparing)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !entered && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(entered)
+        if stop {
+            try await runtime.shutdown()
+            #expect(exited && terminals.starts.isEmpty)
+        }
+        guard case .placement(let result) = try await completedPlacement(runtime, id: id, owner: owner) else { Issue.record("Missing result"); return }
+        #expect(result.state == (stop ? .outcomeUnknown : .created))
+        #expect(terminals.starts.count == (stop ? 0 : 1))
+        if stop {
+            guard case .error = await runtime.place(.create(operationID: UUID(), intent: intent), owner: owner) else { Issue.record("Shutdown admitted new work"); return }
+        }
+    }
+
+    @Test("@spec REMOTE-31.17: When a host admits a placement, the application shall persist the parent-bound operation before creating its worktree, return the retained result on retries, and expose uncertain creation without starting it again.", arguments: [false, true])
+    func admittedWorktreeCreationIsIdempotent(failStart: Bool) async throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid",
+            "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let terminals = HostTerminalFake(); terminals.failStart = failStart
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals)
+        _ = try await runtime.registerRepository(root.path)
+        runtime.hostResources = .init(sampledAt: Date().timeIntervalSince1970, architecture: "arm64", operatingSystem: "linux",
+            cpuCount: 8, cpuUtilization: 0.1, memoryTotalBytes: 16 << 30, memoryAvailableBytes: 12 << 30,
+            diskPath: root.path, diskAvailableBytes: 100 << 30, activeWorktrees: 0, pendingWorktreeOperations: 0)
+        let owner = RemoteMacConnectionSummary.ID(deviceID: .init(value: "parent"), fingerprint: try .init(rawBytes: Data(repeating: 1, count: 32)))
+        let id = UUID()
+        let intent = HostPlacementIntent(repositoryID: root.path, worktreeName: "placed", branchName: "placed",
+            demand: .init(architecture: "arm64", cpus: 2, memoryBytes: 1 << 30, diskBytes: 1 << 20))
+        terminals.duringStart = {
+            let retry = await runtime.place(.create(operationID: id, intent: intent), owner: owner)
+            guard case .placement(let record) = retry else { Issue.record("Missing pending placement"); return }
+            #expect(record.state == .preparing)
+        }
+        let admitted = await runtime.place(.create(operationID: id, intent: intent), owner: owner)
+        guard case .placement(let pending) = admitted else { Issue.record("Admission failed"); return }
+        #expect(pending.state == .preparing)
+        let response = try await completedPlacement(runtime, id: id, owner: owner)
+        guard case .placement(let record) = response else { Issue.record("Admission failed: \(response)"); return }
+        #expect(record.state == (failStart ? .outcomeUnknown : .created))
+        #expect(record.worktreeID == (failStart ? nil : intent.worktreePath))
+        #expect(terminals.starts.count == (failStart ? 0 : 1))
+        #expect(await runtime.place(.create(operationID: id, intent: intent), owner: owner) == response)
+        #expect(await runtime.place(.status(operationID: id), owner: owner) == response)
+        let restored = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake())
+        #expect(await restored.place(.create(operationID: id, intent: intent), owner: owner) == response)
+        #expect(terminals.starts.count == (failStart ? 0 : 1))
+        let stranger = RemoteMacConnectionSummary.ID(deviceID: owner.deviceID, fingerprint: try .init(rawBytes: Data(repeating: 2, count: 32)))
+        guard case .error = await runtime.place(.status(operationID: id), owner: stranger) else { Issue.record("Foreign peer read operation"); return }
+        try await runtime.deleteWorktree(intent.worktreePath)
+        guard case .placement(let deleted) = await runtime.place(.create(operationID: id, intent: intent), owner: owner) else {
+            Issue.record("Missing tombstone"); return
+        }
+        #expect(deleted.state == .released)
+    }
+
+    @Test("@spec REMOTE-25.7: When a parent requests Dev Container placement, the host shall prepare the selected configuration before pane startup, retain its container identity for later panes, stop and remove that container when deleting the worktree, and restore a previously running container if stopping or Git removal fails even when the caller cancels.", arguments: [Optional<String>.none, "compatibility", "up", "exec", "cleanup", "cancel-delete"])
+    func devContainerPlacementRetainsEnvironmentAndCleansUp(failure: String?) async throws {
+        let (root, config, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "--initial-branch=main"], at: root.path)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(".devcontainer"), withIntermediateDirectories: true)
+        try Data(#"{"image":"example:test"}"#.utf8).write(to: root.appendingPathComponent(".devcontainer/devcontainer.json"))
+        _ = try await GitRunner.run(args: ["add", ".devcontainer"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Host Test", "-c", "user.email=host@example.invalid", "commit", "-m", "initial"], at: root.path)
+        let terminals = HostTerminalFake()
+        let executor = HostDevContainerFake(failure: failure)
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, devContainers: .init(executor: executor))
+        _ = try await runtime.registerRepository(root.path)
+        runtime.hostResources = .init(sampledAt: Date().timeIntervalSince1970, architecture: "arm64", operatingSystem: "linux",
+            cpuCount: 8, cpuUtilization: 0.1, memoryTotalBytes: 16 << 30, memoryAvailableBytes: 12 << 30,
+            diskPath: root.path, diskAvailableBytes: 100 << 30, activeWorktrees: 0, pendingWorktreeOperations: 0)
+        let owner = RemoteMacConnectionSummary.ID(deviceID: .init(value: "parent"), fingerprint: try .init(rawBytes: Data(repeating: 1, count: 32)))
+        let id = UUID()
+        let intent = HostPlacementIntent(repositoryID: root.path, worktreeName: "container", branchName: "container",
+            demand: .init(architecture: "arm64", cpus: 1, memoryBytes: 1 << 30, diskBytes: 1 << 20), devContainer: .init())
+        if failure == nil {
+            await executor.onNextHelp {
+                guard case .placement(let retry) = await runtime.place(.createInDevContainer(operationID: id, intent: intent), owner: owner) else {
+                    Issue.record("Concurrent retry did not return an operation"); return
+                }
+                #expect(retry.state == .preparing)
+            }
+        }
+        let response = await runtime.place(.createInDevContainer(operationID: id, intent: intent), owner: owner)
+        if failure == "compatibility" {
+            guard case .error = response else { Issue.record("Missing tool support must fail before admission"); return }
+            #expect(runtime.placements.pendingCount == 0 && terminals.starts.isEmpty)
+            #expect(runtime.state.repos[0].worktrees.count == 1)
+            return
+        }
+        let help = try await GitRunner.captureAll(args: ["worktree", "add", "-h"], at: root.path)
+        if !(help.stdout + help.stderr).contains("relative-paths") {
+            guard case .error = response else { Issue.record("Unsupported Git must fail before admission"); return }
+            #expect(terminals.starts.isEmpty && runtime.placements.pendingCount == 0)
+            return
+        }
+        let completed = try await completedPlacement(runtime, id: id, owner: owner)
+        guard case .placement(let record) = completed else { Issue.record("Placement failed: \(response)"); return }
+        if failure == "up" || failure == "exec" {
+            #expect(record.state == .outcomeUnknown)
+            #expect(record.environment == nil && terminals.starts.isEmpty)
+            #expect(record.message?.contains(failure == "up" ? "lifecycle" : "git-access") == true)
+            try await runtime.deleteWorktree(intent.worktreePath)
+            let cleanup = await executor.calls
+            #expect(cleanup.contains { $0.contains("label=graftty.placement=" + id.uuidString.lowercased()) })
+            #expect(cleanup.contains { $0.starts(with: ["docker", "stop"]) })
+            #expect(cleanup.contains { $0.starts(with: ["docker", "rm"]) })
+            return
+        }
+        #expect(record.state == .created)
+        let environment = try #require(record.environment)
+        #expect(!environment.agentReady)
+        #expect(environment.workspace == intent.worktreePath)
+        #expect(terminals.starts.count == 1)
+        #expect((terminals.starts[0].env["GRAFTTY_INITIAL_COMMAND"] ?? terminals.starts[0].argv.joined(separator: " ")).contains("devcontainer"))
+        let restored = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake())
+        let spawned = restored.spawn(session: PaneSessionID(), path: intent.worktreePath)
+        #expect((spawned.env["GRAFTTY_INITIAL_COMMAND"] ?? spawned.argv.joined(separator: " ")).contains(environment.containerID))
+        let custom = restored.spawn(session: PaneSessionID(), path: intent.worktreePath, command: "printf 'project command'")
+        let customCommand = custom.env["GRAFTTY_INITIAL_COMMAND"] ?? custom.argv.joined(separator: " ")
+        #expect(customCommand.contains(environment.containerID) && customCommand.contains("project command"))
+        let dirtyFile = URL(fileURLWithPath: intent.worktreePath).appendingPathComponent(".devcontainer/devcontainer.json")
+        let original = try Data(contentsOf: dirtyFile)
+        try Data(#"{"image":"changed:test"}"#.utf8).write(to: dirtyFile)
+        await #expect(throws: (any Error).self) { try await runtime.deleteWorktree(intent.worktreePath) }
+        #expect(runtime.state.worktree(forPath: intent.worktreePath) != nil)
+        #expect(await !executor.calls.contains { $0.starts(with: ["docker", "stop"]) })
+        #expect(await !executor.calls.contains { $0.starts(with: ["docker", "rm"]) })
+        try original.write(to: dirtyFile)
+        if failure == "cancel-delete" {
+            await executor.onNextStop {
+                // A writer dirties the worktree after preflight but before Git removal.
+                try Data("changed during stop".utf8).write(to: dirtyFile)
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+            let deletion = Task { try await runtime.deleteWorktree(intent.worktreePath) }
+            await #expect(throws: (any Error).self) { try await deletion.value }
+            #expect(await executor.successfulRestarts == 1)
+            #expect(runtime.state.worktree(forPath: intent.worktreePath) != nil)
+            #expect(FileManager.default.fileExists(atPath: intent.worktreePath))
+            return
+        }
+        if failure == "cleanup" {
+            await #expect(throws: (any Error).self) { try await runtime.deleteWorktree(intent.worktreePath) }
+            #expect(runtime.state.worktree(forPath: intent.worktreePath) == nil)
+        } else { try await runtime.deleteWorktree(intent.worktreePath) }
+        let calls = await executor.calls
+        #expect(calls.contains { $0.starts(with: ["docker", "stop"]) })
+        #expect(calls.contains { $0.starts(with: ["docker", "rm"]) })
+        guard case .placement(let released) = await runtime.place(.status(operationID: id), owner: owner) else { Issue.record("Missing result"); return }
+        #expect(released.state == .released)
+        if failure == "cleanup" { #expect(released.message?.contains("cleanup of stopped container") == true) }
     }
 
     @Test func userPromptHandoffPersistsAndPublishesHistory() throws {
@@ -482,7 +940,7 @@ struct HeadlessHostRuntimeTests {
         let terminals = HostTerminalFake()
         let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminals, initialState: state)
         let session = try await runtime.openWorktree(root.path)
-        try runtime.shutdown()
+        try await runtime.shutdown()
         #expect(terminals.killed.isEmpty)
         #expect(terminals.live.contains(session))
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.state == .running)
