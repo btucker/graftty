@@ -1252,48 +1252,10 @@ final class RemoteWorktreeViewerController: ObservableObject {
                 }
                 var rollbackCandidates = failedPendingSplit.map { [$0] } ?? []
                 if abortsSplitBatch {
-                    rollbackCandidates.append(contentsOf:
-                        pendingRemoteSplitFocus.filter { $0.target == target }
-                    )
-                    let abandonedIDs = Set(
-                        pendingRemoteSplitFocus
-                            .filter { $0.target == target }
-                            .map(\.id)
-                        + pendingRemotePaneControls
-                            .filter { $0.target == target }
-                            .map(\.id)
-                    )
-                    pendingRemoteSplitFocus.removeAll { $0.target == target }
-                    pendingRemoteSplitFocusResults.removeAll {
-                        $0.target == target
-                    }
-                    pendingRemotePaneControls.removeAll {
-                        $0.target == target
-                    }
-                    pendingRemoteMutationOrder.removeAll {
-                        abandonedIDs.contains($0)
-                    }
-                    if let inFlight = remoteMutationInFlight,
-                       abandonedIDs.contains(inFlight) {
-                        remoteMutationInFlight = nil
-                    }
+                    rollbackCandidates.append(contentsOf: abandonRemoteMutationBatch(for: target))
                 }
-                if let rollback = rollbackCandidates.first(where: {
-                    $0.shouldFocus && $0.previousZoomedSessionName != nil
-                }),
-                   let previousZoomedSessionName =
-                    rollback.previousZoomedSessionName,
-                   (abortsSplitBatch || !transferredRollback),
-                   splitTree.zoomed == nil,
-                   selectedRemoteIdentity == target.identity,
-                   selectedRemoteWorktreePath == target.worktreePath,
-                   let zoomedID = remoteTerminalSlots[RemoteTerminalKey(
-                       identity: target.identity,
-                       worktreePath: target.worktreePath,
-                       sessionName: previousZoomedSessionName
-                   )] {
-                    splitTree =
-                        splitTree.withZoom(zoomedID)
+                if abortsSplitBatch || !transferredRollback {
+                    restoreRemoteSplitZoom(from: rollbackCandidates, target: target)
                 }
                 if restoreSnapshotOnError,
                    selectedRemoteIdentity == target.identity,
@@ -1349,25 +1311,46 @@ final class RemoteWorktreeViewerController: ObservableObject {
                   }) else {
                 return
             }
-            let abandonedIDs = Set(
-                pendingRemoteSplitFocus
-                    .filter { $0.target == target }
-                    .map(\.id)
-                + pendingRemotePaneControls
-                    .filter { $0.target == target }
-                    .map(\.id)
+            let abandoned = abandonRemoteMutationBatch(for: target)
+            restoreRemoteSplitZoom(from: abandoned, target: target)
+            presentError(
+                "The remote split timed out waiting for the host's pane layout. Queued commands for this worktree were cancelled."
             )
-            pendingRemoteSplitFocus.removeAll { $0.target == target }
-            pendingRemoteSplitFocusResults.removeAll {
-                $0.target == target
-            }
-            pendingRemotePaneControls.removeAll { $0.target == target }
-            pendingRemoteMutationOrder.removeAll {
-                abandonedIDs.contains($0)
-            }
-            remoteMutationInFlight = nil
             dispatchNextRemoteMutation()
         }
+    }
+
+    private func abandonRemoteMutationBatch(for target: WorktreeKey) -> [PendingRemoteSplitFocus] {
+        let splits = pendingRemoteSplitFocus.filter { $0.target == target }
+        let abandonedIDs = Set(
+            splits.map(\.id)
+                + pendingRemotePaneControls.filter { $0.target == target }.map(\.id)
+        )
+        pendingRemoteSplitFocus.removeAll { $0.target == target }
+        pendingRemoteSplitFocusResults.removeAll { $0.target == target }
+        pendingRemotePaneControls.removeAll { $0.target == target }
+        pendingRemoteMutationOrder.removeAll { abandonedIDs.contains($0) }
+        if let inFlight = remoteMutationInFlight, abandonedIDs.contains(inFlight) {
+            remoteMutationInFlight = nil
+        }
+        return splits
+    }
+
+    private func restoreRemoteSplitZoom(from candidates: [PendingRemoteSplitFocus], target: WorktreeKey) {
+        guard let rollback = candidates.first(where: {
+            $0.shouldFocus && $0.previousZoomedSessionName != nil
+        }),
+        let sessionName = rollback.previousZoomedSessionName,
+        rollback.focusGeneration == remotePaneIntentGeneration,
+        splitTree.zoomed == nil,
+        selectedRemoteIdentity == target.identity,
+        selectedRemoteWorktreePath == target.worktreePath,
+        let zoomedID = remoteTerminalSlots[RemoteTerminalKey(
+            identity: target.identity,
+            worktreePath: target.worktreePath,
+            sessionName: sessionName
+        )] else { return }
+        splitTree = splitTree.withZoom(zoomedID)
     }
 
     private func dispatchNextRemoteMutation() {
