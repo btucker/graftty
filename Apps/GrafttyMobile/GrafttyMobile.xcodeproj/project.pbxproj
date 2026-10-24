@@ -117,6 +117,10 @@
 		F8B6B4952ADDB1FCC8ED09CD /* SSHChildChannelOpenerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 902C9174C63A8EB9E77EB4BC /* SSHChildChannelOpenerTests.swift */; };
 		FBA39AD9402E9419991768C0 /* MultiPaneDetailViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A52344F5699042983845BC7 /* MultiPaneDetailViewTests.swift */; };
 		FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */; };
+		132AF2CB2F76CA9F44FB7DB4 /* LayoutPassProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = C275A4CDA39513788E94B0D3 /* LayoutPassProbe.swift */; };
+		2D3C47A34609032BE35CA28C /* LayoutPassProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = C275A4CDA39513788E94B0D3 /* LayoutPassProbe.swift */; };
+		3138F25737D902148EBC6862 /* IPadRootLayoutLandscapeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EBD33190F7D4128236D0E28 /* IPadRootLayoutLandscapeTests.swift */; };
+		A5E562FED5DC4896A34A9EAF /* IPadRootLayoutSettlingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC28973D4EE88CA9668F7DBD /* IPadRootLayoutSettlingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -248,6 +252,9 @@
 		FCCC6309F3C665D30C50F451 /* NotificationActivationFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationActivationFixture.swift; sourceTree = "<group>"; };
 		FCEA6370F15FD47532C3E4D8 /* RemoteHostConnectionLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteHostConnectionLoopbackTests.swift; sourceTree = "<group>"; };
 		FF7A5068D34751DE52E6705E /* PinnedHostStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedHostStoreTests.swift; sourceTree = "<group>"; };
+		0EBD33190F7D4128236D0E28 /* IPadRootLayoutLandscapeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IPadRootLayoutLandscapeTests.swift; path = ../../Tests/GrafttyMobileKitTests/App/IPadRootLayoutLandscapeTests.swift; sourceTree = "<group>"; };
+		C275A4CDA39513788E94B0D3 /* LayoutPassProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LayoutPassProbe.swift; path = ../../Tests/GrafttyMobileKitTests/App/LayoutPassProbe.swift; sourceTree = "<group>"; };
+		CC28973D4EE88CA9668F7DBD /* IPadRootLayoutSettlingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadRootLayoutSettlingTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -436,6 +443,7 @@
 			children = (
 				3B5DBD2CC8F2E2A00F94D044 /* IPadAppStateTests.swift */,
 				4725DB60C50A64BC035E70BB /* IPadRootLayoutSelectionTests.swift */,
+				CC28973D4EE88CA9668F7DBD /* IPadRootLayoutSettlingTests.swift */,
 				98C28B7B9FD4CB73021407F1 /* KeyboardFrameInsetTests.swift */,
 				3D25E071713009F00061D699 /* LaunchScreenTests.swift */,
 				194EE3FE3BE63175CDFFFD56 /* MobilePaneAttentionTests.swift */,
@@ -452,6 +460,7 @@
 			children = (
 				F5748380A8C491DC269B570B /* ChromeTabViewerTests.swift */,
 				2CB56C09547732A7C94AAB02 /* HostBrowserProxyTests.swift */,
+				0EBD33190F7D4128236D0E28 /* IPadRootLayoutLandscapeTests.swift */,
 				2A2E2CD7C1629DD4B74B5A5E /* RemoteBrowserButtonTests.swift */,
 				6B94DE02ACCEEF83FF1A0CB8 /* WorktreeRowAlignmentTests.swift */,
 			);
@@ -487,6 +496,7 @@
 		A781B60C40AAB68787FE5C9A /* SharedTestSupport */ = {
 			isa = PBXGroup;
 			children = (
+				C275A4CDA39513788E94B0D3 /* LayoutPassProbe.swift */,
 				A46E6C7D1D478A7EC27A5B26 /* VirtualClock.swift */,
 			);
 			name = SharedTestSupport;
@@ -848,9 +858,11 @@
 				6E3698272F39E3D8665B41E7 /* HostStoreTests.swift in Sources */,
 				1424F3BDEE73AA89A78610F3 /* IPadAppStateTests.swift in Sources */,
 				F1820DCAE5783D83D7823A87 /* IPadRootLayoutSelectionTests.swift in Sources */,
+				A5E562FED5DC4896A34A9EAF /* IPadRootLayoutSettlingTests.swift in Sources */,
 				A9FEA136B7551DDE79950AD5 /* IPadWorktreeNavigationTests.swift in Sources */,
 				9869112A7E35C04E54A7395A /* KeyboardFrameInsetTests.swift in Sources */,
 				C55600CC2CAE99D7769B31A8 /* LaunchScreenTests.swift in Sources */,
+				2D3C47A34609032BE35CA28C /* LayoutPassProbe.swift in Sources */,
 				D51C1E9C417EC6CC1180FE22 /* LocalBrowserSessionTests.swift in Sources */,
 				6600F72F53EE9C925338B369 /* MobileAgentCompletionTests.swift in Sources */,
 				839D7F3737A06952FBB49FAC /* MobileAttentionPaneTests.swift in Sources */,
@@ -915,6 +927,8 @@
 			files = (
 				6B398E06DA82E2584FB5E129 /* ChromeTabViewerTests.swift in Sources */,
 				47453C7702697742D415A0AB /* HostBrowserProxyTests.swift in Sources */,
+				3138F25737D902148EBC6862 /* IPadRootLayoutLandscapeTests.swift in Sources */,
+				132AF2CB2F76CA9F44FB7DB4 /* LayoutPassProbe.swift in Sources */,
 				D180563748C10B8F2CFCE625 /* RemoteBrowserButtonTests.swift in Sources */,
 				0F2A43BE2D2FA71D6A91E745 /* VirtualClock.swift in Sources */,
 				7FE46156489D47CAFE34312C /* WorktreeRowAlignmentTests.swift in Sources */,
