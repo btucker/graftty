@@ -14,6 +14,8 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
     public let events: AsyncStream<PagedTerminalEvent>
     private let continuation: AsyncStream<PagedTerminalEvent>.Continuation
     private let config: Config
+    private let onBackpressure: (@Sendable () -> Void)?
+    private let onReaderExit: (@Sendable () -> Void)?
     private let lock = NSLock()
     private var descriptor: Int32 = -1
     private var started = false
@@ -41,8 +43,14 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
         }
     }
 
-    public init(config: Config) {
+    public convenience init(config: Config) {
+        self.init(config: config, onBackpressure: nil, onReaderExit: nil)
+    }
+
+    init(config: Config, onBackpressure: (@Sendable () -> Void)?, onReaderExit: (@Sendable () -> Void)?) {
         self.config = config
+        self.onBackpressure = onBackpressure
+        self.onReaderExit = onReaderExit
         let pair = AsyncStream<PagedTerminalEvent>.makeStream(bufferingPolicy: .bufferingOldest(256))
         events = pair.stream
         continuation = pair.continuation
@@ -131,6 +139,7 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
                 self?.lock.withLock { self?.descriptor = -1 }
                 GrafttyPOSIX.close(fd)
                 self?.closeSync()
+                self?.onReaderExit?()
             }
             do {
                 while let self, !self.lock.withLock({ self.closed }) {
@@ -292,7 +301,9 @@ public final class PagedZmxAttachEngine: PagedTerminalStream, TerminalSizeReport
         while !lock.withLock({ closed }) {
             switch continuation.yield(event) {
             case .enqueued: return
-            case .dropped: Thread.sleep(forTimeInterval: 0.001)
+            case .dropped:
+                onBackpressure?()
+                Thread.sleep(forTimeInterval: 0.001)
             case .terminated:
                 closeSync()
                 return

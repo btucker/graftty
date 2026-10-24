@@ -1,5 +1,7 @@
 import Testing
 import Foundation
+import GrafttyKitTestSupport
+import GrafttyTestSupport
 @testable import GrafttyKit
 
 /// DIVERGE-4.6: the five-second polling safety net must keep every running
@@ -13,17 +15,20 @@ WorktreeStatsStore.pollTick
 @spec DIVERGE-4.6: When the divergence-stats polling tick fires, the application shall recompute at most four eligible worktrees, including running worktrees and closed pinned or main worktrees with auto-tracking enabled, and advance a round-robin cursor so every eligible worktree is recomputed within `ceil(eligibleCount / 4)` ticks. If the same tick dispatches a per-repo `git fetch`, that repository's worktrees shall be skipped because the fetch handler itself recomputes them on success; fetch-due repositories outside the network batch shall remain eligible for the local recompute batch.
 """)
 struct WorktreeStatsStorePollTickTests {
+    private static let now = Date(timeIntervalSince1970: 1_000_000)
 
     @MainActor
     @Test func pollTickRefreshesSingleRunningWorktreeOnEveryTick() async throws {
         let compute = RecordingCompute()
-        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in }, now: { Self.now })
+        let work = ManualWorkQueue()
+        store.dispatchWork = work.enqueue
 
         // Repo-fetch cooldown is fresh (so Gate B is the path under
         // test). A single running worktree is the entire rotating batch,
         // so consecutive ticks still refresh it once the prior compute
         // clears its in-flight gate.
-        store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
+        store.seedLastRepoFetchForTesting(Self.now, forRepo: "/r")
 
         let repo = RepoEntry(
             path: "/r",
@@ -32,29 +37,25 @@ struct WorktreeStatsStorePollTickTests {
         )
 
         await store.pollTickForTesting(repos: [repo])
-        try await waitUntil(timeout: 2.0) { compute.callCount(for: "/r/wt") >= 1 }
-
-        // Wait for the first compute Task to clear `inFlight` via apply().
-        let inFlightCleared: () async -> Bool = { @MainActor in
-            !store.isInFlightForTesting("/r/wt")
-        }
-        let deadline = Date().addingTimeInterval(2.0)
-        while Date() < deadline {
-            if await inFlightCleared() { break }
-            try await Task.sleep(nanoseconds: 25_000_000)
-        }
-        #expect(await inFlightCleared())
+        try #require(work.count == 1)
+        await work.runBatch()
+        #expect(compute.callCount(for: "/r/wt") == 1)
+        #expect(!store.isInFlightForTesting("/r/wt"))
 
         await store.pollTickForTesting(repos: [repo])
-        try await waitUntil(timeout: 2.0) { compute.callCount(for: "/r/wt") >= 2 }
+        try #require(work.count == 1)
+        await work.runBatch()
+        #expect(compute.callCount(for: "/r/wt") == 2)
     }
 
     @MainActor
     @Test func pollTickSkipsStaleWorktrees() async throws {
         let compute = RecordingCompute()
-        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in }, now: { Self.now })
+        let work = ManualWorkQueue()
+        store.dispatchWork = work.enqueue
 
-        store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
+        store.seedLastRepoFetchForTesting(Self.now, forRepo: "/r")
         // The unconditional per-worktree dispatch would otherwise fire,
         // but the worktree is stale so it must be skipped (PR-7.4 /
         // DIVERGE-1.6 parity — stale entries render no stats indicator
@@ -65,7 +66,8 @@ struct WorktreeStatsStorePollTickTests {
         let repo = RepoEntry(path: "/r", displayName: "r", worktrees: [staleWt])
 
         await store.pollTickForTesting(repos: [repo])
-        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(work.count == 0)
+        await work.runBatch()
 
         #expect(!compute.calledPaths.contains("/r/gone"))
     }
@@ -76,14 +78,17 @@ struct WorktreeStatsStorePollTickTests {
 """)
     func pollTickSkipsClosedWorktrees() async throws {
         let compute = RecordingCompute()
-        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in }, now: { Self.now })
+        let work = ManualWorkQueue()
+        store.dispatchWork = work.enqueue
 
-        store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
+        store.seedLastRepoFetchForTesting(Self.now, forRepo: "/r")
         let closedWt = WorktreeEntry(path: "/r/closed", branch: "feature", state: .closed)
         let repo = RepoEntry(path: "/r", displayName: "r", worktrees: [closedWt])
 
         await store.pollTickForTesting(repos: [repo])
-        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(work.count == 0)
+        await work.runBatch()
 
         #expect(!compute.calledPaths.contains("/r/closed"))
     }
@@ -94,7 +99,7 @@ struct WorktreeStatsStorePollTickTests {
 """)
     func refreshBoundsConcurrentDivergenceComputations() async throws {
         let compute = ConcurrencyRecordingCompute(delay: .milliseconds(100))
-        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in }, now: { Self.now })
 
         let worktrees = (0..<12).map {
             WorktreeEntry(
@@ -121,8 +126,10 @@ struct WorktreeStatsStorePollTickTests {
 """)
     func pollTickBatchesAndRotatesAcrossRunningWorktrees() async throws {
         let compute = RecordingCompute()
-        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
-        store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in }, now: { Self.now })
+        let work = ManualWorkQueue()
+        store.dispatchWork = work.enqueue
+        store.seedLastRepoFetchForTesting(Self.now, forRepo: "/r")
 
         let worktrees = (0..<12).map {
             WorktreeEntry(
@@ -140,9 +147,9 @@ struct WorktreeStatsStorePollTickTests {
         try #require(initiallyDispatched == 4)
 
         for expectedCount in [4, 8, 12] {
-            try await waitUntilMainActor(timeout: 2.0) {
-                store.stats.count == expectedCount
-            }
+            try #require(work.count == 4)
+            await work.runBatch()
+            #expect(store.stats.count == expectedCount)
             if expectedCount < worktrees.count {
                 await store.pollTickForTesting(repos: [repo])
             }
@@ -158,11 +165,12 @@ struct WorktreeStatsStorePollTickTests {
         let fetch = BlockingFetch()
         let store = WorktreeStatsStore(
             compute: compute.function,
-            fetch: fetch.function
+            fetch: fetch.function,
+            now: { Self.now }
         )
         let repos = (0..<12).map { index in
             let repoPath = "/repo-\(index)"
-            store.seedLastRepoFetchForTesting(Date(), forRepo: repoPath)
+            store.seedLastRepoFetchForTesting(Self.now, forRepo: repoPath)
             return RepoEntry(
                 path: repoPath,
                 displayName: "repo-\(index)",
@@ -183,7 +191,7 @@ struct WorktreeStatsStorePollTickTests {
         // due, then hold that fetch across the next two ticks so the anchor is
         // absent from the eligible local-compute candidates.
         store.seedLastRepoFetchForTesting(
-            Date(timeIntervalSinceNow: -3600),
+            Self.now.addingTimeInterval(-3600),
             forRepo: "/repo-4"
         )
         store.seedDefaultBranchForTesting("main", forRepo: "/repo-4")
@@ -209,13 +217,17 @@ struct WorktreeStatsStorePollTickTests {
 @spec PERF-1.13: When the thirty-second divergence fetch cadence becomes due for more than four repositories at once, the application shall keep at most four repository fetches outstanding and advance a round-robin cursor so recurring network work cannot fill the shared background-process queue ahead of other pollers.
 """)
     func repoFetchesAreSubmittedInRotatingBatches() async throws {
-        let fetch = ConcurrencyRecordingFetch(delay: .milliseconds(100))
+        let fetch = RecordingFetch()
+        let clock = MutableBox(Self.now)
         let store = WorktreeStatsStore(
             compute: { _, _, _, _ in
                 WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
             },
-            fetch: fetch.function
+            fetch: fetch.function,
+            now: { clock.value }
         )
+        let work = ManualWorkQueue()
+        store.dispatchWork = work.enqueue
         let repos = (0..<12).map { index in
             let repoPath = "/repo-\(index)"
             store.seedDefaultBranchForTesting("main", forRepo: repoPath)
@@ -238,16 +250,18 @@ struct WorktreeStatsStorePollTickTests {
                 store.isInFlightRepoForTesting($0.path)
             }.count
             try #require(claimedRepoCount == 4)
-            // The injected fetch records its completion before the store
-            // resumes on MainActor and releases the corresponding slot.
-            // A subsequent tick needs both boundaries to have completed.
-            try await waitUntilMainActor(timeout: 3.0) {
-                fetch.completedCount == expectedCompletedCount
-                    && repos.allSatisfy { !store.isInFlightRepoForTesting($0.path) }
-            }
+            // Four network fetches plus four local recomputes for other repos.
+            try #require(work.count == 8)
+            await work.runBatch()
+            #expect(fetch.completedCount == expectedCompletedCount)
+            #expect(repos.allSatisfy { !store.isInFlightRepoForTesting($0.path) })
+            // Fetch success queues four local recomputes.
+            await work.runBatch()
+            // Expire cooldown so only cursor rotation can select new repos.
+            clock.withValue { $0.addTimeInterval(60) }
         }
 
-        #expect(fetch.maximumConcurrentCount <= 4)
+        #expect(fetch.calledPaths == Set(repos.map(\.path)))
     }
 
     @MainActor
@@ -257,7 +271,8 @@ struct WorktreeStatsStorePollTickTests {
             compute: { _, _, _, _ in
                 WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
             },
-            fetch: fetch.function
+            fetch: fetch.function,
+            now: { Self.now }
         )
         let repos = (0..<12).map { index in
             let repoPath = "/repo-\(index)"
@@ -293,7 +308,9 @@ struct WorktreeStatsStorePollTickTests {
 """)
     func pollTickWithNoRunningWorktreesDoesNotLeakInFlightRepoSlot() async throws {
         let compute = RecordingCompute()
-        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in }, now: { Self.now })
+        let work = ManualWorkQueue()
+        store.dispatchWork = work.enqueue
 
         let closedWt = WorktreeEntry(path: "/r/closed", branch: "feature", state: .closed)
         let repoEmpty = RepoEntry(path: "/r", displayName: "r", worktrees: [closedWt])
@@ -302,13 +319,16 @@ struct WorktreeStatsStorePollTickTests {
         // Seed the cooldown so the second tick falls through to Gate B
         // without entering `performRepoFetch` (which would shell out to
         // git against the fake `/r` path).
-        store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
+        store.seedLastRepoFetchForTesting(Self.now, forRepo: "/r")
         let runningWt = WorktreeEntry(path: "/r/running", branch: "feature", state: .running)
         let repoWithRunning = RepoEntry(path: "/r", displayName: "r", worktrees: [runningWt])
         await store.pollTickForTesting(repos: [repoWithRunning])
 
-        try await waitUntil(timeout: 2.0) { compute.callCount(for: "/r/running") >= 1 }
+        await work.runBatch()
+        await work.runBatch() // a successful fetch can queue local recomputes
+        #expect(compute.callCount(for: "/r/running") == 1)
     }
+
 
     @MainActor
     @Test("""
@@ -316,20 +336,22 @@ struct WorktreeStatsStorePollTickTests {
 """)
     func pollTickSupersedesAbandonedRepoFetchSlot() async throws {
         let compute = RecordingCompute()
-        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in }, now: { Self.now })
+        let work = ManualWorkQueue()
+        store.dispatchWork = work.enqueue
 
         // A previous `git fetch` hung and never released its slot. Seed
         // the marker well past the abandonment threshold so this tick
         // must treat it as abandoned.
         store.seedInFlightRepoForTesting(
-            Date(timeIntervalSinceNow: -3600),
+            Self.now.addingTimeInterval(-3600),
             forRepo: "/r"
         )
         // Cooldown elapsed and default branch known, so once the stale
         // slot is abandoned the fetch dispatches and reaches the
         // per-worktree refresh (the injected fetch returns immediately).
         store.seedLastRepoFetchForTesting(
-            Date(timeIntervalSinceNow: -3600),
+            Self.now.addingTimeInterval(-3600),
             forRepo: "/r"
         )
         store.seedDefaultBranchForTesting("main", forRepo: "/r")
@@ -342,10 +364,11 @@ struct WorktreeStatsStorePollTickTests {
         // With the latch fixed, the abandoned fetch is superseded and the
         // fresh one recomputes the running worktree's divergence. A bare-
         // `Set` latch would short-circuit forever and never call compute.
-        try await waitUntil(timeout: 2.0) { compute.callCount(for: "/r/running") >= 1 }
+        await work.runBatch()
+        await work.runBatch() // a successful fetch can queue local recomputes
+        #expect(compute.callCount(for: "/r/running") == 1)
     }
 
-    // MARK: - Helpers
 
     private func waitUntil(
         timeout: TimeInterval,
@@ -359,18 +382,6 @@ struct WorktreeStatsStorePollTickTests {
         #expect(condition(), "waitUntil timed out")
     }
 
-    @MainActor
-    private func waitUntilMainActor(
-        timeout: TimeInterval,
-        condition: @escaping @MainActor @Sendable () -> Bool
-    ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return }
-            try await Task.sleep(nanoseconds: 25_000_000)
-        }
-        #expect(condition(), "waitUntilMainActor timed out")
-    }
 }
 
 /// Thread-safe recorder for injected `ComputeFunction` invocations.
@@ -512,43 +523,20 @@ private final class ConcurrencyRecordingCompute: @unchecked Sendable {
     }
 }
 
-private final class ConcurrencyRecordingFetch: @unchecked Sendable {
+private final class RecordingFetch: @unchecked Sendable {
     private let lock = NSLock()
-    private let delay: Duration
-    private var activeCount = 0
     private var _completedCount = 0
-    private var _maximumConcurrentCount = 0
+    private var _calledPaths: Set<String> = []
 
-    init(delay: Duration) {
-        self.delay = delay
-    }
-
-    var completedCount: Int {
-        lock.withLock { _completedCount }
-    }
-
-    var maximumConcurrentCount: Int {
-        lock.withLock { _maximumConcurrentCount }
-    }
+    var completedCount: Int { lock.withLock { _completedCount } }
+    var calledPaths: Set<String> { lock.withLock { _calledPaths } }
 
     var function: WorktreeStatsStore.FetchFunction {
-        { [weak self] _ in
-            guard let self else { return }
-            self.lock.withLock {
-                self.activeCount += 1
-                self._maximumConcurrentCount = max(
-                    self._maximumConcurrentCount,
-                    self.activeCount
-                )
+        { [self] path in
+            lock.withLock {
+                _calledPaths.insert(path)
+                _completedCount += 1
             }
-            try await Task.sleep(for: self.delay)
-            self.lock.withLock {
-                self.activeCount -= 1
-                self._completedCount += 1
-            }
-            // Recording completion precedes the store's MainActor cleanup.
-            // Keep that boundary observable instead of assuming it is atomic.
-            try await Task.sleep(for: .milliseconds(50))
         }
     }
 }
