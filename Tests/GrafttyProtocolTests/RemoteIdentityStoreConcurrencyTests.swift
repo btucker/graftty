@@ -106,7 +106,15 @@ struct RemoteIdentityStoreConcurrencyTests {
         second: () throws -> Value,
         reloaded: () throws -> Value
     ) async throws {
-        let pending = Task.detached { try first() }
+        // The synchronous reader deliberately blocks. Keep it off Swift's
+        // cooperative executor so two-CPU Linux runs can resume the test.
+        let pending = Task {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Value, any Error>) in
+                DispatchQueue.global().async {
+                    continuation.resume(with: Result { try first() })
+                }
+            }
+        }
         defer { gate.release.signal() }
         var events = gate.entered.makeAsyncIterator()
         _ = await events.next()
