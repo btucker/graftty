@@ -22,14 +22,19 @@ struct SessionReconnectTests {
     /// it. `receiveCalls` lets the test wait until the client is parked.
     final class GatedFailingWS: WebSocketClient, @unchecked Sendable {
         private let release: AsyncStream<Void>
+        private let ended: Bool
         private let lock = NSLock()
         private var _receiveCalls = 0
         var receiveCalls: Int { lock.withLock { _receiveCalls } }
-        init(release: AsyncStream<Void>) { self.release = release }
+        init(release: AsyncStream<Void>, ended: Bool = false) {
+            self.release = release
+            self.ended = ended
+        }
         func send(_ frame: WebSocketFrame) async throws {}
         func receive() async throws -> WebSocketFrame {
             lock.withLock { _receiveCalls += 1 }
             for await _ in release {}
+            if ended { throw TerminalSessionClient.ClientError.sessionEnded(exitStatus: 0) }
             throw URLError(.networkConnectionLost)
         }
         func close() {}
@@ -129,7 +134,10 @@ struct SessionReconnectTests {
     func cleanTerminalExitStopsWithoutReconnect() async throws {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
-        factory.nextProvider = { EndedWS() }
+        let failure = AsyncStream<Void>.makeStream()
+        defer { failure.continuation.finish() }
+        let ws = GatedFailingWS(release: failure.stream, ended: true)
+        factory.nextProvider = { ws }
         let client = SessionClient(
             sessionName: "s",
             webSocketFactory: factory.make,
@@ -138,13 +146,15 @@ struct SessionReconnectTests {
         )
         defer { client.stop() }
         client.start()
-        await quiesce()
-
-        #expect(client.connectionState == .ended)
+        await waitUntil { ws.receiveCalls == 1 }
+        try #require(ws.receiveCalls == 1)
+        try #require(client.connectionState == .live)
+        failure.continuation.finish()
+        await waitUntil { client.connectionState == .ended }
+        try #require(client.connectionState == .ended)
         #expect(factory.creations == 1)
-        clock.advance(by: 30)
-        await quiesce()
-        #expect(factory.creations == 1)
+        // A retry would have registered the first 1 s backoff sleep.
+        #expect(!clock.hasPendingSleep(for: 1))
     }
 
     @Test("a terminally ended client cannot be revived by reconnect or lifecycle resume")
@@ -258,7 +268,10 @@ struct SessionReconnectTests {
     func forceReconnectNowCancelsBackoffSleep() async throws {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
-        factory.nextProvider = { FailingWS() }
+        let failure = AsyncStream<Void>.makeStream()
+        defer { failure.continuation.finish() }
+        let ws = GatedFailingWS(release: failure.stream)
+        factory.nextProvider = { ws }
         let client = SessionClient(
             sessionName: "s",
             webSocketFactory: factory.make,
@@ -267,12 +280,24 @@ struct SessionReconnectTests {
         )
         defer { client.stop() }
         client.start()
-        await quiesce()
-        #expect(client.connectionState == .reconnecting(attempt: 1))
+        await waitUntil { ws.receiveCalls == 1 }
+        try #require(ws.receiveCalls == 1)
+        try #require(client.connectionState == .live)
+        failure.continuation.finish()
+        await waitUntil {
+            client.connectionState == .reconnecting(attempt: 1) && clock.hasPendingSleep(for: 30)
+        }
+        try #require(client.connectionState == .reconnecting(attempt: 1))
+        try #require(clock.hasPendingSleep(for: 30))
         let beforeForce = factory.creations
         client.forceReconnectNow()
-        await quiesce()
+        await waitUntil {
+            factory.creations == beforeForce + 1 && ws.receiveCalls == 2 &&
+                clock.hasPendingSleep(for: 30)
+        }
         #expect(factory.creations == beforeForce + 1)
+        #expect(ws.receiveCalls == 2)
+        #expect(clock.hasPendingSleep(for: 30))
     }
 
     @Test(arguments: [false, true])
