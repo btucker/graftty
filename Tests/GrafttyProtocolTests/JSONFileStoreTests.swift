@@ -63,6 +63,45 @@ struct JSONFileStoreTests {
         }
     }
 
+    @Test("@spec PERSIST-5.9: When a JSONFileStore writes with configured POSIX permissions, the application shall apply those permissions to the temporary file before atomically publishing it at the destination.")
+    func permissionsPrecedePublication() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("key.json")
+        let file = JSONFileStore<Record>(fileURL: url, posixPermissions: 0o600)
+
+        for text in ["first private key", "replacement private key"] {
+            let previous = try? Data(contentsOf: url)
+            let bytes = Data(text.utf8)
+            try file.write(bytes, beforeReplacing: { staged in
+                #expect(staged != url)
+                #expect(try Data(contentsOf: staged) == bytes)
+                #expect((try? Data(contentsOf: url)) == previous)
+                let attributes = try FileManager.default.attributesOfItem(atPath: staged.path)
+                #expect(attributes[.posixPermissions] as? Int == 0o600)
+            })
+            #expect(try Data(contentsOf: url) == bytes)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["key.json"])
+        }
+    }
+
+    @Test("a failed restricted-file publication preserves the destination and removes the temporary file")
+    func failedPublicationCleansUp() throws {
+        struct CancelPublication: Error {}
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("key.json")
+        let file = JSONFileStore<Record>(fileURL: url, posixPermissions: 0o600)
+        let original = Data("original".utf8)
+        try file.write(original)
+
+        #expect(throws: CancelPublication.self) {
+            try file.write(Data("replacement".utf8), beforeReplacing: { _ in throw CancelPublication() })
+        }
+        #expect(try Data(contentsOf: url) == original)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["key.json"])
+    }
+
     @Test("@spec PERSIST-5.4: The application shall encode a JSONFileStore's dates and output formatting exactly as the store is configured, so a migrated store keeps the byte format its earlier releases wrote.")
     func byteFormatFollowsConfiguration() throws {
         let dir = try makeTempDir()

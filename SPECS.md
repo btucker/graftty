@@ -1082,6 +1082,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-5.8** If a remote device ID file cannot be read for a reason other than absence or malformed contents, then the application shall throw the read error and preserve the persisted identity.
 
+**PERSIST-5.9** When a JSONFileStore writes with configured POSIX permissions, the application shall apply those permissions to the temporary file before atomically publishing it at the destination.
+
 ## PWD — Manual Pane Routing
 
 ### PWD-1.x — User-Initiated Move
