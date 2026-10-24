@@ -180,7 +180,10 @@ struct TerminalBackNavigationTests {
             measuredPixels: CGSize(width: 1200, height: 480), cellPixels: CGSize(width: 10, height: 20),
             displayScale: 1, container: container.bounds.size))
         container.snapshotScrollView.configure(canvas: canvas, nativeRowHeight: 20, columns: 120)
-        container.onBackRequested = try #require(view.terminalBackSwipeAction)
+        // Bind first so #require unwraps the optional instead of inferring
+        // the optional contextual type (Swift 6.4 rejects the latter).
+        let backSwipeAction = try #require(view.terminalBackSwipeAction)
+        container.onBackRequested = backSwipeAction
         let swipe = try #require(container.gestureRecognizers?.compactMap { $0 as? UISwipeGestureRecognizer }.first)
         #expect(swipe.direction == .right)
         #expect(swipe.numberOfTouchesRequired == 1)
