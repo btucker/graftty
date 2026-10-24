@@ -172,6 +172,36 @@ struct AgentHookInstallerWrapperTests {
         #expect(run.forwardedCodexHome == run.durableCodexHome)
     }
 
+    @Test("@spec TEAM-10.21: When agent hooks are disabled and CODEX_HOME is unset, the application shall run Codex administration in the durable home and coordinate with the managed-home rebuild lock.", arguments: [["login"], ["plugin", "list"], ["mcp", "list"], ["features", "list"]])
+    func disabledHooksDefaultToDurableHome(arguments: [String]) throws {
+        let run = try runCodexWrapperCommand(
+            arguments: arguments,
+            inheritManagedCodexHome: false,
+            hooksDisabled: true,
+            holdManagedHomeLock: true
+        )
+        #expect(run.terminationStatus == 0)
+        #expect(run.forwardedCodexHome == run.durableCodexHome)
+        #expect(run.forwardedArgs == arguments)
+        #expect(run.wasBlockedByManagedHomeLock)
+        #expect(!run.didSync)
+    }
+
+    @Test("@spec TEAM-10.23: If lockf is unavailable, then the Codex wrapper shall use an exclusive flock to coordinate durable administration with managed-home rebuilds.")
+    func missingLockfFallsBackToFlock() throws {
+        let run = try runCodexWrapperCommand(
+            arguments: ["plugin", "list"],
+            inheritManagedCodexHome: true,
+            holdManagedHomeLock: true,
+            lockCommandMissing: true
+        )
+        #expect(run.terminationStatus == 0)
+        #expect(run.forwardedCodexHome == run.durableCodexHome)
+        #expect(run.wasBlockedByManagedHomeLock)
+        #expect(!run.standardError.contains("could not lock"))
+        #expect(!run.standardError.contains("not found"))
+    }
+
     @Test("Durable Codex administration still waits for the shared lock after mirror sync fails.")
     func codexAdministrationWaitsForLockAfterSyncFailure() throws {
         let run = try runCodexWrapperCommand(
@@ -756,7 +786,8 @@ struct AgentHookInstallerWrapperTests {
         makeManagedHomeUnwritable: Bool = false,
         codexTerminatesWithSIGTERM: Bool = false,
         lockCommandExitStatus: Int32? = nil,
-        lockCommandTerminatesWithSIGTERM: Bool = false
+        lockCommandTerminatesWithSIGTERM: Bool = false,
+        lockCommandMissing: Bool = false
     ) throws -> (
         terminationStatus: Int32,
         forwardedArgs: [String],
@@ -830,7 +861,17 @@ struct AgentHookInstallerWrapperTests {
 
         let wrapper = wrapperDirectory.appendingPathComponent("codex")
         let lockCommand: String
-        if let lockCommandExitStatus {
+        if lockCommandMissing {
+            lockCommand = root.appendingPathComponent("missing-lockf").path
+            // flock -s is shared, but lockf -s means silent and exclusive.
+            // Require the Linux exclusive mode, then translate for the Mac.
+            try writeExecutable("""
+                #!/bin/sh
+                [ "$1" = "-x" ] && [ "$2" = "9" ] && [ "$#" = "2" ] || exit 64
+                shift
+                exec /usr/bin/lockf -s "$@"
+                """, to: realDirectory.appendingPathComponent("flock"))
+        } else if let lockCommandExitStatus {
             let fakeLockCommand = root.appendingPathComponent("lockf")
             try writeExecutable(
                 "#!/bin/sh\nexit \(lockCommandExitStatus)\n",

@@ -1,6 +1,6 @@
 #!/bin/sh
 # GRAFTTY_AGENT_HOOK_WRAPPER version={{VERSION}}
-# Hooks run: {{GRAFTTY_CLI_PATH}} team hook codex
+# Hooks run: graftty team hook codex
 real_binary=""
 old_ifs="$IFS"
 IFS=":"
@@ -16,7 +16,7 @@ done
 IFS="$old_ifs"
 
 if [ -z "$real_binary" ]; then
-  printf '%s\n' "graftty: unable to find real codex outside {{WRAPPER_DIRECTORY_PATH}}" >&2
+  printf '%s\n' {{MISSING_CODEX_MESSAGE}} >&2
   exit 127
 fi
 
@@ -289,7 +289,11 @@ _graftty_codex_runtime_home={{CODEX_HOME}}
        [ -f {{CODEX_LOCK}} ] &&
        [ -r {{CODEX_LOCK}} ]; then
       exec 9<{{CODEX_LOCK}} || exit $?
-      {{LOCK_COMMAND}} -s 9
+      if command -v {{LOCK_COMMAND}} >/dev/null 2>&1; then
+        {{LOCK_COMMAND}} -s 9
+      else
+        flock -x 9
+      fi
       _graftty_codex_lock_status=$?
       if [ "$_graftty_codex_lock_status" -ge 128 ]; then
         exit "$_graftty_codex_lock_status"
@@ -363,8 +367,8 @@ _graftty_codex_runtime_home={{CODEX_HOME}}
   fi
 else
   if _graftty_codex_uses_durable_home "$@"; then
-    _graftty_codex_admin_home="${CODEX_HOME:-{{CODEX_SOURCE}}}"
-    if [ "$_graftty_codex_admin_home" = {{CODEX_HOME}} ]; then
+    _graftty_codex_admin_home="${CODEX_HOME:-}"
+    if [ -z "$_graftty_codex_admin_home" ] || [ "$_graftty_codex_admin_home" = {{CODEX_HOME}} ]; then
       _graftty_codex_admin_home={{CODEX_SOURCE}}
     fi
     _graftty_codex_run_administration "$_graftty_codex_admin_home" "$@"
