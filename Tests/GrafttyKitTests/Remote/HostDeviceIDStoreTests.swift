@@ -7,6 +7,11 @@ import GrafttyTestSupport
 @Suite("HostDeviceIDStore Tests")
 struct HostDeviceIDStoreTests {
 
+    @Test("@spec PERSIST-5.13: When host identity stores use their default locations, the application shall store the host key and device ID in the same state directory on every supported platform.")
+    func defaultDirectoriesAgree() {
+        #expect(HostDeviceIDStore.defaultDirectory == HostIdentityStore.defaultDirectory)
+    }
+
     @Test("loadOrGenerateAndPersist generates once: a second load — including from a fresh store instance — returns the same ID")
     func generatesOnceAndIsStable() throws {
         let dir = try makeTempDir()
