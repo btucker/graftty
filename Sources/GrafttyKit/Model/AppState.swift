@@ -19,6 +19,40 @@ public struct AppState: Codable, Sendable, Equatable {
     public var sidebarNavigation: SidebarHostState? = nil
     public var sidebarWidth: Double
 
+    // Failed recovery is transient bookkeeping, outside the persisted value.
+    private var pendingCorruptBackup: PendingCorruptBackup? = nil
+    private enum CodingKeys: String, CodingKey {
+        case repos, selectedWorktreePath, windowFrame, sidebarNavigation, sidebarWidth
+    }
+
+    private final class PendingCorruptBackup: @unchecked Sendable {
+        private let source: URL
+        private let lock = NSLock()
+        private var pending = true
+
+        init(source: URL) { self.source = source }
+
+        func recoverBeforeSaving(_ file: JSONFileStore<AppState>) throws {
+            try lock.withLock {
+                guard pending else { return }
+                // Saving an exported copy must not clear recovery for the source.
+                let destination = file.fileURL.deletingLastPathComponent().resolvingSymlinksInPath()
+                    .appendingPathComponent(file.fileURL.lastPathComponent)
+                let original = source.deletingLastPathComponent().resolvingSymlinksInPath()
+                    .appendingPathComponent(source.lastPathComponent)
+                guard destination == original else { return }
+                _ = try file.loadMovingAsideCorruptFile(ignoringReadErrors: false)
+                pending = false
+            }
+        }
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.repos == rhs.repos && lhs.selectedWorktreePath == rhs.selectedWorktreePath
+            && lhs.windowFrame == rhs.windowFrame && lhs.sidebarNavigation == rhs.sidebarNavigation
+            && lhs.sidebarWidth == rhs.sidebarWidth
+    }
+
     public init(
         repos: [RepoEntry] = [],
         selectedWorktreePath: String? = nil,
@@ -320,7 +354,9 @@ public struct AppState: Codable, Sendable, Equatable {
     }
 
     public func save(to directory: URL) throws {
-        try Self.file(in: directory).save(self)
+        let file = Self.file(in: directory)
+        try pendingCorruptBackup?.recoverBeforeSaving(file)
+        try file.save(self)
     }
 
     public static func load(from directory: URL) throws -> AppState {
@@ -345,12 +381,15 @@ public struct AppState: Codable, Sendable, Equatable {
         do {
             return try load(from: directory)
         } catch {
-            // Best effort: if the rename fails (permissions, etc.) we
-            // still return empty so the app boots. The next save will
-            // overwrite the corrupt file — slightly worse UX but not
-            // worse than the prior silent path.
-            file(in: directory).moveAsideCorruptFile(now: now())
-            return AppState()
+            var fresh = AppState()
+            do {
+                try file(in: directory).moveAsideCorruptFile(now: now())
+            } catch {
+                // Keep booting, but retry preservation before any later save.
+                fresh.pendingCorruptBackup = PendingCorruptBackup(source: file(in: directory).fileURL)
+                NSLog("[Graftty] failed to back up corrupt state: %@", String(describing: error))
+            }
+            return fresh
         }
     }
 
