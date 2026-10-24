@@ -127,15 +127,50 @@ struct MobileAttentionPaneTests {
     }
 
     @Test("@spec PORTS-5.19: While a mobile worktree port row or host browser toolbar is displayed at a compact width, the application shall retain the link and navigation controls while truncating long process and host names.", arguments: [280.0, 320.0, 393.0])
-    func browserControlsAndPortsFitCompactWidths(width: Double) {
+    func browserControlsAndPortsFitCompactWidths(width: Double) throws {
+        let processName = String(repeating: "process-", count: 40)
         let toolbar = HostBrowserControls(hostLabel: String(repeating: "Long Mac name ", count: 40),
             canGoBack: true, canGoForward: false, onBack: {}, onForward: {}, onReload: {})
         let ports = SidebarWorktreePorts(ports: [.init(port: 43210, scope: .loopback,
-            processName: String(repeating: "process-", count: 40))], onOpen: { _ in })
-        let host = UIHostingController(rootView: VStack(spacing: 24) { ports; toolbar }.padding(16))
+            processName: processName)], onOpen: { _ in })
+        let host = UIHostingController(rootView: VStack(spacing: 24) { ports; toolbar }.padding(16)
+            .ignoresSafeArea()
+            .accessibilityElement(children: .contain)
+            .environment(\.accessibilityEnabled, true))
         let size = host.sizeThatFits(in: CGSize(width: width, height: 600))
         #expect(size.width <= width)
         #expect(size.height >= 44 && size.height < 200)
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        host.view.layoutIfNeeded()
+        let objects = accessibilityObjects(in: host.view)
+        for label in ["Back", "Forward", "Reload", "Open port 43210, \(processName)"] {
+            let control = try #require(objects.first { $0.accessibilityLabel == label },
+                "Missing \(label) at \(width) points")
+            #expect(control.accessibilityTraits.contains(.button))
+            let frame = window.convert(control.accessibilityFrame, from: nil)
+            #expect(!frame.isEmpty)
+            #expect(window.bounds.insetBy(dx: -1, dy: -1).contains(frame),
+                "\(label) frame \(frame) must fit viewport \(window.bounds)")
+            #expect(control.accessibilityTraits.contains(.notEnabled) == (label == "Forward"))
+        }
+    }
+
+    private func accessibilityObjects(in root: NSObject) -> [NSObject] {
+        var objects: [NSObject] = [], pending = [root], seen: Set<ObjectIdentifier> = []
+        while let object = pending.popLast(), objects.count < 4096 {
+            guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
+            objects.append(object)
+            if let view = object as? UIView { pending.append(contentsOf: view.subviews) }
+            pending.append(contentsOf: (object.accessibilityElements ?? []).compactMap { $0 as? NSObject })
+            pending.append(contentsOf: (object.automationElements ?? []).compactMap { $0 as? NSObject })
+            for index in 0..<max(0, min(object.accessibilityElementCount(), 128)) {
+                if let child = object.accessibilityElement(at: index) as? NSObject { pending.append(child) }
+            }
+        }
+        return objects
     }
 
     private func worktree(progressTimes: [String: Double]? = nil) -> WorktreePanes {
