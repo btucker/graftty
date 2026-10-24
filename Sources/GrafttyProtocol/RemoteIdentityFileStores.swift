@@ -5,6 +5,39 @@ import Crypto
 #endif
 import Foundation
 
+/// Shares transaction locks across store instances without retaining unused paths.
+private final class RemoteIdentityFileLocks: @unchecked Sendable {
+    static let shared = RemoteIdentityFileLocks()
+
+    private struct Entry {
+        weak var lock: NSLock?
+    }
+
+    private let registryLock = NSLock()
+    private var entries: [String: Entry] = [:]
+
+    func lock(for fileURL: URL) -> NSLock {
+        // Atomic writes replace the leaf itself, so never follow its symlink.
+        // Resolve the nearest existing parent even before first-run directories
+        // exist; Foundation does not resolve aliases through a missing leaf.
+        var directory = fileURL.deletingLastPathComponent().standardizedFileURL
+        var components = [fileURL.lastPathComponent]
+        while directory.path != "/", !FileManager.default.fileExists(atPath: directory.path) {
+            components.append(directory.lastPathComponent)
+            directory.deleteLastPathComponent()
+        }
+        let canonicalDirectory = directory.resolvingSymlinksInPath()
+        let path = components.reversed().reduce(canonicalDirectory) { $0.appendingPathComponent($1) }.path
+        registryLock.lock()
+        defer { registryLock.unlock() }
+        if let existing = entries[path]?.lock { return existing }
+        entries = entries.filter { $0.value.lock != nil }
+        let lock = NSLock()
+        entries[path] = Entry(lock: lock)
+        return lock
+    }
+}
+
 // MARK: - RemoteIdentityFileLocation
 
 /// Names one role's remote-identity file: host vs client, key vs device ID.
@@ -33,10 +66,10 @@ extension RemoteIdentityFileLocation {
 ///
 /// The private key is stored as its 32-byte raw representation in a JSON
 /// file (`Location.fileName`, owner-only 0600) inside the given directory,
-/// alongside a schema version. Every access is serialised through an
-/// `NSLock`. A file from another schema version, or whose bytes are not a
-/// valid key, is moved aside to `<name>.corrupt-<seconds>`; other read
-/// failures throw.
+/// alongside a schema version. Every access in this process is serialised
+/// through an `NSLock` shared by the canonical file path. A file from another
+/// schema version, or whose bytes are not a valid key, is moved aside to
+/// `<name>.corrupt-<seconds>`; other read failures throw.
 public final class RemoteIdentityKeyStore<Location: RemoteIdentityFileLocation>: @unchecked Sendable {
 
     /// Encodes/decodes the raw private-key bytes to/from JSON, plus a
@@ -50,11 +83,19 @@ public final class RemoteIdentityKeyStore<Location: RemoteIdentityFileLocation>:
     private static var currentVersion: Int { 2 }
 
     private let file: JSONFileStore<StoredKey>
-    private let lock = NSLock()
+    private let readData: @Sendable (URL) throws -> Data
+    let lock: NSLock
 
-    public init(directory: URL) {
+    public convenience init(directory: URL) {
+        self.init(directory: directory, readData: { try Data(contentsOf: $0) })
+    }
+
+    init(directory: URL, readData: @escaping @Sendable (URL) throws -> Data) {
+        self.readData = readData
+        let fileURL = directory.appendingPathComponent(Location.fileName)
+        lock = RemoteIdentityFileLocks.shared.lock(for: fileURL)
         file = JSONFileStore(
-            fileURL: directory.appendingPathComponent(Location.fileName),
+            fileURL: fileURL,
             posixPermissions: 0o600,
             backupNaming: .dashSeconds
         )
@@ -106,7 +147,7 @@ public final class RemoteIdentityKeyStore<Location: RemoteIdentityFileLocation>:
 
     private func _load() throws -> Curve25519.Signing.PrivateKey? {
         do {
-            guard let stored = try file.load() else {
+            guard let stored = try file.load(readData: readData) else {
                 return nil
             }
             guard stored.version == Self.currentVersion else {
@@ -135,10 +176,11 @@ public final class RemoteIdentityKeyStore<Location: RemoteIdentityFileLocation>:
 /// peer records identify the same device across launches.
 ///
 /// The ID is stored in a JSON file (`Location.fileName`) inside the given
-/// directory, alongside a schema version. Every access is serialised
-/// through an `NSLock`. Read failures throw so a temporarily inaccessible
-/// identity is preserved; a corrupt or foreign-schema file is first moved
-/// aside to `<name>.corrupt-<seconds>` before generating a replacement.
+/// directory, alongside a schema version. Every access in this process is
+/// serialised through an `NSLock` shared by the canonical file path. Read
+/// failures throw so a temporarily inaccessible identity is preserved; a
+/// corrupt or foreign-schema file is first moved aside to
+/// `<name>.corrupt-<seconds>` before generating a replacement.
 public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @unchecked Sendable {
 
     private struct StoredID: Codable {
@@ -150,7 +192,7 @@ public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @u
 
     private let file: JSONFileStore<StoredID>
     private let readData: @Sendable (URL) throws -> Data
-    private let lock = NSLock()
+    let lock: NSLock
 
     public convenience init(directory: URL) {
         self.init(directory: directory, readData: { try Data(contentsOf: $0) })
@@ -158,8 +200,10 @@ public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @u
 
     init(directory: URL, readData: @escaping @Sendable (URL) throws -> Data) {
         self.readData = readData
+        let fileURL = directory.appendingPathComponent(Location.fileName)
+        lock = RemoteIdentityFileLocks.shared.lock(for: fileURL)
         file = JSONFileStore(
-            fileURL: directory.appendingPathComponent(Location.fileName),
+            fileURL: fileURL,
             backupNaming: .dashSeconds
         )
     }
