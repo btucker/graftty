@@ -32,9 +32,12 @@ extension GrafttyApp {
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
         prStatusStore: PRStatusStore,
-        remoteBranchStore: RemoteBranchStore
+        remoteBranchStore: RemoteBranchStore,
+        discover: @MainActor (RepoEntry) async throws -> [DiscoveredWorktree] = { try await WorktreeDiscovery.discover(repo: $0) }
     ) async {
-        for repoIdx in appState.wrappedValue.repos.indices {
+        let repoIDs = appState.wrappedValue.repos.map(\.id)
+        for repoID in repoIDs {
+            guard let repoIdx = appState.wrappedValue.repos.firstIndex(where: { $0.id == repoID }) else { continue }
             let repo = appState.wrappedValue.repos[repoIdx]
             if let bookmark = repo.bookmark {
                 do {
@@ -48,7 +51,8 @@ extension GrafttyApp {
                             remoteBranchStore: remoteBranchStore,
                             repoIdx: repoIdx,
                             newURL: resolved.url,
-                            isStale: resolved.isStale
+                            isStale: resolved.isStale,
+                            discover: discover
                         )
                     } else if resolved.isStale {
                         // Same path, but the bookmark is stale (cross-
@@ -98,7 +102,9 @@ extension GrafttyApp {
         remoteBranchStore: RemoteBranchStore,
         repoIdx: Int,
         newURL: URL,
-        isStale: Bool
+        isStale: Bool,
+        discover: @MainActor (RepoEntry) async throws -> [DiscoveredWorktree] = { try await WorktreeDiscovery.discover(repo: $0) },
+        repair: @MainActor (String, [String]) async throws -> Void = { try await GitWorktreeRepair.repair(repoPath: $0, worktreePaths: $1) }
     ) async {
         // Guard: the caller may have suspended on an `await` between the
         // index lookup and here; if the repo vanished in the meantime
@@ -108,6 +114,7 @@ extension GrafttyApp {
             return
         }
 
+        let repoID = appState.wrappedValue.repos[repoIdx].id
         let oldRepoPath = appState.wrappedValue.repos[repoIdx].path
         let newRepoPath = newURL.path
 
@@ -164,7 +171,7 @@ extension GrafttyApp {
         // reconcile / FSEvents delete, so this is a recoverable state.
         var discovered: [DiscoveredWorktree]
         do {
-            discovered = try await WorktreeDiscovery.discover(repo: appState.wrappedValue.repos[repoIdx])
+            discovered = try await discover(appState.wrappedValue.repos[repoIdx])
         } catch {
             NSLog("[Graftty] relocateRepo: discover failed at %@: %@",
                   newRepoPath, String(describing: error))
@@ -172,6 +179,13 @@ extension GrafttyApp {
             Self.persistAppState(appState.wrappedValue)
             return
         }
+
+        // Every suspension can remove, reorder, or relocate this entry.
+        // An offset from before discovery no longer identifies the repo.
+        func currentIndex() -> Int? {
+            appState.wrappedValue.repos.firstIndex { $0.id == repoID && $0.path == newRepoPath }
+        }
+        guard currentIndex() != nil else { return }
 
         // (g) Ask the pure decision function whether a repair is needed.
         // If yes, run `git worktree repair` (which rewrites the `gitdir:`
@@ -185,11 +199,9 @@ extension GrafttyApp {
         let finalDecision: RepoRelocator.Decision
         if firstDecision.needsRepair {
             do {
-                try await GitWorktreeRepair.repair(
-                    repoPath: newRepoPath,
-                    worktreePaths: firstDecision.repairCandidatePaths
-                )
-                discovered = try await WorktreeDiscovery.discover(repo: appState.wrappedValue.repos[repoIdx])
+                try await repair(newRepoPath, firstDecision.repairCandidatePaths)
+                guard let currentRepoIdx = currentIndex() else { return }
+                discovered = try await discover(appState.wrappedValue.repos[currentRepoIdx])
             } catch {
                 NSLog("[Graftty] relocateRepo: repair/rediscover failed at %@: %@",
                       newRepoPath, String(describing: error))
@@ -206,6 +218,8 @@ extension GrafttyApp {
         } else {
             finalDecision = firstDecision
         }
+
+        guard let repoIdx = currentIndex() else { return }
 
         // (h) Preserve saved order and state across relocated and stale entries,
         // then append newly discovered worktrees as Tasks.
