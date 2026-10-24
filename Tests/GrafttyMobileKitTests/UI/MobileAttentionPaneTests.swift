@@ -136,7 +136,6 @@ struct MobileAttentionPaneTests {
         let size = host.sizeThatFits(in: CGSize(width: width, height: 600))
         #expect(size.width <= width)
         #expect(size.height >= 44 && size.height < 200)
-
     }
 
     private func worktree(progressTimes: [String: Double]? = nil) -> WorktreePanes {

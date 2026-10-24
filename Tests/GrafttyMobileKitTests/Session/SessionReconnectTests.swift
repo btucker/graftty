@@ -153,14 +153,8 @@ struct SessionReconnectTests {
         await waitUntil { client.connectionState == .ended }
         try #require(client.connectionState == .ended)
         #expect(factory.creations == 1)
-        clock.advance(by: 30)
-        // EOF has completed the receive loop without registering a retry.
+        // A retry would have registered the first 1 s backoff sleep.
         #expect(!clock.hasPendingSleep(for: 1))
-        client.forceReconnectNow()
-        client.suspend()
-        client.resume()
-        #expect(client.connectionState == .ended)
-        #expect(factory.creations == 1)
     }
 
     @Test("a terminally ended client cannot be revived by reconnect or lifecycle resume")
