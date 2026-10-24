@@ -265,10 +265,8 @@ struct HeadlessWorktreeLifecycleTests {
 
         let response = await host.runtime.manage(.delete(worktreeID: path, force: false))
 
-        guard case .error = response else {
-            Issue.record("an in-flight row was deleted: \(response)")
-            return
-        }
+        #expect(response == .error(code: "git-failed", message: "a worktree operation is already in progress",
+            forceAllowed: false, shortStatus: nil))
         #expect(host.runtime.state.worktree(forPath: path)?.state == .creating)
         #expect(try host.runtime.inbox.messages(teamID: TeamLookup.id(forRepoPath: host.repo)).isEmpty)
     }
@@ -417,7 +415,7 @@ struct HeadlessWorktreeLifecycleTests {
         #expect(error.contains("no-such-branch") && !error.hasPrefix("gitFailed("), "\(error)")
     }
 
-    @Test("@spec REMOTE-22.64: When a paired client creates or deletes a worktree on a headless host, the application shall use the Mac's create-failed, not-found, invalid, and git-failed error codes, and shall include short status only when force can help.")
+    @Test("@spec REMOTE-22.64: When a paired client creates or deletes a worktree on a headless host, the application shall use the Mac's create-failed, not-found, invalid, and git-failed error codes, report Git creation failures with the Mac's message, and include short status only when forceAllowed is true.")
     func pairedClientFailuresMatchTheMac() async throws {
         let host = try await host()
         defer { try? FileManager.default.removeItem(at: host.root) }
@@ -429,13 +427,12 @@ struct HeadlessWorktreeLifecycleTests {
 
         let dirty = try await createdWorktree(host, name: "dirty")
         try "draft".write(toFile: dirty + "/notes.txt", atomically: true, encoding: .utf8)
-        let shortStatus = await GitStatusCapture.shortStatus(at: dirty)
         guard case .error(let code, let message, let forceAllowed, let capturedStatus) =
                 await host.runtime.manage(.delete(worktreeID: dirty, force: false)) else {
             Issue.record("a dirty worktree was deleted without force")
             return
         }
-        #expect(code == "git-failed" && forceAllowed && capturedStatus == shortStatus && message.contains("untracked"))
+        #expect(code == "git-failed" && forceAllowed && capturedStatus == "?? notes.txt" && message.contains("untracked"))
 
         // `--force` does not override a lock, so Git refuses again.
         try await git(["worktree", "lock", dirty], at: host.repo)
@@ -450,6 +447,22 @@ struct HeadlessWorktreeLifecycleTests {
         #expect(await host.runtime.manage(.create(repositoryID: host.repo, worktreeName: "dirty", branchName: "other",
             existingSource: nil)) == .error(code: "create-failed",
             message: "worktree destination already exists or is invalid", forceAllowed: false, shortStatus: nil))
+
+        try await git(["branch", "taken"], at: host.repo)
+        let macMessage: String
+        do {
+            try await GitWorktreeAdd.add(repoPath: host.repo,
+                worktreePath: host.repo + "/.worktrees/mac-reference", branch: .createNew(name: "taken"), startPoint: nil)
+            Issue.record("the reference Git creation should reject an existing branch")
+            return
+        } catch let error as GitWorktreeAdd.Error {
+            // AddWorktreeFlow makes this conversion before the Mac envelope map runs.
+            macMessage = try #require(WorktreeCreationError(gitAddFailure: error).userMessage)
+        }
+        #expect(macMessage.contains("taken") && !macMessage.hasPrefix("gitFailed("))
+        let headlessResponse = await host.runtime.manage(.create(repositoryID: host.repo, worktreeName: "git-refused",
+            branchName: "taken", existingSource: nil))
+        #expect(headlessResponse == .creationFailure(message: macMessage))
     }
 
     @Test("A removal whose final save fails is not reported as done")

@@ -3518,7 +3518,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.63** If Git refuses a headless worktree creation, then the application shall report Git's message as the operation's error, as the Mac app does.
 
-**REMOTE-22.64** When a paired client creates or deletes a worktree on a headless host, the application shall use the Mac's create-failed, not-found, invalid, and git-failed error codes, and shall include short status only when force can help.
+**REMOTE-22.64** When a paired client creates or deletes a worktree on a headless host, the application shall use the Mac's create-failed, not-found, invalid, and git-failed error codes, report Git creation failures with the Mac's message, and include short status only when forceAllowed is true.
 
 ### REMOTE-23.x
 

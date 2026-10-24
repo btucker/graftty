@@ -49,6 +49,8 @@ public extension HeadlessHostRuntime {
                     let result = try await createWorktree(repository: repository, name: name, branch: branch,
                         existing: source != nil, remoteOnly: source == .remoteOnly)
                     return .created(worktreeID: result.path, paneID: result.session)
+                } catch let error as GitWorktreeAdd.Error {
+                    return .creationFailure(message: WorktreeCreationError(gitAddFailure: error).userMessage)
                 } catch { return .creationFailure(message: String(describing: error)) }
             case .open(let path): _ = try await openWorktree(path)
             case .delete(let path, let force):
