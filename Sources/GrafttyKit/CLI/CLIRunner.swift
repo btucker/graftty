@@ -6,7 +6,16 @@ import Foundation
 /// Homebrew-installed tools like `gh` and `glab`.
 public struct CLIRunner: CLIExecutor {
     private let terminatesOnCancellation: Bool
-    public init(terminatesOnCancellation: Bool = false) { self.terminatesOnCancellation = terminatesOnCancellation }
+    private let scheduler: SubprocessScheduler
+
+    public init(terminatesOnCancellation: Bool = false) {
+        self.init(scheduler: .dispatch, terminatesOnCancellation: terminatesOnCancellation)
+    }
+
+    init(scheduler: SubprocessScheduler, terminatesOnCancellation: Bool = false) {
+        self.scheduler = scheduler
+        self.terminatesOnCancellation = terminatesOnCancellation
+    }
 
     public func run(
         command: String,
@@ -87,14 +96,16 @@ public struct CLIRunner: CLIExecutor {
     ) async throws -> CLIOutput {
         let output: SubprocessOutput
         do {
-            output = try await Subprocess.run(SubprocessLaunch(
+            var launch = SubprocessLaunch(
                 executable: "/usr/bin/env",
                 arguments: [command] + args,
                 directory: directory,
                 timeout: timeout,
                 timeoutLabel: command,
                 terminatesOnCancellation: terminatesOnCancellation
-            ))
+            )
+            launch.scheduler = scheduler
+            output = try await Subprocess.run(launch)
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as CLIError {

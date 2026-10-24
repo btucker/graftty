@@ -6,9 +6,9 @@ import Testing
 struct CodexAppServerClientTests {
     @Test("@spec SLEEP-26: When querying Codex sleep activity, the application shall enable experimental API access, validate the exact thread and cwd, and issue only read requests for that target.")
     func sleepQueryPreservesExactTarget() async throws {
-        let fake = try makeFakeProxy(threads: ["other"], cwd: "/same", sleepResponses: sleepResponses())
+        let fake = SleepRPC(responses: sleepResponses())
         #expect(await querySleep(fake) == .unknown)
-        let requests = try fake.recordedRequests()
+        let requests = fake.requests
         #expect(try methods(in: requests) == ["initialize", "initialized", "thread/read", "thread/backgroundTerminals/list", "thread/goal/get", "thread/queue/list"])
         let params = try #require(requests.first?["params"] as? [String: Any])
         #expect((params["capabilities"] as? [String: Any])?["experimentalApi"] as? Bool == true)
@@ -33,14 +33,14 @@ struct CodexAppServerClientTests {
             default:
                 responses[method] = ["result": ["data": [["id": "pending"]], "nextCursor": NSNull()]]
             }
-            let fake = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: responses)
+            let fake = SleepRPC(responses: responses)
             #expect(await querySleep(fake) == .busy)
         }
         // An unsupported terminal endpoint must not hide a goal we can observe.
         var responses = sleepResponses()
         responses["thread/backgroundTerminals/list"] = ["error": ["code": -32601, "message": "unsupported"]]
         responses["thread/goal/get"] = ["result": ["goal": ["threadId": "exact", "status": "active"]]]
-        let fake = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: responses)
+        let fake = SleepRPC(responses: responses)
         #expect(await querySleep(fake) == .busy)
     }
 
@@ -49,7 +49,7 @@ struct CodexAppServerClientTests {
         for goal in [NSNull() as Any, ["threadId": "exact", "status": "complete"], ["status": "unexpected"]] {
             var responses = sleepResponses()
             responses["thread/goal/get"] = ["result": ["goal": goal]]
-            let fake = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: responses)
+            let fake = SleepRPC(responses: responses)
             #expect(await querySleep(fake) == .unknown)
         }
     }
@@ -60,23 +60,26 @@ struct CodexAppServerClientTests {
         for thread in invalidThreads {
             var responses = sleepResponses()
             responses["thread/read"] = ["result": ["thread": thread]]
-            let fake = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: responses)
+            let fake = SleepRPC(responses: responses)
             #expect(await querySleep(fake) == .unknown)
-            #expect(try methods(in: fake.recordedRequests()) == ["initialize", "initialized", "thread/read"])
+            #expect(try methods(in: fake.requests) == ["initialize", "initialized", "thread/read"])
         }
-        let unsupported = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: ["thread/read": ["error": ["message": "unsupported"]]])
+        let unsupported = SleepRPC(responses: ["thread/read": ["error": ["message": "unsupported"]]])
         #expect(await querySleep(unsupported) == .unknown)
         for method in ["thread/backgroundTerminals/list", "thread/goal/get", "thread/queue/list"] {
             let invalidResponses: [[String: Any]] = [["error": ["message": "unsupported"]], ["result": NSNull()], ["result": [:]]]
             for response in invalidResponses {
                 var responses = sleepResponses()
                 responses[method] = response
-                let fake = try makeFakeProxy(threads: [], cwd: "/same", sleepResponses: responses)
+                let fake = SleepRPC(responses: responses)
                 #expect(await querySleep(fake) == .unknown)
             }
         }
         let timeout = try makeFakeProxy(threads: [], cwd: "/same", mode: .hangBeforeThreadRead)
-        #expect(await querySleep(timeout) == .unknown)
+        #expect(await CodexAppServerClient(timeout: 0.3).sleepActivity(
+            binaryPath: timeout.binaryPath.path, socketPath: "/tmp/unused-test.sock", expectedCWD: "/same",
+            target: .init(threadID: "exact", activeTurnID: nil)
+        ) == .unknown)
         #expect(await CodexAppServerClient(timeout: 0.1).sleepActivity(binaryPath: "/missing-codex", socketPath: "/missing", expectedCWD: "/same", target: .init(threadID: "exact", activeTurnID: nil)) == .unknown)
     }
 
@@ -89,11 +92,31 @@ struct CodexAppServerClientTests {
         ]
     }
 
-    private func querySleep(_ fake: FakeProxy) async -> ProviderSleepActivity {
-        await CodexAppServerClient(timeout: 0.3).sleepActivity(
-            binaryPath: fake.binaryPath.path, socketPath: "/tmp/unused-test.sock", expectedCWD: "/same",
+    private func querySleep(_ rpc: SleepRPC) async -> ProviderSleepActivity {
+        var client = CodexAppServerClient(timeout: 0.3)
+        client.sleepRPC = .init(request: { try rpc.request($0, $1) }, notify: { rpc.notify($0) })
+        return await client.sleepActivity(
+            binaryPath: "/unused", socketPath: "/unused", expectedCWD: "/same",
             target: .init(threadID: "exact", activeTurnID: nil)
         )
+    }
+
+    private final class SleepRPC: @unchecked Sendable {
+        let responses: [String: [String: Any]]
+        var requests: [[String: Any]] = []
+
+        init(responses: [String: [String: Any]]) { self.responses = responses }
+
+        func request(_ method: String, _ params: [String: Any]) throws -> [String: Any] {
+            requests.append(["method": method, "params": params])
+            if method == "initialize" { return [:] }
+            guard let result = responses[method]?["result"] as? [String: Any] else {
+                throw URLError(.badServerResponse)
+            }
+            return result
+        }
+
+        func notify(_ method: String) { requests.append(["method": method]) }
     }
 
     @Test("""

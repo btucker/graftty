@@ -74,6 +74,13 @@ public extension CodexAppServerClienting {
 
 public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
     private let timeout: TimeInterval
+    #if os(macOS)
+    struct SleepRPC: Sendable {
+        let request: @Sendable (String, [String: Any]) throws -> [String: Any]
+        let notify: @Sendable (String) throws -> Void
+    }
+    var sleepRPC: SleepRPC?
+    #endif
 
     public init(timeout: TimeInterval = 5.0) {
         self.timeout = timeout
@@ -160,6 +167,10 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         expectedCWD: String,
         target: CodexAppServerTarget
     ) throws -> ProviderSleepActivity {
+        if let sleepRPC {
+            return try sleepActivity(expectedCWD: expectedCWD, target: target,
+                                     request: sleepRPC.request, notify: sleepRPC.notify)
+        }
         let process = Process()
         let stdin = Pipe()
         let stdout = Pipe()
@@ -188,12 +199,25 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
                 method: method
             )
         }
-        _ = try request("initialize", params: [
+        return try sleepActivity(expectedCWD: expectedCWD, target: target, request: request) { method in
+            try sendRequest(["method": method], to: connection, deadline: deadline)
+        }
+    }
+
+    /// Runs the read-only activity exchange independently of process startup
+    /// and WebSocket I/O. Tests supply synchronous, recorded RPC replies.
+    private func sleepActivity(
+        expectedCWD: String,
+        target: CodexAppServerTarget,
+        request: (_ method: String, _ params: [String: Any]) throws -> [String: Any],
+        notify: (_ method: String) throws -> Void
+    ) throws -> ProviderSleepActivity {
+        _ = try request("initialize", [
             "clientInfo": ["name": "graftty", "version": clientVersion()],
             "capabilities": ["experimentalApi": true],
         ])
-        try sendRequest(["method": "initialized"], to: connection, deadline: deadline)
-        let result = try request("thread/read", params: ["threadId": target.threadID, "includeTurns": true])
+        try notify("initialized")
+        let result = try request("thread/read", ["threadId": target.threadID, "includeTurns": true])
         guard let thread = result["thread"] as? [String: Any],
               thread["id"] as? String == target.threadID,
               thread["cwd"] as? String == expectedCWD else { return .unknown }
@@ -216,13 +240,13 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
 
         // Read independently: an unsupported endpoint must not hide known busy
         // work in another endpoint. All requests share the same bounded deadline.
-        let terminals = try? request("thread/backgroundTerminals/list", params: ["threadId": target.threadID, "limit": 1])
+        let terminals = try? request("thread/backgroundTerminals/list", ["threadId": target.threadID, "limit": 1])
         if let entries = terminals?["data"] as? [Any], !entries.isEmpty { return .busy }
-        let goalResult = try? request("thread/goal/get", params: ["threadId": target.threadID])
+        let goalResult = try? request("thread/goal/get", ["threadId": target.threadID])
         if let goal = goalResult?["goal"] as? [String: Any],
            goal["threadId"] as? String == target.threadID,
            goal["status"] as? String == "active" { return .busy }
-        let queue = try? request("thread/queue/list", params: ["threadId": target.threadID, "limit": 1])
+        let queue = try? request("thread/queue/list", ["threadId": target.threadID, "limit": 1])
         if let entries = queue?["data"] as? [Any], !entries.isEmpty { return .busy }
         return .unknown
     }
