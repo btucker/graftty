@@ -1090,6 +1090,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-5.12** If a corrupt file cannot be moved aside, then the application shall preserve it and surface the failure before allowing a replacement write.
 
+**PERSIST-5.13** When host identity stores use their default locations, the application shall store the host key and device ID in the same state directory on every supported platform.
+
 ## PWD — Manual Pane Routing
 
 ### PWD-1.x — User-Initiated Move
