@@ -319,7 +319,8 @@ public final class HeadlessHostRuntime {
         let containerID: String?
         if let placement, placement.intent.devContainer != nil {
             // Refuse an already-dirty deletion before interrupting its running processes.
-            if !force, !(try await GitRunner.run(args: ["status", "--porcelain"], at: path)).isEmpty {
+            if !force, FileManager.default.fileExists(atPath: path),
+               !(try await GitRunner.run(args: ["status", "--porcelain"], at: path)).isEmpty {
                 throw GitWorktreeRemove.Error.gitFailed(exitCode: 128, stderr: "Worktree contains modified or untracked files; use --force to delete it")
             }
             if let retained = placement.environment?.containerID { containerID = retained }
@@ -328,11 +329,15 @@ public final class HeadlessHostRuntime {
         let restartContainer: Bool
         if let containerID { restartContainer = try await devContainers.stopForDeletion(containerID: containerID) }
         else { restartContainer = false }
-        let priorState = worktree.state
-        state.repos[index.repo].worktrees[index.worktree].state = .deleting
-        try? save()
+        var priorState = worktree.state
         var dismissed = false
         do {
+            // Preflight and Docker suspend. Another worktree can be deleted or
+            // reordered while this path is leased, invalidating its old index.
+            let current = try indices(path)
+            priorState = state.repos[current.repo].worktrees[current.worktree].state
+            state.repos[current.repo].worktrees[current.worktree].state = .deleting
+            try? save()
             try await GitWorktreeRemove.remove(repoPath: repo.path, worktreePath: path, force: force)
         } catch GitWorktreeRemove.Error.gitFailed where pruneVanished && !FileManager.default.fileExists(atPath: path) {
             try? await GitWorktreePrune.run(repoPath: repo.path)

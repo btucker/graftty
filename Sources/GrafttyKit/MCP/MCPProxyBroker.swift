@@ -30,6 +30,7 @@ public actor MCPProxyBroker {
         var budget = MCPMessageBudget()
         var queued: [Data] = []
         var queueBytes = 0
+        var transportEnded = false
         var error: MCPProxyError?
         var lastActivity = ContinuousClock.now
     }
@@ -84,7 +85,7 @@ public actor MCPProxyBroker {
                             await self?.enqueue(message, id: id)
                         }
                     } catch { }
-                    await self?.fail(id, .outcomeUnknown)
+                    await self?.upstreamEnded(id)
                 }
                 sessions[id]?.monitor = Task { [weak self] in
                     while !Task.isCancelled {
@@ -98,7 +99,7 @@ public actor MCPProxyBroker {
             await fail(id, .unavailable)
             return .closed
         case .send(let id, let message):
-            guard await check(id), let session = sessions[id], let endpoint = session.endpoint else { return failure(id) }
+            guard await canSend(id), let session = sessions[id], let endpoint = session.endpoint else { return failure(id) }
             guard Self.validMessage(message) else { await fail(id, .invalidRequest); return .error(.invalidRequest) }
             guard session.sends.count < 16, session.sendingBytes + message.count <= 2 * Self.maximumMessageBytes else {
                 await fail(id, .overloaded); return .error(.overloaded)
@@ -112,11 +113,15 @@ public actor MCPProxyBroker {
             let previous = session.lastSend
             let task = Task { [weak self] in
                 await previous?.value
-                guard !Task.isCancelled, await self?.check(id) == true else {
+                guard !Task.isCancelled, await self?.canSend(id) == true else {
                     await self?.sent(id, sendID: sendID, bytes: message.count); return
                 }
                 do { try await endpoint.transport.send(message) }
-                catch { await self?.fail(id, .outcomeUnknown) }
+                catch {
+                    // EOF cancels pending writes while retaining complete replies.
+                    // A cancellation from that cleanup must not discard them.
+                    if !Task.isCancelled { await self?.fail(id, .outcomeUnknown) }
+                }
                 await self?.sent(id, sendID: sendID, bytes: message.count)
             }
             sessions[id]?.sends[sendID] = task
@@ -125,6 +130,7 @@ public actor MCPProxyBroker {
         case .receive(let id):
             guard await check(id), let session = sessions[id] else { return failure(id) }
             sessions[id]?.queued = []; sessions[id]?.queueBytes = 0
+            if session.transportEnded { await fail(id, .outcomeUnknown) }
             return .messages(session.queued)
         }
     }
@@ -134,7 +140,12 @@ public actor MCPProxyBroker {
         for id in sessions.keys { await fail(id, .outcomeUnknown) }
     }
 
-    private func failure(_ id: UUID) -> MCPProxyResponse { .error(sessions[id]?.error ?? .unavailable) }
+    private func failure(_ id: UUID) -> MCPProxyResponse {
+        .error(sessions[id]?.error ?? (sessions[id]?.transportEnded == true ? .outcomeUnknown : .unavailable))
+    }
+    private func canSend(_ id: UUID) async -> Bool {
+        await check(id) && sessions[id]?.transportEnded == false
+    }
     private func check(_ id: UUID) async -> Bool {
         guard !closed, let session = sessions[id], session.error == nil else { return false }
         guard (try? authorize(session.scope, peer)) == session.definition else { await fail(id, .unauthorized); return false }
@@ -154,6 +165,17 @@ public actor MCPProxyBroker {
     private func sent(_ id: UUID, sendID: UUID, bytes: Int) {
         guard sessions[id]?.sends.removeValue(forKey: sendID) != nil else { return }
         sessions[id]?.sendingBytes -= bytes
+    }
+    private func upstreamEnded(_ id: UUID) async {
+        guard let session = sessions[id], session.error == nil, !session.transportEnded else { return }
+        sessions[id]?.transportEnded = true
+        sessions[id]?.reader = nil; sessions[id]?.endpoint = nil
+        sessions[id]?.sends = [:]; sessions[id]?.lastSend = nil; sessions[id]?.sendingBytes = 0
+        session.sends.values.forEach { $0.cancel() }
+        // Keep the monitor while replies wait for an authorized receive. Hard
+        // failures still use fail(), which discards the queue immediately.
+        if session.queued.isEmpty { await fail(id, .outcomeUnknown) }
+        await session.endpoint?.close()
     }
     private func fail(_ id: UUID, _ error: MCPProxyError) async {
         guard let session = sessions[id], session.error == nil else { return }

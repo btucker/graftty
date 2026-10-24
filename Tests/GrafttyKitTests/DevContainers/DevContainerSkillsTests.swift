@@ -6,6 +6,13 @@ import GrafttyProtocol
 /// Runs the exact container installation commands in an isolated local home.
 /// Container lifecycle and SSH transport have separate integration tests.
 actor SkillContainerExecutor: CLIExecutor {
+    nonisolated static var canPublishProjectSkills: Bool {
+        #if os(Linux)
+        true
+        #else
+        ["/opt/homebrew/bin/gmv", "/usr/local/bin/gmv"].contains { FileManager.default.isExecutableFile(atPath: $0) }
+        #endif
+    }
     let home: URL
     let workspace: URL
     let missingAgent: Bool
@@ -112,7 +119,8 @@ struct DevContainerSkillsTests {
         #expect(await mismatched.commands.isEmpty)
     }
 
-    @Test("@spec REMOTE-28.16: When a Dev Container placement selects verified skill revisions, the application shall install their user skills into an isolated writable agent home and project skills into the container worktree before opening its shell, rejecting conflicting project content without overwriting it.")
+    @Test("@spec REMOTE-28.16: When a Dev Container placement selects verified skill revisions, the application shall install their user skills into an isolated writable agent home and project skills into the container worktree before opening its shell, rejecting conflicting project content without overwriting it.",
+          .enabled(if: SkillContainerExecutor.canPublishProjectSkills, "Requires GNU mv or gmv for real no-replace publication"))
     func installsRealScriptsAndPreservesRuntimeOwnedFiles() async throws {
         let fixture = try SkillFixture(); defer { fixture.remove() }
         try fixture.write("home/.agents/skills/personal/SKILL.md", "personal")

@@ -4,7 +4,9 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
+#if canImport(Graftty)
 @testable import Graftty
+#endif
 import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
@@ -47,18 +49,16 @@ struct DirectSSHLoopbackTests {
             catch { callback.continuation.finish() }
         }))
         let port = try await server.start(host: "127.0.0.1", port: 0)
-        let proxy = Process(), input = Pipe(), output = Pipe()
-        proxy.executableURL = URL(fileURLWithPath: "/bin/sh")
         // nc is only the loopback fixture. The production proxy will be aws.
-        proxy.arguments = ["-c", "printf 'Starting session with SessionId: fixture\\n'; exec /usr/bin/nc 127.0.0.1 \(port)"]
-        proxy.standardInput = input; proxy.standardOutput = output; proxy.standardError = FileHandle.nullDevice
-        try proxy.run()
-        defer { if proxy.isRunning { proxy.terminate() }; proxy.waitUntilExit() }
+        // Use the production process owner: Foundation's termination callback
+        // can miss an exited child after other tests change signal handling.
+        let proxy = try DuplexSubprocess(command: "/bin/sh", arguments: ["-c",
+            "printf 'Starting session with SessionId: fixture\\n'; exec /usr/bin/nc 127.0.0.1 \(port)"])
         let fingerprint = pinned ? try f.fingerprint : try RemoteIdentityFingerprint(rawBytes: Data(repeating: 7, count: 32))
         let client = try f.client(fingerprint: fingerprint)
         do {
             if pinned {
-                try await client.connect(input: output.fileHandleForReading, output: input.fileHandleForWriting)
+                try await client.connect(input: proxy.output, output: proxy.input)
                 let channel = try await client.makeGitControlClient(handler: { bytes in bytes })
                 try await channel.open()
                 #expect(try await channel.send(Data("parent request".utf8)) == Data("parent request".utf8))
@@ -66,10 +66,10 @@ struct DirectSSHLoopbackTests {
                 #expect(await iterator.next() == Data("worker callback".utf8))
                 channel.close()
             } else {
-                await #expect(throws: (any Error).self) { try await client.connect(input: output.fileHandleForReading, output: input.fileHandleForWriting) }
+                await #expect(throws: (any Error).self) { try await client.connect(input: proxy.output, output: proxy.input) }
             }
-        } catch { await client.close(); await server.close(); throw error }
-        await client.close(); await server.close()
+        } catch { await client.close(); await server.close(); await proxy.stop(); throw error }
+        await client.close(); await server.close(); await proxy.stop()
     }
 
     @Test("@spec REMOTE-26.26: When a host resource probe receives its first authenticated sidebar snapshot, the application shall timestamp the observation locally, preserve unknown metrics, and fail on timeout or disconnect.", .timeLimit(.minutes(1)), arguments: ["sample", "unknown", "timeout", "disconnect"])
@@ -119,6 +119,7 @@ struct DirectSSHLoopbackTests {
         await client.close()
     }
 
+    #if canImport(Graftty)
     @Test("@spec REMOTE-30.20: When an app-owned parent MCP transport disconnects, the application shall authenticate a fresh connection, invalidate old worker sessions without replay, and stop reconnecting if provider authorization is revoked.", .timeLimit(.minutes(1)), arguments: [false, true])
     @MainActor func appOwnedMCPReconnectsWithFreshAuthorization(proxy: Bool) async throws {
         let f = Fixture(); defer { f.cleanup() }
@@ -253,6 +254,8 @@ struct DirectSSHLoopbackTests {
         await service.shutdown(); await interactive.close(); await server.close()
     }
 
+    #endif
+
     private struct Fixture {
         let directory = URL.temporaryDirectory.appendingPathComponent("direct-ssh-\(UUID())")
         let hostKey = Curve25519.Signing.PrivateKey()
@@ -286,7 +289,7 @@ struct DirectSSHLoopbackTests {
         func cleanup() { try? FileManager.default.removeItem(at: directory) }
     }
 
-    @Test("@spec REMOTE-31.16: When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and require worktree-management permission.", .timeLimit(.minutes(1)), arguments: [true, false])
+    @Test("@spec REMOTE-31.16: When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and recheck current pairing and worktree-management permission before each request.", .timeLimit(.minutes(1)), arguments: [true, false])
     func placementUsesAuthenticatedIdentity(allowed: Bool) async throws {
         let f = Fixture(); defer { f.cleanup() }
         let peer = try f.peer(key: f.clientKey, managementAllowed: allowed)
@@ -309,6 +312,20 @@ struct DirectSSHLoopbackTests {
                 try await channel.open()
                 let response = try await channel.send(.placement(.status(operationID: UUID())))
                 #expect(response == .error(code: "test-identity", message: "authenticated", forceAllowed: false, shortStatus: nil))
+                var managementDisabled = peer
+                managementDisabled.capabilities.worktreeManagement = .disabled
+                var terminalDisabled = peer
+                terminalDisabled.capabilities.terminalControl = .disabled
+                let changedKey = try f.peer(key: Curve25519.Signing.PrivateKey())
+                for changed in [managementDisabled, terminalDisabled, changedKey] {
+                    try f.store.update(changed)
+                    let rejected = try await channel.send(.placement(.status(operationID: UUID())))
+                    #expect(rejected == .error(code: "placement-forbidden", message: "Placement requires current pairing and worktree-management permission.", forceAllowed: false, shortStatus: nil))
+                    try f.store.update(peer)
+                }
+                try f.store.remove(id: peer.id)
+                let revoked = try await channel.send(.placement(.status(operationID: UUID())))
+                #expect(revoked == .error(code: "placement-forbidden", message: "Placement requires current pairing and worktree-management permission.", forceAllowed: false, shortStatus: nil))
             } else {
                 await #expect(throws: (any Error).self) {
                     let channel = try await client.makeWorktreeManagementClient()

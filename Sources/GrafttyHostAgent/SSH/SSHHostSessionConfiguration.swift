@@ -89,6 +89,13 @@ struct SSHHostSessionConfiguration: Sendable {
                                 }
                                 return await authenticatedSkillMutator(transfer, .init(deviceID: peer.id, fingerprint: peer.fingerprint))
                             }
+                            if case .placement = request {
+                                guard !Task.isCancelled, let peer = peerBox.peer,
+                                      peer.capabilities.worktreeManagement == .allowed,
+                                      SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: trustedPeerStore) else {
+                                    return .error(code: "placement-forbidden", message: "Placement requires current pairing and worktree-management permission.", forceAllowed: false, shortStatus: nil)
+                                }
+                            }
                             return await peerBox.manage(request, using: worktreeManagementMutator, placement: authenticatedPlacementMutator)
                         },
                         chromeTabMutator: chromeTabMutator.map { mutator -> ChromeTabChannelHandler.Mutator in

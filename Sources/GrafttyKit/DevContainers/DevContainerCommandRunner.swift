@@ -64,7 +64,12 @@ private func runLinuxContainerCommand(command: String, args: [String], directory
     let err = try FileHandle(forWritingTo: stderr)
     defer { try? err.close() }
     var options = PlatformOptions()
-    options.teardownSequence = [.gracefulShutDown(allowedDurationToNextStep: .seconds(2))]
+    options.createSession = true
+    // Swift Subprocess 1.0.0 cancels graceful teardown when the leader exits,
+    // which can skip its final group KILL while TERM-ignoring children survive.
+    // Kill the isolated group in the first step, before the leader is reaped.
+    // Successful completion never runs teardown and retains background helpers.
+    options.teardownSequence = [.send(signal: .kill, toProcessGroup: true, allowedDurationToNextStep: .zero)]
     // File capture also prevents a descendant's inherited stdout/stderr from
     // delaying completion. The files are private and unlinked after exit.
     let result = try await run(.path("/usr/bin/env"), arguments: .init([command] + args),

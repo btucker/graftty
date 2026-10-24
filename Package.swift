@@ -412,7 +412,7 @@ let package = Package(
             name: "GrafttyDirectSSHTests",
             dependencies: ["GrafttyHostAgent", "GrafttyRemoteClient", "GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,
             path: "Tests/GrafttyTests/Remote/SSH",
-            sources: ["DirectSSHLoopbackTests.swift", "AWSLiveHostTests.swift"],
+            sources: ["DirectSSHLoopbackTests.swift", "AWSLiveHostTests.swift", "AWSLiveMCPTests.swift", "AWSLiveMCPContainerTests.swift"],
             swiftSettings: strictWarnings
         ),
     ] : [])

@@ -69,35 +69,97 @@ public enum DevContainerSkillInstaller {
             return result
         }
         for batch in batches(commands) { _ = try await run(batch) }
-        // Check every project destination before publishing any of them. An
-        // existing identical checked-in skill is reused; a conflict is explicit.
-        var checks: [String] = []
-        for skill in projectSkills {
-            let components = skill.destination.split(separator: "/").map(String.init)
-            for end in 1...components.count {
-                let path = components.prefix(end).joined(separator: "/")
-                checks.append("test ! -L " + quote(path) + " || { printf '%s\\n' " + quote("Project skill path is a symlink: " + path) + " >&2; exit 1; }")
-            }
-            checks.append("if test -e " + quote(skill.destination) + "; then\n" +
-                "test -d " + quote(skill.destination) + "\n" +
-                "test -z \"$(find " + quote(skill.destination) + " ! -type f ! -type d -print)\"\n" +
-                "diff -r " + quote(skill.source) + " " + quote(skill.destination) + " >/dev/null || { printf '%s\\n' " + quote("Project skill conflicts with the selected revision: " + skill.destination) + " >&2; exit 1; }\nfi")
+        func reject(_ message: String) -> String { "{ printf '%s\\n' " + quote(message) + " >&2; exit 1; }" }
+        func pathChecks(_ destination: String) -> String {
+            let components = destination.split(separator: "/").map(String.init)
+            return (1...components.count).map { end in
+                let path = quote(components.prefix(end).joined(separator: "/"))
+                return "test ! -L " + path + " || " + reject("Project skill path is a symlink: " + destination) + "\n" +
+                    "if test -e " + path + "; then test -d " + path + " || " + reject("Project skill path is not a directory: " + destination) + "; fi\n"
+            }.joined()
         }
-        for snapshot in snapshots {
-            for file in snapshot.files where file.scope == .project {
-                let destination = "./" + file.path
-                checks.append("if test -e " + quote(destination) + "; then test " + (file.executable ? "-x " : "! -x ") + quote(destination) + "; fi")
-            }
+        func contentChecks(_ skill: (source: String, destination: String), required: Bool) -> String {
+            let destination = quote(skill.destination)
+            let conflict = reject("Project skill conflicts with the selected revision: " + skill.destination)
+            return pathChecks(skill.destination) + (required ? "test -d " + destination + " || " + conflict + "\n" : "") +
+                "if test -e " + destination + "; then\n" +
+                "test -z \"$(find " + destination + " ! -type f ! -type d -print)\" || " + conflict + "\n" +
+                "diff -r " + quote(skill.source) + " " + destination + " >/dev/null || " + conflict + "\nfi\n"
         }
-        for batch in batches(checks) { _ = try await run(batch) }
+        func validation(required: Bool) -> [String] {
+            var checks = projectSkills.map { contentChecks($0, required: required) }
+            for snapshot in snapshots {
+                for file in snapshot.files where file.scope == .project {
+                    let destination = quote("./" + file.path)
+                    let mode = "test " + (file.executable ? "-x " : "! -x ") + destination + " || " + reject("Project skill executable mode conflicts: " + file.path)
+                    checks.append(required ? mode : "if test -e " + destination + "; then " + mode + "; fi")
+                }
+            }
+            return checks
+        }
+        // Check the whole set before publication, then recheck when reusing a
+        // destination and after all writes. Other filesystem writers do not
+        // share this actor's serialization.
+        for batch in batches(validation(required: false)) { _ = try await run(batch) }
         var publish = userSkills.map { "ln -s " + quote($0.source) + " " + quote($0.destination) }
         for skill in projectSkills {
-            // Project files use ordinary checkout permissions so the host Git
-            // process can read them even when the container uses a different UID.
-            publish.append("if test ! -e " + quote(skill.destination) + "; then\n(umask 022; mkdir -p " + quote((skill.destination as NSString).deletingLastPathComponent) +
-                ")\ncp -R " + quote(skill.source) + " " + quote(skill.destination) + "\nchmod -R u+w,go+rX " + quote(skill.destination) + "\nfi")
+            let parent = (skill.destination as NSString).deletingLastPathComponent
+            // Stage on the destination filesystem and never merge into or
+            // replace a concurrent creator's directory. Probe real behavior,
+            // including no-clobber skips whose exit status varies by Coreutils
+            // version, instead of trusting a flag name or exit status alone.
+            // This prerequisite applies only to missing project skills.
+            publish.append(contentChecks(skill, required: false) + """
+            if test ! -e \(quote(skill.destination)); then
+              (
+                (umask 022; mkdir -p \(quote(parent)))
+                \(pathChecks(parent))
+                stage=$(mktemp -d \(quote(parent + "/.graftty-skill.XXXXXXXX")))
+                trap 'rm -rf "$stage"' EXIT
+                trap 'exit 130' HUP INT TERM
+                mover=
+                for candidate in mv gmv; do
+                  mkdir "$stage/probe-source" "$stage/probe-destination"
+                  printf source > "$stage/probe-source/source"
+                  printf keep > "$stage/probe-destination/keep"
+                  probe_status=0
+                  "$candidate" -T --no-clobber "$stage/probe-source" "$stage/probe-destination" 2>/dev/null || probe_status=$?
+                  if { test "$probe_status" -eq 0 || test "$probe_status" -eq 1; } &&
+                     test -d "$stage/probe-source" && test ! -L "$stage/probe-source" &&
+                     test "$(cat "$stage/probe-source/source" 2>/dev/null)" = source &&
+                     test "$(cat "$stage/probe-destination/keep" 2>/dev/null)" = keep &&
+                     test ! -e "$stage/probe-destination/source" &&
+                     test ! -e "$stage/probe-destination/probe-source" &&
+                     "$candidate" -T --no-clobber "$stage/probe-source" "$stage/probe-moved" 2>/dev/null &&
+                     test ! -e "$stage/probe-source" && test -d "$stage/probe-moved" &&
+                     test "$(cat "$stage/probe-moved/source" 2>/dev/null)" = source; then
+                    mover=$candidate
+                    break
+                  fi
+                  rm -rf "$stage/probe-source" "$stage/probe-destination" "$stage/probe-moved"
+                done
+                test -n "$mover" || \(reject("Missing project skills require GNU mv or gmv supporting -T --no-clobber; install GNU coreutils in the Dev Container"))
+                cp -R \(quote(skill.source)) "$stage/content"
+                chmod -R u+w,go+rX "$stage/content"
+                \(pathChecks(parent))
+                move_status=0
+                "$mover" -T --no-clobber "$stage/content" \(quote(skill.destination)) || move_status=$?
+                case "$move_status" in
+                  0) ;;
+                  1)
+                    test -d "$stage/content" && test ! -L "$stage/content" &&
+                    test -z "$(find "$stage/content" ! -type f ! -type d -print)" &&
+                    diff -r \(quote(skill.source)) "$stage/content" >/dev/null || \(reject("Project skill publication failed without preserving its source: " + skill.destination))
+                    ;;
+                  *) \(reject("Project skill publication failed: " + skill.destination));;
+                esac
+                \(contentChecks(skill, required: true))
+              )
+            fi
+            """)
         }
         for batch in batches(publish) { _ = try await run(batch) }
+        for batch in batches(validation(required: true)) { _ = try await run(batch) }
         return profile
     }
 }

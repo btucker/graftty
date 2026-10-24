@@ -126,20 +126,111 @@ import MCP
         #expect(await upstream.sendCount == 1)
         await broker.close()
     }
+
+    @Test("@spec REMOTE-30.24: When an upstream MCP transport ends after delivering complete messages, the application shall reject further sends, allow still-authorized receives to drain those messages once before reporting the terminal error, and discard them immediately on authority changes, teardown, or protocol-limit failures.",
+          .timeLimit(.minutes(1)), arguments: [false, true], [false, true])
+    func drainsCompleteMessagesAfterUpstreamEnds(throwing: Bool, blockedSend: Bool) async throws {
+        let (policy, scope, peer) = try fixture()
+        let upstream = MCPFixtureTransport(blockedSend: blockedSend)
+        let broker = MCPProxyBroker(peer: peer, authorize: { try policy.authorize($0, peer: $1) },
+            makeTransport: { _ in MCPProxyEndpoint(transport: upstream) })
+        let id = UUID()
+        #expect(await broker.handle(.open(sessionID: id, scope: scope)) == .opened)
+        let request = Data(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"edit"}}"#.utf8)
+        #expect(await broker.handle(.send(sessionID: id, message: request)) == .accepted)
+        #expect(try await upstream.nextSent() == request)
+        let reply = Data(#"{"jsonrpc":"2.0","id":1,"result":{"content":[]}}"#.utf8)
+        let notification = Data(#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#.utf8)
+        await upstream.finish(after: [reply, notification], throwing: throwing)
+        try await upstream.waitForDisconnect()
+        #expect(await broker.handle(.send(sessionID: id, message: request)) == .error(.outcomeUnknown))
+        #expect(await upstream.sendCount == 1)
+        #expect(await broker.handle(.receive(sessionID: id)) == .messages([reply, notification]))
+        #expect(await broker.handle(.receive(sessionID: id)) == .error(.outcomeUnknown))
+        #expect(await broker.handle(.receive(sessionID: id)) == .error(.outcomeUnknown))
+        await broker.close()
+        #expect(await upstream.disconnectCount == 1)
+    }
+
+    enum HardInvalidation: CaseIterable, Sendable { case revoke, policyChange, sessionClose, brokerClose }
+
+    @Test(.timeLimit(.minutes(1)), arguments: HardInvalidation.allCases)
+    func hardInvalidationDiscardsRepliesAfterUpstreamEnds(invalidation: HardInvalidation) async throws {
+        let (policy, scope, peer) = try fixture()
+        let current = MutableMCPPolicy(policy)
+        let upstream = MCPFixtureTransport()
+        let broker = MCPProxyBroker(peer: peer, authorize: { try current.get().authorize($0, peer: $1) },
+            makeTransport: { _ in MCPProxyEndpoint(transport: upstream) })
+        let id = UUID()
+        #expect(await broker.handle(.open(sessionID: id, scope: scope)) == .opened)
+        let reply = Data(#"{"jsonrpc":"2.0","id":1,"result":{}}"#.utf8)
+        await upstream.finish(after: [reply])
+        try await upstream.waitForDisconnect()
+        let expected: MCPProxyError
+        switch invalidation {
+        case .revoke: current.revoke(); expected = .unauthorized
+        case .policyChange: current.changeServer(); expected = .unauthorized
+        case .sessionClose:
+            #expect(await broker.handle(.close(sessionID: id)) == .closed)
+            expected = .unavailable
+        case .brokerClose: await broker.close(); expected = .unavailable
+        }
+        #expect(await broker.handle(.receive(sessionID: id)) == .error(expected))
+        #expect(await broker.handle(.receive(sessionID: id)) == .error(expected))
+        await broker.close()
+        #expect(await upstream.disconnectCount == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func protocolFailureDiscardsRepliesBeforeUpstreamEnds(overflow: Bool) async throws {
+        let (policy, scope, peer) = try fixture()
+        let upstream = MCPFixtureTransport()
+        let broker = MCPProxyBroker(peer: peer, authorize: { try policy.authorize($0, peer: $1) },
+            makeTransport: { _ in MCPProxyEndpoint(transport: upstream) })
+        let id = UUID()
+        #expect(await broker.handle(.open(sessionID: id, scope: scope)) == .opened)
+        let notification = Data(#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#.utf8)
+        let messages = overflow ? Array(repeating: notification, count: 33) : [notification, Data("malformed".utf8)]
+        await upstream.finish(after: messages)
+        try await upstream.waitForDisconnect()
+        #expect(await broker.handle(.receive(sessionID: id)) == .error(overflow ? .overloaded : .invalidRequest))
+        await broker.close()
+        #expect(await upstream.disconnectCount == 1)
+    }
 }
 
 private actor MCPFixtureTransport: Transport {
     nonisolated let logger = StdioTransport().logger
     private let incoming = AsyncThrowingStream<Data, Error>.makeStream()
     private let sent = AsyncThrowingStream<Data, Error>.makeStream()
+    private let disconnectedEvents = AsyncStream<Void>.makeStream()
+    private let blockedSend: Bool
     private(set) var sendCount = 0
     private(set) var disconnected = false
+    private(set) var disconnectCount = 0
+    init(blockedSend: Bool = false) { self.blockedSend = blockedSend }
     func connect() {}
-    func disconnect() { disconnected = true; incoming.continuation.finish(); sent.continuation.finish() }
-    func send(_ data: Data) { sendCount += 1; sent.continuation.yield(data) }
+    func disconnect() {
+        disconnected = true; disconnectCount += 1
+        incoming.continuation.finish(); sent.continuation.finish()
+        disconnectedEvents.continuation.yield(())
+        disconnectedEvents.continuation.finish()
+    }
+    func send(_ data: Data) async throws {
+        sendCount += 1; sent.continuation.yield(data)
+        if blockedSend { try await Task.sleep(for: .seconds(300)) }
+    }
     func receive() -> AsyncThrowingStream<Data, Error> { incoming.stream }
     func emit(_ data: Data) { incoming.continuation.yield(data) }
     func fail() { incoming.continuation.finish(throwing: MCPProxyError.unavailable) }
+    func finish(after messages: [Data], throwing: Bool = false) {
+        for message in messages { incoming.continuation.yield(message) }
+        incoming.continuation.finish(throwing: throwing ? MCPProxyError.unavailable : nil)
+    }
+    func waitForDisconnect() async throws {
+        for await _ in disconnectedEvents.stream { return }
+        throw MCPProxyError.unavailable
+    }
     func nextSent() async throws -> Data {
         for try await message in sent.stream { return message }
         throw MCPProxyError.unavailable
@@ -152,4 +243,7 @@ private final class MutableMCPPolicy: @unchecked Sendable {
     init(_ policy: MCPProxyPolicy) { self.policy = policy }
     func get() -> MCPProxyPolicy { lock.withLock { policy } }
     func revoke() { lock.withLock { policy.grants[0].revoked = true } }
+    func changeServer() {
+        lock.withLock { policy.servers["fixture"] = .stdio(executable: "/usr/bin/true", arguments: ["changed"], environmentKeys: []) }
+    }
 }

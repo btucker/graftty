@@ -12,10 +12,8 @@ public final class DuplexSubprocess: @unchecked Sendable {
     public let input: FileHandle
     public let output: FileHandle
     private let errors: FileHandle
-    private let lifecycle = NSLock()
-    private let diagnosticLock = NSLock()
-    private var stopped = false
-    private var diagnosticBytes = Data()
+    private let shutdown = NSLock()
+    private let diagnosticState = DiagnosticState()
 
     public convenience init(command: String, arguments: [String]) throws {
         try self.init(executable: URL(fileURLWithPath: "/usr/bin/env"), arguments: [command] + arguments,
@@ -46,42 +44,28 @@ public final class DuplexSubprocess: @unchecked Sendable {
         try? stdout.fileHandleForWriting.close()
         try? stderr.fileHandleForWriting.close()
         let errorDescriptor = errors.fileDescriptor
-        errors.readabilityHandler = { [weak self] handle in
-            guard let self else { return }
-            self.lifecycle.withLock {
-                // Keep a queued callback from reading a descriptor that stop()
-                // has closed and another process has since reused.
-                guard !self.stopped else { return }
-                guard let chunk = Subprocess.drainChunk(fd: errorDescriptor) else {
-                    handle.readabilityHandler = nil
-                    return
-                }
-                self.appendDiagnostics(chunk)
+        // Retain only read state. Retaining the owner here could run its deinit
+        // on FileHandle's monitoring queue and make close() sync onto itself.
+        errors.readabilityHandler = { [diagnosticState] handle in
+            if !diagnosticState.read(from: errorDescriptor) {
+                // Foundation may synchronize with callbacks during teardown.
+                // The read-state lock must already be released.
+                handle.readabilityHandler = nil
             }
         }
     }
 
-    public var diagnostics: String {
-        diagnosticLock.withLock { String(decoding: diagnosticBytes, as: UTF8.self) }
-    }
+    public var diagnostics: String { diagnosticState.text }
 
     public func stop() async {
         await Task.detached { self.stopSynchronously() }.value
     }
 
-    private func appendDiagnostics(_ chunk: Data) {
-        diagnosticLock.withLock {
-            diagnosticBytes.append(chunk)
-            if diagnosticBytes.count > 65536 {
-                diagnosticBytes = Data(diagnosticBytes.suffix(65536))
-            }
-        }
-    }
-
     fileprivate func stopSynchronously() {
-        lifecycle.withLock {
-            guard !stopped else { return }
-            stopped = true
+        // All callers wait for the entire shutdown, including descriptor close.
+        // Callbacks never acquire this lock, so Foundation may wait for them.
+        shutdown.withLock {
+            guard diagnosticState.stopReading() else { return }
             // Retain the unreaped leader until after signalling the entire group.
             // Otherwise an exited AWS CLI could leave its plugin behind, or its
             // PID could be reused before cleanup signals it.
@@ -96,6 +80,32 @@ public final class DuplexSubprocess: @unchecked Sendable {
     }
 
     deinit { stopSynchronously() }
+
+    private final class DiagnosticState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stopped = false
+        private var bytes = Data()
+
+        var text: String { lock.withLock { String(decoding: bytes, as: UTF8.self) } }
+
+        func read(from descriptor: Int32) -> Bool {
+            lock.withLock {
+                // Do not read a descriptor closed and reused after shutdown.
+                guard !stopped, let chunk = Subprocess.drainChunk(fd: descriptor) else { return false }
+                bytes.append(chunk)
+                if bytes.count > 65536 { bytes = Data(bytes.suffix(65536)) }
+                return true
+            }
+        }
+
+        func stopReading() -> Bool {
+            lock.withLock {
+                guard !stopped else { return false }
+                stopped = true
+                return true
+            }
+        }
+    }
 }
 
 /// Tracks children without extending their normal lifetime. App termination can

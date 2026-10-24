@@ -3586,7 +3586,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-25.6** When creating a worktree for the upstream Dev Container common-directory mount, the application shall request relative Git metadata without rewriting existing worktrees and shall report unsupported Git versions as a creation failure.
 
-**REMOTE-25.7** When a parent requests Dev Container placement, the host shall prepare the selected configuration before pane startup, retain its container identity for later panes, stop and remove that container when deleting the worktree, and restart it if Git refuses deletion even when the caller cancels.
+**REMOTE-25.7** When a parent requests Dev Container placement, the host shall prepare the selected configuration before pane startup, retain its container identity for later panes, stop and remove that container when deleting the worktree, and restore a previously running container if stopping or Git removal fails even when the caller cancels.
+
+**REMOTE-25.8** When worktree deletion suspends for container cleanup, the host shall resolve the worktree by its current path before changing its state so concurrent deletion or reordering cannot affect another worktree.
 
 ### REMOTE-26.x — Git replication and authenticated parent publication
 
@@ -3634,7 +3636,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-26.22** When SSH uses a provider proxy's standard streams, the application shall retain host-key pinning, public-key client authentication, and bidirectional control without exposing a local TCP listener.
 
-**REMOTE-26.23** When a provider proxy stops or fails, the application shall close its streams, stop its process group, and reap its child process, while retaining only bounded diagnostic output.
+**REMOTE-26.23** When a provider proxy stops, fails, or loses its owner, the application shall serialize concurrent shutdown, close its streams, stop its process group and reap its child without callback deadlocks, and retain only bounded diagnostic output.
 
 **REMOTE-26.24** When connecting through AWS Session Manager, the application shall use the completed enrollment's exact instance and SSH port, recheck its account and current parent and worker identities, and reject revoked or incomplete enrollment without restoring trust.
 
@@ -3647,6 +3649,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-26.28** When a Dev Container command exits while a background descendant remains running, the application shall return the command's output and exit status without waiting for the descendant.
 
 **REMOTE-26.29** When preparing or reopening a relative Git worktree in a Dev Container, the application shall enable both upstream Git-root and common-directory mounting so Git metadata remains reachable inside the container.
+
+**REMOTE-26.30** When a Linux Dev Container command is canceled or times out, the application shall stop its isolated process group, including descendants that ignore graceful termination, before reporting cancellation or timeout.
 
 ### REMOTE-27.x — Native session replication and restore
 
@@ -3697,6 +3701,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-28.18** When a managed placement installs agent skills, the application shall bind-mount a private placement directory at the same host and container path, verify its visibility and matching user identity before launch, and retain native profile files when the container is removed.
 
 **REMOTE-28.19** When a runtime home mirrors the user's native skill directory inside their home, the application shall capture that directory through the alias while rejecting project-root escapes and aliases to unrelated directories.
+
+**REMOTE-28.20** When publishing selected project skills, the application shall reject conflicting late-created or changed destinations, recheck path types and executable flags, and verify the final content before reporting a prepared profile.
+
+**REMOTE-28.21** If safe project-directory publication is unavailable, then the application shall reject missing project skills with an actionable prerequisite while allowing user-only skills and identical existing project skills.
+
+**REMOTE-28.22** When a no-clobber mover returns exit status one, the application shall accept a skipped publication only after verifying its preserved source and identical destination, and reject unsupported movers or incomplete moves.
 
 ### REMOTE-29.x — AWS Spot evacuation
 
@@ -3768,6 +3778,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-30.23** While an authenticated interactive connection to the enrolled worker exists, the parent MCP service shall reuse that connection and shall leave its terminal and control channels open when MCP stops.
 
+**REMOTE-30.24** When an upstream MCP transport ends after delivering complete messages, the application shall reject further sends, allow still-authorized receives to drain those messages once before reporting the terminal error, and discard them immediately on authority changes, teardown, or protocol-limit failures.
+
 ### REMOTE-31.x — Provider preferences and placement
 
 **REMOTE-31.1** When a user configures the aws compute provider, the CLI shall persist the selected existing AWS profile and placement preferences without copying AWS credentials.
@@ -3800,7 +3812,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-31.15** When an agent requests a read-only placement plan, the CLI shall rank connected compatible hosts using fresh measured CPU, memory, and disk headroom, explain rejections and unknown reservation state, and require admission before starting work.
 
-**REMOTE-31.16** When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and require worktree-management permission.
+**REMOTE-31.16** When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and recheck current pairing and worktree-management permission before each request.
 
 **REMOTE-31.17** When a host admits a placement, the application shall persist the parent-bound operation before creating its worktree, return the retained result on retries, and expose uncertain creation without starting it again.
 

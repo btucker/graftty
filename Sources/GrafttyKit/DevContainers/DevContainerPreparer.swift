@@ -168,12 +168,36 @@ public actor DevContainerPreparer {
     /// Return whether a rejected deletion needs to restart the container.
     public func stopForDeletion(containerID: String) async throws -> Bool {
         guard try await containerExists(containerID) else { return false }
+        guard try await containerIsRunning(containerID) else { return false }
+        do {
+            // Finish the bounded stop even if the caller disconnects. Killing
+            // its client can leave Docker still stopping the container while
+            // compensation tries to restore it.
+            _ = try await Task { [self] in
+                try await docker(["stop", "--timeout", "10", containerID])
+            }.value
+            try Task.checkCancellation()
+        } catch {
+            let stopError = error
+            do {
+                try await Task { [self] in
+                    if try await containerExists(containerID), !(try await containerIsRunning(containerID)) {
+                        try await restartAfterRejectedDeletion(containerID: containerID)
+                    }
+                }.value
+            } catch {
+                throw DevContainerPreparationError(stage: "cleanup", message: "Container stop failed: \(stopError). Container restart also failed: \(error)")
+            }
+            throw stopError
+        }
+        return true
+    }
+    private func containerIsRunning(_ containerID: String) async throws -> Bool {
         let state = try await docker(["inspect", "--format", "{{.State.Running}}", containerID])
         let running = state.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard running == "true" || running == "false" else {
             throw DevContainerPreparationError(stage: "cleanup", message: "Docker returned an unknown running state")
         }
-        if running == "true" { _ = try await docker(["stop", "--timeout", "10", containerID]) }
         return running == "true"
     }
     public func restartAfterRejectedDeletion(containerID: String) async throws {
