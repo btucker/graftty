@@ -4,6 +4,7 @@ import GrafttyProtocol
 import SwiftUI
 import Testing
 import UIKit
+import XCTest
 @testable import GrafttyMobileKit
 
 @MainActor
@@ -18,7 +19,8 @@ struct IPadWorktreeFeedTests {
         defer { feed.unmount() }
 
         feed.frames.publish(.snapshot(Self.rows))
-        try await waitUntil("pushed frame applied") { feed.appState.latestWorktrees == Self.rows }
+        try await feed.waitForAppliedFrame()
+        #expect(feed.appState.latestWorktrees == Self.rows)
         #expect(feed.appState.anyWorktreeHasAttention)
         #expect(feed.applied == [Self.rows])
     }
@@ -34,7 +36,8 @@ struct IPadWorktreeFeedTests {
         defer { feed.unmount() }
 
         feed.frames.publish(.snapshot(Self.rows))
-        try await waitUntil("attention recomputed from the seeded rows") { feed.appState.anyWorktreeHasAttention }
+        try await feed.waitForAppliedFrame()
+        #expect(feed.appState.anyWorktreeHasAttention)
     }
 
     @Test("@spec IPAD-1.26: When the iPad layout applies a pushed panes-state frame whose rows equal the shared worktree state, the application shall leave the shared rows and attention indicator unwritten, so views observing them are not invalidated by a repeated frame.")
@@ -84,6 +87,7 @@ struct IPadWorktreeFeedTests {
         let frames = LatestValueBroadcast<PanesStateMessage>()
         /// The rows handed to the layout after each applied frame.
         private(set) var applied: [[WorktreePanes]] = []
+        private let appliedFrame = XCTestExpectation(description: "The hosted feed applied the pushed frame")
         private let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 400))
         private let defaultsSuite = "ipad-feed-\(UUID())"
 
@@ -109,6 +113,7 @@ struct IPadWorktreeFeedTests {
             let remote = RemoteWorktreeProviders(coordinator: nil, host: host, worktreeUpdates: pushed)
             let feed = IPadWorktreeFeed(host: host, updates: remote.updates, appState: appState) { [weak self] list in
                 self?.applied.append(list)
+                self?.appliedFrame.fulfill()
             }
             // A hosted controller has no active scene; the feed waits for one.
             window.rootViewController = UIHostingController(rootView: Color.clear
@@ -123,16 +128,13 @@ struct IPadWorktreeFeedTests {
             frames.finish()
             UserDefaults.standard.removePersistentDomain(forName: defaultsSuite)
         }
-    }
 
-    /// Hosted SwiftUI tasks start asynchronously; wait for the condition with
-    /// a bounded number of short pauses rather than a fixed delay.
-    private func waitUntil(_ stage: String, _ condition: () -> Bool) async throws {
-        for _ in 0..<150 {
-            if condition() { return }
-            try await Task.sleep(for: .milliseconds(20))
+        func waitForAppliedFrame() async throws {
+            // The gate opens after shared state and applied rows are updated.
+            // Keep the former polling budget as a failure bound, without pauses.
+            let result = await XCTWaiter.fulfillment(of: [appliedFrame], timeout: 3)
+            try #require(result == .completed)
         }
-        Issue.record("Timed out waiting for \(stage)")
     }
 }
 #endif
