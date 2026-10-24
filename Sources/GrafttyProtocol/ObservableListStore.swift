@@ -37,6 +37,11 @@ public final class ObservableListStore<Element: Codable & Sendable> {
     private let isLoadable: @Sendable (Element) -> Bool
     private let areInIncreasingOrder: (Element, Element) -> Bool
 
+    private enum BackgroundRead: Sendable {
+        case loaded([Element])
+        case malformed
+    }
+
     /// - Parameters:
     ///   - isLoadable: Rows that fail it are dropped on read (e.g. pairings
     ///     from an older protocol version).
@@ -58,14 +63,20 @@ public final class ObservableListStore<Element: Codable & Sendable> {
     public func loadIfNeeded() async {
         guard !hasLoaded else { return }
         let file = file
-        let corruptFile = corruptFile
         let isLoadable = isLoadable
         let loaded = await Task.detached(priority: .userInitiated) {
-            Self.read(file, corruptFile: corruptFile, isLoadable: isLoadable)
+            Self.readInBackground(file, isLoadable: isLoadable)
         }.value
         guard !hasLoaded else { return }
-        elements = loaded.sorted(by: areInIncreasingOrder)
-        hasLoaded = true
+        switch loaded {
+        case .loaded(let rows):
+            elements = rows.sorted(by: areInIncreasingOrder)
+            hasLoaded = true
+        case .malformed:
+            // Re-read on the owning actor before recovery. A background read
+            // must never rename a file that a later write has replaced.
+            ensureLoaded()
+        }
     }
 
     /// Sync fallback for mutations that race ahead of `loadIfNeeded()`.
@@ -95,5 +106,18 @@ public final class ObservableListStore<Element: Codable & Sendable> {
         case .discard: try? file.load()
         }
         return (rows ?? []).filter(isLoadable)
+    }
+
+    nonisolated private static func readInBackground(
+        _ file: JSONFileStore<[Element]>,
+        isLoadable: (Element) -> Bool
+    ) -> BackgroundRead {
+        do {
+            return .loaded((try file.load() ?? []).filter(isLoadable))
+        } catch is DecodingError {
+            return .malformed
+        } catch {
+            return .loaded([])
+        }
     }
 }

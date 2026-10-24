@@ -2,6 +2,34 @@ import Foundation
 import Testing
 @testable import GrafttyProtocol
 
+private final class CorruptListReadGate: @unchecked Sendable {
+    static let shared = CorruptListReadGate()
+    let entered: AsyncStream<Void>
+    let continuation: AsyncStream<Void>.Continuation
+    let release = DispatchSemaphore(value: 0)
+
+    init() { (entered, continuation) = AsyncStream.makeStream() }
+}
+
+private struct GatedListRow: Codable, Sendable, Equatable {
+    let name: String
+    init(_ name: String) { self.name = name }
+
+    init(from decoder: Decoder) throws {
+        name = try decoder.singleValueContainer().decode(String.self)
+        if name == "corrupt" {
+            CorruptListReadGate.shared.continuation.yield(())
+            CorruptListReadGate.shared.release.wait()
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Invalid row"))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(name)
+    }
+}
+
 @Suite("ObservableListStore")
 @MainActor
 struct ObservableListStoreTests {
@@ -95,5 +123,29 @@ struct ObservableListStoreTests {
         #expect(store.hasLoaded)
         await store.loadIfNeeded()
         #expect(store.elements.map(\.name) == ["new"])
+    }
+
+    @Test("@spec PERSIST-5.11: When an asynchronous list load finishes after a successful write, the application shall preserve the written file rather than archive it as corrupt.")
+    func staleCorruptLoadCannotArchiveNewWrite() async throws {
+        let url = makeFileURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let file = JSONFileStore<[GatedListRow]>(fileURL: url)
+        try file.save([GatedListRow("corrupt")])
+        let store = ObservableListStore(file: file, corruptFile: .moveAside,
+            areInIncreasingOrder: { $0.name < $1.name })
+        let gate = CorruptListReadGate.shared
+        defer { gate.release.signal() }
+        let loading = Task { await store.loadIfNeeded() }
+        var events = gate.entered.makeAsyncIterator()
+        _ = await events.next()
+
+        let fresh = [GatedListRow("fresh")]
+        try store.write(fresh)
+        gate.release.signal()
+        await loading.value
+
+        #expect(store.elements == fresh)
+        #expect(try file.load() == fresh)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path) == ["rows.json"])
     }
 }

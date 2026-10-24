@@ -1092,6 +1092,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-5.10** When remote identity stores in one process refer to the same destination path, the application shall serialize their complete read-and-generate transactions so they return the same persisted identity.
 
+**PERSIST-5.11** When an asynchronous list load finishes after a successful write, the application shall preserve the written file rather than archive it as corrupt.
+
 ## PWD — Manual Pane Routing
 
 ### PWD-1.x — User-Initiated Move
