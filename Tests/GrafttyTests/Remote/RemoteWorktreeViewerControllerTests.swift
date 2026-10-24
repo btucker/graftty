@@ -181,9 +181,8 @@ struct RemoteWorktreeViewerControllerTests {
         #expect(viewer.controller.selectedRemotePaneSessionName == "a")
         #expect(viewer.controller.focusedTerminalID == a)
 
-        // The snapshot-first ordering is the one where a created pane would
-        // otherwise take focus (REMOTE-24.12), so the suppression is only
-        // observable here; response-first loses focus anyway (#586).
+        // Also cover snapshot-first ordering (REMOTE-24.12), where the new
+        // pane is already in the layout when the response arrives.
         let snapshotFirst = try await ViewerHarness.opened(layout: .leaf("a"))
         let first = try snapshotFirst.terminal("a")
         snapshotFirst.surfaces.send(.split(.right), from: first)
@@ -447,20 +446,19 @@ struct RemoteWorktreeViewerControllerTests {
         #expect(publishingSteps == ["snapshot 1", "snapshot 2"])
     }
 
-    /// The response-first ordering loses focus to the source pane (#586):
-    /// the snapshot's reconcile passes the pre-split selection as preferred.
-    @Test func createdPaneTakesFocusWhenTheResponseArrivesFirst() async throws {
+    @Test("@spec REMOTE-24.15: When a snapshot reveals a split-created pane after the split response, the viewer shall focus the created pane unless a newer user intent superseded the split.", arguments: [PaneControlResponse.splitCreated(sessionName: "b"), .ok])
+    func createdPaneTakesFocusWhenTheResponseArrivesFirst(response: PaneControlResponse) async throws {
         let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
         let a = try viewer.terminal("a")
         viewer.surfaces.send(.split(.right), from: a)
         await viewer.settle()
-        try await viewer.answer(0, .splitCreated(sessionName: "b"))
-        await viewer.settle()
+        try await viewer.answer(0, response)
         viewer.publish(.split(.leaf("a"), .leaf("b")))
         await viewer.settle()
-        withKnownIssue("#586: split focus reverts when the response precedes the snapshot") {
-            #expect(viewer.controller.selectedRemotePaneSessionName == "b")
-        }
+        let b = try viewer.terminal("b")
+        #expect(viewer.controller.selectedRemotePaneSessionName == "b")
+        #expect(viewer.controller.focusedTerminalID == b)
+        #expect(viewer.surfaces.focused == b)
     }
 }
 
