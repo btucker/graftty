@@ -129,6 +129,31 @@ struct TeamCodexAppServerRegistrationTests {
         #expect(record.realBinaryPath == native.path)
     }
 
+    @Test("@spec TEAM-10.20: When a Codex Node launcher has a nested npm platform package, the application shall register that package's native binary before sibling or in-package vendor fallbacks.", arguments: [false, true])
+    func codexAppServerRegisterStoresNestedNpmBinary(withCompetingFallbacks: Bool) throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (shim, native) = try Self.installNodeShim(root: dir) { packageRoot in
+            Self.vendoredBinary(in: packageRoot
+                .appendingPathComponent("node_modules/@openai", isDirectory: true)
+                .appendingPathComponent(CodexDeliveryBinaryResolver.platformPackageDirectoryName, isDirectory: true))
+        }
+        if withCompetingFallbacks {
+            let packageRoot = shim.resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent()
+            for fallbackRoot in [packageRoot, packageRoot.deletingLastPathComponent()
+                .appendingPathComponent(CodexDeliveryBinaryResolver.platformPackageDirectoryName)] {
+                let fallback = Self.vendoredBinary(in: fallbackRoot)
+                try FileManager.default.createDirectory(at: fallback.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try "#!/bin/sh\n".write(to: fallback, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fallback.path)
+            }
+        }
+
+        let storage = CodexAppServerSessionStorage(rootDirectory: dir.appendingPathComponent("records"))
+        let record = try Self.register(storage: storage, realBinaryPath: shim.path)
+        #expect(record.realBinaryPath == native.path)
+    }
+
     @Test("App-server register stores the native Codex binary from the in-package vendor fallback layout.")
     func codexAppServerRegisterStoresNativeCodexBinaryForInPackageVendorLayout() throws {
         let dir = try makeTempDir()
