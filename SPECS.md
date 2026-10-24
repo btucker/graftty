@@ -1084,6 +1084,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-5.9** When a JSONFileStore writes with configured POSIX permissions, the application shall apply those permissions to the temporary file before atomically publishing it at the destination.
 
+**PERSIST-5.10** When remote identity stores in one process refer to the same destination path, the application shall serialize their complete read-and-generate transactions so they return the same persisted identity.
+
 ## PWD — Manual Pane Routing
 
 ### PWD-1.x — User-Initiated Move
