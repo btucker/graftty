@@ -38,7 +38,6 @@ final class SSHUserAuthCapabilityTests: XCTestCase {
     /// @spec REMOTE-7.1: When a client opens a channel with `channel_type: "pane_control"`
     /// over an authenticated `RemoteHostConnection`, the host shall accept the channel only
     /// when the requesting trusted peer holds the `terminal_control` capability.
-    /// (Enforced at userauth: a peer with `terminalControl: .disabled` is rejected.)
     func testTrustedPeerWithoutCapRejected() throws {
         let key = Curve25519.Signing.PrivateKey()
         let store = makeStore()

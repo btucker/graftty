@@ -221,6 +221,16 @@ final class RemoteMacConnectionRegistry {
         self.now = now
     }
 
+    /// Wait for an interactive attempt already in progress rather than opening
+    /// a competing SSH connection that would replace that peer on the worker.
+    func mcpConnection(for identity: RemoteMacIdentity) async throws -> (any MCPHostLink)? {
+        if let attempt = inFlight[identity] { _ = try? await attempt.task.value }
+        try Task.checkCancellation()
+        guard let entry = entries[identity], await entry.connection.state == .connected,
+              entries[identity]?.id == entry.id else { return nil }
+        return entry.connection as? any MCPHostLink
+    }
+
     func connect(
         to remoteMac: RemoteMac,
         replacingExistingHostConnection: Bool = false
@@ -579,6 +589,13 @@ final class RemoteMacConnectionRegistry {
             identity: identity,
             entryID: entryID
         )
+    }
+
+    func resourceObservation(for identity: RemoteMacIdentity) async -> HostResourceObservation? {
+        guard let entry = entries[identity], let store = entry.paneEnvironment.worktreePanesStore else { return nil }
+        let observation = await store.resourceObservation
+        guard entries[identity]?.id == entry.id else { return nil }
+        return observation
     }
 
     func sidebarSnapshot(for identity: RemoteMacIdentity) async -> SidebarSnapshot? {

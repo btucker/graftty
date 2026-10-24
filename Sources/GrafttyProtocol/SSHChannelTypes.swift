@@ -6,6 +6,11 @@
 /// convention; the channel types are namespaced and will not collide with
 /// stock OpenSSH or other SSH libraries.
 public enum SSHChannelTypeNames {
+    /// Parent/worker replication control. Git pack streaming uses a separate data path.
+    public static let mcpControl = "mcp-control-v1@graftty.dev"
+
+    public static let gitControl = "git-control-v1@graftty.dev"
+
     /// Duplex team discovery and messaging between authenticated Macs.
     public static let chromeTabs = "chrome-tabs-v1@graftty.dev"
     public static let team = "team@graftty.dev"

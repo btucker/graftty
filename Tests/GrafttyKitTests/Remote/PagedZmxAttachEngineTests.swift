@@ -182,7 +182,8 @@ private final class FakePagedDaemon: @unchecked Sendable {
 extension PagedZmxAttachEngineTests {
     @Test("@spec TERM-12.40: While a paged terminal produces events faster than its renderer consumes them, the application shall preserve event order with bounded buffering without disconnecting, and shall release a waiting reader when the attachment closes.", .timeLimit(.minutes(1)), arguments: [false, true], [false, true])
     func outputBurstPreservesAttachment(closeWhileFull: Bool, resizing: Bool) async throws {
-        let burstSent = DispatchSemaphore(value: 0)
+        let backpressured = DispatchSemaphore(value: 0)
+        let readerExited = DispatchSemaphore(value: 0)
         let count = 512
         let daemon = try FakePagedDaemon { fd in
             try FakePagedDaemon.negotiate(fd)
@@ -190,10 +191,16 @@ extension PagedZmxAttachEngineTests {
                 #expect(try FakePagedDaemon.receive(fd).0 == 2)
                 try FakePagedDaemon.send(fd, tag: 31, payload: Data([79, 0, 165, 0]))
             }
-            for index in 0..<count {
-                try FakePagedDaemon.send(fd, tag: 1, payload: Data("\(index)".utf8))
+            do {
+                for index in 0..<count {
+                    try FakePagedDaemon.send(fd, tag: 1, payload: Data("\(index)".utf8))
+                }
+            } catch {
+                // Closing a full attachment can interrupt the peer's write
+                // before the whole burst fits in the OS socket buffer.
+                if closeWhileFull { return }
+                throw error
             }
-            burstSent.signal()
             if closeWhileFull {
                 do {
                     _ = try FakePagedDaemon.receive(fd)
@@ -208,7 +215,9 @@ extension PagedZmxAttachEngineTests {
         }
         defer { daemon.finish() }
         let engine = PagedZmxAttachEngine(config: .init(zmxExecutable: URL(fileURLWithPath: "/unused"),
-            zmxDir: daemon.directory, sessionName: "session"))
+            zmxDir: daemon.directory, sessionName: "session"),
+            onBackpressure: { backpressured.signal() },
+            onReaderExit: { readerExited.signal() })
         defer { engine.close() }
         try await engine.start()
         var iterator = engine.events.makeAsyncIterator()
@@ -216,16 +225,12 @@ extension PagedZmxAttachEngineTests {
             Issue.record("Missing checkpoint"); return
         }
         if resizing { try engine.resize(windowSize: .init(cols: 165, rows: 79)) }
-        let sent = await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(returning: burstSent.wait(timeout: .now() + 3) == .success)
-            }
-        }
-        try #require(sent)
-        // Model a renderer pause during ordinary output or a takeover resize.
-        try await Task.sleep(for: .milliseconds(100))
+        // Pause the renderer until the engine has actually filled its event
+        // buffer. The peer may still be writing on either OS at this point.
+        try #require(await Self.wait(backpressured))
         if closeWhileFull {
             await engine.close()
+            #expect(await Self.wait(readerExited), "close must release the backpressured reader")
         } else {
             if resizing { #expect(await iterator.next() == .grid(cols: 165, rows: 79)) }
             var output: [Data] = []
@@ -241,6 +246,14 @@ extension PagedZmxAttachEngineTests {
         }
         #expect(await daemon.waitUntilDone())
         #expect(daemon.error == nil)
+    }
+
+    private static func wait(_ signal: DispatchSemaphore) async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: signal.wait(timeout: .now() + 3) == .success)
+            }
+        }
     }
 
     @Test("@spec TERM-12.25: When a native paged attachment negotiates pixel-size support, the application shall send current pixel metadata before each changed window size and daemon-requested size reply, including changes that preserve the cell grid.", arguments: [UInt8(8), UInt8(9)])

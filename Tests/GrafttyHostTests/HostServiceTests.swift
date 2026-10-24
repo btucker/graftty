@@ -43,6 +43,37 @@ struct HostServiceTests {
         func cleanup() { try? FileManager.default.removeItem(at: root) }
     }
 
+    @Test("@spec REMOTE-29.2: While a managed Spot host runs, the host service shall monitor interruption notices independently of agent turns and initiate evacuation using the reported deadline.", .timeLimit(.minutes(1)))
+    func interruptionMonitorStartsDrainWithoutAnAgent() async throws {
+        let fixture = try Fixture(); defer { fixture.cleanup() }
+        let notice = HostInterruptionNotice(provider: "test-cloud", eventID: "preemption", action: .terminate,
+            deadline: Date().addingTimeInterval(120))
+        let source = TestInterruptionSource(notice: notice)
+        let service = try HostService(configuration: fixture.configuration, enablePairing: false,
+            interruptionSource: source, interruptionPollInterval: .milliseconds(5))
+        do {
+            _ = try await service.start()
+            var observed: HostDrainRecord?
+            for _ in 0..<100 {
+                if case .status(let status) = try await HostAdministrationServer.request(.status, configuration: fixture.configuration),
+                   let drain = status.drain {
+                    #expect(status.interruptionObservedAt != nil)
+                    #expect(status.interruptionError == nil)
+                    observed = drain; break
+                }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let drain = try #require(observed)
+            #expect(drain.notice == notice)
+            #expect(drain.deadline == notice.deadline)
+            #expect(drain.placements.isEmpty)
+            await service.stop()
+            let polls = await source.polls
+            try await Task.sleep(for: .milliseconds(20))
+            #expect(await source.polls == polls)
+        } catch { await service.stop(); throw error }
+    }
+
     @Test("@spec PORTS-5.32: When Linux setup enrolls a Mac, the application shall permit loopback port forwarding while preserving an existing explicit tunnel denial.")
     func setupAllowsLoopbackForwarding() throws {
         let fixture = try Fixture()
@@ -126,5 +157,15 @@ struct HostServiceTests {
             throw error
         }
         await occupying.stop()
+    }
+}
+
+private actor TestInterruptionSource: HostInterruptionSource {
+    let notice: HostInterruptionNotice
+    var polls = 0
+    init(notice: HostInterruptionNotice) { self.notice = notice }
+    func poll() async throws -> HostInterruptionNotice? {
+        polls += 1
+        return polls == 1 ? nil : notice
     }
 }

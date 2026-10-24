@@ -103,11 +103,13 @@ let strictWarnings: [SwiftSetting] = [
 
 #if os(Linux)
 let isLinux = true
+let containerProcessDependencies: [Target.Dependency] = [.product(name: "Subprocess", package: "swift-subprocess")]
 let appleDependencies: [Package.Dependency] = []
 let appleKitDependencies: [Target.Dependency] = []
 let webRTCDependencies: [Target.Dependency] = []
 #else
 let isLinux = false
+let containerProcessDependencies: [Target.Dependency] = []
 let appleDependencies: [Package.Dependency] = [
     ghosttyDependency,
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
@@ -128,7 +130,6 @@ let linuxKitExclusions = ["Updater", "Editor", "Model/PNGThumbnail.swift",
 let linuxPendingKitTests = [
     "CLI/CLIRunnerTests.swift", // #666: GNU env not-found message
     "Git/WorktreeMonitorTests.swift", // contentStreamCountForTesting is macOS-only (FSEvents)
-    "Remote/PagedZmxAttachEngineTests.swift", // #672: TERM-12.40 flaky on Linux
     "Remote/ZmxAttachEngineTests.swift", // runs the bundled macOS zmx
     "SidebarHostNavigationTests.swift", // uses ProjectIconDiscovery (ImageIO)
     "Teams/AgentPluginInstallerTests.swift", // #667: Codex TOML parse differs on Linux
@@ -181,6 +182,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.22.0"),
         .package(url: "https://github.com/stencilproject/Stencil.git", from: "0.15.1"),
+        .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "1.0.0"),
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", revision: "72a09adb79e0b7112df92949612533c013c6c664"),
     ] + appleDependencies,
     targets: ([
         .target(
@@ -202,12 +205,13 @@ let package = Package(
             name: "GrafttyKit",
             dependencies: [
                 "GrafttyProtocol",
+                .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOWebSocket", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "Stencil", package: "Stencil"),
-            ] + appleKitDependencies + cryptoDependencies,
+            ] + appleKitDependencies + cryptoDependencies + containerProcessDependencies,
             exclude: isLinux ? linuxKitExclusions : [],
             resources: [
                 .copy("Web/Resources"),
@@ -285,6 +289,7 @@ let package = Package(
             dependencies: [
                 "GrafttyKit",
                 "GrafttyProtocol",
+                "GrafttyRemoteClient",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             swiftSettings: strictWarnings
@@ -318,6 +323,7 @@ let package = Package(
         .testTarget(
             name: "GrafttyTunnelTests",
             dependencies: ["GrafttyTunnel", .product(name: "NIOCore", package: "swift-nio"),
+                           .product(name: "NIOPosix", package: "swift-nio"),
                            .product(name: "NIOEmbedded", package: "swift-nio"),
                            .product(name: "NIOSSH", package: "swift-nio-ssh")],
             swiftSettings: strictWarnings
@@ -405,7 +411,7 @@ let package = Package(
             name: "GrafttyDirectSSHTests",
             dependencies: ["GrafttyHostAgent", "GrafttyRemoteClient", "GrafttyKit", "GrafttyProtocol"] + cryptoDependencies,
             path: "Tests/GrafttyTests/Remote/SSH",
-            sources: ["DirectSSHLoopbackTests.swift"],
+            sources: ["DirectSSHLoopbackTests.swift", "AWSLiveHostTests.swift", "AWSLiveMCPTests.swift", "AWSLiveMCPContainerTests.swift"],
             swiftSettings: strictWarnings
         ),
     ] : [])

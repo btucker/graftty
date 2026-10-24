@@ -1290,6 +1290,8 @@ struct GrafttyApp: App {
             )
         }
         services.hostAgentPool = hostAgentPool
+        do { try services.parentMCPConnections.restore() }
+        catch { NSLog("[Graftty] saved parent MCP connections could not be restored") }
         Task { @MainActor in
             do {
                 try await services.startRemoteMacAccessServices(
@@ -1329,6 +1331,8 @@ struct GrafttyApp: App {
                 stateBinding.wrappedValue.capturePaneTitleMetadata(tm.paneTitleMetadata)
                 tm.autoSleep.shutdown()
                 try? Self.persistAppStateSynchronously(stateBinding.wrappedValue)
+                appServices.parentMCPConnections.cancel()
+                appServices.parentMCPProcesses.close()
                 appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
                 appServices.prStatusStore.stop()

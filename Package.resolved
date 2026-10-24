@@ -1,5 +1,5 @@
 {
-  "originHash" : "5ef007c37ce12ea8f2dd678a658dc88d4009b4e4b4bd1a72c5e759e197ec6049",
+  "originHash" : "7850f0915bc10c80f10f3bba0a3656274407828d7773c9eecf11424dc1085f83",
   "pins" : [
     {
       "identity" : "displaylink",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "41bea2661e04bebcb1c4f15fc0b6197850100fdd",
         "version" : "3.0.1"
+      }
+    },
+    {
+      "identity" : "eventsource",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mattt/eventsource.git",
+      "state" : {
+        "revision" : "86b5096ac59ab46e66bd1f6377c604bc1dab0bc2",
+        "version" : "1.5.1"
       }
     },
     {
@@ -208,12 +217,29 @@
       }
     },
     {
+      "identity" : "swift-sdk",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/modelcontextprotocol/swift-sdk.git",
+      "state" : {
+        "revision" : "72a09adb79e0b7112df92949612533c013c6c664"
+      }
+    },
+    {
       "identity" : "swift-service-lifecycle",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swift-server/swift-service-lifecycle.git",
       "state" : {
         "revision" : "9829955b385e5bb88128b73f1b8389e9b9c3191a",
         "version" : "2.11.0"
+      }
+    },
+    {
+      "identity" : "swift-subprocess",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-subprocess.git",
+      "state" : {
+        "revision" : "b3937ab85dd32f6e9435914599c1519074769c1a",
+        "version" : "1.0.0"
       }
     },
     {

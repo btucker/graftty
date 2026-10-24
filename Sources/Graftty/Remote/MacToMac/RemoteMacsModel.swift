@@ -191,23 +191,58 @@ final class RemoteMacsModel: ObservableObject {
         savedRemoteMacs = store.remoteMacs
     }
 
+    func mcpConnection(for peer: RemoteMacConnectionSummary.ID) async throws -> (any MCPHostLink)? {
+        try await connectionRegistry.mcpConnection(for: .init(id: peer.deviceID, fingerprint: peer.fingerprint))
+    }
+
     func connectionState(for identity: RemoteMacIdentity) -> RemoteMacConnectionState {
         connectionStates[identity] ?? .offline
+    }
+
+    func transferSkills(on host: RemoteMacConnectionSummary.ID, request: RemoteSkillTransferRequest) async -> ResponseMessage {
+        await loadSavedRemotes()
+        let identity = RemoteMacIdentity(id: host.deviceID, fingerprint: host.fingerprint)
+        guard savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == identity }), connectionState(for: identity) == .connected else {
+            return .error("Skill destination identity is unavailable or disconnected.")
+        }
+        do {
+            switch try await sendWorktreeManagement(identity: identity, request: .agentSkills(request)) {
+            case .agentSkills(let status): return .agentSkills(status)
+            case .error(_, let message, _, _): return .error(message)
+            default: return .error("Host returned an unexpected skill transfer response; update both hosts.")
+            }
+        } catch { return .error("Skill transfer reply unavailable; retry with the same snapshot and operation UUID. \(error)") }
+    }
+
+    func place(on host: RemoteMacConnectionSummary.ID, request: HostPlacementRequest) async -> ResponseMessage {
+        await loadSavedRemotes()
+        let identity = RemoteMacIdentity(id: host.deviceID, fingerprint: host.fingerprint)
+        guard savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == identity }), connectionState(for: identity) == .connected else {
+            return .error("Placement host identity is unavailable or disconnected.")
+        }
+        do {
+            switch try await sendWorktreeManagement(identity: identity, request: .placement(request)) {
+            case .placement(let record): return .placement(record)
+            case .error(_, let message, _, _): return .error(message)
+            default: return .error("Host returned an unexpected placement response.")
+            }
+        } catch { return .error("Placement reply unavailable; query the same operation UUID before retrying. \(error)") }
     }
 
     func remoteMacConnectionSummaries() async
         -> [RemoteMacConnectionSummary] {
         await loadSavedRemotes()
-        return savedRemoteMacs.map { remoteMac in
-            let state = connectionState(for: RemoteMacIdentity(remoteMac))
-            return RemoteMacConnectionSummary(
-                deviceID: remoteMac.id,
-                fingerprint: remoteMac.fingerprint,
-                label: remoteMac.label,
+        var summaries: [RemoteMacConnectionSummary] = []
+        for remoteMac in savedRemoteMacs {
+            let identity = RemoteMacIdentity(remoteMac)
+            let observation = await connectionRegistry.resourceObservation(for: identity)
+            let state = connectionState(for: identity)
+            summaries.append(RemoteMacConnectionSummary(
+                deviceID: remoteMac.id, fingerprint: remoteMac.fingerprint, label: remoteMac.label,
                 lastKnownHost: remoteMac.lastKnownBaseURL?.host,
-                state: RemoteMacConnectionSummary.State(state)
-            )
+                state: RemoteMacConnectionSummary.State(state), resourceObservation: observation))
         }
+        return summaries
     }
 
     func reconnectRemoteMac(target: String) async -> ResponseMessage {
@@ -892,6 +927,7 @@ final class RemoteMacsModel: ObservableObject {
         _ request: WorktreeManagementRequest
     ) async -> WorktreeManagementResponse? {
         switch request {
+        case .agentSkills, .placement: return nil // Admission belongs to the directly authenticated parent.
         case .worktreeAgentCompletions(let worktreeID):
             guard let route = relayRouter.resolveWorktree(worktreeID) else { return nil }
             let response = await forwardManagement(identity: route.identity,

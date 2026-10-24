@@ -13,20 +13,15 @@ import NIOSSH
 /// userauth `username` field is deliberately ignored; the peer is
 /// resolved entirely by the offered Ed25519 public key.
 ///
-/// REMOTE-6.1 / REMOTE-7.1 capability enforcement happens here, not at
-/// channel-open: all R5-scope channel types (session/pty, panes-state,
-/// pane-control) require the same `terminalControl == .allowed`
-/// capability, so a peer without it cannot authenticate at all.
-/// SSH_MSG_USERAUTH_FAILURE closes every R5 channel-open gate by
-/// exclusion. When per-channel capability differentiation actually
-/// matters (port-tunnel REMOTE-4.x with `askEachTime`), that PR will
-/// introduce a per-connection `AuthenticatedPeerBox` and migrate the
-/// check to channel-open time.
+/// Ordinary SSH access requires terminal permission. A configured replication
+/// receiver may admit a desktop/host peer with only replication permission;
+/// SSHHostSessionConfiguration then restricts that peer to replication channels.
 public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     public let supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods = .publicKey
 
     private let store: TrustedPeerStore
     private let expectedDeviceID: RemoteDeviceID?
+    private let allowReplicationOnly: Bool
     private let activePeerRegistry: ActiveRemotePeerRegistry?
     private let closeActiveTransport: (@Sendable () async -> Void)?
     private let onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)?
@@ -43,6 +38,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     public init(
         store: TrustedPeerStore,
         expectedDeviceID: RemoteDeviceID? = nil,
+        allowReplicationOnly: Bool = false,
         activePeerRegistry: ActiveRemotePeerRegistry? = nil,
         closeActiveTransport: (@Sendable () async -> Void)? = nil,
         onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil,
@@ -51,6 +47,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     ) {
         self.store = store
         self.expectedDeviceID = expectedDeviceID
+        self.allowReplicationOnly = allowReplicationOnly
         self.activePeerRegistry = activePeerRegistry
         self.closeActiveTransport = closeActiveTransport
         self.onActivePeerRegistered = onActivePeerRegistered
@@ -60,11 +57,16 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
 
     /// Compare the permissions captured by userauth after async registration.
     /// Display names and activity timestamps do not change authorization.
-    static func hasCurrentAuthorization(_ peer: TrustedPeer, in store: TrustedPeerStore) -> Bool {
+    static func hasCurrentAuthorization(_ peer: TrustedPeer, in store: TrustedPeerStore, allowReplicationOnly: Bool = false) -> Bool {
         guard let current = try? store.get(id: peer.id) else { return false }
         return current.id == peer.id && current.kind == peer.kind
             && current.publicKey == peer.publicKey && current.capabilities == peer.capabilities
-            && current.capabilities.terminalControl == .allowed
+            && permitsAuthentication(current, allowReplicationOnly: allowReplicationOnly)
+    }
+
+    private static func permitsAuthentication(_ peer: TrustedPeer, allowReplicationOnly: Bool) -> Bool {
+        peer.capabilities.terminalControl == .allowed
+            || (allowReplicationOnly && peer.capabilities.replication == .allowed && (peer.kind == .mac || peer.kind == .linux))
     }
 
     public func requestReceived(
@@ -77,7 +79,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
             do {
                 let fingerprint = try Self.fingerprint(of: publicKeyRequest.publicKey)
                 if let peer = try store.get(fingerprint: fingerprint),
-                   peer.capabilities.terminalControl == .allowed,
+                   Self.permitsAuthentication(peer, allowReplicationOnly: allowReplicationOnly),
                    expectedDeviceID == nil || peer.id == expectedDeviceID {
                     if let activePeerRegistry, let closeActiveTransport {
                         let entryID = activePeerRegistry.register(
@@ -91,12 +93,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
                     onAuthenticatedPeer?(peer)
                     responsePromise.succeed(.success)
                 } else {
-                    // Either no matching trusted peer (unpaired / revoked) or the
-                    // peer's terminalControl capability has been disabled. Reject
-                    // with the same SSH_MSG_USERAUTH_FAILURE — clients can't tell
-                    // the difference, which prevents probing for revoked-vs-unpaired
-                    // status. REMOTE-6.1 / REMOTE-7.1 are satisfied by exclusion:
-                    // a peer that can't authenticate can't open any channel.
+                    // Do not distinguish unknown, revoked, or unauthorized peers.
                     responsePromise.succeed(.failure)
                 }
             } catch {

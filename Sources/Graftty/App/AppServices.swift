@@ -18,6 +18,26 @@ import WebRTC
 /// and the Settings paired-devices list.
 @MainActor
 final class AppServices {
+    let parentMCPProcesses = DuplexSubprocessScope()
+    lazy var parentMCPConnections: MCPConnectionSupervisor = {
+        let peers = trustedPeerStore
+        let processes = parentMCPProcesses
+        return MCPConnectionSupervisor(directory: ClientIdentityStore.defaultDirectory.appendingPathComponent("parent-mcp")) { [weak self] configuration, ready in
+            let registry = try HostProviderRegistry(providers: [AWSHostProvider(enrollment: AWSHostEnrollment(peers: peers))])
+            try await ParentMCPConnection.run(configuration, registry: registry, processScope: processes,
+                existingConnection: { @MainActor [weak self] peer in
+                    guard let self else { throw CancellationError() }
+                    return try await self.remoteMacsModel.mcpConnection(for: peer)
+                }, identity: { @MainActor [weak self] in
+                    guard let self, let key = try ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory).load(),
+                          let serverKey = self.hostKey() else { throw MCPConnectionFailure.authorization }
+                    return (.init(deviceID: Self.localRemoteDeviceID().value, displayName: Self.localHostDisplayName(),
+                                  publicKey: key.publicKey.rawRepresentation.base64EncodedString(),
+                                  serverPublicKey: serverKey.publicKey.rawRepresentation.base64EncodedString()), key)
+                }, ready: ready)
+        }
+    }()
+
     let socketServer: SocketServer
     var attentionFileObserver: AttentionFileHandoffObserver?
     let worktreeMonitor: WorktreeMonitor

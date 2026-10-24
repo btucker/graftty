@@ -1,11 +1,12 @@
 import ArgumentParser
 import Foundation
 import GrafttyKit
+import GrafttyProtocol
 
 struct Remote: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Set up and manage remote hosts",
-        subcommands: [RemoteReconnect.self, RemoteReconnectClient.self, RemoteSetupLinux.self]
+        subcommands: [RemoteMCP.self, RemoteSkills.self, RemotePlacement.self, RemotePlacementPlan.self, RemoteHosts.self, RemoteReconnect.self, RemoteReconnectClient.self, RemoteSetupLinux.self]
     )
 }
 
@@ -69,4 +70,41 @@ struct RemoteReconnect: ParsableCommand {
         try CLIEnv.expectOk(CLIEnv.sendRequest(.reconnectRemoteMac(target: target)), for: "remote reconnect")
         print("Reconnect requested for \(target). Check the Remote Hosts sidebar for status.")
     }
+}
+
+struct RemoteHosts: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "hosts", abstract: "List paired hosts and authenticated resource observations",
+        discussion: "Graftty must be running. Unknown or stale metrics do not imply spare capacity. Disk measurements apply only to the reported filesystem path. AWS inventory is available separately through provider hosts aws.")
+    @Flag(help: "Print identities, connection states, resource observations, and freshness as JSON") var json = false
+    static func fetch() throws -> [RemoteMacConnectionSummary] {
+        let response = try CLIEnv.sendRequest(.listRemoteHosts)
+        guard case .remoteHosts(let hosts) = response else {
+            try CLIEnv.expectOk(response, for: "remote hosts")
+            throw ValidationError("The running Graftty version does not support host telemetry.")
+        }
+        return hosts
+    }
+    func run() throws {
+        let hosts = try Self.fetch()
+        if json {
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            print(String(decoding: try encoder.encode(hosts), as: UTF8.self))
+            return
+        }
+        print("DEVICE\tNAME\tCONNECTION\tMETRICS\tARCH\tVCPU\tCPU_FRACTION\tAVAILABLE_MEMORY_BYTES\tAVAILABLE_DISK_BYTES\tDISK_PATH")
+        for host in hosts {
+            let fresh = host.resourceObservation?.isFresh() == true && host.state == .connected
+            let sample = fresh ? host.resourceObservation?.sample : nil
+            let cells: [String] = [host.deviceID.value, host.label, host.state.rawValue,
+                fresh ? "fresh" : (host.resourceObservation == nil ? "unavailable" : "stale"),
+                sample?.architecture ?? "unknown", Self.metric(sample?.cpuCount), Self.metric(sample?.cpuUtilization),
+                Self.metric(sample?.memoryAvailableBytes), Self.metric(sample?.diskAvailableBytes), sample?.diskPath ?? "unknown"]
+            print(cells.map { $0.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.map(String.init).joined() }.joined(separator: "\t"))
+        }
+        if hosts.isEmpty { print("No paired hosts.") }
+    }
+    private static func metric<T: CustomStringConvertible>(_ value: T?) -> String {
+        value.map { $0.description } ?? "unknown"
+    }
+
 }

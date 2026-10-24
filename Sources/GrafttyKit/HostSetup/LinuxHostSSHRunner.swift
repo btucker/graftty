@@ -12,14 +12,17 @@ public struct LinuxHostSSHRunner: LinuxHostSSHExecuting {
     let executable: String
     let timeout: TimeInterval
     let directory: String?
+    private let scheduler: SubprocessScheduler
 
     public init() {
+        scheduler = .dispatch
         executable = "/usr/bin/ssh"
         timeout = 600
         directory = nil
     }
 
-    init(executable: String, timeout: TimeInterval, directory: String? = nil) {
+    init(executable: String, timeout: TimeInterval, directory: String? = nil, scheduler: SubprocessScheduler = .dispatch) {
+        self.scheduler = scheduler
         self.executable = executable
         self.timeout = timeout
         self.directory = directory
@@ -27,7 +30,7 @@ public struct LinuxHostSSHRunner: LinuxHostSSHExecuting {
 
     public func capture(arguments: [String], inputFile: URL?) async throws -> CLIOutput {
         try Task.checkCancellation()
-        let output = try await Subprocess.run(SubprocessLaunch(
+        var launch = SubprocessLaunch(
             executable: executable,
             arguments: arguments,
             directory: directory,
@@ -36,7 +39,9 @@ public struct LinuxHostSSHRunner: LinuxHostSSHExecuting {
             timeout: .seconds(timeout),
             timeoutLabel: "ssh",
             terminatesOnCancellation: true
-        ))
+        )
+        launch.scheduler = scheduler
+        let output = try await Subprocess.run(launch)
         return CLIOutput(
             stdout: String(decoding: output.stdout, as: UTF8.self),
             stderr: String(decoding: output.stderr, as: UTF8.self),

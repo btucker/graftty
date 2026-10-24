@@ -12,6 +12,18 @@ import GrafttyProtocol
 struct ControlSocketWireFixtureTests {
     // Nested payloads mostly use synthesized Codable, so a Swift rename alone
     // changes their keys; they are frozen in full rather than spliced in.
+    static let operationID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    static func host() throws -> RemoteMacConnectionSummary.ID {
+        .init(deviceID: .init(value: "worker"), fingerprint: try .init(rawBytes: Data(repeating: 0, count: 32)))
+    }
+    static let skillStatus = RemoteSkillTransferStatus(descriptor: .init(operationID: operationID,
+        repositoryID: "/repo", runtime: "codex", revision: "rev", byteCount: 12), receivedBytes: 12, phase: .staged)
+    static func placement() throws -> HostPlacementRecord {
+        .init(operationID: operationID, owner: try host(),
+            intent: .init(repositoryID: "/repo", worktreeName: "wt", branchName: "wt",
+                demand: .init(architecture: "arm64", cpus: 1, memoryBytes: 1024, diskBytes: 2048)),
+            admittedAt: Date(timeIntervalSince1970: 0))
+    }
     static let recap = AttentionRecap(
         title: "Fix auth", context: "Login", completed: "Tests pass", next: "Open PR", need: "Review",
         emoji: "e1", emojiAlternatives: ["e2"], purposeChanged: true, checkpoint: "Green", decisions: ["JWT"])
@@ -57,6 +69,15 @@ struct ControlSocketWireFixtureTests {
 
     static func requests() throws -> [(NotificationMessage, String)] {
         [
+            (.mcpBridge(.init(parent: try host(), request: .close(sessionID: operationID))),
+             #"{"request":{"parent":{"deviceID":{"value":"worker"},"fingerprint":{"rawBytes":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},"request":{"close":{"sessionID":"00000000-0000-0000-0000-000000000001"}}},"type":"mcp_bridge"}"#),
+            (.listRemoteHosts,
+             #"{"type":"list_remote_hosts"}"#),
+            (.remoteSkills(host: try host(), request: .finish(operationID: operationID)),
+             #"{"host":{"deviceID":{"value":"worker"},"fingerprint":{"rawBytes":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},"request":{"finish":{"operationID":"00000000-0000-0000-0000-000000000001"}},"type":"remote_skills"}"#),
+            (.remotePlacement(host: try host(), request: .status(operationID: operationID)),
+             #"{"host":{"deviceID":{"value":"worker"},"fingerprint":{"rawBytes":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},"request":{"status":{"operationID":"00000000-0000-0000-0000-000000000001"}},"type":"remote_placement"}"#),
+            (.mcpConnection(.list), #"{"request":{"list":{}},"type":"mcp_connection"}"#),
             (.linuxSetupIdentity, #"{"type":"linux_setup_identity"}"#),
             (.completeLinuxSetup(try setupResult()),
              #"{"result":{"destination":"alias","identity":{"deviceID":"dev","displayName":"Linux","port":8801,"publicKey":"key"},"openSSH":{"hostname":"h","port":22,"user":"u"},"projectPaths":["/home/u/app"],"toolOutcomes":[{"component":"codex","message":"ok","status":"succeeded"}]},"type":"complete_linux_setup"}"#),
@@ -76,7 +97,7 @@ struct ControlSocketWireFixtureTests {
              #"{"request":{"create":{"_0":{"agentPrompt":"go","agentRuntime":"codex","base":"main","branchName":"br","callerWorktree":"/r","command":"codex","existing":false,"operationID":"op","project":"app","worktreeName":"wt"}}},"target":"Studio","type":"remote_worktree"}"#),
             (.remoteWorktree(target: "Studio", request: .status(operationID: "op")),
              #"{"request":{"status":{"operationID":"op"}},"target":"Studio","type":"remote_worktree"}"#),
-            (.remoteWorktree(target: "Studio", request: remoteOriginCreate), 
+            (.remoteWorktree(target: "Studio", request: remoteOriginCreate),
              #"{"request":{"create":{"_0":{"branchName":"wt","callerWorktree":"/r","existing":false,"operationID":"op","origin":{"host":"git.example.com","path":"/srv/app.git","port":2222,"sshUser":"deploy","transport":"ssh"},"worktreeName":"wt"}}},"target":"Studio","type":"remote_worktree"}"#),
             (.addPane(path: "/r", direction: .down, command: "ls", agentRuntime: .codex, agentPrompt: "go"),
              #"{"agent_prompt":"go","agent_runtime":"codex","command":"ls","direction":"down","path":"/r","type":"add_pane"}"#),
@@ -132,6 +153,13 @@ struct ControlSocketWireFixtureTests {
 
     static func responses() throws -> [(ResponseMessage, String)] {
         [
+            (.mcpConnections([]), #"{"mcpConnections":[],"type":"mcp_connections"}"#),
+            (.remoteHosts([]),
+             #"{"hosts":[],"type":"remote_hosts"}"#),
+            (.agentSkills(skillStatus),
+             #"{"agentSkills":{"descriptor":{"byteCount":12,"operationID":"00000000-0000-0000-0000-000000000001","repositoryID":"/repo","revision":"rev","runtime":"codex"},"phase":"staged","receivedBytes":12},"type":"agent_skills"}"#),
+            (.placement(try placement()),
+             #"{"placement":{"admittedAt":-978307200,"intent":{"branchName":"wt","demand":{"architecture":"arm64","cpus":1,"diskBytes":2048,"memoryBytes":1024},"repositoryID":"/repo","worktreeName":"wt"},"operationID":"00000000-0000-0000-0000-000000000001","owner":{"deviceID":{"value":"worker"},"fingerprint":{"rawBytes":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},"state":"preparing"},"type":"placement"}"#),
             (.linuxSetupIdentity(trust),
              #"{"identity":{"deviceID":"dev","displayName":"Mac","publicKey":"key"},"type":"linux_setup_identity"}"#),
             (.ok, #"{"type":"ok"}"#),
@@ -143,8 +171,9 @@ struct ControlSocketWireFixtureTests {
             (.paneShow("out"), #"{"text":"out","type":"pane_show"}"#),
             (.teamList(teamName: "t", members: [member]),
              #"{"members":[{"agents":[],"branch":"main","is_main_worktree":true,"is_running":false,"name":"main","worktree_path":"/r"}],"team_name":"t","type":"team_list"}"#),
-            (.teamList(teamName: "t", members: [memberWithAgent]), 
+            (.teamList(teamName: "t", members: [memberWithAgent]),
              #"{"members":[{"agents":[{"address":"/r/wt#codex-1","display_name":"Codex","id":"codex-1","is_reachable":true,"pane_session_name":"s","runtime":"codex"}],"branch":"wt","is_main_worktree":false,"is_running":true,"name":"wt","project_name":"app","project_path":"/r","worktree_path":"/r/wt"}],"team_name":"t","type":"team_list"}"#),
+            (.mcpProxy(.accepted), #"{"mcpProxy":{"accepted":{}},"type":"mcp_proxy"}"#),
             (.teamHookOutput("{}"), #"{"output":"{}","type":"team_hook_output"}"#),
             (.teamInbox(messages: [inboxMessage], nextBeforeID: "b", nextAfterID: "a", snapshotThroughID: "s"),
              #"{"messages":[{"agent_prompt":"prompt","batch_id":"batch","body":"hi","created_at":-978307200,"from":{"agentID":"codex-1","member":"a","runtime":"codex","worktree":"/r/a"},"id":"0001","kind":"team_message","priority":"normal","repo_path":"/r","source":"github","team":"t","to":{"member":"b","worktree":"/r/b"}}],"next_after_id":"a","next_before_id":"b","snapshot_through_id":"s","type":"team_inbox"}"#),
@@ -170,11 +199,11 @@ struct ControlSocketWireFixtureTests {
              .createWorktree, .agentPromptStagingCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability, .worktreeCreateStatus, .removeWorktree,
              .worktreeRemoveCapability, .worktreePinnedRemovalCapability, .worktreePinCapability, .setWorktreePinned,
-             .worktreeRemoveStatus, .capabilities: break
+             .worktreeRemoveStatus, .capabilities, .mcpConnection, .mcpBridge, .remoteSkills, .remotePlacement, .listRemoteHosts: break
         }
         switch response {
         case .linuxSetupIdentity, .ok, .error, .serverBusy, .paneList, .paneShow, .teamList, .teamHookOutput,
-             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove, .capabilities: break
+             .teamInbox, .worktreeCreate, .worktreeCreateRetry, .worktreeRemove, .capabilities, .mcpConnections, .mcpProxy, .agentSkills, .placement, .remoteHosts: break
         }
     }
 
