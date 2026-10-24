@@ -198,38 +198,59 @@ struct HeadlessWorktreeLifecycleTests {
         #expect(creations.status(operationID: status.operationID, now: Date().addingTimeInterval(11 * 60)) == nil)
     }
 
-    @Test("@spec REMOTE-22.55: When a paired Mac creates or polls a worktree on a headless host, the application shall scope the operation ID to that peer, so another peer can neither poll nor reuse it.")
+    @Test("@spec REMOTE-22.55: When paired Macs create or poll worktrees on a headless host with the same operation ID, the application shall retain independent operations for each peer and the local CLI, and shall reject a stranger's status poll.")
     func remoteOperationsAreScopedToThePeer() async throws {
         let host = try await host()
         defer { try? FileManager.default.removeItem(at: host.root) }
-        let creation = RemoteWorktreeCreation(callerWorktree: "/elsewhere/project", project: host.repo,
-            worktreeName: "remote", branchName: "remote", existing: false, base: nil, command: nil,
-            agentRuntime: nil, agentPrompt: nil, operationID: "shared-id")
+        let operationID = "shared-id"
         let owner = RemoteDeviceID(value: "mac-a")
+        let other = RemoteDeviceID(value: "mac-b")
 
-        guard case .worktreeCreate(let created) = await host.runtime.remoteTeam(.worktree(.create(creation)), deviceID: owner) else {
-            Issue.record("remote creation was rejected")
-            return
+        func remoteCreation(_ name: String, from device: RemoteDeviceID) async throws -> WorktreeCreateStatus {
+            let creation = RemoteWorktreeCreation(callerWorktree: "/elsewhere/project", project: host.repo,
+                worktreeName: name, branchName: name, existing: false, base: nil, command: nil,
+                agentRuntime: nil, agentPrompt: nil, operationID: operationID)
+            let response = await host.runtime.remoteTeam(.worktree(.create(creation)), deviceID: device)
+            guard case .worktreeCreate(var status) = response else {
+                Issue.record("remote creation was rejected: \(response)")
+                throw CancellationError()
+            }
+            // Finish before removing the fixture, even when an assertion fails.
+            let deadline = ContinuousClock.now + .seconds(20)
+            while status.state == .pending, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+                let response = await host.runtime.remoteTeam(.worktree(.status(operationID: operationID)), deviceID: device)
+                guard case .worktreeCreate(let next) = response else {
+                    Issue.record("the owning peer could not poll its operation: \(response)")
+                    throw CancellationError()
+                }
+                status = next
+            }
+            #expect(status.operationID == operationID)
+            #expect(status.state == .ready, "\(status.error ?? "")")
+            #expect(status.worktreePath == host.repo + "/.worktrees/" + name)
+            return status
         }
-        #expect(created.operationID == "shared-id")
-        #expect(await host.runtime.remoteTeam(.worktree(.status(operationID: "shared-id")), deviceID: RemoteDeviceID(value: "mac-b"))
+
+        let first = try await remoteCreation("remote-a", from: owner)
+        #expect(await host.runtime.remoteTeam(.worktree(.status(operationID: operationID)), deviceID: other)
             == .error("Unknown or expired remote worktree operation"))
-        #expect(await host.runtime.handle(.worktreeCreateStatus(operationID: "shared-id"))
+        #expect(await host.runtime.handle(.worktreeCreateStatus(operationID: operationID))
             == .error("unknown or expired worktree creation operation"))
-        guard case .worktreeCreate(var polled) = await host.runtime.remoteTeam(.worktree(.status(operationID: "shared-id")), deviceID: owner) else {
-            Issue.record("the owning peer could not poll its operation")
-            return
-        }
-        #expect(polled.operationID == "shared-id")
-        #expect(polled.worktreePath == host.repo + "/.worktrees/remote")
-        // Let Git finish before the fixture directory is removed.
-        let deadline = ContinuousClock.now + .seconds(20)
-        while polled.state == .pending, ContinuousClock.now < deadline,
-              case .worktreeCreate(let next) = await host.runtime.remoteTeam(.worktree(.status(operationID: "shared-id")), deviceID: owner) {
-            polled = next
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        #expect(polled.state == .ready, "\(polled.error ?? "")")
+
+        let second = try await remoteCreation("remote-b", from: other)
+        #expect(first.worktreePath != second.worktreePath)
+        #expect(await host.runtime.remoteTeam(.worktree(.status(operationID: operationID)), deviceID: owner)
+            == .worktreeCreate(first))
+        #expect(await host.runtime.remoteTeam(.worktree(.status(operationID: operationID)), deviceID: other)
+            == .worktreeCreate(second))
+
+        let local = try await finished(host, await host.runtime.handle(.createWorktree(
+            callerWorktree: host.repo, worktreeName: "local", branchName: "local", existing: false,
+            base: nil, command: nil, agentRuntime: nil, agentPrompt: nil, operationID: operationID)))
+        #expect(local.state == .ready)
+        #expect(local.worktreePath == host.repo + "/.worktrees/local")
+        #expect(host.terminals.starts.count == 3)
     }
 
     @Test("@spec REMOTE-22.60: If a paired client asks a headless host to delete a worktree that is still being created or removed, then the application shall reject the request and leave the row to the operation that owns it.")
@@ -396,27 +417,25 @@ struct HeadlessWorktreeLifecycleTests {
         #expect(error.contains("no-such-branch") && !error.hasPrefix("gitFailed("), "\(error)")
     }
 
-    /// The paired-client envelope keeps the responses it gave before #481:
-    /// its codes, messages and raw `git status --short` output.
-    @Test("A paired client's delete keeps its envelope responses")
-    func pairedClientDeleteKeepsItsWire() async throws {
+    @Test("@spec REMOTE-22.64: When a paired client creates or deletes a worktree on a headless host, the application shall use the Mac's create-failed, not-found, invalid, and git-failed error codes, and shall include short status only when force can help.")
+    func pairedClientFailuresMatchTheMac() async throws {
         let host = try await host()
         defer { try? FileManager.default.removeItem(at: host.root) }
 
         #expect(await host.runtime.manage(.delete(worktreeID: "/missing", force: false)) == .error(
-            code: "host_operation_failed", message: "worktree is not registered: /missing", forceAllowed: false, shortStatus: nil))
+            code: "not-found", message: "unknown worktree", forceAllowed: false, shortStatus: nil))
         #expect(await host.runtime.manage(.delete(worktreeID: host.repo, force: false)) == .error(
-            code: "host_operation_failed", message: "cannot delete the main checkout", forceAllowed: false, shortStatus: nil))
+            code: "invalid", message: "cannot delete the main checkout", forceAllowed: false, shortStatus: nil))
 
         let dirty = try await createdWorktree(host, name: "dirty")
         try "draft".write(toFile: dirty + "/notes.txt", atomically: true, encoding: .utf8)
-        let rawStatus = try await git(["status", "--short"], at: dirty)
-        guard case .error(let code, let message, let forceAllowed, let shortStatus) =
+        let shortStatus = await GitStatusCapture.shortStatus(at: dirty)
+        guard case .error(let code, let message, let forceAllowed, let capturedStatus) =
                 await host.runtime.manage(.delete(worktreeID: dirty, force: false)) else {
             Issue.record("a dirty worktree was deleted without force")
             return
         }
-        #expect(code == "git_failed" && forceAllowed && shortStatus == rawStatus && message.contains("untracked"))
+        #expect(code == "git-failed" && forceAllowed && capturedStatus == shortStatus && message.contains("untracked"))
 
         // `--force` does not override a lock, so Git refuses again.
         try await git(["worktree", "lock", dirty], at: host.repo)
@@ -425,11 +444,11 @@ struct HeadlessWorktreeLifecycleTests {
             Issue.record("a locked worktree was deleted")
             return
         }
-        #expect(forcedCode == "git_failed" && !forcedAllowed && forcedStatus == rawStatus)
+        #expect(forcedCode == "git-failed" && !forcedAllowed && forcedStatus == nil)
         #expect(host.runtime.state.worktree(forPath: dirty)?.state == .running)
 
         #expect(await host.runtime.manage(.create(repositoryID: host.repo, worktreeName: "dirty", branchName: "other",
-            existingSource: nil)) == .error(code: "host_operation_failed",
+            existingSource: nil)) == .error(code: "create-failed",
             message: "worktree destination already exists or is invalid", forceAllowed: false, shortStatus: nil))
     }
 
@@ -448,7 +467,7 @@ struct HeadlessWorktreeLifecycleTests {
             Issue.record("an unsaved removal was acknowledged")
             return
         }
-        #expect(code == "host_operation_failed")
+        #expect(code == "git-failed")
 
         let status = try await finished(removal: await host.runtime.handle(.removeWorktree(worktreePath: viaCLI, force: false)), host)
         #expect(status.state == .failed)
