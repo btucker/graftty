@@ -77,7 +77,7 @@ enum LinuxHostMaintenanceScripts {
     }
 
     static func install(release: LinuxHostRelease, data: String, expected: LinuxHostIdentity, version: String) throws -> String {
-        guard let resource = Bundle.module.url(forResource: "linux-install", withExtension: "sh") else {
+        guard let resource = GrafttyKitResourceBundle.bundle.url(forResource: "linux-install", withExtension: "sh") else {
             throw LinuxHostSetupError.invalidPlan("The maintenance installer resource is missing.")
         }
         let installer = try String(contentsOf: resource, encoding: .utf8)
