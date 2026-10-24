@@ -375,6 +375,41 @@ struct AppStateTests {
         #expect(!contents.contains { $0.hasPrefix("state.json.corrupt") })
     }
 
+    @Test("a state save retries a failed corruption backup without losing evidence")
+    func failedBackupIsRetriedBeforeStateSave() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let original = Data("{broken state".utf8)
+        let url = dir.appendingPathComponent("state.json")
+        let collision = dir.appendingPathComponent("state.json.corrupt.100000")
+        let previousBackup = Data("previous evidence".utf8)
+        try original.write(to: url)
+        try previousBackup.write(to: collision)
+
+        let fresh = AppState.loadOrFreshBackingUpCorruption(from: dir,
+            now: { Date(timeIntervalSince1970: 100) })
+        #expect(fresh == AppState())
+        #expect(try Data(contentsOf: url) == original)
+        try fresh.save(to: dir.appendingPathComponent("export"))
+        #expect(try Data(contentsOf: url) == original)
+        try fresh.save(to: dir)
+
+        let backups = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("state.json.corrupt.") }
+        let backupBytes = try backups.map { try Data(contentsOf: $0) }
+        #expect(backupBytes.contains(original))
+        #expect(try Data(contentsOf: collision) == previousBackup)
+        #expect(try AppState.load(from: dir) == AppState())
+        // Recovery is complete. Later saves retain the ordinary save policy.
+        try Data("{later corruption".utf8).write(to: url)
+        try fresh.save(to: dir)
+        let laterBackups = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("state.json.corrupt.") }
+        #expect(laterBackups.count == backups.count)
+        let json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        #expect(Set(json.keys) == ["repos", "windowFrame", "sidebarWidth"])
+    }
+
     // MARK: setFocusedTerminal — focus-preservation on worktree switch
     //
     // `TERM-2.3`: "When the user switches back to a running worktree,

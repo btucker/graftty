@@ -43,6 +43,9 @@ public struct JSONFileStore<Value: Codable>: Sendable {
     private let createsDirectory: Bool
     private let posixPermissions: Int16?
     private let backupNaming: CorruptBackupNaming
+    var moveItem: @Sendable (URL, URL) throws -> Void = {
+        try FileManager.default.moveItem(at: $0, to: $1)
+    }
 
     public init(
         fileURL: URL,
@@ -78,15 +81,17 @@ public struct JSONFileStore<Value: Codable>: Sendable {
     }
 
     /// Loads the value, or `nil` when the file is missing, unreadable or
-    /// malformed. Malformed contents are first moved aside (best effort) so
-    /// the caller's next save cannot destroy the user's prior data.
-    public func loadMovingAsideCorruptFile() -> Value? {
+    /// malformed. Malformed contents are first moved aside; backup failures
+    /// throw so a caller cannot proceed to overwrite the only evidence.
+    /// Recovery retries before a write must also propagate read errors.
+    public func loadMovingAsideCorruptFile(ignoringReadErrors: Bool = true) throws -> Value? {
         do {
             return try load()
         } catch is DecodingError {
-            moveAsideCorruptFile()
+            try moveAsideCorruptFile()
             return nil
         } catch {
+            if !ignoringReadErrors { throw error }
             return nil
         }
     }
@@ -180,11 +185,10 @@ public struct JSONFileStore<Value: Codable>: Sendable {
         }
     }
 
-    /// Best-effort rename of an unreadable file so the user's prior data
-    /// survives the fresh value the caller is about to write. Returns the
-    /// backup URL, or `nil` when the rename failed.
+    /// Renames a corrupt file so the user's prior data survives replacement.
+    /// A failed rename throws and leaves the original and any prior backup intact.
     @discardableResult
-    public func moveAsideCorruptFile(now: Date = Date()) -> URL? {
+    public func moveAsideCorruptFile(now: Date = Date()) throws -> URL {
         let name = fileURL.lastPathComponent
         let suffix: String
         switch backupNaming {
@@ -192,11 +196,7 @@ public struct JSONFileStore<Value: Codable>: Sendable {
         case .dashSeconds: suffix = ".corrupt-\(Int(now.timeIntervalSince1970))"
         }
         let backupURL = fileURL.deletingLastPathComponent().appendingPathComponent(name + suffix)
-        do {
-            try FileManager.default.moveItem(at: fileURL, to: backupURL)
-            return backupURL
-        } catch {
-            return nil
-        }
+        try moveItem(fileURL, backupURL)
+        return backupURL
     }
 }

@@ -36,6 +36,7 @@ public final class ObservableListStore<Element: Codable & Sendable> {
     private let corruptFile: CorruptFilePolicy
     private let isLoadable: @Sendable (Element) -> Bool
     private let areInIncreasingOrder: (Element, Element) -> Bool
+    private var corruptBackupFailed = false
 
     private enum BackgroundRead: Sendable {
         case loaded([Element])
@@ -64,9 +65,12 @@ public final class ObservableListStore<Element: Codable & Sendable> {
         guard !hasLoaded else { return }
         let file = file
         let isLoadable = isLoadable
-        let loaded = await Task.detached(priority: .userInitiated) {
-            Self.readInBackground(file, isLoadable: isLoadable)
-        }.value
+        let loaded: BackgroundRead = await withCheckedContinuation { continuation in
+            // File reads can block; leave Swift's cooperative workers available.
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: Self.readInBackground(file, isLoadable: isLoadable))
+            }
+        }
         guard !hasLoaded else { return }
         switch loaded {
         case .loaded(let rows):
@@ -75,7 +79,12 @@ public final class ObservableListStore<Element: Codable & Sendable> {
         case .malformed:
             // Re-read on the owning actor before recovery. A background read
             // must never rename a file that a later write has replaced.
-            ensureLoaded()
+            switch corruptFile {
+            case .moveAside: ensureLoaded()
+            case .discard:
+                elements = []
+                hasLoaded = true
+            }
         }
     }
 
@@ -83,26 +92,35 @@ public final class ObservableListStore<Element: Codable & Sendable> {
     /// No-op when already loaded.
     public func ensureLoaded() {
         guard !hasLoaded else { return }
-        elements = Self.read(file, corruptFile: corruptFile, isLoadable: isLoadable)
-            .sorted(by: areInIncreasingOrder)
+        do {
+            elements = try Self.read(file, corruptFile: corruptFile, isLoadable: isLoadable)
+                .sorted(by: areInIncreasingOrder)
+        } catch {
+            corruptBackupFailed = true
+            NSLog("[Graftty] failed to back up corrupt %@: %@", file.fileURL.path, String(describing: error))
+        }
         hasLoaded = true
     }
 
     /// Persists `list` and, only once the write succeeds, publishes it as
     /// loaded, so a pending `loadIfNeeded()` cannot replace it.
     public func write(_ list: [Element]) throws {
+        if corruptBackupFailed {
+            _ = try file.loadMovingAsideCorruptFile(ignoringReadErrors: false)
+        }
         try file.save(list)
         elements = list.sorted(by: areInIncreasingOrder)
         hasLoaded = true
+        corruptBackupFailed = false
     }
 
     nonisolated private static func read(
         _ file: JSONFileStore<[Element]>,
         corruptFile: CorruptFilePolicy,
         isLoadable: (Element) -> Bool
-    ) -> [Element] {
+    ) throws -> [Element] {
         let rows = switch corruptFile {
-        case .moveAside: file.loadMovingAsideCorruptFile()
+        case .moveAside: try file.loadMovingAsideCorruptFile()
         case .discard: try? file.load()
         }
         return (rows ?? []).filter(isLoadable)

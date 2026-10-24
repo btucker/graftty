@@ -90,15 +90,23 @@ public final class RemoteIdentityKeyStore<Location: RemoteIdentityFileLocation>:
         self.init(directory: directory, readData: { try Data(contentsOf: $0) })
     }
 
-    init(directory: URL, readData: @escaping @Sendable (URL) throws -> Data) {
+    init(
+        directory: URL,
+        readData: @escaping @Sendable (URL) throws -> Data,
+        moveCorruptFile: @escaping @Sendable (URL, URL) throws -> Void = {
+            try FileManager.default.moveItem(at: $0, to: $1)
+        }
+    ) {
         self.readData = readData
         let fileURL = directory.appendingPathComponent(Location.fileName)
         lock = RemoteIdentityFileLocks.shared.lock(for: fileURL)
-        file = JSONFileStore(
+        var file = JSONFileStore<StoredKey>(
             fileURL: fileURL,
             posixPermissions: 0o600,
             backupNaming: .dashSeconds
         )
+        file.moveItem = moveCorruptFile
+        self.file = file
     }
 
     public static var defaultDirectory: URL { Location.defaultDirectory }
@@ -151,14 +159,14 @@ public final class RemoteIdentityKeyStore<Location: RemoteIdentityFileLocation>:
                 return nil
             }
             guard stored.version == Self.currentVersion else {
-                file.moveAsideCorruptFile()
+                try file.moveAsideCorruptFile()
                 return nil
             }
             return try Curve25519.Signing.PrivateKey(rawRepresentation: stored.privateKeyData)
         } catch is DecodingError, is CryptoKitError {
             // Legacy schemas (no `version` field) decode-fail here; treat as corrupt.
             // CryptoKitError covers byte-level corruption inside a structurally valid record.
-            file.moveAsideCorruptFile()
+            try file.moveAsideCorruptFile()
             return nil
         }
     }
@@ -198,14 +206,22 @@ public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @u
         self.init(directory: directory, readData: { try Data(contentsOf: $0) })
     }
 
-    init(directory: URL, readData: @escaping @Sendable (URL) throws -> Data) {
+    init(
+        directory: URL,
+        readData: @escaping @Sendable (URL) throws -> Data,
+        moveCorruptFile: @escaping @Sendable (URL, URL) throws -> Void = {
+            try FileManager.default.moveItem(at: $0, to: $1)
+        }
+    ) {
         self.readData = readData
         let fileURL = directory.appendingPathComponent(Location.fileName)
         lock = RemoteIdentityFileLocks.shared.lock(for: fileURL)
-        file = JSONFileStore(
+        var file = JSONFileStore<StoredID>(
             fileURL: fileURL,
             backupNaming: .dashSeconds
         )
+        file.moveItem = moveCorruptFile
+        self.file = file
     }
 
     public static var defaultDirectory: URL { Location.defaultDirectory }
@@ -230,12 +246,12 @@ public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @u
                 return nil
             }
             guard stored.version == Self.currentVersion, !stored.deviceID.value.isEmpty else {
-                file.moveAsideCorruptFile()
+                try file.moveAsideCorruptFile()
                 return nil
             }
             return stored.deviceID
         } catch is DecodingError {
-            file.moveAsideCorruptFile()
+            try file.moveAsideCorruptFile()
             return nil
         }
     }
