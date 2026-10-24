@@ -9,8 +9,9 @@ public enum AttentionReportIdentity {
     }
 
     public static func unmanagedAgent(environment: [String: String]) -> UnmanagedAgent? {
+        let codexSessionID = environment["CODEX_SESSION_ID"].flatMap { $0.isEmpty ? nil : $0 }
         let session: (TeamHookRuntime, String)?
-        if let id = environment["CODEX_SESSION_ID"] ?? environment["CODEX_THREAD_ID"], !id.isEmpty {
+        if let id = codexSessionID ?? environment["CODEX_THREAD_ID"], !id.isEmpty {
             session = (.codex, id)
         } else if let id = environment["CLAUDE_SESSION_ID"], !id.isEmpty {
             session = (.claude, id)

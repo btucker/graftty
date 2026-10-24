@@ -3914,7 +3914,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.19** When a tracked agent has no Graftty wrapper identity, a valid recap shall appear in Attention immediately, and its next matching Stop hook shall not create a duplicate card.
 
-**AGENT-3.20** When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from its native session ID.
+**AGENT-3.20** When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from the first non-empty native session ID or thread ID.
 
 **AGENT-3.21** When an agent resumes in a sandbox after a stopped turn, the application shall consume its durable progress event and clear only an older stopped card from that session.
 
