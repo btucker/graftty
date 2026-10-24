@@ -136,9 +136,9 @@ public final class RemoteIdentityKeyStore<Location: RemoteIdentityFileLocation>:
 ///
 /// The ID is stored in a JSON file (`Location.fileName`) inside the given
 /// directory, alongside a schema version. Every access is serialised
-/// through an `NSLock`. An unreadable file yields a fresh ID; a corrupt or
-/// foreign-schema file is first moved aside to `<name>.corrupt-<seconds>`,
-/// so the device always has a usable identity.
+/// through an `NSLock`. Read failures throw so a temporarily inaccessible
+/// identity is preserved; a corrupt or foreign-schema file is first moved
+/// aside to `<name>.corrupt-<seconds>` before generating a replacement.
 public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @unchecked Sendable {
 
     private struct StoredID: Codable {
@@ -164,7 +164,7 @@ public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @u
     public func loadOrGenerateAndPersist() throws -> RemoteDeviceID {
         lock.lock()
         defer { lock.unlock() }
-        if let existing = _load() {
+        if let existing = try _load() {
             return existing
         }
         let id = RemoteDeviceID.generate()
@@ -174,7 +174,7 @@ public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @u
 
     // MARK: Private (call only while holding `lock`)
 
-    private func _load() -> RemoteDeviceID? {
+    private func _load() throws -> RemoteDeviceID? {
         do {
             guard let stored = try file.load() else {
                 return nil
@@ -186,8 +186,6 @@ public final class RemoteDeviceIDStore<Location: RemoteIdentityFileLocation>: @u
             return stored.deviceID
         } catch is DecodingError {
             file.moveAsideCorruptFile()
-            return nil
-        } catch {
             return nil
         }
     }
