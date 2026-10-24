@@ -10,6 +10,7 @@ public typealias HostDeviceIDStore = RemoteDeviceIDStore<HostDeviceIDFile>
 
 public enum HostDeviceIDFile: RemoteIdentityFileLocation {
     public static let fileName = "host-device-id.json"
+    public static var defaultDirectory: URL { HostIdentityFile.defaultDirectory }
 }
 
 /// Generic types cannot hold static stored properties, so `shared` is
