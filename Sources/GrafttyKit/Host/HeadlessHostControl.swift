@@ -35,13 +35,19 @@ public extension HeadlessHostRuntime {
     func manage(_ request: WorktreeManagementRequest) async -> WorktreeManagementResponse {
         do {
             switch request {
-            case .agentCompletions:
-                return .agentCompletions(AgentCompletionCatalog.local(repos: state.repos,
-                    records: (try? presence.listAll()) ?? [], isReachable: TeamAgentReachability.isReachable))
-            case .worktreeAgentCompletions(let worktreeID):
-                let candidates = AgentCompletionCatalog.local(repos: state.repos,
-                    records: (try? presence.listAll()) ?? [], isReachable: TeamAgentReachability.isReachable)
-                return .agentCompletions(AgentCompletionCatalog.contextualized(candidates, worktreePath: worktreeID, repos: state.repos))
+            case .agentCompletions, .worktreeAgentCompletions:
+                let repos = state.repos
+                let presence = presence
+                let readPresence = Self.presenceRecordsReader
+                return await OffMainIO.run {
+                    let candidates = AgentCompletionCatalog.local(repos: repos,
+                        records: (try? readPresence(presence)) ?? [], isReachable: TeamAgentReachability.isReachable)
+                    if case .worktreeAgentCompletions(let worktreeID) = request {
+                        return .agentCompletions(AgentCompletionCatalog.contextualized(
+                            candidates, worktreePath: worktreeID, repos: repos))
+                    }
+                    return .agentCompletions(candidates)
+                }
             case .listRepositories:
                 return .repositories(await repositoryInfo())
             case .create(let repository, let name, let branch, let source):
@@ -145,10 +151,15 @@ public extension HeadlessHostRuntime {
             return await RemoteCLIWorktreeService.handle(operation, from: deviceID, repos: state.repos,
                 platform: HeadlessWorktreeLifecycle(runtime: self))
         }
+        let repos = state.repos
+        let inbox = inbox
         let presence = presence
-        return RemoteTeamService(inbox: inbox, agentRecords: { (try? presence.listAll()) ?? [] },
-            agentReachability: { TeamAgentReachability.isReachable($0) })
-            .handle(request, from: deviceID, repos: state.repos)
+        let readPresence = Self.presenceRecordsReader
+        return await OffMainIO.run {
+            RemoteTeamService(inbox: inbox, agentRecords: { (try? readPresence(presence)) ?? [] },
+                agentReachability: { TeamAgentReachability.isReachable($0) })
+                .handle(request, from: deviceID, repos: repos)
+        }
     }
 }
 

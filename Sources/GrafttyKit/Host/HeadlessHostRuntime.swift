@@ -12,6 +12,10 @@ public final class HeadlessHostRuntime {
     let terminals: any HostTerminalDriver
     let inbox: TeamInbox
     let presence: TeamPresenceStorage
+    /// Captured before dispatch so tests can observe the actual presence read.
+    @TaskLocal static var presenceRecordsReader: @Sendable (TeamPresenceStorage) throws -> [TeamPresenceRecord] = {
+        try $0.listAll()
+    }
     let recaps = AttentionRecapCoordinator()
     let agentSetup: HostAgentSetup
     let portScanner: PortScanner
