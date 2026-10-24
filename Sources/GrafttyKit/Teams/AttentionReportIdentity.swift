@@ -27,19 +27,27 @@ public enum AttentionReportIdentity {
 
     public static func currentAgentID(worktreePath: String) -> String? {
         let environment = ProcessInfo.processInfo.environment
-        if let explicit = environment["GRAFTTY_AGENT_ID"]
-            .flatMap(TeamAgentIdentity.init(rawValue:)) {
-            return explicit.rawValue
-        }
         let records = (try? TeamPresenceStorage(
             rootDirectory: TeamPresenceStorage.defaultRoot()
         ).listAll()) ?? []
+        return currentAgentID(
+            worktreePath: worktreePath, environment: environment, records: records,
+            isReachable: TeamAgentReachability.isReachable
+        )
+    }
+
+    static func currentAgentID(
+        worktreePath: String,
+        environment: [String: String],
+        records: [TeamPresenceRecord],
+        isReachable: (TeamPresenceRecord) -> Bool
+    ) -> String? {
         return TeamCallerAgentIdentityResolver.resolve(
-            explicitAgentID: nil,
+            explicitAgentID: environment["GRAFTTY_AGENT_ID"],
             worktree: worktreePath,
             paneSessionName: TeamRegisterPaneResolver.paneSessionName(env: environment),
             records: records,
-            isReachable: TeamAgentReachability.isReachable
+            isReachable: isReachable
         )
     }
 }

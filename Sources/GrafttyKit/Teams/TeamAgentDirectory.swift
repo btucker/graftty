@@ -298,10 +298,6 @@ public enum TeamCallerAgentIdentityResolver {
         records: [TeamPresenceRecord],
         isReachable: (TeamPresenceRecord) -> Bool
     ) -> String? {
-        if let explicit = explicitAgentID.flatMap(TeamAgentIdentity.init(rawValue:)) {
-            return explicit.rawValue
-        }
-
         let identities = Set(records.compactMap { record -> TeamAgentIdentity? in
             guard record.worktree == worktree,
                   record.paneSessionName == paneSessionName,
@@ -311,6 +307,12 @@ public enum TeamCallerAgentIdentityResolver {
             }
             return TeamAgentDirectory.identity(for: record)
         })
+        // Pane environments can inherit another agent's ID. Treat it as a
+        // hint only after checking ownership in this worktree and pane.
+        if let explicit = explicitAgentID.flatMap(TeamAgentIdentity.init(rawValue:)),
+           identities.contains(explicit) {
+            return explicit.rawValue
+        }
         guard identities.count == 1 else { return nil }
         return identities.first?.rawValue
     }

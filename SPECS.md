@@ -2624,6 +2624,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.14** When `graftty team msg <address> <text>` is invoked, the CLI shall send a normal-priority `team_send` request as a hidden alias of `team send` that `graftty team --help` does not list.
 
+**TEAM-4.15** When a team CLI caller inherits an agent ID from another worktree or pane, the application shall use only reachable top-level presence in the caller's worktree and pane to identify the sender, accepting the inherited ID only when it belongs to that presence and leaving ambiguous identity unset.
+
 ### TEAM-5.x — `team_*` Inbox Events
 
 **TEAM-5.1** When team_message is dispatched, the application shall append exactly one inbox row addressed to the named recipient.
