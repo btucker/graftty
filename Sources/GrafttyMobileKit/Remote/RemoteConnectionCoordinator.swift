@@ -273,6 +273,9 @@ public final class RemoteConnectionCoordinator {
         guard connectionsAllowed else { return nil }
         guard let pinnedHost = pinnedHost(for: host) else { return nil }
 
+        if let inFlight = inFlightAttempts[host.id] {
+            return await inFlight.task.value
+        }
         if let live = liveConnections[host.id] {
             return live
         }
@@ -284,10 +287,6 @@ public final class RemoteConnectionCoordinator {
             }
             failureCooldowns[host.id] = nil
         }
-        if let inFlight = inFlightAttempts[host.id] {
-            return await inFlight.task.value
-        }
-
         let attemptID = UUID()
         let task = Task<RemoteHostConnection?, Never> { [weak self] in
             await self?.negotiate(
@@ -681,8 +680,9 @@ public final class RemoteConnectionCoordinator {
             Task { await self?.evict(hostID: host.id, connectionIdentity: connectionIdentity) }
         }
 
+        let refreshedPin: PinnedHost
         do {
-            let refreshedPin = try await RemoteHostDialer.negotiate(
+            refreshedPin = try await RemoteHostDialer.negotiate(
                 connection,
                 signaling: signaling,
                 pinnedHost: pinnedHost,
@@ -692,11 +692,6 @@ public final class RemoteConnectionCoordinator {
                 replacingExistingConnection: replacingExistingConnection,
                 connectedAt: now
             )
-            try RemoteHostDialer.persistRefreshedPin(refreshedPin, using: pinnedHostStore.update) { error in
-                Self.logger.warning(
-                    "connected to host \(host.id, privacy: .public), but could not persist route metadata: \(String(describing: error), privacy: .public)"
-                )
-            }
         } catch {
             await connection.close()
             guard !invalidatedAttempts.contains(attemptID) else {
@@ -721,20 +716,9 @@ public final class RemoteConnectionCoordinator {
 
         liveConnections[host.id] = connection
 
-        // Register-then-verify: the line above and this `await` are NOT
-        // in the same uninterrupted stretch — this is a genuine new
-        // suspension point, unlike the no-await check right before it.
-        // Reasoning through what a concurrent `invalidate(host:)` sees if
-        // it lands in EXACTLY this gap: registration already happened
-        // (`liveConnections[host.id]` is visible), so `invalidate` takes
-        // its normal live-connection branch — `removeValue` + `close` —
-        // rather than the in-flight-attempt branch. That's coherent: the
-        // connection gets torn down either way, just via the ordinary
-        // path instead of `invalidatedAttempts`. What THIS check guards
-        // against is different — a connection that went terminal on its
-        // own (ICE failed, DataChannel closed) in the gap between
-        // the dialer applying the answer and this line, independent of any
-        // `invalidate` call.
+        // Registration stays provisional while reading connection state.
+        // Invalidation or a terminal observer can evict it during this
+        // actor hop; check both state and registration before saving.
         let state = await stateAfterRegistration(connection)
         if state.isTerminal {
             evict(hostID: host.id, connectionIdentity: connectionIdentity)
@@ -742,6 +726,27 @@ public final class RemoteConnectionCoordinator {
             guard !invalidatedAttempts.contains(attemptID) else {
                 return nil
             }
+            return fail(host: host, route: failureRoute)
+        }
+
+        guard !Task.isCancelled,
+              !invalidatedAttempts.contains(attemptID),
+              liveConnections[host.id] === connection else {
+            evict(hostID: host.id, connectionIdentity: connectionIdentity)
+            await connection.close()
+            return nil
+        }
+        do {
+            try RemoteHostDialer.persistRefreshedPin(refreshedPin, using: pinnedHostStore.refreshConnectionMetadata) { error in
+                Self.logger.warning(
+                    "connected to host \(host.id, privacy: .public), but could not persist route metadata: \(String(describing: error), privacy: .public)"
+                )
+            }
+        } catch {
+            evict(hostID: host.id, connectionIdentity: connectionIdentity)
+            await connection.close()
+            guard !invalidatedAttempts.contains(attemptID) else { return nil }
+            Self.logger.warning("negotiation with host \(host.id, privacy: .public) failed: \(String(describing: error), privacy: .public)")
             return fail(host: host, route: failureRoute)
         }
 
