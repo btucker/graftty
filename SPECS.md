@@ -3534,7 +3534,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.54** If a headless host is polled for a worktree creation or removal that it does not retain, then the application shall answer with the Mac app's unknown-or-expired message, and finished results shall expire after the retention period.
 
-**REMOTE-22.55** When a paired Mac creates or polls a worktree on a headless host, the application shall scope the operation ID to that peer, so another peer can neither poll nor reuse it.
+**REMOTE-22.55** When paired Macs create or poll worktrees on a headless host with the same operation ID, the application shall retain independent operations for each peer and the local CLI, and shall reject a stranger's status poll.
 
 **REMOTE-22.56** When a headless host creates or removes a linked worktree, the application shall send the team's member-joined or member-left event to the main checkout, as the Mac app does.
 
@@ -3551,6 +3551,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-22.62** When a headless host removes a worktree, the application shall drop the worktree's cached diff statistics, so a worktree created later at the same path starts without them.
 
 **REMOTE-22.63** If Git refuses a headless worktree creation, then the application shall report Git's message as the operation's error, as the Mac app does.
+
+**REMOTE-22.64** When a paired client creates or deletes a worktree on a headless host, the application shall use the Mac's create-failed, not-found, invalid, and git-failed error codes, report Git creation failures with the Mac's message, and include short status only when forceAllowed is true.
 
 ### REMOTE-23.x
 
