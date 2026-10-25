@@ -179,6 +179,9 @@ elif args[0] == 'build':
     step = 'test' if args[1] == 'test' else 'release'
     with calls.open('a') as handle: handle.write(step + '\n')
     mode = os.environ['GRAFTTY_TEST_ZMX_FAILURE']
+    if mode == 'safe-tests' and '-Doptimize=ReleaseSafe' not in args:
+        print('Tests and shipped binary must use ReleaseSafe', file=sys.stderr)
+        sys.exit(44)
     if mode in ('compiler', 'compiler-http', 'test'):
         diagnostics = {'compiler': 'src/main.zig:1:1: error: invalid syntax',
                        'compiler-http': 'src/main.zig:1:1: error: HTTP response read failure: ConnectionResetByPeer',
@@ -202,6 +205,11 @@ elif args[0] == 'build':
     def run_build(self, mode):
         return subprocess.run(["bash", str(self.repo / "scripts/linux/build-zmx.sh"), "aarch64", str(self.output)],
                               env={**self.env, "GRAFTTY_TEST_ZMX_FAILURE": mode}, capture_output=True, text=True, timeout=15)
+
+    def test_tests_use_the_shipped_safety_mode(self):
+        result = self.run_build("safe-tests")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.output.exists())
 
     def test_transient_dependency_failure_is_retried_in_both_steps(self):
         result = self.run_build("transient")

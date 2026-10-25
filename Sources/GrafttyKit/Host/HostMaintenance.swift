@@ -7,11 +7,26 @@ final class HostMaintenance: WorktreeMonitorDelegate {
     let monitor = WorktreeMonitor(watchContents: true)
     var task: Task<Void, Never>?
     var portTask: Task<Void, Never>?
+    var resourceTask: Task<Void, Never>?
     var dirty: Set<String> = []
     init(runtime: HeadlessHostRuntime) { self.runtime = runtime; monitor.delegate = self }
     func start() {
         guard let runtime else { return }
         for repo in runtime.state.repos { monitor.installRepoWatchers(repo: repo); dirty.insert(repo.path) }
+        resourceTask = Task { [weak self] in
+            let sampler = HostResourceSampler()
+            while !Task.isCancelled {
+                guard let runtime = self?.runtime else { return }
+                let active = runtime.state.repos.flatMap(\.worktrees).filter { $0.state == .running }.count
+                var sample = await sampler.sample(diskPath: runtime.configuration.stateDirectory.path,
+                    activeWorktrees: active, pendingOperations: runtime.busyPaths.count)
+                guard !Task.isCancelled else { return }
+                sample.pendingPlacements = runtime.placements.pendingCount
+                sample.acceptingPlacements = runtime.drain == nil
+                runtime.hostResources = sample
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
         portTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let runtime = self?.runtime else { return }
@@ -38,7 +53,7 @@ final class HostMaintenance: WorktreeMonitorDelegate {
             }
         }
     }
-    func stop() { task?.cancel(); task = nil; portTask?.cancel(); portTask = nil; monitor.stopAll() }
+    func stop() { resourceTask?.cancel(); resourceTask = nil; runtime?.hostResources = nil; task?.cancel(); task = nil; portTask?.cancel(); portTask = nil; monitor.stopAll() }
     nonisolated func worktreeMonitorDidDetectChange(_ monitor: WorktreeMonitor, repoPath: String) {
         Task { @MainActor [weak self] in self?.dirty.insert(repoPath) }
     }

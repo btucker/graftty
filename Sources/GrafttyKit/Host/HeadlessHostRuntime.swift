@@ -23,6 +23,12 @@ public final class HeadlessHostRuntime {
     var projectIcons: [UUID: HostProjectIcon] = [:]
     var projectIconLoads: [UUID: HostProjectIconLoad] = [:]
     var busyPaths: Set<String> = []
+    let devContainers: DevContainerPreparer
+    let placements: HostPlacementLedger
+    let skillTransfers: RemoteSkillTransferReceiver
+    public var mcpProfiles: MCPProfileService?
+    var placementTasks: [UUID: Task<Void, Never>] = [:]
+    var isShuttingDown = false
     /// `graftty worktree add` / `remove` operations, shared with the Mac app.
     let worktreeCreations = CLIWorktreeCreationStore()
     let worktreeRemovals = CLIWorktreeRemovalStore()
@@ -36,11 +42,15 @@ public final class HeadlessHostRuntime {
     var repositoryBranches: [String: RemoteBranchSnapshot] = [:]
     var operationGeneration: UInt64 = 0
     var worktreeStats: [String: WorktreeWireStats] = [:]
+    public internal(set) var hostResources: HostResourceSnapshot?
     public var origin: WorktreeOrigin?
 
     public init(configuration: HostConfiguration, terminals: (any HostTerminalDriver)? = nil,
                 initialState: AppState? = nil, portScanner: PortScanner? = nil,
-                agentSetup: HostAgentSetup? = nil) throws {
+                agentSetup: HostAgentSetup? = nil, devContainers: DevContainerPreparer? = nil) throws {
+        placements = try HostPlacementLedger(fileURL: configuration.stateDirectory.appendingPathComponent("placements.json"))
+        skillTransfers = RemoteSkillTransferReceiver(directory: configuration.stateDirectory.appendingPathComponent("agent-skills"))
+        self.devContainers = devContainers ?? DevContainerPreparer(profileDirectory: configuration.stateDirectory.appendingPathComponent("agent-profiles"))
         self.configuration = configuration
         self.portScanner = portScanner ?? PortScanner()
         self.agentSetup = agentSetup ?? HostAgentSetup(configuration: configuration)
@@ -82,6 +92,12 @@ public final class HeadlessHostRuntime {
     }
 
     public func restore() async throws {
+        for record in placements.retainedRecords where record.state == .created && record.environment?.mcpConfigured == true {
+            guard FileManager.default.fileExists(atPath: record.intent.worktreePath),
+                  let grants = record.intent.devContainer?.mcpGrants else { continue }
+            guard let mcpProfiles else { throw HostRuntimeError.invalid("Managed MCP profile service is unavailable") }
+            _ = try mcpProfiles.prepare(operationID: record.operationID, configurations: grants.map { .init(parent: record.owner, scope: $0) })
+        }
         let live = try await terminals.sessions()
         for ri in state.repos.indices {
             for wi in state.repos[ri].worktrees.indices {
@@ -189,7 +205,9 @@ public final class HeadlessHostRuntime {
     /// Creates a linked worktree and starts its first pane, as a paired
     /// client's worktree-management request does.
     public func createWorktree(repository: String, name: String, branch: String,
-        existing: Bool = false, remoteOnly: Bool = false, command: String? = nil) async throws -> (path: String, session: String) {
+        existing: Bool = false, remoteOnly: Bool = false, command: String? = nil, relativeGitPaths: Bool = false,
+        prepareEnvironment: (@MainActor @Sendable (String) async throws -> Void)? = nil) async throws -> (path: String, session: String) {
+        guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
         guard let repo = state.repos.first(where: { $0.path == repository }) else { throw HostRuntimeError.notFound("repository is not registered") }
         // Validate the name before probing the destination it names.
         if let error = WorktreeCreationInput.validationError(worktreeName: name, branchName: branch, existing: existing) {
@@ -206,13 +224,15 @@ public final class HeadlessHostRuntime {
         case .failure(let error): throw HostRuntimeError.invalid(error.userMessage ?? "could not begin worktree creation")
         }
         let session = try await finishCreatingWorktree(CLIWorktreeCreationPlan(repoPath: repo.path, worktreePath: path,
-            branch: selection, base: nil, initialCommand: command, agentRuntime: nil))
+            branch: selection, base: nil, initialCommand: command, agentRuntime: nil),
+            relativeGitPaths: relativeGitPaths, prepareEnvironment: prepareEnvironment)
         return (path, session)
     }
 
     /// Rejects destinations the placeholder check cannot see: an existing
     /// directory or a symlink anywhere under `.worktrees`.
     func creationDestinationError(worktreePath path: String, repo: RepoEntry) -> String? {
+        guard !isShuttingDown, placements.drain == nil else { return "Host is shutting down or draining" }
         let container = (repo.path as NSString).appendingPathComponent(".worktrees")
         guard path.hasPrefix(container + "/"), !FileManager.default.fileExists(atPath: path) else {
             return "worktree destination already exists or is invalid"
@@ -233,7 +253,8 @@ public final class HeadlessHostRuntime {
 
     /// Phase two for a `.creating` row: Git, then the first pane. A Git
     /// failure drops the row; a pane failure leaves the worktree closed.
-    func finishCreatingWorktree(_ plan: CLIWorktreeCreationPlan) async throws -> String {
+    func finishCreatingWorktree(_ plan: CLIWorktreeCreationPlan, relativeGitPaths: Bool = false,
+        prepareEnvironment: (@MainActor @Sendable (String) async throws -> Void)? = nil) async throws -> String {
         let path = plan.worktreePath
         do { try acquire(path) } catch {
             _ = state.removeWorktree(atPath: path)
@@ -243,8 +264,9 @@ public final class HeadlessHostRuntime {
         defer { busyPaths.remove(path) }
         do {
             if let agent = plan.agentRuntime { try await agentSetup.ensure(agent) }
+            guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
             let startPoint = await GitWorktreeAdd.startPoint(for: plan.branch, base: plan.base, repoPath: plan.repoPath)
-            try await GitWorktreeAdd.add(repoPath: plan.repoPath, worktreePath: path, branch: plan.branch, startPoint: startPoint)
+            try await GitWorktreeAdd.add(repoPath: plan.repoPath, worktreePath: path, branch: plan.branch, startPoint: startPoint, relativePaths: relativeGitPaths)
         } catch {
             _ = state.removeWorktree(atPath: path)
             try? save()
@@ -260,6 +282,10 @@ public final class HeadlessHostRuntime {
             TeamMembershipEvents.fireJoined(repo: repo, joinerWorktreePath: path, dispatcher: controlPlatform.teamEventDispatcher)
         }
         do {
+            try Task.checkCancellation()
+            try await prepareEnvironment?(path)
+            try Task.checkCancellation()
+            guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
             return try await openUnlocked(path, command: plan.initialCommand)
         } catch {
             closeCreatingRow(path)
@@ -289,24 +315,52 @@ public final class HeadlessHostRuntime {
         guard path != repo.path else { throw HostRuntimeError.invalid("cannot delete the main checkout") }
         try acquire(path)
         defer { busyPaths.remove(path) }
-        let priorState = worktree.state
-        state.repos[index.repo].worktrees[index.worktree].state = .deleting
-        try? save()
+        let placement = placements.record(for: path)
+        let containerID: String?
+        if let placement, placement.intent.devContainer != nil {
+            // Refuse an already-dirty deletion before interrupting its running processes.
+            if !force, FileManager.default.fileExists(atPath: path),
+               !(try await GitRunner.run(args: ["status", "--porcelain"], at: path)).isEmpty {
+                throw GitWorktreeRemove.Error.gitFailed(exitCode: 128, stderr: "Worktree contains modified or untracked files; use --force to delete it")
+            }
+            if let retained = placement.environment?.containerID { containerID = retained }
+            else { containerID = try await devContainers.findPlacementContainer(operationID: placement.operationID, workspace: path) }
+        } else { containerID = nil }
+        let restartContainer: Bool
+        if let containerID { restartContainer = try await devContainers.stopForDeletion(containerID: containerID) }
+        else { restartContainer = false }
+        var priorState = worktree.state
         var dismissed = false
         do {
+            // Preflight and Docker suspend. Another worktree can be deleted or
+            // reordered while this path is leased, invalidating its old index.
+            let current = try indices(path)
+            priorState = state.repos[current.repo].worktrees[current.worktree].state
+            state.repos[current.repo].worktrees[current.worktree].state = .deleting
+            try? save()
             try await GitWorktreeRemove.remove(repoPath: repo.path, worktreePath: path, force: force)
         } catch GitWorktreeRemove.Error.gitFailed where pruneVanished && !FileManager.default.fileExists(atPath: path) {
             try? await GitWorktreePrune.run(repoPath: repo.path)
             dismissed = true
         } catch {
-            // Restore before the caller captures `git status --short`, as
-            // `DeleteWorktreeFlow` does, so a retry sees the prior state.
+            let deletionError = error
             if let current = state.indices(forWorktreePath: path) {
                 state.repos[current.repo].worktrees[current.worktree].state = priorState
                 try? save()
             }
+            if restartContainer, let containerID {
+                do {
+                    // Restore the environment even if the requesting channel was
+                    // canceled. This compensation still uses the Docker timeout.
+                    try await Task { [devContainers] in
+                        try await devContainers.restartAfterRejectedDeletion(containerID: containerID)
+                    }.value
+                }
+                catch { throw HostRuntimeError.invalid("Worktree deletion failed: \(deletionError). Container restart also failed: \(error)") }
+            }
             throw error
         }
+        if let placement { await mcpProfiles?.stop(operationID: placement.operationID) }
         for session in worktree.paneSessions.values { try? await terminals.kill(launcher.sessionName(for: session)) }
         worktreeStats[path] = nil
         state.removeWorktree(atPath: path)
@@ -315,7 +369,15 @@ public final class HeadlessHostRuntime {
                 reason: .removed, dispatcher: controlPlatform.teamEventDispatcher)
         }
         try save()
+        try placements.releaseDeletedWorktree(path)
         await refreshPortBindings()
+        if let containerID, let placement {
+            do { try await devContainers.removeStoppedContainer(containerID: containerID) }
+            catch {
+                try placements.recordCleanupFailure(operationID: placement.operationID, containerID: containerID, message: String(describing: error))
+                throw error
+            }
+        }
         return WorktreeRemovalOutcome(dismissed: dismissed)
     }
 
@@ -329,9 +391,21 @@ public final class HeadlessHostRuntime {
         _ = try await removeWorktree(path, force: force)
     }
 
-    public func shutdown() throws { deliveryTask?.cancel(); deliveryTask = nil; maintenance?.stop(); maintenance = nil; try save(); terminals.detachAll() }
+    public func shutdown() async throws {
+        isShuttingDown = true
+        await skillTransfers.discardIncomplete()
+        deliveryTask?.cancel(); deliveryTask = nil
+        maintenance?.stop(); maintenance = nil
+        let jobs = Array(placementTasks.values)
+        for job in jobs { job.cancel() }
+        for job in jobs { await job.value }
+        await mcpProfiles?.stop()
+        try save()
+        terminals.detachAll()
+    }
 
     public func spawn(session: PaneSessionID, path: String, command: String? = nil) -> ZmxSpawnConfiguration {
+        let command = placements.environment(for: path).map { DevContainerPreparer.shellCommand(for: $0, command: command) } ?? command
         var environment = ProcessInfo.processInfo.environment
         for key in ZmxLauncher.leakyEnvKeysToStripAtAppLaunch { environment.removeValue(forKey: key) }
         #if os(Linux)

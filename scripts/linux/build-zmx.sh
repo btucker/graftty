@@ -80,7 +80,7 @@ zig_build_with_download_retry() {
     zig fmt --check src
     # Use musl so zmx itself does not need a particular glibc version.
     started=$SECONDS
-    zig_build_with_download_retry build test -j2 "-Dtarget=$arch-linux-musl" --summary all
+    zig_build_with_download_retry build test -j2 "-Dtarget=$arch-linux-musl" -Doptimize=ReleaseSafe --summary all
     echo "Zmx compile and test: $((SECONDS - started)) seconds"
     started=$SECONDS
     zig_build_with_download_retry build -j2 "-Dtarget=$arch-linux-musl" -Doptimize=ReleaseSafe \

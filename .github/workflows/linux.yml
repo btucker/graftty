@@ -34,7 +34,7 @@ jobs:
       - name: Install build tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends python3 curl ca-certificates xz-utils git file
+          apt-get install -y --no-install-recommends python3 curl ca-certificates xz-utils git file netcat-openbsd
           scripts/linux/install-zig.sh /opt/zig
           echo /opt/zig >> "$GITHUB_PATH"
       - name: Verify toolchain and architecture

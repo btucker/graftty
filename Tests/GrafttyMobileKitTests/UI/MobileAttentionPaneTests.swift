@@ -127,7 +127,7 @@ struct MobileAttentionPaneTests {
     }
 
     @Test("@spec PORTS-5.19: While a mobile worktree port row or host browser toolbar is displayed at a compact width, the application shall retain the link and navigation controls while truncating long process and host names.", arguments: [280.0, 320.0, 393.0])
-    func browserControlsAndPortsFitCompactWidths(width: Double) async throws {
+    func browserControlsAndPortsFitCompactWidths(width: Double) {
         let toolbar = HostBrowserControls(hostLabel: String(repeating: "Long Mac name ", count: 40),
             canGoBack: true, canGoForward: false, onBack: {}, onForward: {}, onReload: {})
         let ports = SidebarWorktreePorts(ports: [.init(port: 43210, scope: .loopback,
@@ -136,21 +136,6 @@ struct MobileAttentionPaneTests {
         let size = host.sizeThatFits(in: CGSize(width: width, height: 600))
         #expect(size.width <= width)
         #expect(size.height >= 44 && size.height < 200)
-        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true; window.rootViewController = nil }
-        host.view.backgroundColor = .systemBackground
-        host.view.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(100))
-        let renderer = ImageRenderer(content: VStack(spacing: 24) { ports; toolbar }
-            .padding(16).frame(width: width).background(Color.white)
-            .environment(\.colorScheme, .light))
-        renderer.scale = 2
-        let image = try #require(renderer.uiImage)
-        let directory = URL(fileURLWithPath: "/tmp/graftty-browser-controls")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try image.pngData()?.write(to: directory.appendingPathComponent("controls-\(Int(width)).png"))
     }
 
     private func worktree(progressTimes: [String: Double]? = nil) -> WorktreePanes {

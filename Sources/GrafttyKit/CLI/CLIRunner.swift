@@ -5,11 +5,17 @@ import Foundation
 /// Prepends common install directories so Finder-launched apps can find
 /// Homebrew-installed tools like `gh` and `glab`.
 public struct CLIRunner: CLIExecutor {
+    private let terminatesOnCancellation: Bool
     private let scheduler: SubprocessScheduler
 
-    public init() { scheduler = .dispatch }
+    public init(terminatesOnCancellation: Bool = false) {
+        self.init(scheduler: .dispatch, terminatesOnCancellation: terminatesOnCancellation)
+    }
 
-    init(scheduler: SubprocessScheduler) { self.scheduler = scheduler }
+    init(scheduler: SubprocessScheduler, terminatesOnCancellation: Bool = false) {
+        self.scheduler = scheduler
+        self.terminatesOnCancellation = terminatesOnCancellation
+    }
 
     public func run(
         command: String,
@@ -95,10 +101,13 @@ public struct CLIRunner: CLIExecutor {
                 arguments: [command] + args,
                 directory: directory,
                 timeout: timeout,
-                timeoutLabel: command
+                timeoutLabel: command,
+                terminatesOnCancellation: terminatesOnCancellation
             )
             launch.scheduler = scheduler
             output = try await Subprocess.run(launch)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let error as CLIError {
             throw error
         } catch {

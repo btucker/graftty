@@ -47,17 +47,23 @@ struct TeamSend: ParsableCommand {
 
     func run() throws {
         let worktreePath = try CLIEnv.resolveWorktree()
-        let body = try TeamMessageInput.resolve(text: text, stdin: stdin)
         let response = try CLIEnv.sendRequest(
-            .teamSend(
+            request(
                 callerWorktree: worktreePath,
-                callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
-                recipient: address,
-                text: body,
-                priority: urgent ? .urgent : .normal
+                callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath)
             )
         )
         try CLIEnv.expectOk(response, for: "team send")
+    }
+
+    func request(callerWorktree: String, callerAgentID: String?) throws -> NotificationMessage {
+        .teamSend(
+            callerWorktree: callerWorktree,
+            callerAgentID: callerAgentID,
+            recipient: address,
+            text: try TeamMessageInput.resolve(text: text, stdin: stdin),
+            priority: urgent ? .urgent : .normal
+        )
     }
 }
 
@@ -683,9 +689,11 @@ struct TeamMsg: ParsableCommand {
         try CLIEnv.expectOk(response, for: "team msg")
     }
 
-    func request(callerWorktree: String, callerAgentID: String?) -> NotificationMessage {
-        .teamSend(callerWorktree: callerWorktree, callerAgentID: callerAgentID, recipient: address, text: text,
-                  priority: .normal)
+    func request(callerWorktree: String, callerAgentID: String?) throws -> NotificationMessage {
+        try TeamSend.parse(["--", address, text]).request(
+            callerWorktree: callerWorktree,
+            callerAgentID: callerAgentID
+        )
     }
 }
 
@@ -1003,7 +1011,7 @@ struct InternalGroup: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "internal",
         abstract: "Internal subcommands invoked by graftty itself; not meant for direct use.",
-        subcommands: [SyncCodexHome.self, ClaudePeerSend.self, SleepGuard.self]
+        subcommands: [SyncCodexHome.self, ClaudePeerSend.self, SleepGuard.self, GitReceiveCheck.self]
     )
 }
 

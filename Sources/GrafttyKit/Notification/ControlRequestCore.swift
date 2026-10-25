@@ -7,6 +7,11 @@ import GrafttyProtocol
 /// `ControlPlatform.handlePlatformRequest`.
 @MainActor
 public enum ControlRequestCore {
+    /// Captured with the handler so tests can observe the actual presence read.
+    @TaskLocal static var presenceRecordsReader: @Sendable (TeamPresenceStorage) throws -> [TeamPresenceRecord] = {
+        try $0.listAll()
+    }
+
     /// Fire-and-forget path. Returns false for messages that expect a
     /// response; those are answered by `handleRequest`.
     @discardableResult
@@ -90,9 +95,9 @@ public enum ControlRequestCore {
                 return .ok
             }
         case .teamMembers(let callerPath, let worktree, let repo):
-            return teamMembers(callerPath: callerPath, worktree: worktree, repo: repo, platform: platform)
+            return await teamMembers(callerPath: callerPath, worktree: worktree, repo: repo, platform: platform)
         case .teamList(let callerPath):
-            return teamMembers(callerPath: callerPath, worktree: nil, repo: nil, platform: platform)
+            return await teamMembers(callerPath: callerPath, worktree: nil, repo: nil, platform: platform)
         case .teamHook(let request):
             platform.providerActivity(path: request.callerWorktree, paneSessionName: request.paneSessionName,
                                       sessionID: request.sessionID, activity: request.providerSleepActivity ?? .unknown,
@@ -137,6 +142,7 @@ public enum ControlRequestCore {
         case .listPanes, .addPane, .closePane, .showPane, .sendPane,
              .previewFiles, .previewImage, .offerResource, .setWorktreePinned,
              .remoteWorktree, .reconnectRemoteMac, .reconnectRemoteClient,
+             .mcpConnection, .mcpBridge, .remoteSkills, .remotePlacement, .listRemoteHosts,
              .linuxSetupIdentity, .completeLinuxSetup:
             return await platform.handlePlatformRequest(message)
         }
@@ -186,11 +192,12 @@ public enum ControlRequestCore {
     private static func teamHandler(platform: any ControlTeamPlatform,
                                     policy: TeamHookDeliveryPolicy = TeamHookDeliveryPolicy()) -> TeamInboxRequestHandler {
         let presence = platform.teamPresence
+        let readPresence = presenceRecordsReader
         return TeamInboxRequestHandler(
             inbox: platform.teamInbox,
             dispatcher: platform.teamEventDispatcher,
             automaticDeliveryOwner: policy.automaticDeliveryOwner,
-            agentRecords: { (try? presence.listAll()) ?? [] },
+            agentRecords: { (try? readPresence(presence)) ?? [] },
             agentReachability: policy.agentReachability
         )
     }
@@ -253,17 +260,12 @@ public enum ControlRequestCore {
     }
 
     private static func teamMembers(callerPath: String?, worktree: String?, repo: String?,
-                                    platform: any ControlTeamPlatform) -> ResponseMessage {
-        do {
-            let result = try teamHandler(platform: platform).members(
-                callerWorktree: callerPath, worktree: worktree, repo: repo,
-                repos: platform.state.repos
+                                    platform: any ControlTeamPlatform) async -> ResponseMessage {
+        await teamInboxOperation("failed to list team members", platform: platform) { handler, repos in
+            let result = try handler.members(
+                callerWorktree: callerPath, worktree: worktree, repo: repo, repos: repos
             )
             return .teamList(teamName: result.teamName, members: result.members)
-        } catch let error as TeamInboxRequestError {
-            return .error(error.description)
-        } catch {
-            return .error("failed to list team members: \(error)")
         }
     }
 

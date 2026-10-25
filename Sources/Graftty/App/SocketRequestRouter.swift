@@ -59,6 +59,9 @@ final class SocketRequestRouter {
         self.remoteTeamRouter = remoteTeamRouter
     }
 
+    var parentMCPConnections: MCPConnectionSupervisor?
+    private var parentServerPublicKey: () -> String? = { nil }
+
     convenience init(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
@@ -79,6 +82,8 @@ final class SocketRequestRouter {
             remoteMacsModel: services.remoteMacsModel,
             remoteTeamRouter: services.remoteTeamRouter
         )
+        parentMCPConnections = services.parentMCPConnections
+        parentServerPublicKey = { [weak services] in services?.hostKey()?.publicKey.rawRepresentation.base64EncodedString() }
     }
 
     /// Fire-and-forget path (`SocketServer.onMessage`).
@@ -98,7 +103,11 @@ final class SocketRequestRouter {
 
     /// Mac-specific dispatch for requests the shared core does not own.
     func handlePaneRequest(_ message: NotificationMessage) async -> ResponseMessage? {
-        await Self.handlePaneRequest(
+        if case .mcpConnection(let request) = message {
+            guard let parentMCPConnections else { return .error("Parent MCP service is unavailable") }
+            return await parentMCPConnections.handle(request)
+        }
+        let response = await Self.handlePaneRequest(
             message,
             appState: appState,
             terminalManager: terminalManager,
@@ -106,6 +115,11 @@ final class SocketRequestRouter {
             remoteMacsModel: remoteMacsModel,
             remoteTeamRouter: remoteTeamRouter
         )
+        if case .linuxSetupIdentity(let identity) = response {
+            return .linuxSetupIdentity(.init(deviceID: identity.deviceID, displayName: identity.displayName,
+                publicKey: identity.publicKey, serverPublicKey: parentServerPublicKey()))
+        }
+        return response
     }
 }
 
@@ -200,6 +214,12 @@ extension SocketRequestRouter {
                 return .error(error.localizedDescription)
             }
 
+        case .remoteSkills(let host, let request):
+            return await remoteMacsModel.transferSkills(on: host, request: request)
+        case .remotePlacement(let host, let request):
+            return await remoteMacsModel.place(on: host, request: request)
+        case .listRemoteHosts:
+            return .remoteHosts(await remoteMacsModel.remoteMacConnectionSummaries())
         case .reconnectRemoteMac(let target):
             return await remoteMacsModel.reconnectRemoteMac(target: target)
         case .remoteWorktree(let target, let request):

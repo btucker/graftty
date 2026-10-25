@@ -217,6 +217,7 @@ public struct AgentPluginInstaller: Sendable {
             for path in [
                 "skills/graftty/SKILL.md", "skills/graftty-team/SKILL.md",
                 "skills/graftty-open/SKILL.md", "skills/graftty-preview/SKILL.md",
+                "skills/project-setup/SKILL.md", "skills/remote-host/SKILL.md",
                 ".\(provider.rawValue)-plugin/plugin.json",
             ] {
                 let file = staging.appendingPathComponent("plugins/graftty/\(path)")

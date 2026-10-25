@@ -31,6 +31,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     public var sidebarSnapshot: SidebarSnapshot? { lock.withLock { navigationSnapshot } }
     private var onSnapshot: OnSnapshot
     private var onClosed: OnClosed
+    private let onSidebarSnapshot: @Sendable (SidebarSnapshot?) async -> Void
 
     /// Serial inbound queue. The frame relay yields raw frame bytes onto
     /// this stream; a single drain Task spawned in `open()` consumes them
@@ -49,7 +50,8 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         requestReply: Bool = false,
         subsystemReplyTimeout: TimeAmount = .seconds(30),
         onSnapshot: @escaping OnSnapshot,
-        onClosed: @escaping OnClosed
+        onClosed: @escaping OnClosed,
+        onSidebarSnapshot: @escaping @Sendable (SidebarSnapshot?) async -> Void = { _ in }
     ) {
         // `PanesStateSubscription` sets `requestReply` so a peer that
         // predates panes-state-v2 can reject it and the caller can retry V1.
@@ -68,6 +70,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         )
         self.onSnapshot = onSnapshot
         self.onClosed = onClosed
+        self.onSidebarSnapshot = onSidebarSnapshot
         var cont: AsyncStream<Data>.Continuation!
         self.inboundStream = AsyncStream { c in cont = c }
         self.inboundContinuation = cont
@@ -124,6 +127,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                 switch message {
                 case .snapshot(let worktrees, let sidebar):
                     self.lock.withLock { self.navigationSnapshot = sidebar }
+                    await self.onSidebarSnapshot(sidebar)
                     await onSnapshot(worktrees)
                 }
             }

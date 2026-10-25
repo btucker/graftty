@@ -26,7 +26,8 @@ public enum GitWorktreeAdd {
         worktreePath: String,
         branch: BranchSelection,
         startPoint: String?,
-        startPointResolutionPath: String? = nil
+        startPointResolutionPath: String? = nil,
+        relativePaths: Bool = false
     ) async throws {
         if case .useExisting(let name, .local) = branch {
             let ref = "refs/heads/\(name)"
@@ -56,11 +57,12 @@ public enum GitWorktreeAdd {
             resolvedStartPoint = startPoint
         }
 
-        let args = argvFor(
+        var args = argvFor(
             branch: branch,
             worktreePath: worktreePath,
             startPoint: resolvedStartPoint
         )
+        if relativePaths { args.insert("--relative-paths", at: 2) }
         let result: CLIOutput
         do {
             result = try await GitRunner.captureAll(args: args, at: repoPath)

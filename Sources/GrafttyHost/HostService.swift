@@ -20,12 +20,18 @@ final class HostService {
     private let runtime: HeadlessHostRuntime
     private let socket: SocketServer
     private let ssh: DirectSSHHostServer
+    private let mcpBridge: MCPWorkerBridge
     private var admin: HostAdministrationServer?
     private var http: LANRemoteAccessServer?
     private let pairing: HostPairingServer
     private var peers: [RemoteDeviceID: TeamRPCSession] = [:]
     private var signalSources: [DispatchSourceSignal] = []
     private var pairingTicker: Task<Void, Never>?
+    private let interruptionSource: (any HostInterruptionSource)?
+    private let interruptionPollInterval: Duration
+    private var interruptionTask: Task<Void, Never>?
+    private var interruptionObservedAt: Date?
+    private var interruptionError: String?
 
     nonisolated static var cliPath: String { HostSetup.cliPath }
 
@@ -49,8 +55,19 @@ final class HostService {
         try store.upsertAfterPairing(peer)
     }
 
-    init(configuration: HostConfiguration, enablePairing: Bool) throws {
+    init(configuration: HostConfiguration, enablePairing: Bool,
+         interruptionSource: (any HostInterruptionSource)? = nil, interruptionPollInterval: Duration = .seconds(5)) throws {
         self.configuration = configuration
+        guard interruptionPollInterval > .zero else { throw HostRuntimeError.invalid("Interruption interval must be positive") }
+        self.interruptionPollInterval = interruptionPollInterval
+        if let interruptionSource { self.interruptionSource = interruptionSource }
+        else {
+            switch configuration.computeProvider {
+            case nil: self.interruptionSource = nil
+            case "aws": self.interruptionSource = AWSInterruptionSource()
+            default: throw HostRuntimeError.invalid("Unsupported host interruption provider")
+            }
+        }
         lease = try HostProcessLease(configuration: configuration)
         try configuration.save()
         ZmxLauncher.sanitizeProcessEnvironment()
@@ -61,6 +78,11 @@ final class HostService {
         runtime.origin = WorktreeOrigin(deviceID: id, deviceLabel: identity.displayName, relayDepth: 0)
         let identityStore = HostIdentityStore(directory: configuration.identityDirectory)
         let trusted = TrustedPeerStore(directory: configuration.identityDirectory)
+        mcpBridge = MCPWorkerBridge(authorize: { identity in
+            guard let peer = try? trusted.get(id: identity.deviceID) else { return false }
+            return peer.fingerprint == identity.fingerprint && (peer.kind == .mac || peer.kind == .linux)
+                && peer.capabilities.terminalControl == .allowed && peer.capabilities.worktreeManagement == .allowed
+        })
         guard let kind = RemoteDeviceKind(rawValue: "linux") else { throw HostRuntimeError.invalid("Linux host identity is not supported by this protocol build") }
         let base = URL(string: "http://127.0.0.1:\(configuration.httpPort)")!
         pairing = HostPairingServer(session: HostPairingSession(identityStore: identityStore, peerStore: trusted,
@@ -101,19 +123,31 @@ final class HostService {
                 return engine
             }, panesStateSubscribe: subscribe, panesStateV2Subscribe: subscribe,
             paneControlMutator: { await runtime.control($0) }, worktreeManagementMutator: { await runtime.manage($0) },
+            authenticatedPlacementMutator: { await runtime.place($0, owner: $1) },
+            authenticatedSkillMutator: { await runtime.receiveSkills($0, owner: $1) },
             displayOwnershipStore: ownership)
+        let mcpBridge = self.mcpBridge
+        runtime.mcpProfiles = MCPProfileService(
+            directory: URL(fileURLWithPath: configuration.socketPath).deletingLastPathComponent().appendingPathComponent("mcp"),
+            runtime: URL(fileURLWithPath: Self.cliPath).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent(),
+            send: { await mcpBridge.handle($0) })
         socket = SocketServer(socketPath: configuration.socketPath)
-        socket.onAsyncRequest = { await runtime.handle($0) }
+        socket.onAsyncRequest = { message in
+            if case .mcpBridge(let request) = message { return .mcpProxy(await mcpBridge.handle(request)) }
+            return await runtime.handle(message)
+        }
         socket.onMessage = { message in
             // Request-style messages are dispatched once by onAsyncRequest.
             if !message.expectsResponse { Task { _ = await runtime.handle(message) } }
         }
         let pairing = pairing
-        admin = HostAdministrationServer(configuration: configuration) { request in
+        admin = HostAdministrationServer(configuration: configuration) { [weak self] request in
             switch request {
             case .status:
+                let service = self
                 return await MainActor.run { .status(HostStatus(running: true, configuration: configuration,
-                    repositoryCount: runtime.state.repos.count, paneCount: runtime.sessions().count)) }
+                    repositoryCount: runtime.state.repos.count, paneCount: runtime.sessions().count, drain: runtime.drain,
+                    interruptionObservedAt: service?.interruptionObservedAt, interruptionError: service?.interruptionError)) }
             case .pairingStatus:
                 if case .pendingConfirmation(_, _, _, let name, _, let code, _) = await pairing.currentState() {
                     return .pairing(displayName: name, code: code.display)
@@ -178,10 +212,32 @@ final class HostService {
     func start() async throws -> Int {
         do {
             try await runtime.restore()
+            // Check before advertising readiness, then keep observing without
+            // depending on any agent process or incoming parent connection.
+            await pollInterruption()
+            if interruptionSource != nil {
+                interruptionTask = Task { [weak self, interruptionPollInterval] in
+                    while !Task.isCancelled {
+                        do { try await Task.sleep(for: interruptionPollInterval) } catch { return }
+                        guard let self else { return }
+                        await self.pollInterruption()
+                    }
+                }
+            }
             runtime.startTeamDelivery()
             runtime.startMaintenance()
             try socket.start()
             try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: configuration.socketPath)
+            let mcpBridge = self.mcpBridge
+            await ssh.setMCPControl(.init(handler: { _, bytes in
+                if bytes == MCPProxyControl.ready { return bytes }
+                // The worker forwards only local requests to its parent.
+                return (try? JSONEncoder().encode(MCPProxyResponse.error(.unauthorized))) ?? Data()
+            }, onConnect: { identity, session in
+                await mcpBridge.connected(identity, session: session)
+            }, onDisconnect: { _, sessionID in
+                await mcpBridge.disconnected(sessionID)
+            }))
             await ssh.setTeamMessaging(handler: { [runtime] device, bytes in
                 guard let request = try? JSONDecoder().decode(RemoteTeamRequest.self, from: bytes) else { return Data() }
                 let response = await runtime.remoteTeam(request, deviceID: device)
@@ -202,14 +258,36 @@ final class HostService {
     private func connected(_ device: RemoteDeviceID, session: TeamRPCSession) { peers[device] = session }
     private func disconnected(_ device: RemoteDeviceID, id: UUID) { if peers[device]?.id == id { peers[device] = nil } }
 
+    private func pollInterruption() async {
+        guard let interruptionSource else { return }
+        do {
+            let notice = try await interruptionSource.poll()
+            try Task.checkCancellation()
+            interruptionObservedAt = Date()
+            interruptionError = nil
+            if let notice {
+                try runtime.beginDrain(notice)
+            }
+        } catch {
+            if !Task.isCancelled {
+                interruptionError = "Could not observe or persist provider interruption state; retrying."
+                // No metadata tokens or provider response bodies enter logs.
+                FileHandle.standardError.write(Data("Graftty could not observe or persist provider interruption state; retrying.\n".utf8))
+            }
+        }
+    }
+
     func stop() async {
         for source in signalSources { source.cancel() }
         signalSources.removeAll()
         pairingTicker?.cancel(); pairingTicker = nil
+        interruptionTask?.cancel()
+        await interruptionTask?.value
+        interruptionTask = nil
         await pairing.cancel()
         await ssh.close()
         http?.stop(); admin?.stop(); socket.stop()
-        try? runtime.shutdown()
+        try? await runtime.shutdown()
         withExtendedLifetime(lease) {}
     }
 

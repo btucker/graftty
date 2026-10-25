@@ -576,7 +576,7 @@ private final class AgentIntegrationMacHost {
         productionCreation = nil
         let sessions = runtime.sessions()
         for session in sessions { try? await runtime.closePane(target: session.name) }
-        try? runtime.shutdown()
+        try? await runtime.shutdown()
         socket.stop()
     }
 }

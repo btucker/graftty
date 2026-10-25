@@ -352,6 +352,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-4.10** The application shall use regular (not security-scoped) bookmarks. Security-scoped bookmarks are unnecessary because Graftty is not sandboxed and `NSOpenPanel` already grants the app arbitrary-path URLs.
 
+**LAYOUT-4.11** When repository discovery or repair suspends during relocation, the application shall apply the result only to the same repository identity at the expected path, preserving other repositories and skipping a removed repository.
+
+**LAYOUT-4.12** When a repository is removed while launch-time location resolution suspends, the application shall continue resolving the remaining original repository identities without using stale array offsets.
+
 ### LAYOUT-5.x — Window Lifecycle
 
 **LAYOUT-5.1** When the user closes the main window (Cmd+W, red traffic-light button, or `File → Close`), the application shall keep running as a foreground app — the Dock icon remains visible, background services (socket listener, stats/PR pollers, filesystem watchers, web access server) keep running, and any running terminal panes stay attached to their underlying zmx sessions. Closing the window is not a quit; the user explicitly issues `Cmd+Q` or `File → Quit` to terminate the app.
@@ -980,6 +984,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-2.27** When the CLI sends `capabilities`, the application shall answer with the name of every control capability its dispatcher supports, and shall answer each older single-capability probe from that same set: `ok` when supported, an error otherwise.
 
+**ATTN-2.28** When a control-socket request lists team members or teams, the application shall read and decode presence files off the main thread while preserving member responses and request errors.
+
 ### ATTN-3.x — Error Handling
 
 **ATTN-3.1** If the application is not running, then the CLI shall print "Graftty is not running" and exit with code 1.
@@ -1286,7 +1292,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONFIG-2.5** The application bundle shall include ghostty's per-shell integration scripts and the `xterm-ghostty` terminfo entry as vendored resources, pinned to the ghostty version backing libghostty-spm, with upstream license headers preserved and a provenance record, so shell integration works without a separately installed Ghostty.app.
 
-**CONFIG-2.6** The application shall resolve GrafttyKit's SwiftPM resource bundle from the packaged `.app` layout (`Contents/Resources/`), falling back to `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not trap on SwiftPM's generated accessor (which probes only the `.app` root and the compiling machine's `.build` path — neither present once shipped).
+**CONFIG-2.6** The application shall resolve GrafttyKit's SwiftPM resource bundle, including the Linux host maintenance installer, from the packaged `.app` layout (`Contents/Resources/`), falling back to `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not trap on SwiftPM's generated accessor (which probes only the `.app` root and the compiling machine's `.build` path — neither present once shipped).
 
 **CONFIG-2.7** If GrafttyKit's resource bundle uses either SwiftPM's flat layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's build system, then the application shall locate the bundled web client assets, agent plugin payload, Codex wrapper template, and vendored ghostty runtime resources.
 
@@ -1543,6 +1549,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **DIST-4.8** When a Linux zmx build restores compiled artifacts, the release scripts shall execute the unit tests again, retain format validation and ReleaseSafe compilation, and isolate cache entries by architecture and build inputs.
 
 **DIST-4.9** When the Linux smoke test installs Git inside the fresh container, the script shall run every apt-get command under a kill-backed timeout with apt retries and a per-connection timeout shorter than that bound, and shall print the apt output with the exit status on failure, so a mirror stall fails fast with a diagnostic instead of consuming the job timeout in silence.
+
+**DIST-4.10** When building Linux zmx, the release scripts shall run its complete test suite in the same ReleaseSafe mode as the shipped executable, retaining runtime safety checks for large-history tests.
 
 ## WEB — Web Access
 
@@ -2444,6 +2452,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.26** When the iPad layout applies a pushed panes-state frame whose rows equal the shared worktree state, the application shall leave the shared rows and attention indicator unwritten, so views observing them are not invalidated by a repeated frame.
 
+**IPAD-1.27** When a phone's retained RootView enters the regular-width mobile split layout with its sidebar shown or collapsed, the application shall settle within 24 layout passes.
+
+**IPAD-1.28** When the regular-width mobile sidebar is collapsed or has no host content, the application shall preserve the remembered expanded sidebar width through the persistence debounce.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
@@ -2622,7 +2634,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.13** When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree, unpinning, and explicitly removing a pinned worktree, and explain role instruction files and retention after PR or MR resolution.
 
-**TEAM-4.14** When `graftty team msg <address> <text>` is invoked, the CLI shall send a normal-priority `team_send` request as a hidden alias of `team send` that `graftty team --help` does not list.
+**TEAM-4.14** When `graftty team msg <address> <text>` is invoked, the CLI shall validate the body and send a normal-priority `team_send` request as a hidden alias of `team send` that `graftty team --help` does not list; if the body is empty, then the CLI shall reject it before sending.
 
 **TEAM-4.15** When a team CLI caller inherits an agent ID from another worktree or pane, the application shall use only reachable top-level presence in the caller's worktree and pane to identify the sender, accepting the inherited ID only when it belongs to that presence and leaving ambiguous identity unset.
 
@@ -2719,6 +2731,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-10.18** When the periodic presence sweep runs, the application shall clean stale presence and orphaned app-server records and load the remaining presence records off the main thread before updating delivery liveness.
 
 **TEAM-10.19** If a periodic presence refresh finishes after a newer foreground presence update or removal, then the application shall preserve the newer records and use them for delivery liveness.
+
+**TEAM-10.20** When a Codex Node launcher has a nested npm platform package, the application shall register that package's native binary before sibling or in-package vendor fallbacks.
 
 ### TEAM-11.x — Idle Delivery
 
@@ -3008,6 +3022,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.23** If the LAN remote-access listener's configured port is outside 0–65535, then the application shall fail to start with a thrown error rather than terminate the process.
 
+**REMOTE-2.24** When a dial refreshes connection metadata after a concurrent pairing edit, the client shall preserve the current pairing fields and update only routes, last successful route, wake addresses, and connection time.
+
+**REMOTE-2.25** If a pin is removed or its key changes during a dial, then the client shall reject the connection metadata refresh and leave the current pairing unchanged.
+
+**REMOTE-2.26** When a mobile dial is invalidated before it becomes usable, the application shall discard its connection without saving refreshed connection metadata.
+
+**REMOTE-2.27** If a mobile connection becomes terminal or loses registration during post-connect verification, then the client shall discard it without saving connection metadata.
+
+**REMOTE-2.28** While multiple pinned-host store instances access the same file, the client shall serialize their read-modify-write operations so each completed update is retained.
+
+**REMOTE-2.29** While a mobile dial awaits post-connect validation, concurrent callers shall await that attempt's final result rather than receive its provisional connection.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -3062,7 +3088,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-7.x — pane_control Channel
 
-**REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability. (Enforced at userauth: a peer with `terminalControl: .disabled` is rejected.)
+**REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability.
 
 **REMOTE-7.2** When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<right|down|left|up>}`, the host shall replace the leaf whose `sessionName == target` with a new split node placed to the requested side of the original leaf, applied on the main actor, and reply `{"ok":true}` on success.
 
@@ -3554,13 +3580,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-24.4** If a remote split fails with a cancelled or downstream-unavailable code, then the viewer shall drop every queued mutation for that worktree, alerting only for downstream-unavailable; for any other error the viewer shall continue with the next queued mutation and show the error unless its code is no-matching-split.
 
-**REMOTE-24.5** When a host answers a remote split with a bare ok, the viewer shall keep that split in flight until a snapshot shows a new pane and shall then send the next queued mutation; if ten seconds elapse first, the viewer shall drop every queued mutation for that worktree.
+**REMOTE-24.5** When a host answers a remote split with a bare ok, the viewer shall keep that split in flight until a snapshot shows a new pane and shall then send the next queued mutation; if ten seconds elapse first, the viewer shall cancel that worktree's queued mutations, report the timeout, and restore the prior zoom if its pane is present and no newer user intent superseded it.
 
 **REMOTE-24.6** When a remote close succeeds, the viewer shall remove the closed pane from its layout and focus the projected replacement before the next snapshot arrives, and shall ignore commands from the final closed pane until a snapshot catches up.
 
 **REMOTE-24.7** When a remote equalize fails, the viewer shall restore the snapshot layout and the zoom it cleared; when it succeeds, the viewer shall keep the zoom cleared unless the user zoomed again after sending it.
 
-**REMOTE-24.8** When a remote surface closes unexpectedly, the viewer shall recreate a surface for the same session; if opening the session or creating its surface fails, the viewer shall retry after 750 ms while its worktree is still selected and the host still lists that pane.
+**REMOTE-24.8** When a remote surface closes unexpectedly or fails to open, the viewer shall wait 750 ms before retrying, double successive retry delays up to thirty seconds, reset the delay after a surface survives thirty seconds, and retry only while its worktree is selected and the host still lists the pane.
 
 **REMOTE-24.9** When the window disappears, the viewer shall destroy every remote surface and empty its layout while keeping the selection, so that the next snapshot recreates the surfaces; the panes' registered command handlers shall not keep the viewer alive.
 
@@ -3573,6 +3599,258 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-24.13** While remote pane mutations are queued or in flight, the viewer shall publish a change only when its selection, layout, or opening state changes, so queue bookkeeping alone does not re-evaluate the window.
 
 **REMOTE-24.14** If a dispatched remote pane mutation has no reply after thirty seconds, then the viewer shall report the timeout, abandon that worktree's queued mutations, release the queue for other Macs, and ignore the expired dispatch's late result.
+
+**REMOTE-24.15** When a snapshot reveals a split-created pane after the split response, the viewer shall focus the created pane unless a newer user intent superseded the split.
+
+### REMOTE-25.x — Dev Container environments
+
+**REMOTE-25.1** When preparing a remote project environment, the application shall use its selected Dev Container configuration through the existing Dev Container CLI.
+
+**REMOTE-25.2** When a project first receives a worktree on a host, the application shall transfer the required repository history and prepare its environment on demand while allowing other projects on the same host.
+
+**REMOTE-25.3** When preparing worktrees with different environment definitions, the application shall preserve their selected revisions and prevent accidental sharing of mutable environment state.
+
+**REMOTE-25.4** If container setup, required lifecycle commands, or agent readiness checks fail, then the application shall report the failed stage without claiming the agent is ready.
+
+**REMOTE-25.5** When remote preparation state changes, the application shall expose consistent progress and failures to the CLI, Mac, and GrafttyMobile.
+
+**REMOTE-25.6** When creating a worktree for the upstream Dev Container common-directory mount, the application shall request relative Git metadata without rewriting existing worktrees and shall report unsupported Git versions as a creation failure.
+
+**REMOTE-25.7** When a parent requests Dev Container placement, the host shall prepare the selected configuration before pane startup, retain its container identity for later panes, stop and remove that container when deleting the worktree, and restore a previously running container if stopping or Git removal fails even when the caller cancels.
+
+**REMOTE-25.8** When worktree deletion suspends for container cleanup, the host shall resolve the worktree by its current path before changing its state so concurrent deletion or reordering cannot affect another worktree.
+
+### REMOTE-26.x — Git replication and authenticated parent publication
+
+**REMOTE-26.1** While a delegated host is reachable, the initiating Mac shall regularly fetch its committed work independently of publication to origin or creation of a PR or MR.
+
+**REMOTE-26.2** When an agent pushes work to its recorded parent, the application shall transfer ordinary Git objects and refs over the authenticated Graftty connection without replacing the parent's active checkout.
+
+**REMOTE-26.3** When a remote host can authenticate to origin using independently configured credentials, the application shall permit direct publication without requiring the parent route.
+
+**REMOTE-26.4** When a remote agent cannot authenticate or connect to origin, the remote-host workflow shall support pushing to the parent and requesting publication of an exact received commit.
+
+**REMOTE-26.5** When the parent receives Git work, the application shall derive sender identity from the authenticated connection and match it to the active host and worktree delegation.
+
+**REMOTE-26.6** If an incoming Git update targets a repository or ref outside its active delegation, then the parent shall reject the update before changing refs.
+
+**REMOTE-26.7** When the parent publishes delegated work, the application shall verify the received commit's association with the authenticated delegation and resolve the authorized destination from parent-owned configuration.
+
+**REMOTE-26.8** When a transfer or publication request is retried, the application shall bind its identity to the sender, delegation generation, destination, and commit, rejecting changed contents and reconciling unknown outcomes.
+
+**REMOTE-26.9** When remote hosts are provisioned or work is transferred, the application shall retain private keys and authentication stores on their existing devices without automatically copying or forwarding credentials.
+
+**REMOTE-26.10** When a parent records a Git delegation, the application shall persist its expected host identity, repository, worktree, exact allowed refs, generation, and expiry, and reject authentication or scope mismatches.
+
+**REMOTE-26.11** When a Git delegation is reassigned or revoked, the application shall reject prior generations and changed retries, retain revocation across restart, and serialize updates from separate parent processes.
+
+**REMOTE-26.12** When a delegated Git receive hook validates a push, the application shall recheck the authenticated assignment and every proposed ref before Git updates any ref, and reject deletions and non-commit targets.
+
+**REMOTE-26.13** When preparing a delegated Git receiver, the parent shall authenticate its scope before creating storage, isolate each assignment generation in a bare repository, and require its own receive hook without inheriting caller Git configuration.
+
+**REMOTE-26.14** When a peer opens the Git control subsystem, the host shall require replication permission, derive the device and key fingerprint from SSH authentication, and keep bidirectional requests on that authenticated connection.
+
+**REMOTE-26.15** When a delegated host starts or loses its parent connection, the host shall initiate and retry an authenticated connection to each recorded parent without copying private keys or requiring a publicly reachable SSH port on the Mac.
+
+**REMOTE-26.16** While a parent is unreachable, the host shall retain unacknowledged work locally while it survives, retry with bounded backoff, and report Git and session progress as saved only after their respective parent acknowledgements.
+
+**REMOTE-26.17** When a parent prepares a Git transfer, the application shall issue a bounded, short-lived, single-use receive token, bind it to the authenticated host and current delegation, and recheck authority before releasing its receive command.
+
+**REMOTE-26.18** When a host has only replication permission, the parent shall allow authenticated delegated Git requests without granting terminal, worktree-management, browser, or team access, and shall reject replication after its permission is revoked.
+
+**REMOTE-26.19** When a delegated host cannot reach its parent and an authorized wake path is available, the host shall attempt Wake-on-LAN and retry authenticated connection within the remaining operation deadline, without treating a sent wake packet as a receipt or delaying transfers to other reachable parents.
+
+**REMOTE-26.20** When enrolling an AWS host, the parent shall bind the host's locally generated public identity to the recorded account, region, instance, and pending launch operation through authenticated provider command results before accepting SSH-authenticated callbacks, and shall reject unsolicited or changed-key enrollment without copying private keys.
+
+**REMOTE-26.21** When enrolling an existing AWS instance through the CLI, the application shall require an explicit account, instance, operation UUID, and development-user paths and use the running parent's public identity.
+
+**REMOTE-26.22** When SSH uses a provider proxy's standard streams, the application shall retain host-key pinning, public-key client authentication, and bidirectional control without exposing a local TCP listener.
+
+**REMOTE-26.23** When a provider proxy stops, fails, or loses its owner, the application shall serialize concurrent shutdown, close its streams, stop its process group and reap its child without callback deadlocks, and retain only bounded diagnostic output.
+
+**REMOTE-26.24** When connecting through AWS Session Manager, the application shall use the completed enrollment's exact instance and SSH port, recheck its account and current parent and worker identities, and reject revoked or incomplete enrollment without restoring trust.
+
+**REMOTE-26.25** When probing an AWS host through the CLI, the application shall require a saved enrollment operation and report its pinned identity and authenticated resource observation without accepting endpoint overrides.
+
+**REMOTE-26.26** When a host resource probe receives its first authenticated sidebar snapshot, the application shall timestamp the observation locally, preserve unknown metrics, and fail on timeout or disconnect.
+
+**REMOTE-26.27** When relaying replication bytes, the application shall drain writes before forwarding input EOF, preserve the reverse stream, and close both endpoints on cancellation, deadline, failed authorization, or oversized input.
+
+**REMOTE-26.28** When a Dev Container command exits while a background descendant remains running, the application shall return the command's output and exit status without waiting for the descendant.
+
+**REMOTE-26.29** When preparing or reopening a relative Git worktree in a Dev Container, the application shall enable both upstream Git-root and common-directory mounting so Git metadata remains reachable inside the container.
+
+**REMOTE-26.30** When a Linux Dev Container command is canceled or times out, the application shall stop its isolated process group, including descendants that ignore graceful termination, before reporting cancellation or timeout.
+
+### REMOTE-27.x — Native session replication and restore
+
+**REMOTE-27.1** While a delegated host is reachable, the application shall regularly copy worktree-associated native Claude and Codex session data to the recorded parent, excluding authentication files.
+
+**REMOTE-27.2** When receiving native session data, the application shall validate a consistent transfer before replacing a previously usable copy and report session and Git replication progress separately.
+
+**REMOTE-27.3** When restoring work on another host, the application shall prepare a compatible environment, restore the selected Git and native session data, and invoke the supported native resume mechanism.
+
+**REMOTE-27.4** If native session data, paths, runtime versions, or destination authentication prevent resumption, then the application shall preserve the copied data and report the incompatibility without claiming successful resume.
+
+### REMOTE-28.x — Remote development skills
+
+**REMOTE-28.1** When an agent uses the project-setup skill, the skill shall guide creation or repair of version-controlled Dev Container configuration, verification of project commands, and documentation of resource and authentication prerequisites without embedding credentials.
+
+**REMOTE-28.2** When an agent uses the remote-host skill, the skill shall explain its recorded parent and direct or parent-mediated publication workflow without treating skill instructions as authentication or authorization enforcement.
+
+**REMOTE-28.3** When preparing a managed remote agent environment, the application shall install the parent's compatible user-level skills and enabled plugins for the selected agent runtime before launching that agent, without copying keys or authentication stores.
+
+**REMOTE-28.4** When preparing a project or worktree on a remote host, the application shall make its project-level and worktree-local skills available in the agent's execution environment while preserving runtime discovery precedence and isolation from other projects and parents.
+
+**REMOTE-28.5** When launching or resuming a managed remote agent, the application shall reconcile its installed skill and plugin revision with the parent snapshot and report missing or incompatible dependencies without silently claiming configuration parity.
+
+**REMOTE-28.6** When refreshing remote agent configuration, the application shall stage a complete revision before activating it for a new launch, preserve running agents' configuration, and remove obsolete Graftty-managed entries without deleting unrelated remote configuration.
+
+**REMOTE-28.7** When capturing remote skills, the application shall retain user and project scope, supporting file bytes and executable flags in a deterministic runtime-specific snapshot without exporting the rest of the agent home.
+
+**REMOTE-28.8** When capturing or decoding a remote skill snapshot, the application shall reject escaping links, special files, credential-file paths, duplicate or traversing destinations, and excessive content before installing any files.
+
+**REMOTE-28.9** When staging a remote skill snapshot, the application shall validate all content before publishing a complete revision isolated by parent, project, and runtime, retaining earlier revisions for running agents.
+
+**REMOTE-28.10** When exporting or staging remote skills through the CLI, the application shall require explicit source and destination selections, verify the requested revision before staging, and report staged paths without activating an agent or copying authentication stores.
+
+**REMOTE-28.11** When receiving remote skills, the application shall bind bounded chunks and their retained acknowledgements to the authenticated parent identity and registered repository, reject conflicting retries, and publish only a complete snapshot matching the declared runtime and revision.
+
+**REMOTE-28.12** While receiving remote skill snapshots, the application shall bound active transfers, reserved bytes, chunk size, and retention time, and release incomplete content on cancellation or expiry without activating it.
+
+**REMOTE-28.13** When a peer transfers agent skills over SSH, the host shall derive its device and fingerprint from authentication and recheck current pairing and worktree-management permission before each request.
+
+**REMOTE-28.14** When sending remote skills, the application shall pin the destination identity, resume the same snapshot and operation from a matching retained offset, bound each request, and accept completion only from a matching staged acknowledgement.
+
+**REMOTE-28.15** When a placement selects staged skills, the application shall load and verify each exact revision from the authenticated parent's repository namespace before admitting work, including after a host restart.
+
+**REMOTE-28.16** When a Dev Container placement selects verified skill revisions, the application shall install their user skills into an isolated writable agent home and project skills into the container worktree before opening its shell, rejecting conflicting project content without overwriting it.
+
+**REMOTE-28.17** When a skill-bearing container placement selects an agent, the application shall require a matching runtime revision, check the agent executable in that container, and launch with the retained isolated skill home without claiming authentication readiness.
+
+**REMOTE-28.18** When a managed placement installs agent skills, the application shall bind-mount a private placement directory at the same host and container path, verify its visibility and matching user identity before launch, and retain native profile files when the container is removed.
+
+**REMOTE-28.19** When a runtime home mirrors the user's native skill directory inside their home, the application shall capture that directory through the alias while rejecting project-root escapes and aliases to unrelated directories.
+
+**REMOTE-28.20** When publishing selected project skills, the application shall reject conflicting late-created or changed destinations, recheck path types and executable flags, and verify the final content before reporting a prepared profile.
+
+**REMOTE-28.21** If safe project-directory publication is unavailable, then the application shall reject missing project skills with an actionable prerequisite while allowing user-only skills and identical existing project skills.
+
+**REMOTE-28.22** When a no-clobber mover returns exit status one, the application shall accept a skipped publication only after verifying its preserved source and identical destination, and reject unsupported movers or incomplete moves.
+
+### REMOTE-29.x — AWS Spot evacuation
+
+**REMOTE-29.1** When configuring AWS compute, the application shall support Spot instances in the initial AWS provider implementation.
+
+**REMOTE-29.2** While a managed Spot host runs, the host service shall monitor interruption notices independently of agent turns and initiate evacuation using the reported deadline.
+
+**REMOTE-29.3** When a Spot interruption notice is detected, the host shall immediately stop accepting new placements and start one drain operation covering every managed worktree and its associated sessions.
+
+**REMOTE-29.4** When draining a Spot host, the host service shall coordinate writers and attempt ordinary WIP commits and parent transfers for outstanding source changes without waiting for tests, PR creation, or an agent response.
+
+**REMOTE-29.5** When draining a Spot host, the application shall transfer native session data to each worktree's recorded parent and track Git and session acknowledgements independently.
+
+**REMOTE-29.6** If an evacuation operation fails or a parent is unreachable, then the host shall continue other worktree transfers within the deadline and report per-worktree partial or failed results without claiming unacknowledged work is saved.
+
+**REMOTE-29.7** When repeated Spot warnings arrive, the host shall join the existing drain operation and bound retries and transfer concurrency by the remaining interruption deadline.
+
+**REMOTE-29.8** When the AWS interruption adapter polls instance metadata, it shall use IMDSv2 without redirects or proxies, distinguish an absent notice from failed observation, and translate valid action deadlines into provider-independent interruption notices.
+
+**REMOTE-29.9** When a host begins draining for a provider interruption, it shall durably retain one operation and its managed placements, reject new admission across restarts, preserve existing retries, and never extend the earliest observed deadline.
+
+**REMOTE-29.10** When a host starts draining during environment preparation, the application shall retain the created worktree and refuse to start its new pane or agent after preparation finishes.
+
+### REMOTE-30.x — MCP access through the parent
+
+**REMOTE-30.1** When a managed Linux agent uses a granted parent MCP server, the application shall proxy standard MCP messages over the authenticated parent connection while retaining upstream authentication and refresh on the parent.
+
+**REMOTE-30.2** When forwarding a worker MCP request, the parent shall require a current grant bound to the authenticated worker, repository, worktree, assignment generation, server ID, and expiry without accepting worker-supplied upstream commands, URLs, or credential configuration.
+
+**REMOTE-30.3** When an MCP grant expires, is revoked, or is superseded by reassignment, the application shall reject new calls and close its sessions without transferring that authority through copied session data.
+
+**REMOTE-30.4** While proxying MCP sessions, the application shall isolate messages and negotiated capabilities by delegation and enforce bounded messages, queues, concurrency, and deadlines.
+
+**REMOTE-30.5** If the parent connection is lost during an MCP call, then the application shall report unavailable or unknown outcome without automatically replaying the call, copying credentials, or falling back to an unconfigured direct connection.
+
+**REMOTE-30.6** If an existing MCP authentication source lacks a supported parent integration, then the application shall report authentication required or unsupported without scraping or exporting private authentication stores.
+
+**REMOTE-30.7** When presenting MCP access in the CLI, Mac, or Mobile, the application shall identify the server, execution location, delegation, and readiness without exposing authentication material or recording tool payloads by default.
+
+**REMOTE-30.8** When preparing or recovering a worktree, the application shall generate scoped MCP bridge configuration from current parent grants and check MCP readiness separately from container readiness and agent-runtime authentication.
+
+**REMOTE-30.9** When configuring granted MCP servers for a remote agent, the application shall preserve their logical server names and upstream tool definitions through separate Graftty bridge entries without requiring an agent-facing forwarding tool.
+
+**REMOTE-30.10** When an MCP bridge forwards protocol messages, the application shall preserve request IDs, notifications and callbacks within one authorized session without replaying a call after a transport failure.
+
+**REMOTE-30.11** When a parent opens the MCP subsystem on a managed host, the application shall authenticate both peers and carry standard MCP tool calls back to the parent without granting the worker terminal access to the parent.
+
+**REMOTE-30.12** While proxying MCP, the application shall bound outstanding requests in each direction and expire each unanswered call even if other messages continue arriving.
+
+**REMOTE-30.13** While serving a managed profile MCP socket, the application shall reject general host commands, other parents, unselected grants and sessions opened through another profile, and close its sessions when the endpoint stops.
+
+**REMOTE-30.14** When a managed container installs MCP configuration, the application shall generate native entries in its fresh private profile, preserve existing files, and mount only its dedicated socket directory and the bridge runtime read-only.
+
+**REMOTE-30.15** When a managed MCP endpoint stops, the application shall remove its socket while retaining the mount directory, and shall recreate the endpoint only from host-supplied assignment configuration.
+
+**REMOTE-30.16** When preparing MCP mounts through Dev Container CLI, the application shall preserve project configuration and relative path resolution, supply read-only mounts through a private configuration override, and remove that override after success or failure.
+
+**REMOTE-30.17** When the parent owns an MCP connection, the application shall persist its provider binding and policy path, reuse an identical start, reconnect with fresh sessions after transport loss, and stop reconnecting after explicit removal or shutdown.
+
+**REMOTE-30.18** If an app-owned MCP connection fails local enrollment, parent identity, or policy-file validation, then the application shall retain a sanitized blocked status without retrying, and shall reject conflicting configuration until the saved connection is removed.
+
+**REMOTE-30.19** When the local CLI starts, stops, or lists parent MCP connections, the application shall exchange saved connection intent and sanitized lifecycle status over the control socket.
+
+**REMOTE-30.20** When an app-owned parent MCP transport disconnects, the application shall authenticate a fresh connection, invalidate old worker sessions without replay, and stop reconnecting if provider authorization is revoked.
+
+**REMOTE-30.21** When the parent app terminates, the application shall synchronously stop and reap its tracked MCP and provider proxy process groups and reject subprocess creation after shutdown.
+
+**REMOTE-30.22** When launching MCP servers or provider proxies, the application shall pass only their standard streams and shall close unrelated inherited file descriptors so child processes cannot retain parent connections.
+
+**REMOTE-30.23** While an authenticated interactive connection to the enrolled worker exists, the parent MCP service shall reuse that connection and shall leave its terminal and control channels open when MCP stops.
+
+**REMOTE-30.24** When an upstream MCP transport ends after delivering complete messages, the application shall reject further sends, allow still-authorized receives to drain those messages once before reporting the terminal error, and discard them immediately on authority changes, teardown, or protocol-limit failures.
+
+### REMOTE-31.x — Provider preferences and placement
+
+**REMOTE-31.1** When a user configures the aws compute provider, the CLI shall persist the selected existing AWS profile and placement preferences without copying AWS credentials.
+
+**REMOTE-31.2** When a user configures an instance pool or preferred instance type, the CLI shall persist, display, update, and clear those per-user settings without hard-coding a universal preferred instance type.
+
+**REMOTE-31.3** When resolving placement preferences, the application shall report effective values and their sources without silently relaxing configured spending or host-count limits.
+
+**REMOTE-31.4** When an agent lists remote hosts, the CLI shall report host identity, readiness, architecture, CPU capacity and utilization, available memory, free disk, pending placements, and observation timestamps.
+
+**REMOTE-31.5** When placing a worktree, the application shall evaluate compatible existing hosts using current resource headroom and pending reservations before allocating another instance.
+
+**REMOTE-31.6** When selecting new AWS Spot capacity, the application shall compare eligible instance-type and Availability Zone prices with timestamps, compatibility, configured preferences, and limits.
+
+**REMOTE-31.7** If host telemetry or price observations are stale or absent, then the application shall expose the uncertainty rather than treating unknown capacity as idle or unknown prices as zero.
+
+**REMOTE-31.8** When concurrent or retried placement requests are accepted, the application shall reserve capacity and reuse operation identities to avoid duplicate allocations.
+
+**REMOTE-31.9** When an AWS instance starts, the application shall verify trusted Graftty connectivity and project readiness before reporting the requested worktree ready.
+
+**REMOTE-31.10** When querying AWS Spot offers, the CLI shall compare the latest effective Linux prices for the configured pool by region and Availability Zone, filter architecture and resource requirements, use the preferred type only to break equal-price ties, and distinguish observed prices from verified capacity.
+
+**REMOTE-31.11** When listing AWS provider instances, the CLI shall report account-scoped instance identity, lifecycle state, available hardware metadata, and observation time across configured regions, default to Graftty-tagged instances, and expose readiness and unmeasured load as unknown without treating tags as authenticated host ownership.
+
+**REMOTE-31.12** When a host publishes resource observations on its authenticated panes-state channel, the protocol shall preserve optional CPU, memory, disk, and workload measurements with a sample timestamp while accepting legacy snapshots without telemetry.
+
+**REMOTE-31.13** While a Linux host runs, the host shall periodically measure CPU utilization from successive kernel counters, available memory from MemAvailable, and unprivileged filesystem headroom, reporting unreadable or invalid measurements as unknown rather than zero.
+
+**REMOTE-31.14** When an authenticated host sample is received, the client shall assign its own receipt time, avoid refreshing replayed samples, and invalidate telemetry on disconnect so stale or absent measurements cannot imply idle capacity.
+
+**REMOTE-31.15** When an agent requests a read-only placement plan, the CLI shall rank connected compatible hosts using fresh measured CPU, memory, and disk headroom, explain rejections and unknown reservation state, and require admission before starting work.
+
+**REMOTE-31.16** When a peer submits a placement request, the host shall bind the request to the SSH-authenticated device and key fingerprint and recheck current pairing and worktree-management permission before each request.
+
+**REMOTE-31.17** When a host admits a placement, the application shall persist the parent-bound operation before creating its worktree, return the retained result on retries, and expose uncertain creation without starting it again.
+
+**REMOTE-31.18** When an agent creates or queries a remote placement, the CLI shall require a stable operation UUID and an unambiguous connected paired host and send its pinned identity with the request.
+
+**REMOTE-31.19** When a placement is admitted, the host shall return its preparing status without waiting for setup, continue independently of the request lifetime, and finish canceling owned jobs before shutdown returns.
+
+**REMOTE-31.20** When connecting through a registered compute provider, the application shall select the adapter by provider identifier, preserve the enrollment operation and pinned host identity, and recheck adapter authorization without requiring AWS-specific identifiers in shared connection code.
 
 ## CHROME — Dedicated Chrome tabs
 
@@ -3916,7 +4194,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.19** When a tracked agent has no Graftty wrapper identity, a valid recap shall appear in Attention immediately, and its next matching Stop hook shall not create a duplicate card.
 
-**AGENT-3.20** When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from its native session ID.
+**AGENT-3.20** When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from the first non-empty native session ID or thread ID.
 
 **AGENT-3.21** When an agent resumes in a sandbox after a stopped turn, the application shall consume its durable progress event and clear only an older stopped card from that session.
 
@@ -4123,6 +4401,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CLI-1.3** If a stopped subprocess, timed out or cancelled, is still running when its kill grace (two seconds by default) elapses after SIGTERM, then the application shall send SIGKILL so the caller is released instead of waiting for a child that ignores SIGTERM.
 
 **CLI-1.4** When a piped subprocess exits, the application shall return all of its output without waiting out an end-of-file timeout.
+
+**CLI-1.5** When a CLI runner explicitly enables cancellation, the application shall terminate its subprocess and propagate cancellation instead of waiting for the command timeout.
 
 ## CONTEXT — CONTEXT
 

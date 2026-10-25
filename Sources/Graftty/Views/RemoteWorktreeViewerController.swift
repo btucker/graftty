@@ -149,7 +149,8 @@ final class RemoteWorktreeViewerController: ObservableObject {
     // not published: changing it does not re-evaluate the window body.
     private var remoteTerminalSlots: [RemoteTerminalKey: PaneSlotID] = [:]
     private var openingRemoteTerminals: [RemoteTerminalKey: PaneSlotID] = [:]
-    private var scheduledRemoteTerminalRetries: Set<RemoteTerminalKey> = []
+    private var scheduledRemoteTerminalRetries: [RemoteTerminalKey: UUID] = [:]
+    private var remoteTerminalRetryAttempts: [RemoteTerminalKey: Int] = [:]
     private var appIsVisible = true
     private var pendingRemoteFocusTarget: WorktreeKey?
     private var pendingRemoteSplitFocus: [PendingRemoteSplitFocus] = []
@@ -407,6 +408,13 @@ final class RemoteWorktreeViewerController: ObservableObject {
         var sessionName: String
     }
 
+    private var remoteTerminalKeys: Set<RemoteTerminalKey> {
+        Set(remoteTerminalSlots.keys)
+            .union(openingRemoteTerminals.keys)
+            .union(scheduledRemoteTerminalRetries.keys)
+            .union(remoteTerminalRetryAttempts.keys)
+    }
+
     private struct PendingRemoteSplitFocus {
         var id: UUID
         var target: WorktreeKey
@@ -463,7 +471,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
             )?.state == .closed
         }
         let currentIdentities = Set(worktreePanesByRemote.keys)
-        let staleIdentities = Set(remoteTerminalSlots.keys.map(\.identity))
+        let staleIdentities = Set(remoteTerminalKeys.map(\.identity))
             .subtracting(currentIdentities)
         for identity in staleIdentities {
             destroyRemoteSurfaces(identity: identity)
@@ -579,12 +587,15 @@ final class RemoteWorktreeViewerController: ObservableObject {
             .removedSessionNames.intersection(sessionNames) ?? []
         let visibleSessionNames =
             sessionNames.subtracting(removedSessionNames)
-        let staleKeys = remoteTerminalSlots.keys.filter {
+        let staleKeys = remoteTerminalKeys.filter {
             $0.identity == identity
                 && $0.worktreePath == worktreePath
                 && !visibleSessionNames.contains($0.sessionName)
         }
         for key in staleKeys {
+            openingRemoteTerminals[key] = nil
+            scheduledRemoteTerminalRetries[key] = nil
+            remoteTerminalRetryAttempts[key] = nil
             if let terminalID = remoteTerminalSlots.removeValue(forKey: key) {
                 surfaces.destroySurface(terminalID: terminalID)
             }
@@ -672,7 +683,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
             selectedRemotePaneSessionName = newestSplitSessionName
             pendingRemoteFocusTarget = focusTarget
         }
-        let focusedSession = preferredSessionName.flatMap {
+        let focusedSession = newestSplitSessionName ?? preferredSessionName.flatMap {
             visibleSessionNames.contains($0) ? $0 : nil
         } ?? selectedRemotePaneSessionName.flatMap {
             visibleSessionNames.contains($0) ? $0 : nil
@@ -690,7 +701,8 @@ final class RemoteWorktreeViewerController: ObservableObject {
             )
             guard let terminalID = remoteTerminalSlots[key],
                   !surfaces.hasRemoteSurface(terminalID),
-                  openingRemoteTerminals[key] == nil else {
+                  openingRemoteTerminals[key] == nil,
+                  scheduledRemoteTerminalRetries[key] == nil else {
                 continue
             }
             openingRemoteTerminals[key] = terminalID
@@ -737,6 +749,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
                         )
                         return
                     }
+                    resetRemoteTerminalBackoffAfterStableStream(source: key, terminalID: terminalID)
                     let isSelected = selectedRemoteIdentity == identity
                         && selectedRemoteWorktreePath == worktreePath
                     surfaces.setVisible(
@@ -752,6 +765,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
                         focusRemotePane(terminalID, target: focusTarget)
                     }
                 } catch {
+                    guard remoteTerminalSlots[key] == terminalID else { return }
                     NSLog(
                         "[Graftty] failed to open remote terminal %@ on %@: %@",
                         leaf.sessionName,
@@ -1035,44 +1049,60 @@ final class RemoteWorktreeViewerController: ObservableObject {
                 worktreePath: source.worktreePath
             )
         }
+        // Install the retry gate before rebuilding the layout. Snapshots
+        // may update its slots during backoff, but must not reopen a stream.
+        scheduleRemoteTerminalRetry(source: source, remoteMac: remoteMac)
         synchronizeRemoteWorktree(
             remoteMac: remoteMac,
             worktreePath: source.worktreePath,
             focusSelection: shouldRestoreFocus
         )
-        scheduleRemoteTerminalRetry(source: source, remoteMac: remoteMac)
     }
 
     private func scheduleRemoteTerminalRetry(
         source: RemoteTerminalKey,
         remoteMac: RemoteMac
     ) {
-        guard !scheduledRemoteTerminalRetries.contains(source) else { return }
-        scheduledRemoteTerminalRetries.insert(source)
-        Task { @MainActor in
-            await sleep(.milliseconds(750))
-            guard scheduledRemoteTerminalRetries.contains(source) else {
-                return
-            }
-            scheduledRemoteTerminalRetries.remove(source)
+        guard scheduledRemoteTerminalRetries[source] == nil else { return }
+        let generation = UUID()
+        scheduledRemoteTerminalRetries[source] = generation
+        let attempt = remoteTerminalRetryAttempts[source, default: 0]
+        let delay = Duration.milliseconds(min(30_000, 750 * (1 << attempt)))
+        remoteTerminalRetryAttempts[source] = min(attempt + 1, 6)
+        Task { @MainActor [weak self, sleep] in
+            await sleep(delay)
+            guard let self,
+                  scheduledRemoteTerminalRetries[source] == generation else { return }
+            scheduledRemoteTerminalRetries[source] = nil
             guard selectedRemoteIdentity == source.identity,
                   selectedRemoteWorktreePath == source.worktreePath,
-                  model.worktreePanesByRemote[source.identity]?
-                    .contains(where: {
-                        $0.path == source.worktreePath
-                            && $0.layout?.leaves.contains(where: {
-                                $0.sessionName == source.sessionName
-                            }) == true
-                    }) == true,
+                  Self.directWorktree(
+                    source.worktreePath,
+                    in: model.worktreePanesByRemote[source.identity]
+                  )?.layout?.leaves.contains(where: {
+                      $0.sessionName == source.sessionName
+                  }) == true,
                   let terminalID = remoteTerminalSlots[source],
-                  !surfaces.hasRemoteSurface(terminalID) else {
-                return
-            }
+                  !surfaces.hasRemoteSurface(terminalID) else { return }
             synchronizeRemoteWorktree(
                 remoteMac: remoteMac,
                 worktreePath: source.worktreePath,
                 focusSelection: false
             )
+        }
+    }
+
+    private func resetRemoteTerminalBackoffAfterStableStream(
+        source: RemoteTerminalKey,
+        terminalID: PaneSlotID
+    ) {
+        guard remoteTerminalRetryAttempts[source] != nil else { return }
+        Task { @MainActor [weak self, sleep] in
+            await sleep(.seconds(30))
+            guard let self,
+                  remoteTerminalSlots[source] == terminalID,
+                  surfaces.hasRemoteSurface(terminalID) else { return }
+            remoteTerminalRetryAttempts[source] = nil
         }
     }
 
@@ -1252,48 +1282,10 @@ final class RemoteWorktreeViewerController: ObservableObject {
                 }
                 var rollbackCandidates = failedPendingSplit.map { [$0] } ?? []
                 if abortsSplitBatch {
-                    rollbackCandidates.append(contentsOf:
-                        pendingRemoteSplitFocus.filter { $0.target == target }
-                    )
-                    let abandonedIDs = Set(
-                        pendingRemoteSplitFocus
-                            .filter { $0.target == target }
-                            .map(\.id)
-                        + pendingRemotePaneControls
-                            .filter { $0.target == target }
-                            .map(\.id)
-                    )
-                    pendingRemoteSplitFocus.removeAll { $0.target == target }
-                    pendingRemoteSplitFocusResults.removeAll {
-                        $0.target == target
-                    }
-                    pendingRemotePaneControls.removeAll {
-                        $0.target == target
-                    }
-                    pendingRemoteMutationOrder.removeAll {
-                        abandonedIDs.contains($0)
-                    }
-                    if let inFlight = remoteMutationInFlight,
-                       abandonedIDs.contains(inFlight) {
-                        remoteMutationInFlight = nil
-                    }
+                    rollbackCandidates.append(contentsOf: abandonRemoteMutationBatch(for: target))
                 }
-                if let rollback = rollbackCandidates.first(where: {
-                    $0.shouldFocus && $0.previousZoomedSessionName != nil
-                }),
-                   let previousZoomedSessionName =
-                    rollback.previousZoomedSessionName,
-                   (abortsSplitBatch || !transferredRollback),
-                   splitTree.zoomed == nil,
-                   selectedRemoteIdentity == target.identity,
-                   selectedRemoteWorktreePath == target.worktreePath,
-                   let zoomedID = remoteTerminalSlots[RemoteTerminalKey(
-                       identity: target.identity,
-                       worktreePath: target.worktreePath,
-                       sessionName: previousZoomedSessionName
-                   )] {
-                    splitTree =
-                        splitTree.withZoom(zoomedID)
+                if abortsSplitBatch || !transferredRollback {
+                    restoreRemoteSplitZoom(from: rollbackCandidates, target: target)
                 }
                 if restoreSnapshotOnError,
                    selectedRemoteIdentity == target.identity,
@@ -1349,25 +1341,46 @@ final class RemoteWorktreeViewerController: ObservableObject {
                   }) else {
                 return
             }
-            let abandonedIDs = Set(
-                pendingRemoteSplitFocus
-                    .filter { $0.target == target }
-                    .map(\.id)
-                + pendingRemotePaneControls
-                    .filter { $0.target == target }
-                    .map(\.id)
+            let abandoned = abandonRemoteMutationBatch(for: target)
+            restoreRemoteSplitZoom(from: abandoned, target: target)
+            presentError(
+                "The remote split timed out waiting for the host's pane layout. Queued commands for this worktree were cancelled."
             )
-            pendingRemoteSplitFocus.removeAll { $0.target == target }
-            pendingRemoteSplitFocusResults.removeAll {
-                $0.target == target
-            }
-            pendingRemotePaneControls.removeAll { $0.target == target }
-            pendingRemoteMutationOrder.removeAll {
-                abandonedIDs.contains($0)
-            }
-            remoteMutationInFlight = nil
             dispatchNextRemoteMutation()
         }
+    }
+
+    private func abandonRemoteMutationBatch(for target: WorktreeKey) -> [PendingRemoteSplitFocus] {
+        let splits = pendingRemoteSplitFocus.filter { $0.target == target }
+        let abandonedIDs = Set(
+            splits.map(\.id)
+                + pendingRemotePaneControls.filter { $0.target == target }.map(\.id)
+        )
+        pendingRemoteSplitFocus.removeAll { $0.target == target }
+        pendingRemoteSplitFocusResults.removeAll { $0.target == target }
+        pendingRemotePaneControls.removeAll { $0.target == target }
+        pendingRemoteMutationOrder.removeAll { abandonedIDs.contains($0) }
+        if let inFlight = remoteMutationInFlight, abandonedIDs.contains(inFlight) {
+            remoteMutationInFlight = nil
+        }
+        return splits
+    }
+
+    private func restoreRemoteSplitZoom(from candidates: [PendingRemoteSplitFocus], target: WorktreeKey) {
+        guard let rollback = candidates.first(where: {
+            $0.shouldFocus && $0.previousZoomedSessionName != nil
+        }),
+        let sessionName = rollback.previousZoomedSessionName,
+        rollback.focusGeneration == remotePaneIntentGeneration,
+        splitTree.zoomed == nil,
+        selectedRemoteIdentity == target.identity,
+        selectedRemoteWorktreePath == target.worktreePath,
+        let zoomedID = remoteTerminalSlots[RemoteTerminalKey(
+            identity: target.identity,
+            worktreePath: target.worktreePath,
+            sessionName: sessionName
+        )] else { return }
+        splitTree = splitTree.withZoom(zoomedID)
     }
 
     private func dispatchNextRemoteMutation() {
@@ -1784,11 +1797,12 @@ final class RemoteWorktreeViewerController: ObservableObject {
         identity: RemoteMacIdentity,
         worktreePath: String
     ) {
-        let keys = remoteTerminalSlots.keys.filter {
+        let keys = remoteTerminalKeys.filter {
             $0.identity == identity && $0.worktreePath == worktreePath
         }
         for key in keys {
-            scheduledRemoteTerminalRetries.remove(key)
+            scheduledRemoteTerminalRetries[key] = nil
+            remoteTerminalRetryAttempts[key] = nil
             openingRemoteTerminals[key] = nil
             if let terminalID = remoteTerminalSlots.removeValue(forKey: key) {
                 surfaces.destroySurface(terminalID: terminalID)
@@ -1797,7 +1811,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
     }
 
     private func destroyRemoteSurfaces(identity: RemoteMacIdentity) {
-        let worktreePaths = Set(remoteTerminalSlots.keys.compactMap {
+        let worktreePaths = Set(remoteTerminalKeys.compactMap {
             $0.identity == identity ? $0.worktreePath : nil
         })
         for worktreePath in worktreePaths {
@@ -1815,6 +1829,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
         remoteTerminalSlots.removeAll()
         openingRemoteTerminals.removeAll()
         scheduledRemoteTerminalRetries.removeAll()
+        remoteTerminalRetryAttempts.removeAll()
         splitTree = SplitTree(root: nil)
     }
 

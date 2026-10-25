@@ -102,6 +102,10 @@ targets:
           - UI/RemoteBrowserButtonTests.swift
           - UI/WorktreeRowAlignmentTests.swift
           - Auth/VirtualClock.swift
+          - App/IPadRootLayoutLandscapeTests.swift
+          - App/LayoutPassProbe.swift
+      - path: ../../Tests/GrafttyMobileKitTests/App/LayoutPassProbe.swift
+        group: SharedTestSupport
       - path: ../../Tests/GrafttyMobileKitTests/Auth/VirtualClock.swift
         group: SharedTestSupport
     settings:
@@ -120,6 +124,10 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
     sources:
+      - path: ../../Tests/GrafttyMobileKitTests/App/IPadRootLayoutLandscapeTests.swift
+        group: GrafttyMobileBrowserTests
+      - path: ../../Tests/GrafttyMobileKitTests/App/LayoutPassProbe.swift
+        group: SharedTestSupport
       - path: ../../Tests/GrafttyMobileKitTests/UI/HostBrowserProxyTests.swift
         group: GrafttyMobileBrowserTests
       - path: ../../Tests/GrafttyMobileKitTests/UI/ChromeTabViewerTests.swift

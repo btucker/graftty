@@ -29,6 +29,18 @@ public protocol RemoteHostLink: PanesStateDriverMaking {
     func close() async
 }
 
+/// Optional parent-service channel on an existing authenticated link. Borrowers
+/// own this channel, not the interactive link's lifetime or state observer.
+public protocol MCPHostLink: RemoteHostLink {
+    func makeMCPControlClient(handler: @escaping TeamRPCSession.Handler,
+                              onClose: @escaping @Sendable () async -> Void) async throws -> TeamChannelClient
+}
+
+extension DirectSSHHostConnection: MCPHostLink {}
+#if canImport(WebRTC)
+extension RemoteHostConnection: MCPHostLink {}
+#endif
+
 /// A link dialed by exchanging a signed SDP offer and answer.
 public protocol WebRTCHostLink: RemoteHostLink {
     func createOfferSDP() async throws -> String

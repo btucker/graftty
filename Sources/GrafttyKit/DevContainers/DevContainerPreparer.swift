@@ -1,0 +1,287 @@
+import Foundation
+import GrafttyProtocol
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
+
+/// Uses upstream parsing and lifecycle execution. This component does not install
+/// tools, add credential mounts, forward agents, or declare an agent authenticated.
+public actor DevContainerPreparer {
+    private let executor: any CLIExecutor
+    private let profileDirectory: URL?
+    private var preparing: Set<String> = []
+    public init(executor: any CLIExecutor = DevContainerCommandRunner(), profileDirectory: URL? = nil) {
+        self.executor = executor; self.profileDirectory = profileDirectory
+    }
+
+    public func checkRelativeWorktreeSupport(at workspace: String) async throws {
+        for command in ["read-configuration", "up", "exec"] {
+            let help = try await run([command, "--help"], at: workspace, stage: "compatibility", timeout: .seconds(5))
+            guard help.stdout.contains("--mount-git-worktree-common-dir") else {
+                throw DevContainerPreparationError(stage: "compatibility", message: "Install a Dev Container CLI supporting relative Git worktree common-directory mounts")
+            }
+        }
+    }
+
+    public func prepare(workspace rawWorkspace: String, configuration: String? = nil, operationID: UUID, skills: [RemoteSkillSnapshot] = [], agent: TeamHookRuntime? = nil, mcp: MCPProfileMount? = nil) async throws -> PreparedDevContainer {
+        if mcp != nil && (profileDirectory == nil || skills.isEmpty) { throw DevContainerPreparationError(stage: "mcp", message: "MCP requires a durable private profile and selected skill revisions") }
+        if !skills.isEmpty {
+            try RemoteSkillTransferReceiver.validate(try skills.map { .init(runtime: $0.runtime.rawValue, revision: try $0.revision) })
+        }
+        if let agent, !skills.contains(where: { $0.runtime == agent }) {
+            throw DevContainerPreparationError(stage: "agent-skills", message: "Agent launch requires a matching skill revision")
+        }
+        guard rawWorkspace.hasPrefix("/") else { throw DevContainerPreparationError(stage: "configuration", message: "Workspace must be absolute") }
+        let workspace = CanonicalPath.canonicalize(rawWorkspace)
+        guard workspace.hasPrefix("/"), preparing.insert(workspace).inserted else {
+            throw DevContainerPreparationError(stage: "configuration", message: "Workspace must be absolute and cannot already be preparing")
+        }
+        defer { preparing.remove(workspace) }
+        let config = try configurationFile(workspace: workspace, selected: configuration)
+        let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: config))
+        let contents: Data
+        do { contents = try handle.read(upToCount: 1024 * 1024 + 1) ?? Data(); try handle.close() }
+        catch { try? handle.close(); throw error }
+        guard contents.count <= 1024 * 1024 else {
+            throw DevContainerPreparationError(stage: "configuration", message: "Dev Container configuration exceeds 1 MiB")
+        }
+        let relativeGit = try usesRelativeWorktree(at: workspace)
+        if relativeGit { try await checkRelativeWorktreeSupport(at: workspace) }
+        // Upstream only adds the worktree's common-directory mount when
+        // Git-root mounting is also enabled. The Git root is this worktree.
+        var common = ["--workspace-folder", workspace, "--config", config, "--mount-workspace-git-root", relativeGit ? "true" : "false"]
+        if relativeGit { common += ["--mount-git-worktree-common-dir", "true"] }
+        let read = try await run(["read-configuration"] + common, at: workspace, stage: "configuration", timeout: .seconds(60))
+        guard let configuration = try json(read.stdout, stage: "configuration")["configuration"] as? [String: Any] else {
+            throw DevContainerPreparationError(stage: "configuration", message: "CLI did not return a resolved configuration")
+        }
+        guard configuration["dockerComposeFile"] == nil else {
+            throw DevContainerPreparationError(stage: "configuration", message: "Compose preparation is not yet supported; use an image or Dockerfile configuration")
+        }
+        let label = "graftty.placement=\(operationID.uuidString.lowercased())"
+        let workspaceLabel = "graftty.workspace=" + SHA256.hash(data: Data(workspace.utf8)).map { String(format: "%02x", $0) }.joined()
+        let profileMount = try skills.isEmpty && mcp == nil ? nil : profileDirectory.map { try DevContainerProfileMount(directory: $0, operationID: operationID) }
+        defer { profileMount?.removeProbe() }
+        // CLI --mount only accepts type/source/target/external. Its normal
+        // configuration mounts accept Docker's readonly flag. Keep --config
+        // pointing at the project so relative Dockerfiles/features keep their base.
+        let overrideDirectory = mcp.map { _ in FileManager.default.temporaryDirectory.appendingPathComponent("graftty-container-" + UUID().uuidString) }
+        defer { if let overrideDirectory { try? FileManager.default.removeItem(at: overrideDirectory) } }
+        if let mcp, let overrideDirectory {
+            var augmented = configuration
+            guard configuration["mounts"] == nil || configuration["mounts"] is [Any] else {
+                throw DevContainerPreparationError(stage: "configuration", message: "Container mounts must be an array")
+            }
+            augmented.removeValue(forKey: "configFilePath")
+            augmented["mounts"] = (configuration["mounts"] as? [Any] ?? []) + mcp.mounts
+            try FileManager.default.createDirectory(at: overrideDirectory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            let override = overrideDirectory.appendingPathComponent("devcontainer.json")
+            try JSONSerialization.data(withJSONObject: augmented).write(to: override, options: .withoutOverwriting)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: override.path)
+            common += ["--override-config", override.path]
+        }
+        let mounts = profileMount.map { ["--mount", $0.argument] } ?? []
+        let up = try await run(["up"] + common + ["--id-label", label, "--id-label", workspaceLabel] + mounts, at: workspace, stage: "lifecycle", timeout: .seconds(1800))
+        let output = try json(up.stdout, stage: "lifecycle")
+        guard output["outcome"] as? String == "success", let containerID = output["containerId"] as? String,
+              containerID.count == 64, containerID.allSatisfy({ "0123456789abcdef".contains($0) }), let remoteFolder = output["remoteWorkspaceFolder"] as? String,
+              validValue(remoteFolder), remoteFolder.hasPrefix("/") else {
+            throw DevContainerPreparationError(stage: "lifecycle", message: "CLI did not return a complete successful container result")
+        }
+        // Up can print success before background lifecycle tasks finish. run waits
+        // for process exit before this check, including a later non-zero exit.
+        _ = try await run(["exec"] + common + ["--container-id", containerID, "git", "status", "--porcelain"],
+            at: workspace, stage: "git-access", timeout: .seconds(60))
+        guard try Data(contentsOf: URL(fileURLWithPath: config)) == contents else {
+            throw DevContainerPreparationError(stage: "configuration-changed", message: "Configuration changed while preparing; the container is not reported prepared")
+        }
+        if let profileMount {
+            _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", profileMount.verificationScript],
+                at: workspace, stage: "agent-profile-mount", timeout: .seconds(30))
+        }
+        if let agent {
+            _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", "command -v " + agent.rawValue + " >/dev/null"],
+                at: workspace, stage: "agent-runtime (install \(agent.rawValue) in the Dev Container)", timeout: .seconds(30))
+        }
+        if mcp != nil {
+            _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c",
+                "test -S /run/graftty-mcp/bridge.sock && /opt/graftty-mcp/bin/graftty remote mcp bridge --help >/dev/null"],
+                at: workspace, stage: "mcp-runtime (requires a compatible Linux container)", timeout: .seconds(30))
+        }
+        let agentHome: String?
+        if skills.isEmpty && mcp == nil { agentHome = nil }
+        else {
+            agentHome = try await DevContainerSkillInstaller.install(skills, workspace: workspace,
+                execArguments: ["exec"] + common + ["--container-id", containerID], operationID: operationID, executor: executor,
+                profileDirectory: profileMount?.directory)
+        }
+        if let mcp, let agentHome {
+            let script = try mcp.installationScript(home: agentHome)
+            // Each generated line is bounded; split scripts below Linux's argv limit.
+            var batch = "set -eu\numask 077\n"
+            for line in script.split(separator: "\n", omittingEmptySubsequences: false) {
+                if batch.utf8.count + line.utf8.count > 48_000 {
+                    _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", batch], at: workspace, stage: "mcp-config", timeout: .seconds(30))
+                    batch = "set -eu\numask 077\n"
+                }
+                batch += line + "\n"
+            }
+            _ = try await run(["exec"] + common + ["--container-id", containerID, "/bin/sh", "-c", batch], at: workspace, stage: "mcp-config", timeout: .seconds(30))
+        }
+        return PreparedDevContainer(containerID: containerID, workspace: workspace, configurationPath: config,
+            configurationDigest: SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined(),
+            remoteWorkspaceFolder: remoteFolder, remoteUser: output["remoteUser"] as? String, usesRelativeGitWorktree: relativeGit, agentSkillHome: agentHome, mcpConfigured: mcp == nil ? nil : true)
+    }
+
+    public nonisolated static func shellCommand(for environment: PreparedDevContainer, command: String? = nil) -> String {
+        var args = ["devcontainer", "exec", "--container-id", environment.containerID,
+                    "--workspace-folder", environment.workspace, "--config", environment.configurationPath,
+                    "--mount-workspace-git-root", environment.usesRelativeGitWorktree ? "true" : "false"]
+        if environment.usesRelativeGitWorktree { args += ["--mount-git-worktree-common-dir", "true"] }
+        if let home = environment.agentSkillHome {
+            args += ["env", "HOME=" + home, "CODEX_HOME=" + home + "/.codex", "CLAUDE_CONFIG_DIR=" + home + "/.claude"]
+            if let command { args += ["/bin/sh", "-c", command + "\nexec /bin/sh"] }
+            else { args += ["/bin/sh"] }
+        } else {
+            if let command { args += ["/bin/sh", "-lc", command + "\nexec /bin/sh -l"] }
+            else { args += ["/bin/sh", "-l"] }
+        }
+        return "exec " + args.map(WorktreeAgentLaunchCommand.shellLiteral).joined(separator: " ")
+    }
+
+    /// Labels locate resources for an already authenticated, retained operation.
+    /// They never authorize a peer or establish parent identity.
+    public func findPlacementContainer(operationID: UUID, workspace: String) async throws -> String? {
+        let workspaceHash = SHA256.hash(data: Data(workspace.utf8)).map { String(format: "%02x", $0) }.joined()
+        let output = try await docker(["ps", "--all", "--quiet", "--no-trunc",
+            "--filter", "label=graftty.placement=" + operationID.uuidString.lowercased(),
+            "--filter", "label=graftty.workspace=" + workspaceHash])
+        let ids = output.stdout.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard ids.count <= 1, ids.allSatisfy(Self.validContainerID) else {
+            throw DevContainerPreparationError(stage: "cleanup", message: "Placement container discovery is ambiguous; inspect the retained operation before deleting")
+        }
+        return ids.first
+    }
+
+    /// Return whether a rejected deletion needs to restart the container.
+    public func stopForDeletion(containerID: String) async throws -> Bool {
+        guard try await containerExists(containerID) else { return false }
+        guard try await containerIsRunning(containerID) else { return false }
+        do {
+            // Finish the bounded stop even if the caller disconnects. Killing
+            // its client can leave Docker still stopping the container while
+            // compensation tries to restore it.
+            _ = try await Task { [self] in
+                try await docker(["stop", "--timeout", "10", containerID])
+            }.value
+            try Task.checkCancellation()
+        } catch {
+            let stopError = error
+            do {
+                try await Task { [self] in
+                    if try await containerExists(containerID), !(try await containerIsRunning(containerID)) {
+                        try await restartAfterRejectedDeletion(containerID: containerID)
+                    }
+                }.value
+            } catch {
+                throw DevContainerPreparationError(stage: "cleanup", message: "Container stop failed: \(stopError). Container restart also failed: \(error)")
+            }
+            throw stopError
+        }
+        return true
+    }
+    private func containerIsRunning(_ containerID: String) async throws -> Bool {
+        let state = try await docker(["inspect", "--format", "{{.State.Running}}", containerID])
+        let running = state.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard running == "true" || running == "false" else {
+            throw DevContainerPreparationError(stage: "cleanup", message: "Docker returned an unknown running state")
+        }
+        return running == "true"
+    }
+    public func restartAfterRejectedDeletion(containerID: String) async throws {
+        guard Self.validContainerID(containerID) else { throw DevContainerPreparationError(stage: "cleanup", message: "Invalid retained container ID") }
+        _ = try await docker(["start", containerID])
+    }
+    public func removeStoppedContainer(containerID: String) async throws {
+        guard try await containerExists(containerID) else { return }
+        // Do not remove volumes or force-kill a container that another actor restarted.
+        _ = try await docker(["rm", containerID])
+    }
+    private static func validContainerID(_ id: String) -> Bool { id.count == 64 && id.allSatisfy { "0123456789abcdef".contains($0) } }
+    private func containerExists(_ id: String) async throws -> Bool {
+        guard Self.validContainerID(id) else { throw DevContainerPreparationError(stage: "cleanup", message: "Invalid retained container ID") }
+        let output = try await docker(["ps", "--all", "--quiet", "--no-trunc", "--filter", "id=" + id])
+        let ids = output.stdout.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard ids.isEmpty || ids == [id] else {
+            throw DevContainerPreparationError(stage: "cleanup", message: "Docker returned an unexpected container identity")
+        }
+        return !ids.isEmpty
+    }
+    private func docker(_ args: [String]) async throws -> CLIOutput {
+        do {
+            let result = try await executor.run(command: "docker", args: args, at: NSHomeDirectory(), timeout: .seconds(30))
+            guard result.exitCode == 0 else { throw DevContainerPreparationError(stage: "cleanup", message: "Docker exited with status \(result.exitCode)") }
+            return result
+        } catch { throw DevContainerPreparationError(stage: "cleanup", message: String(describing: error)) }
+    }
+
+    private func run(_ args: [String], at workspace: String, stage: String, timeout: Duration) async throws -> CLIOutput {
+        try Task.checkCancellation()
+        do {
+            let result = try await executor.run(command: "devcontainer", args: args, at: workspace, timeout: timeout)
+            guard result.exitCode == 0 else { throw DevContainerPreparationError(stage: stage, message: "CLI exited with status \(result.exitCode)") }
+            try Task.checkCancellation()
+            return result
+        } catch is CancellationError { throw CancellationError() }
+        catch { throw DevContainerPreparationError(stage: stage, message: String(describing: error)) }
+    }
+
+    private func json(_ text: String, stage: String) throws -> [String: Any] {
+        guard text.utf8.count <= 8 * 1024 * 1024,
+              let value = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+            throw DevContainerPreparationError(stage: stage, message: "CLI returned invalid or oversized JSON")
+        }
+        return value
+    }
+    private func validValue(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.count <= 4096 && !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+    }
+    private func configurationFile(workspace: String, selected: String?) throws -> String {
+        let candidates = selected.map { [$0] } ?? [".devcontainer/devcontainer.json", ".devcontainer.json"]
+        for candidate in candidates {
+            guard !candidate.hasPrefix("/"), !candidate.split(separator: "/").contains("..") else {
+                throw DevContainerPreparationError(stage: "configuration", message: "Configuration must be inside the worktree")
+            }
+            let path = CanonicalPath.canonicalize((workspace as NSString).appendingPathComponent(candidate))
+            guard path.hasPrefix(workspace + "/") else {
+                throw DevContainerPreparationError(stage: "configuration", message: "Configuration escapes the worktree")
+            }
+            var directory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: path, isDirectory: &directory), !directory.boolValue { return path }
+        }
+        throw DevContainerPreparationError(stage: "configuration", message: "No selected Dev Container configuration exists; use the project-setup skill")
+    }
+    private func usesRelativeWorktree(at workspace: String) throws -> Bool {
+        let git = (workspace as NSString).appendingPathComponent(".git")
+        let attributes = try FileManager.default.attributesOfItem(atPath: git)
+        if attributes[.type] as? FileAttributeType == .typeDirectory { return false }
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              ((attributes[.size] as? NSNumber)?.intValue ?? Int.max) <= 4096 else {
+            throw DevContainerPreparationError(stage: "git-layout", message: "Unsupported Git metadata layout")
+        }
+        let value = try String(contentsOfFile: git, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.hasPrefix("gitdir: "), !value.dropFirst(8).isEmpty, !value.dropFirst(8).hasPrefix("/"),
+              !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+            throw DevContainerPreparationError(stage: "git-layout", message: "Linked worktrees require relative Git metadata; existing absolute metadata is not rewritten automatically")
+        }
+        return true
+    }
+}
+
+public struct DevContainerPreparationError: Error, Sendable, CustomStringConvertible {
+    public let stage: String
+    public let message: String
+    public var description: String { "Dev Container \(stage): \(message)" }
+}

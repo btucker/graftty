@@ -96,6 +96,11 @@ public enum NotificationMessage: Sendable, Equatable {
     case notify(path: String, text: String, clearAfter: TimeInterval? = nil, paneSessionName: String? = nil)
     case clear(path: String, paneSessionName: String? = nil)
     case listPanes(path: String)
+    case listRemoteHosts
+    case mcpBridge(MCPBridgeRequest)
+    case mcpConnection(MCPConnectionRequest)
+    case remoteSkills(host: RemoteMacConnectionSummary.ID, request: RemoteSkillTransferRequest)
+    case remotePlacement(host: RemoteMacConnectionSummary.ID, request: HostPlacementRequest)
     case reconnectRemoteMac(target: String)
     case reconnectRemoteClient(target: String)
     case remoteWorktree(target: String, request: RemoteWorktreeRequest)
@@ -209,7 +214,7 @@ extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case targets
         case type, path, text, clearAfter, index, lines
-        case target, request, result
+        case target, request, result, host
         case callerWorktree = "caller_worktree"
         case callerAgentID = "caller_agent_id"
         case recipient, priority, worktree, repo, member, unread, all, limit, consuming
@@ -263,6 +268,22 @@ extension NotificationMessage: Codable {
         case .listPanes(let path):
             try container.encode("list_panes", forKey: .type)
             try container.encode(path, forKey: .path)
+        case .mcpConnection(let request):
+            try container.encode("mcp_connection", forKey: .type)
+            try container.encode(request, forKey: .request)
+        case .mcpBridge(let request):
+            try container.encode("mcp_bridge", forKey: .type)
+            try container.encode(request, forKey: .request)
+        case .remoteSkills(let host, let request):
+            try container.encode("remote_skills", forKey: .type)
+            try container.encode(host, forKey: .host)
+            try container.encode(request, forKey: .request)
+        case .remotePlacement(let host, let request):
+            try container.encode("remote_placement", forKey: .type)
+            try container.encode(host, forKey: .host)
+            try container.encode(request, forKey: .request)
+        case .listRemoteHosts:
+            try container.encode("list_remote_hosts", forKey: .type)
         case .reconnectRemoteMac(let target):
             try container.encode("reconnect_remote_mac", forKey: .type)
             try container.encode(target, forKey: .target)
@@ -418,6 +439,16 @@ extension NotificationMessage: Codable {
         case "list_panes":
             let path = try container.decode(String.self, forKey: .path)
             self = .listPanes(path: path)
+        case "mcp_connection":
+            self = .mcpConnection(try container.decode(MCPConnectionRequest.self, forKey: .request))
+        case "mcp_bridge":
+            self = .mcpBridge(try container.decode(MCPBridgeRequest.self, forKey: .request))
+        case "remote_skills":
+            self = .remoteSkills(host: try container.decode(RemoteMacConnectionSummary.ID.self, forKey: .host), request: try container.decode(RemoteSkillTransferRequest.self, forKey: .request))
+        case "remote_placement":
+            self = .remotePlacement(host: try container.decode(RemoteMacConnectionSummary.ID.self, forKey: .host), request: try container.decode(HostPlacementRequest.self, forKey: .request))
+        case "list_remote_hosts":
+            self = .listRemoteHosts
         case "reconnect_remote_mac":
             self = .reconnectRemoteMac(target: try container.decode(String.self, forKey: .target))
         case "remote_worktree":
@@ -829,6 +860,11 @@ public enum ResponseMessage: Sendable, Equatable {
         "Control socket is busy; retry the command."
 
     case linuxSetupIdentity(LinuxHostTrustRequest)
+    case mcpProxy(MCPProxyResponse)
+    case mcpConnections([MCPConnectionStatus])
+    case agentSkills(RemoteSkillTransferStatus)
+    case placement(HostPlacementRecord)
+    case remoteHosts([RemoteMacConnectionSummary])
     case ok
     case error(String)
     case serverBusy
@@ -848,6 +884,11 @@ public extension ResponseMessage {
     /// The `type` tag this response carries on the wire.
     var wireType: String {
         switch self {
+        case .mcpConnections: "mcp_connections"
+        case .mcpProxy: "mcp_proxy"
+        case .agentSkills: "agent_skills"
+        case .placement: "placement"
+        case .remoteHosts: "remote_hosts"
         case .linuxSetupIdentity: "linux_setup_identity"
         case .ok: "ok"
         case .error, .serverBusy: "error"
@@ -866,7 +907,7 @@ public extension ResponseMessage {
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, code, message, panes, output, messages, text, operation, identity, capabilities
+        case type, code, message, panes, output, messages, text, operation, identity, capabilities, hosts, placement, agentSkills, mcpProxy, mcpConnections
         case operationID = "operation_id"
         case teamName = "team_name"
         case members
@@ -879,8 +920,18 @@ extension ResponseMessage: Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(wireType, forKey: .type)
         switch self {
+        case .mcpConnections(let statuses):
+            try container.encode(statuses, forKey: .mcpConnections)
+        case .mcpProxy(let response):
+            try container.encode(response, forKey: .mcpProxy)
+        case .agentSkills(let status):
+            try container.encode(status, forKey: .agentSkills)
+        case .placement(let record):
+            try container.encode(record, forKey: .placement)
         case .linuxSetupIdentity(let identity):
             try container.encode(identity, forKey: .identity)
+        case .remoteHosts(let hosts):
+            try container.encode(hosts, forKey: .hosts)
         case .ok:
             break
         case .error(let message):
@@ -917,8 +968,18 @@ extension ResponseMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
+        case "mcp_connections":
+            self = .mcpConnections(try container.decode([MCPConnectionStatus].self, forKey: .mcpConnections))
+        case "mcp_proxy":
+            self = .mcpProxy(try container.decode(MCPProxyResponse.self, forKey: .mcpProxy))
+        case "agent_skills":
+            self = .agentSkills(try container.decode(RemoteSkillTransferStatus.self, forKey: .agentSkills))
+        case "placement":
+            self = .placement(try container.decode(HostPlacementRecord.self, forKey: .placement))
         case "linux_setup_identity":
             self = .linuxSetupIdentity(try container.decode(LinuxHostTrustRequest.self, forKey: .identity))
+        case "remote_hosts":
+            self = .remoteHosts(try container.decode([RemoteMacConnectionSummary].self, forKey: .hosts))
         case "ok":
             self = .ok
         case "error":

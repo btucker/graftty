@@ -65,6 +65,6 @@ extension HeadlessHostRuntime {
             return SidebarProject(id: repo.path, repositoryID: repo.path, name: repo.displayName,
                 owner: origin, iconRevision: currentProjectIcon(for: repo)?.revision, initials: initials,
                 supportsWorktreeEditing: repo.isGitTracked, worktreeOrderMode: repo.isGitTracked ? repo.worktreeOrderMode : nil)
-        }))
+        }, hostResources: hostResources))
     }
 }

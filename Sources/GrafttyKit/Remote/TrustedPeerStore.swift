@@ -9,8 +9,8 @@ import GrafttyProtocol
 /// the given directory. The file is written atomically to avoid corruption
 /// from a crash mid-write.
 ///
-/// Thread safety is achieved via an `NSLock`; the store is not high-throughput
-/// so a simple lock beats the complexity of async isolation.
+/// An NSLock serializes each instance, and an advisory file lock protects
+/// complete read/modify/write transactions across app and CLI processes.
 public final class TrustedPeerStore: @unchecked Sendable {
 
     // MARK: Errors
@@ -20,6 +20,8 @@ public final class TrustedPeerStore: @unchecked Sendable {
         case duplicateFingerprint
         /// No peer with the given ID was found.
         case notFound
+        case changedIdentity
+        case invalidStore
     }
 
     // MARK: Storage layout
@@ -53,6 +55,8 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func add(_ peer: TrustedPeer) throws {
         lock.lock()
         defer { lock.unlock() }
+        let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
+        defer { withExtendedLifetime(fileLock) {} }
         var envelope = _load()
         let fingerprint = peer.fingerprint
         guard !envelope.peers.contains(where: { $0.fingerprint == fingerprint }) else {
@@ -70,6 +74,8 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func upsertAfterPairing(_ peer: TrustedPeer) throws {
         lock.lock()
         defer { lock.unlock() }
+        let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
+        defer { withExtendedLifetime(fileLock) {} }
         var envelope = _load()
         guard !envelope.peers.contains(where: {
             $0.id != peer.id && $0.fingerprint == peer.fingerprint
@@ -81,10 +87,32 @@ public final class TrustedPeerStore: @unchecked Sendable {
         try _save(envelope)
     }
 
+    /// Provider enrollment may add a new identity, but must never replace a key
+    /// or restore permissions removed from an already trusted peer.
+    public func enrollWithoutReplacingIdentity(_ peer: TrustedPeer) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
+        defer { withExtendedLifetime(fileLock) {} }
+        var envelope = try file.load() ?? Envelope(version: RemoteAccessProtocol.version, peers: [])
+        guard envelope.version == RemoteAccessProtocol.version,
+              Set(envelope.peers.map(\.id)).count == envelope.peers.count,
+              Set(envelope.peers.map(\.fingerprint)).count == envelope.peers.count else { throw Error.invalidStore }
+        if let existing = envelope.peers.first(where: { $0.id == peer.id }) {
+            guard existing.publicKey == peer.publicKey, existing.kind == peer.kind else { throw Error.changedIdentity }
+            return
+        }
+        guard !envelope.peers.contains(where: { $0.fingerprint == peer.fingerprint }) else { throw Error.duplicateFingerprint }
+        envelope.peers.append(peer)
+        try _save(envelope)
+    }
+
     /// Removes the peer with the given ID. Throws `.notFound` if absent.
     public func remove(id: RemoteDeviceID) throws {
         lock.lock()
         defer { lock.unlock() }
+        let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
+        defer { withExtendedLifetime(fileLock) {} }
         var envelope = _load()
         guard let idx = envelope.peers.firstIndex(where: { $0.id == id }) else {
             throw Error.notFound
@@ -98,6 +126,8 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func update(_ peer: TrustedPeer) throws {
         lock.lock()
         defer { lock.unlock() }
+        let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
+        defer { withExtendedLifetime(fileLock) {} }
         var envelope = _load()
         guard let idx = envelope.peers.firstIndex(where: { $0.id == peer.id }) else {
             throw Error.notFound
@@ -110,6 +140,8 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func get(id: RemoteDeviceID) throws -> TrustedPeer? {
         lock.lock()
         defer { lock.unlock() }
+        let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
+        defer { withExtendedLifetime(fileLock) {} }
         let envelope = _load()
         return envelope.peers.first(where: { $0.id == id })
     }
@@ -118,6 +150,8 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func contains(fingerprint: RemoteIdentityFingerprint) throws -> Bool {
         lock.lock()
         defer { lock.unlock() }
+        let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
+        defer { withExtendedLifetime(fileLock) {} }
         let envelope = _load()
         return envelope.peers.contains(where: { $0.fingerprint == fingerprint })
     }
@@ -129,6 +163,8 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func get(fingerprint: RemoteIdentityFingerprint) throws -> TrustedPeer? {
         lock.lock()
         defer { lock.unlock() }
+        let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
+        defer { withExtendedLifetime(fileLock) {} }
         let envelope = _load()
         return envelope.peers.first(where: { $0.fingerprint == fingerprint })
     }
@@ -139,6 +175,8 @@ public final class TrustedPeerStore: @unchecked Sendable {
     public func list() throws -> [TrustedPeer] {
         lock.lock()
         defer { lock.unlock() }
+        let fileLock = try ExclusiveFileLock(url: file.fileURL.appendingPathExtension("lock"))
+        defer { withExtendedLifetime(fileLock) {} }
         let envelope = _load()
         return envelope.peers.sorted { lhs, rhs in
             switch (lhs.lastSeenAt, rhs.lastSeenAt) {

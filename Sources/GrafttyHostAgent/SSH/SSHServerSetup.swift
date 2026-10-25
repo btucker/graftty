@@ -26,6 +26,7 @@ public enum SSHServerSetup {
         hostKey: Curve25519.Signing.PrivateKey,
         trustedPeerStore: TrustedPeerStore,
         expectedDeviceID: RemoteDeviceID? = nil,
+        allowReplicationOnly: Bool = false,
         activePeerRegistry: ActiveRemotePeerRegistry? = nil,
         closeActiveTransport: (@Sendable () async -> Void)? = nil,
         onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil,
@@ -39,6 +40,7 @@ public enum SSHServerSetup {
             userAuthDelegate: SSHUserAuthDelegate(
                 store: trustedPeerStore,
                 expectedDeviceID: expectedDeviceID,
+                allowReplicationOnly: allowReplicationOnly,
                 activePeerRegistry: activePeerRegistry,
                 closeActiveTransport: closeActiveTransport,
                 onActivePeerRegistered: onActivePeerRegistered,

@@ -18,6 +18,10 @@ struct SSHHostSessionConfiguration: Sendable {
     let panesStateV2Subscribe: PanesStateChannelHandler.Subscribe
     let paneControlMutator: PaneControlChannelHandler.Mutator
     let worktreeManagementMutator: WorktreeManagementChannelHandler.Mutator
+    var authenticatedPlacementMutator: AuthenticatedPlacementMutator? = nil
+    var authenticatedSkillMutator: AuthenticatedSkillMutator? = nil
+    var mcpControl: AuthenticatedMCPControl? = nil
+    var gitControl: AuthenticatedGitControl? = nil
     var chromeTabMutator: ChromeTabChannelHandler.Mutator? = nil
     var chromeTabOnDisconnect: ChromeTabChannelHandler.OnDisconnect = { _ in }
     let ownershipStore: SessionDisplayOwnershipStore
@@ -42,6 +46,7 @@ struct SSHHostSessionConfiguration: Sendable {
             hostKey: hostKey,
             trustedPeerStore: trustedPeerStore,
             expectedDeviceID: expectedDeviceID,
+            allowReplicationOnly: gitControl != nil,
             activePeerRegistry: activeRemotePeers,
             closeActiveTransport: closeTransport,
             onActivePeerRegistered: { entryID in
@@ -56,7 +61,7 @@ struct SSHHostSessionConfiguration: Sendable {
             },
             inboundChildChannelInitializer: { child, type in
                 if case .directTCPIP(let destination) = type {
-                    guard peerBox.browserTunnelAllowed(host: destination.targetHost, port: destination.targetPort) else {
+                    guard peerBox.terminalControlAllowed, peerBox.browserTunnelAllowed(host: destination.targetHost, port: destination.targetPort) else {
                         return child.eventLoop.makeFailedFuture(SSHHostSessionError.unsupportedChannelType)
                     }
                     return SSHTCPBridge.connect(host: destination.targetHost, port: destination.targetPort, channel: child)
@@ -72,7 +77,26 @@ struct SSHHostSessionConfiguration: Sendable {
                         panesStateV2Subscribe: panesStateV2Subscribe,
                         paneControlMutator: paneControlMutator,
                         worktreeManagementMutator: { request in
-                            await peerBox.manage(request, using: worktreeManagementMutator)
+                            if case .agentSkills(let transfer) = request {
+                                guard !Task.isCancelled, let peer = peerBox.peer,
+                                      peer.capabilities.worktreeManagement == .allowed,
+                                      peer.kind == .mac || peer.kind == .linux,
+                                      SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: trustedPeerStore) else {
+                                    return .error(code: "skills-forbidden", message: "Skill transfer requires current pairing and worktree-management permission.", forceAllowed: false, shortStatus: nil)
+                                }
+                                guard let authenticatedSkillMutator else {
+                                    return .error(code: "skills-unavailable", message: "This host does not support skill transfer.", forceAllowed: false, shortStatus: nil)
+                                }
+                                return await authenticatedSkillMutator(transfer, .init(deviceID: peer.id, fingerprint: peer.fingerprint))
+                            }
+                            if case .placement = request {
+                                guard !Task.isCancelled, let peer = peerBox.peer,
+                                      peer.capabilities.worktreeManagement == .allowed,
+                                      SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: trustedPeerStore) else {
+                                    return .error(code: "placement-forbidden", message: "Placement requires current pairing and worktree-management permission.", forceAllowed: false, shortStatus: nil)
+                                }
+                            }
+                            return await peerBox.manage(request, using: worktreeManagementMutator, placement: authenticatedPlacementMutator)
                         },
                         chromeTabMutator: chromeTabMutator.map { mutator -> ChromeTabChannelHandler.Mutator in
                             { @Sendable request, deviceID, viewerID in
@@ -88,7 +112,41 @@ struct SSHHostSessionConfiguration: Sendable {
                         ownershipBroadcaster: ownershipBroadcaster,
                         deviceIDProvider: { peerBox.deviceID },
                         worktreeManagementAllowed: { peerBox.worktreeManagementAllowed },
+                        terminalControlAllowed: { peerBox.terminalControlAllowed },
+                        replicationAllowed: { peerBox.gitControlIdentity(in: trustedPeerStore) != nil },
                         displayKindProvider: { peerBox.displayKind },
+                        mcpControlHandler: mcpControl.map { callbacks -> TeamChannelHandler.Handler in
+                            { deviceID, bytes in
+                                guard let identity = peerBox.mcpControlIdentity(in: trustedPeerStore), identity.deviceID == deviceID else { return Data() }
+                                return await callbacks.handler(identity, bytes)
+                            }
+                        },
+                        mcpControlOnConnect: { deviceID, session in
+                            guard let callbacks = mcpControl, let identity = peerBox.mcpControlIdentity(in: trustedPeerStore), identity.deviceID == deviceID else {
+                                await session.close(); return
+                            }
+                            await callbacks.onConnect(identity, session)
+                        },
+                        mcpControlOnDisconnect: { deviceID, sessionID in
+                            guard let callbacks = mcpControl, let peer = peerBox.peer, peer.id == deviceID else { return }
+                            await callbacks.onDisconnect(.init(deviceID: peer.id, fingerprint: peer.fingerprint), sessionID)
+                        },
+                        gitControlHandler: gitControl.map { callbacks -> TeamChannelHandler.Handler in
+                            { deviceID, bytes in
+                                guard !Task.isCancelled, let identity = peerBox.gitControlIdentity(in: trustedPeerStore), identity.deviceID == deviceID else { return Data() }
+                                return await callbacks.handler(identity, bytes)
+                            }
+                        },
+                        gitControlOnConnect: { deviceID, session in
+                            guard let callbacks = gitControl, let identity = peerBox.gitControlIdentity(in: trustedPeerStore), identity.deviceID == deviceID else {
+                                await session.close(); return
+                            }
+                            await callbacks.onConnect(identity, session)
+                        },
+                        gitControlOnDisconnect: { deviceID, sessionID in
+                            guard let callbacks = gitControl, let peer = peerBox.peer, peer.id == deviceID else { return }
+                            await callbacks.onDisconnect(.init(deviceID: peer.id, fingerprint: peer.fingerprint), sessionID)
+                        },
                         teamHandler: teamHandler,
                         teamOnConnect: teamOnConnect,
                         teamOnDisconnect: teamOnDisconnect,
@@ -130,6 +188,21 @@ final class AuthenticatedPeerBox: @unchecked Sendable {
         }
     }
 
+    var terminalControlAllowed: Bool { peer?.capabilities.terminalControl == .allowed }
+
+    func gitControlIdentity(in store: TrustedPeerStore) -> RemoteMacConnectionSummary.ID? {
+        guard let peer, peer.capabilities.replication == .allowed, peer.kind == .mac || peer.kind == .linux,
+              SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: store, allowReplicationOnly: true) else { return nil }
+        return .init(deviceID: peer.id, fingerprint: peer.fingerprint)
+    }
+
+    func mcpControlIdentity(in store: TrustedPeerStore) -> RemoteMacConnectionSummary.ID? {
+        guard let peer, peer.capabilities.worktreeManagement == .allowed,
+              peer.kind == .mac || peer.kind == .linux,
+              SSHUserAuthDelegate.hasCurrentAuthorization(peer, in: store) else { return nil }
+        return .init(deviceID: peer.id, fingerprint: peer.fingerprint)
+    }
+
     var teamAllowed: Bool {
         lock.withLock { _peer?.kind == .mac || _peer?.kind.rawValue == "linux" }
     }
@@ -143,7 +216,17 @@ final class AuthenticatedPeerBox: @unchecked Sendable {
     /// Port and sign-in taps grant narrow approval after resolving a live worktree listener.
     func manage(_ request: WorktreeManagementRequest,
                 using mutator: WorktreeManagementChannelHandler.Mutator,
+                placement: AuthenticatedPlacementMutator? = nil,
                 approvals: BrowserTunnelApprovalStore = .shared) async -> WorktreeManagementResponse {
+        if case .placement(let placementRequest) = request {
+            guard let peer, peer.capabilities.worktreeManagement == .allowed else {
+                return .error(code: "placement-forbidden", message: "Placement requires authenticated worktree-management permission.", forceAllowed: false, shortStatus: nil)
+            }
+            guard let placement else {
+                return .error(code: "placement-unavailable", message: "This host does not support placement admission.", forceAllowed: false, shortStatus: nil)
+            }
+            return await placement(placementRequest, .init(deviceID: peer.id, fingerprint: peer.fingerprint))
+        }
         guard case .openResource(_, let resource) = request else { return await mutator(request) }
         if case .authenticate(let url) = resource {
             guard let peer, peer.capabilities.portTunnel != .disabled else {
