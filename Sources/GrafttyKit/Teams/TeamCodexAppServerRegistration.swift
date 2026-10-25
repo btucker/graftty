@@ -69,19 +69,20 @@ public enum CodexDeliveryBinaryResolver {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let openAIOrgRoot = packageRoot.deletingLastPathComponent()
-        let candidateURLs = [
-            openAIOrgRoot
-                .appendingPathComponent(platformPackageDirectoryName, isDirectory: true)
-                .appendingPathComponent("vendor", isDirectory: true)
-                .appendingPathComponent(targetTriple, isDirectory: true)
-                .appendingPathComponent("bin", isDirectory: true)
-                .appendingPathComponent("codex"),
+        let candidateRoots = [
             packageRoot
-                .appendingPathComponent("vendor", isDirectory: true)
+                .appendingPathComponent("node_modules", isDirectory: true)
+                .appendingPathComponent(platformPackageName, isDirectory: true),
+            openAIOrgRoot
+                .appendingPathComponent(platformPackageDirectoryName, isDirectory: true),
+            packageRoot,
+        ]
+        let candidateURLs = candidateRoots.map {
+            $0.appendingPathComponent("vendor", isDirectory: true)
                 .appendingPathComponent(targetTriple, isDirectory: true)
                 .appendingPathComponent("bin", isDirectory: true)
-                .appendingPathComponent("codex"),
-        ]
+                .appendingPathComponent("codex")
+        }
 
         guard let nativeURL = candidateURLs.first(where: { fileManager.isExecutableFile(atPath: $0.path) }) else {
             return realBinaryPath

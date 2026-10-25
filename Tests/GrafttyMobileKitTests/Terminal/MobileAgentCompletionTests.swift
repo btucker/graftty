@@ -121,21 +121,44 @@ struct MobileAgentCompletionTests {
         #expect(!model.isActive)
     }
 
-    @Test func heldPickerArrowStopsWhenCompletionCloses() async throws {
+    @Test(arguments: [false, true])
+    func heldPickerArrowStopsWhenCompletionCloses(accept: Bool) async throws {
+        let repeatScheduler = ManualArrowRepeat()
         let (container, model, _) = setup()
+        let other = AgentCompletionCandidate(address: "/project/other#codex", projectPath: "/project",
+            projectName: "Project", worktreePath: "/project/other", worktreeName: "other", hostName: "Mac", runtime: "codex")
+        model.loadCandidates = { [Self.candidate, other] }
         container.terminalView.insertText("%")
         await model.waitForLoad()
+        container.terminalView.startArrowRepeat = repeatScheduler.start
         let down = CompletionPress(UIKeyCommand.inputDownArrow, usage: .keyboardDownArrow)
         container.terminalView.pressesBegan([down], with: nil)
-        model.accept(Self.candidate.id)
+        defer { container.terminalView.pressesEnded([down], with: nil) }
+        try #require(repeatScheduler.isRepeating)
+        let beforeRepeat = model.selectedID
+        repeatScheduler.fire()
+        try #require(model.selectedID != beforeRepeat)
+        try #require(repeatScheduler.isRepeating)
+        try #require(model.isActive)
+        if accept {
+            model.accept(Self.candidate.id)
+        } else {
+            // Cancellation without literal insertion leaves the repeat active
+            // until its next tick checks that the picker has closed.
+            model.cancel(preserveLiteral: false)
+            try #require(repeatScheduler.isRepeating)
+        }
+        try #require(!model.isActive)
         var forwardedArrows = 0
         container.hardwareKeyboardCommands = [.init(
             id: "arrow", title: "Arrow", input: UIKeyCommand.inputDownArrow, modifierFlags: [],
             perform: { forwardedArrows += 1 }
         )]
-        try await Task.sleep(for: .milliseconds(550))
+        repeatScheduler.fire()
         #expect(forwardedArrows == 0)
-        container.terminalView.pressesEnded([down], with: nil)
+        #expect(!repeatScheduler.isRepeating)
+        repeatScheduler.fire()
+        #expect(forwardedArrows == 0)
     }
 
     @Test func loadingOrEmptyPickerCannotSubmit() async {

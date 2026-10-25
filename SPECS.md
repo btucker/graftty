@@ -352,6 +352,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-4.10** The application shall use regular (not security-scoped) bookmarks. Security-scoped bookmarks are unnecessary because Graftty is not sandboxed and `NSOpenPanel` already grants the app arbitrary-path URLs.
 
+**LAYOUT-4.11** When repository discovery or repair suspends during relocation, the application shall apply the result only to the same repository identity at the expected path, preserving other repositories and skipping a removed repository.
+
+**LAYOUT-4.12** When a repository is removed while launch-time location resolution suspends, the application shall continue resolving the remaining original repository identities without using stale array offsets.
+
 ### LAYOUT-5.x — Window Lifecycle
 
 **LAYOUT-5.1** When the user closes the main window (Cmd+W, red traffic-light button, or `File → Close`), the application shall keep running as a foreground app — the Dock icon remains visible, background services (socket listener, stats/PR pollers, filesystem watchers, web access server) keep running, and any running terminal panes stay attached to their underlying zmx sessions. Closing the window is not a quit; the user explicitly issues `Cmd+Q` or `File → Quit` to terminate the app.
@@ -980,6 +984,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-2.27** When the CLI sends `capabilities`, the application shall answer with the name of every control capability its dispatcher supports, and shall answer each older single-capability probe from that same set: `ok` when supported, an error otherwise.
 
+**ATTN-2.28** When a control-socket request lists team members or teams, the application shall read and decode presence files off the main thread while preserving member responses and request errors.
+
 ### ATTN-3.x — Error Handling
 
 **ATTN-3.1** If the application is not running, then the CLI shall print "Graftty is not running" and exit with code 1.
@@ -1288,7 +1294,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONFIG-2.5** The application bundle shall include ghostty's per-shell integration scripts and the `xterm-ghostty` terminfo entry as vendored resources, pinned to the ghostty version backing libghostty-spm, with upstream license headers preserved and a provenance record, so shell integration works without a separately installed Ghostty.app.
 
-**CONFIG-2.6** The application shall resolve GrafttyKit's SwiftPM resource bundle from the packaged `.app` layout (`Contents/Resources/`), falling back to `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not trap on SwiftPM's generated accessor (which probes only the `.app` root and the compiling machine's `.build` path — neither present once shipped).
+**CONFIG-2.6** The application shall resolve GrafttyKit's SwiftPM resource bundle, including the Linux host maintenance installer, from the packaged `.app` layout (`Contents/Resources/`), falling back to `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not trap on SwiftPM's generated accessor (which probes only the `.app` root and the compiling machine's `.build` path — neither present once shipped).
 
 **CONFIG-2.7** If GrafttyKit's resource bundle uses either SwiftPM's flat layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's build system, then the application shall locate the bundled web client assets, agent plugin payload, Codex wrapper template, and vendored ghostty runtime resources.
 
@@ -2450,6 +2456,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.27** When a phone's retained RootView enters the regular-width mobile split layout with its sidebar shown or collapsed, the application shall settle within 24 layout passes.
 
+**IPAD-1.28** When the regular-width mobile sidebar is collapsed or has no host content, the application shall preserve the remembered expanded sidebar width through the persistence debounce.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
@@ -2628,7 +2636,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-4.13** When agents establish durable roles, the bundled Graftty Team skill shall demonstrate supported CLI commands for pinning the current or another tracked worktree, unpinning, and explicitly removing a pinned worktree, and explain role instruction files and retention after PR or MR resolution.
 
-**TEAM-4.14** When `graftty team msg <address> <text>` is invoked, the CLI shall send a normal-priority `team_send` request as a hidden alias of `team send` that `graftty team --help` does not list.
+**TEAM-4.14** When `graftty team msg <address> <text>` is invoked, the CLI shall validate the body and send a normal-priority `team_send` request as a hidden alias of `team send` that `graftty team --help` does not list; if the body is empty, then the CLI shall reject it before sending.
 
 **TEAM-4.15** When a team CLI caller inherits an agent ID from another worktree or pane, the application shall use only reachable top-level presence in the caller's worktree and pane to identify the sender, accepting the inherited ID only when it belongs to that presence and leaving ambiguous identity unset.
 
@@ -2725,6 +2733,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-10.18** When the periodic presence sweep runs, the application shall clean stale presence and orphaned app-server records and load the remaining presence records off the main thread before updating delivery liveness.
 
 **TEAM-10.19** If a periodic presence refresh finishes after a newer foreground presence update or removal, then the application shall preserve the newer records and use them for delivery liveness.
+
+**TEAM-10.20** When a Codex Node launcher has a nested npm platform package, the application shall register that package's native binary before sibling or in-package vendor fallbacks.
 
 ### TEAM-11.x — Idle Delivery
 
@@ -3013,6 +3023,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-2.22** When the LAN remote-access listener's bind host is a numeric IP address, the application shall bind that address without name resolution, so a `::` listener starts on a Linux host with no non-loopback IPv6 address; a host name shall still be resolved.
 
 **REMOTE-2.23** If the LAN remote-access listener's configured port is outside 0–65535, then the application shall fail to start with a thrown error rather than terminate the process.
+
+**REMOTE-2.24** When a dial refreshes connection metadata after a concurrent pairing edit, the client shall preserve the current pairing fields and update only routes, last successful route, wake addresses, and connection time.
+
+**REMOTE-2.25** If a pin is removed or its key changes during a dial, then the client shall reject the connection metadata refresh and leave the current pairing unchanged.
+
+**REMOTE-2.26** When a mobile dial is invalidated before it becomes usable, the application shall discard its connection without saving refreshed connection metadata.
+
+**REMOTE-2.27** If a mobile connection becomes terminal or loses registration during post-connect verification, then the client shall discard it without saving connection metadata.
+
+**REMOTE-2.28** While multiple pinned-host store instances access the same file, the client shall serialize their read-modify-write operations so each completed update is retained.
+
+**REMOTE-2.29** While a mobile dial awaits post-connect validation, concurrent callers shall await that attempt's final result rather than receive its provisional connection.
 
 ### REMOTE-3.x — Revocation
 
@@ -3564,7 +3586,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-24.7** When a remote equalize fails, the viewer shall restore the snapshot layout and the zoom it cleared; when it succeeds, the viewer shall keep the zoom cleared unless the user zoomed again after sending it.
 
-**REMOTE-24.8** When a remote surface closes unexpectedly, the viewer shall recreate a surface for the same session; if opening the session or creating its surface fails, the viewer shall retry after 750 ms while its worktree is still selected and the host still lists that pane.
+**REMOTE-24.8** When a remote surface closes unexpectedly or fails to open, the viewer shall wait 750 ms before retrying, double successive retry delays up to thirty seconds, reset the delay after a surface survives thirty seconds, and retry only while its worktree is selected and the host still lists the pane.
 
 **REMOTE-24.9** When the window disappears, the viewer shall destroy every remote surface and empty its layout while keeping the selection, so that the next snapshot recreates the surfaces; the panes' registered command handlers shall not keep the viewer alive.
 
@@ -3577,6 +3599,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-24.13** While remote pane mutations are queued or in flight, the viewer shall publish a change only when its selection, layout, or opening state changes, so queue bookkeeping alone does not re-evaluate the window.
 
 **REMOTE-24.14** If a dispatched remote pane mutation has no reply after thirty seconds, then the viewer shall report the timeout, abandon that worktree's queued mutations, release the queue for other Macs, and ignore the expired dispatch's late result.
+
+**REMOTE-24.15** When a snapshot reveals a split-created pane after the split response, the viewer shall focus the created pane unless a newer user intent superseded the split.
 
 ### REMOTE-25.x — Dev Container environments
 
