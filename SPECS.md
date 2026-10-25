@@ -1476,6 +1476,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-8.1** The Settings → General pane shall expose a "Restart ZMX…" button that, after user confirmation, tears down every running pane across every worktree — invoking the same `destroySurface` / `zmx kill --force` path as per-worktree Stop (`TERM-1.2` / `ZMX-4.3`) — and then marks each affected worktree `.closed` via `prepareForStop` (`STATE-2.11`), preserving each worktree's `splitTree`, `focusedPaneSlotID`, and `primaryPaneSlotID` so re-opening recreates the same layout and startup ownership at the same leaf IDs under freshly-spawned zmx daemons. The confirmation alert (`NSAlert` with `.warning` style) shall name the destructive consequence explicitly — how many sessions across how many worktrees will end, with a "Any unsaved work in those sessions will be lost" warning (pluralization per `ZmxRestartConfirmation.informativeText`) — and shall offer "Restart ZMX" and "Cancel" buttons with Cancel as the default dismissal. If no worktrees are running at click time, the alert shall state that the action will have no effect rather than silently no-op.
 
+**ZMX-8.2** When repositories or worktrees change during Restart ZMX confirmation, the application shall stop only still-running worktrees with the original repository and worktree identities, using their current panes and skipping removed entries.
+
 ### ZMX-9.x — Resize Protocol
 
 **ZMX-9.1** When the bundled `zmx attach` client receives a PTY resize event while idle, it shall forward the new grid without requiring a later keystroke or daemon output to wake its poll loop. This protects restored or lazily reattached panes: when Graftty resizes the outer PTY as a pane comes into view, the daemon's inner PTY must receive the new grid immediately so full-screen programs such as Claude Code, vim, and htop repaint at the visible pane size before user input.
@@ -2734,6 +2736,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.20** When a Codex Node launcher has a nested npm platform package, the application shall register that package's native binary before sibling or in-package vendor fallbacks.
 
+**TEAM-10.21** When agent hooks are disabled and CODEX_HOME is unset, the application shall run Codex administration in the durable home and coordinate with the managed-home rebuild lock.
+
+**TEAM-10.22** When Codex wrapper paths contain newlines or shell metacharacters, the application shall treat them as literal data in comments and missing-binary diagnostics without executing them.
+
+**TEAM-10.23** If lockf is unavailable, then the Codex wrapper shall use an exclusive flock to coordinate durable administration with managed-home rebuilds.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.6** If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.
@@ -3034,6 +3042,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-2.29** While a mobile dial awaits post-connect validation, concurrent callers shall await that attempt's final result rather than receive its provisional connection.
 
+**REMOTE-2.30** When either native client orders signaling routes, the application shall prefer discovered URLs, the pin's last successful route, pin routes, and saved host routes in that order, deduplicate by URL, and use the saved base URL only if no candidates exist.
+
 ### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
@@ -3241,6 +3251,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-12.18** When an explicit reconnect arrives during an ordinary connection attempt, the application shall replace the weaker attempt with one signed replacement attempt and shall deduplicate further reconnects while that replacement attempt remains pending.
 
 **REMOTE-12.19** When a Remote Mac receives an ownership snapshot acknowledging its live terminal grid, the application shall suppress matching resize requests from layout and native resize callbacks so the ownership exchange terminates.
+
+**REMOTE-12.20** When a saved Mac's pin has a last successful route absent from its saved routes, the application shall include that refreshed route in the next authenticated dial.
 
 ### REMOTE-13.x
 
@@ -3526,7 +3538,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.54** If a headless host is polled for a worktree creation or removal that it does not retain, then the application shall answer with the Mac app's unknown-or-expired message, and finished results shall expire after the retention period.
 
-**REMOTE-22.55** When a paired Mac creates or polls a worktree on a headless host, the application shall scope the operation ID to that peer, so another peer can neither poll nor reuse it.
+**REMOTE-22.55** When paired Macs create or poll worktrees on a headless host with the same operation ID, the application shall retain independent operations for each peer and the local CLI, and shall reject a stranger's status poll.
 
 **REMOTE-22.56** When a headless host creates or removes a linked worktree, the application shall send the team's member-joined or member-left event to the main checkout, as the Mac app does.
 
@@ -3543,6 +3555,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-22.62** When a headless host removes a worktree, the application shall drop the worktree's cached diff statistics, so a worktree created later at the same path starts without them.
 
 **REMOTE-22.63** If Git refuses a headless worktree creation, then the application shall report Git's message as the operation's error, as the Mac app does.
+
+**REMOTE-22.64** When a paired client creates or deletes a worktree on a headless host, the application shall use the Mac's create-failed, not-found, invalid, and git-failed error codes, report Git creation failures with the Mac's message, and include short status only when forceAllowed is true.
 
 **REMOTE-22.65** When a headless host answers agent-completion or remote-team requests that read presence, the application shall decode presence files off the main actor while preserving responses and request errors.
 

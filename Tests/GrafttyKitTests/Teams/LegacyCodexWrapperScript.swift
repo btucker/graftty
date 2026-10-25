@@ -3,9 +3,10 @@ import Foundation
 
 /// A frozen copy of `AgentHookInstaller.codexWrapperScript` as it was built
 /// from Swift string literals before the wrapper moved to
-/// `Teams/Resources/codex-wrapper.sh`. `CodexWrapperTemplateTests` proves the
-/// template renders byte-identical output; delete this file together with
-/// those tests once the template has shipped.
+/// `Teams/Resources/codex-wrapper.sh`, with deliberate #533 corrections for
+/// path quoting, the durable-home default, and missing lockf fallback.
+/// `CodexWrapperTemplateTests` proves the template matches those reviewed
+/// bytes; delete this file and those tests once the template has shipped.
 enum LegacyCodexWrapperScript {
     static func render(
         wrapperDirectory: String,
@@ -316,7 +317,11 @@ enum LegacyCodexWrapperScript {
                [ -f \(codexLockLiteral) ] &&
                [ -r \(codexLockLiteral) ]; then
               exec 9<\(codexLockLiteral) || exit $?
-              \(shellLiteral(codexLockCommandPath)) -s 9
+              if command -v \(shellLiteral(codexLockCommandPath)) >/dev/null 2>&1; then
+                \(shellLiteral(codexLockCommandPath)) -s 9
+              else
+                flock -x 9
+              fi
               _graftty_codex_lock_status=$?
               if [ "$_graftty_codex_lock_status" -ge 128 ]; then
                 exit "$_graftty_codex_lock_status"
@@ -390,8 +395,8 @@ enum LegacyCodexWrapperScript {
           fi
         else
           if _graftty_codex_uses_durable_home "$@"; then
-            _graftty_codex_admin_home="${CODEX_HOME:-\(codexSourceLiteral)}"
-            if [ "$_graftty_codex_admin_home" = \(codexHomeLiteral) ]; then
+            _graftty_codex_admin_home="${CODEX_HOME:-}"
+            if [ -z "$_graftty_codex_admin_home" ] || [ "$_graftty_codex_admin_home" = \(codexHomeLiteral) ]; then
               _graftty_codex_admin_home=\(codexSourceLiteral)
             fi
             _graftty_codex_run_administration "$_graftty_codex_admin_home" "$@"
@@ -409,7 +414,7 @@ enum LegacyCodexWrapperScript {
         return """
         #!/bin/sh
         # GRAFTTY_AGENT_HOOK_WRAPPER version=\(AgentHookInstaller.version)
-        # Hooks run: \(grafttyCLIPath) team hook \(runtime.rawValue)
+        # Hooks run: graftty team hook \(runtime.rawValue)
         \(resolveBlock)
 
         \(registerBlock)
@@ -440,7 +445,7 @@ enum LegacyCodexWrapperScript {
         IFS="$old_ifs"
 
         if [ -z "$real_binary" ]; then
-          printf '%s\\n' "graftty: unable to find real \(realCommandName) outside \(wrapperDirectory)" >&2
+          printf '%s\\n' \(shellLiteral("graftty: unable to find real \(realCommandName) outside \(wrapperDirectory)")) >&2
           exit 127
         fi
         """

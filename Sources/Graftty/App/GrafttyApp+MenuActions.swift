@@ -151,38 +151,59 @@ extension GrafttyApp {
     /// `STATE-2.11`) but applied in bulk. Re-opening any worktree
     /// afterwards spawns fresh zmx daemons. `ZMX-8.1`.
     func restartZMXWithConfirmation() {
+        Self.restartZMX(appState: $appState, confirm: { totalPanes, worktreeCount in
+            let alert = NSAlert()
+            alert.messageText = "Restart ZMX?"
+            alert.informativeText = ZmxRestartConfirmation.informativeText(
+                paneCount: totalPanes,
+                worktreeCount: worktreeCount
+            )
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Restart ZMX")
+            alert.addButton(withTitle: "Cancel")
+            return alert.runModal() == .alertFirstButtonReturn
+        }, destroySurfaces: { terminalManager.destroySurfaces(terminalIDs: $0) })
+    }
+
+    @MainActor
+    static func restartZMX(
+        appState: Binding<AppState>,
+        confirm: (_ paneCount: Int, _ worktreeCount: Int) -> Bool,
+        destroySurfaces: ([PaneSlotID]) -> Void
+    ) {
         struct RunningEntry {
-            let repoIdx: Int
-            let worktreeIdx: Int
-            let terminalIDs: [PaneSlotID]
+            let repoID: UUID
+            let worktreeID: UUID
         }
         var running: [RunningEntry] = []
         var totalPanes = 0
-        for (repoIdx, repo) in appState.repos.enumerated() {
-            for (wtIdx, wt) in repo.worktrees.enumerated() where wt.state == .running {
+        for repo in appState.wrappedValue.repos {
+            for wt in repo.worktrees where wt.state == .running {
                 let leaves = wt.splitTree.allLeaves
-                running.append(RunningEntry(repoIdx: repoIdx, worktreeIdx: wtIdx, terminalIDs: leaves))
+                running.append(RunningEntry(repoID: repo.id, worktreeID: wt.id))
                 totalPanes += leaves.count
             }
         }
 
-        let alert = NSAlert()
-        alert.messageText = "Restart ZMX?"
-        alert.informativeText = ZmxRestartConfirmation.informativeText(
-            paneCount: totalPanes,
-            worktreeCount: running.count
-        )
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Restart ZMX")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard confirm(totalPanes, running.count) else { return }
 
+        func currentIndices(for entry: RunningEntry) -> (repo: Int, worktree: Int)? {
+            guard let repoIdx = appState.wrappedValue.repos.firstIndex(where: { $0.id == entry.repoID }),
+                  let worktreeIdx = appState.wrappedValue.repos[repoIdx].worktrees.firstIndex(where: {
+                      $0.id == entry.worktreeID && $0.state == .running
+                  }) else { return nil }
+            return (repoIdx, worktreeIdx)
+        }
         for entry in running {
-            terminalManager.destroySurfaces(terminalIDs: entry.terminalIDs)
-            appState.repos[entry.repoIdx].worktrees[entry.worktreeIdx].prepareForStop()
+            guard let indices = currentIndices(for: entry) else { continue }
+            let terminalIDs = appState.wrappedValue.repos[indices.repo].worktrees[indices.worktree].splitTree.allLeaves
+            destroySurfaces(terminalIDs)
+            // Teardown can call back into app state. Resolve again before writing.
+            guard let indices = currentIndices(for: entry) else { continue }
+            appState.wrappedValue.repos[indices.repo].worktrees[indices.worktree].prepareForStop()
         }
         // The menu bar stays usable with no window open (#604).
-        Self.persistAppState(appState)
+        Self.persistAppState(appState.wrappedValue)
     }
 
     /// Resolve the user's Ghostty config file path, create it if missing,

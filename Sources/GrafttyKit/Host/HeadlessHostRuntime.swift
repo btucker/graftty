@@ -308,10 +308,10 @@ public final class HeadlessHostRuntime {
     /// Removes a linked worktree. The row reads `.deleting` while Git runs
     /// and gets its prior state back if Git refuses. Git's and the final
     /// save's errors are thrown unchanged, so each caller keeps its own wire:
-    /// `graftty worktree remove` maps them like the Mac's `DeleteWorktreeFlow`
-    /// (`HeadlessWorktreeLifecycle`), the paired-client envelope as it always
-    /// has. `pruneVanished` is GIT-4.13: when Git refuses a worktree whose
-    /// directory is already gone, prune Git's record and report a dismissal.
+    /// `graftty worktree remove` and the paired-client envelope map them to
+    /// the Mac's failure responses. `pruneVanished` is GIT-4.13: when Git
+    /// refuses a worktree whose directory is already gone, prune Git's record
+    /// and report a dismissal.
     func removeWorktree(_ path: String, force: Bool, pruneVanished: Bool = false) async throws -> WorktreeRemovalOutcome {
         let index = try indices(path)
         let repo = state.repos[index.repo]
