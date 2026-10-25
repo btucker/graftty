@@ -54,5 +54,41 @@ struct IPadRootLayoutSettlingTests {
         #expect(host.traitCollection.verticalSizeClass == .compact)
         #expect(abs(fixture.state.navigationWindowWidth - host.view.safeAreaLayoutGuide.layoutFrame.width) < 1)
     }
+
+    @Test("@spec IPAD-1.28: When the regular-width mobile sidebar is collapsed or has no host content, the application shall preserve the remembered expanded sidebar width through the persistence debounce.", arguments: [true, false], [true, false])
+    func remembersExpandedSidebarWidth(sidebarShown: Bool, hasHost: Bool) async throws {
+        let fixture = try SplitLayoutFixture(sidebarShown: sidebarShown, hasHost: hasHost)
+        defer { fixture.cleanUp() }
+        // Above the split view's maximum, so the visible case must persist
+        // a new measurement rather than pass with the preseeded value.
+        fixture.state.sidebarWidth = 900
+        await fixture.unlock()
+        let host = LayoutPassHost(rootView: fixture.root)
+        host.limit = 1024
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 834, height: 1194))
+        window.traitOverrides.horizontalSizeClass = .compact
+        window.traitOverrides.verticalSizeClass = .regular
+        host.onLimit = { [weak window] in window?.isHidden = true; window?.rootViewController = nil }
+        defer { window.isHidden = true; window.rootViewController = nil }
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        _ = try await observeNaturalLayouts { host.passes }
+        try #require(host.passes > 0 && host.passes <= 1024)
+        window.frame = CGRect(x: 0, y: 0, width: 1194, height: 834)
+        window.traitOverrides.horizontalSizeClass = .regular
+        window.traitOverrides.verticalSizeClass = .compact
+        // The natural-frame probe spans the real 250 ms persistence debounce.
+        _ = try await observeNaturalLayouts { host.passes }
+        try #require(abs(fixture.state.navigationWindowWidth - host.view.safeAreaLayoutGuide.layoutFrame.width) < 1)
+        print("706 debounce: shown=\(sidebarShown) hasHost=\(hasHost) remembered=\(fixture.state.sidebarWidth)")
+        if !sidebarShown || !hasHost {
+            #expect(fixture.state.sidebarWidth == 900)
+            #expect(IPadAppState(defaults: fixture.defaults).sidebarWidth == 900)
+        } else {
+            #expect(fixture.state.sidebarWidth >= 220 && fixture.state.sidebarWidth < 900)
+            #expect(IPadAppState(defaults: fixture.defaults).sidebarWidth == fixture.state.sidebarWidth)
+        }
+    }
+
 }
 #endif
