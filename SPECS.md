@@ -2736,6 +2736,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.20** When a Codex Node launcher has a nested npm platform package, the application shall register that package's native binary before sibling or in-package vendor fallbacks.
 
+**TEAM-10.21** When agent hooks are disabled and CODEX_HOME is unset, the application shall run Codex administration in the durable home and coordinate with the managed-home rebuild lock.
+
+**TEAM-10.22** When Codex wrapper paths contain newlines or shell metacharacters, the application shall treat them as literal data in comments and missing-binary diagnostics without executing them.
+
+**TEAM-10.23** If lockf is unavailable, then the Codex wrapper shall use an exclusive flock to coordinate durable administration with managed-home rebuilds.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.6** If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.

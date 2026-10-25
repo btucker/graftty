@@ -492,10 +492,9 @@ public struct AgentHookInstaller: Sendable {
             .path
         return try renderShellTemplate(codexWrapperTemplate(), values: [
             "VERSION": version,
-            "GRAFTTY_CLI_PATH": grafttyCLIPath,
             "GRAFTTY_CLI": shellCommandToken(grafttyCLIPath),
             "WRAPPER_DIRECTORY": shellLiteral(wrapperDirectory),
-            "WRAPPER_DIRECTORY_PATH": wrapperDirectory,
+            "MISSING_CODEX_MESSAGE": shellLiteral("graftty: unable to find real codex outside \(wrapperDirectory)"),
             "CODEX_HOME": shellLiteral(codexHomeDirectory),
             "CODEX_SOURCE": shellLiteral(codexSourceDirectory),
             "CODEX_LOCK": shellLiteral(codexLockPath),
