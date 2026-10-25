@@ -683,7 +683,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
             selectedRemotePaneSessionName = newestSplitSessionName
             pendingRemoteFocusTarget = focusTarget
         }
-        let focusedSession = preferredSessionName.flatMap {
+        let focusedSession = newestSplitSessionName ?? preferredSessionName.flatMap {
             visibleSessionNames.contains($0) ? $0 : nil
         } ?? selectedRemotePaneSessionName.flatMap {
             visibleSessionNames.contains($0) ? $0 : nil
