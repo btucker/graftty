@@ -2724,6 +2724,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.19** If a periodic presence refresh finishes after a newer foreground presence update or removal, then the application shall preserve the newer records and use them for delivery liveness.
 
+**TEAM-10.20** When a Codex Node launcher has a nested npm platform package, the application shall register that package's native binary before sibling or in-package vendor fallbacks.
+
 ### TEAM-11.x — Idle Delivery
 
 **TEAM-11.6** If the worktree watermark lock cannot be acquired within the configured timeout, the application shall throw a lock-timeout error instead of blocking the calling thread indefinitely.
