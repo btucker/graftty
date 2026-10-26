@@ -19,21 +19,47 @@ public protocol PanesStateDriverMaking: Sendable {
 /// The one panes-state subscription path shared by the Mac-to-Mac registry
 /// and the mobile coordinator.
 public enum PanesStateSubscription {
-    /// Returns a subscribed store on the origin-aware V2 channel, or on V1
-    /// when the host rejects V2. `onClosed` only hears closes that follow a
-    /// completed open; a close during the open fails the subscription instead,
-    /// and the owner hears nothing further from that channel.
     public static func open(
         on host: some PanesStateDriverMaking,
         onSnapshot: @escaping PanesStateChannelClient.OnSnapshot = { _ in },
         onClosed: @escaping PanesStateChannelClient.OnClosed = { _ in }
     ) async throws -> WorktreePanesStore {
+        try await open(on: host, health: .init(), onSnapshot: onSnapshot, onClosed: onClosed)
+    }
+
+    static func open(
+        on host: some PanesStateDriverMaking,
+        health: PanesStateHealthPolicy,
+        onSnapshot: @escaping PanesStateChannelClient.OnSnapshot = { _ in },
+        onClosed: @escaping PanesStateChannelClient.OnClosed = { _ in }
+    ) async throws -> WorktreePanesStore {
+        let driver = RenewingPanesStateDriver(health: health) { continuation in
+            try await openOnce(
+                on: host,
+                onClosed: { _ in continuation.finish() },
+                onFrame: { continuation.yield($0) }
+            )
+        }
+        return try await subscribe(driver: driver, onSnapshot, onClosed)
+    }
+
+    /// Returns a subscribed store on the origin-aware V2 channel, or on V1
+    /// when the host rejects V2. `onClosed` only hears closes that follow a
+    /// completed open; a close during the open fails the subscription instead,
+    /// and the owner hears nothing further from that channel.
+    static func openOnce(
+        on host: some PanesStateDriverMaking,
+        onSnapshot: @escaping PanesStateChannelClient.OnSnapshot = { _ in },
+        onClosed: @escaping PanesStateChannelClient.OnClosed = { _ in },
+        onFrame: @escaping @Sendable (PanesStateMessage) async -> Void = { _ in }
+    ) async throws -> WorktreePanesStore {
+        try Task.checkCancellation()
         do {
-            return try await subscribe(host, originAware: true, onSnapshot, onClosed)
+            return try await subscribe(host, originAware: true, onSnapshot, onClosed, onFrame)
         } catch let error where isSubsystemRejection(error) {
             // A superseded or torn-down attempt must not open a second channel.
             try Task.checkCancellation()
-            return try await subscribe(host, originAware: false, onSnapshot, onClosed)
+            return try await subscribe(host, originAware: false, onSnapshot, onClosed, onFrame)
         }
     }
 
@@ -41,23 +67,36 @@ public enum PanesStateSubscription {
         _ host: some PanesStateDriverMaking,
         originAware: Bool,
         _ onSnapshot: @escaping PanesStateChannelClient.OnSnapshot,
-        _ onClosed: @escaping PanesStateChannelClient.OnClosed
+        _ onClosed: @escaping PanesStateChannelClient.OnClosed,
+        _ onFrame: @escaping @Sendable (PanesStateMessage) async -> Void
     ) async throws -> WorktreePanesStore {
         let driver = try await host.makePanesStateDriver(originAware: originAware)
+        return try await subscribe(driver: driver, onSnapshot, onClosed, onFrame)
+    }
+
+    private static func subscribe(
+        driver: any PanesStateSubscriptionDriver,
+        _ onSnapshot: @escaping PanesStateChannelClient.OnSnapshot,
+        _ onClosed: @escaping PanesStateChannelClient.OnClosed,
+        _ onFrame: @escaping @Sendable (PanesStateMessage) async -> Void = { _ in }
+    ) async throws -> WorktreePanesStore {
         let store = WorktreePanesStore(driver: driver)
         // Exactly one side decides each close: before the open completes it
         // fails the subscription; afterwards it reaches the owner.
         let gate = NIOLockedValueBox(OpenGate.opening)
         driver.setCallbacks(
             onSnapshot: { [weak store] snapshot in
-                await store?.applySnapshot(snapshot)
+                guard let store, await store.applySnapshotIfOpen(snapshot) else { return }
                 // Frames buffered before a close during the open still drain;
                 // the failed subscription must not hand them to the owner.
                 let failed = gate.withLockedValue { state -> Bool in
                     if case .closedDuringOpen = state { return true }
                     return false
                 }
-                if !failed { await onSnapshot(snapshot) }
+                if !failed {
+                    if let frame = await store.currentSnapshot { await onFrame(frame) }
+                    await onSnapshot(snapshot)
+                }
             },
             onClosed: { [weak store] reason in
                 let reachesOwner = gate.withLockedValue { state in
@@ -71,6 +110,7 @@ public enum PanesStateSubscription {
         )
         do {
             try await store.subscribe()
+            try Task.checkCancellation()
         } catch {
             await store.unsubscribe()
             throw error
@@ -127,3 +167,9 @@ extension RemoteHostConnection: PanesStateDriverMaking {
     }
 }
 #endif
+
+/// Renewal does not infer health from incremental traffic: idle hosts deduplicate it.
+struct PanesStateHealthPolicy: Sendable {
+    var renewal: ReplyDeadline = .after(.seconds(60))
+    var initialSnapshot: ReplyDeadline = .after(.seconds(15))
+}

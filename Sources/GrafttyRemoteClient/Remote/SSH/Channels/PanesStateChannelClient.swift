@@ -49,6 +49,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         subsystemName: String = SSHChannelTypeNames.panesState,
         requestReply: Bool = false,
         subsystemReplyTimeout: TimeAmount = .seconds(30),
+        childOpenTimeout: Duration = .seconds(10),
         onSnapshot: @escaping OnSnapshot,
         onClosed: @escaping OnClosed,
         onSidebarSnapshot: @escaping @Sendable (SidebarSnapshot?) async -> Void = { _ in }
@@ -59,6 +60,8 @@ public final class PanesStateChannelClient: @unchecked Sendable {
             parentChannel: parentChannel,
             parentHandler: parentHandler,
             subsystem: subsystemName,
+            childOpenTimeout: childOpenTimeout,
+            closeParentOnOpenTimeout: false,
             reply: requestReply
                 ? .acknowledged(timeout: .nanoseconds(subsystemReplyTimeout.nanoseconds))
                 : .written(wantReply: false),
@@ -106,6 +109,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
             // once it has run, and the drain ends when the stream finishes.
             try await channel.open(
                 onFrame: { [inboundContinuation] in inboundContinuation.yield($0) },
+                onError: { [weak self] _ in self?.close() },
                 onClose: { [self] in handleChildClose() }
             )
         } catch {
@@ -123,7 +127,12 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                 let onSnapshot = self.lock.withLock { self.onSnapshot }
                 guard
                     let message = try? JSONDecoder.shared.decode(PanesStateMessage.self, from: bytes)
-                else { continue }
+                else {
+                    // A stream that cannot be decoded is unhealthy even if
+                    // its SSH parent still carries other working channels.
+                    self.close()
+                    return
+                }
                 switch message {
                 case .snapshot(let worktrees, let sidebar):
                     self.lock.withLock { self.navigationSnapshot = sidebar }

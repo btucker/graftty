@@ -25,6 +25,20 @@ struct SSHChildChannelOpenerTests {
         try await fixture.channel.close().get()
     }
 
+    @Test("@spec REMOTE-6.20: If a panes-state SSH child cannot open before its deadline, then the client shall fail only the pane feed and preserve the parent transport and its sibling channels.")
+    func panesStateOpenTimeoutPreservesParent() async throws {
+        let fixture = try await StalledSSHParent.make()
+        let watchdog = fixture.closeAfterDelay()
+        defer { watchdog.cancel() }
+        let client = PanesStateChannelClient(parentChannel: fixture.channel, parentHandler: fixture.handler,
+            childOpenTimeout: .milliseconds(25), onSnapshot: { _ in }, onClosed: { _ in })
+        await #expect(throws: PanesStateChannelClient.ClientError.self) { try await client.open() }
+        try await fixture.channel.eventLoop.submit {}.get()
+        #expect(fixture.channel.isActive)
+        client.close()
+        if fixture.channel.isActive { try await fixture.channel.close().get() }
+    }
+
     @Test("an already cancelled open leaves the parent available")
     func cancellationBeforeOpenPreservesParent() async throws {
         let fixture = try await StalledSSHParent.make()

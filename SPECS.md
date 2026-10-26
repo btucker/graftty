@@ -3100,6 +3100,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-6.13** When a panes-state frame is applied, the client store shall publish its worktree rows and sidebar metadata together as one frame to every observer, and shall end those observations when the channel closes or the client unsubscribes.
 
+**REMOTE-6.14** If a panes-state channel receives an undecodable snapshot or a framing error, then the client shall close the feed instead of silently retaining stale state.
+
+**REMOTE-6.15** While a panes-state subscription remains open, the client shall renew only that subscription on the existing host connection 60 seconds after the previous fresh initial snapshot and apply its new initial snapshot, including empty or unchanged legacy snapshots, without treating a quiet feed as a failure.
+
+**REMOTE-6.16** If a panes-state subscription has no initial snapshot within 15 seconds of initial subsystem acceptance or within a 15-second renewal attempt that includes channel opening and subsystem negotiation, then the shared client shall close the feed as unhealthy and end its observers while leaving the parent connection open.
+
+**REMOTE-6.17** When a panes-state subscription is replaced, the client shall fence snapshots and close callbacks from earlier generations so they cannot overwrite or close the replacement.
+
+**REMOTE-6.18** If a pane subscription is cancelled, manually unsubscribed, or released by its last owner, then the client shall cancel renewal and snapshot waits and close its host subscription without reconnecting or reporting a new failure.
+
+**REMOTE-6.19** If a connected Mac's panes-state feed fails, then the application shall report the feed as unhealthy while retaining the host connection and its terminal, pane-control, and team channels.
+
+**REMOTE-6.20** If a panes-state SSH child cannot open before its deadline, then the client shall fail only the pane feed and preserve the parent transport and its sibling channels.
+
+**REMOTE-6.21** If a connected Mac's worktree feed becomes unhealthy, then the application shall expose that feed failure separately from transport status and exclude its cached rows from live relay snapshots while preserving the connected session.
+
 ### REMOTE-7.x — pane_control Channel
 
 **REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability.
@@ -3259,6 +3275,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-12.20** When a saved Mac's pin has a last successful route absent from its saved routes, the application shall include that refreshed route in the next authenticated dial.
 
 **REMOTE-12.21** If a saved Mac's fingerprint differs from its current pin, then the application shall report a host-key mismatch that requires pairing before any WebRTC offer, signaling request, or direct SSH connect.
+
+**REMOTE-12.22** When a cached Mac connection's pane feed is replaced while its transport state is being read, the registry shall use the current pane environment when returning the connection or tearing it down.
 
 ### REMOTE-13.x
 

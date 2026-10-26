@@ -45,6 +45,13 @@ final class RemoteMacsModel: ObservableObject {
     let relayRouter: RemoteWorktreeRelayRouter
     var onRemoteNotification: ((RemoteNotificationEvent) -> Void)?
     @Published private var connectionStates: [RemoteMacIdentity: RemoteMacConnectionState] = [:]
+    @Published private var paneFeedFailures: [RemoteMacIdentity: String] = [:]
+    private struct PaneFeedRecovery {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+    private var paneFeedRecoveries: [RemoteMacIdentity: PaneFeedRecovery] = [:]
+    private let paneFeedRetryDelay: @Sendable () async throws -> Void
     private enum ConnectionIntent: Int {
         case ordinary
         case selectionRecovery
@@ -91,10 +98,12 @@ final class RemoteMacsModel: ObservableObject {
         store: RemoteMacStore? = nil,
         connectionRegistry: RemoteMacConnectionRegistry? = nil,
         relayRouter: RemoteWorktreeRelayRouter? = nil,
+        paneFeedRetryDelay: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
         maintenancePins: PinnedHostStore = PinnedHostStore(directory: PinnedHostStore.defaultDirectory)
     ) {
         self.store = store ?? RemoteMacStore()
         self.maintenancePins = maintenancePins
+        self.paneFeedRetryDelay = paneFeedRetryDelay
         let registry = connectionRegistry ?? RemoteMacConnectionRegistry()
         self.connectionRegistry = registry
         self.relayRouter = relayRouter ?? RemoteWorktreeRelayRouter()
@@ -121,6 +130,9 @@ final class RemoteMacsModel: ObservableObject {
         registry.onPaneSnapshot = { [weak self] identity, snapshot in
             self?.applyPaneSnapshot(snapshot, from: identity)
         }
+        registry.onPaneFeedFailure = { [weak self] identity, reason in
+            self?.recoverPaneFeed(identity: identity, reason: reason)
+        }
         registry.onConnectionStateChange = { [weak self] identity, state in
             guard let self else { return }
             // A host-key mismatch is classified from the typed SSH error in
@@ -129,6 +141,7 @@ final class RemoteMacsModel: ObservableObject {
             // Once classified, no generic callback may erase the actionable
             // trust state.
             guard self.connectionStates[identity] != .needsPairing else {
+                self.stopPaneFeedRecovery(identity: identity)
                 self.invalidatePaneControlQueue(for: identity)
                 self.worktreePanesByRemote[identity] = nil
                 self.repositoriesByRemote[identity] = nil
@@ -144,6 +157,7 @@ final class RemoteMacsModel: ObservableObject {
             case .idle, .connecting, .connected:
                 return
             }
+            self.stopPaneFeedRecovery(identity: identity)
             self.invalidatePaneControlQueue(for: identity)
             self.worktreePanesByRemote[identity] = nil
             self.repositoriesByRemote[identity] = nil
@@ -194,6 +208,42 @@ final class RemoteMacsModel: ObservableObject {
     func mcpConnection(for peer: RemoteMacConnectionSummary.ID) async throws -> (any MCPHostLink)? {
         try await connectionRegistry.mcpConnection(for: .init(id: peer.deviceID, fingerprint: peer.fingerprint))
     }
+
+    func paneFeedFailure(for identity: RemoteMacIdentity) -> String? { paneFeedFailures[identity] }
+
+    private func recoverPaneFeed(identity: RemoteMacIdentity, reason: String) {
+        paneFeedFailures[identity] = reason
+        refreshRelayRoutes()
+        guard paneFeedRecoveries[identity] == nil else { return }
+        let id = UUID()
+        let registry = connectionRegistry
+        let retryDelay = paneFeedRetryDelay
+        let task = Task { @MainActor [weak self] in
+            defer {
+                if self?.paneFeedRecoveries[identity]?.id == id { self?.paneFeedRecoveries[identity] = nil }
+            }
+            while !Task.isCancelled {
+                do { try await retryDelay() } catch { return }
+                guard self?.paneFeedRecoveries[identity]?.id == id,
+                      self?.paneFeedFailures[identity] != nil else { return }
+                do {
+                    try await registry.renewPaneFeed(identity: identity)
+                    if self?.paneFeedFailures[identity] == nil { return }
+                } catch {
+                    guard !Task.isCancelled, self?.paneFeedRecoveries[identity]?.id == id else { return }
+                    self?.paneFeedFailures[identity] = String(describing: error)
+                }
+            }
+        }
+        paneFeedRecoveries[identity] = PaneFeedRecovery(id: id, task: task)
+    }
+
+    private func stopPaneFeedRecovery(identity: RemoteMacIdentity) {
+        paneFeedRecoveries.removeValue(forKey: identity)?.task.cancel()
+        paneFeedFailures[identity] = nil
+    }
+
+    deinit { for recovery in paneFeedRecoveries.values { recovery.task.cancel() } }
 
     func connectionState(for identity: RemoteMacIdentity) -> RemoteMacConnectionState {
         connectionStates[identity] ?? .offline
@@ -411,6 +461,7 @@ final class RemoteMacsModel: ObservableObject {
     }
 
     private func prepareForExplicitReconnect(identity: RemoteMacIdentity) {
+        stopPaneFeedRecovery(identity: identity)
         invalidatePaneControlQueue(for: identity)
         worktreePanesByRemote[identity] = nil
         repositoriesByRemote[identity] = nil
@@ -466,6 +517,7 @@ final class RemoteMacsModel: ObservableObject {
     }
 
     func disconnect(identity: RemoteMacIdentity) {
+        stopPaneFeedRecovery(identity: identity)
         connectAttemptIDs[identity] = nil
         connectAttempts.removeValue(forKey: identity)?.task.cancel()
         invalidatePaneControlQueue(for: identity)
@@ -859,10 +911,11 @@ final class RemoteMacsModel: ObservableObject {
     func sidebarRelaySnapshot() async -> SidebarRelaySnapshot {
         var result = SidebarRelaySnapshot()
         var snapshots: [RemoteMacIdentity: [WorktreePanes]] = [:]
-        for mac in savedRemoteMacs where connectionState(for: RemoteMacIdentity(mac)) == .connected {
+        for mac in savedRemoteMacs where connectionState(for: RemoteMacIdentity(mac)) == .connected
+            && paneFeedFailures[RemoteMacIdentity(mac)] == nil {
             let identity = RemoteMacIdentity(mac)
             let frame = await connectionRegistry.panesSnapshot(for: identity)
-            guard connectionState(for: identity) == .connected,
+            guard connectionState(for: identity) == .connected, paneFeedFailures[identity] == nil,
                   savedRemoteMacs.contains(where: { RemoteMacIdentity($0) == identity }) else { continue }
             let rows: [WorktreePanes]
             let sidebar: SidebarSnapshot?
@@ -1107,16 +1160,20 @@ final class RemoteMacsModel: ObservableObject {
         )
     }
 
+    private var healthyWorktreeSnapshots: [RemoteMacIdentity: [WorktreePanes]] {
+        worktreePanesByRemote.filter { paneFeedFailures[$0.key] == nil }
+    }
+
     func promotedWorktreesForRelay() -> [WorktreePanes] {
         relayRouter.promotedWorktrees(
-            snapshots: worktreePanesByRemote,
+            snapshots: healthyWorktreeSnapshots,
             remoteMacs: savedRemoteMacs
         )
     }
 
     private func refreshRelayRoutes() {
         _ = relayRouter.promotedWorktrees(
-            snapshots: worktreePanesByRemote,
+            snapshots: healthyWorktreeSnapshots,
             remoteMacs: savedRemoteMacs
         )
     }
@@ -1148,6 +1205,7 @@ final class RemoteMacsModel: ObservableObject {
         _ snapshot: [WorktreePanes],
         from identity: RemoteMacIdentity
     ) {
+        paneFeedFailures[identity] = nil
         let ownerLabel = savedRemoteMacs.first { RemoteMacIdentity($0) == identity }?.label ?? identity.id.value
         let normalized = snapshot.map {
             RemoteWorktreeRelayRouter.normalizingSidebarIdentity($0, ownerID: identity.id, ownerLabel: ownerLabel)

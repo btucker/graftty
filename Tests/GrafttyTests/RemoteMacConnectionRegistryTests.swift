@@ -466,49 +466,202 @@ struct RemoteMacConnectionRegistryTests {
         }
     }
 
-    @Test("panes-state closure evicts the live entry and publishes failure")
-    func panesStateClosureEvictsLiveEntry() async throws {
-        let closeEmitter = RemoteMacPaneCloseEmitter()
+    @Test("@spec REMOTE-6.19: If a connected Mac's panes-state feed fails, then the application shall report the feed as unhealthy while retaining the host connection and its terminal, pane-control, and team channels.", .timeLimit(.minutes(1)))
+    func panesStateRecoveryPreservesLiveEntryAndFencesOldCallbacks() async throws {
+        let snapshots = RemoteMacSnapshotEmitter()
+        let closes = RemoteMacPaneCloseEmitter()
+        // Retain the registry-facing callbacks too. Replaying these bypasses
+        // the shared store's fence and exercises the registry's generation.
+        let ownerSnapshots = RemoteMacSnapshotEmitter()
+        let ownerCloses = RemoteMacPaneCloseEmitter()
+        let recorder = RemoteMacSnapshotRecorder()
         let connection = FakeRemoteMacHostConnection(
-            offerSDP: "v=0\noffer\n",
-            paneCloseEmitter: closeEmitter
-        )
+            offerSDP: "v=0\noffer\n", snapshotEmitter: snapshots, paneCloseEmitter: closes)
         let stateRecorder = RemoteMacConnectionStateRecorder()
         let registry = makeRegistry(
             signalingTransport: { request, _ in
-                try signalingResponse(
-                    url: request.url!,
-                    answer: TestSignalingAnswer(sdp: "v=0\nanswer\n")
-                )
+                try signalingResponse(url: request.url!, answer: TestSignalingAnswer(sdp: "v=0\nanswer\n"))
             },
-            connectionFactory: { _, _ in connection }
+            connectionFactory: { _, _ in connection },
+            paneEnvironmentBuilder: { host, onSnapshot, onClosed in
+                ownerSnapshots.install(onSnapshot)
+                ownerCloses.install(onClosed)
+                return await RemoteMacPaneEnvironment.build(
+                    remoteHost: host, onSnapshot: onSnapshot, onClosed: onClosed)
+            },
+            onPaneSnapshot: { identity, rows in recorder.record(identity: identity, snapshot: rows) }
         )
         registry.onConnectionStateChange = { identity, state in
             stateRecorder.record(identity: identity, state: state)
         }
         let remote = try makeRemoteMac()
         let identity = RemoteMacIdentity(remote)
-        _ = try await registry.connect(to: remote)
+        defer { registry.disconnect(identity: identity) }
+        let original = try await registry.connect(to: remote)
+        let originalStore = try #require(original.paneEnvironment.worktreePanesStore)
+        let control = try #require(original.paneEnvironment.paneControlClient)
+        let terminal = try #require(
+            try await registry.openTerminalSession(identity: identity, sessionName: "retained") as? FakeWebSocketClient)
+        try await terminal.send(.text("before-recovery"))
+        #expect(try await terminal.receive() == .text("before-recovery"))
+        let oldRows = [makeWorktreeSnapshot(path: "/removed")]
+        await snapshots.emit(oldRows)
+        await recorder.waitForCount(1)
 
-        await closeEmitter.emit("relay-ended")
-        for _ in 0..<20 where registry.activeConnectionCount != 0 {
-            await Task.yield()
+        let failures = RemoteMacTestEvents<String>()
+        var feedFailures: [String] = []
+        registry.onPaneFeedFailure = { failedIdentity, reason in
+            #expect(failedIdentity == identity)
+            feedFailures.append(reason)
+            failures.send(reason)
         }
-        for _ in 0..<20 {
-            if await connection.closeCount == 1 { break }
-            await Task.yield()
-        }
+        await closes.emit("relay-ended")
+        #expect(await failures.next() == "panes-state channel closed")
+        #expect(registry.activeConnectionCount == 1)
+        #expect(stateRecorder.states.isEmpty)
+        #expect(await connection.closeCount == 0)
+        #expect(try await registry.sendPaneControl(identity: identity, request: .equalize(target: "retained")) == .ok)
 
-        #expect(registry.activeConnectionCount == 0)
-        let states = stateRecorder.states
-        #expect(states.count == 1)
-        #expect(states.first?.0 == identity)
-        #expect(
-            states.first?.1 == .failed(
-                reason: "panes-state channel closed: relay-ended"
-            )
-        )
+        let recovery = Task { try await registry.renewPaneFeed(identity: identity) }
+        await snapshots.waitUntilInstalled(2)
+        await closes.waitUntilInstalled(2)
+        let freshRows = [makeWorktreeSnapshot(path: "/added")]
+        await snapshots.emit(freshRows)
+        try await recovery.value
+        let recovered = try await registry.connect(to: remote)
+        let recoveredStore = try #require(recovered.paneEnvironment.worktreePanesStore)
+        #expect(recovered.id == original.id)
+        #expect((recovered.connection as? FakeRemoteMacHostConnection) === connection)
+        #expect(recoveredStore !== originalStore)
+        #expect(recovered.paneEnvironment.paneControlClient === control)
+        #expect(await registry.panesSnapshot(for: identity) == .snapshot(freshRows))
+        #expect(await originalStore.connectionState == .closed(reason: "panes-state channel closed"))
+        #expect(await connection.createOfferCallCount == 1)
+        #expect(await connection.closeCount == 0)
+        #expect(await connection.openedTerminalSessions == ["retained"])
+        #expect(!terminal.isClosed)
+        try await terminal.send(.text("after-recovery"))
+        #expect(try await terminal.receive() == .text("after-recovery"))
+        #expect(try await registry.sendPaneControl(identity: identity, request: .equalize(target: "retained")) == .ok)
+
+        let staleRows = [makeWorktreeSnapshot(path: "/late-old")]
+        await ownerSnapshots.emit(staleRows)
+        await ownerCloses.emit("late-old-close")
+        #expect(recorder.snapshots.last == freshRows)
+        #expect(!recorder.snapshots.contains(staleRows))
+        #expect(feedFailures == ["panes-state channel closed"])
+        #expect(await registry.panesSnapshot(for: identity) == .snapshot(freshRows))
+        #expect(registry.activeConnectionCount == 1)
+        #expect(stateRecorder.states.isEmpty)
+        await registry.disconnectAndWait(identity: identity)
         #expect(await connection.closeCount == 1)
+        #expect(terminal.isClosed)
+    }
+
+    @Test("@spec REMOTE-12.22: When a cached Mac connection's pane feed is replaced while its transport state is being read, the registry shall use the current pane environment when returning the connection or tearing it down.", .timeLimit(.minutes(1)), arguments: [false, true])
+    func cachedConnectionStateReadPreservesRecoveredEnvironment(terminal: Bool) async throws {
+        let snapshots = RemoteMacSnapshotEmitter()
+        let closes = RemoteMacPaneCloseEmitter()
+        let connection = FakeRemoteMacHostConnection(
+            offerSDP: "v=0\noriginal\n", snapshotEmitter: snapshots, paneCloseEmitter: closes)
+        let replacement = FakeRemoteMacHostConnection(offerSDP: "v=0\nreplacement\n")
+        let sequence = RemoteMacConnectionSequence([connection, replacement])
+        let registry = makeRegistry(
+            signalingTransport: { request, _ in
+                try signalingResponse(url: request.url!, answer: TestSignalingAnswer(sdp: "v=0\nanswer\n"))
+            },
+            connectionFactory: { _, _ in sequence.next() }
+        )
+        let remote = try makeRemoteMac()
+        let identity = RemoteMacIdentity(remote)
+        defer { registry.disconnect(identity: identity) }
+        let original = try await registry.connect(to: remote)
+        let failures = RemoteMacTestEvents<String>()
+        registry.onPaneFeedFailure = { _, reason in failures.send(reason) }
+        await closes.emit("original-ended")
+        #expect(await failures.next() == "panes-state channel closed")
+
+        let stateRead = RemoteMacStateReadGate()
+        defer { stateRead.release() }
+        await connection.blockNextStateRead(on: stateRead)
+        let cachedConnect = Task { try await registry.connect(to: remote) }
+        await stateRead.waitUntilStarted()
+
+        // The cached connect holds a copy of the old entry across its actor
+        // hop. Install a new store before allowing that read to finish.
+        let recovery = Task { try await registry.renewPaneFeed(identity: identity) }
+        await snapshots.waitUntilInstalled(2)
+        await closes.waitUntilInstalled(2)
+        let freshRows = [makeWorktreeSnapshot(path: "/recovered")]
+        await snapshots.emit(freshRows)
+        try await recovery.value
+        let recovered = try await registry.connect(to: remote)
+        let recoveredStore = try #require(recovered.paneEnvironment.worktreePanesStore)
+        #expect(recoveredStore !== original.paneEnvironment.worktreePanesStore)
+        #expect(await registry.panesSnapshot(for: identity) == .snapshot(freshRows))
+
+        if terminal { await connection.setStateWithoutNotification(.closed) }
+        stateRead.release()
+        let returned = try await cachedConnect.value
+        if terminal {
+            #expect(returned.id != original.id)
+            #expect(await recoveredStore.connectionState == .closed(reason: "unsubscribed"))
+        } else {
+            #expect(returned.id == original.id)
+            #expect(returned.paneEnvironment.worktreePanesStore === recoveredStore)
+            let current = try await registry.connect(to: remote)
+            #expect(current.paneEnvironment.worktreePanesStore === recoveredStore)
+            #expect(await registry.panesSnapshot(for: identity) == .snapshot(freshRows))
+            #expect(await recoveredStore.connectionState == .subscribed)
+        }
+    }
+
+    @Test("disconnect before a recovering pane feed's first snapshot closes its pending channel and rejects late frames", .timeLimit(.minutes(1)))
+    func disconnectDuringPaneFeedRecoveryCannotRestoreEntry() async throws {
+        let snapshots = RemoteMacSnapshotEmitter()
+        let closes = RemoteMacPaneCloseEmitter()
+        let recorder = RemoteMacSnapshotRecorder()
+        let connection = FakeRemoteMacHostConnection(
+            offerSDP: "v=0\noffer\n", snapshotEmitter: snapshots, paneCloseEmitter: closes)
+        let registry = makeRegistry(
+            signalingTransport: { request, _ in
+                try signalingResponse(url: request.url!, answer: TestSignalingAnswer(sdp: "v=0\nanswer\n"))
+            },
+            connectionFactory: { _, _ in connection },
+            onPaneSnapshot: { identity, rows in recorder.record(identity: identity, snapshot: rows) }
+        )
+        let remote = try makeRemoteMac()
+        let identity = RemoteMacIdentity(remote)
+        defer { registry.disconnect(identity: identity) }
+        _ = try await registry.connect(to: remote)
+        let originalRows = [makeWorktreeSnapshot(path: "/original")]
+        await snapshots.emit(originalRows)
+        await recorder.waitForCount(1)
+        let failures = RemoteMacTestEvents<String>()
+        registry.onPaneFeedFailure = { _, reason in failures.send(reason) }
+        await closes.emit("original-ended")
+        #expect(await failures.next() == "panes-state channel closed")
+
+        let recovery = Task { try await registry.renewPaneFeed(identity: identity) }
+        await snapshots.waitUntilInstalled(2)
+        await closes.waitUntilInstalled(2)
+        let pendingDriver = try #require(await connection.panesDrivers.last)
+        await pendingDriver.waitUntilOpened()
+        // The replacement has opened but has never received its first frame.
+        // Disconnect must clean it up whether it has reached the pending-store
+        // map or is still returning from the shared subscription's open.
+        await registry.disconnectAndWait(identity: identity)
+        await #expect(throws: (any Error).self) { try await recovery.value }
+        await pendingDriver.waitUntilClosed()
+        #expect(pendingDriver.closeCount == 1)
+        #expect(registry.activeConnectionCount == 0)
+        #expect(await connection.closeCount == 1)
+        await snapshots.emit([makeWorktreeSnapshot(path: "/late-pending")])
+        await closes.emit("late-pending-close")
+        #expect(recorder.snapshots == [originalRows])
+        #expect(registry.activeConnectionCount == 0)
+        #expect(await registry.panesSnapshot(for: identity) == nil)
+        #expect(await connection.createOfferCallCount == 1)
     }
 
     @Test("panes-state closure during setup cannot activate an entry")
@@ -594,6 +747,7 @@ struct RemoteMacConnectionRegistryTests {
         _ = try await registry.connect(to: remote)
         let liveSnapshot = [makeWorktreeSnapshot(path: "/live")]
         await emitter.emit(liveSnapshot)
+        await recorder.waitForCount(1)
 
         registry.disconnect(identity: identity)
         await emitter.emit([makeWorktreeSnapshot(path: "/stale")])
@@ -878,12 +1032,51 @@ private final class RemoteMacConnectionSequence: @unchecked Sendable {
     }
 }
 
+private final class RemoteMacTestEvents<Value: Sendable>: Sendable {
+    private let stream: AsyncStream<Value>
+    private let continuation: AsyncStream<Value>.Continuation
+
+    init() { (stream, continuation) = AsyncStream<Value>.makeStream() }
+    deinit { continuation.finish() }
+    func send(_ value: Value) { continuation.yield(value) }
+    func next() async -> Value? {
+        var iterator = stream.makeAsyncIterator()
+        return await iterator.next()
+    }
+}
+
+private final class RemoteMacStateReadGate: Sendable {
+    private let started = RemoteMacTestEvents<Void>()
+    private let released = RemoteMacTestEvents<Void>()
+
+    func wait() async {
+        started.send(())
+        _ = await released.next()
+    }
+
+    func waitUntilStarted() async { _ = await started.next() }
+    func release() { released.send(()) }
+}
+
 private final class RemoteMacSnapshotEmitter: @unchecked Sendable {
     private let lock = NSLock()
     private var onSnapshot: (@Sendable ([WorktreePanes]) async -> Void)?
+    private var installationCount = 0
+    private let installations = RemoteMacTestEvents<Int>()
 
     func install(_ onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void) {
-        lock.withLock { self.onSnapshot = onSnapshot }
+        let count = lock.withLock {
+            self.onSnapshot = onSnapshot
+            installationCount += 1
+            return installationCount
+        }
+        installations.send(count)
+    }
+
+    func waitUntilInstalled(_ count: Int) async {
+        while let installed = await installations.next() {
+            if installed >= count { return }
+        }
     }
 
     func emit(_ snapshot: [WorktreePanes]) async {
@@ -894,22 +1087,43 @@ private final class RemoteMacSnapshotEmitter: @unchecked Sendable {
 private final class RemoteMacSnapshotRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [[WorktreePanes]] = []
+    private let changes = RemoteMacTestEvents<Int>()
 
     var snapshots: [[WorktreePanes]] {
         lock.withLock { storage }
     }
 
     func record(identity _: RemoteMacIdentity, snapshot: [WorktreePanes]) {
-        lock.withLock { storage.append(snapshot) }
+        let count = lock.withLock { storage.append(snapshot); return storage.count }
+        changes.send(count)
+    }
+
+    func waitForCount(_ count: Int) async {
+        while let recorded = await changes.next() {
+            if recorded >= count { return }
+        }
     }
 }
 
 private final class RemoteMacPaneCloseEmitter: @unchecked Sendable {
     private let lock = NSLock()
     private var onClosed: (@Sendable (String) async -> Void)?
+    private var installationCount = 0
+    private let installations = RemoteMacTestEvents<Int>()
 
     func install(_ onClosed: @escaping @Sendable (String) async -> Void) {
-        lock.withLock { self.onClosed = onClosed }
+        let count = lock.withLock {
+            self.onClosed = onClosed
+            installationCount += 1
+            return installationCount
+        }
+        installations.send(count)
+    }
+
+    func waitUntilInstalled(_ count: Int) async {
+        while let installed = await installations.next() {
+            if installed >= count { return }
+        }
     }
 
     func emit(_ reason: String) async {
@@ -944,9 +1158,12 @@ private actor FakeRemoteMacHostConnection: RemoteHostLinkFake, DirectHostLink {
     private(set) var directEndpoints: [DirectSSHEndpoint] = []
     private var appliedAnswerStorage: [String] = []
     private var openedTerminalSessionStorage: [String] = []
+    private var terminalClients: [FakeWebSocketClient] = []
+    private(set) var panesDrivers: [FakePanesStateDriver] = []
     private var closeCallCount = 0
     private var currentState: RemoteHostConnection.State = .connected
     private var stateHandler: (@Sendable (RemoteHostConnection.State) -> Void)?
+    private var nextStateReadGate: RemoteMacStateReadGate?
 
     init(
         offerSDP: String,
@@ -974,7 +1191,16 @@ private actor FakeRemoteMacHostConnection: RemoteHostLinkFake, DirectHostLink {
     }
 
     var state: RemoteHostConnection.State {
-        currentState
+        get async {
+            let gate = nextStateReadGate
+            nextStateReadGate = nil
+            await gate?.wait()
+            return currentState
+        }
+    }
+
+    func blockNextStateRead(on gate: RemoteMacStateReadGate) {
+        nextStateReadGate = gate
     }
 
     func transition(to newState: RemoteHostConnection.State) {
@@ -1002,11 +1228,13 @@ private actor FakeRemoteMacHostConnection: RemoteHostLinkFake, DirectHostLink {
     }
 
     func makePanesStateDriver(originAware _: Bool) -> any PanesStateSubscriptionDriver {
-        FakePanesStateDriver(
+        let driver = FakePanesStateDriver(
             snapshotEmitter: snapshotEmitter,
             paneCloseEmitter: paneCloseEmitter,
             closeDuringOpenReason: closePanesDuringOpenReason
         )
+        panesDrivers.append(driver)
+        return driver
     }
 
     func makePaneControlDriver() async throws -> any PaneControlChannelDriver {
@@ -1015,10 +1243,13 @@ private actor FakeRemoteMacHostConnection: RemoteHostLinkFake, DirectHostLink {
 
     func openTerminalClient(sessionName: String, preferPaged _: Bool) -> any WebSocketClient & Sendable {
         openedTerminalSessionStorage.append(sessionName)
-        return FakeWebSocketClient()
+        let client = FakeWebSocketClient()
+        terminalClients.append(client)
+        return client
     }
 
     func close() async {
+        terminalClients.forEach { $0.close() }
         closeCallCount += 1
         currentState = .closed
         stateHandler?(.closed)
@@ -1031,6 +1262,12 @@ private final class FakePanesStateDriver: PanesStateSubscriptionDriver, @uncheck
     private let paneCloseEmitter: RemoteMacPaneCloseEmitter?
     private let closeDuringOpenReason: String?
     private var onClosed: PanesStateChannelClient.OnClosed = { _ in }
+    private var closes = 0
+    private let opened = RemoteMacTestEvents<Void>()
+    private let closed = RemoteMacTestEvents<Void>()
+    var closeCount: Int { lock.withLock { closes } }
+    func waitUntilOpened() async { _ = await opened.next() }
+    func waitUntilClosed() async { _ = await closed.next() }
 
     init(
         snapshotEmitter: RemoteMacSnapshotEmitter?,
@@ -1052,12 +1289,16 @@ private final class FakePanesStateDriver: PanesStateSubscriptionDriver, @uncheck
     }
 
     func open() async throws {
+        opened.send(())
         if let closeDuringOpenReason {
             await lock.withLock { onClosed }(closeDuringOpenReason)
         }
     }
 
-    func close() {}
+    func close() {
+        lock.withLock { closes += 1 }
+        closed.send(())
+    }
 }
 
 private final class FakePaneControlDriver: PaneControlChannelDriver, @unchecked Sendable {
@@ -1069,7 +1310,23 @@ private final class FakePaneControlDriver: PaneControlChannelDriver, @unchecked 
 }
 
 private final class FakeWebSocketClient: WebSocketClient, @unchecked Sendable {
-    func send(_ frame: WebSocketFrame) async throws {}
-    func receive() async throws -> WebSocketFrame { .binary(Data()) }
-    func close() {}
+    private enum Failure: Error { case closed }
+    private let lock = NSLock()
+    private var frames: [WebSocketFrame] = []
+    private var closed = false
+    var isClosed: Bool { lock.withLock { closed } }
+
+    func send(_ frame: WebSocketFrame) async throws {
+        try lock.withLock {
+            guard !closed else { throw Failure.closed }
+            frames.append(frame)
+        }
+    }
+    func receive() async throws -> WebSocketFrame {
+        try lock.withLock {
+            guard !closed else { throw Failure.closed }
+            return frames.isEmpty ? .binary(Data()) : frames.removeFirst()
+        }
+    }
+    func close() { lock.withLock { closed = true } }
 }

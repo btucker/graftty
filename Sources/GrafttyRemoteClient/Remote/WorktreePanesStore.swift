@@ -39,6 +39,12 @@ public actor WorktreePanesStore {
         hasReceivedSnapshot ? .snapshot(current, sidebar: sidebar) : nil
     }
 
+    /// Rows and metadata from one actor read, excluding a closed feed's cache.
+    public var liveSnapshot: PanesStateMessage? {
+        if case .closed = connectionState { return nil }
+        return currentSnapshot
+    }
+
     /// A consumer that already fetched rows may reconcile only against the
     /// same frame. Nil differs from a matching legacy frame without metadata.
     public func navigationSnapshot(matching worktrees: [WorktreePanes]) -> PanesStateMessage? {
@@ -65,6 +71,19 @@ public actor WorktreePanesStore {
         self.driver = driver
     }
 
+    deinit {
+        // A managed feed must not keep renewing after its last owner leaves.
+        if case .closed = connectionState {} else { driver.close() }
+    }
+
+    func applySnapshotIfOpen(_ snapshot: [WorktreePanes]) -> Bool {
+        guard case .closed = connectionState else {
+            applySnapshot(snapshot)
+            return true
+        }
+        return false
+    }
+
     public func subscribe() async throws {
         try await driver.open()
         switch connectionState {
@@ -79,10 +98,11 @@ public actor WorktreePanesStore {
     }
 
     public func unsubscribe() async {
-        driver.close()
+        if case .closed = connectionState { return }
         self.connectionState = .closed(reason: "unsubscribed")
         clearResources()
         frames.finish()
+        await driver.shutdown()
     }
 
     /// Called by the channel driver's `onSnapshot` callback when a new
@@ -171,6 +191,12 @@ public actor WorktreePanesStore {
 public protocol PanesStateChannelDriver: Sendable {
     func open() async throws
     func close()
+    /// Completes channel teardown before an asynchronous owner releases it.
+    func shutdown() async
+}
+
+extension PanesStateChannelDriver {
+    public func shutdown() async { close() }
 }
 
 public protocol PanesStateCallbacksConfigurable: Sendable {
