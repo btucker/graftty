@@ -3564,6 +3564,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.64** When a paired client creates or deletes a worktree on a headless host, the application shall use the Mac's create-failed, not-found, invalid, and git-failed error codes, report Git creation failures with the Mac's message, and include short status only when forceAllowed is true.
 
+**REMOTE-22.65** When a headless host answers agent-completion or remote-team requests that read presence, the application shall decode presence files off the main actor while preserving responses and request errors.
+
 ### REMOTE-23.x
 
 **REMOTE-23.1** When reading Linux process identity, the application shall parse process names containing spaces and closing parentheses without shifting the parent PID or start time fields.
