@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 /// @spec PERSIST-5.4
 /// The application shall encode a JSONFileStore's dates and output
@@ -125,18 +130,44 @@ public struct JSONFileStore<Value: Codable>: Sendable {
     /// Atomically replaces the file with already-encoded bytes, for callers
     /// that validate the encoding (e.g. a size cap) before writing it.
     public func write(_ data: Data) throws {
+        try write(data, beforeReplacing: { _ in })
+    }
+
+    func write(_ data: Data, beforeReplacing: (URL) throws -> Void) throws {
         if createsDirectory {
             try FileManager.default.createDirectory(
                 at: fileURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
         }
-        try data.write(to: fileURL, options: .atomic)
-        if let posixPermissions {
-            try FileManager.default.setAttributes(
-                [.posixPermissions: NSNumber(value: posixPermissions)],
-                ofItemAtPath: fileURL.path
-            )
+        guard let posixPermissions else {
+            try data.write(to: fileURL, options: .atomic)
+            return
+        }
+
+        // mkstemp creates the file as 0600 before any secret bytes are written.
+        // Keep it beside the destination so rename is an atomic replacement.
+        var template = Array(fileURL.deletingLastPathComponent()
+            .appendingPathComponent(".\(fileURL.lastPathComponent).XXXXXX").path.utf8CString)
+        let descriptor = mkstemp(&template)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let temporaryURL = URL(fileURLWithPath: String(cString: template))
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        do {
+            guard fchmod(descriptor, mode_t(UInt16(bitPattern: posixPermissions))) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            try handle.write(contentsOf: data)
+            try handle.synchronize()
+            try handle.close()
+        } catch {
+            try? handle.close()
+            throw error
+        }
+        try beforeReplacing(temporaryURL)
+        guard rename(temporaryURL.path, fileURL.path) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
     }
 
