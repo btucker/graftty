@@ -10,6 +10,27 @@ import GrafttyProtocol
 /// coordinator. Attempt tracking, eviction and failure policy stay with each
 /// caller.
 public enum RemoteHostDialer {
+    /// Orders routing hints for both native clients. Live discovery appears
+    /// before persisted metadata; duplicate URLs retain their first kind.
+    public static func routingRoutes(
+        pinnedHost: PinnedHost,
+        hostRoutes: [RemoteConnectionRoute],
+        discoveredBaseURLs: [URL] = [],
+        fallbackBaseURL: URL
+    ) -> [RemoteConnectionRoute] {
+        var candidates = discoveredBaseURLs.map { RemoteConnectionRoute(kind: .lan, baseURL: $0) }
+        if let lastSuccessful = pinnedHost.lastSuccessfulRoute {
+            candidates.append(lastSuccessful)
+        }
+        candidates.append(contentsOf: pinnedHost.routes)
+        candidates.append(contentsOf: hostRoutes)
+        if candidates.isEmpty {
+            candidates.append(RemoteConnectionRoute(kind: .lan, baseURL: fallbackBaseURL))
+        }
+        var seen = Set<URL>()
+        return candidates.filter { seen.insert($0.baseURL).inserted }
+    }
+
     /// Creates an offer on `link`, exchanges it with the pinned host over the
     /// first reachable route, and applies the answer. `checkpoint` runs on the
     /// caller's actor after each step so a superseded attempt stops before its
@@ -53,8 +74,8 @@ public enum RemoteHostDialer {
         return refreshed
     }
 
-    /// Saves a pin refreshed by a successful connection. A missing pin means
-    /// trust was revoked while negotiation was in flight, so that error is
+    /// Saves a pin refreshed by a successful connection. A missing or replaced pin means
+    /// trust changed while negotiation was in flight, so that error is
     /// rethrown to fail the connection; any other store failure is only
     /// reported, because the connection itself is usable.
     public static func persistRefreshedPin(
@@ -64,8 +85,8 @@ public enum RemoteHostDialer {
     ) throws {
         do {
             try update(pin)
-        } catch PinnedHostStore.Error.notFound {
-            throw PinnedHostStore.Error.notFound
+        } catch let error as PinnedHostStore.Error where error == .notFound || error == .identityChanged {
+            throw error
         } catch {
             onFailure(error)
         }

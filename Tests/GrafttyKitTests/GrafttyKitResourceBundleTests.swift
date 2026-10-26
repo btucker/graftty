@@ -5,12 +5,26 @@ import GrafttyTestSupport
 
 @Suite("""
 @spec CONFIG-2.6: The application shall resolve GrafttyKit's SwiftPM resource \
-bundle from the packaged `.app` layout (`Contents/Resources/`), falling back to \
+bundle, including the Linux host maintenance installer, from the packaged `.app` layout (`Contents/Resources/`), falling back to \
 `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not \
 trap on SwiftPM's generated accessor (which probes only the `.app` root and the \
 compiling machine's `.build` path — neither present once shipped).
 """)
 struct GrafttyKitResourceBundleTests {
+    @Test("Linux maintenance uses the packaged resource resolver instead of SwiftPM's trapping accessor")
+    func maintenanceInstallerUsesPackagedResourceResolver() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appendingPathComponent(
+            "Sources/GrafttyKit/HostSetup/LinuxHostMaintenanceScripts.swift"
+        ), encoding: .utf8)
+        // Loading the real SwiftPM bundle in a test succeeds even with the
+        // broken accessor. Guard the production consumer as well as testing
+        // packaged-layout resolution below.
+        #expect(!source.contains("Bundle.module"))
+        #expect(source.contains("GrafttyKitResourceBundle.bundle"))
+    }
+
     /// Build a throwaway `.app`-like tree with the resource bundle at the given
     /// subpath relative to the `.app` root, returning (appRoot, resourcesDir).
     private func makeApp(

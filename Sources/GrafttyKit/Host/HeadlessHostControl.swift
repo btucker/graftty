@@ -45,21 +45,16 @@ public extension HeadlessHostRuntime {
             case .listRepositories:
                 return .repositories(await repositoryInfo())
             case .create(let repository, let name, let branch, let source):
-                let result = try await createWorktree(repository: repository, name: name, branch: branch,
-                    existing: source != nil, remoteOnly: source == .remoteOnly)
-                return .created(worktreeID: result.path, paneID: result.session)
+                do {
+                    let result = try await createWorktree(repository: repository, name: name, branch: branch,
+                        existing: source != nil, remoteOnly: source == .remoteOnly)
+                    return .created(worktreeID: result.path, paneID: result.session)
+                } catch let error as GitWorktreeAdd.Error {
+                    return .creationFailure(message: WorktreeCreationError(gitAddFailure: error).userMessage)
+                } catch { return .creationFailure(message: String(describing: error)) }
             case .open(let path): _ = try await openWorktree(path)
             case .delete(let path, let force):
-                // REMOTE-22.60: a CLI creation's row exists before its Git
-                // task takes the worktree lease.
-                if state.worktree(forPath: path)?.state.isInFlight == true {
-                    throw HostRuntimeError.busy("worktree operation in progress: \(path)")
-                }
-                do { try await deleteWorktree(path, force: force); return .deleted(dismissed: false) }
-                catch let GitWorktreeRemove.Error.gitFailed(_, stderr) {
-                    let status = try? await GitRunner.run(args: ["status", "--short"], at: path)
-                    return .error(code: "git_failed", message: stderr, forceAllowed: !force, shortStatus: status)
-                }
+                return await manageDeletion(path, force: force)
             case .acknowledge(let path, let pane):
                 let index = try indices(path)
                 if let pane {
@@ -98,6 +93,32 @@ public extension HeadlessHostRuntime {
             }
             return .ok
         } catch { return .error(code: "host_operation_failed", message: String(describing: error), forceAllowed: false, shortStatus: nil) }
+    }
+
+    private func manageDeletion(_ path: String, force: Bool) async -> WorktreeManagementResponse {
+        guard let repo = state.repo(forWorktreePath: path) else {
+            return .init(removal: .failure(.notFound))
+        }
+        guard path != repo.path else {
+            return .init(removal: .failure(.mainCheckoutRejected))
+        }
+        // REMOTE-22.60: a CLI creation's row exists before its Git task takes the lease.
+        guard state.worktree(forPath: path)?.state.isInFlight != true else {
+            return .init(removal: .failure(.gitFailedFinal(WorktreeRemovalError.operationInProgressMessage)))
+        }
+        do {
+            try await deleteWorktree(path, force: force)
+            return .init(removal: .success(.init(dismissed: false)))
+        } catch GitWorktreeRemove.Error.gitFailed(_, let stderr) {
+            if force {
+                return .init(removal: .failure(.gitFailedFinal(stderr.isEmpty ? "git worktree remove --force failed" : stderr)))
+            }
+            return .init(removal: .failure(.gitFailedForceable(
+                stderr: stderr.isEmpty ? "git worktree remove failed" : stderr,
+                shortStatus: await GitStatusCapture.shortStatus(at: path))))
+        } catch {
+            return .init(removal: .failure(.gitFailedFinal(String(describing: error))))
+        }
     }
 
     /// Control-socket entry point. Attention, recap, team, capability, and

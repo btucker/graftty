@@ -196,8 +196,11 @@ public struct IPadRootLayout: View {
         })
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
-            set: { appState.sidebarWidth = $0 }
-        ))
+            set: { width in
+                guard width.isFinite, width > 0 else { return }
+                appState.sidebarWidth = width
+            }
+        ), when: selectedHost != nil && appState.columnVisibility == .all)
         .focusedSceneValue(\.mobileGhosttyCommandContext, ghosttyCommandContext)
         .task(id: HostPresentationRefreshKey(
             hostID: selectedHost?.id,

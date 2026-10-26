@@ -9,6 +9,88 @@ import Testing
 @Suite("RemoteMacConnectionRegistry")
 @MainActor
 struct RemoteMacConnectionRegistryTests {
+    @Test("@spec REMOTE-12.21: If a saved Mac's fingerprint differs from its current pin, then the application shall report a host-key mismatch that requires pairing before any WebRTC offer, signaling request, or direct SSH connect.", .timeLimit(.minutes(1)), arguments: [RemoteHostTransport.webRTC, .directSSH])
+    func rotatedPinFailsBeforeDialing(transport: RemoteHostTransport) async throws {
+        var remote = try makeRemoteMac()
+        remote.transport = transport
+        remote.directEndpoint = try DirectSSHEndpoint(host: "studio.local", port: 8801)
+        remote.fingerprint = try RemoteIdentityFingerprint(rawBytes: Data(repeating: 0x33, count: 32))
+        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x62, count: 32))
+        let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let pins = PinnedHostStore(directory: directory)
+        let pin = PinnedHost(
+            id: remote.id, kind: .mac,
+            publicKey: try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation),
+            displayName: remote.label, pinnedAt: remote.addedAt,
+            pairingURL: try #require(remote.lastKnownBaseURL)
+        )
+        try pins.add(pin)
+        let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
+        let registry = makeRegistry(
+            signalingTransport: { _, _ in
+                Issue.record("Mismatched pin must fail before signaling")
+                throw URLError(.unsupportedURL)
+            },
+            pinnedHostProvider: { try? pins.get(id: $0) },
+            connectionFactory: { _, _ in connection },
+            directConnectionFactory: { _, _ in connection }
+        )
+        let store = RemoteMacStore(storeURL: directory.appendingPathComponent("remote-macs.json"))
+        try store.add(remote)
+        let model = RemoteMacsModel(
+            store: store, connectionRegistry: registry,
+            maintenancePins: pins
+        )
+        await model.loadSavedRemotes()
+        await #expect(throws: PinnedHostKeyError.hostKeyMismatch(expected: remote.fingerprint, offered: pin.fingerprint)) {
+            _ = try await model.connect(to: remote)
+        }
+        #expect(await connection.createOfferCallCount == 0)
+        #expect(await connection.directEndpoints.isEmpty)
+        #expect(await connection.closeCount == 1)
+        #expect(registry.activeConnectionCount == 0)
+        #expect(model.connectionState(for: RemoteMacIdentity(remote)) == .needsPairing)
+    }
+
+    @Test("@spec REMOTE-12.20: When a saved Mac's pin has a last successful route absent from its saved routes, the application shall include that refreshed route in the next authenticated dial.")
+    func dialIncludesPinsLastSuccessfulRoute() async throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let publicKey = try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
+        let stale = RemoteConnectionRoute(kind: .lan, baseURL: URL(string: "http://stale.local:8800")!)
+        let current = RemoteConnectionRoute(kind: .tailscaleDNS, baseURL: URL(string: "http://current.tailnet.ts.net:8800")!)
+        let remote = RemoteMac(
+            id: RemoteDeviceID(value: "studio-mac"), label: "Studio",
+            fingerprint: RemoteIdentityFingerprint(of: publicKey),
+            lastKnownBaseURL: stale.baseURL, routes: [stale], lastSuccessfulRoute: stale
+        )
+        let pin = PinnedHost(
+            id: remote.id, kind: .mac, publicKey: publicKey, displayName: remote.label,
+            pinnedAt: Date(timeIntervalSince1970: 1_700_000_000), pairingURL: stale.baseURL,
+            routes: [], lastSuccessfulRoute: current
+        )
+        let registry = makeRegistry(signalingTransport: { request, body in
+            guard request.url?.host == current.baseURL.host else { throw URLError(.cannotConnectToHost) }
+            if request.url?.path == "/v2/rtc/challenge" {
+                let probe = try JSONDecoder.iso8601().decode(SignalingChallengeRequest.self, from: body)
+                return try authenticatedSignalingResponse(url: request.url!, value: SignalingChallengeResponse(
+                    hostDeviceID: remote.id, clientDeviceID: probe.clientDeviceID, clientNonce: probe.clientNonce,
+                    hostNonce: Data(repeating: 0x72, count: 32),
+                    expiresAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) + 30),
+                    routes: [current], signingKey: key
+                ))
+            }
+            let offer = try JSONDecoder.iso8601().decode(AuthenticatedSignalingOffer.self, from: body)
+            return try authenticatedSignalingResponse(url: request.url!, value: AuthenticatedSignalingAnswer(
+                offer: offer, sdp: "v=0\nanswer\n", routes: [current], signingKey: key
+            ))
+        }, pinnedHostProvider: { _ in pin })
+        _ = try await registry.connect(to: remote)
+        #expect(registry.activeConnectionCount == 1)
+        await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
+    }
+
     @Test("missing base URL fails closed")
     func missingBaseURLFailsClosed() async throws {
         let registry = makeRegistry(signalingTransport: { request, _ in
@@ -710,14 +792,15 @@ private func authenticatedSignalingResponse<Value: Encodable>(
 private func makeRemoteMac(
     id: RemoteDeviceID = RemoteDeviceID(value: "studio-mac"),
     label: String = "Studio Mac",
-    fingerprintByte: UInt8 = 0x22,
     baseURL: URL? = URL(string: "http://studio.local:9443"),
     addedAt: Date = Date(timeIntervalSince1970: 1_700_000_000)
 ) throws -> RemoteMac {
-    RemoteMac(
+    let key = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x62, count: 32))
+    let publicKey = try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
+    return RemoteMac(
         id: id,
         label: label,
-        fingerprint: try RemoteIdentityFingerprint(rawBytes: Data(repeating: fingerprintByte, count: 32)),
+        fingerprint: RemoteIdentityFingerprint(of: publicKey),
         lastKnownBaseURL: baseURL,
         addedAt: addedAt
     )

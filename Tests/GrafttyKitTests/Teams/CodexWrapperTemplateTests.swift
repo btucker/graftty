@@ -1,9 +1,84 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyTestSupport
 
 @Suite("Codex wrapper shell template")
 struct CodexWrapperTemplateTests {
+    @Test("Native flock keeps administration exclusively locked", .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/flock")))
+    func nativeFlockHoldsExclusiveAdministrationLock() throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let managed = root.appendingPathComponent("managed")
+        let durable = root.appendingPathComponent("durable")
+        let bin = root.appendingPathComponent("bin")
+        for directory in [managed, durable, bin] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let lock = managed.appendingPathComponent(".graftty-mirror.lock")
+        try Data().write(to: lock)
+        let codex = bin.appendingPathComponent("codex")
+        try """
+            #!/bin/sh
+            # A shared probe must fail while administration owns an exclusive lock.
+            if /usr/bin/flock -n -s "$GRAFTTY_TEST_LOCK" /bin/true; then exit 41; fi
+            [ "$CODEX_HOME" = "$GRAFTTY_TEST_DURABLE" ] || exit 42
+            """.write(to: codex, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: codex.path)
+        let script = try AgentHookInstaller.codexWrapperScript(
+            wrapperDirectory: root.appendingPathComponent("wrapper-bin").path,
+            grafttyCLIPath: "/bin/true",
+            codexHomeDirectory: managed.path,
+            codexSourceDirectory: durable.path
+        )
+        let wrapper = root.appendingPathComponent("wrapper.sh")
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [wrapper.path, "plugin", "list"]
+        process.environment = [
+            "PATH": "\(bin.path):/usr/bin:/bin", "CODEX_HOME": managed.path,
+            "GRAFTTY_DISABLE_AGENT_HOOKS": "1", "GRAFTTY_TEST_LOCK": lock.path,
+            "GRAFTTY_TEST_DURABLE": durable.path,
+        ]
+        let stderr = Pipe()
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        #expect(stderr.fileHandleForReading.readDataToEndOfFile().isEmpty)
+    }
+
+    @Test("@spec TEAM-10.22: When Codex wrapper paths contain newlines or shell metacharacters, the application shall treat them as literal data in comments and missing-binary diagnostics without executing them.", arguments: [true, false])
+    func pathsCannotExecuteShellText(inComment: Bool) throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let injected = root.appendingPathComponent("injected")
+        let wrapperDirectory = inComment ? "/missing/wrapper" :
+            "/missing/$(printf injected > \"$GRAFTTY_TEST_INJECTION\")/`printf injected > \"$GRAFTTY_TEST_INJECTION\"`/$GRAFTTY_TEST_INJECTION/'quoted'"
+        let cli = inComment ? "/missing/graftty\nprintf injected > \"$GRAFTTY_TEST_INJECTION\"\n#" : "/missing/graftty"
+        let script = try AgentHookInstaller.codexWrapperScript(
+            wrapperDirectory: wrapperDirectory,
+            grafttyCLIPath: cli,
+            codexHomeDirectory: root.appendingPathComponent("home").path,
+            codexSourceDirectory: root.appendingPathComponent("source").path
+        )
+        let wrapper = root.appendingPathComponent("wrapper.sh")
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [wrapper.path]
+        process.environment = ["PATH": "/missing/binaries", "GRAFTTY_TEST_INJECTION": injected.path]
+        let stderr = Pipe()
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        let diagnostic = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        #expect(process.terminationStatus == 127)
+        #expect(!FileManager.default.fileExists(atPath: injected.path))
+        #expect(diagnostic == "graftty: unable to find real codex outside \(wrapperDirectory)\n")
+    }
+
     struct Inputs: CustomTestStringConvertible {
         var wrapperDirectory: String
         var grafttyCLIPath: String
@@ -37,7 +112,7 @@ struct CodexWrapperTemplateTests {
         ),
     ]
 
-    @Test("The template renders the same bytes as the Swift-literal wrapper it replaced.", arguments: inputs)
+    @Test("The template matches the frozen renderer with the reviewed #533 corrections.", arguments: inputs)
     func templateMatchesLegacyWrapper(_ input: Inputs) throws {
         let rendered = try AgentHookInstaller.codexWrapperScript(
             wrapperDirectory: input.wrapperDirectory,

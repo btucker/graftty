@@ -7,6 +7,35 @@ import Testing
 
 @Suite("RemoteHostDialer signed negotiation")
 struct RemoteHostDialerTests {
+    @Test("@spec REMOTE-2.30: When either native client orders signaling routes, the application shall prefer discovered URLs, the pin's last successful route, pin routes, and saved host routes in that order, deduplicate by URL, and use the saved base URL only if no candidates exist.")
+    func sharedRoutingOrder() throws {
+        let fixture = try DialerFixture()
+        let discovered = URL(string: "http://fresh.local:8800")!
+        let fallback = URL(string: "http://fallback.local:8800")!
+        let saved = RemoteConnectionRoute(kind: .lan, baseURL: URL(string: "http://saved.local:8800")!)
+        var pin = fixture.pinnedHost
+        pin.lastSuccessfulRoute = fixture.tailRoute
+        pin.routes = [fixture.lanRoute, fixture.tailRoute]
+        #expect(RemoteHostDialer.routingRoutes(
+            pinnedHost: pin,
+            hostRoutes: [saved, fixture.lanRoute],
+            discoveredBaseURLs: [discovered, fixture.tailRoute.baseURL, discovered],
+            fallbackBaseURL: fallback
+        ) == [
+            RemoteConnectionRoute(kind: .lan, baseURL: discovered),
+            RemoteConnectionRoute(kind: .lan, baseURL: fixture.tailRoute.baseURL),
+            fixture.lanRoute, saved,
+        ])
+        #expect(RemoteHostDialer.routingRoutes(
+            pinnedHost: pin, hostRoutes: [saved], fallbackBaseURL: fallback
+        ) == [fixture.tailRoute, fixture.lanRoute, saved])
+        pin.lastSuccessfulRoute = nil
+        pin.routes = []
+        #expect(RemoteHostDialer.routingRoutes(
+            pinnedHost: pin, hostRoutes: [], fallbackBaseURL: fallback
+        ) == [RemoteConnectionRoute(kind: .lan, baseURL: fallback)])
+    }
+
     @Test("negotiate checkpoints after each network step and stamps the pin only after applying the answer")
     func negotiateAppliesAnswerThenRefreshesPin() async throws {
         let fixture = try DialerFixture()

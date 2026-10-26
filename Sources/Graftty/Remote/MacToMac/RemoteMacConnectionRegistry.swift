@@ -166,7 +166,7 @@ final class RemoteMacConnectionRegistry {
         }
         self.clientDeviceID = Self.defaultClientDeviceID()
         self.pinnedHostProvider = { try? pinnedHostStore.get(id: $0) }
-        self.pinnedHostUpdater = { try pinnedHostStore.update($0) }
+        self.pinnedHostUpdater = { try pinnedHostStore.refreshConnectionMetadata($0) }
         self.signalingClient = SignalingClient()
         self.connectionFactory = { clientKey, expectedHostFingerprint in
             RemoteHostConnection(clientKey: clientKey, expectedHostFingerprint: expectedHostFingerprint)
@@ -448,10 +448,15 @@ final class RemoteMacConnectionRegistry {
         var paneEnvironment: RemoteMacPaneEnvironment?
         do {
             guard let pinnedHost = pinnedHostProvider(remoteMac.id) else { throw ConnectionError.notConnected(identity) }
+            guard pinnedHost.fingerprint == identity.fingerprint else {
+                throw PinnedHostKeyError.hostKeyMismatch(
+                    expected: identity.fingerprint,
+                    offered: pinnedHost.fingerprint
+                )
+            }
             let refreshedPinnedHost: PinnedHost
             switch dialLink {
             case .direct(let direct):
-                guard pinnedHost.fingerprint == identity.fingerprint else { throw ConnectionError.notConnected(identity) }
                 guard let endpoint = remoteMac.directEndpoint else { throw ConnectionError.missingDirectEndpoint(identity) }
                 try await direct.connect(host: endpoint.host, port: endpoint.port)
                 try ensureCurrentAttempt(attemptID, identity: identity)
@@ -459,15 +464,11 @@ final class RemoteMacConnectionRegistry {
                 refreshed.lastConnectedAt = now()
                 refreshedPinnedHost = refreshed
             case .webRTC(let webRTC):
-                var routes: [RemoteConnectionRoute] = []
-                if let lastSuccessful = remoteMac.lastSuccessfulRoute {
-                    routes.append(lastSuccessful)
-                }
-                routes.append(contentsOf: remoteMac.routes)
-                routes.append(contentsOf: pinnedHost.routes)
-                if routes.isEmpty {
-                    routes.append(RemoteConnectionRoute(kind: .lan, baseURL: try requiredBaseURL(remoteMac, identity: identity)))
-                }
+                let routes = RemoteHostDialer.routingRoutes(
+                    pinnedHost: pinnedHost,
+                    hostRoutes: remoteMac.routes,
+                    fallbackBaseURL: try requiredBaseURL(remoteMac, identity: identity)
+                )
                 refreshedPinnedHost = try await RemoteHostDialer.negotiate(
                     webRTC,
                     signaling: signalingClient,
