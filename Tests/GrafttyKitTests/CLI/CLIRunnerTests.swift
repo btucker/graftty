@@ -127,13 +127,13 @@ struct CLIRunnerTests {
     @spec CLI-1.2: When a timeout-enabled subprocess exits before its deadline, the application shall allow its Process and pipe descriptors to be released immediately rather than retain them in the delayed timeout work item until the original deadline.
     """)
     func delayedTimeoutWorkItemDoesNotRetainCompletedProcess() {
-        weak var weakProcess: Process?
+        weak var weakProcess: SubprocessProcess?
         weak var weakTermination: SubprocessTermination?
 
         do {
             // A 60-second timer stays queued long after this scope ends;
             // neither the process nor its termination state may ride on it.
-            let process = Process()
+            let process = SubprocessProcess()
             let termination = SubprocessTermination(process: process)
             termination.armTimeout(after: 60)
             weakProcess = process
