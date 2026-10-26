@@ -4416,6 +4416,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CLI-1.5** When a CLI runner explicitly enables cancellation, the application shall terminate its subprocess and propagate cancellation instead of waiting for the command timeout.
 
+**CLI-1.6** When a subprocess exits while a background descendant still holds its inherited output pipes, the application shall return the command's output and exit status without waiting for that descendant to exit.
+
+**CLI-1.7** When the application stops a subprocess on timeout or cancellation, the application shall deliver SIGTERM to a child that does not handle it so the child exits without waiting for the SIGKILL escalation, whichever thread launched it.
+
 ## CONTEXT — CONTEXT
 
 ### CONTEXT-1.x

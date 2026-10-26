@@ -7,8 +7,11 @@ import Glibc
 
 /// Shared POSIX launcher for commands whose descendants must stop with their owner.
 enum SpawnedProcessGroup {
-    static func spawn(executable: URL, args: [String], env: [String: String],
-                      standardInput: Int32? = nil, standardOutput: Int32,
+    /// `resetsSignals` starts the child with no blocked signals and default
+    /// dispositions instead of the launching thread's: dispatch worker
+    /// threads block SIGTERM, which the child would otherwise inherit.
+    static func spawn(executable: URL, args: [String], env: [String: String], directory: String? = nil,
+                      resetsSignals: Bool = false, standardInput: Int32? = nil, standardOutput: Int32,
                       standardError: Int32?, closeDescriptors: [Int32]) throws -> pid_t {
         #if os(Linux)
         var actions = posix_spawn_file_actions_t()
@@ -44,6 +47,11 @@ enum SpawnedProcessGroup {
             guard rc == 0 else { throw posixError(rc) }
         }
 
+        if let directory {
+            rc = directory.withCString { posix_spawn_file_actions_addchdir_np(&actions, $0) }
+            guard rc == 0 else { throw posixError(rc) }
+        }
+
         for descriptor in Set(closeDescriptors) where descriptor > STDERR_FILENO {
             rc = posix_spawn_file_actions_addclose(&actions, descriptor)
             guard rc == 0 else { throw posixError(rc) }
@@ -64,11 +72,21 @@ enum SpawnedProcessGroup {
         rc = posix_spawnattr_setpgroup(&attrs, 0)
         guard rc == 0 else { throw posixError(rc) }
         #if os(Linux)
-        let flags = Int16(POSIX_SPAWN_SETPGROUP)
+        var flags = Int32(POSIX_SPAWN_SETPGROUP)
         #else
-        let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
+        var flags = Int32(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
         #endif
-        rc = posix_spawnattr_setflags(&attrs, flags)
+        if resetsSignals {
+            var signals = sigset_t()
+            sigemptyset(&signals)
+            rc = posix_spawnattr_setsigmask(&attrs, &signals)
+            guard rc == 0 else { throw posixError(rc) }
+            sigfillset(&signals)
+            rc = posix_spawnattr_setsigdefault(&attrs, &signals)
+            guard rc == 0 else { throw posixError(rc) }
+            flags |= Int32(POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF)
+        }
+        rc = posix_spawnattr_setflags(&attrs, Int16(flags))
         guard rc == 0 else { throw posixError(rc) }
 
         let argvStrings = [executable.path] + args
