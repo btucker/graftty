@@ -60,7 +60,9 @@ struct WorktreePanesStoreTests {
         let rows = makeWorktrees(count: 2)
         await store.applySnapshot(rows)
         #expect(await frames.next() == .snapshot(rows, sidebar: sidebar))
+        #expect(await store.liveSnapshot == .snapshot(rows, sidebar: sidebar))
         await store.markClosed(reason: "network-error")
+        #expect(await store.liveSnapshot == nil)
         #expect(await frames.next() == nil)
 
         let unsubscribed = WorktreePanesStore(driver: FakeChannelDriver())

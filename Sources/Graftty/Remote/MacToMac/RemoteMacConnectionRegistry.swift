@@ -41,7 +41,7 @@ final class RemoteMacConnectionRegistry {
         var remoteMac: RemoteMac
         let createdAt: Date
         let connection: any RemoteHostLink
-        let paneEnvironment: RemoteMacPaneEnvironment
+        var paneEnvironment: RemoteMacPaneEnvironment
 
         func sendPaneControl(
             _ request: PaneControlRequest
@@ -128,6 +128,9 @@ final class RemoteMacConnectionRegistry {
     }
     private var portForwards: [ForwardKey: ForwardAttempt] = [:]
     private var entries: [RemoteMacIdentity: Entry] = [:]
+    private var paneFeedTokens: [UUID: UUID] = [:]
+    private var failedPaneFeeds: [UUID: UUID] = [:]
+    private var pendingPaneStores: [UUID: WorktreePanesStore] = [:]
     private var teamClients: [UUID: TeamChannelClient] = [:]
     private var reconnectOnTeamClose: Set<UUID> = []
     var canReconnectFromHost: @MainActor (RemoteMacIdentity) -> Bool = { _ in false }
@@ -144,6 +147,7 @@ final class RemoteMacConnectionRegistry {
     private let directConnectionFactory: DirectHostConnectionFactory
     private let paneEnvironmentBuilder: PaneEnvironmentBuilder
     var onPaneSnapshot: PaneSnapshotHandler
+    var onPaneFeedFailure: @MainActor (RemoteMacIdentity, String) -> Void = { _, _ in }
     var onConnectionStateChange: ConnectionStateHandler
     private let now: @Sendable () -> Date
 
@@ -237,10 +241,12 @@ final class RemoteMacConnectionRegistry {
     ) async throws -> Entry {
         try Task.checkCancellation()
         let identity = RemoteMacIdentity(remoteMac)
-        if var existing = entries[identity] {
+        if let existing = entries[identity] {
             let state = await existing.connection.state
             try Task.checkCancellation()
-            guard entries[identity]?.id == existing.id else {
+            // Pane-only recovery can replace the environment without changing
+            // the transport ID while this state read is suspended.
+            guard var current = entries[identity], current.id == existing.id else {
                 return try await connect(
                     to: remoteMac,
                     replacingExistingHostConnection: replacingExistingHostConnection
@@ -248,11 +254,11 @@ final class RemoteMacConnectionRegistry {
             }
             if state.isTerminal {
                 entries[identity] = nil
-                await close(existing)
+                await close(current)
             } else {
-                existing.remoteMac = remoteMac
-                entries[identity] = existing
-                return existing
+                current.remoteMac = remoteMac
+                entries[identity] = current
+                return current
             }
         }
 
@@ -482,20 +488,23 @@ final class RemoteMacConnectionRegistry {
                     try ensureCurrentAttempt(attemptID, identity: identity)
                 }
             }
+            paneFeedTokens[attemptID] = attemptID
             let environment = await paneEnvironmentBuilder(
                 connection,
                 { [weak self] snapshot in
                     await self?.publishPaneSnapshot(
                         snapshot,
                         identity: identity,
-                        entryID: attemptID
+                        entryID: attemptID,
+                        feedID: attemptID
                     )
                 },
                 { [weak self] reason in
                     await self?.handlePaneChannelClose(
                         reason: reason,
                         identity: identity,
-                        entryID: attemptID
+                        entryID: attemptID,
+                        feedID: attemptID
                     )
                 }
             )
@@ -522,6 +531,7 @@ final class RemoteMacConnectionRegistry {
                 paneEnvironment: environment
             )
         } catch {
+            paneFeedTokens[attemptID] = nil
             await paneEnvironment?.close()
             await connection.setOnStateChange(nil)
             await connection.close()
@@ -583,13 +593,68 @@ final class RemoteMacConnectionRegistry {
     private func handlePaneChannelClose(
         reason: String,
         identity: RemoteMacIdentity,
-        entryID: UUID
+        entryID: UUID,
+        feedID: UUID
     ) {
+        guard paneFeedTokens[entryID] == feedID else { return }
+        if entries[identity]?.id == entryID {
+            failedPaneFeeds[entryID] = feedID
+            onPaneFeedFailure(identity, reason)
+            return
+        }
         handleTerminalState(
             .failed(reason: "panes-state channel closed: \(reason)"),
             identity: identity,
             entryID: entryID
         )
+    }
+
+    /// Rebuild only a failed pane feed. The transport, terminal ownership,
+    /// pane-control client, team channel, and connection identity survive.
+    func renewPaneFeed(identity: RemoteMacIdentity) async throws {
+        guard let entry = entries[identity] else { throw ConnectionError.notConnected(identity) }
+        let entryID = entry.id
+        let connection = entry.connection
+        let feedID = UUID()
+        paneFeedTokens[entryID] = feedID
+        let store = try await PanesStateSubscription.open(
+            on: connection,
+            onSnapshot: { [weak self] rows in
+                await self?.publishPaneSnapshot(rows, identity: identity, entryID: entryID, feedID: feedID)
+            },
+            onClosed: { [weak self] reason in
+                await self?.handlePaneChannelClose(reason: reason, identity: identity, entryID: entryID, feedID: feedID)
+            }
+        )
+        guard entries[identity]?.id == entryID, paneFeedTokens[entryID] == feedID else {
+            await store.unsubscribe()
+            throw CancellationError()
+        }
+        pendingPaneStores[entryID] = store
+        defer { if pendingPaneStores[entryID] === store { pendingPaneStores[entryID] = nil } }
+        do {
+            guard try await store.waitForFirstSnapshot(timeout: .seconds(15)) == .received else {
+                throw ConnectionError.paneEnvironmentUnavailable(identity)
+            }
+            try Task.checkCancellation()
+            guard var current = entries[identity], current.id == entryID,
+                  paneFeedTokens[entryID] == feedID else { throw CancellationError() }
+            guard failedPaneFeeds[entryID] != feedID else { throw ConnectionError.paneEnvironmentUnavailable(identity) }
+            let oldStore = current.paneEnvironment.worktreePanesStore
+            current.paneEnvironment = RemoteMacPaneEnvironment(
+                worktreePanesStore: store,
+                paneControlClient: current.paneEnvironment.paneControlClient)
+            entries[identity] = current
+            await oldStore?.unsubscribe()
+            // Publish once after installation too, so a reader can now obtain
+            // the recovered rows and metadata together from this new store.
+            let rows = await store.current
+            guard failedPaneFeeds[entryID] != feedID else { throw ConnectionError.paneEnvironmentUnavailable(identity) }
+            publishPaneSnapshot(rows, identity: identity, entryID: entryID, feedID: feedID)
+        } catch {
+            await store.unsubscribe()
+            throw error
+        }
     }
 
     func resourceObservation(for identity: RemoteMacIdentity) async -> HostResourceObservation? {
@@ -606,16 +671,19 @@ final class RemoteMacConnectionRegistry {
 
     func panesSnapshot(for identity: RemoteMacIdentity) async -> PanesStateMessage? {
         guard let entry = entries[identity], let store = entry.paneEnvironment.worktreePanesStore else { return nil }
-        let snapshot = await store.currentSnapshot
-        guard entries[identity]?.id == entry.id else { return nil }
+        let snapshot = await store.liveSnapshot
+        guard entries[identity]?.id == entry.id,
+              entries[identity]?.paneEnvironment.worktreePanesStore === store else { return nil }
         return snapshot
     }
 
     private func publishPaneSnapshot(
         _ snapshot: [WorktreePanes],
         identity: RemoteMacIdentity,
-        entryID: UUID
+        entryID: UUID,
+        feedID: UUID
     ) {
+        guard paneFeedTokens[entryID] == feedID, failedPaneFeeds[entryID] != feedID else { return }
         let isCurrentAttempt = inFlight[identity]?.id == entryID
         let isCurrentEntry = entries[identity]?.id == entryID
         guard isCurrentAttempt || isCurrentEntry else { return }
@@ -684,6 +752,10 @@ final class RemoteMacConnectionRegistry {
     }
 
     private func close(_ entry: Entry) async {
+        paneFeedTokens[entry.id] = nil
+        failedPaneFeeds[entry.id] = nil
+        let pendingStore = pendingPaneStores.removeValue(forKey: entry.id)
+        await pendingStore?.unsubscribe()
         let forwards = portForwards.filter { $0.key.connectionID == entry.id }
         for (key, attempt) in forwards {
             portForwards[key] = nil

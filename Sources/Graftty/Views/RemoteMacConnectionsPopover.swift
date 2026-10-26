@@ -38,14 +38,16 @@ struct RemoteMacConnectionsPopover: View {
     }
 
     private func machineRow(_ mac: RemoteMac) -> some View {
-        let state = model.connectionState(for: RemoteMacIdentity(mac))
+        let identity = RemoteMacIdentity(mac)
+        let state = model.connectionState(for: identity)
+        let feedFailure = model.paneFeedFailure(for: identity)
         return HStack(spacing: 10) {
             Image(systemName: "desktopcomputer").foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 3) {
                 Text(mac.label).lineLimit(1)
                 HStack(spacing: 5) {
-                    Circle().fill(state.statusColor).frame(width: 6, height: 6)
-                    Text(state.statusText).font(.caption).foregroundStyle(.secondary)
+                    Circle().fill(feedFailure == nil ? state.statusColor : .orange).frame(width: 6, height: 6)
+                    Text(feedFailure == nil ? state.statusText : "Worktree feed unavailable").font(.caption).foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 8)
@@ -66,7 +68,7 @@ struct RemoteMacConnectionsPopover: View {
             }
         }
         .padding(.horizontal, 12).frame(height: 64)
-        .help(mac.lastKnownBaseURL?.host ?? mac.label)
+        .help(feedFailure ?? mac.lastKnownBaseURL?.host ?? mac.label)
     }
 }
 

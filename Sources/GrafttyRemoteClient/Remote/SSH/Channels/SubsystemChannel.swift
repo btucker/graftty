@@ -102,6 +102,8 @@ final class SubsystemChannel: @unchecked Sendable {
     private let subsystem: String
     private let maximumBufferSize: Int?
     private let reply: Reply
+    private let childOpenTimeout: Duration
+    private let closeParentOnOpenTimeout: Bool
     private let lock = NIOLock()
     private var state: State = .idle
     private var ackWaiter: SSHSubsystemReplyWaiter?
@@ -111,6 +113,8 @@ final class SubsystemChannel: @unchecked Sendable {
         parentHandler: NIOSSHHandler,
         subsystem: String,
         maximumBufferSize: Int? = nil,
+        childOpenTimeout: Duration = .seconds(10),
+        closeParentOnOpenTimeout: Bool = true,
         reply: Reply,
         errors: SubsystemErrors
     ) {
@@ -119,6 +123,8 @@ final class SubsystemChannel: @unchecked Sendable {
         self.subsystem = subsystem
         self.maximumBufferSize = maximumBufferSize
         self.reply = reply
+        self.childOpenTimeout = childOpenTimeout
+        self.closeParentOnOpenTimeout = closeParentOnOpenTimeout
         self.errors = errors
     }
 
@@ -152,7 +158,9 @@ final class SubsystemChannel: @unchecked Sendable {
         do {
             let child = try await openChildChannel(
                 parentChannel: parentChannel,
-                parentHandler: parentHandler
+                parentHandler: parentHandler,
+                timeout: childOpenTimeout,
+                closeParentOnTimeout: closeParentOnOpenTimeout
             ) { [maximumBufferSize, errors] child, _ in
                 child.eventLoop.makeCompletedFuture {
                     try installSubsystemPipeline(

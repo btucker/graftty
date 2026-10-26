@@ -402,7 +402,9 @@ struct RemoteMacsSection: View {
                                 isActive: selectedRemoteIdentity == identity
                                     && selectedRemoteWorktreePath == nil
                             ))
-                        if let host = remoteMac.lastKnownBaseURL?.host {
+                        if let failure = model.paneFeedFailure(for: identity) {
+                            Text("Worktree feed unavailable").font(.caption).foregroundStyle(.orange).help(failure)
+                        } else if let host = remoteMac.lastKnownBaseURL?.host {
                             Text(host)
                                 .font(.caption)
                                 .lineLimit(1)

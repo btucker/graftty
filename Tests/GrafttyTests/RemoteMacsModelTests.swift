@@ -133,6 +133,90 @@ struct RemoteMacsModelTests {
         return (model, registry)
     }
 
+    @Test("@spec REMOTE-6.21: If a connected Mac's worktree feed becomes unhealthy, then the application shall expose that feed failure separately from transport status and exclude its cached rows from live relay snapshots while preserving the connected session.")
+    func paneFeedFailureHasSeparateStatusAndNoRelayAuthority() async throws {
+        let remote = try remoteMac()
+        let identity = RemoteMacIdentity(remote)
+        let recorder = RemoteMacsModelManagementRecorder(response: .repositories([]))
+        let (model, registry) = try await projectControlModel(remotes: [remote], recorder: recorder)
+        defer { model.disconnect(identity: identity) }
+        let row = WorktreePanes(path: "/repo/worktree", displayName: "branch", repoDisplayName: "Project", repositoryID: "/repo", displayBranch: "branch", state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil)
+        registry.onPaneSnapshot(identity, [row])
+        #expect(!(await model.sidebarRelaySnapshot()).worktrees.isEmpty)
+        registry.onPaneFeedFailure(identity, "snapshot timed out")
+        #expect(model.paneFeedFailure(for: identity) == "snapshot timed out")
+        #expect(model.connectionState(for: identity) == .connected)
+        #expect(registry.activeConnectionCount == 1)
+        #expect(model.worktreePanesByRemote[identity]?.map(\.path) == [row.path])
+        let relay = await model.sidebarRelaySnapshot()
+        #expect(relay.worktrees.isEmpty)
+        #expect(relay.projects.isEmpty)
+        #expect(relay.authoritativeOwnerIDs.isEmpty)
+        #expect(model.promotedWorktreesForRelay().isEmpty)
+        registry.onPaneSnapshot(identity, [row])
+        #expect(model.paneFeedFailure(for: identity) == nil)
+        #expect(!(await model.sidebarRelaySnapshot()).worktrees.isEmpty)
+    }
+
+    @Test("pane-only recovery restores health and relay authority, and manual disconnect cancels its retries", .timeLimit(.minutes(1)))
+    func paneFeedRecoversWithoutRedialAndStopsAfterDisconnect() async throws {
+        let remote = try remoteMac()
+        let identity = RemoteMacIdentity(remote)
+        let row = WorktreePanes(path: "/repo/recovered", displayName: "recovered", repoDisplayName: "Project", repositoryID: "/repo", displayBranch: "branch", state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil)
+        let driver = ModelRecoveryPanesDriver(rows: [row])
+        let (closed, didClose) = AsyncStream<Void>.makeStream()
+        let connection = ModelRecoveryConnection(driver: driver, didClose: { didClose.yield(()) })
+        var dials = 0
+        let registry = RemoteMacConnectionRegistry { remoteMac, identity in
+            dials += 1
+            return .init(id: UUID(), identity: identity, remoteMac: remoteMac, createdAt: Date(),
+                         connection: connection, paneEnvironment: .empty)
+        }
+        let saved = RemoteMacStore(storeURL: try tempStoreURL())
+        try saved.add(remote)
+        let (retry, permitRetry) = AsyncStream<Void>.makeStream()
+        let (waiting, didWait) = AsyncStream<Void>.makeStream()
+        let model = RemoteMacsModel(store: saved, connectionRegistry: registry, paneFeedRetryDelay: {
+            didWait.yield(())
+            var iterator = retry.makeAsyncIterator()
+            _ = await iterator.next()
+            try Task.checkCancellation()
+        })
+        await model.loadSavedRemotes()
+        let original = try await model.connect(to: remote)
+        registry.onPaneSnapshot(identity, [row])
+        let (updates, didUpdate) = AsyncStream<Void>.makeStream()
+        let apply = registry.onPaneSnapshot
+        registry.onPaneSnapshot = { identity, rows in apply(identity, rows); didUpdate.yield(()) }
+        registry.onPaneFeedFailure(identity, "test failure")
+        var wait = waiting.makeAsyncIterator()
+        _ = await wait.next()
+        #expect(model.paneFeedFailure(for: identity) != nil)
+        #expect((await model.sidebarRelaySnapshot()).authoritativeOwnerIDs.isEmpty)
+        permitRetry.yield(())
+        var updated = updates.makeAsyncIterator()
+        _ = await updated.next() // The first recovered frame.
+        _ = await updated.next() // The new store is installed in the registry.
+        #expect(model.paneFeedFailure(for: identity) == nil)
+        #expect(model.connectionState(for: identity) == .connected)
+        #expect((await model.sidebarRelaySnapshot()).authoritativeOwnerIDs == [remote.id])
+        #expect(try await registry.connect(to: remote).id == original.id)
+        #expect(dials == 1)
+        #expect(driver.openCount == 1)
+
+        registry.onPaneFeedFailure(identity, "second test failure")
+        _ = await wait.next()
+        model.disconnect(identity: identity)
+        var closedIterator = closed.makeAsyncIterator()
+        _ = await closedIterator.next()
+        permitRetry.yield(())
+        #expect(model.connectionState(for: identity) == .offline)
+        #expect(model.paneFeedFailure(for: identity) == nil)
+        #expect(registry.activeConnectionCount == 0)
+        #expect(driver.openCount == 1)
+        #expect(dials == 1)
+    }
+
     @Test("@spec REMOTE-14.7: When remote project metadata arrives during refresh, the application shall derive project contents and removal authority from the same per-owner snapshot.")
     func sidebarAuthorityUsesOneSnapshot() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
@@ -2278,4 +2362,30 @@ private struct HostPairingCoordinatorTestFixture {
     func cleanup() {
         try? FileManager.default.removeItem(at: dir)
     }
+}
+
+private struct ModelRecoveryConnection: RemoteHostLinkFake {
+    let driver: ModelRecoveryPanesDriver
+    let didClose: @Sendable () -> Void
+    var state: RemoteHostConnection.State { .connected }
+    func setOnStateChange(_ handler: (@Sendable (RemoteHostConnection.State) -> Void)?) {}
+    func makePanesStateDriver(originAware: Bool) -> any PanesStateSubscriptionDriver { driver }
+    func makePaneControlDriver() async throws -> any PaneControlChannelDriver { RemoteMacsModelTestPaneControlDriver() }
+    func openTerminalClient(sessionName: String, preferPaged: Bool) async throws -> any WebSocketClient & Sendable { RemoteMacsModelTestWebSocketClient() }
+    func close() async { didClose() }
+}
+
+private final class ModelRecoveryPanesDriver: PanesStateSubscriptionDriver, SidebarSnapshotProviding, @unchecked Sendable {
+    let rows: [WorktreePanes]
+    let sidebarSnapshot: SidebarSnapshot? = .init(projects: [.init(id: "project", repositoryID: "/repo", name: "Project")])
+    private let lock = NSLock()
+    private var snapshot: PanesStateChannelClient.OnSnapshot = { _ in }
+    private var opens = 0
+    var openCount: Int { lock.withLock { opens } }
+    init(rows: [WorktreePanes]) { self.rows = rows }
+    func setCallbacks(onSnapshot: @escaping PanesStateChannelClient.OnSnapshot, onClosed: @escaping PanesStateChannelClient.OnClosed) {
+        lock.withLock { snapshot = onSnapshot }
+    }
+    func open() async throws { lock.withLock { opens += 1 }; await lock.withLock { snapshot }(rows) }
+    func close() {}
 }

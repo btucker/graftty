@@ -13,7 +13,7 @@ struct PanesStateSubscriptionTests {
         let host = ScriptedPanesHost(v2: v2, v1: v1)
         let owner = OwnerRecorder()
 
-        let store = try await PanesStateSubscription.open(
+        let store = try await PanesStateSubscription.openOnce(
             on: host, onSnapshot: owner.snapshot, onClosed: owner.closed)
 
         #expect(await host.requested == [true, false])
@@ -34,7 +34,7 @@ struct PanesStateSubscriptionTests {
         let host = ScriptedPanesHost(v2: v2, v1: ScriptedPanesDriver(open: .succeed))
 
         await #expect(throws: PanesStateChannelClient.ClientError.self) {
-            _ = try await PanesStateSubscription.open(on: host)
+            _ = try await PanesStateSubscription.openOnce(on: host)
         }
         #expect(await host.requested == [true])
         #expect(v2.closeCount == 1)
@@ -47,7 +47,7 @@ struct PanesStateSubscriptionTests {
         let owner = OwnerRecorder()
 
         await #expect(throws: WorktreePanesStore.SubscriptionError.closedDuringOpen(reason: "dropped")) {
-            _ = try await PanesStateSubscription.open(
+            _ = try await PanesStateSubscription.openOnce(
                 on: host, onSnapshot: owner.snapshot, onClosed: owner.closed)
         }
         #expect(await host.requested == [true])
@@ -57,7 +57,7 @@ struct PanesStateSubscriptionTests {
         #expect(owner.snapshots.isEmpty)
 
         let live = ScriptedPanesDriver(open: .succeed)
-        let store = try await PanesStateSubscription.open(
+        let store = try await PanesStateSubscription.openOnce(
             on: ScriptedPanesHost(v2: live, v1: ScriptedPanesDriver(open: .succeed)),
             onSnapshot: owner.snapshot, onClosed: owner.closed)
         await live.closeFromPeer("peer-gone")
@@ -71,7 +71,7 @@ struct PanesStateSubscriptionTests {
             PanesStateChannelClient.ClientError.subsystemRejected)))
         let host = ScriptedPanesHost(v2: v2, v1: ScriptedPanesDriver(open: .succeed))
 
-        let attempt = Task { try await PanesStateSubscription.open(on: host) }
+        let attempt = Task { try await PanesStateSubscription.openOnce(on: host) }
         await #expect(throws: CancellationError.self) {
             _ = try await attempt.value
         }
