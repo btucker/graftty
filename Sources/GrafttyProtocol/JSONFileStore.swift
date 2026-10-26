@@ -59,9 +59,13 @@ public struct JSONFileStore<Value: Codable>: Sendable {
     /// the underlying file error; malformed contents throw `DecodingError`,
     /// so callers can tell corruption apart from an unreadable file.
     public func load() throws -> Value? {
+        try load(readData: { try Data(contentsOf: $0) })
+    }
+
+    func load(readData: (URL) throws -> Data) throws -> Value? {
         let data: Data
         do {
-            data = try Data(contentsOf: fileURL)
+            data = try readData(fileURL)
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return nil
         }

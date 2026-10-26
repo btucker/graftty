@@ -1086,6 +1086,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-5.7** If a JSONFileStore's value rejects the file's contents with its own error while decoding, then the application shall report the contents as malformed with a DecodingError, so the store's corrupt-file recovery applies.
 
+**PERSIST-5.8** If a remote device ID file cannot be read for a reason other than absence or malformed contents, then the application shall throw the read error and preserve the persisted identity.
+
 ## PWD — Manual Pane Routing
 
 ### PWD-1.x — User-Initiated Move
@@ -3254,6 +3256,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-12.20** When a saved Mac's pin has a last successful route absent from its saved routes, the application shall include that refreshed route in the next authenticated dial.
 
+**REMOTE-12.21** If a saved Mac's fingerprint differs from its current pin, then the application shall report a host-key mismatch that requires pairing before any WebRTC offer, signaling request, or direct SSH connect.
+
 ### REMOTE-13.x
 
 **REMOTE-13.1** While a Mac shares worktrees from a directly connected Remote Mac, the application shall preserve the remote split layout, replace resource identifiers with opaque one-hop aliases, and exclude any row that was already relayed by the downstream Mac.
@@ -4417,6 +4421,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CLI-1.4** When a piped subprocess exits, the application shall return all of its output without waiting out an end-of-file timeout.
 
 **CLI-1.5** When a CLI runner explicitly enables cancellation, the application shall terminate its subprocess and propagate cancellation instead of waiting for the command timeout.
+
+**CLI-1.6** When a subprocess exits while a background descendant still holds its inherited output pipes, the application shall return the command's output and exit status without waiting for that descendant to exit.
+
+**CLI-1.7** When the application stops a subprocess on timeout or cancellation, the application shall deliver SIGTERM to a child that does not handle it so the child exits without waiting for the SIGKILL escalation, whichever thread launched it.
 
 ## CONTEXT — CONTEXT
 

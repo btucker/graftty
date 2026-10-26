@@ -68,29 +68,28 @@ struct SubprocessPipeEOFTests {
         #expect(drained.count <= 1 << 20, "drained \(drained.count) bytes")
     }
 
-    #if canImport(Darwin)
     /// A background child that inherits the pipes keeps them open after the
     /// command exits. The callback used to block in `read(upToCount:)` until
     /// that child exited, so the command waited out the EOF timeout and came
-    /// back with no output. On Linux, swift-corelibs-foundation reports
-    /// termination only once every process holding the socket it creates at
-    /// launch has closed it, so the command still waits for such a child.
-    @Test("A background child holding the pipes neither delays nor loses the output")
+    /// back with no output. On Linux, swift-corelibs-foundation's `Process`
+    /// reports termination only once every process holding the socket it
+    /// creates at launch has closed it; the Linux launch path waits on the
+    /// command's own PID instead (#736).
+    @Test("@spec CLI-1.6: When a subprocess exits while a background descendant still holds its inherited output pipes, the application shall return the command's output and exit status without waiting for that descendant to exit.")
     func heldPipeDoesNotDelayOrLoseOutput() async throws {
         let started = ContinuousClock.now
         let output = try await Subprocess.run(SubprocessLaunch(
             executable: "/bin/sh",
-            arguments: ["-c", "echo out; echo err >&2; sleep 8 &"],
+            arguments: ["-c", "echo out; echo err >&2; sleep 8 & exit 3"],
             timeoutLabel: "sh"
         ))
         let elapsed = ContinuousClock.now - started
 
-        #expect(output.status == 0)
+        #expect(output.status == 3)
         #expect(String(decoding: output.stdout, as: UTF8.self) == "out\n")
         #expect(String(decoding: output.stderr, as: UTF8.self) == "err\n")
         #expect(elapsed < .milliseconds(4500), "returned after \(elapsed)")
     }
-    #endif
 }
 
 /// A set-once flag shared with the writer thread.

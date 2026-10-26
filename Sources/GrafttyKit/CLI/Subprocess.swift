@@ -6,7 +6,7 @@ import Glibc
 #endif
 
 /// One subprocess launch. `CLIRunner` and `LinuxHostSSHRunner` both run
-/// through `Subprocess.run(_:)`, the shared `Process` wrapper for
+/// through `Subprocess.run(_:)`, the shared process wrapper for
 /// run-to-completion commands.
 struct SubprocessLaunch: Sendable {
     /// Where stdout and stderr go while the child runs.
@@ -58,9 +58,10 @@ struct SubprocessOutput: Sendable {
 enum Subprocess {
     /// Runs `launch` to exit. Throws `CLIError.timedOut` when the timeout
     /// stopped the child, `CancellationError` when cancellation did, and the
-    /// underlying `Process.run()` error when the launch itself failed.
+    /// launcher's own error (`Process.run()`, or `posix_spawn` on Linux) when
+    /// the launch itself failed.
     static func run(_ launch: SubprocessLaunch) async throws -> SubprocessOutput {
-        let process = Process()
+        let process = SubprocessProcess()
         process.executableURL = URL(fileURLWithPath: launch.executable)
         process.arguments = launch.arguments
         process.currentDirectoryURL = launch.directory.map { URL(fileURLWithPath: $0) }
@@ -217,6 +218,18 @@ enum Subprocess {
     }
 }
 
+#if os(Linux)
+/// The process `Subprocess.run(_:)` launches. swift-corelibs-foundation's
+/// `Process.run()` sizes its descriptor-closing loop by reading
+/// `/proc/self/fd`, copying a fixed 256-byte name out of each `readdir`
+/// entry. That reads past glibc's directory buffer when an entry ends at a
+/// page edge, crashing with SIGSEGV (#736; fixed upstream by
+/// swift-corelibs-foundation #5472, in no Swift release through 6.4.1).
+typealias SubprocessProcess = SpawnedSubprocess
+#else
+typealias SubprocessProcess = Process
+#endif
+
 /// Stops one subprocess on timeout or cancellation: SIGTERM first, then
 /// SIGKILL if the child is still running after `killGrace` (CLI-1.3). One
 /// lock orders launch, stop, and the kill check; `isRunning` is what keeps a
@@ -232,12 +245,12 @@ final class SubprocessTermination: @unchecked Sendable {
     private let scheduler: SubprocessScheduler
 
     private let lock = NSLock()
-    private weak var process: Process?
+    private weak var process: SubprocessProcess?
     private var isFinished = false
     private var stopRequested = false
     private var _didTimeout = false
 
-    init(process: Process, killGrace: TimeInterval = 2, scheduler: SubprocessScheduler = .dispatch) {
+    init(process: SubprocessProcess, killGrace: TimeInterval = 2, scheduler: SubprocessScheduler = .dispatch) {
         self.process = process
         self.killGrace = killGrace
         self.scheduler = scheduler
@@ -342,3 +355,97 @@ private final class PipeStream: @unchecked Sendable {
         drained?.readabilityHandler = nil
     }
 }
+
+#if os(Linux)
+/// The subset of `Process` that `Subprocess` uses, launched through
+/// `SpawnedProcessGroup` (#736). Like corelibs, the child starts in its own
+/// process group and inherits only its standard streams, but the descriptors
+/// are closed in the child, so the parent never scans `/proc/self/fd`. Like
+/// `Process` on macOS, it starts with default signal handling, so SIGTERM
+/// stops it (CLI-1.7).
+///
+/// Termination is reported when the child itself exits, even while a
+/// background descendant still holds an inherited descriptor (CLI-1.6).
+/// Corelibs instead waits until every holder of its launch socket closes it.
+final class SpawnedSubprocess: @unchecked Sendable {
+    var executableURL: URL?
+    var arguments: [String]?
+    var currentDirectoryURL: URL?
+    var environment: [String: String]?
+    /// Nil inherits the app's stdin.
+    var standardInput: FileHandle?
+    /// A `Pipe` or `FileHandle`; nil inherits the app's stream.
+    var standardOutput: Any?
+    var standardError: Any?
+    var terminationHandler: (@Sendable (SpawnedSubprocess) -> Void)?
+
+    private let lock = NSLock()
+    private var pid: pid_t = 0
+    private var running = false
+    private var status: Int32 = 0
+
+    var processIdentifier: Int32 { lock.withLock { pid } }
+    var isRunning: Bool { lock.withLock { running } }
+    var terminationStatus: Int32 { lock.withLock { status } }
+
+    func run() throws {
+        guard let executableURL else { throw POSIXError(.ENOENT) }
+        let spawned = try SpawnedProcessGroup.spawn(
+            executable: executableURL, args: arguments ?? [],
+            env: environment ?? ProcessInfo.processInfo.environment,
+            directory: currentDirectoryURL?.path, resetsSignals: true,
+            standardInput: standardInput?.fileDescriptor,
+            standardOutput: Self.writeDescriptor(standardOutput) ?? STDOUT_FILENO,
+            standardError: Self.writeDescriptor(standardError) ?? STDERR_FILENO,
+            closeDescriptors: [])
+        // The child holds its own copies; the readers see EOF once it and
+        // any descendants close them.
+        for case let pipe as Pipe in [standardOutput, standardError] {
+            try? pipe.fileHandleForWriting.close()
+        }
+        lock.withLock {
+            pid = spawned
+            running = true
+        }
+        // A blocking wait per child, on its own thread rather than one taken
+        // from the dispatch pool.
+        Thread { self.waitForExit() }.start()
+    }
+
+    /// SIGTERM, as `Process.terminate()` sends; a no-op once the child exited.
+    func terminate() {
+        lock.withLock {
+            guard running else { return }
+            _ = kill(pid, SIGTERM)
+        }
+    }
+
+    private func waitForExit() {
+        let pid = processIdentifier
+        // Observe the exit without reaping: until `waitpid` below, the zombie
+        // keeps the PID reserved, so `terminate()` cannot signal a reused PID.
+        var info = siginfo_t()
+        while waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) == -1, errno == EINTR {}
+        var raw: Int32 = 0
+        lock.withLock {
+            running = false
+            while waitpid(pid, &raw, 0) == -1, errno == EINTR {}
+            // Exit code, or the signal number for an uncaught signal, as
+            // `Process.terminationStatus` reports them.
+            let signal = raw & 0x7F
+            status = signal == 0 ? (raw >> 8) & 0xFF : signal
+        }
+        let handler = terminationHandler
+        terminationHandler = nil
+        handler?(self)
+    }
+
+    private static func writeDescriptor(_ stream: Any?) -> Int32? {
+        switch stream {
+        case let pipe as Pipe: pipe.fileHandleForWriting.fileDescriptor
+        case let handle as FileHandle: handle.fileDescriptor
+        default: nil
+        }
+    }
+}
+#endif
