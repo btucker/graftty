@@ -3254,6 +3254,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-12.20** When a saved Mac's pin has a last successful route absent from its saved routes, the application shall include that refreshed route in the next authenticated dial.
 
+**REMOTE-12.21** If a saved Mac's fingerprint differs from its current pin, then the application shall report a host-key mismatch that requires pairing before any WebRTC offer, signaling request, or direct SSH connect.
+
 ### REMOTE-13.x
 
 **REMOTE-13.1** While a Mac shares worktrees from a directly connected Remote Mac, the application shall preserve the remote split layout, replace resource identifiers with opaque one-hop aliases, and exclude any row that was already relayed by the downstream Mac.
