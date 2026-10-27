@@ -100,8 +100,10 @@ public enum ZmxRunner {
         defer { closeIfOpen(&stderrRead) }
         defer { closeIfOpen(&stderrWrite) }
 
+        // The timeout's SIGTERM must reach a child launched from a dispatch
+        // worker, whose blocked signals it would otherwise inherit (ZMX-4.7).
         let pid = try SpawnedProcessGroup.spawn(executable: executable, args: args, env: env,
-            standardOutput: stdoutWrite, standardError: captureStderr ? stderrWrite : nil,
+            resetsSignals: true, standardOutput: stdoutWrite, standardError: captureStderr ? stderrWrite : nil,
             closeDescriptors: [stdoutRead, stdoutWrite, stderrRead, stderrWrite])
 
         closeIfOpen(&stdoutWrite)

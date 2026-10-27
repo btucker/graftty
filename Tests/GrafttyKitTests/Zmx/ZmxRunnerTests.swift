@@ -128,6 +128,33 @@ struct ZmxRunnerTests {
         #expect(!Self.processExists(childPID))
     }
 
+    /// Dispatch worker threads block SIGTERM on Linux and macOS. A child
+    /// spawned from one inherited that mask, so its trap never ran and every
+    /// timeout waited out the SIGTERM grace for SIGKILL (#756).
+    @Test("@spec ZMX-4.7: When a synchronous zmx subprocess times out, the application shall deliver SIGTERM to the timed-out child before the SIGKILL escalation, whichever thread launched it.")
+    func timeoutDeliversTerminateToTheChild() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-zmx-runner-term-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: marker) }
+
+        let result = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: Result {
+                    try ZmxRunner.capture(
+                        executable: URL(fileURLWithPath: "/bin/sh"),
+                        // `wait` returns as soon as a trapped signal arrives.
+                        args: ["-c", "trap 'echo term > \"$MARKER\"; exit 0' TERM; /bin/sleep 30 & wait"],
+                        env: ["MARKER": marker.path],
+                        timeout: 0.5
+                    )
+                })
+            }
+        }
+
+        #expect(throws: ZmxRunner.Error.timedOut) { _ = try result.get() }
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+    }
+
     @Test func captureChecksTimeoutWhileStdoutRemainsBusy() throws {
         let start = Date()
         #expect(throws: ZmxRunner.Error.timedOut) {
