@@ -4434,6 +4434,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.58** When Graftty renders the Codex launch wrapper from its bundled shell template, the application shall substitute every placeholder in one pass, never expand placeholder text inside a substituted value, and fail when the template and the supplied values disagree.
 
+**AGENT-6.59** When the managed Codex wrapper launches the interactive Codex TUI, the application shall pass --no-alt-screen so the TUI runs inline and its transcript reaches terminal scrollback, and if the user already passed --no-alt-screen before any -- separator, then the application shall not pass it a second time.
+
+**AGENT-6.60** When Graftty spawns an interactive terminal shell for Mac or GrafttyMobile, the application shall set CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 in that shell's environment, replacing any inherited value, so Claude Code started in the pane renders inline and its transcript reaches terminal scrollback.
+
 ## CLI — CLI
 
 ### CLI-1.x
@@ -4569,6 +4573,46 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-29.x
 
 **CONTEXT-29** When the mobile Context drawer timeline is scrolled more than half the panel height away from the latest event, the application shall collapse the pinned brief to a one-line bar showing the title with the next step, or the pending question when one is waiting, shall expand the full brief when the bar is tapped, and shall restore the full brief only when the bar is tapped or the reader returns to the bottom, so that the brief changing size cannot toggle it back.
+
+### CONTEXT-30.x
+
+**CONTEXT-30** When the application locates timeline messages in an agent terminal's scrollback, it shall match a whitespace-insensitive prefix of each message's first non-empty line after stripping terminal prompt and border glyphs, assign rows in chronological order using the latest consistent copy when resize redraws duplicate the transcript, require a whole-row match for messages too short to be distinctive, and leave a message without a row when it is absent.
+
+### CONTEXT-31.x
+
+**CONTEXT-31** When the user clicks a human input line in worktree history on Mac or mobile, the application shall scroll the agent terminal to that message, and if the message is not in the terminal's loaded scrollback, show a brief Not in terminal history note beneath the line instead of an alert.
+
+### CONTEXT-32.x
+
+**CONTEXT-32** While worktree history shows a peer message on Mac or mobile, the application shall keep tapping the message to expand its full text, and offer Show in terminal beneath the expanded text and in the message's context menu to scroll the agent terminal to it.
+
+### CONTEXT-33.x
+
+**CONTEXT-33** When the application jumps a Mac terminal to a timeline message, it shall read each loaded scrollback row by absolute screen row, keeping soft-wrapped rows separate, and scroll so the message's row is at the top of the viewport.
+
+### CONTEXT-34.x
+
+**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages, marks closer than 3 points merged into one, and a box showing the current viewport, and shall hide the card while no message is located.
+
+### CONTEXT-35.x
+
+**CONTEXT-35** When the user hovers over the scrollback map on Mac, or drags along it on Mac or mobile, the application shall show a label to the left of the strip with the nearest mark's message, the human input verbatim or the peer message's gist with a sparkle when generated, and while dragging shall scroll the terminal live to center the row under the pointer or finger; when the user clicks or taps a mark, the application shall scroll that mark's row to the top of the terminal.
+
+### CONTEXT-36.x
+
+**CONTEXT-36** While the pointer is not over the scrollback map and no drag is in progress, the application shall draw the card at 40 percent opacity, and shall draw it fully opaque while it is hovered, dragged, or touched, changing without animation when Reduce Motion is on.
+
+### CONTEXT-37.x
+
+**CONTEXT-37** While GrafttyMobile shows the scrollback map on the focused agent pane, the application shall place the card below the pane's floating top-right controls, including the Worktree context button, so the card and the controls never overlap.
+
+### CONTEXT-38.x
+
+**CONTEXT-38** While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, rescan when a check every five seconds finds that the oldest scrollback row changed because output at the scrollback limit evicted rows, and not scan the scrollback while the pane is hidden.
+
+### CONTEXT-39.x
+
+**CONTEXT-39** The scrollback map shall be one adjustable accessibility element labeled Scrollback map, whose value names the current message and its position, and whose increment and decrement move to the next newer or older message and scroll the terminal there.
 
 ## MEM — MEM
 

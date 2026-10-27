@@ -126,7 +126,8 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
 
     /// Apply the terminal-capability env (TERM, COLORTERM, TERM_PROGRAM,
     /// TERMINFO when ghostty-terminfo is available) so the inner shell
-    /// emits truecolor and unlocks ghostty-specific terminfo features.
+    /// emits truecolor and unlocks ghostty-specific terminfo features, and
+    /// keep Claude Code out of the alternate screen.
     /// Shared between the host-managed pane path (`make`) and the WebSocket
     /// bridge (`WebSession.start`) so whichever `zmx attach` wins the
     /// create-session race produces a shell with identical terminal
@@ -139,6 +140,10 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         // That preference must not disable colors in the interactive terminal.
         // The user's shell startup files can still opt into NO_COLOR.
         env.removeValue(forKey: "NO_COLOR")
+        // AGENT-6.60: Graftty supports only inline agent TUIs. Claude's
+        // fullscreen mode keeps the transcript in the alternate screen, so
+        // it never reaches the scrollback that history and jumps depend on.
+        env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] = "1"
         let terminfoDir = ghosttyResourcesDir.flatMap(availableGhosttyTerminfoDir)
         setDefault("TERM", in: &env, to: terminfoDir == nil ? "xterm-256color" : "xterm-ghostty")
         setDefault("COLORTERM", in: &env, to: "truecolor")

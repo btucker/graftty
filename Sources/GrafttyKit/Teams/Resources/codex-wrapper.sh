@@ -357,6 +357,26 @@ _graftty_codex_runtime_home={{CODEX_HOME}}
     exit 1
   fi
   {{GRAFTTY_CLI}} team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$_graftty_codex_native_binary" --app-server-pid "$_graftty_codex_app_server_pid" --owner-pid "$$" >/dev/null 2>&1 || true
+  # AGENT-6.59: Graftty supports only the inline TUI. In the alternate
+  # screen the transcript never reaches terminal scrollback. The flag
+  # takes precedence over any tui.alternate_screen configuration.
+  _graftty_codex_requests_inline() {
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --)
+          return 1
+          ;;
+        --no-alt-screen)
+          return 0
+          ;;
+      esac
+      shift
+    done
+    return 1
+  }
+  if ! _graftty_codex_requests_inline "$@"; then
+    set -- --no-alt-screen "$@"
+  fi
   {{TUI_COMMAND}}
   _graftty_codex_tui_status=$?
   if [ "$_graftty_codex_tui_status" -ne 0 ]; then

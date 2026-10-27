@@ -8,6 +8,8 @@ public struct SidebarWorktreeContext: Equatable {
     public let pending: [SidebarActivityItem]
     public let question: String?
     public let questionPaneID: String?
+    /// The session of the pane whose agent last stopped, where its transcript scrolls.
+    public let agentPaneID: String?
     public let isRunning: Bool
     public let brief: WorktreeBrief?
 
@@ -37,6 +39,7 @@ public struct SidebarWorktreeContext: Equatable {
         target.isMainCheckout = worktree.isMainCheckout
         target.prBadge = worktree.prBadge
         let route = SidebarProjection.attentionPaneRoute(for: target, in: worktree)
+        self.agentPaneID = route
         let progress = worktree.sidebar?.agentProgressTimes ?? [:]
         let resumedAt = stop?.providerSessionKey.flatMap { progress[$0] }
             ?? (stop?.providerSessionKey == nil ? progress.values.max() : nil)

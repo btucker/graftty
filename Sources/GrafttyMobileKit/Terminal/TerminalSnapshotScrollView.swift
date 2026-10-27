@@ -347,6 +347,21 @@ final class TerminalSnapshotScrollView: UIScrollView, UIScrollViewDelegate, UIGe
     var additionalHistoryFrameForTesting: CGRect? { nil }
     #endif
 
+    /// Shows absolute row `row` at the top: through the canvas offset while following
+    /// another client's grid, otherwise in the native viewport.
+    func reveal(row: UInt64) {
+        guard let surface = terminalView.surface else { return }
+        guard canvas != nil, rowHeight > 0 else {
+            surface.scrollToRow(UInt(row))
+            return
+        }
+        let maxY = max(0, contentSize.height - bounds.height)
+        contentOffset.y = min(maxY, CGFloat(min(row, historyRows)) * rowHeight)
+        // Reading scrollback pages the native viewport, so resync it even when the
+        // canvas row is unchanged.
+        surface.scrollToRow(UInt(nativeRow))
+    }
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard !adjusting, let canvas, rowHeight > 0 else { return }
         // UIScrollView quantizes offsets to display pixels. Treat its rounded

@@ -644,7 +644,24 @@ struct AgentHookInstallerWrapperTests {
         let run = try runCodexWrapperClassifier(arguments)
         #expect(run.terminationStatus == 0)
         #expect(run.mode == "remote")
-        #expect(run.forwardedArgs == arguments)
+        #expect(run.forwardedArgs == ["--no-alt-screen"] + arguments)
+    }
+
+    @Test(
+        "@spec AGENT-6.59: When the managed Codex wrapper launches the interactive Codex TUI, the application shall pass --no-alt-screen so the TUI runs inline and its transcript reaches terminal scrollback, and if the user already passed --no-alt-screen before any -- separator, then the application shall not pass it a second time.",
+        arguments: [
+            (["a prompt"], ["--no-alt-screen", "a prompt"]),
+            (["resume"], ["--no-alt-screen", "resume"]),
+            (["--", "--no-alt-screen"], ["--no-alt-screen", "--", "--no-alt-screen"]),
+            (["--no-alt-screen", "a prompt"], ["--no-alt-screen", "a prompt"]),
+            (["--model", "gpt-5", "--no-alt-screen"], ["--model", "gpt-5", "--no-alt-screen"]),
+        ]
+    )
+    func codexWrapperRunsTUIInline(arguments: [String], expected: [String]) throws {
+        let run = try runCodexWrapperClassifier(arguments)
+        #expect(run.terminationStatus == 0)
+        #expect(run.mode == "remote")
+        #expect(run.forwardedArgs == expected)
     }
 
     @Test(
@@ -658,7 +675,7 @@ struct AgentHookInstallerWrapperTests {
         let run = try runCodexWrapperClassifier(arguments)
         #expect(run.terminationStatus == 0)
         #expect(run.mode == "remote")
-        #expect(run.forwardedArgs == arguments)
+        #expect(run.forwardedArgs == ["--no-alt-screen"] + arguments)
     }
 
     @Test("Generated wrapper preserves runtime exit status after cleanup.")

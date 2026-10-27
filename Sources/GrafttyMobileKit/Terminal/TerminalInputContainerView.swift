@@ -19,6 +19,10 @@ public final class TerminalInputContainerView: UIView,
     }
 
     let terminalView = MobileTerminalInputView(frame: .zero)
+    /// The session behind `terminalView`, read for the timeline's jump to terminal.
+    weak var scrollbackSession: InMemoryTerminalSession?
+    /// Where timeline messages sit in this pane's scrollback, for the agent pane's overlay.
+    private(set) lazy var scrollbackMapModel = ScrollbackMapModel(terminal: self)
     private(set) lazy var snapshotScrollView = TerminalSnapshotScrollView(terminalView: terminalView)
     var onPhysicalViewportReady: ((InMemoryTerminalViewport) -> Void)? {
         didSet {
@@ -700,6 +704,10 @@ extension TerminalInputContainerView: TerminalSurfaceScrollbarDelegate {
     public func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) {
         snapshotScrollView.updateScrollbar(scrollbar)
         refreshFirstLineClearance()
+        if let value = snapshotScrollView.scrollbar {
+            scrollbackMapModel.update(viewport: ScrollbackViewport(
+                offset: Int(clamping: value.offset), length: Int(clamping: value.len), total: Int(clamping: value.total)))
+        }
     }
 }
 

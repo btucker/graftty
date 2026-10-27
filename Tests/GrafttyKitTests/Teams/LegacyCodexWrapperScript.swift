@@ -4,7 +4,8 @@ import Foundation
 /// A frozen copy of `AgentHookInstaller.codexWrapperScript` as it was built
 /// from Swift string literals before the wrapper moved to
 /// `Teams/Resources/codex-wrapper.sh`, with deliberate #533 corrections for
-/// path quoting, the durable-home default, and missing lockf fallback.
+/// path quoting, the durable-home default, and missing lockf fallback,
+/// plus the AGENT-6.59 inline TUI flag.
 /// `CodexWrapperTemplateTests` proves the template matches those reviewed
 /// bytes; delete this file and those tests once the template has shipped.
 enum LegacyCodexWrapperScript {
@@ -385,6 +386,26 @@ enum LegacyCodexWrapperScript {
             exit 1
           fi
           \(shellLiteral(grafttyCLIPath)) team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$_graftty_codex_native_binary" --app-server-pid "$_graftty_codex_app_server_pid" --owner-pid "$$" >/dev/null 2>&1 || true
+          # AGENT-6.59: Graftty supports only the inline TUI. In the alternate
+          # screen the transcript never reaches terminal scrollback. The flag
+          # takes precedence over any tui.alternate_screen configuration.
+          _graftty_codex_requests_inline() {
+            while [ "$#" -gt 0 ]; do
+              case "$1" in
+                --)
+                  return 1
+                  ;;
+                --no-alt-screen)
+                  return 0
+                  ;;
+              esac
+              shift
+            done
+            return 1
+          }
+          if ! _graftty_codex_requests_inline "$@"; then
+            set -- --no-alt-screen "$@"
+          fi
           \(tuiCommand)
           _graftty_codex_tui_status=$?
           if [ "$_graftty_codex_tui_status" -ne 0 ]; then

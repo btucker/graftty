@@ -117,10 +117,11 @@ struct CodexBrowserLauncherTests {
         #expect(try String(contentsOf: backend, encoding: .utf8) == "original-native")
         #expect(try String(contentsOf: offer, encoding: .utf8) == "2\nopen\n\(url)\ngraftty-fixture-pane\n")
         let tuiArguments = try String(contentsOf: arguments, encoding: .utf8).split(separator: "\n").map(String.init)
-        try #require(tuiArguments.count == 6)
+        try #require(tuiArguments.count == 7)
         #expect(tuiArguments.prefix(3) == ["--enable", "hooks", "--remote"])
         #expect(tuiArguments[3].hasPrefix("unix://"))
-        #expect(tuiArguments.suffix(2) == ["resume", "thread-fixture"])
+        // AGENT-6.59: the managed TUI always runs inline.
+        #expect(tuiArguments.suffix(3) == ["--no-alt-screen", "resume", "thread-fixture"])
     }
 
     @Test("@spec PORTS-5.41: When a Mac pane launches a wrapper-managed Codex TUI and an installed browser-hook TUI matches its native Codex version, the application shall route HTTP(S) TUI browser URLs through the pane's Graftty helper, retain the original app-server binary, and use the original TUI outside a pane or after a version mismatch.")

@@ -167,6 +167,8 @@ final class SurfaceHandle {
     private var attachmentGrid: DisplayGrid?
     private var lastPagedGrid: DisplayGrid?
     private(set) var followerScrollbar = ghostty_action_scrollbar_s()
+    /// Where timeline messages sit in this pane's scrollback, for the agent pane's overlay.
+    @MainActor private(set) lazy var scrollbackMapModel = ScrollbackMapModel(terminal: self)
     /// zmx session this pane is attached to, nil for direct-shell panes.
     /// Used by TerminalManager to route last-remote-detach syncs (TERM-11.4).
     let zmxSessionName: String?
@@ -336,25 +338,14 @@ final class SurfaceHandle {
                 currentPath: ProcessInfo.processInfo.environment["PATH"] ?? "",
                 bundleURL: Bundle.main.bundleURL
             )
-            let agentHookBin = Self.agentHookPathPrefix()
-            let path = agentHookBin.map { "\($0):\(sanitizedPath)" } ?? sanitizedPath
-            var pairs: [(key: String, value: String)] = [
-                ("GRAFTTY_SOCK", socketPath),
-                ("PATH", path),
-            ]
-            // Hand the wrapper bin path to the user's shell init via env so
-            // the ZDOTDIR shim's `.zshrc` can re-prepend it AFTER the user's
-            // own PATH manipulations run. Without this, .zshrc lines like
-            // `export PATH="$BUN_INSTALL/bin:$PATH"` push graftty's surface-
-            // env-injected prepend behind the user's claude / codex
-            // installations and the wrapper never gets invoked.
-            if let agentHookBin {
-                pairs.append(("GRAFTTY_AGENT_HOOKS_BIN", agentHookBin))
-                pairs.append(("ZDOTDIR", AgentHookInstaller
+            envPairs = Self.directShellEnvironment(
+                socketPath: socketPath,
+                sanitizedPath: sanitizedPath,
+                agentHookBin: Self.agentHookPathPrefix(),
+                zshInitDirectory: AgentHookInstaller
                     .zshInitDirectory(rootDirectory: AgentHookInstaller.rootDirectory())
-                    .path))
-            }
-            envPairs = pairs
+                    .path
+            )
         } else {
             envPairs = []
         }
@@ -581,6 +572,34 @@ final class SurfaceHandle {
         Unmanaged<SurfaceUserdataBox>.fromOpaque(userdataPointer).takeUnretainedValue() === box
     }
 
+    /// The environment a direct (non-zmx) shell gets on top of the app's own.
+    static func directShellEnvironment(
+        socketPath: String,
+        sanitizedPath: String,
+        agentHookBin: String?,
+        zshInitDirectory: @autoclosure () -> String
+    ) -> [(key: String, value: String)] {
+        let path = agentHookBin.map { "\($0):\(sanitizedPath)" } ?? sanitizedPath
+        var pairs: [(key: String, value: String)] = [
+            ("GRAFTTY_SOCK", socketPath),
+            ("PATH", path),
+            // AGENT-6.60: like zmx-spawned shells, render Claude Code inline so
+            // its transcript reaches scrollback.
+            ("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "1"),
+        ]
+        // Hand the wrapper bin path to the user's shell init via env so
+        // the ZDOTDIR shim's `.zshrc` can re-prepend it AFTER the user's
+        // own PATH manipulations run. Without this, .zshrc lines like
+        // `export PATH="$BUN_INSTALL/bin:$PATH"` push graftty's surface-
+        // env-injected prepend behind the user's claude / codex
+        // installations and the wrapper never gets invoked.
+        if let agentHookBin {
+            pairs.append(("GRAFTTY_AGENT_HOOKS_BIN", agentHookBin))
+            pairs.append(("ZDOTDIR", zshInitDirectory()))
+        }
+        return pairs
+    }
+
     private static func agentHookPathPrefix() -> String? {
         guard ProcessInfo.processInfo.environment["GRAFTTY_DISABLE_AGENT_HOOKS"] != "1" else {
             return nil
@@ -719,9 +738,11 @@ final class SurfaceHandle {
         return ghostty_surface_new(app, &config)
     }
 
-    func updateFollowerScrollbar(_ value: ghostty_action_scrollbar_s) {
+    @MainActor func updateFollowerScrollbar(_ value: ghostty_action_scrollbar_s) {
         followerScrollbar = value
         followerPresentation?.updateScrollbar(value)
+        scrollbackMapModel.update(viewport: ScrollbackViewport(
+            offset: Int(clamping: value.offset), length: Int(clamping: value.len), total: Int(clamping: value.total)))
     }
 
     /// @spec OWN-2.1

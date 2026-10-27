@@ -833,6 +833,11 @@ final class RemoteWorktreeViewerController: ObservableObject {
         )] ?? splitTree.allLeaves.first
     }
 
+    /// The surface slot already showing a remote pane, without creating one.
+    func existingTerminalID(identity: RemoteMacIdentity, worktreePath: String, sessionName: String) -> PaneSlotID? {
+        remoteTerminalSlots[RemoteTerminalKey(identity: identity, worktreePath: worktreePath, sessionName: sessionName)]
+    }
+
     private func remoteSessionName(for terminalID: PaneSlotID) -> String? {
         remoteTerminalSlots.first(where: { $0.value == terminalID })?.key.sessionName
     }
