@@ -117,10 +117,54 @@ public struct WorktreeTimeline: Sendable {
         }
     }
 
+    /// @spec CONTEXT-25
+    /// A row is one event, a fold of older checkpoints, a run of peer messages
+    /// from one sender, or a run of nearby human inputs.
     public struct Row: Identifiable, Sendable {
+        public enum Kind: Sendable { case event, folded, peerMessages, inputs }
+        public struct Entry: Identifiable, Equatable, Sendable {
+            public var id: String { event.id }
+            public let event: Event
+            public let count: Int
+        }
         public var id: String { events[0].id }
+        public let kind: Kind
         public let events: [Event]
-        public var isGroup: Bool { events.count > 1 }
+        /// Peer runs collapse consecutive exact duplicates; other rows keep every event.
+        public let entries: [Entry]
+        public var isGroup: Bool { kind == .folded }
+
+        init(kind: Kind, events: [Event]) {
+            self.kind = kind
+            self.events = events
+            var entries: [Entry] = []
+            for event in events {
+                if kind == .peerMessages, let last = entries.last, last.event.completed == event.completed {
+                    entries[entries.count - 1] = Entry(event: last.event, count: last.count + 1)
+                } else {
+                    entries.append(Entry(event: event, count: 1))
+                }
+            }
+            self.entries = entries
+        }
+
+        init(_ event: Event) {
+            switch event.kind {
+            case .user: self.init(kind: .inputs, events: [event])
+            case .agentMessage: self.init(kind: .peerMessages, events: [event])
+            case .creation, .checkpoint: self.init(kind: .event, events: [event])
+            }
+        }
+
+        func merging(_ event: Event) -> Row? {
+            guard let last = events.last, last.kind == event.kind else { return nil }
+            switch kind {
+            case .inputs where (event.timestamp ?? 0) - (last.timestamp ?? 0) <= 600,
+                 .peerMessages where (event.sourceWorktreePath ?? event.title) == (last.sourceWorktreePath ?? last.title):
+                return Row(kind: kind, events: events + [event])
+            default: return nil
+            }
+        }
     }
 
     public let events: [Event]
@@ -189,21 +233,25 @@ public struct WorktreeTimeline: Sendable {
     }
 
     public func rows(showAll: Bool) -> [Row] {
-        guard !showAll, events.count > 8 else { return events.map { Row(events: [$0]) } }
+        let folds = !showAll && events.count > 8
         let recent = Set(events.filter { $0.kind == .checkpoint }.suffix(2).map(\.id))
         var rows: [Row] = []
         var run: [Event] = []
         func flush() {
             guard !run.isEmpty else { return }
-            rows.append(Row(events: run))
+            rows.append(run.count > 1 ? Row(kind: .folded, events: run) : Row(run[0]))
             run.removeAll(keepingCapacity: true)
         }
         for (index, event) in events.enumerated() {
-            if index > 0, event.kind == .checkpoint, !event.isExplicitEntry, !recent.contains(event.id) {
+            if folds, index > 0, event.kind == .checkpoint, !event.isExplicitEntry, !recent.contains(event.id) {
                 run.append(event)
             } else {
                 flush()
-                rows.append(Row(events: [event]))
+                if let merged = rows.last?.merging(event) {
+                    rows[rows.count - 1] = merged
+                } else {
+                    rows.append(Row(event))
+                }
             }
         }
         flush()
