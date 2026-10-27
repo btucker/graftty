@@ -29,6 +29,18 @@ extension TerminalInputContainerView: TerminalScrollback {
         return ScrollbackRows(rows: rows, firstRow: first, totalRows: total)
     }
 
+    /// Reads the viewport in place when it already shows row 0; otherwise pages to
+    /// the top for one read and restores the offset in the same main-actor turn.
+    public func firstRowText() -> String? {
+        guard let session = scrollbackSession, let surface = terminalView.surface,
+              let scrollbar = snapshotScrollView.scrollbar, scrollbar.total > 0 else { return nil }
+        let atTop = scrollbar.offset == 0
+        if !atTop { surface.scrollToRow(0) }
+        let text = session.readViewportRowsText()
+        if !atTop { surface.scrollToRow(UInt(clamping: scrollbar.offset)) }
+        return text.map { String($0.prefix { $0 != "\n" }) }
+    }
+
     public func scroll(toRow row: Int) {
         snapshotScrollView.reveal(row: UInt64(max(0, row)))
     }

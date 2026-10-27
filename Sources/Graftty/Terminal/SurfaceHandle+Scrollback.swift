@@ -11,6 +11,12 @@ extension SurfaceHandle: TerminalScrollback {
         Self.scrollbackRows(surface, total: Int(followerScrollbar.total), limit: limit)
     }
 
+    func firstRowText() -> String? {
+        let columns = ghostty_surface_size(surface).columns
+        guard followerScrollbar.total > 0, columns > 0 else { return nil }
+        return Self.screenRow(surface, y: 0, columns: UInt32(columns))
+    }
+
     func scroll(toRow row: Int) {
         if followerPresentation?.reveal(row: UInt64(max(0, row))) == true { return }
         Self.scroll(surface, toRow: row)

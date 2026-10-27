@@ -10,7 +10,12 @@ private final class FakeScrollback: TerminalScrollback {
     var rows: [String]
     var reads = 0
     var scrolled: [Int] = []
+    var firstRowReads = 0
     init(rows: [String]) { self.rows = rows }
+    func firstRowText() -> String? {
+        firstRowReads += 1
+        return rows.first
+    }
     func scrollbackRows(limit: Int) -> ScrollbackRows? {
         reads += 1
         return ScrollbackRows(rows: rows, firstRow: 0, totalRows: rows.count)
@@ -89,6 +94,15 @@ struct ScrollbackMapPresenceTests {
         #expect(edge[0].y == 100 - ScrollbackMapLayout.markHeight, "A mark on the last row stays inside the strip")
     }
 
+    @Test func aChainOfCloseMarksNeverMergesMarksThreePointsApart() {
+        let layout = ScrollbackMapLayout(height: 100, totalRows: 1000)
+        // Each mark is 2 pt below the previous one, so neighbors are close but a and c are 4 pt apart.
+        let marks = ["a", "b", "c", "d"].enumerated().map { index, id in
+            ScrollbackMap.Mark(row: 100 + index * 20, kind: .peer, eventID: id)
+        }
+        #expect(layout.clusters(marks).map { $0.marks.map(\.eventID) } == [["a", "b"], ["c", "d"]])
+    }
+
     @Test func viewportBoxCoversTheVisibleRows() {
         let layout = ScrollbackMapLayout(height: 100, totalRows: 1000)
         let box = layout.viewportBox(ScrollbackViewport(offset: 800, length: 100, total: 1000))
@@ -156,6 +170,20 @@ struct ScrollbackMapScrubTests {
         #expect(peer.kind == .peer && peer.heading.hasPrefix("layout · "))
     }
 
+    @Test func aGistThatFinishesAfterFocusMovesIsDropped() async {
+        // Long enough that the provider must summarize instead of showing it verbatim.
+        let text = String(repeating: "The layout agent checked another split view. ", count: 3)
+        let entry = ScrollbackMapEntry(kind: .peer, text: text, timestamp: nil, sender: "layout")
+        let gists = PeerMessageGistProvider { _ in
+            try await Task.sleep(for: .milliseconds(100))
+            return "Summary of the mark the pointer already left"
+        }
+        let load = Task { await ScrollbackMapOverlay.gist(for: entry, from: gists) }
+        load.cancel()
+        #expect(await load.value == nil, "A hover that moved on must not label the new mark with this gist")
+        #expect(await ScrollbackMapOverlay.gist(for: entry, from: gists)?.isGenerated == true)
+    }
+
     @Test func scrubbingScrollsTheModelsTerminal() async throws {
         let terminal = FakeScrollback(rows: sampleRows())
         let model = ScrollbackMapModel(terminal: terminal, debounce: .zero)
@@ -203,7 +231,7 @@ func scrollbackMapClearsMobileControls(controlsHeight: Double) {
 }
 
 @MainActor
-@Suite("@spec CONTEXT-38: While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, and not scan the scrollback while the pane is hidden.")
+@Suite("@spec CONTEXT-38: While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, rescan when a check every five seconds finds that the oldest scrollback row changed because output at the scrollback limit evicted rows, and not scan the scrollback while the pane is hidden.")
 struct ScrollbackMapRebuildTests {
     @Test func hiddenPaneNeverScans() async {
         let terminal = FakeScrollback(rows: sampleRows())
@@ -235,6 +263,33 @@ struct ScrollbackMapRebuildTests {
         model.setVisible(false)
         try? await Task.sleep(for: .milliseconds(150))
         #expect(terminal.reads == 1, "Hiding the pane cancels a pending scan")
+    }
+
+    @Test func evictionAtTheScrollbackLimitRescans() async {
+        // Distinct filler rows, so the oldest row changes when output evicts rows.
+        var rows = sampleRows().enumerated().map { $1 == "⏺ working…" ? "⏺ step \($0)" : $1 }
+        let terminal = FakeScrollback(rows: rows)
+        let model = ScrollbackMapModel(terminal: terminal, debounce: .milliseconds(10),
+                                       evictionCheckInterval: .milliseconds(30))
+        model.update(timeline: sampleTimeline())
+        model.update(viewport: ScrollbackViewport(offset: 560, length: 40, total: 600))
+        model.setVisible(true)
+        await waitUntil { model.map != nil }
+        #expect(model.map?.marks.map(\.row).sorted() == [40, 300, 560])
+
+        // At the limit, 30 new rows evict the 30 oldest; the total and viewport stay put.
+        rows = Array(rows.dropFirst(30)) + (0..<30).map { "⏺ new step \($0)" }
+        terminal.rows = rows
+        await waitUntil { model.map?.marks.map(\.row).sorted() == [10, 270, 530] }
+        #expect(model.map?.marks.map(\.row).sorted() == [10, 270, 530], "Marks follow the evicted rows")
+        #expect(terminal.reads == 2)
+
+        model.setVisible(false)
+        let checks = terminal.firstRowReads
+        terminal.rows = Array(rows.dropFirst(30)) + (0..<30).map { "⏺ later step \($0)" }
+        try? await Task.sleep(for: .milliseconds(150))
+        #expect(terminal.firstRowReads == checks, "A hidden pane stops checking")
+        #expect(terminal.reads == 2)
     }
 
     @Test func timelineChangeRescans() async {

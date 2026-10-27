@@ -92,7 +92,9 @@ public struct ScrollbackMapLayout: Equatable {
         var groups: [[(mark: ScrollbackMap.Mark, y: CGFloat)]] = []
         for mark in marks.sorted(by: { $0.row < $1.row }) {
             let y = y(forRow: mark.row)
-            if let last = groups.last?.last, y - last.y < Self.mergeDistance {
+            // Measure from the group's first mark, so a chain of close marks
+            // never merges marks that are `mergeDistance` or more apart.
+            if let first = groups.last?.first, y - first.y < Self.mergeDistance {
                 groups[groups.count - 1].append((mark, y))
             } else {
                 groups.append([(mark, y)])
@@ -163,7 +165,6 @@ public struct ScrollbackMapOverlay: View {
     let scroll: (Int) -> Void
     @State private var hoverY: CGFloat?
     @State private var scrubY: CGFloat?
-    @State private var dragStartY: CGFloat?
     @State private var accessibilityMark: String?
     @State private var gist: PeerMessageGist?
     @State private var labelHeight: CGFloat = 0
@@ -248,14 +249,13 @@ public struct ScrollbackMapOverlay: View {
     private var scrubGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                if dragStartY == nil { dragStartY = value.startLocation.y }
                 scrubY = value.location.y
                 // A press that has not moved yet may be a click on a mark.
                 guard abs(value.translation.height) >= 2 || abs(value.translation.width) >= 2 else { return }
                 scroll(layout.scrubTopRow(atY: value.location.y, viewportLength: viewport.length))
             }
             .onEnded { value in
-                defer { scrubY = nil; dragStartY = nil }
+                defer { scrubY = nil }
                 guard abs(value.translation.height) < 2, abs(value.translation.width) < 2 else { return }
                 if let mark = layout.tapTarget(in: map, atY: value.location.y) {
                     scroll(mark.row)
@@ -289,8 +289,15 @@ public struct ScrollbackMapOverlay: View {
 
     private func loadGist() async {
         gist = nil
-        guard let mark = focusedMark, let entry = entries[mark.eventID], entry.kind == .peer else { return }
-        gist = await gists.gist(for: entry.text)
+        if let loaded = await Self.gist(for: focusedMark.flatMap { entries[$0.eventID] }, from: gists) { gist = loaded }
+    }
+
+    /// A peer entry's gist; nil for human input, or once the label's task was
+    /// cancelled because focus moved to another mark while it generated.
+    static func gist(for entry: ScrollbackMapEntry?, from gists: PeerMessageGistProvider) async -> PeerMessageGist? {
+        guard let entry, entry.kind == .peer else { return nil }
+        let gist = await gists.gist(for: entry.text)
+        return Task.isCancelled ? nil : gist
     }
 }
 
@@ -327,7 +334,9 @@ struct ScrollbackMapLabel: View {
 
 /// @spec CONTEXT-38
 /// One terminal pane's scrollback map: rebuilt from the timeline and the pane's
-/// scrollback after a quiet second, only while the pane is visible.
+/// scrollback after a quiet second, only while the pane is visible. At the scrollback
+/// limit new output evicts old rows without changing the total, so a cheap periodic
+/// check of the oldest row triggers a rescan.
 @MainActor
 public final class ScrollbackMapModel: ObservableObject {
     @Published public private(set) var map: ScrollbackMap?
@@ -337,11 +346,22 @@ public final class ScrollbackMapModel: ObservableObject {
     private var messages: [ScrollbackMap.Message] = []
     private var isVisible = false
     private var pending: Task<Void, Never>?
+    private var evictionCheck: Task<Void, Never>?
+    /// The oldest row when the current map was scanned.
+    private var scannedFirstRow: String?
     private let debounce: Duration
+    private let evictionCheckInterval: Duration
 
-    public init(terminal: any TerminalScrollback, debounce: Duration = .seconds(1)) {
+    public init(terminal: any TerminalScrollback, debounce: Duration = .seconds(1),
+                evictionCheckInterval: Duration = .seconds(5)) {
         self.terminal = terminal
         self.debounce = debounce
+        self.evictionCheckInterval = evictionCheckInterval
+    }
+
+    deinit {
+        pending?.cancel()
+        evictionCheck?.cancel()
     }
 
     public func update(timeline: WorktreeTimeline) {
@@ -349,7 +369,7 @@ public final class ScrollbackMapModel: ObservableObject {
         guard messages != self.messages else { return }
         self.messages = messages
         entries = ScrollbackMapEntry.entries(in: timeline)
-        if messages.isEmpty { map = nil }
+        if messages.isEmpty { map = nil; stopEvictionCheck() }
         scheduleRebuild()
     }
 
@@ -364,7 +384,7 @@ public final class ScrollbackMapModel: ObservableObject {
     public func setVisible(_ visible: Bool) {
         guard visible != isVisible else { return }
         isVisible = visible
-        if visible { scheduleRebuild() } else { pending?.cancel(); pending = nil }
+        if visible { scheduleRebuild() } else { pending?.cancel(); pending = nil; stopEvictionCheck() }
     }
 
     public func scroll(toRow row: Int) {
@@ -380,11 +400,34 @@ public final class ScrollbackMapModel: ObservableObject {
         pending = Task { [weak self] in
             try? await Task.sleep(for: debounce)
             guard !Task.isCancelled, let self, let terminal = self.terminal else { return }
+            let firstRow = terminal.firstRowText()
             let map = await terminal.scrollbackMap(for: self.messages)
             guard !Task.isCancelled else { return }
             self.map = map
+            self.scannedFirstRow = firstRow
             self.pending = nil
+            if map == nil { self.stopEvictionCheck() } else { self.startEvictionCheck() }
         }
+    }
+
+    /// Reads one row per interval, never the full scan, and rescans when it moved.
+    private func startEvictionCheck() {
+        guard evictionCheck == nil else { return }
+        let interval = evictionCheckInterval
+        evictionCheck = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled, let self else { return }
+                // A pending scan records the row itself; hiding the pane cancels this loop.
+                guard self.pending == nil, let terminal = self.terminal else { continue }
+                if terminal.firstRowText() != self.scannedFirstRow { self.scheduleRebuild() }
+            }
+        }
+    }
+
+    private func stopEvictionCheck() {
+        evictionCheck?.cancel()
+        evictionCheck = nil
     }
 }
 
@@ -394,10 +437,13 @@ public struct ScrollbackMapOverlayHost: View {
     let timeline: WorktreeTimeline
     let isVisible: Bool
     var gists: PeerMessageGistProvider = .shared
+    /// Derived once per parent update, not on every viewport report that redraws this body.
+    private let messages: [ScrollbackMap.Message]
 
     public init(model: ScrollbackMapModel, timeline: WorktreeTimeline, isVisible: Bool = true,
                 gists: PeerMessageGistProvider = .shared) {
         self.model = model; self.timeline = timeline; self.isVisible = isVisible; self.gists = gists
+        self.messages = ScrollbackMap.messages(in: timeline)
     }
 
     public var body: some View {
@@ -414,7 +460,7 @@ public struct ScrollbackMapOverlayHost: View {
             model.setVisible(isVisible)
         }
         .onDisappear { model.setVisible(false) }
-        .onChange(of: ScrollbackMap.messages(in: timeline)) { _, _ in model.update(timeline: timeline) }
+        .onChange(of: messages) { _, _ in model.update(timeline: timeline) }
         .onChange(of: isVisible) { _, visible in model.setVisible(visible) }
     }
 }

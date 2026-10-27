@@ -72,6 +72,9 @@ public struct TerminalRevealRequest: Equatable {
 public protocol TerminalScrollback: AnyObject {
     /// The newest `limit` rows already loaded, or nil when the terminal has no surface.
     func scrollbackRows(limit: Int) -> ScrollbackRows?
+    /// The oldest loaded row's text, read alone so it is cheap to poll; it changes
+    /// when output at the scrollback limit evicts rows without changing the total.
+    func firstRowText() -> String?
     /// Shows absolute row `row` at the top of the viewport, clamped to the scrollback.
     func scroll(toRow row: Int)
 }
