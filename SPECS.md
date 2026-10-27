@@ -1096,6 +1096,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-5.12** If a corrupt file cannot be moved aside, then the application shall preserve it and surface the failure before allowing a replacement write.
 
+**PERSIST-5.14** If corrupt pinned-host data cannot be moved aside during a connection metadata refresh, then the client shall surface the recovery error and preserve the original file.
+
 ## PWD — Manual Pane Routing
 
 ### PWD-1.x — User-Initiated Move

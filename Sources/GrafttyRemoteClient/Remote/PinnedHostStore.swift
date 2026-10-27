@@ -169,10 +169,11 @@ public final class PinnedHostStore: @unchecked Sendable {
     /// Merges a successful connection's metadata into the current pairing.
     /// Pairing fields are never copied from the dial's earlier snapshot.
     /// A removed or replaced identity cannot be refreshed by an old dial.
+    /// A failed corrupt-file backup is rethrown before any metadata is saved.
     public func refreshConnectionMetadata(_ refreshed: PinnedHost) throws {
         lock.lock()
         defer { lock.unlock() }
-        var envelope = _load()
+        var envelope = try _load()
         guard let idx = envelope.hosts.firstIndex(where: { $0.id == refreshed.id }) else {
             throw Error.notFound
         }

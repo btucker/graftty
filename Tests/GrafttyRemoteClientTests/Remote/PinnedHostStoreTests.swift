@@ -2,11 +2,49 @@ import CryptoKit
 import Foundation
 import GrafttyProtocol
 import Testing
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 @testable import GrafttyRemoteClient
 
 @Suite("PinnedHostStore Tests")
 struct PinnedHostStoreTests {
+
+    @Test("@spec PERSIST-5.14: If corrupt pinned-host data cannot be moved aside during a connection metadata refresh, then the client shall surface the recovery error and preserve the original file.", .enabled(if: geteuid() != 0, "Root bypasses directory write permissions"))
+    func connectionRefreshPreservesCorruptionWhenBackupFails() throws {
+        let dir = try makeTempDir()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let store = PinnedHostStore(directory: dir)
+        let host = makeHost()
+        let url = dir.appendingPathComponent("pinned-hosts.json")
+        let original = Data("{broken".utf8)
+        try original.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+
+        #expect(throws: CocoaError.self) { try store.refreshConnectionMetadata(host) }
+        var reportedError: (any Error)?
+        try RemoteHostDialer.persistRefreshedPin(host, using: store.refreshConnectionMetadata) {
+            reportedError = $0
+        }
+        #expect(reportedError is CocoaError)
+        #expect(try Data(contentsOf: url) == original)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["pinned-hosts.json"])
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+        #expect(throws: PinnedHostStore.Error.notFound) { try store.refreshConnectionMetadata(host) }
+        let backups = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+        #expect(backups.count == 1)
+        let backup = try #require(backups.first)
+        #expect(backup.lastPathComponent.hasPrefix("pinned-hosts.json.corrupt."))
+        #expect(try Data(contentsOf: backup) == original)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
 
     @Test("@spec REMOTE-2.14: When a paired host supplies verified wake addresses, the client shall retain them across launches, while existing saved hosts without wake metadata shall continue to decode.")
     func wakeMetadataRoundTripAndLegacyDecoding() throws {
