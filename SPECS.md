@@ -4588,6 +4588,30 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-33** When the application jumps a Mac terminal to a timeline message, it shall read each loaded scrollback row by absolute screen row, keeping soft-wrapped rows separate, and scroll so the message's row is at the top of the viewport.
 
+### CONTEXT-34.x
+
+**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages, marks closer than 3 points merged into one, and a box showing the current viewport, and shall hide the card while no message is located.
+
+### CONTEXT-35.x
+
+**CONTEXT-35** When the user hovers over the scrollback map on Mac, or drags along it on Mac or mobile, the application shall show a label to the left of the strip with the nearest mark's message, the human input verbatim or the peer message's gist with a sparkle when generated, and while dragging shall scroll the terminal live to center the row under the pointer or finger; when the user clicks or taps a mark, the application shall scroll that mark's row to the top of the terminal.
+
+### CONTEXT-36.x
+
+**CONTEXT-36** While the pointer is not over the scrollback map and no drag is in progress, the application shall draw the card at 40 percent opacity, and shall draw it fully opaque while it is hovered, dragged, or touched, changing without animation when Reduce Motion is on.
+
+### CONTEXT-37.x
+
+**CONTEXT-37** While GrafttyMobile shows the scrollback map on the focused agent pane, the application shall place the card below the pane's floating top-right controls, including the Worktree context button, so the card and the controls never overlap.
+
+### CONTEXT-38.x
+
+**CONTEXT-38** While the agent pane is visible, the application shall rebuild its scrollback map after about a second without timeline or scrollback size changes, ignore scroll-only viewport changes, and not scan the scrollback while the pane is hidden.
+
+### CONTEXT-39.x
+
+**CONTEXT-39** The scrollback map shall be one adjustable accessibility element labeled Scrollback map, whose value names the current message and its position, and whose increment and decrement move to the next newer or older message and scroll the terminal there.
+
 ## MEM — MEM
 
 ### MEM-1.x

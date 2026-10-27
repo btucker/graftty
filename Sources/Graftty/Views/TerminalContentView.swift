@@ -1,5 +1,13 @@
 import SwiftUI
+import GrafttyCommandUI
 import GrafttyKit
+import GrafttyProtocol
+
+/// The worktree's agent pane, which carries the scrollback map, and the timeline it maps.
+struct AgentScrollbackMap {
+    let terminalID: PaneSlotID
+    let timeline: WorktreeTimeline
+}
 
 /// Recursively renders a SplitTree into terminal surface views.
 struct TerminalContentView: View {
@@ -11,6 +19,7 @@ struct TerminalContentView: View {
     let theme: GhosttyTheme
     let onFocusTerminal: (PaneSlotID) -> Void
     var previewWorktreePath: String? = nil
+    var agentScrollbackMap: AgentScrollbackMap? = nil
 
     private var previewPane: PaneSlotID? {
         ImagePreviewLayout.visiblePane(tree: splitTree.wrappedValue, focused: focusedPaneSlotID)
@@ -122,6 +131,12 @@ struct TerminalContentView: View {
                             takeControlButton {
                                 _ = tm.takeDisplayControl(for: terminalID)
                             }
+                        }
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if let map = agentScrollbackMap, map.terminalID == terminalID {
+                            ScrollbackMapOverlayHost(model: handle.scrollbackMapModel, timeline: map.timeline)
+                                .padding(10)
                         }
                     }
                     // A retry replaces the native view while preserving the

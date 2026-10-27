@@ -97,7 +97,7 @@ public struct WorktreeBriefContent: View {
 }
 
 extension WorktreeTimeline {
-    init(_ context: SidebarWorktreeContext) {
+    public init(_ context: SidebarWorktreeContext) {
         self.init(history: context.worktree.sidebar?.history, brief: context.brief)
     }
 }

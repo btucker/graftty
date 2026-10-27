@@ -208,7 +208,8 @@ struct MainWindow: View {
                             onFocusTerminal: { terminalID in
                                 attentionOpenGeneration &+= 1
                                 remoteViewer.focusTerminal(terminalID)
-                            }
+                            },
+                            agentScrollbackMap: agentScrollbackMap
                         )
                         .padding(.leading, 6)
                     } else if remoteViewer.isOpeningSelectedWorktree {
@@ -247,7 +248,8 @@ struct MainWindow: View {
                             }
                             terminalManager.setFocus(terminalID)
                         },
-                        previewWorktreePath: selectedWorktree?.path
+                        previewWorktreePath: selectedWorktree?.path,
+                        agentScrollbackMap: agentScrollbackMap
                     )
                     // A hair of breathing room so terminal text doesn't
                     // slam into the sidebar divider.
@@ -627,6 +629,19 @@ struct MainWindow: View {
         }
         guard let handle else { return false }
         return await handle.reveal(eventID: request.eventID, messages: request.messages)
+    }
+
+    /// The selected worktree's agent pane, local or remote, and the timeline its scrollback map marks.
+    private var agentScrollbackMap: AgentScrollbackMap? {
+        guard let context = selectedContext, let session = context.agentPaneID else { return nil }
+        let terminalID: PaneSlotID?
+        if let remoteIdentity = selectedRemoteIdentity {
+            terminalID = remoteViewer.existingTerminalID(identity: remoteIdentity, worktreePath: context.worktree.path,
+                                                         sessionName: session)
+        } else {
+            terminalID = terminalManager.handle(forSessionName: session)?.terminalID
+        }
+        return terminalID.map { AgentScrollbackMap(terminalID: $0, timeline: WorktreeTimeline(context)) }
     }
 
     private var selectedContext: SidebarWorktreeContext? {

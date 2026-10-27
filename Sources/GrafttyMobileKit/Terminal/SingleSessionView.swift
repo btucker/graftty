@@ -153,6 +153,9 @@ struct SingleSessionView: View {
     @State private var stickyControlActivation:
         TerminalInputContainerView.StickyControlActivation = .inactive
     @State private var isTrayShiftSelected = false
+    @State private var scrollbackMapModel: ScrollbackMapModel?
+    /// The floating top-right controls' height, so the scrollback map sits below them.
+    @State private var floatingControlsHeight: CGFloat = 44
     @AppStorage(autocorrectionDefaultsKey) private var isAutocorrectionEnabled = false
     /// The iOS-scaled Mac ghostty config used to build `controller`.
     /// Cached so owner-selected font preferences can be applied without re-fetching.
@@ -386,11 +389,21 @@ struct SingleSessionView: View {
     }
 
     private var worktreeContext: SidebarWorktreeContext? {
-        guard !isEmbeddedPane, let row = attentionWorktrees.first(where: {
+        isEmbeddedPane ? nil : paneWorktreeContext
+    }
+
+    private var paneWorktreeContext: SidebarWorktreeContext? {
+        guard let row = attentionWorktrees.first(where: {
             if let path = step.worktreePath { return $0.path == path }
             return $0.layout?.leaves.contains(where: { $0.sessionName == step.sessionName }) == true
         }) else { return nil }
         return sidebarNavigation?.worktreeContext(row) ?? SidebarWorktreeContext(worktree: row)
+    }
+
+    /// The timeline the scrollback map marks, while this focused pane is its worktree's agent pane.
+    private var agentScrollbackTimeline: WorktreeTimeline? {
+        guard isPaneFocused, let context = paneWorktreeContext, context.agentPaneID == step.sessionName else { return nil }
+        return WorktreeTimeline(context)
     }
 
     @ViewBuilder
@@ -508,7 +521,18 @@ struct SingleSessionView: View {
                                      isPaneOwner: { client?.isOwner == true },
                                      canPresentAuthentication: { true },
                                      terminalRequest: $terminalBrowserRequest)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { floatingControlsHeight = $0 }
                         .modifier(TerminalFloatingControlPlacement())
+                        .padding(.trailing, 12)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if let model = scrollbackMapModel, let timeline = agentScrollbackTimeline {
+                    // CONTEXT-37: below the floating controls, which hold Worktree context.
+                    let controlsHeight = step.worktreePath != nil && coordinator != nil ? floatingControlsHeight : 0
+                    ScrollbackMapOverlayHost(model: model, timeline: timeline,
+                                             isVisible: scenePhase == .active && connection == .live)
+                        .padding(.top, ScrollbackMapLayout.topInset(belowControlsAt: 12, controlsHeight: controlsHeight))
                         .padding(.trailing, 12)
                 }
             }
@@ -1149,6 +1173,8 @@ struct SingleSessionView: View {
             captureContainer: { [paneContainerBox, client] view in
                 paneContainerBox.view = view
                 MobileTerminalRegistry.shared.register(view, sessionName: client.sessionName)
+                let mapModel = view.scrollbackMapModel
+                DispatchQueue.main.async { if scrollbackMapModel !== mapModel { scrollbackMapModel = mapModel } }
                 paneContainerBox.controlAttachmentID = view.controlAttachmentID
                 let shiftSelected = view.isTrayShiftSelected
                 DispatchQueue.main.async { isTrayShiftSelected = shiftSelected }
