@@ -1,7 +1,7 @@
 #if canImport(UIKit)
 import CoreFoundation
 import GrafttyCommandUI
-import GrafttyProtocol
+@testable import GrafttyProtocol
 import SwiftUI
 import Testing
 import UIKit
@@ -39,6 +39,8 @@ final class SplitLayoutFixture {
     let state: IPadAppState
     let gate = BiometricGate(authenticator: UnlockedAuthenticator())
     let notifications: MobileAgentNotifications
+    /// Replaces the real sidebar-width persistence debounce when set.
+    var debounce: ManualSidebarWidthDebounce?
 
     init(sidebarShown: Bool, hasHost: Bool) throws {
         defaults = try #require(UserDefaults(suiteName: suite))
@@ -64,6 +66,7 @@ final class SplitLayoutFixture {
             appState: state, notificationIO: .init(fetch: { _ in [] }, reopen: { _, _ in }))
             .environment(\.scenePhase, .active)
             .defaultAppStorage(defaults)
+            .environment(\.sidebarWidthDebounce, debounce?.debounce ?? .standard)
     }
 
     func cleanUp() {
@@ -73,6 +76,35 @@ final class SplitLayoutFixture {
 
     private struct UnlockedAuthenticator: BiometricAuthenticator {
         func authenticate() async -> Result<Void, Error> { .success(()) }
+    }
+}
+
+/// Stands in for the 250ms sidebar-width persistence debounce. Records each
+/// write synchronously, inside the preference delivery that scheduled it, and
+/// runs the uncancelled ones only when the test elapses it.
+@MainActor
+final class ManualSidebarWidthDebounce {
+    private(set) var scheduled = 0
+    private var pending: [Int: @MainActor () -> Void] = [:]
+    var pendingCount: Int { pending.count }
+
+    // Weak: a pending write captures the persister, whose environment holds
+    // this debounce.
+    var debounce: SidebarWidthDebounce {
+        SidebarWidthDebounce { [weak self] write in
+            guard let self else { return {} }
+            scheduled += 1
+            let id = scheduled
+            pending[id] = write
+            return { [weak self] in self?.pending[id] = nil }
+        }
+    }
+
+    /// Runs the still-pending writes in the order they were scheduled.
+    func elapse() {
+        for id in pending.keys.sorted() {
+            pending.removeValue(forKey: id)?()
+        }
     }
 }
 
