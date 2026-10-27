@@ -36,6 +36,10 @@ struct SubprocessLaunch: Sendable {
     var killGrace: Duration = .seconds(2)
     /// Runs the delayed timeout and SIGKILL actions.
     var scheduler: SubprocessScheduler = .dispatch
+    #if os(Linux)
+    /// Reaps the child; tests inject a status another waiter took (CLI-1.9).
+    var waitpid: @Sendable (pid_t, UnsafeMutablePointer<Int32>, Int32) -> pid_t = { Glibc.waitpid($0, $1, $2) }
+    #endif
 }
 
 /// Runs a delayed stop action. Production uses GCD; tests inject a manual
@@ -61,7 +65,11 @@ enum Subprocess {
     /// launcher's own error (`Process.run()`, or `posix_spawn` on Linux) when
     /// the launch itself failed.
     static func run(_ launch: SubprocessLaunch) async throws -> SubprocessOutput {
+        #if os(Linux)
+        let process = SubprocessProcess(waitpid: launch.waitpid)
+        #else
         let process = SubprocessProcess()
+        #endif
         process.executableURL = URL(fileURLWithPath: launch.executable)
         process.arguments = launch.arguments
         process.currentDirectoryURL = launch.directory.map { URL(fileURLWithPath: $0) }
@@ -112,7 +120,9 @@ enum Subprocess {
 
         let termination = SubprocessTermination(
             process: process, killGrace: Subprocess.seconds(of: launch.killGrace), scheduler: launch.scheduler)
-        let status: Int32 = try await withTaskCancellationHandler {
+        // A lost exit status (CLI-1.9) is reported only after the timeout
+        // and cancellation that may have stopped the child.
+        let status: Result<Int32, Error> = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { process in
                     termination.finish()
@@ -123,7 +133,7 @@ enum Subprocess {
                     // can hold back (CLI-1.4). A no-op for `.files` capture.
                     buffers.stdout.finish()
                     buffers.stderr.finish()
-                    continuation.resume(returning: process.terminationStatus)
+                    continuation.resume(returning: Result { try process.reapedStatus() })
                 }
                 do {
                     try termination.start()
@@ -148,13 +158,14 @@ enum Subprocess {
         if termination.didTimeout, let timeout = launch.timeout {
             throw CLIError.timedOut(command: launch.timeoutLabel, seconds: seconds(of: timeout))
         }
+        let exitStatus = try status.get()
         if let files {
             return SubprocessOutput(
                 stdout: try Data(contentsOf: files.stdout),
                 stderr: try Data(contentsOf: files.stderr),
-                status: status)
+                status: exitStatus)
         }
-        return SubprocessOutput(stdout: buffers.stdout.data, stderr: buffers.stderr.data, status: status)
+        return SubprocessOutput(stdout: buffers.stdout.data, stderr: buffers.stderr.data, status: exitStatus)
     }
 
     /// Crash-safe single-chunk drain of a pipe's read descriptor. Returns the
@@ -228,12 +239,35 @@ enum Subprocess {
 typealias SubprocessProcess = SpawnedSubprocess
 #else
 typealias SubprocessProcess = Process
+
+extension Process: TerminableSubprocess {
+    /// Foundation's own reaper always records the exit status.
+    func reapedStatus() throws -> Int32 { terminationStatus }
+
+    /// Foundation reaps on its own queue, so a reap between this check and
+    /// the signal is not excluded here.
+    func killIfRunning() {
+        if isRunning { _ = kill(processIdentifier, SIGKILL) }
+    }
+}
 #endif
+
+/// What `SubprocessTermination` needs from the process it stops. Tests
+/// substitute a process whose reaper runs at a chosen moment (CLI-1.8).
+protocol TerminableSubprocess: AnyObject {
+    var isRunning: Bool { get }
+    func run() throws
+    func terminate()
+    /// SIGKILL, unless the child has already been reaped.
+    func killIfRunning()
+}
 
 /// Stops one subprocess on timeout or cancellation: SIGTERM first, then
 /// SIGKILL if the child is still running after `killGrace` (CLI-1.3). One
-/// lock orders launch, stop, and the kill check; `isRunning` is what keeps a
-/// late action from signalling a reaped PID.
+/// lock orders launch, stop, and the kill check. The process checks that its
+/// child is unreaped in the same step that signals it. On Linux that step
+/// holds the lock its reaper takes, so a late action cannot signal a PID the
+/// reaper released (CLI-1.8); Foundation's macOS reaper is not excluded.
 ///
 /// Delayed actions capture this object, and it holds the `Process`, weakly.
 /// `DispatchQueue.asyncAfter` retains a scheduled closure until its deadline,
@@ -245,12 +279,12 @@ final class SubprocessTermination: @unchecked Sendable {
     private let scheduler: SubprocessScheduler
 
     private let lock = NSLock()
-    private weak var process: SubprocessProcess?
+    private weak var process: (any TerminableSubprocess)?
     private var isFinished = false
     private var stopRequested = false
     private var _didTimeout = false
 
-    init(process: SubprocessProcess, killGrace: TimeInterval = 2, scheduler: SubprocessScheduler = .dispatch) {
+    init(process: any TerminableSubprocess, killGrace: TimeInterval = 2, scheduler: SubprocessScheduler = .dispatch) {
         self.process = process
         self.killGrace = killGrace
         self.scheduler = scheduler
@@ -292,8 +326,8 @@ final class SubprocessTermination: @unchecked Sendable {
 
     private func killIfRunning() {
         lock.withLock {
-            guard !isFinished, let process, process.isRunning else { return }
-            _ = kill(process.processIdentifier, SIGKILL)
+            guard !isFinished, let process else { return }
+            process.killIfRunning()
         }
     }
 }
@@ -367,7 +401,7 @@ private final class PipeStream: @unchecked Sendable {
 /// Termination is reported when the child itself exits, even while a
 /// background descendant still holds an inherited descriptor (CLI-1.6).
 /// Corelibs instead waits until every holder of its launch socket closes it.
-final class SpawnedSubprocess: @unchecked Sendable {
+final class SpawnedSubprocess: TerminableSubprocess, @unchecked Sendable {
     var executableURL: URL?
     var arguments: [String]?
     var currentDirectoryURL: URL?
@@ -382,11 +416,24 @@ final class SpawnedSubprocess: @unchecked Sendable {
     private let lock = NSLock()
     private var pid: pid_t = 0
     private var running = false
-    private var status: Int32 = 0
+    /// Nil until exit, and after it when another waiter reaped the child.
+    private var status: Int32?
+    /// `waitpid(2)`; tests inject one whose status another waiter took (CLI-1.9).
+    private let reap: @Sendable (pid_t, UnsafeMutablePointer<Int32>, Int32) -> pid_t
+
+    init(waitpid: @escaping @Sendable (pid_t, UnsafeMutablePointer<Int32>, Int32) -> pid_t = { Glibc.waitpid($0, $1, $2) }) {
+        reap = waitpid
+    }
 
     var processIdentifier: Int32 { lock.withLock { pid } }
     var isRunning: Bool { lock.withLock { running } }
-    var terminationStatus: Int32 { lock.withLock { status } }
+
+    /// The exit status as `Process.terminationStatus` reports it. Throws
+    /// ECHILD when another waiter reaped the child first, losing it (CLI-1.9).
+    func reapedStatus() throws -> Int32 {
+        guard let status = lock.withLock({ status }) else { throw POSIXError(.ECHILD) }
+        return status
+    }
 
     func run() throws {
         guard let executableURL else { throw POSIXError(.ENOENT) }
@@ -413,10 +460,15 @@ final class SpawnedSubprocess: @unchecked Sendable {
     }
 
     /// SIGTERM, as `Process.terminate()` sends; a no-op once the child exited.
-    func terminate() {
+    func terminate() { signal(SIGTERM) }
+
+    func killIfRunning() { signal(SIGKILL) }
+
+    /// The reaper releases the PID under the same lock.
+    private func signal(_ signal: Int32) {
         lock.withLock {
             guard running else { return }
-            _ = kill(pid, SIGTERM)
+            _ = kill(pid, signal)
         }
     }
 
@@ -429,7 +481,9 @@ final class SpawnedSubprocess: @unchecked Sendable {
         var raw: Int32 = 0
         lock.withLock {
             running = false
-            while waitpid(pid, &raw, 0) == -1, errno == EINTR {}
+            var reaped: pid_t
+            repeat { reaped = reap(pid, &raw, 0) } while reaped == -1 && errno == EINTR
+            guard reaped == pid else { return }
             // Exit code, or the signal number for an uncaught signal, as
             // `Process.terminationStatus` reports them.
             let signal = raw & 0x7F

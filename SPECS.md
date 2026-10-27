@@ -1434,6 +1434,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-4.6** When a synchronous zmx subprocess emits more than a pipe buffer on stdout or stderr, the application shall drain both streams while the child is running so `pane show` and maintenance commands complete instead of deadlocking while waiting for the child to exit.
 
+**ZMX-4.7** When a synchronous zmx subprocess times out, the application shall deliver SIGTERM to the timed-out child before the SIGKILL escalation, whichever thread launched it.
+
 ### ZMX-5.x — Fallback
 
 **ZMX-5.1** If the bundled `zmx` binary is missing or not executable, the application shall fall back to libghostty's default `$SHELL` spawn behavior on a per-pane basis.
@@ -4447,6 +4449,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CLI-1.6** When a subprocess exits while a background descendant still holds its inherited output pipes, the application shall return the command's output and exit status without waiting for that descendant to exit.
 
 **CLI-1.7** When the application stops a subprocess on timeout or cancellation, the application shall deliver SIGTERM to a child that does not handle it so the child exits without waiting for the SIGKILL escalation, whichever thread launched it.
+
+**CLI-1.8** If the Linux reaper collects a stopped subprocess while its SIGKILL escalation is checking that the child still runs, then the application shall not signal the PID the reaper released.
+
+**CLI-1.9** If another waiter already reaped a Linux subprocess so that its exit status is lost, then the application shall report the lost status as an error instead of exit status 0, or report the timeout or cancellation that stopped the child.
 
 ## CONTEXT — CONTEXT
 
