@@ -35,7 +35,8 @@ struct SurfaceScrollbackTests {
         try #require(columns > 10)
         let wrapped = String(repeating: "w", count: columns * 2 + 3)
         var lines = (0..<40).map { String(format: "filler-%02d", $0) }
-        lines += [wrapped, "> Please fix the sidebar layout", "⏺ Looking now."]
+        // Styled text checks that every build reads plain row text.
+        lines += [wrapped, "> \u{1B}[1;32mPlease fix\u{1B}[0m the sidebar layout", "⏺ Looking now."]
         lines += (40..<80).map { String(format: "filler-%02d", $0) }
         let data = Data(lines.joined(separator: "\r\n").utf8)
         data.withUnsafeBytes { ghostty_surface_write_buffer(surface, $0.baseAddress!.assumingMemoryBound(to: UInt8.self), UInt($0.count)) }
