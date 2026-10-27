@@ -23,4 +23,20 @@ struct SidebarWidthPreferenceTests {
     func defaultIsZero() {
         #expect(SidebarWidthKey.defaultValue == 0)
     }
+
+    @Test("the timed debounce writes later, and never runs a superseded write")
+    @MainActor
+    func timedDebounceRunsOnlyUncancelledWritesLater() async throws {
+        var writes: [Int] = []
+        let debounce = SidebarWidthDebounce.after(.zero)
+        let cancel = debounce.schedule { writes.append(1) }
+        cancel()
+        _ = debounce.schedule { writes.append(2) }
+        #expect(writes.isEmpty)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while writes.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(writes == [2])
+    }
 }
