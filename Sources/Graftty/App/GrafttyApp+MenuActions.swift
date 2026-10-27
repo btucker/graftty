@@ -211,9 +211,9 @@ extension GrafttyApp {
     /// default editor for that file type — same behavior as Ghostty.app's
     /// own "Open Configuration" menu. `TERM-9.2`.
     ///
-    /// Static so the `open_config` keybind callback in `startup()` (which
-    /// can't capture `self` cleanly) can share the implementation with
-    /// the menu button's instance handler.
+    /// Static so the `open_config` keybind callback that
+    /// `TerminalPaneActions.install` wires (which has no `self`) can share
+    /// the implementation with the menu button's instance handler.
     static func openGhosttySettings() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let url = GhosttyConfigLocator.resolveURL(home: home)
