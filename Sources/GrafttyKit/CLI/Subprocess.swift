@@ -36,6 +36,10 @@ struct SubprocessLaunch: Sendable {
     var killGrace: Duration = .seconds(2)
     /// Runs the delayed timeout and SIGKILL actions.
     var scheduler: SubprocessScheduler = .dispatch
+    #if os(Linux)
+    /// Reaps the child; tests inject a status another waiter took (CLI-1.9).
+    var waitpid: @Sendable (pid_t, UnsafeMutablePointer<Int32>, Int32) -> pid_t = { Glibc.waitpid($0, $1, $2) }
+    #endif
 }
 
 /// Runs a delayed stop action. Production uses GCD; tests inject a manual
@@ -61,7 +65,11 @@ enum Subprocess {
     /// launcher's own error (`Process.run()`, or `posix_spawn` on Linux) when
     /// the launch itself failed.
     static func run(_ launch: SubprocessLaunch) async throws -> SubprocessOutput {
+        #if os(Linux)
+        let process = SubprocessProcess(waitpid: launch.waitpid)
+        #else
         let process = SubprocessProcess()
+        #endif
         process.executableURL = URL(fileURLWithPath: launch.executable)
         process.arguments = launch.arguments
         process.currentDirectoryURL = launch.directory.map { URL(fileURLWithPath: $0) }
@@ -112,7 +120,9 @@ enum Subprocess {
 
         let termination = SubprocessTermination(
             process: process, killGrace: Subprocess.seconds(of: launch.killGrace), scheduler: launch.scheduler)
-        let status: Int32 = try await withTaskCancellationHandler {
+        // A lost exit status (CLI-1.9) is reported only after the timeout
+        // and cancellation that may have stopped the child.
+        let status: Result<Int32, Error> = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { process in
                     termination.finish()
@@ -123,7 +133,7 @@ enum Subprocess {
                     // can hold back (CLI-1.4). A no-op for `.files` capture.
                     buffers.stdout.finish()
                     buffers.stderr.finish()
-                    continuation.resume(with: Result { try process.reapedStatus() })
+                    continuation.resume(returning: Result { try process.reapedStatus() })
                 }
                 do {
                     try termination.start()
@@ -148,13 +158,14 @@ enum Subprocess {
         if termination.didTimeout, let timeout = launch.timeout {
             throw CLIError.timedOut(command: launch.timeoutLabel, seconds: seconds(of: timeout))
         }
+        let exitStatus = try status.get()
         if let files {
             return SubprocessOutput(
                 stdout: try Data(contentsOf: files.stdout),
                 stderr: try Data(contentsOf: files.stderr),
-                status: status)
+                status: exitStatus)
         }
-        return SubprocessOutput(stdout: buffers.stdout.data, stderr: buffers.stderr.data, status: status)
+        return SubprocessOutput(stdout: buffers.stdout.data, stderr: buffers.stderr.data, status: exitStatus)
     }
 
     /// Crash-safe single-chunk drain of a pipe's read descriptor. Returns the
@@ -254,8 +265,9 @@ protocol TerminableSubprocess: AnyObject {
 /// Stops one subprocess on timeout or cancellation: SIGTERM first, then
 /// SIGKILL if the child is still running after `killGrace` (CLI-1.3). One
 /// lock orders launch, stop, and the kill check. The process checks that its
-/// child is unreaped in the same step that signals it, so a late action
-/// cannot signal a PID its reaper released (CLI-1.8).
+/// child is unreaped in the same step that signals it. On Linux that step
+/// holds the lock its reaper takes, so a late action cannot signal a PID the
+/// reaper released (CLI-1.8); Foundation's macOS reaper is not excluded.
 ///
 /// Delayed actions capture this object, and it holds the `Process`, weakly.
 /// `DispatchQueue.asyncAfter` retains a scheduled closure until its deadline,

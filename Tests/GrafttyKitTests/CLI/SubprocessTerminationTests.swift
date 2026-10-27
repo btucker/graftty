@@ -31,16 +31,22 @@ struct SubprocessTerminationTests {
         #expect(throws: CLIError.self) { _ = try result.get() }
     }
 
-    @Test("@spec CLI-1.8: If the reaper collects a stopped subprocess while its SIGKILL escalation is checking that the child still runs, then the application shall not signal the PID the reaper released.")
+    @Test("@spec CLI-1.8: If the Linux reaper collects a stopped subprocess while its SIGKILL escalation is checking that the child still runs, then the application shall not signal the PID the reaper released.")
     func escalationNeverSignalsAReleasedPID() throws {
-        let child = try Self.sleeper(), reused = try Self.sleeper()
+        // Clean up only children this test has not reaped: signalling a
+        // reaped PID is the hazard under test.
+        var unreaped: [pid_t] = []
         defer {
-            for pid in [child, reused] {
+            for pid in unreaped {
                 _ = kill(pid, SIGKILL)
                 var status: Int32 = 0
                 _ = waitpid(pid, &status, 0)
             }
         }
+        let child = try Self.sleeper()
+        unreaped.append(child)
+        let reused = try Self.sleeper()
+        unreaped.append(reused)
         let process = ReapedDuringRunningCheck(childPID: child, reusedPID: reused)
         let scheduler = ManualSubprocessScheduler()
         defer { scheduler.finish() }
@@ -54,28 +60,41 @@ struct SubprocessTerminationTests {
         // this SIGTERM, so the exit signal says which one stopped it.
         _ = kill(reused, SIGTERM)
         var status: Int32 = 0
-        #expect(waitpid(reused, &status, 0) == reused)
+        let reapedReused = waitpid(reused, &status, 0) == reused
+        if reapedReused { unreaped.removeAll { $0 == reused } }
+        #expect(reapedReused)
         #expect(status & 0x7F == SIGTERM)
     }
 
     #if os(Linux)
-    @Test("@spec CLI-1.9: If another waiter already reaped a subprocess so that its exit status is lost, then the application shall report an unknown exit status error instead of exit status 0.")
+    @Test("@spec CLI-1.9: If another waiter already reaped a Linux subprocess so that its exit status is lost, then the application shall report the lost status as an error instead of exit status 0, or report the timeout or cancellation that stopped the child.")
     func lostExitStatusIsAnError() async throws {
-        let process = SpawnedSubprocess(waitpid: { pid, status, options in
-            _ = waitpid(pid, status, options) // Another waiter collects the status first.
-            errno = ECHILD
-            return -1
-        })
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", "exit 3"]
-        let run = Task {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                process.terminationHandler = { _ in continuation.resume() }
-                do { try process.run() } catch { continuation.resume(throwing: error) }
-            }
-        }
-        try await subprocessResult(run).get()
-        #expect(throws: POSIXError(.ECHILD)) { _ = try process.reapedStatus() }
+        var exited = SubprocessLaunch(executable: "/bin/sh", arguments: ["-c", "exit 3"], timeoutLabel: "sh")
+        exited.waitpid = Self.lostStatus
+        let exit = try await subprocessResult(Task { try await Subprocess.run(exited) })
+        #expect(throws: POSIXError(.ECHILD)) { _ = try exit.get() }
+
+        let child = try SubprocessTestChild()
+        defer { child.finish() }
+        let scheduler = ManualSubprocessScheduler()
+        defer { scheduler.finish() }
+        var stopped = SubprocessLaunch(
+            executable: "/bin/sh", arguments: child.arguments(),
+            directory: child.root.path, timeout: .seconds(30), timeoutLabel: "sh")
+        stopped.waitpid = Self.lostStatus
+        stopped.scheduler = scheduler.scheduler
+        let run = Task { try await Subprocess.run(stopped) }
+        try #require(await child.readyPID() != nil)
+        try #require(await scheduler.nextAction()).run()
+        let timeout = try await subprocessResult(run)
+        #expect(throws: CLIError.timedOut(command: "sh", seconds: 30)) { _ = try timeout.get() }
+    }
+
+    /// Another waiter collects the status first.
+    private static let lostStatus: @Sendable (pid_t, UnsafeMutablePointer<Int32>, Int32) -> pid_t = { pid, status, options in
+        _ = waitpid(pid, status, options)
+        errno = ECHILD
+        return -1
     }
     #endif
 

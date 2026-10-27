@@ -4448,9 +4448,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CLI-1.7** When the application stops a subprocess on timeout or cancellation, the application shall deliver SIGTERM to a child that does not handle it so the child exits without waiting for the SIGKILL escalation, whichever thread launched it.
 
-**CLI-1.8** If the reaper collects a stopped subprocess while its SIGKILL escalation is checking that the child still runs, then the application shall not signal the PID the reaper released.
+**CLI-1.8** If the Linux reaper collects a stopped subprocess while its SIGKILL escalation is checking that the child still runs, then the application shall not signal the PID the reaper released.
 
-**CLI-1.9** If another waiter already reaped a subprocess so that its exit status is lost, then the application shall report an unknown exit status error instead of exit status 0.
+**CLI-1.9** If another waiter already reaped a Linux subprocess so that its exit status is lost, then the application shall report the lost status as an error instead of exit status 0, or report the timeout or cancellation that stopped the child.
 
 ## CONTEXT — CONTEXT
 

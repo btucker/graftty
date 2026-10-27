@@ -131,7 +131,7 @@ struct ZmxRunnerTests {
     /// Dispatch worker threads block SIGTERM on Linux and macOS. A child
     /// spawned from one inherited that mask, so its trap never ran and every
     /// timeout waited out the SIGTERM grace for SIGKILL (#756).
-    @Test("@spec ZMX-4.7: When a synchronous zmx subprocess times out, the application shall deliver SIGTERM to the timed-out child before the SIGKILL escalation, whichever thread launched it.")
+    @Test("@spec ZMX-4.7: When a synchronous zmx subprocess times out, the application shall deliver SIGTERM to the timed-out child before the SIGKILL escalation, whichever thread launched it.", .timeLimit(.minutes(1)))
     func timeoutDeliversTerminateToTheChild() async throws {
         let marker = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-zmx-runner-term-\(UUID().uuidString)")
