@@ -174,6 +174,42 @@ struct WorktreeHistoryTests {
         #expect(try JSONDecoder().decode(WorktreeHistory.self, from: JSONEncoder().encode(history)) == history)
     }
 
+    @Test("@spec CONTEXT-25: When a worktree history contains consecutive peer messages from one sender or human inputs at most ten minutes apart, the application shall merge each run into one peer-message or input row in chronological order, collapsing consecutive exact-duplicate peer messages into one entry with a repeat count, whether or not all steps are shown.")
+    func mergesPeerRunsAndNearbyInputs() {
+        var history = WorktreeHistory(origin: .init(date: start, source: .user))
+        func peer(_ sender: String, _ text: String, _ offset: Double) {
+            history.record(.init(text: "<graftty-peer-message agent=\"\(sender)#claude\">\(text)</graftty-peer-message>", at: start.addingTimeInterval(offset)))
+        }
+        history.record(.init(text: "First", at: start.addingTimeInterval(10)))
+        history.record(.init(text: "Second", at: start.addingTimeInterval(610)))
+        history.record(.init(text: "Much later", at: start.addingTimeInterval(1211)))
+        peer("/repo/a", "Started.", 1300)
+        peer("/repo/a", "Still waiting.", 1310)
+        peer("/repo/a", "Still waiting.", 1320)
+        peer("/repo/a", "Done.", 1330)
+        peer("/repo/a", "Still waiting.", 1340)
+        peer("/repo/b", "Other sender.", 1350)
+        history.record(.init(text: "Thanks", at: start.addingTimeInterval(1360)))
+        peer("/repo/a", "After your reply.", 1370)
+        let timeline = WorktreeTimeline(history: history, brief: brief(count: 2))
+        for showAll in [false, true] {
+            let rows = timeline.rows(showAll: showAll)
+            #expect(rows.map(\.kind) == [.event, .event, .event, .inputs, .inputs, .peerMessages, .peerMessages, .inputs, .peerMessages])
+            #expect(rows.map(\.events.count) == [1, 1, 1, 2, 1, 5, 1, 1, 1])
+            #expect(rows.flatMap(\.events) == timeline.events)
+            #expect(!rows.contains { $0.isGroup })
+            let peers = rows[5].entries
+            #expect(peers.map(\.event.completed) == ["Started.", "Still waiting.", "Done.", "Still waiting."])
+            #expect(peers.map(\.count) == [1, 2, 1, 1])
+            #expect(rows[3].entries.map(\.event.completed) == ["First", "Second"])
+        }
+        var unnamed = WorktreeHistory()
+        for offset in 0..<2 {
+            unnamed.record(.init(text: "<graftty-peer-message>Report \(offset)</graftty-peer-message>", at: start.addingTimeInterval(Double(offset))))
+        }
+        #expect(WorktreeTimeline(history: unnamed, brief: nil).rows(showAll: false).map(\.events.count) == [2])
+    }
+
     @Test("@spec CONTEXT-24: When a history contains explicit entries and legacy snapshots, the application shall keep explicit headlines visible in the shared timeline and show only decisions newly introduced relative to the previous legacy snapshot.")
     func explicitHeadlinesStayVisibleAndLegacyDecisionsDoNotRepeat() throws {
         var brief = brief(count: 10)

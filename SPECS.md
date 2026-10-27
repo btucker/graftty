@@ -4484,7 +4484,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-15.x
 
-**CONTEXT-15** When Context is opened on Mac or mobile, the application shall show its history section without a disclosure, label human input separately from agent progress, and show a local date and time for each visible event while fitting the available width.
+**CONTEXT-15** When Context is opened on Mac or mobile, the application shall show its history section without a disclosure, label human input separately from agent progress, separate rows by local day with Today, Yesterday, or a medium date, and show a short local time for each visible row while fitting the available width.
 
 ### CONTEXT-16.x
 
@@ -4500,7 +4500,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-19.x
 
-**CONTEXT-19** When worktree history displays human input and peer messages on Mac or mobile, the application shall label human text only as 'Your input' and show peer messages as distinct sender-labelled disclosures collapsed by default, with their full content available on expansion.
+**CONTEXT-19** When worktree history displays human input and peer messages on Mac or mobile, the application shall label a run of human input once as You with each input verbatim, and show each run of peer messages from one sender as one card with the sender link, a message count, the last two messages as one-line gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.
 
 ### CONTEXT-20.x
 
@@ -4521,6 +4521,26 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-24.x
 
 **CONTEXT-24** When a history contains explicit entries and legacy snapshots, the application shall keep explicit headlines visible in the shared timeline and show only decisions newly introduced relative to the previous legacy snapshot.
+
+### CONTEXT-25.x
+
+**CONTEXT-25** When a worktree history contains consecutive peer messages from one sender or human inputs at most ten minutes apart, the application shall merge each run into one peer-message or input row in chronological order, collapsing consecutive exact-duplicate peer messages into one entry with a repeat count, whether or not all steps are shown.
+
+### CONTEXT-26.x
+
+**CONTEXT-26** When Context history shows a peer message, the application shall show text that fits one line verbatim without running a model, otherwise show an on-device Apple Intelligence summary marked as generated when available, and otherwise show the truncated first sentence or line unmarked, generating each text at most once per process.
+
+### CONTEXT-27.x
+
+**CONTEXT-27** When Context is opened on Mac or mobile, the application shall pin the current brief above the timeline, capped at half the panel height and scrolling internally only when it exceeds that cap, and shall scroll the oldest-first timeline independently, opening at its latest event.
+
+### CONTEXT-28.x
+
+**CONTEXT-28** When a new event arrives in the Context timeline, the application shall scroll to it only while the reader is at the bottom of the timeline, and otherwise shall show a Jump to latest control that scrolls to the latest event and disappears when used or when the reader returns to the bottom.
+
+### CONTEXT-29.x
+
+**CONTEXT-29** When the mobile Context drawer timeline is scrolled more than half the panel height away from the latest event, the application shall collapse the pinned brief to a one-line bar showing the title with the next step, or the pending question when one is waiting, shall expand the full brief when the bar is tapped, and shall restore the full brief only when the bar is tapped or the reader returns to the bottom, so that the brief changing size cannot toggle it back.
 
 ## MEM — MEM
 

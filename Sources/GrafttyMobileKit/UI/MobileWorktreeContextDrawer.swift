@@ -61,7 +61,7 @@ struct MobileWorktreeContextDrawer: ViewModifier {
                                 .onTapGesture { close() }
                                 .accessibilityLabel("Close context")
                                 .accessibilityAddTraits(.isButton)
-                            WorktreeContextPanel(context: context, onClose: close)
+                            WorktreeContextPanel(context: context, collapsesBrief: true, onClose: close)
                                 .environment(\.worktreeContextActions, navigationActions)
                                 .accessibilityAddTraits(.isModal)
                                 .frame(width: min(420, max(0, geometry.size.width - 20)))
