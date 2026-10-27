@@ -9,6 +9,7 @@ import Testing
 @MainActor
 @Suite("TerminalPaneActions")
 struct TerminalPaneActionsTests {
+    @MainActor
     private final class StateBox {
         var state: AppState
         init(_ state: AppState) { self.state = state }
