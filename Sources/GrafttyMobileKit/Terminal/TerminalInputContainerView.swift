@@ -19,6 +19,8 @@ public final class TerminalInputContainerView: UIView,
     }
 
     let terminalView = MobileTerminalInputView(frame: .zero)
+    /// The session behind `terminalView`, read for the timeline's jump to terminal.
+    weak var scrollbackSession: InMemoryTerminalSession?
     private(set) lazy var snapshotScrollView = TerminalSnapshotScrollView(terminalView: terminalView)
     var onPhysicalViewportReady: ((InMemoryTerminalViewport) -> Void)? {
         didSet {

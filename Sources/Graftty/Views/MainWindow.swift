@@ -267,9 +267,11 @@ struct MainWindow: View {
                         WorktreeContextPanel(context: context, foreground: terminalManager.theme.foreground,
                             secondary: terminalManager.theme.foreground.opacity(0.6),
                             onClose: { showsWorktreeContext = false })
-                            .environment(\.worktreeContextActions, WorktreeContextActions { [identity = selectedRemoteIdentity] path, _ in
+                            .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
                                 openContextWorktree(path, remoteIdentity: identity)
-                            })
+                            }, revealInTerminal: { [identity = selectedRemoteIdentity] request in
+                                await revealInTerminal(request, remoteIdentity: identity)
+                            }))
                             .frame(width: 360)
                             .background(terminalManager.theme.background)
                             .padding(.top, 30)
@@ -612,6 +614,19 @@ struct MainWindow: View {
               !worktree.state.isInFlight else { return false }
         attentionOpenGeneration &+= 1
         return selectWorktree(path, acknowledging: true)
+    }
+
+    /// Scrolls the context worktree's agent pane, local or remote, to a timeline message.
+    private func revealInTerminal(_ request: TerminalRevealRequest, remoteIdentity: RemoteMacIdentity?) async -> Bool {
+        let handle: SurfaceHandle?
+        if let remoteIdentity {
+            handle = remoteViewer.existingTerminalID(identity: remoteIdentity, worktreePath: request.worktree.path,
+                                                     sessionName: request.paneID).flatMap { terminalManager.handle(for: $0) }
+        } else {
+            handle = terminalManager.handle(forSessionName: request.paneID)
+        }
+        guard let handle else { return false }
+        return await handle.reveal(eventID: request.eventID, messages: request.messages)
     }
 
     private var selectedContext: SidebarWorktreeContext? {

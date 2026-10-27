@@ -1148,6 +1148,7 @@ struct SingleSessionView: View {
             onBackRequested: terminalBackSwipeAction,
             captureContainer: { [paneContainerBox, client] view in
                 paneContainerBox.view = view
+                MobileTerminalRegistry.shared.register(view, sessionName: client.sessionName)
                 paneContainerBox.controlAttachmentID = view.controlAttachmentID
                 let shiftSelected = view.isTrayShiftSelected
                 DispatchQueue.main.async { isTrayShiftSelected = shiftSelected }

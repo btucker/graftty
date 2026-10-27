@@ -4432,6 +4432,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.58** When Graftty renders the Codex launch wrapper from its bundled shell template, the application shall substitute every placeholder in one pass, never expand placeholder text inside a substituted value, and fail when the template and the supplied values disagree.
 
+**AGENT-6.59** When the managed Codex wrapper launches the interactive Codex TUI, the application shall pass --no-alt-screen so the TUI runs inline and its transcript reaches terminal scrollback, and if the user already passed --no-alt-screen before any -- separator, then the application shall not pass it a second time.
+
+**AGENT-6.60** When Graftty spawns an interactive terminal shell for Mac or GrafttyMobile, the application shall set CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 in that shell's environment, replacing any inherited value, so Claude Code started in the pane renders inline and its transcript reaches terminal scrollback.
+
 ## CLI — CLI
 
 ### CLI-1.x
@@ -4567,6 +4571,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-29.x
 
 **CONTEXT-29** When the mobile Context drawer timeline is scrolled more than half the panel height away from the latest event, the application shall collapse the pinned brief to a one-line bar showing the title with the next step, or the pending question when one is waiting, shall expand the full brief when the bar is tapped, and shall restore the full brief only when the bar is tapped or the reader returns to the bottom, so that the brief changing size cannot toggle it back.
+
+### CONTEXT-30.x
+
+**CONTEXT-30** When the application locates timeline messages in an agent terminal's scrollback, it shall match a whitespace-insensitive prefix of each message's first non-empty line after stripping terminal prompt and border glyphs, assign rows in chronological order using the latest consistent copy when resize redraws duplicate the transcript, require a whole-row match for messages too short to be distinctive, and leave a message without a row when it is absent.
+
+### CONTEXT-31.x
+
+**CONTEXT-31** When the user clicks a human input line in worktree history on Mac or mobile, the application shall scroll the agent terminal to that message, and if the message is not in the terminal's loaded scrollback, show a brief Not in terminal history note beneath the line instead of an alert.
+
+### CONTEXT-32.x
+
+**CONTEXT-32** While worktree history shows a peer message on Mac or mobile, the application shall keep tapping the message to expand its full text, and offer Show in terminal beneath the expanded text and in the message's context menu to scroll the agent terminal to it.
+
+### CONTEXT-33.x
+
+**CONTEXT-33** When the application jumps a Mac terminal to a timeline message, it shall read each loaded scrollback row by absolute screen row, keeping soft-wrapped rows separate, and scroll so the message's row is at the top of the viewport.
 
 ## MEM — MEM
 

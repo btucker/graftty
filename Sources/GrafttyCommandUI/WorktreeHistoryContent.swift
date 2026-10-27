@@ -7,7 +7,11 @@ struct WorktreeHistoryContent: View {
     let secondary: Color
     var openWorktree: ((String) -> Bool)? = nil
     var gists: PeerMessageGistProvider = .shared
+    /// Scrolls the agent terminal to a message by event id; nil when no agent pane is known.
+    var revealInTerminal: (@MainActor (String) async -> Bool)? = nil
     @State private var showsAll = false
+    /// The message whose last reveal found nothing, shown briefly beneath it.
+    @State private var missingInTerminal: String?
     @State private var expandedGroups: Set<String> = []
     @State private var unavailableWorktree = false
 
@@ -131,10 +135,21 @@ struct WorktreeHistoryContent: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("You").font(.caption2).foregroundStyle(Color.orange)
             ForEach(row.entries) { entry in
-                Text(entry.event.completed).font(.callout).lineSpacing(2)
+                let line = Text(entry.event.completed).font(.callout).lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .overlay(alignment: .leading) { Rectangle().fill(Color.orange.opacity(0.6)).frame(width: 2) }
+                if revealInTerminal != nil {
+                    Button { reveal(entry.event.id) } label: { line.contentShape(Rectangle()) }
+                        .buttonStyle(.plain)
+                        .help("Show in terminal")
+                        .accessibilityHint("Show this message in the terminal")
+                        .accessibilityIdentifier("worktree.context.history.reveal.\(entry.id)")
+                } else {
+                    line
+                }
+                missingNote(entry.event.id)
             }
         }
     }
@@ -158,7 +173,9 @@ struct WorktreeHistoryContent: View {
                     .accessibilityIdentifier("worktree.context.history.earlier.\(row.id)")
             }
             ForEach(row.entries.suffix(visible)) { entry in
-                PeerMessageLine(entry: entry, secondary: secondary, gists: gists)
+                PeerMessageLine(entry: entry, secondary: secondary, gists: gists,
+                    reveal: revealInTerminal == nil ? nil : { reveal(entry.event.id) })
+                missingNote(entry.event.id)
             }
         }
         .padding(10)
@@ -196,6 +213,29 @@ struct WorktreeHistoryContent: View {
                 .help(event.title)
                 .fixedSize(horizontal: false, vertical: event.kind != .agentMessage)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func missingNote(_ eventID: String) -> some View {
+        if missingInTerminal == eventID {
+            Text("Not in terminal history").font(.caption2).foregroundStyle(secondary)
+                .padding(.leading, 10)
+                .accessibilityIdentifier("worktree.context.history.missing.\(eventID)")
+        }
+    }
+
+    /// A message the terminal no longer holds gets a brief note instead of an alert.
+    private func reveal(_ eventID: String) {
+        guard let revealInTerminal else { return }
+        Task { @MainActor in
+            guard !(await revealInTerminal(eventID)) else {
+                if missingInTerminal == eventID { missingInTerminal = nil }
+                return
+            }
+            missingInTerminal = eventID
+            try? await Task.sleep(for: .seconds(3))
+            if missingInTerminal == eventID { missingInTerminal = nil }
         }
     }
 
@@ -251,6 +291,7 @@ private struct PeerMessageLine: View {
     let entry: WorktreeTimeline.Row.Entry
     let secondary: Color
     let gists: PeerMessageGistProvider
+    var reveal: (() -> Void)? = nil
     @State private var gist: PeerMessageGist?
     @State private var expanded = false
 
@@ -277,9 +318,20 @@ private struct PeerMessageLine: View {
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             .accessibilityHint("Show the full message")
             .accessibilityIdentifier("worktree.context.history.message.\(entry.id)")
+            .contextMenu {
+                if let reveal { Button("Show in Terminal", systemImage: "terminal", action: reveal) }
+            }
             if expanded {
                 Text(text).font(.callout).lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
+                if let reveal {
+                    Button("Show in terminal", action: reveal)
+                        .font(.caption)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .frame(minHeight: 32, alignment: .leading)
+                        .accessibilityIdentifier("worktree.context.history.reveal.\(entry.id)")
+                }
             }
         }
         .task(id: text) { gist = await gists.gist(for: text) }

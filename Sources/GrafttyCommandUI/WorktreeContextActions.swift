@@ -4,9 +4,14 @@ import SwiftUI
 /// Context links use the current window's host-aware worktree selection.
 public struct WorktreeContextActions {
     public let openWorktree: (String, WorktreePanes) -> Bool
+    /// Scrolls the worktree's agent terminal to a timeline message. False when the
+    /// pane is unavailable or the message is not in its loaded scrollback.
+    public let revealInTerminal: (@MainActor (TerminalRevealRequest) async -> Bool)?
 
-    public init(openWorktree: @escaping (String, WorktreePanes) -> Bool) {
+    public init(openWorktree: @escaping (String, WorktreePanes) -> Bool,
+                revealInTerminal: (@MainActor (TerminalRevealRequest) async -> Bool)? = nil) {
         self.openWorktree = openWorktree
+        self.revealInTerminal = revealInTerminal
     }
 
     /// A path from another Mac must never select a same-named local worktree.
@@ -43,6 +48,46 @@ public struct WorktreeContextActions {
         }
         guard let ready else { throw Failure.notReady }
         return ready
+    }
+}
+
+/// A timeline message to show in a worktree's agent terminal.
+public struct TerminalRevealRequest: Equatable {
+    public let worktree: WorktreePanes
+    /// The agent pane's session name.
+    public let paneID: String
+    public let eventID: String
+    /// Every human input and peer message in the timeline, oldest first, so duplicate
+    /// rows resolve the same way for every message.
+    public let messages: [ScrollbackMap.Message]
+
+    public init(worktree: WorktreePanes, paneID: String, eventID: String, messages: [ScrollbackMap.Message]) {
+        self.worktree = worktree; self.paneID = paneID; self.eventID = eventID; self.messages = messages
+    }
+}
+
+/// A terminal whose scrollback can be read and scrolled by absolute row.
+/// Mac surfaces and mobile panes conform; the scrollback map overlay builds on it.
+@MainActor
+public protocol TerminalScrollback: AnyObject {
+    /// The newest `limit` rows already loaded, or nil when the terminal has no surface.
+    func scrollbackRows(limit: Int) -> ScrollbackRows?
+    /// Shows absolute row `row` at the top of the viewport, clamped to the scrollback.
+    func scroll(toRow row: Int)
+}
+
+extension TerminalScrollback {
+    /// Reads rows on the main actor, where the surface stays alive, and matches them off it.
+    public func scrollbackMap(for messages: [ScrollbackMap.Message]) async -> ScrollbackMap? {
+        guard let snapshot = scrollbackRows(limit: ScrollbackMap.readLimit) else { return nil }
+        return await Task.detached(priority: .userInitiated) { ScrollbackMap.locate(messages, in: snapshot) }.value
+    }
+
+    /// Scrolls to the message's row; false when it is not in the loaded scrollback.
+    public func reveal(eventID: String, messages: [ScrollbackMap.Message]) async -> Bool {
+        guard let row = await scrollbackMap(for: messages)?.row(for: eventID) else { return false }
+        scroll(toRow: row)
+        return true
     }
 }
 

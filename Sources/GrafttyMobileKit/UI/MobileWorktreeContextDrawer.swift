@@ -81,11 +81,18 @@ struct MobileWorktreeContextDrawer: ViewModifier {
 
     private var navigationActions: WorktreeContextActions? {
         contextActions.map { actions in
-            WorktreeContextActions { path, source in
+            WorktreeContextActions(openWorktree: { path, source in
                 guard actions.openWorktree(path, source) else { return false }
                 close()
                 return true
-            }
+            }, revealInTerminal: actions.revealInTerminal.map { reveal in
+                { request in
+                    // The drawer covers the terminal, so close it once the pane has scrolled.
+                    guard await reveal(request) else { return false }
+                    close()
+                    return true
+                }
+            })
         }
     }
 

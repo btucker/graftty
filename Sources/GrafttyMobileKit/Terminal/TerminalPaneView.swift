@@ -194,6 +194,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.controller = controller
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        view.scrollbackSession = session
         view.agentCompletion = agentCompletion
         view.terminalView.isAutocorrectionEnabled = isAutocorrectionEnabled
         view.committedSoftwareInput = committedSoftwareInput
@@ -224,6 +225,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.authoritativeGrid = authoritativeGrid
         view.snapshotScrollView.showsAdditionalHistory = showsAdditionalHistory
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        view.scrollbackSession = session
         view.agentCompletion = agentCompletion
         view.terminalView.isAutocorrectionEnabled = isAutocorrectionEnabled
         view.committedSoftwareInput = committedSoftwareInput

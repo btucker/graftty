@@ -343,6 +343,17 @@ final class MacFollowerTerminalView: NSView {
         refreshHistory()
     }
 
+    /// Scrolls the follower canvas so absolute row `row` is at its top; false when
+    /// this view is not following, so the caller scrolls the native viewport instead.
+    func reveal(row: UInt64) -> Bool {
+        guard followerGrid != nil, rowHeight > 0 else { return false }
+        let maxY = max(0, document.bounds.height - scrollView.contentView.bounds.height)
+        let y = min(maxY, CGFloat(min(row, historyRows)) * rowHeight)
+        scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.minX, y: y))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        return true
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         updateHistoryTimer()
