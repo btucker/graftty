@@ -1112,6 +1112,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-5.14** If corrupt pinned-host data cannot be moved aside during a connection metadata refresh, then the client shall surface the recovery error and preserve the original file.
 
+**PERSIST-5.20** When a JSONFileStore publishes a file, the application shall synchronize its contents and then fsync the containing directory once before returning success, propagating synchronization failures.
+
+**PERSIST-5.21** When a JSONFileStore writes with a custom POSIX mode, the application shall apply that mode before publication and preserve it at the destination.
+
 ## PWD — Manual Pane Routing
 
 ### PWD-1.x — User-Initiated Move
