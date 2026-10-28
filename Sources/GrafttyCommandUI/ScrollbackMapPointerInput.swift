@@ -31,6 +31,7 @@ final class ScrollbackMapPointerView: NSView {
     private var press: NSPoint?
     private var dragged = false
     private var pointerTracking: NSTrackingArea?
+    private var forwardingWheel = false
 
     init(content: AnyView) {
         self.content = NSHostingView(rootView: content)
@@ -48,7 +49,7 @@ final class ScrollbackMapPointerView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard !isHidden, bounds.contains(convert(point, from: superview)) else { return nil }
+        guard !isHidden, !forwardingWheel, bounds.contains(convert(point, from: superview)) else { return nil }
         return self
     }
 
@@ -69,6 +70,17 @@ final class ScrollbackMapPointerView: NSView {
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
     override func mouseMoved(with event: NSEvent) { onHover?(convert(event.locationInWindow, from: nil).y) }
     override func mouseExited(with event: NSEvent) { onHover?(nil) }
+
+    override func scrollWheel(with event: NSEvent) {
+        // The terminal is a sibling below the overlay, outside our responder
+        // chain. Re-hit-test without this input plane to preserve its scrolling.
+        guard let root = window?.contentView else { return }
+        forwardingWheel = true
+        defer { forwardingWheel = false }
+        let point = root.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
+        let target = root.hitTest(point)
+        if target !== self { target?.scrollWheel(with: event) }
+    }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)

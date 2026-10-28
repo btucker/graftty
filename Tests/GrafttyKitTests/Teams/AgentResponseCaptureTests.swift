@@ -85,4 +85,31 @@ struct AgentResponseCaptureTests {
         try handoff.consumeActivities { if case .response(let event) = $0 { responses.append(event.response.text) } }
         #expect(responses == ["The latest update."])
     }
+
+    @Test func establishedCursorPreservesRepliesBeforeLargeToolRecordsAndAcceptsNullAgentID() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("session.jsonl")
+        var data = try codex("Initial reply.", id: "initial")
+        data.append(0x0A)
+        try data.write(to: file)
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("handoff"))
+        let capture = AgentResponseCapture(handoff: handoff)
+        try capture.capture(payload: ["transcript_path": file.path], runtime: .codex, worktree: "/task", sessionID: "session")
+        _ = try handoff.consumeActivities { _ in }
+        data.append(try codex("Before the tool.", id: "before"))
+        data.append(0x0A)
+        data.append(Data(repeating: 0x78, count: 3 * 1024 * 1024))
+        data.append(0x0A)
+        data.append(try codex("After the tool.", id: "after", time: "2026-10-28T18:30:01Z"))
+        data.append(0x0A)
+        try data.write(to: file)
+        try capture.capture(payload: ["transcript_path": file.path, "agent_id": NSNull()],
+                            runtime: .codex, worktree: "/task", sessionID: "session")
+        var responses: [String] = []
+        try handoff.consumeActivities { if case .response(let event) = $0 { responses.append(event.response.text) } }
+        #expect(responses == ["Before the tool.", "After the tool."])
+        #expect(try handoff.consumeActivities { _ in Issue.record("Replies must be drained once") } == 0)
+    }
 }

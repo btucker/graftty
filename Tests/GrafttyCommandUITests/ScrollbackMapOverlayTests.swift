@@ -176,6 +176,9 @@ struct ScrollbackMapScrubTests {
         #expect(scrolled == [40], "The full visible card must receive clicks above the native terminal, including its padding")
         #expect(terminal.clicks == 0, "Map clicks must not reach the terminal")
 
+        pointer.scrollWheel(with: MapWheelEvent(point: point))
+        #expect(terminal.wheels == 1, "Wheel scrolling over the map must reach the terminal behind it")
+
         var hovers: [CGFloat?] = []
         let onHover = pointer.onHover
         pointer.onHover = { hovers.append($0); onHover?($0) }
@@ -270,10 +273,20 @@ struct ScrollbackMapScrubTests {
 }
 
 @MainActor
+private final class MapWheelEvent: NSEvent {
+    let point: NSPoint
+    init(point: NSPoint) { self.point = point; super.init() }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override var locationInWindow: NSPoint { point }
+    override var type: NSEvent.EventType { .scrollWheel }
+}
+
 private final class MapTerminalFixture: NSView {
     var clicks = 0
+    var wheels = 0
     override var isFlipped: Bool { true }
     override func mouseDown(with event: NSEvent) { clicks += 1 }
+    override func scrollWheel(with event: NSEvent) { wheels += 1 }
 }
 
 private struct MapTerminalRepresentable: NSViewRepresentable {

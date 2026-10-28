@@ -20,7 +20,7 @@ public struct AgentResponseCapture {
     public init(handoff: AttentionFileHandoff = AttentionFileHandoff()) { self.handoff = handoff }
 
     public func capture(payload: [String: Any], runtime: TeamHookRuntime, worktree: String, sessionID: String?) throws {
-        guard payload["agent_id"] == nil,
+        guard !AgentStopHookFilter.isSubagentStop(stdinJSON: payload),
               let sessionID, !sessionID.isEmpty,
               let path = payload["transcript_path"] as? String, path.hasPrefix("/") else { return }
         let file = URL(fileURLWithPath: path)
@@ -39,38 +39,51 @@ public struct AgentResponseCapture {
         // an occupied cursor instead of delaying the agent behind a file lock.
         guard let lease = try? ExclusiveFileLock(url: cursorURL.appendingPathExtension("lock"), wait: false) else { return }
         defer { withExtendedLifetime(lease) {} }
-        var cursor = (try? JSONDecoder().decode(Cursor.self, from: Data(contentsOf: cursorURL)))
-            ?? Cursor(fileNumber: number)
-        if cursor.fileNumber != number || cursor.offset > size { cursor = Cursor(fileNumber: number) }
+        let saved = try? JSONDecoder().decode(Cursor.self, from: Data(contentsOf: cursorURL))
+        let isInitialScan = saved == nil || saved?.fileNumber != number || (saved?.offset ?? 0) > size
+        var cursor = saved ?? Cursor(fileNumber: number)
+        if isInitialScan { cursor = Cursor(fileNumber: number) }
         guard cursor.offset < size else { return }
-        // Backfill only the recent tail on first observation or after a large
-        // tool record. Old megabytes must not delay the latest visible reply.
+        // Backfill only the recent tail on first observation. Once established,
+        // stream every unread record so large tool results cannot erase replies.
         let limit = 2 * 1024 * 1024
-        if size - cursor.offset > UInt64(limit) {
+        if isInitialScan, size - cursor.offset > UInt64(limit) {
             cursor.offset = size - UInt64(limit)
             cursor.discardingLine = true
         }
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
         try handle.seek(toOffset: cursor.offset)
-        // Bound each hook's work even for a first scan of a large resumed session.
-        guard let data = try handle.read(upToCount: limit), !data.isEmpty else { return }
-        var consumed = 0
-        for newline in data.indices where data[newline] == 0x0A {
-            let start = consumed
-            consumed = newline + 1
-            if cursor.discardingLine { cursor.discardingLine = false; continue }
-            if let response = Self.response(from: Data(data[start..<newline]), runtime: runtime,
-                                             sessionID: sessionID, offset: cursor.offset + UInt64(start)) {
-                try handoff.response(response, worktree: worktree)
+        var pending = Data()
+        var readOffset = cursor.offset
+        var recordOffset = cursor.offset
+        while readOffset < size {
+            guard let chunk = try handle.read(upToCount: Int(min(65_536, size - readOffset))), !chunk.isEmpty else { break }
+            readOffset += UInt64(chunk.count)
+            var start = chunk.startIndex
+            for newline in chunk.indices where chunk[newline] == 0x0A {
+                if !cursor.discardingLine, pending.count + newline - start <= limit {
+                    pending.append(contentsOf: chunk[start..<newline])
+                    if let response = Self.response(from: pending, runtime: runtime,
+                                                     sessionID: sessionID, offset: recordOffset) {
+                        try handoff.response(response, worktree: worktree)
+                    }
+                }
+                pending.removeAll(keepingCapacity: true)
+                cursor.discardingLine = false
+                start = newline + 1
+                recordOffset = readOffset - UInt64(chunk.endIndex - start)
             }
+            if !cursor.discardingLine {
+                if pending.count + chunk.endIndex - start <= limit {
+                    pending.append(contentsOf: chunk[start...])
+                } else {
+                    pending.removeAll(keepingCapacity: true)
+                    cursor.discardingLine = true
+                }
+            }
+            cursor.offset = cursor.discardingLine ? readOffset : recordOffset
         }
-        if consumed == 0, data.count == limit {
-            // An oversized tool record must not prevent later messages from being read.
-            consumed = data.count
-            cursor.discardingLine = true
-        }
-        cursor.offset += UInt64(consumed)
         try JSONEncoder().encode(cursor).write(to: cursorURL, options: .atomic)
     }
 
