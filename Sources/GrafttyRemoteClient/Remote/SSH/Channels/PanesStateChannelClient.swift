@@ -31,6 +31,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     public var sidebarSnapshot: SidebarSnapshot? { lock.withLock { navigationSnapshot } }
     private var onSnapshot: OnSnapshot
     private var onClosed: OnClosed
+    private var didNotifyClosed = false
     private let onSidebarSnapshot: @Sendable (SidebarSnapshot?) async -> Void
 
     /// Serial inbound queue. The frame relay yields raw frame bytes onto
@@ -109,7 +110,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
             // once it has run, and the drain ends when the stream finishes.
             try await channel.open(
                 onFrame: { [inboundContinuation] in inboundContinuation.yield($0) },
-                onError: { [weak self] _ in self?.close() },
+                onError: { [weak self] _ in self?.failFeed() },
                 onClose: { [self] in handleChildClose() }
             )
         } catch {
@@ -130,7 +131,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                 else {
                     // A stream that cannot be decoded is unhealthy even if
                     // its SSH parent still carries other working channels.
-                    self.close()
+                    self.failFeed()
                     return
                 }
                 switch message {
@@ -149,8 +150,21 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         channel.close()
     }
 
+    /// Protocol failure ends this feed immediately. The peer may never
+    /// acknowledge SSH channel close, so owner notification cannot wait
+    /// for the transport's close future.
+    private func failFeed() {
+        close()
+        handleChildClose()
+    }
+
     private func handleChildClose() {
-        let onClosed = lock.withLock { self.onClosed }
+        let onClosed: OnClosed? = lock.withLock {
+            guard !didNotifyClosed else { return nil }
+            didNotifyClosed = true
+            return self.onClosed
+        }
+        guard let onClosed else { return }
         // Finish the inbound stream so the drain task exits cleanly.
         inboundContinuation.finish()
         Task { await onClosed("channel-closed") }
