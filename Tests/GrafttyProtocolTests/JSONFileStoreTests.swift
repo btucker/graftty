@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import GrafttyProtocol
 import GrafttyTestSupport
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 @Suite("JSONFileStore")
 struct JSONFileStoreTests {
@@ -73,15 +78,79 @@ struct JSONFileStoreTests {
         for text in ["first private key", "replacement private key"] {
             let previous = try? Data(contentsOf: url)
             let bytes = Data(text.utf8)
+            var publications = 0
             try file.write(bytes, beforeReplacing: { staged in
+                publications += 1
                 #expect(staged != url)
                 #expect(try Data(contentsOf: staged) == bytes)
                 #expect((try? Data(contentsOf: url)) == previous)
                 let attributes = try FileManager.default.attributesOfItem(atPath: staged.path)
                 #expect(attributes[.posixPermissions] as? Int == 0o600)
             })
+            #expect(publications == 1)
             #expect(try Data(contentsOf: url) == bytes)
             #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["key.json"])
+        }
+    }
+
+    @Test("@spec PERSIST-5.20: When a JSONFileStore publishes a file, the application shall synchronize its contents and then fsync the containing directory once before returning success, propagating synchronization failures.", arguments: [nil, Int16(0o600)])
+    func publicationSynchronizesDirectory(permissions: Int16?) throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("state.json")
+        let file = JSONFileStore<Record>(fileURL: url, posixPermissions: permissions)
+
+        for text in ["first publication", "replacement publication"] {
+            let bytes = Data(text.utf8)
+            var calls = 0
+            try file.write(bytes, beforeReplacing: { _ in }, synchronizeDirectory: { descriptor in
+                calls += 1
+                var attributes = stat()
+                #expect(fstat(descriptor, &attributes) == 0)
+                #expect(attributes.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR))
+                var expected = stat()
+                #expect(stat(dir.path, &expected) == 0)
+                #expect(attributes.st_ino == expected.st_ino)
+                #expect(attributes.st_dev == expected.st_dev)
+                #expect((try? Data(contentsOf: url)) == bytes)
+                return fsync(descriptor)
+            })
+            #expect(calls == 1)
+        }
+
+        let replacement = Data("published but synchronization failed".utf8)
+        #expect(throws: POSIXError(.EIO)) {
+            try file.write(replacement, beforeReplacing: { _ in }, synchronizeDirectory: { _ in
+                errno = EIO
+                return -1
+            })
+        }
+        #expect(try Data(contentsOf: url) == replacement)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["state.json"])
+    }
+
+    @Test("@spec PERSIST-5.21: When a JSONFileStore writes with a custom POSIX mode, the application shall apply that mode before publication and preserve it at the destination.")
+    func customPermissionsPrecedePublication() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("custom.json")
+        let file = JSONFileStore<Record>(fileURL: url, posixPermissions: 0o640)
+
+        for text in ["first custom mode", "replacement custom mode"] {
+            let bytes = Data(text.utf8)
+            let previous = try? Data(contentsOf: url)
+            var publications = 0
+            try file.write(bytes, beforeReplacing: { staged in
+                publications += 1
+                let stagedBytes = try Data(contentsOf: staged)
+                let attributes = try FileManager.default.attributesOfItem(atPath: staged.path)
+                #expect((try? Data(contentsOf: url)) == previous)
+                #expect(stagedBytes == bytes)
+                #expect(attributes[.posixPermissions] as? Int == 0o640)
+            })
+            #expect(publications == 1)
+            #expect(try Data(contentsOf: url) == bytes)
+            #expect(try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int == 0o640)
         }
     }
 
