@@ -79,12 +79,13 @@ public struct TeamHookRequest: Codable, Sendable, Equatable {
     public var paneSessionName: String?
     public var attentionReason: AgentHookAttentionReason?
     public var stopHookActive: Bool
+    public var turnID: String?
     public var providerSleepActivity: ProviderSleepActivity?
 
     public init(callerWorktree: String, callerAgentID: String? = nil, runtime: TeamHookRuntime,
                 event: TeamHookEvent, sessionID: String?, paneSessionName: String?,
                 attentionReason: AgentHookAttentionReason? = nil, stopHookActive: Bool = false,
-                providerSleepActivity: ProviderSleepActivity? = nil) {
+                providerSleepActivity: ProviderSleepActivity? = nil, turnID: String? = nil) {
         self.callerWorktree = callerWorktree
         self.callerAgentID = callerAgentID
         self.runtime = runtime
@@ -93,6 +94,7 @@ public struct TeamHookRequest: Codable, Sendable, Equatable {
         self.paneSessionName = paneSessionName
         self.attentionReason = attentionReason
         self.stopHookActive = stopHookActive
+        self.turnID = turnID
         self.providerSleepActivity = providerSleepActivity
     }
 
@@ -104,6 +106,7 @@ public struct TeamHookRequest: Codable, Sendable, Equatable {
         case paneSessionName = "pane_session_name"
         case attentionReason = "attention_reason"
         case stopHookActive = "stop_hook_active"
+        case turnID = "turn_id"
         case providerSleepActivity = "provider_sleep_activity"
     }
 
@@ -119,7 +122,8 @@ public struct TeamHookRequest: Codable, Sendable, Equatable {
             attentionReason: try container.decodeIfPresent(AgentHookAttentionReason.self, forKey: .attentionReason),
             stopHookActive: try container.decodeIfPresent(Bool.self, forKey: .stopHookActive) ?? false,
             providerSleepActivity: try container.decodeIfPresent(ProviderSleepActivity.self,
-                                                                 forKey: .providerSleepActivity)
+                                                                 forKey: .providerSleepActivity),
+            turnID: try container.decodeIfPresent(String.self, forKey: .turnID)
         )
     }
 }

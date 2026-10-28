@@ -738,10 +738,14 @@ struct HeadlessHostRuntimeTests {
         #expect(await runtime.handle(.teamSend(callerWorktree: root.path, recipient: peerPath, text: "hello peer", priority: .normal)) == .ok)
         let stored = try TeamInbox(rootDirectory: config.stateDirectory.appendingPathComponent("team-inbox")).messages(teamID: root.path)
         #expect(stored.map(\.body) == ["hello peer"])
-        let recap = AttentionRecap(title: "Host running", completed: "Started panes", next: "Connect viewer", emoji: "🖥️")
+        let recap = AttentionRecap(title: "Host running", completed: "Started panes", next: "Connect viewer", need: "Review host?", emoji: "🖥️")
         #expect(await runtime.handle(.attentionReport(callerWorktree: root.path, callerAgentID: "codex-test", recap: recap)) == .ok)
         _ = await runtime.handle(.teamHook(callerWorktree: root.path, callerAgentID: "codex-test", runtime: .codex,
-            event: .stop, sessionID: "test", paneSessionName: nil, stopHookActive: false))
+            event: .stop, sessionID: "test", paneSessionName: nil, stopHookActive: false, turnID: "turn-1"))
+        let firstStop = runtime.state.worktree(forPath: root.path)?.unseenAgentStop
+        _ = await runtime.handle(.teamHook(callerWorktree: root.path, callerAgentID: "codex-test", runtime: .codex,
+            event: .stop, sessionID: "test", paneSessionName: nil, stopHookActive: false, turnID: "turn-1"))
+        #expect(runtime.state.worktree(forPath: root.path)?.unseenAgentStop == firstStop)
         #expect(runtime.state.worktree(forPath: root.path)?.unseenAgentStop?.recap == recap)
         #expect(runtime.snapshot().first?.sidebar?.unseenAgentStop?.recap == recap)
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.emoji == "🖥️")

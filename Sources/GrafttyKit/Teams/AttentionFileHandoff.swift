@@ -12,7 +12,6 @@ import Foundation
 import GrafttyProtocol
 
 public enum AttentionFileStopAction: Equatable, Sendable {
-    case requestRecap
     case queued
 }
 
@@ -88,6 +87,8 @@ public struct AttentionFileHandoff: Sendable {
             throw AttentionFileHandoffError.invalidRecap
         }
         try ensureDirectory()
+        let lease = try ExclusiveFileLock(url: rootDirectory.appendingPathComponent(".handoff.lock"))
+        defer { withExtendedLifetime(lease) {} }
         let data = try JSONEncoder().encode(recap)
         try data.write(to: reportURL(worktree: worktree, agentID: agentID), options: .atomic)
     }
@@ -108,6 +109,8 @@ public struct AttentionFileHandoff: Sendable {
             throw AttentionFileHandoffError.invalidRecap
         }
         try ensureDirectory()
+        let lease = try ExclusiveFileLock(url: rootDirectory.appendingPathComponent(".handoff.lock"))
+        defer { withExtendedLifetime(lease) {} }
         let receipt = publishedURL(worktree: worktree, agentID: agentID)
         try Data(String(Date().timeIntervalSince1970).utf8).write(to: receipt, options: .atomic)
         do {
@@ -133,6 +136,8 @@ public struct AttentionFileHandoff: Sendable {
         stoppedAt: Date = Date()
     ) throws -> AttentionFileStopAction {
         try ensureDirectory()
+        let lease = try ExclusiveFileLock(url: rootDirectory.appendingPathComponent(".handoff.lock"))
+        defer { withExtendedLifetime(lease) {} }
         let marker = turnID.map { _ in markerURL(worktree: worktree, agentID: agentID, sessionID: sessionID) }
         if let marker, let turnID,
            (try? String(contentsOf: marker, encoding: .utf8)) == turnID {
@@ -156,9 +161,6 @@ public struct AttentionFileHandoff: Sendable {
             guard FileManager.default.fileExists(atPath: url.path) else { return nil }
             return try JSONDecoder().decode(AttentionRecap.self, from: Data(contentsOf: url))
         }
-        // Older clients and cached skills can stage text without an identity.
-        // Keep that report available during the one permitted correction turn.
-        if recap?.emoji == nil, agentID != nil, !stopHookActive { return .requestRecap }
         let event = AttentionFileStopEvent(
             worktree: worktree,
             agentID: agentID,
@@ -184,10 +186,21 @@ public struct AttentionFileHandoff: Sendable {
         runtime: TeamHookRuntime,
         sessionID: String?,
         progressedAt: Date = Date(),
-        userPrompt: String? = nil
+        userPrompt: String? = nil,
+        startsTurn: Bool = false
     ) throws {
         guard !worktree.isEmpty else { throw AttentionFileHandoffError.invalidRecap }
         try ensureDirectory()
+        let lease = try ExclusiveFileLock(url: rootDirectory.appendingPathComponent(".handoff.lock"))
+        defer { withExtendedLifetime(lease) {} }
+        if startsTurn, let agentID {
+            for url in [reportURL(worktree: worktree, agentID: agentID),
+                        publishedURL(worktree: worktree, agentID: agentID)] {
+                if FileManager.default.fileExists(atPath: url.path) {
+                    try FileManager.default.removeItem(at: url)
+                }
+            }
+        }
         let event = AttentionFileProgressEvent(
             worktree: worktree, agentID: agentID, runtime: runtime,
             sessionID: sessionID, progressedAt: progressedAt,

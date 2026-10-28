@@ -105,7 +105,7 @@ public enum ControlRequestCore {
             return await teamHook(callerPath: request.callerWorktree, callerAgentID: request.callerAgentID,
                                   runtime: request.runtime, event: request.event, sessionID: request.sessionID,
                                   paneSessionName: request.paneSessionName, attentionReason: request.attentionReason,
-                                  stopHookActive: request.stopHookActive, platform: platform)
+                                  stopHookActive: request.stopHookActive, turnID: request.turnID, platform: platform)
         case .capabilities:
             // ATTN-2.27
             let supported = platform.controlCapabilities
@@ -273,7 +273,7 @@ public enum ControlRequestCore {
 
     private static func teamHook(callerPath: String, callerAgentID: String?, runtime: TeamHookRuntime,
                                  event: TeamHookEvent, sessionID: String?, paneSessionName: String?,
-                                 attentionReason: AgentHookAttentionReason?, stopHookActive: Bool,
+                                 attentionReason: AgentHookAttentionReason?, stopHookActive: Bool, turnID: String?,
                                  platform: any ControlPlatform) async -> ResponseMessage {
         recordHookLiveness(callerPath: callerPath, runtime: runtime, event: event, sessionID: sessionID ?? callerAgentID,
                            paneSessionName: paneSessionName, attentionReason: attentionReason, platform: platform)
@@ -281,9 +281,9 @@ public enum ControlRequestCore {
         switch action {
         case .recordStoppedTurn:
             switch platform.attentionRecaps.stop(worktree: callerPath, agentID: callerAgentID,
-                                                 stopHookActive: stopHookActive) {
-            case .requestRecap:
-                return .teamHookOutput(TeamHookRenderer.requestRecap())
+                                                 stopHookActive: stopHookActive, turnID: turnID) {
+            case .alreadyRecorded:
+                return .teamHookOutput("{}")
             case .record(let recap):
                 recordStoppedTurn(callerPath: callerPath, runtime: runtime, callerAgentID: callerAgentID,
                                   sessionID: sessionID, paneSessionName: paneSessionName, recap: recap,
@@ -297,6 +297,9 @@ public enum ControlRequestCore {
                 platform.postAgentNotification(notification, worktreePath: callerPath)
             }
         case .clear:
+            if event == .sessionStart || event == .userPromptSubmit {
+                platform.attentionRecaps.beginTurn(worktree: callerPath, agentID: callerAgentID)
+            }
             platform.state.clearAgentAttention(callerPath: callerPath, callerAgentID: callerAgentID,
                                                   runtime: runtime, sessionID: sessionID)
         case .none:
@@ -308,10 +311,11 @@ public enum ControlRequestCore {
             do { try platform.stateDidChange() } catch { return .error(String(describing: error)) }
         }
 
-        // Attention-only hooks must return quickly. They carry no inbox or
-        // instruction data.
+        // These hooks skip inbox scans. The turn-start reminder is constant
+        // context accepted by both providers before the ordinary turn.
         if isAttentionOnlyTeamHook(runtime: runtime, event: event) {
-            return .teamHookOutput("{}")
+            return .teamHookOutput(event == .userPromptSubmit && platform.state.worktree(forPath: callerPath) != nil
+                ? (try? TeamHookRenderer.userPromptSubmit()) ?? "{}" : "{}")
         }
 
         do {

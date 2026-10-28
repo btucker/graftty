@@ -13,18 +13,13 @@ struct AttentionRecapCoordinatorTests {
         need: nil, emoji: "🧪"
     )
 
-    @Test("Socket recap without emoji requests one correction and preserves the original if uncorrected")
-    func legacyRecapRequestsEmojiOnce() {
+    @Test("Socket recap without emoji is preserved without a correction turn")
+    func legacyRecapStopsQuietly() {
         let coordinator = AttentionRecapCoordinator()
         var legacy = recap
         legacy.emoji = nil
         coordinator.report(legacy, worktree: "/repo/one", agentID: "codex-1")
-        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .requestRecap)
-        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: true) == .record(legacy))
-        coordinator.report(legacy, worktree: "/repo/one", agentID: "codex-1")
-        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .requestRecap)
-        coordinator.report(recap, worktree: "/repo/one", agentID: "codex-1")
-        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: true) == .record(recap))
+        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .record(legacy))
     }
 
     @Test("@spec AGENT-3.9: When an agent reports a recap with a task-specific emoji between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.")
@@ -35,11 +30,21 @@ struct AttentionRecapCoordinatorTests {
         #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: true) == .record(nil))
     }
 
-    @Test("@spec AGENT-3.10: When an agent stops without reporting a recap, the application shall request one continuation once, then show a generic stopped card if the continued turn still has no report.")
-    func missingRecapRequestsOnce() {
+    @Test("@spec AGENT-3.10: When an agent stops without reporting a recap, the application shall show a generic stopped card without requesting a continuation.")
+    func missingRecapStopsQuietly() {
         let coordinator = AttentionRecapCoordinator()
-        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .requestRecap)
+        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .record(nil))
         #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: true) == .record(nil))
+    }
+
+    @Test("Starting a new turn discards only that agent's pending socket recap")
+    func newTurnDoesNotReuseEarlierReport() {
+        let coordinator = AttentionRecapCoordinator()
+        coordinator.report(recap, worktree: "/repo/one", agentID: "codex-1")
+        coordinator.report(recap, worktree: "/repo/one", agentID: "codex-2")
+        coordinator.beginTurn(worktree: "/repo/one", agentID: "codex-1")
+        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .record(nil))
+        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-2", stopHookActive: false) == .record(recap))
     }
 
     @Test("@spec AGENT-3.11: While several agents share a worktree, the application shall accept only a recap from the agent whose stopped turn is being handled.")

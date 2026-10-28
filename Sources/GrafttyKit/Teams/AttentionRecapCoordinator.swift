@@ -2,7 +2,7 @@ import Foundation
 import GrafttyProtocol
 
 public enum AttentionRecapStopAction: Equatable {
-    case requestRecap
+    case alreadyRecorded
     case record(AttentionRecap?)
 }
 
@@ -17,6 +17,7 @@ public final class AttentionRecapCoordinator {
     }
 
     private var pending: [Key: AttentionRecap] = [:]
+    private var lastRecordedTurn: [Key: String] = [:]
 
     public init() {}
 
@@ -24,14 +25,22 @@ public final class AttentionRecapCoordinator {
         pending[Key(worktree: worktree, agentID: agentID)] = recap
     }
 
-    public func stop(worktree: String, agentID: String?, stopHookActive: Bool) -> AttentionRecapStopAction {
+    public func beginTurn(worktree: String, agentID: String?) {
+        guard let agentID else { return }
+        pending.removeValue(forKey: Key(worktree: worktree, agentID: agentID))
+    }
+
+    public func stop(worktree: String, agentID: String?, stopHookActive: Bool, turnID: String? = nil) -> AttentionRecapStopAction {
         guard let agentID, !agentID.isEmpty else { return .record(nil) }
         let key = Key(worktree: worktree, agentID: agentID)
+        if let turnID {
+            if lastRecordedTurn[key] == turnID { return .alreadyRecorded }
+            lastRecordedTurn[key] = turnID
+        }
         if let recap = pending[key] {
-            if recap.emoji == nil, !stopHookActive { return .requestRecap }
             pending.removeValue(forKey: key)
             return .record(recap)
         }
-        return stopHookActive ? .record(nil) : .requestRecap
+        return .record(nil)
     }
 }

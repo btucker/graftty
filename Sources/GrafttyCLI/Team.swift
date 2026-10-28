@@ -239,17 +239,19 @@ struct TeamHook: ParsableCommand {
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
+        func attentionAgentID() -> String? {
+            AttentionReportIdentity.currentAgentID(worktreePath: worktreePath, runtime: runtime, sessionID: resolvedSessionID)
+                ?? resolvedSessionID.map { TeamAgentIdentity(runtime: runtime, nativeSessionID: $0).rawValue }
+        }
         func stageAttentionProgress() {
             try? AttentionFileHandoff().progress(
                 worktree: worktreePath,
-                agentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
+                agentID: attentionAgentID(),
                 runtime: runtime,
                 sessionID: resolvedSessionID,
-                userPrompt: event == .userPromptSubmit ? WorktreeUserPrompt.text(from: stdinPayload) : nil
+                userPrompt: event == .userPromptSubmit ? WorktreeUserPrompt.text(from: stdinPayload) : nil,
+                startsTurn: event == .sessionStart || event == .userPromptSubmit
             )
-        }
-        if event == .sessionStart || event == .userPromptSubmit {
-            stageAttentionProgress()
         }
         if runtime == .claude,
            event == .sessionStart || event == .postToolUse || event == .stop,
@@ -271,6 +273,10 @@ struct TeamHook: ParsableCommand {
                 paneSessionName: paneSessionName
             )
         }
+        if event == .sessionStart || event == .userPromptSubmit {
+            stageAttentionProgress()
+        }
+        let stopTurnID = event == .stop ? AgentStopHookFilter.turnID(stdinJSON: stdinPayload) : nil
         let providerSleepActivity: ProviderSleepActivity = runtime == .claude
             ? .claudeHook(payload: stdinPayload, event: event.camelCaseKey)
             : .unknown
@@ -284,31 +290,33 @@ struct TeamHook: ParsableCommand {
             activity: providerSleepActivity
         ))
         if event == .stop,
-           let action = try? AttentionFileHandoff().stop(
+           let _ = try? AttentionFileHandoff().stop(
                 worktree: worktreePath,
-                agentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath)
-                    ?? resolvedSessionID.map { TeamAgentIdentity(runtime: runtime, nativeSessionID: $0).rawValue },
+                agentID: attentionAgentID(),
                 runtime: runtime,
                 sessionID: resolvedSessionID,
                 paneSessionName: paneSessionName,
                 stopHookActive: stopHookActive,
-                turnID: stdinPayload["turn_id"] as? String
+                turnID: stopTurnID
            ) {
-            print(action == .requestRecap ? TeamHookRenderer.requestRecap() : "{}")
+            print("{}")
             return
         }
         do {
             let response = try SocketClient.sendExpectingResponse(
                 .teamHook(
                     callerWorktree: worktreePath,
-                    callerAgentID: TeamMessageInput.currentAgentID(worktreePath: worktreePath),
+                    callerAgentID: event == .stop
+                        ? attentionAgentID()
+                        : TeamMessageInput.currentAgentID(worktreePath: worktreePath),
                     runtime: runtime,
                     event: event,
                     sessionID: resolvedSessionID,
                     paneSessionName: paneSessionName,
                     attentionReason: attentionReason,
                     stopHookActive: stopHookActive,
-                    providerSleepActivity: providerSleepActivity
+                    providerSleepActivity: providerSleepActivity,
+                    turnID: stopTurnID
                 )
             )
             switch response {
@@ -340,12 +348,10 @@ struct TeamHook: ParsableCommand {
         event: TeamHookEvent,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String {
-        guard event == .sessionStart,
-              environment["GRAFTTY_SOCK"]?.isEmpty == false,
-              let output = try? TeamHookRenderer.sessionStart(runtime: runtime) else {
-            return "{}"
-        }
-        return output
+        guard environment["GRAFTTY_SOCK"]?.isEmpty == false else { return "{}" }
+        if event == .userPromptSubmit { return (try? TeamHookRenderer.userPromptSubmit()) ?? "{}" }
+        guard event == .sessionStart else { return "{}" }
+        return (try? TeamHookRenderer.sessionStart(runtime: runtime)) ?? "{}"
     }
 
     private func updateClaudeNativePresence(
@@ -1099,7 +1105,13 @@ extension TeamPresenceResolution {
 
 private enum TeamMessageInput {
     static func currentAgentID(worktreePath: String) -> String? {
-        AttentionReportIdentity.currentAgentID(worktreePath: worktreePath)
+        let environment = ProcessInfo.processInfo.environment
+        let records = (try? TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).listAll()) ?? []
+        return TeamCallerAgentIdentityResolver.resolve(
+            explicitAgentID: environment["GRAFTTY_AGENT_ID"], worktree: worktreePath,
+            paneSessionName: TeamRegisterPaneResolver.paneSessionName(env: environment),
+            records: records, isReachable: TeamAgentReachability.isReachable
+        )
     }
 
     static func resolve(text: String?, stdin: Bool) throws -> String {
