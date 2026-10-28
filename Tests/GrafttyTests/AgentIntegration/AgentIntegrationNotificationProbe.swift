@@ -56,6 +56,9 @@ final class AgentIntegrationNotificationProbe {
         }
         try handoff.consumeActivities(acceptingWorktree: { self.runtime.state.worktree(forPath: $0) != nil }) { activity in
             switch activity {
+            case .response(let event):
+                guard let index = self.runtime.state.indices(forWorktreePath: event.worktree) else { return }
+                self.runtime.state.repos[index.repo].worktrees[index.worktree].recordAgentResponse(event.response)
             case .stop(let event):
                 events.append(event)
                 record(event)

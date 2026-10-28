@@ -20,11 +20,11 @@ struct WorktreeHistoryRevealTests {
             revealInTerminal: { revealed.append($0); return found }))
         defer { host.close() }
         let collapsed = host.height
-        try await host.click(fromBottom: 28)
+        try await host.click(fromBottom: 45)
         #expect(revealed == [timeline.events[0].id])
         #expect(host.height > collapsed + 8, "A message missing from scrollback must show a note")
         found = true
-        try await host.click(fromBottom: host.height - collapsed + 28)
+        try await host.click(fromBottom: host.height - collapsed + 45)
         #expect(revealed.count == 2)
         #expect(abs(host.height - collapsed) < 1, "A found message must clear the note")
     }
@@ -39,10 +39,10 @@ struct WorktreeHistoryRevealTests {
             gists: PeerMessageGistProvider { _ in nil }, revealInTerminal: { revealed.append($0); return true }))
         defer { host.close() }
         let collapsed = host.height
-        try await host.click(fromBottom: 46)
+        try await host.click(fromBottom: 53)
         #expect(revealed.isEmpty, "Tapping a peer message expands it without scrolling the terminal")
         #expect(host.height > collapsed + 40)
-        try await host.click(fromBottom: 46)
+        try await host.click(fromBottom: 53)
         #expect(revealed == [timeline.events[0].id])
     }
 

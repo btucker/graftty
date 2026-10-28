@@ -4,6 +4,20 @@ import Testing
 @testable import GrafttyKit
 
 struct WorktreeHistoryPersistenceTests {
+    @Test func agentResponsesSurviveAcknowledgementAndPairedDeviceProjection() throws {
+        var worktree = WorktreeEntry(path: "/repo/task", branch: "task")
+        let response = WorktreeHistory.AgentResponse(id: "response", text: "Implementing the quiet rail on both platforms.",
+                                                    at: .now, runtime: "codex")
+        worktree.recordAgentResponse(response)
+        worktree.recordAgentResponse(response)
+        worktree.acknowledgeAttention()
+        let restored = try JSONDecoder().decode(WorktreeEntry.self, from: JSONEncoder().encode(worktree))
+        #expect(restored.history?.responses == [response])
+        let metadata = SidebarHostNavigation.metadata(for: restored, projectID: "repo", folders: [])
+        let wire = try JSONDecoder().decode(SidebarWorktreeMetadata.self, from: JSONEncoder().encode(metadata))
+        #expect(wire.history?.responses == [response])
+    }
+
     @Test func humanInputPreventsMergingAcrossTheReply() {
         let date = Date(timeIntervalSince1970: 100)
         var worktree = WorktreeEntry(path: "/task", branch: "task")

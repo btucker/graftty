@@ -10,7 +10,17 @@ import Glibc
 /// formatting exactly as the store is configured, so a migrated store keeps
 /// the byte format its earlier releases wrote.
 ///
+/// @spec PERSIST-5.20
+/// When a JSONFileStore publishes a file, the application shall synchronize its
+/// contents and then fsync the containing directory once before returning
+/// success, propagating synchronization failures.
+///
 /// One `Codable` value persisted as JSON at a fixed file URL.
+///
+/// Writes provide fsync-level durability for the file and its immediate parent
+/// directory on Darwin and Linux filesystems that support directory fsync.
+/// Newly created ancestor directories are not synchronized. Darwin drive-cache
+/// flushing via F_FULLFSYNC is outside this guarantee.
 ///
 /// Every policy that decides the on-disk bytes or failure behaviour — date
 /// encoding, output formatting, parent-directory creation, file permissions,
@@ -133,22 +143,48 @@ public struct JSONFileStore<Value: Codable>: Sendable {
 
     /// Atomically replaces the file with already-encoded bytes, for callers
     /// that validate the encoding (e.g. a size cap) before writing it.
+    /// A synchronization failure after publication throws even though the new
+    /// file is already visible at the destination.
     public func write(_ data: Data) throws {
         try write(data, beforeReplacing: { _ in })
     }
 
-    func write(_ data: Data, beforeReplacing: (URL) throws -> Void) throws {
+    func write(
+        _ data: Data,
+        beforeReplacing: (URL) throws -> Void,
+        synchronizeDirectory: (Int32) -> Int32 = { fsync($0) }
+    ) throws {
+        let directoryURL = fileURL.deletingLastPathComponent()
         if createsDirectory {
             try FileManager.default.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
+                at: directoryURL,
                 withIntermediateDirectories: true
             )
         }
-        guard let posixPermissions else {
+        if let posixPermissions {
+            try writeRestricted(data, permissions: posixPermissions, beforeReplacing: beforeReplacing)
+        } else {
+            // Foundation synchronizes the file contents during its atomic write.
             try data.write(to: fileURL, options: .atomic)
-            return
         }
 
+        // File synchronization alone does not persist rename's directory entry.
+        // Publish first, then synchronize this directory exactly once.
+        let directoryDescriptor = open(directoryURL.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard directoryDescriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { close(directoryDescriptor) }
+        guard synchronizeDirectory(directoryDescriptor) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
+    private func writeRestricted(
+        _ data: Data,
+        permissions posixPermissions: Int16,
+        beforeReplacing: (URL) throws -> Void
+    ) throws {
         // mkstemp creates the file as 0600 before any secret bytes are written.
         // Keep it beside the destination so rename is an atomic replacement.
         var template = Array(fileURL.deletingLastPathComponent()

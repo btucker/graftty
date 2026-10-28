@@ -86,5 +86,19 @@ struct IPadAppStateTests {
 
         #expect(state.focusRequestCount == 1)
     }
+
+    @Test("@spec IPAD-1.30: When IPadAppState is constructed with an injected UserDefaults suite, the application shall read and write the nested sidebar navigation state through that same suite rather than the standard defaults.")
+    func sidebarNavigationUsesInjectedDefaults() {
+        let defaults = freshDefaults()
+        defaults.set(240.0, forKey: "sidebar.mobile.railWidth")
+        defaults.set(false, forKey: "sidebar.mobile.collapsed")
+
+        let state = IPadAppState(defaults: defaults)
+        #expect(state.sidebarNavigation.railExpandedWidth == 240)
+        #expect(state.sidebarNavigation.railCollapsed == false)
+
+        state.sidebarNavigation.railExpandedWidth = 150
+        #expect(defaults.double(forKey: "sidebar.mobile.railWidth") == 150)
+    }
 }
 #endif

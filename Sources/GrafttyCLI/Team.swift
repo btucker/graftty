@@ -232,6 +232,10 @@ struct TeamHook: ParsableCommand {
         let resolvedSessionID = sessionID
             ?? stdinSessionID
             ?? ProcessInfo.processInfo.environment["GRAFTTY_AGENT_SESSION_ID"]
+        // Capture commentary at tool boundaries as well as the final Stop. This
+        // file handoff works even when the provider cannot reach the app socket.
+        try? AgentResponseCapture().capture(payload: stdinPayload, runtime: runtime,
+            worktree: worktreePath, sessionID: resolvedSessionID)
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )

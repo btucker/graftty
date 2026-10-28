@@ -1122,6 +1122,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-5.19** If an observable list encounters a non-decoding read error, then the application shall leave it unloaded and block writes until a later load succeeds so mutations retain the persisted rows.
 
+**PERSIST-5.20** When a JSONFileStore publishes a file, the application shall synchronize its contents and then fsync the containing directory once before returning success, propagating synchronization failures.
+
+**PERSIST-5.21** When a JSONFileStore writes with a custom POSIX mode, the application shall apply that mode before publication and preserve it at the destination.
+
 ## PWD — Manual Pane Routing
 
 ### PWD-1.x — User-Initiated Move
@@ -2505,6 +2509,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-1.28** When the regular-width mobile sidebar is collapsed or has no host content, the application shall preserve the remembered expanded sidebar width through the persistence debounce.
 
 **IPAD-1.29** While a measured regular-width mobile sidebar width waits in the persistence debounce, the application shall keep the remembered width until the debounce elapses.
+
+**IPAD-1.30** When IPadAppState is constructed with an injected UserDefaults suite, the application shall read and write the nested sidebar navigation state through that same suite rather than the standard defaults.
 
 ### IPAD-2.x — Multi-Pane Detail View
 
@@ -4570,7 +4576,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-19.x
 
-**CONTEXT-19** When worktree history displays human input and peer messages on Mac or mobile, the application shall label a run of human input once as You with each input verbatim, and show each run of peer messages from one sender as one card with the sender link, a message count, the last two messages as one-line gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.
+**CONTEXT-19** When worktree history displays human input and peer messages on Mac or mobile, the application shall align sender and time beside a quiet timeline rail with message text on one reading edge, label a run of human input once as You with each input verbatim, and show each peer run without an enclosing card, with the sender link, a message count for multiple messages, the last two multiline gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.
 
 ### CONTEXT-20.x
 
@@ -4598,7 +4604,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-26.x
 
-**CONTEXT-26** When Context history shows a peer message, the application shall show text that fits one line verbatim without running a model, otherwise show an on-device Apple Intelligence summary marked as generated when available, and otherwise show the truncated first sentence or line unmarked, generating each text at most once per process.
+**CONTEXT-26** When Context history shows a peer message or visible agent response, the application shall show single-line text of at most 80 characters verbatim without running a model, otherwise show an on-device Apple Intelligence summary marked as generated when available, and otherwise show the first sentence or line unmarked, limiting summaries and fallbacks to 240 characters while allowing them to wrap, generating each text at most once per process.
 
 ### CONTEXT-27.x
 
@@ -4630,11 +4636,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-34.x
 
-**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages, marks closer than 3 points merged into one, and a box showing the current viewport, and shall hide the card while no message is located.
+**CONTEXT-34** While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks closer than 3 points merged into one, and a box showing the current viewport, and shall hide the card while no message is located.
 
 ### CONTEXT-35.x
 
-**CONTEXT-35** When the user hovers over the scrollback map on Mac, or drags along it on Mac or mobile, the application shall show a label to the left of the strip with the nearest mark's message, the human input verbatim or the peer message's gist with a sparkle when generated, and while dragging shall scroll the terminal live to center the row under the pointer or finger; when the user clicks or taps a mark, the application shall scroll that mark's row to the top of the terminal.
+**CONTEXT-35** When the user hovers over the scrollback map card including its padding on Mac or with a pointer on mobile, or drags along it on Mac or mobile, the application shall show a label to the left of the strip with the nearest mark's message, the human input verbatim or the peer message's gist with a sparkle when generated, and while dragging shall scroll the terminal live to center the row under the pointer or finger; when the user clicks or taps a mark, the application shall scroll that mark's row to the top of the terminal.
 
 ### CONTEXT-36.x
 
@@ -4651,6 +4657,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-39.x
 
 **CONTEXT-39** The scrollback map shall be one adjustable accessibility element labeled Scrollback map, whose value names the current message and its position, and whose increment and decrement move to the next newer or older message and scroll the terminal there.
+
+### CONTEXT-40.x
+
+**CONTEXT-40** When a provider emits a visible agent response, the application shall retain it once in worktree history independently of attention, order it between human inputs and other events by its original time, and show its wrapping summary with the original text available on expansion on Mac and mobile.
+
+### CONTEXT-41.x
+
+**CONTEXT-41** When Codex or Claude hooks expose a session transcript, the application shall capture visible assistant responses incrementally through the durable handoff, exclude reasoning, tool output and subagent responses, tolerate incomplete records, and replay responses without duplicating history or clearing attention.
 
 ## MEM — MEM
 
