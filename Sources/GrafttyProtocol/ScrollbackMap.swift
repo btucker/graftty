@@ -50,7 +50,7 @@ public struct ScrollbackMap: Sendable, Equatable {
         timeline.events.compactMap { event in
             switch event.kind {
             case .user: Message(eventID: event.id, kind: .input, text: event.completed)
-            case .agentMessage: Message(eventID: event.id, kind: .peer, text: event.completed)
+            case .agentMessage, .agentResponse: Message(eventID: event.id, kind: .peer, text: event.completed)
             case .creation, .checkpoint: nil
             }
         }

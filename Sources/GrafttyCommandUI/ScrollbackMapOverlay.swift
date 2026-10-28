@@ -26,9 +26,9 @@ public struct ScrollbackMapEntry: Sendable, Equatable {
             switch event.kind {
             case .user:
                 entries[event.id] = ScrollbackMapEntry(kind: .input, text: event.completed, timestamp: event.timestamp, sender: nil)
-            case .agentMessage:
+            case .agentMessage, .agentResponse:
                 entries[event.id] = ScrollbackMapEntry(kind: .peer, text: event.completed, timestamp: event.timestamp,
-                                                       sender: event.sourceWorktreeName)
+                                                       sender: event.sourceWorktreeName ?? (event.kind == .agentResponse ? event.title : nil))
             case .creation, .checkpoint: break
             }
         }
@@ -56,6 +56,11 @@ public struct ScrollbackMapLayout: Equatable {
     public static let tapTolerance: CGFloat = 6
 
     public static var stripHeight: CGFloat { cardSize.height - stripInset.top - stripInset.bottom }
+
+    /// Input covers the whole card; drawing coordinates begin inside its padding.
+    public static func stripY(forCardY y: CGFloat) -> CGFloat {
+        min(stripHeight, max(0, y - stripInset.top))
+    }
 
     public struct Cluster: Equatable, Identifiable {
         public var id: String { marks[0].eventID }
@@ -155,8 +160,7 @@ public struct ScrollbackMapLayout: Equatable {
 }
 
 /// @spec CONTEXT-34
-/// A small floating card at a terminal pane's top-right that maps where human input
-/// and peer messages sit in the whole scrollback, with the current viewport boxed.
+/// While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks closer than 3 points merged into one, and a box showing the current viewport, and shall hide the card while no message is located.
 public struct ScrollbackMapOverlay: View {
     let map: ScrollbackMap
     let viewport: ScrollbackViewport
@@ -189,12 +193,47 @@ public struct ScrollbackMapOverlay: View {
 
     public var body: some View {
         if !map.marks.isEmpty {
-            card
-                .overlay(alignment: .topLeading) { label }
-                .opacity(ScrollbackMapLayout.opacity(isActive: isActive))
-                .animation(ScrollbackMapLayout.fadeAnimation(reduceMotion: reduceMotion), value: isActive)
+            inputCard
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Scrollback map")
+                .accessibilityValue(accessibilityValue)
+                .accessibilityHint("Swipe up or down to move between messages in the terminal")
+                .accessibilityAdjustableAction { direction in
+                    let forward = direction == .increment
+                    guard let mark = ScrollbackMapLayout.adjacentMark(in: map, from: accessibilityMark, forward: forward) else { return }
+                    accessibilityMark = mark.eventID
+                    scroll(mark.row)
+                }
+                .accessibilityIdentifier("terminal.scrollbackMap")
                 .task(id: focusedMark?.eventID) { await loadGist() }
         }
+    }
+
+    private var visualCard: some View {
+        card.overlay(alignment: .topLeading) { label }
+            .opacity(ScrollbackMapLayout.opacity(isActive: isActive))
+            .animation(ScrollbackMapLayout.fadeAnimation(reduceMotion: reduceMotion), value: isActive)
+    }
+
+    private var inputCard: some View {
+        #if os(macOS)
+        ScrollbackMapPointerInput(content: AnyView(visualCard),
+            onHover: { hoverY = $0.map(ScrollbackMapLayout.stripY(forCardY:)) },
+            onScrub: { scrubY = $0.map(ScrollbackMapLayout.stripY(forCardY:)) },
+            onDrag: { scroll(layout.scrubTopRow(atY: ScrollbackMapLayout.stripY(forCardY: $0), viewportLength: viewport.length)) },
+            onClick: { click(atY: ScrollbackMapLayout.stripY(forCardY: $0)) }
+        )
+        .frame(width: ScrollbackMapLayout.cardSize.width, height: ScrollbackMapLayout.cardSize.height)
+        #else
+        visualCard.contentShape(Rectangle())
+            .gesture(scrubGesture)
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let point): hoverY = ScrollbackMapLayout.stripY(forCardY: point.y)
+                case .ended: hoverY = nil
+                }
+            }
+        #endif
     }
 
     private var card: some View {
@@ -218,51 +257,32 @@ public struct ScrollbackMapOverlay: View {
         }
         .frame(width: ScrollbackMapLayout.cardSize.width - ScrollbackMapLayout.stripInset.leading - ScrollbackMapLayout.stripInset.trailing,
                height: layout.height, alignment: .top)
-        .contentShape(Rectangle())
-        .gesture(scrubGesture)
-        #if os(macOS)
-        .onContinuousHover { phase in
-            switch phase {
-            case .active(let point): hoverY = point.y
-            case .ended: hoverY = nil
-            }
-        }
-        #endif
         .padding(ScrollbackMapLayout.stripInset)
         .frame(width: ScrollbackMapLayout.cardSize.width, height: ScrollbackMapLayout.cardSize.height)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Scrollback map")
-        .accessibilityValue(accessibilityValue)
-        .accessibilityHint("Swipe up or down to move between messages in the terminal")
-        .accessibilityAdjustableAction { direction in
-            let forward = direction == .increment
-            guard let mark = ScrollbackMapLayout.adjacentMark(in: map, from: accessibilityMark, forward: forward) else { return }
-            accessibilityMark = mark.eventID
-            scroll(mark.row)
-        }
-        .accessibilityIdentifier("terminal.scrollbackMap")
     }
 
     private var scrubGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                scrubY = value.location.y
+                let y = ScrollbackMapLayout.stripY(forCardY: value.location.y)
+                scrubY = y
                 // A press that has not moved yet may be a click on a mark.
                 guard abs(value.translation.height) >= 2 || abs(value.translation.width) >= 2 else { return }
-                scroll(layout.scrubTopRow(atY: value.location.y, viewportLength: viewport.length))
+                scroll(layout.scrubTopRow(atY: y, viewportLength: viewport.length))
             }
             .onEnded { value in
                 defer { scrubY = nil }
                 guard abs(value.translation.height) < 2, abs(value.translation.width) < 2 else { return }
-                if let mark = layout.tapTarget(in: map, atY: value.location.y) {
-                    scroll(mark.row)
-                } else {
-                    scroll(layout.scrubTopRow(atY: value.location.y, viewportLength: viewport.length))
-                }
+                click(atY: ScrollbackMapLayout.stripY(forCardY: value.location.y))
             }
+    }
+
+    private func click(atY y: CGFloat) {
+        scroll(layout.tapTarget(in: map, atY: y)?.row
+            ?? layout.scrubTopRow(atY: y, viewportLength: viewport.length))
     }
 
     @ViewBuilder

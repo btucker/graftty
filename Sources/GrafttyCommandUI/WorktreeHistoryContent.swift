@@ -1,7 +1,7 @@
 import GrafttyProtocol
 import SwiftUI
 
-/// The history stays open; peer runs become sender cards and older runs of agent work can fold.
+/// A quiet rail aligns all messages; older runs of agent work can fold.
 struct WorktreeHistoryContent: View {
     let timeline: WorktreeTimeline
     let secondary: Color
@@ -47,8 +47,9 @@ struct WorktreeHistoryContent: View {
                     switch row.kind {
                     case .folded: group(row)
                     case .event: eventRow(row.events[0])
-                    case .inputs: railed(row.events) { inputs(row) }
-                    case .peerMessages: railed(row.events) { peerCard(row) }
+                    case .inputs: railed(row.events, title: "You") { inputs(row) }
+                    case .peerMessages:
+                        railed(row.events, title: row.events[0].sourceWorktreeName ?? row.events[0].title) { peerMessages(row) }
                     }
                 }
             }
@@ -91,36 +92,41 @@ struct WorktreeHistoryContent: View {
         }
     }
 
-    private func railed<Content: View>(_ events: [WorktreeTimeline.Event], @ViewBuilder content: () -> Content) -> some View {
+    private func railed<Content: View>(_ events: [WorktreeTimeline.Event], title: String? = nil,
+                                      @ViewBuilder content: () -> Content) -> some View {
         let first = events[0]
         let last = events.last?.id == timeline.events.last?.id
-        return HStack(alignment: .top, spacing: 12) {
+        return HStack(alignment: .top, spacing: 10) {
             VStack(spacing: 0) {
-                Circle().fill(color(for: first)).frame(width: 7, height: 7).padding(.top, 6)
-                if !last { Rectangle().fill(secondary.opacity(0.3)).frame(width: 1) }
+                Circle().fill(color(for: first)).frame(width: 6, height: 6).padding(.top, 7)
+                if !last { Rectangle().fill(secondary.opacity(0.2)).frame(width: 1) }
             }
             .frame(width: 8)
             VStack(alignment: .leading, spacing: 6) {
-                if first.timestamp != nil || last {
-                    HStack(spacing: 6) {
-                        if let timestamp = first.timestamp { Text(Self.time(timestamp)) }
-                        if last { Text("Latest") }
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    sender(first, title: title ?? first.title)
+                    Spacer(minLength: 0)
+                    if let timestamp = first.timestamp {
+                        Text(Self.time(timestamp)).font(.caption2).foregroundStyle(secondary).fixedSize()
                     }
-                    .font(.caption2).foregroundStyle(secondary)
                 }
                 content()
+                if last { Text("Latest").font(.caption2).foregroundStyle(secondary) }
             }
             .padding(.bottom, last ? 0 : 22)
         }
         .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: first.kind == .agentMessage || (first.sourceWorktreePath != nil && openWorktree != nil) ? .contain : .combine)
+        .accessibilityElement(children: first.kind == .agentMessage || first.kind == .agentResponse || (first.sourceWorktreePath != nil && openWorktree != nil) ? .contain : .combine)
         .accessibilityIdentifier("worktree.context.history.event.\(first.id)")
     }
 
     private func eventRow(_ event: WorktreeTimeline.Event) -> some View {
         railed([event]) {
-            sender(event, title: event.title)
-            if !event.completed.isEmpty {
+            if event.kind == .agentResponse {
+                TimelineMessageLine(event: event, secondary: secondary, gists: gists,
+                    reveal: revealInTerminal == nil ? nil : { reveal(event.id) })
+                missingNote(event.id)
+            } else if !event.completed.isEmpty {
                 Text(event.completed).font(.callout).lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -133,13 +139,10 @@ struct WorktreeHistoryContent: View {
 
     private func inputs(_ row: WorktreeTimeline.Row) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("You").font(.caption2).foregroundStyle(Color.orange)
             ForEach(row.entries) { entry in
                 let line = Text(entry.event.completed).font(.callout).lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .overlay(alignment: .leading) { Rectangle().fill(Color.orange.opacity(0.6)).frame(width: 2) }
                 if revealInTerminal != nil {
                     Button { reveal(entry.event.id) } label: { line.contentShape(Rectangle()) }
                         .buttonStyle(.plain)
@@ -154,14 +157,12 @@ struct WorktreeHistoryContent: View {
         }
     }
 
-    private func peerCard(_ row: WorktreeTimeline.Row) -> some View {
+    private func peerMessages(_ row: WorktreeTimeline.Row) -> some View {
         let expanded = expandedGroups.contains(row.id)
         let visible = expanded ? row.entries.count : min(row.entries.count, 2)
-        return VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "bubble.left.and.bubble.right").font(.caption)
-                sender(row.events[0], title: row.events[0].sourceWorktreeName ?? row.events[0].title)
-                Text(row.events.count == 1 ? "1 message" : "\(row.events.count) messages")
+        return VStack(alignment: .leading, spacing: 8) {
+            if row.events.count > 1 {
+                Text("\(row.events.count) messages")
                     .font(.caption2).foregroundStyle(secondary).fixedSize()
             }
             if row.entries.count > 2 {
@@ -173,16 +174,14 @@ struct WorktreeHistoryContent: View {
                     .accessibilityIdentifier("worktree.context.history.earlier.\(row.id)")
             }
             ForEach(row.entries.suffix(visible)) { entry in
-                PeerMessageLine(entry: entry, secondary: secondary, gists: gists,
+                TimelineMessageLine(event: entry.event, count: entry.count, secondary: secondary, gists: gists,
                     reveal: revealInTerminal == nil ? nil : { reveal(entry.event.id) })
                 missingNote(entry.event.id)
             }
         }
-        .padding(10)
-        .background(secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    /// The messages behind the earlier control: the card's message count minus the
+    /// The messages behind the earlier control: the run's message count minus the
     /// messages its visible lines represent, repeats included.
     static func hiddenMessageCount(_ row: WorktreeTimeline.Row, visibleEntries: Int) -> Int {
         row.events.count - row.entries.suffix(visibleEntries).reduce(0) { $0 + $1.count }
@@ -194,11 +193,9 @@ struct WorktreeHistoryContent: View {
             Button {
                 unavailableWorktree = !openWorktree(path)
             } label: {
-                Text(title).font(.callout).fontWeight(.semibold)
-                    .lineLimit(event.kind == .agentMessage ? 1 : nil)
-                    .truncationMode(.middle)
+                Text(title).font(.caption).fontWeight(.semibold)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -208,10 +205,10 @@ struct WorktreeHistoryContent: View {
             .accessibilityIdentifier("worktree.context.history.link.\(event.id)")
         } else {
             Text(title)
-                .font(.callout).fontWeight(.semibold)
-                .lineLimit(event.kind == .agentMessage ? 1 : nil)
+                .font(.caption).fontWeight(.semibold)
+                .foregroundStyle(event.kind == .user ? Color.orange : .primary)
                 .help(event.title)
-                .fixedSize(horizontal: false, vertical: event.kind != .agentMessage)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -247,7 +244,7 @@ struct WorktreeHistoryContent: View {
         switch event.kind {
         case .creation: .accentColor
         case .user: .orange
-        case .checkpoint, .agentMessage: secondary
+        case .checkpoint, .agentMessage, .agentResponse: secondary
         }
     }
 
@@ -286,9 +283,10 @@ struct WorktreeHistoryContent: View {
     private static func date(_ timestamp: Double) -> Date { Date(timeIntervalSinceReferenceDate: timestamp) }
 }
 
-/// One peer message as a single gist line; tapping it reveals the original text.
-private struct PeerMessageLine: View {
-    let entry: WorktreeTimeline.Row.Entry
+/// A peer message or agent response as a wrapping summary; tapping reveals the original text.
+private struct TimelineMessageLine: View {
+    let event: WorktreeTimeline.Event
+    var count: Int = 1
     let secondary: Color
     let gists: PeerMessageGistProvider
     var reveal: (() -> Void)? = nil
@@ -296,18 +294,15 @@ private struct PeerMessageLine: View {
     @State private var expanded = false
 
     var body: some View {
-        let text = entry.event.completed
+        let text = event.completed
         let shown = gist ?? .immediate(text)
         VStack(alignment: .leading, spacing: 4) {
             Button { expanded.toggle() } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    if shown.isGenerated {
-                        Image(systemName: "sparkles").font(.caption2).foregroundStyle(secondary)
-                            .accessibilityLabel("Summary")
-                    }
-                    Text(shown.text).font(.callout).lineLimit(1).truncationMode(.tail)
-                    if entry.count > 1 {
-                        Text("×\(entry.count)").font(.caption).foregroundStyle(secondary).fixedSize()
+                    Text(shown.text).font(.callout).lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if count > 1 {
+                        Text("×\(count)").font(.caption).foregroundStyle(secondary).fixedSize()
                     }
                     Spacer(minLength: 0)
                 }
@@ -317,9 +312,12 @@ private struct PeerMessageLine: View {
             .buttonStyle(.plain)
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             .accessibilityHint("Show the full message")
-            .accessibilityIdentifier("worktree.context.history.message.\(entry.id)")
+            .accessibilityIdentifier("worktree.context.history.message.\(event.id)")
             .contextMenu {
                 if let reveal { Button("Show in Terminal", systemImage: "terminal", action: reveal) }
+            }
+            if shown.isGenerated {
+                Label("AI summary", systemImage: "sparkles").font(.caption2).foregroundStyle(secondary)
             }
             if expanded {
                 Text(text).font(.callout).lineSpacing(2)
@@ -330,7 +328,7 @@ private struct PeerMessageLine: View {
                         .buttonStyle(.plain)
                         .foregroundStyle(Color.accentColor)
                         .frame(minHeight: 32, alignment: .leading)
-                        .accessibilityIdentifier("worktree.context.history.reveal.\(entry.id)")
+                        .accessibilityIdentifier("worktree.context.history.reveal.\(event.id)")
                 }
             }
         }

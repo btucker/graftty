@@ -4,7 +4,7 @@ import FoundationModels
 #endif
 
 /// @spec CONTEXT-26
-/// One display line for a peer message, and whether a model wrote it.
+/// When Context history shows a peer message or visible agent response, the application shall show single-line text of at most 80 characters verbatim without running a model, otherwise show an on-device Apple Intelligence summary marked as generated when available, and otherwise show the first sentence or line unmarked, limiting summaries and fallbacks to 240 characters while allowing them to wrap, generating each text at most once per process.
 /// Human input never goes through this type.
 public struct PeerMessageGist: Equatable, Sendable {
     public typealias Summarizer = @Sendable (String) async throws -> String?
@@ -12,12 +12,13 @@ public struct PeerMessageGist: Equatable, Sendable {
     public let text: String
     public let isGenerated: Bool
 
-    static let maxLength = 80
+    static let maxLength = 240
+    static let verbatimLength = 80
 
     /// The message itself when it already fits one line.
     static func verbatim(_ text: String) -> PeerMessageGist? {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.contains(where: \.isNewline), text.count <= maxLength else { return nil }
+        guard !text.contains(where: \.isNewline), text.count <= verbatimLength else { return nil }
         return PeerMessageGist(text: text, isGenerated: false)
     }
 
@@ -43,7 +44,7 @@ public struct PeerMessageGist: Equatable, Sendable {
     }
 
     static let instructions = """
-        Summarize the message from a coding agent in one plain line of at most 70 characters. \
+        Summarize the message from a coding agent in one or two plain sentences of at most 240 characters. \
         Reply with the summary only, with no preamble, quotes, or markdown.
         """
 

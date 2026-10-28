@@ -7,8 +7,8 @@ import Testing
 
 @MainActor
 struct WorktreeHistoryContentTests {
-    @Test("@spec CONTEXT-19: When worktree history displays human input and peer messages on Mac or mobile, the application shall label a run of human input once as You with each input verbatim, and show each run of peer messages from one sender as one card with the sender link, a message count, the last two messages as one-line gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.", arguments: [260.0, 390.0])
-    func humanInputAndPeerCards(width: Double) async throws {
+    @Test("@spec CONTEXT-19: When worktree history displays human input and peer messages on Mac or mobile, the application shall align sender and time beside a quiet timeline rail with message text on one reading edge, label a run of human input once as You with each input verbatim, and show each peer run without an enclosing card, with the sender link, a message count for multiple messages, the last two multiline gists with earlier messages behind a control, repeats marked with a count, and the full original text when a message is tapped.", arguments: [260.0, 390.0])
+    func humanInputAndPeerMessages(width: Double) async throws {
         let start = Date(timeIntervalSince1970: 1_792_411_200)
         let firstPeer = UUID(), longPeer = UUID()
         let peerText = String(repeating: "The agent checked the layout and kept the full investigation available. ", count: 25)
@@ -30,8 +30,6 @@ struct WorktreeHistoryContentTests {
                 .environment(\.colorScheme, .dark)
         }
         let host = NSHostingView(rootView: content(peerText))
-        let short = NSHostingView(rootView: content("A brief note."))
-        #expect(abs(host.fittingSize.height - short.fittingSize.height) < 3, "A long peer message must collapse to one line")
         let window = NSWindow(contentRect: .init(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize), styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
@@ -42,7 +40,7 @@ struct WorktreeHistoryContentTests {
         try await Task.sleep(for: .milliseconds(200))
         host.layoutSubtreeIfNeeded()
         try capture(host, named: "messages-collapsed-\(Int(width))")
-        // Card rows from the bottom: 20 padding, 10 card inset, 32-point lines, 2-point spacing.
+        // The rail's latest label sits below the messages; sender navigation is a separate header.
         let collapsedHeight = host.fittingSize.height
         func click(x: Double, fromBottom offset: Double) async throws {
             let top = collapsedHeight - offset
@@ -55,20 +53,61 @@ struct WorktreeHistoryContentTests {
             try await Task.sleep(for: .milliseconds(100))
             host.layoutSubtreeIfNeeded()
         }
-        try await click(x: width / 2, fromBottom: 154)
+        try await click(x: width / 2, fromBottom: 198)
         #expect(openedPaths == ["/repo/layout"])
         #expect(abs(host.fittingSize.height - collapsedHeight) < 3, "Opening the worktree must not toggle the card")
-        try await click(x: width / 2, fromBottom: 80)
+        try await click(x: width / 2, fromBottom: 108)
         #expect(host.fittingSize.height > collapsedHeight + 400, "Tapping a message must reveal its complete text")
         #expect(openedPaths.count == 1, "Expanding must not navigate to the worktree")
         let expandedHeight = host.fittingSize.height
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
-        try await click(x: 62, fromBottom: 114)
+        try await click(x: 62, fromBottom: 148)
         #expect(host.fittingSize.height > expandedHeight + 25, "The earlier control must reveal the older message")
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
         try capture(host, named: "messages-expanded-\(Int(width))")
+    }
+
+    @Test(arguments: [260.0, 390.0])
+    func peerSummariesWrapWithoutLosingTheirLastWords(width: Double) {
+        func height(_ text: String) -> CGFloat {
+            var history = WorktreeHistory()
+            history.record(.init(text: "<graftty-peer-message agent=\"/repo/layout#claude\">\(text)</graftty-peer-message>", at: .now))
+            let host = NSHostingView(rootView: WorktreeHistoryContent(timeline: .init(history: history, brief: nil), secondary: .secondary)
+                .padding(20).frame(width: width).fixedSize(horizontal: false, vertical: true))
+            return host.fittingSize.height
+        }
+        let long = "Updated the build workflows so pull requests run the modern migration checks and retain the dependency coverage required by the integration branch."
+        #expect(height(long) > height("Updated the workflows.") + 12,
+                "The summary must grow to fit multiple lines instead of clipping or truncating its conclusion")
+    }
+
+    @Test(arguments: [260.0, 390.0], [ColorScheme.dark, .light])
+    func agentRepliesUseTheSharedWrappingSummary(width: Double, scheme: ColorScheme) async throws {
+        let start = Date()
+        var history = WorktreeHistory()
+        history.record(.init(text: "I like B.", at: start))
+        history.record(WorktreeHistory.AgentResponse(id: "reply", text: "I will implement B on both Mac and Mobile: a slim rail, sender and time on one line where they fit, multiline summaries, and no enclosing peer cards. Human input will share the same reading edge without the extra quote indent.\n\nThe map already has a click handler, so I am checking why it fails to receive clicks rather than adding a second handler.", at: start.addingTimeInterval(1), runtime: "codex"))
+        let summary = "Implementing B on Mac and Mobile, with a slim rail and multiline summaries. Investigating why map clicks reach the terminal."
+        let gists = PeerMessageGistProvider { _ in summary }
+        let host = NSHostingView(rootView: WorktreeHistoryContent(timeline: .init(history: history, brief: nil),
+            secondary: .secondary, gists: gists)
+            .padding(20).frame(width: width).fixedSize(horizontal: false, vertical: true)
+            .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, scheme))
+        let window = NSWindow(contentRect: .init(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(200))
+        window.setContentSize(host.fittingSize)
+        host.layoutSubtreeIfNeeded()
+        #expect(abs(host.fittingSize.width - width) < 1)
+        #expect(host.fittingSize.height > 200)
+        try capture(host, named: "agent-reply-\(Int(width))-\(scheme == .dark ? "dark" : "light")")
     }
 
     @Test func earlierControlCountsHiddenMessagesIncludingRepeats() throws {

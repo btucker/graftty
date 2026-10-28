@@ -274,6 +274,11 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         history?.record(input)
     }
 
+    public mutating func recordAgentResponse(_ response: WorktreeHistory.AgentResponse) {
+        if history == nil { history = WorktreeHistory() }
+        history?.record(response)
+    }
+
     /// Single setter for attention: pane-scoped when `pane` is non-nil,
     /// worktree-scoped otherwise. All three sources (agent-stop, user
     /// notify, command-finished) route through here so the scoping rule
