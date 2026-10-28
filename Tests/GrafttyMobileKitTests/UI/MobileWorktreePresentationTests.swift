@@ -48,6 +48,18 @@ struct MobileWorktreePresentationTests {
         }
     }
 
+    @Test("Pending creation hides early pane layouts until startup completes")
+    func pendingCreationHidesPanes() {
+        var progress = WorktreeCreationProgress()
+        progress.transition(to: .startingPane)
+        let running = row("pending", layout: leaf("early-pane", title: "Shell"))
+        let pending = running.with(creationProgress: progress)
+        #expect(MobileWorktreeRowPresentation(context: SidebarWorktreeContext(worktree: pending)).leaves.isEmpty)
+        progress.transition(to: .ready)
+        let ready = running.with(creationProgress: progress)
+        #expect(MobileWorktreeRowPresentation(context: SidebarWorktreeContext(worktree: ready)).leaves.count == 1)
+    }
+
     @Test("@spec IOS-9.12: When a mobile worktree question has no displayed matching pane, the application shall display it beneath the worktree, including empty layouts and non-running worktrees, without acknowledging its request.")
     func questionFallsBackToWorktree() {
         for layout in [nil, leaf("other", title: "Other"), leaf("reported", title: "Reported")] {

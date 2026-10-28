@@ -84,6 +84,24 @@ struct WorktreeCreationProgressTests {
         #expect(wire.with(path: "relay").creationProgress == wire.creationProgress)
     }
 
+    @Test("@spec GIT-5.30: When a creating worktree is selected, the application shall display its progress and output in the terminal content area, switch to the terminal on success, and retain failed or interrupted diagnostics until a terminal is explicitly opened.")
+    func creationContentReplacesTerminalUntilReady() {
+        var progress = WorktreeCreationProgress()
+        for phase in [WorktreeCreationProgress.Phase.preparing, .git, .startingPane] {
+            progress.transition(to: phase)
+            #expect(progress.showsInTerminalArea(isRunning: false))
+            #expect(progress.showsInTerminalArea(isRunning: true))
+        }
+        progress.transition(to: .ready)
+        #expect(!progress.showsInTerminalArea(isRunning: true))
+        #expect(!progress.showsInTerminalArea(isRunning: false))
+        for phase in [WorktreeCreationProgress.Phase.failed, .interrupted] {
+            progress.transition(to: phase)
+            #expect(progress.showsInTerminalArea(isRunning: false))
+            #expect(!progress.showsInTerminalArea(isRunning: true))
+        }
+    }
+
     @Test func terminalControlsAndInvalidUTF8StayBounded() {
         #expect(WorktreeCreationProgress.plainText("\u{1B}[31merror\u{1B}[0m\u{1B}]0;title\u{07}\u{1B}]8;;https://example.com\u{1B}\\link\u{1B}]8;;\u{1B}\\") == "errorlink")
         #expect(WorktreeCreationProgress.plainText("safe\u{202E}text\u{2066}") == "safetext")

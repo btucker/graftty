@@ -271,7 +271,15 @@ public struct IPadRootLayout: View {
     static func onWorktreeListChanged(appState: IPadAppState, list: [WorktreePanes]) {
         // @Observable skips a write of an equal value, so a repeated frame
         // leaves views observing these rows alone (IPAD-1.26).
+        let previous = appState.latestWorktrees.first { $0.path == appState.selectedWorktreePath }
         appState.latestWorktrees = list
+        if previous?.showsCreationProgress == true,
+           let current = list.first(where: { $0.path == appState.selectedWorktreePath }),
+           !current.showsCreationProgress, current.state == .running,
+           let pane = current.layout?.leaves.first?.sessionName {
+            appState.select(hostID: appState.selectedHostId, worktreePath: current.path,
+                            paneID: pane, requestsTerminalFocus: true)
+        }
 
         // Clear a stale selection whose path vanished server-side.
         if let path = appState.selectedWorktreePath,
@@ -304,9 +312,10 @@ public struct IPadRootLayout: View {
     }
 
     static func applyWorktreeSelection(appState: IPadAppState, worktree: WorktreePanes) {
-        guard !worktree.state.isInFlight else { return }
+        guard !worktree.state.isInFlight || worktree.showsCreationProgress else { return }
         appState.select(hostID: appState.selectedHostId, worktreePath: worktree.path,
-                        paneID: worktree.layout?.leaves.first?.sessionName, requestsTerminalFocus: true)
+                        paneID: worktree.layout?.leaves.first?.sessionName,
+                        requestsTerminalFocus: !worktree.showsCreationProgress)
     }
 
     static func applyPaneSelection(appState: IPadAppState, leaf: PaneLayoutNode.Leaf) {

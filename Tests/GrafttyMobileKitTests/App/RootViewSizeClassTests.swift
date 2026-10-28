@@ -9,6 +9,24 @@ import UIKit
 @MainActor
 @Suite("RootView size-class router — IPAD-1.1 + IPAD-7.1")
 struct RootViewSizeClassTests {
+    @Test func pendingCreationKeepsDiagnosticsAcrossSizeClasses() throws {
+        let state = IPadAppState(defaults: try #require(UserDefaults(suiteName: "creation-resize-\(UUID())")))
+        let host = Host(label: "Mac", baseURL: URL(string: "https://mac.local")!)
+        var progress = WorktreeCreationProgress()
+        progress.transition(to: .startingPane)
+        let row = WorktreePanes(path: "pending", displayName: "Pending", repoDisplayName: "Repo", displayBranch: "pending",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: "early-pane", title: "Shell", attentionText: nil, isBusy: false, attentionSource: nil),
+            creationProgress: progress)
+        state.latestWorktrees = [row]
+        state.selectedHostId = host.id
+        state.selectedWorktreePath = row.path
+        state.focusedPaneId = "early-pane"
+        let selection = try #require(RootView.compactSelection(appState: state, hosts: [host]))
+        #expect(selection.worktree == row)
+        #expect(selection.session == nil)
+    }
+
     @Test func recentPaneChoiceUpdatesTheActualHostWorktreeAndPaneRoute() throws {
         let state = IPadAppState(defaults: try #require(UserDefaults(suiteName: "recent-selection-\(UUID())")))
         let host = Host(label: "Other Mac", baseURL: URL(string: "https://other.invalid")!)

@@ -13,7 +13,7 @@ struct MobileWorktreeCreationTests {
         .leaf(sessionName: "pane", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
     }
 
-    @Test("@spec IOS-9.5: When a valid mobile Add Worktree form is submitted, the application shall dismiss the form immediately and display a non-selectable creating row in the target repository while creation runs.")
+    @Test("@spec IOS-9.5: When a valid mobile Add Worktree form is submitted, the application shall dismiss the form immediately and display a creating row in the target repository while creation runs, allowing inspection once host progress arrives.")
     func showsPlaceholderUntilRunningPaneArrives() {
         var creation = MobileWorktreeCreation()
         let id = creation.begin(placeholder: row(path: "temporary"), knownPaths: [], generation: 1)
@@ -79,3 +79,93 @@ struct MobileWorktreeCreationTests {
         #expect(creation.rows(in: [otherRepo]).count == 2)
     }
 }
+
+#if canImport(UIKit)
+import Foundation
+import GrafttyProtocol
+import SwiftUI
+import Testing
+import UIKit
+import XCTest
+@testable import GrafttyMobileKit
+
+@Suite("Compact creation content", .serialized) @MainActor
+struct WorktreeCreationContentTests {
+    private final class Lifecycle: ObservableObject {
+        @Published var phase: ScenePhase = .active
+    }
+
+    private struct LifecycleView<Content: View>: View {
+        @ObservedObject var lifecycle: Lifecycle
+        let content: Content
+        var body: some View { content.environment(\.scenePhase, lifecycle.phase) }
+    }
+
+    @Test("The compact creation screen observes output and opens the first pane only after readiness", .timeLimit(.minutes(1)))
+    func compactCreationFollowsPushesUntilReady() async throws {
+        let host = Host(id: UUID(), label: "Test", baseURL: URL(string: "https://test.local")!,
+            addedAt: Date(), lastUsedAt: nil)
+        var progress = WorktreeCreationProgress()
+        progress.transition(to: .git)
+        func row(_ progress: WorktreeCreationProgress, state: WorktreeWireState = .creating,
+                 layout: PaneLayoutNode? = nil) -> WorktreePanes {
+            WorktreePanes(path: "/repo/feature", displayName: "feature", repoDisplayName: "repo",
+                displayBranch: "feature", state: state, isMainCheckout: false, prBadge: nil, stats: nil,
+                attentionText: nil, layout: layout, creationProgress: progress)
+        }
+        var continuations: [AsyncStream<RemoteWorktreeUpdate>.Continuation] = []
+        var latest: RemoteWorktreeUpdate?
+        let subscribed = XCTestExpectation(description: "Creation screen subscribed")
+        let opened = XCTestExpectation(description: "Created pane selected")
+        let repeated = XCTestExpectation(description: "Replayed readiness must not select the pane again")
+        repeated.isInverted = true
+        var selected: [String] = []
+        let provider = RemoteWorktreeUpdatesProvider { _ in
+            let stream = AsyncStream<RemoteWorktreeUpdate>.makeStream(bufferingPolicy: .unbounded)
+            if continuations.isEmpty { subscribed.fulfill() }
+            continuations.append(stream.continuation)
+            if let latest { stream.continuation.yield(latest) }
+            return stream.stream
+        }
+        let lifecycle = Lifecycle()
+        let view = WorktreeDetailView(host: host, worktree: row(progress)) { session in
+            selected.append(session)
+            if selected.count == 1 { opened.fulfill() } else { repeated.fulfill() }
+        }
+        .environment(\.remoteWorktreeUpdates, provider)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 600))
+        window.rootViewController = UIHostingController(rootView: LifecycleView(lifecycle: lifecycle, content: view))
+        window.makeKeyAndVisible()
+        defer {
+            continuations.forEach { $0.finish() }
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        #expect(await XCTWaiter.fulfillment(of: [subscribed], timeout: 5) == .completed)
+        progress.output = "waiting for setup lock"
+        continuations.last?.yield(.frame(.snapshot([row(progress)])))
+        #expect(selected.isEmpty)
+        // A ready-looking frame from a later creation at this path is not ours.
+        var other = WorktreeCreationProgress()
+        other.transition(to: .ready)
+        let pane = PaneLayoutNode.leaf(sessionName: "created", title: "shell", attentionText: nil,
+            isBusy: false, attentionSource: nil)
+        let unrelated = PaneLayoutNode.leaf(sessionName: "wrong-operation", title: "other", attentionText: nil,
+            isBusy: false, attentionSource: nil)
+        continuations.last?.yield(.frame(.snapshot([row(other, state: .running, layout: unrelated)])))
+        #expect(selected.isEmpty)
+        progress.transition(to: .ready)
+        latest = .frame(.snapshot([row(progress, state: .running, layout: pane)]))
+        continuations.last?.yield(try #require(latest))
+        #expect(await XCTWaiter.fulfillment(of: [opened], timeout: 5) == .completed)
+        #expect(selected == ["created"])
+        // The coordinator replays its latest snapshot whenever a lifecycle
+        // task restarts. Readiness must navigate only once for this operation.
+        lifecycle.phase = .background
+        try await Task.sleep(for: .milliseconds(50))
+        lifecycle.phase = .active
+        #expect(await XCTWaiter.fulfillment(of: [repeated], timeout: 1) == .completed)
+        #expect(selected == ["created"])
+    }
+}
+#endif

@@ -11,6 +11,28 @@ import Testing
 @Suite("Remote worktree viewer mutation queue")
 @MainActor
 struct RemoteWorktreeViewerControllerTests {
+    @Test("Selecting creation diagnostics does not open a remote worktree until explicitly requested", arguments: [WorktreeCreationProgress.Phase.git, .failed, .interrupted])
+    func creationSelectionDoesNotLaunchEarly(phase: WorktreeCreationProgress.Phase) async throws {
+        var progress = WorktreeCreationProgress()
+        progress.transition(to: phase)
+        let viewer = try await ViewerHarness.opened(layout: nil,
+            state: phase == .git ? .creating : .closed, creationProgress: progress)
+        #expect(viewer.controller.selectedRemoteWorktreePath == ViewerHarness.path)
+        #expect(viewer.controller.selectedWorktreeSnapshot?.showsCreationProgress == true)
+        #expect(viewer.controller.splitTree.root == nil)
+        #expect(viewer.model.openedWorktrees.isEmpty)
+        if phase != .git {
+            viewer.controller.selectRemoteWorktree(viewer.mac, worktreePath: ViewerHarness.path,
+                acknowledging: false, inspectingCreation: false)
+            await viewer.settle()
+            #expect(viewer.model.openedWorktrees == [ViewerHarness.path])
+        }
+        viewer.publish(.leaf("created"))
+        await viewer.settle()
+        #expect(viewer.controller.splitTree.root != nil)
+        _ = try viewer.terminal("created")
+    }
+
     @Test("@spec REMOTE-24.1: While a split request for a remote worktree is in flight, the viewer shall hold every later split, close, equalize, and resize for that worktree in one ordered queue and send the next request only after the host answers the previous one.")
     func splitInFlightSerializesLaterMutations() async throws {
         let viewer = try await ViewerHarness.opened(layout: .leaf("a"))
@@ -663,13 +685,14 @@ private final class ViewerHarness {
         state: WorktreeWireState = .running,
         failingCreates: Int = 0,
         openResponse: WorktreeManagementResponse = .ok,
-        surfaces: FakeViewerSurfaces? = nil
+        surfaces: FakeViewerSurfaces? = nil,
+        creationProgress: WorktreeCreationProgress? = nil
     ) async throws -> ViewerHarness {
         let surfaces = surfaces ?? FakeViewerSurfaces()
         let harness = try ViewerHarness(surfaces: surfaces, state: state)
         surfaces.failingCreates = failingCreates
         harness.model.openWorktreeResponse = openResponse
-        harness.model.worktreePanesByRemote = [harness.identity: [harness.worktree(layout)]]
+        harness.model.worktreePanesByRemote = [harness.identity: [harness.worktree(layout).with(creationProgress: creationProgress)]]
         harness.controller.reconcile(worktreePanesByRemote: harness.model.worktreePanesByRemote)
         harness.controller.selectRemoteWorktree(harness.mac, worktreePath: path, acknowledging: false)
         await harness.settle()

@@ -132,6 +132,9 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// the mobile client can render it directly without re-running
     /// the Trojan-Source defense (`GIT-2.10`).
     public let displayBranch: String
+    public var showsCreationProgress: Bool {
+        state != .deleting && creationProgress?.showsInTerminalArea(isRunning: state == .running) == true
+    }
     public let creationProgress: WorktreeCreationProgress?
     public let state: WorktreeWireState
     /// True when this entry is the repo's main checkout

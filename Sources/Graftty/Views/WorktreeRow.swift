@@ -229,7 +229,6 @@ struct WorktreeRow: View {
                         if let progress = entry.creationProgress {
                             WorktreeCreationProgressView(progress: progress)
                                 .foregroundStyle(theme.sidebarSecondaryText)
-                                .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.creationProgress: $0] }
                         }
                         if let brief = brief ?? entry.brief {
                             Text(brief.context ?? brief.completed)

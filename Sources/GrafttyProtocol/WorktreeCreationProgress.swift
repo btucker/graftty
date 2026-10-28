@@ -23,6 +23,12 @@ public struct WorktreeCreationProgress: Codable, Sendable, Hashable {
 
     public var isPending: Bool { phase == .preparing || phase == .git || phase == .startingPane }
 
+    /// Pending creation occupies the terminal area. A terminal explicitly
+    /// opened after failure or interruption takes precedence over diagnostics.
+    public func showsInTerminalArea(isRunning: Bool) -> Bool {
+        isPending || (phase != .ready && !isRunning)
+    }
+
     public var label: String {
         switch phase {
         case .preparing: "Preparing worktree"

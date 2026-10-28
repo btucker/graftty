@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Testing
 import GrafttyProtocol
+import GrafttyCommandUI
 import GrafttyKit
 @testable import Graftty
 
@@ -77,7 +78,7 @@ struct SidebarPRBadgeInteractionTests {
         }
     }
 
-    @Test("The creating row passes output-inspector clicks through the production selection overlay")
+    @Test("@spec GIT-5.5: While a worktree is creating, the application shall show a working indicator, hide terminal panes and Git statistics, suppress worktree actions, and allow selecting the row to inspect creation in the terminal content area.")
     func creationOutputOwnsItsClickTarget() async throws {
         var worktree = WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature", state: .creating)
         worktree.creationProgress = WorktreeCreationProgress()
@@ -105,21 +106,36 @@ struct SidebarPRBadgeInteractionTests {
         try await Task.sleep(for: .milliseconds(150))
         hosting.layoutSubtreeIfNeeded()
         let overlay = try #require(findDragView(in: hosting))
-        let rect = try #require(overlay.excludedRects.first)
-        let location = overlay.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+        #expect(overlay.excludedRects.isEmpty)
+        let location = overlay.convert(NSPoint(x: overlay.bounds.midX, y: overlay.bounds.midY), to: nil)
         let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: window)
         let point = try #require(overlay.superview).convert(location, from: nil)
-        #expect(overlay.hitTest(point, event: down) == nil)
-        let visibleWindows = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
-        try click(at: location, in: window, dragView: overlay)
-        try await Task.sleep(for: .milliseconds(150))
-        #expect(selections == 0)
-        let popover = try #require(NSApp.windows.first { $0.isVisible && !visibleWindows.contains(ObjectIdentifier($0)) })
-        defer { popover.orderOut(nil) }
+        // Dispatch directly to the production nonmodal row target. A native
+        // Button.mouseDown can enter AppKit tracking and block a headless CI
+        // runner before the synthetic mouseUp can be delivered.
+        let hit = try #require(overlay.hitTest(point, event: down))
+        #expect(hit === overlay)
+        hit.mouseDown(with: down)
+        hit.mouseUp(with: try NSEvent.syntheticClick(.leftMouseUp, at: location, in: window))
+        #expect(selections == 1)
         if let directory = ProcessInfo.processInfo.environment["GRAFTTY_SIDEBAR_RENDER_DIR"] {
+            let progress = try #require(worktree.creationProgress)
+            let detail = NSHostingView(rootView: MainWindowDetailLayout {
+                Text("repo / feature").font(.caption).padding(12)
+            } content: {
+                WorktreeCreationDetailView(progress: progress,
+                    foreground: GhosttyTheme.fallback.foreground, background: GhosttyTheme.fallback.background)
+            }.background(GhosttyTheme.fallback.background).foregroundStyle(GhosttyTheme.fallback.foreground))
+            let detailWindow = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 800, height: 440),
+                styleMask: .borderless, backing: .buffered, defer: false)
+            detailWindow.contentView = detail
+            detailWindow.orderFront(nil)
+            defer { detailWindow.orderOut(nil) }
+            try await Task.sleep(for: .milliseconds(100))
             let url = URL(fileURLWithPath: directory, isDirectory: true)
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            for (name, view) in [("creation-row", hosting as NSView), ("creation-output", try #require(popover.contentView))] {
+            for (name, view) in [("creation-row", hosting as NSView), ("creation-output", detail as NSView)] {
+                view.layoutSubtreeIfNeeded()
                 let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
                 view.cacheDisplay(in: view.bounds, to: bitmap)
                 try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent(name + ".png"))

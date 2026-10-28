@@ -34,11 +34,6 @@ struct WorktreeBlock: View {
         // sidebar-style's full per-row padding.
         VStack(alignment: .leading, spacing: 3) {
             worktreeRow
-            if let progress = worktree.creationProgress {
-                WorktreeCreationProgressView(progress: progress)
-                    .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
-                    .padding(.leading, 20)
-            }
             paneRows
         }
         // IPAD-1.16: active-worktree block highlight (Mac parity).
@@ -75,7 +70,14 @@ struct WorktreeBlock: View {
 
     @ViewBuilder
     private var worktreeRow: some View {
-        if worktree.state.isInFlight {
+        if worktree.state == .creating, worktree.showsCreationProgress {
+            Button(action: onSelect) {
+                HStack(spacing: 0) {
+                    rowIdentity
+                    DivergenceGutter(stats: worktree.stats, theme: theme)
+                }
+            }.buttonStyle(.plain)
+        } else if worktree.state.isInFlight {
             // Non-tappable: on-disk path may not exist yet
             // (`.creating`) or is about to vanish (`.deleting`).
             HStack(spacing: 0) {
@@ -184,6 +186,10 @@ struct WorktreeRowContent: View {
                         .font(.caption)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
+                }
+                if let progress = worktree.creationProgress {
+                    WorktreeCreationProgressView(progress: progress)
                         .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
                 }
                 if let brief = worktree.sidebar?.brief {

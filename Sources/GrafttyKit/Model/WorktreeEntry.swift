@@ -98,6 +98,9 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var autoTrackLastAttempt: GitAutoTracking.Target?
     /// Initial activity for a newly added worktree. Legacy entries have no creation time.
     public var createdAt: Date?
+    public var showsCreationProgress: Bool {
+        state != .deleting && creationProgress?.showsInTerminalArea(isRunning: state == .running) == true
+    }
     public var creationProgress: WorktreeCreationProgress?
     public var state: WorktreeState
     /// Wall-clock time when this entry most recently transitioned to
