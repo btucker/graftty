@@ -14,8 +14,6 @@ struct IPadRootLayoutSettlingTests {
         let fixture = try SplitLayoutFixture(sidebarShown: true, hasHost: true)
         defer { fixture.cleanUp() }
         let key = "sidebar.mobile.railWidth"
-        let previous = UserDefaults.standard.object(forKey: key)
-        defer { UserDefaults.standard.set(previous, forKey: key) }
         fixture.state.sidebarNavigation.railExpandedWidth = 412
         #expect(fixture.defaults.double(forKey: key) == 412)
     }

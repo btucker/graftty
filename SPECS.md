@@ -2500,6 +2500,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.29** While a measured regular-width mobile sidebar width waits in the persistence debounce, the application shall keep the remembered width until the debounce elapses.
 
+**IPAD-1.30** When IPadAppState is constructed with an injected UserDefaults suite, the application shall read and write the nested sidebar navigation state through that same suite rather than the standard defaults.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.

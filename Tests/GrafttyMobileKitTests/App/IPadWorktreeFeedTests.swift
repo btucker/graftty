@@ -187,7 +187,6 @@ struct IPadWorktreeFeedTests {
             let host = Host(label: "mac", baseURL: URL(string: "http://127.0.0.1:9")!)
             configuration = FeedConfiguration(host: host)
             appState = IPadAppState(defaults: defaults)
-            appState.sidebarNavigation = .init(prefix: "sidebar.mobile", defaults: defaults, collapsed: true)
             appState.select(hostID: host.id, worktreePath: nil, paneID: nil)
             prepare(appState)
 
