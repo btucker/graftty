@@ -43,27 +43,32 @@ struct WebSocketOutputTests {
         #expect(retainedFrames == 0)
     }
 
-    @Test func completedWritesReleaseBudgetAndPreserveOrder() throws {
+    @Test("@spec WEB-4.14: When queued WebSocket writes complete, the application shall release their byte and frame reservations and preserve every payload byte, frame order, and opcode across subsequent batches.")
+    func completedWritesReleaseBudgetAndPreserveOrder() throws {
         let sink = StalledWebSocketWrites()
         let channel = EmbeddedChannel(handler: sink)
         let output = WebSocketOutput(channel: channel)
         defer { _ = try? channel.finish() }
-        // Send more than the lifetime budget. Each completed batch must
-        // release its reservation, with text interleaved among binary bytes.
+        // Fill both budgets each batch. Any unreleased reservation must
+        // prevent the next batch from fitting, even if other writes complete.
         for batch in 0..<3 {
-            for index in 0..<512 {
-                let byte = UInt8(truncatingIfNeeded: batch * 512 + index)
-                output.send(Data(repeating: byte, count: 8192), opcode: index % 17 == 0 ? .text : .binary)
+            for index in 0..<1024 {
+                let sequence = batch * 1024 + index
+                var payload = Data(repeating: UInt8(truncatingIfNeeded: sequence), count: 8192)
+                // The first two bytes identify every frame, including across batches.
+                payload[0] = UInt8(truncatingIfNeeded: sequence >> 8)
+                output.send(payload, opcode: index % 17 == 0 ? .text : .binary)
             }
             channel.embeddedEventLoop.run()
             let frames = sink.succeedWrites()
-            #expect(frames.count == 512)
+            #expect(frames.count == 1024)
             for (index, frame) in frames.enumerated() {
-                let byte = UInt8(truncatingIfNeeded: batch * 512 + index)
+                let sequence = batch * 1024 + index
+                var expected = channel.allocator.buffer(repeating: UInt8(truncatingIfNeeded: sequence), count: 8192)
+                expected.setInteger(UInt16(sequence), at: 0)
                 #expect(frame.opcode == (index % 17 == 0 ? .text : .binary))
-                #expect(frame.data.readableBytes == 8192)
-                let bytesMatch = frame.data.readableBytesView.allSatisfy { $0 == byte }
-                #expect(bytesMatch)
+                // ByteBuffer equality checks the length and every byte with memcmp.
+                #expect(frame.data == expected)
             }
         }
         #expect(sink.closeCount == 0)
