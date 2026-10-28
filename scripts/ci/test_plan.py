@@ -49,7 +49,7 @@ def mac_filters(test_ids, batch_size=20):
     return patterns
 
 
-def verify_swift_results(test_ids, result_paths):
+def verify_swift_results(test_ids, result_paths, *, include_ownership=False):
     """Require one result (including disabled tests) for every discovered ID."""
     actual = Counter()
     for path in result_paths:
@@ -62,7 +62,7 @@ def verify_swift_results(test_ids, result_paths):
             # Swift Testing lists nested suites with '/', but xUnit uses '.'.
             prefix = module + "." + suite.replace(".", "/") + "/" if separator else module + "."
             actual[prefix + test.attrib["name"]] += 1
-    return verify_inventory(test_ids, actual)
+    return verify_inventory(test_ids, actual, include_ownership=include_ownership)
 
 
 def verify_xctest_results(test_ids, transcript_paths):
@@ -80,9 +80,9 @@ def verify_xctest_results(test_ids, transcript_paths):
     return verify_inventory(test_ids, actual)
 
 
-def verify_inventory(test_ids, actual):
+def verify_inventory(test_ids, actual, *, include_ownership=False):
     expected = Counter(identifier for identifier in test_ids
-                       if not identifier.startswith("OwnershipModelTests."))
+                       if include_ownership or not identifier.startswith("OwnershipModelTests."))
     missing, unexpected = expected - actual, actual - expected
     if missing or unexpected:
         raise ValueError(f"Test inventory mismatch: missing={dict(missing)}, unexpected={dict(unexpected)}")

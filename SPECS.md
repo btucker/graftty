@@ -1400,6 +1400,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TECH-6.4** When an iOS CI runner executes multiple test batches, the workflow shall preserve separate test processes and result bundles, reuse its simulator, execute later batches after a test failure, and retain the failure status.
 
+**TECH-6.5** When the macOS dispatch diagnostic samples a completed suite, the tool shall report blocked dispatch workers separately from idle workers, unclassified workers, and dedicated threads, retain raw stacks and suite order, and reject missing suite samples.
+
+**TECH-6.6** When the macOS dispatch diagnostic runs a CI capture, the tool shall require the paging renderer configuration, apply CI skip conditions, and preserve CI process order through the final parallel ownership gate.
+
+**TECH-6.7** When the native sidebar test fixture creates a window, the fixture shall disable native window animations before displaying the window.
+
 ## ZMX — zmx Session Backing
 
 ### ZMX-1.x — Bundling

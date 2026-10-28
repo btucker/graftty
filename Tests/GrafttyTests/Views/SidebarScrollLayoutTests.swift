@@ -66,6 +66,14 @@ private struct HostedSidebarScrollView: View {
 /// XCTest keeps the AppKit run loop alive until every native assertion finishes.
 @MainActor
 final class SidebarScrollLayoutTests: XCTestCase {
+    /// @spec TECH-6.7: When the native sidebar test fixture creates a window, the fixture shall disable native window animations before displaying the window.
+    func testHostedWindowDisablesAnimations() async throws {
+        _ = NSApplication.shared
+        let hosted = try await Hosted.make(pinnedCount: 1, rail: false)
+        defer { hosted.tearDown() }
+        XCTAssertEqual(hosted.window.animationBehavior, .none)
+    }
+
     /// @spec LAYOUT-2.122: While the macOS sidebar is displayed below native window controls, the application shall place pinned content below the native toolbar's full hit region, including after resizing.
     func testPinnedContentClearsNativeToolbar() async throws {
         for rail in [false, true] {
@@ -439,6 +447,7 @@ final class SidebarScrollLayoutTests: XCTestCase {
             hosting = NSHostingView(rootView: HostedSidebarScrollView(harness: harness))
             window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 900, height: 540),
                 styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+            window.animationBehavior = .none
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
             window.appearance = NSAppearance(named: .darkAqua)
