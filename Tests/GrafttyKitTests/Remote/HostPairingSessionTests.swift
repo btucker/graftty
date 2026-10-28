@@ -4,7 +4,7 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
-import GrafttyProtocol
+@testable import GrafttyProtocol
 import Testing
 
 @testable import GrafttyKit
@@ -78,6 +78,32 @@ struct HostPairingSessionTests {
         } else {
             Issue.record("Expected awaitingClient state, got \(session.state)")
         }
+    }
+
+    @Test("@spec REMOTE-1.16: When a host pairing session starts, the application shall read the host device ID for that payload, so a start made while the device-ID store is unreadable fails without a payload and a later start carries the persisted ID.")
+    func startPairingReadsHostDeviceIDPerStart() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let identityStore = HostIdentityStore(directory: dir)
+        _ = try identityStore.generateAndPersist()
+        try Data(#"{"version":1,"deviceID":{"value":"persisted-mac"}}"#.utf8)
+            .write(to: dir.appendingPathComponent(HostDeviceIDFile.fileName))
+        let deviceIDStore = HostDeviceIDStore(directory: dir, readData: readDataFailingFirst(1))
+        let session = HostPairingSession(
+            identityStore: identityStore,
+            peerStore: TrustedPeerStore(directory: dir),
+            hostDeviceIDProvider: { try deviceIDStore.loadOrGenerateAndPersist() },
+            hostKind: .mac,
+            hostDisplayName: "Test Mac",
+            pairingURLProvider: { URL(string: "https://host.local:8800/v2/pairing")! }
+        )
+
+        #expect(throws: CocoaError(.fileReadNoPermission)) {
+            try session.startPairing()
+        }
+        #expect(session.state == HostPairingSessionState.idle)
+        #expect(try session.startPairing().hostDeviceID == RemoteDeviceID(value: "persisted-mac"))
     }
 
     // MARK: - receiveClientIdentity transitions to pendingConfirmation

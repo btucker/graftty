@@ -154,7 +154,7 @@ extension SocketRequestRouter {
                 let store = ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory)
                 let key = try store.loadOrGenerateAndPersist()
                 return .linuxSetupIdentity(LinuxHostTrustRequest(
-                    deviceID: AppServices.localRemoteDeviceID().value,
+                    deviceID: try AppServices.localRemoteDeviceID().value,
                     displayName: AppServices.localHostDisplayName(),
                     publicKey: key.publicKey.rawRepresentation.base64EncodedString()
                 ))

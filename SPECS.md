@@ -3020,6 +3020,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.13** The application shall construct one `HostIdentityStore` and one `TrustedPeerStore` per process and share them with the pairing coordinator, the paired-access signaling server, the inbound host pool and the Settings paired-devices list.
 
+**REMOTE-1.14** If the host device-ID store cannot load or persist the stable device ID, then the application shall surface the store error to the Mac caller rather than generate a replacement device ID.
+
+**REMOTE-1.15** When a Remote Mac WebRTC connection attempt starts, the application shall read the client device ID from the device-ID store for that attempt, so an attempt made while the store is unreadable fails before any signaling offer and a later attempt presents the persisted ID.
+
+**REMOTE-1.16** When a host pairing session starts, the application shall read the host device ID for that payload, so a start made while the device-ID store is unreadable fails without a payload and a later start carries the persisted ID.
+
+**REMOTE-1.17** If paired-device access cannot start because the host device-ID store is unreadable, then the application shall report that the device ID could not be read rather than blame a port conflict.
+
+**REMOTE-1.18** While the host device-ID store is unreadable, Bonjour discovery shall keep publishing other Macs and shall treat a service advertising this Mac's host-key fingerprint as itself, without generating a device ID.
+
 ### REMOTE-2.x — Authenticated Attach
 
 **REMOTE-2.1** When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
@@ -3431,6 +3441,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-20.16** If a direct SSH connection is closed while it is still waiting for authentication, then the pending connect shall fail and return rather than wait forever.
 
 **REMOTE-20.17** When the direct SSH listener's bind host is a numeric IP address such as `::`, the application shall bind that address without name resolution, so the listener starts on a Linux host with no non-loopback IPv6 address.
+
+**REMOTE-20.18** When a saved direct SSH host connects, the application shall not read the local device ID, so an unreadable device-ID store does not fail a connection that never sends it.
 
 ### REMOTE-21.x
 
