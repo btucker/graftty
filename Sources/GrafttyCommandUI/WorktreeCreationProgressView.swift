@@ -51,7 +51,7 @@ public struct WorktreeCreationProgressView: View {
                 .background(.quaternary)
             }
             .padding(16)
-            .foregroundStyle(.primary)
+            .foregroundStyle(Color.primary)
             .background(.background)
             .frame(idealWidth: 420, maxWidth: 520)
             .presentationCompactAdaptation(.sheet)
