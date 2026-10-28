@@ -32,7 +32,9 @@ public struct AgentResponseCapture {
         let directory = handoff.rootDirectory.appendingPathComponent("transcript-cursors", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                attributes: [.posixPermissions: 0o700])
-        let key = SHA256.hash(data: Data("\(worktree)\0\(runtime.rawValue)\0\(sessionID)\0\(path)".utf8))
+        // A session can change directories; that must not replay its old replies
+        // into the newly resolved worktree's history.
+        let key = SHA256.hash(data: Data("\(runtime.rawValue)\0\(sessionID)\0\(path)".utf8))
             .map { String(format: "%02x", $0) }.joined()
         let cursorURL = directory.appendingPathComponent(key + ".json")
         // Parallel tool completions can run hooks together. The next hook retries
@@ -47,12 +49,13 @@ public struct AgentResponseCapture {
         // Backfill only the recent tail on first observation. Once established,
         // stream every unread record so large tool results cannot erase replies.
         let limit = 2 * 1024 * 1024
-        if isInitialScan, size - cursor.offset > UInt64(limit) {
-            cursor.offset = size - UInt64(limit)
-            cursor.discardingLine = true
-        }
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
+        if isInitialScan, size - cursor.offset > UInt64(limit) {
+            cursor.offset = size - UInt64(limit)
+            try handle.seek(toOffset: cursor.offset - 1)
+            cursor.discardingLine = try handle.read(upToCount: 1)?.first != 0x0A
+        }
         try handle.seek(toOffset: cursor.offset)
         var pending = Data()
         var readOffset = cursor.offset

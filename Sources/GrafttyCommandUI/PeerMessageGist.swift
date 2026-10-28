@@ -89,7 +89,7 @@ public actor PeerMessageGistProvider {
             } catch {
                 reply = nil
             }
-            let summary = reply?.split(whereSeparator: \.isNewline).first?
+            let summary = reply?.split(whereSeparator: \.isWhitespace).joined(separator: " ")
                 .trimmingCharacters(in: .whitespaces.union(CharacterSet(charactersIn: "\"“”")))
             guard let summary, !summary.isEmpty else { return PeerMessageGist.immediate(text) }
             return PeerMessageGist(text: PeerMessageGist.clipped(summary), isGenerated: true)

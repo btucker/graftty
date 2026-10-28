@@ -196,6 +196,9 @@ struct WorktreeHistoryContent: View {
                 Text(title).font(.caption).fontWeight(.semibold)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    #if os(iOS)
+                    .frame(minHeight: 44, alignment: .topLeading)
+                    #endif
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

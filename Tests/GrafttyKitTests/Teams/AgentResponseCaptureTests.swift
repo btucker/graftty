@@ -112,4 +112,41 @@ struct AgentResponseCaptureTests {
         #expect(responses == ["Before the tool.", "After the tool."])
         #expect(try handoff.consumeActivities { _ in Issue.record("Replies must be drained once") } == 0)
     }
+
+    @Test func changingWorktreeDoesNotReplayTheSameSessionIntoAnotherHistory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("session.jsonl")
+        var data = try codex("A reply for the original worktree.")
+        data.append(0x0A)
+        try data.write(to: file)
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("handoff"))
+        let capture = AgentResponseCapture(handoff: handoff)
+        let payload: [String: Any] = ["transcript_path": file.path]
+        try capture.capture(payload: payload, runtime: .codex, worktree: "/task/A", sessionID: "session")
+        _ = try handoff.consumeActivities { _ in }
+        try capture.capture(payload: payload, runtime: .codex, worktree: "/task/B", sessionID: "session")
+        #expect(try handoff.consumeActivities { _ in Issue.record("Changing directories must not replay old replies") } == 0)
+    }
+
+    @Test func initialTailStartingAtARecordBoundaryKeepsTheFirstCompleteReply() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("session.jsonl")
+        var tail = try codex("A complete reply at the start of the tail.")
+        tail.append(0x0A)
+        tail.append(Data(repeating: 0x78, count: 2 * 1024 * 1024 - tail.count - 1))
+        tail.append(0x0A)
+        var data = Data("older record\n".utf8)
+        data.append(tail)
+        try data.write(to: file)
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("handoff"))
+        try AgentResponseCapture(handoff: handoff).capture(payload: ["transcript_path": file.path],
+            runtime: .codex, worktree: "/task", sessionID: "session")
+        var replies: [String] = []
+        try handoff.consumeActivities { if case .response(let event) = $0 { replies.append(event.response.text) } }
+        #expect(replies == ["A complete reply at the start of the tail."])
+    }
 }

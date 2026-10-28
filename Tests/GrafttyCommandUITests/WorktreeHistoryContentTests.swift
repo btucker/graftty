@@ -74,7 +74,8 @@ struct WorktreeHistoryContentTests {
         func height(_ text: String) -> CGFloat {
             var history = WorktreeHistory()
             history.record(.init(text: "<graftty-peer-message agent=\"/repo/layout#claude\">\(text)</graftty-peer-message>", at: .now))
-            let host = NSHostingView(rootView: WorktreeHistoryContent(timeline: .init(history: history, brief: nil), secondary: .secondary)
+            let host = NSHostingView(rootView: WorktreeHistoryContent(timeline: .init(history: history, brief: nil), secondary: .secondary,
+                gists: PeerMessageGistProvider { _ in nil })
                 .padding(20).frame(width: width).fixedSize(horizontal: false, vertical: true))
             return host.fittingSize.height
         }

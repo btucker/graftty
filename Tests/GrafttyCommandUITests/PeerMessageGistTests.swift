@@ -28,8 +28,8 @@ struct PeerMessageGistTests {
     }
 
     @Test func longOrMultilineTextUsesGeneratedSummary() async {
-        let provider = PeerMessageGistProvider { _ in "  Layout verified on both platforms.\nExtra line" }
-        #expect(await provider.gist(for: long) == PeerMessageGist(text: "Layout verified on both platforms.", isGenerated: true))
+        let provider = PeerMessageGistProvider { _ in "  Layout verified on both platforms.\nMap navigation restored." }
+        #expect(await provider.gist(for: long) == PeerMessageGist(text: "Layout verified on both platforms. Map navigation restored.", isGenerated: true))
         #expect(await provider.gist(for: "Line one\nLine two").isGenerated)
     }
 
