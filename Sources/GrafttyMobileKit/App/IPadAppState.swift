@@ -7,7 +7,8 @@ import GrafttyCommandUI
 import GrafttyRemoteClient
 
 /// Observable selection state for the iPad regular-width layout.
-/// `selectedHostId` and `sidebarWidth` persist to `UserDefaults`;
+/// `selectedHostId`, `sidebarWidth`, `recentPanes`, and `sidebarNavigation`
+/// persist to the injected `UserDefaults` (IPAD-1.30);
 /// `selectedWorktreePath`, `focusedPaneId`, and `theme` are in-memory
 /// only — they're cheap to re-derive on launch from the persisted
 /// host + a fresh worktrees fetch.
@@ -41,7 +42,7 @@ public final class IPadAppState {
         }
     }
 
-    public var sidebarNavigation = SidebarNavigationState(prefix: "sidebar.mobile", collapsed: true)
+    public var sidebarNavigation: SidebarNavigationState
     let recentPanes: MobileRecentPanes
     public var navigationWindowWidth: Double = 1100
     public var selectedWorktreePath: String?
@@ -94,6 +95,7 @@ public final class IPadAppState {
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         recentPanes = MobileRecentPanes(defaults: defaults)
+        sidebarNavigation = SidebarNavigationState(prefix: "sidebar.mobile", defaults: defaults, collapsed: true)
 
         if let idString = defaults.string(forKey: Keys.selectedHostId),
            let id = UUID(uuidString: idString) {
