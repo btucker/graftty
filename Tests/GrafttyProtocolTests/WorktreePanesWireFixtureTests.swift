@@ -32,7 +32,10 @@ struct WorktreePanesWireFixtureTests {
     /// line (or a value in `WorktreePanesWireFixture.rows`) fails here.
     @Test
     func fixtureRowsEncodeEveryCodingKey() throws {
-        let encoded = try JSONEncoder().encode(WorktreePanesWireFixture.rows)
+        // Keep the released fixture frozen while including fields added since release.
+        let currentRows = WorktreePanesWireFixture.rows + [WorktreePanesWireFixture.rows[0].with(
+            creationProgress: WorktreeCreationProgress(operationID: "fixture", startedAt: .distantPast))]
+        let encoded = try JSONEncoder().encode(currentRows)
         let rows = try #require(try JSONSerialization.jsonObject(with: encoded) as? [[String: Any]])
         let keys = Set(rows.flatMap(\.keys))
         #expect(keys == Set(WorktreePanes.CodingKeys.allCases.map(\.stringValue)))

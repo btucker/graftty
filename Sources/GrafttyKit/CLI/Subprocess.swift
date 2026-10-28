@@ -26,6 +26,9 @@ struct SubprocessLaunch: Sendable {
     /// File connected to the child's stdin; nil inherits the app's stdin.
     var standardInput: URL?
     var capture: Capture = .pipes
+    /// Optional rolling capture limit and observer, used by worktree creation.
+    var captureLimit: Int?
+    var onOutput: (@Sendable (Data) -> Void)?
     var timeout: Duration?
     /// Command named in `CLIError.timedOut`.
     var timeoutLabel: String
@@ -83,7 +86,7 @@ enum Subprocess {
             process.standardInput = handle
         }
 
-        let buffers = PipeBuffers()
+        let buffers = PipeBuffers(limit: launch.captureLimit, onOutput: launch.onOutput)
         var files: (directory: URL, stdout: URL, stderr: URL)?
         defer { if let files { try? FileManager.default.removeItem(at: files.directory) } }
         switch launch.capture {
@@ -334,8 +337,13 @@ final class SubprocessTermination: @unchecked Sendable {
 
 /// Captured stdout and stderr of one piped subprocess.
 private final class PipeBuffers: Sendable {
-    let stdout = PipeStream()
-    let stderr = PipeStream()
+    let stdout: PipeStream
+    let stderr: PipeStream
+
+    init(limit: Int?, onOutput: (@Sendable (Data) -> Void)?) {
+        stdout = PipeStream(limit: limit, onOutput: onOutput)
+        stderr = PipeStream(limit: limit, onOutput: onOutput)
+    }
 }
 
 /// One pipe's bytes. `readabilityHandler` fires on private background queues
@@ -352,6 +360,20 @@ private final class PipeStream: @unchecked Sendable {
     private var handle: FileHandle?
     private var finished = false
 
+    private let limit: Int?
+    private let onOutput: (@Sendable (Data) -> Void)?
+
+    init(limit: Int?, onOutput: (@Sendable (Data) -> Void)?) {
+        self.limit = limit
+        self.onOutput = onOutput
+    }
+
+    private func append(_ chunk: Data) {
+        bytes.append(chunk)
+        if let limit, bytes.count > limit { bytes = Data(bytes.suffix(limit)) }
+        onOutput?(chunk)
+    }
+
     var data: Data { lock.withLock { bytes } }
 
     /// Drains `handle` while the child runs, one chunk per callback.
@@ -367,7 +389,7 @@ private final class PipeStream: @unchecked Sendable {
         let atEOF = lock.withLock { () -> FileHandle? in
             guard !finished else { return nil }
             guard let chunk = Subprocess.drainChunk(fd: fd) else { return handle }
-            bytes.append(chunk)
+            append(chunk)
             return nil
         }
         atEOF?.readabilityHandler = nil
@@ -380,7 +402,7 @@ private final class PipeStream: @unchecked Sendable {
         let drained = lock.withLock { () -> FileHandle? in
             guard !finished, let handle else { return nil }
             finished = true
-            bytes.append(Subprocess.readWithoutBlocking(fd))
+            append(Subprocess.readWithoutBlocking(fd))
             self.handle = nil
             return handle
         }

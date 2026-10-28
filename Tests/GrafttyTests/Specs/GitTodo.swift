@@ -209,7 +209,7 @@ struct GitTodo {
     func git_5_6() async throws { }
 
     @Test("""
-@spec GIT-5.7: When `git worktree add` started by `GIT-5.4` fails, the application shall (a) remove the `.creating` placeholder from the sidebar and (b) present an `NSAlert` titled "Could not create worktree" whose informative text shows git's stderr (or "git worktree add failed" when stderr is empty). Inline error display in the sheet is no longer reachable since `GIT-5.4` already dismissed the sheet on submit. Mirrors `GIT-1.2` / `GIT-4.4` / `GIT-4.11`'s alert-not-silent-return policy on the symmetric create path.
+@spec GIT-5.7: When `git worktree add` started by `GIT-5.4` fails, the application shall (a) retain the row with failed creation diagnostics that can be inspected in the sidebar and (b) present an `NSAlert` titled "Could not create worktree" whose informative text shows git's stderr (or "git worktree add failed" when stderr is empty). Inline error display in the sheet is no longer reachable since `GIT-5.4` already dismissed the sheet on submit. Mirrors `GIT-1.2` / `GIT-4.4` / `GIT-4.11`'s alert-not-silent-return policy on the symmetric create path.
 """, .disabled("not yet implemented"))
     func git_5_7() async throws { }
 

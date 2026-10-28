@@ -152,7 +152,7 @@ struct WorktreeReconcilerTests {
     /// so an FSEvents-driven reconcile must NOT flip it to `.stale`.
     /// Only `AddWorktreeFlow` is allowed to clear placeholders.
     @Test("""
-    @spec GIT-5.8: While a worktree entry is in the `.creating` state, the reconciler (`WorktreeReconciler.reconcile`) shall not transition the entry to `.stale` even when the path is absent from `git worktree list --porcelain` output. The placeholder is in flight by definition — git hasn't finished writing its admin entry yet — and only `AddWorktreeFlow` is permitted to clear the placeholder (success → `.running`, failure → remove). Without this guard, an FSEvents tick on `.git/worktrees/` that fires before git's admin write completes (or one driven by an unrelated change in another worktree) would briefly flash the spinning placeholder to `.stale`.
+    @spec GIT-5.8: While a worktree entry is in the `.creating` state, the reconciler (`WorktreeReconciler.reconcile`) shall not transition the entry to `.stale` even when the path is absent from `git worktree list --porcelain` output. The placeholder is in flight by definition — git hasn't finished writing its admin entry yet — and only `AddWorktreeFlow` is permitted to clear the placeholder (success → `.running`, failure → retained diagnostics). Without this guard, an FSEvents tick on `.git/worktrees/` that fires before git's admin write completes (or one driven by an unrelated change in another worktree) would briefly flash the spinning placeholder to `.stale`.
     """)
     func creatingPlaceholderIsPreservedWhenAbsentFromDiscovery() {
         let existing = [wt("/r/in-flight", "feat", state: .creating)]

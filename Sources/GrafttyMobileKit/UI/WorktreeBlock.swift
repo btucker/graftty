@@ -34,6 +34,11 @@ struct WorktreeBlock: View {
         // sidebar-style's full per-row padding.
         VStack(alignment: .leading, spacing: 3) {
             worktreeRow
+            if let progress = worktree.creationProgress {
+                WorktreeCreationProgressView(progress: progress)
+                    .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
+                    .padding(.leading, 20)
+            }
             paneRows
         }
         // IPAD-1.16: active-worktree block highlight (Mac parity).

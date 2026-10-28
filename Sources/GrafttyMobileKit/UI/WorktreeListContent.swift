@@ -605,13 +605,19 @@ public struct WorktreeListContent: View {
     /// Compact navigation may still show the project picker or another
     /// project's detail while the requested worktree is being created.
     private func pendingCreationRows(excludingProjectID: String? = nil) -> some View {
-        ForEach(worktreeCreation.rows(in: []).filter {
+        let snapshot: [WorktreePanes]
+        if case .loaded(let rows) = state { snapshot = rows } else { snapshot = [] }
+        return ForEach(worktreeCreation.pendingRows(in: snapshot).filter {
             SidebarProjection.projectID($0) != excludingProjectID
         }, id: \.path) { worktree in
             VStack(alignment: .leading, spacing: 2) {
                 Text(worktree.repoDisplayName).font(.caption).foregroundStyle(.secondary)
                 WorktreeRowContent(worktree: worktree, theme: theme,
                     isActive: false, isOpening: false, attentionCount: 0)
+                if let progress = worktree.creationProgress {
+                    WorktreeCreationProgressView(progress: progress)
+                        .foregroundStyle(theme?.sidebarSecondaryText ?? .secondary)
+                }
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }

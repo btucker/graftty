@@ -132,6 +132,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// the mobile client can render it directly without re-running
     /// the Trojan-Source defense (`GIT-2.10`).
     public let displayBranch: String
+    public let creationProgress: WorktreeCreationProgress?
     public let state: WorktreeWireState
     /// True when this entry is the repo's main checkout
     /// (`worktree.path == repo.path`). Drives the italic + house-icon
@@ -190,8 +191,10 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         route: WorktreeRoute? = nil,
         sidebar: SidebarWorktreeMetadata? = nil,
         ports: [WorktreePort] = [],
-        portBindings: [String: [PortBinding]]? = nil
+        portBindings: [String: [PortBinding]]? = nil,
+        creationProgress: WorktreeCreationProgress? = nil
     ) {
+        self.creationProgress = creationProgress
         self.path = path
         self.displayName = displayName
         self.repoDisplayName = repoDisplayName
@@ -221,7 +224,8 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
         layout: PaneLayoutNode? = nil,
         origin: WorktreeOrigin? = nil,
         route: WorktreeRoute? = nil,
-        sidebar: SidebarWorktreeMetadata? = nil
+        sidebar: SidebarWorktreeMetadata? = nil,
+        creationProgress: WorktreeCreationProgress? = nil
     ) -> WorktreePanes {
         WorktreePanes(
             path: path ?? self.path, displayName: displayName, repoDisplayName: repoDisplayName,
@@ -229,7 +233,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
             isMainCheckout: isMainCheckout, prBadge: prBadge, stats: stats,
             attentionText: attentionText, attentionSource: attentionSource, attentionTimestamp: attentionTimestamp,
             layout: layout ?? self.layout, origin: origin ?? self.origin, route: route ?? self.route,
-            sidebar: sidebar ?? self.sidebar, ports: ports, portBindings: portBindings)
+            sidebar: sidebar ?? self.sidebar, ports: ports, portBindings: portBindings, creationProgress: creationProgress ?? self.creationProgress)
     }
 
     /// Custom decode preserves readability when an older server
@@ -239,13 +243,14 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
     /// Internal and `CaseIterable` so the wire-fixture test can check that
     /// `encode(to:)` writes every key.
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case path, displayName, repoDisplayName, repositoryID, displayBranch, state,
+        case path, displayName, repoDisplayName, repositoryID, displayBranch, state, creationProgress,
              isMainCheckout, prBadge, stats, attentionText, attentionSource,
              attentionTimestamp, layout, origin, route, sidebar, ports, portBindings
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.creationProgress = try c.decodeIfPresent(WorktreeCreationProgress.self, forKey: .creationProgress)
         self.portBindings = try c.decodeIfPresent([String: [PortBinding]].self, forKey: .portBindings)
         self.sidebar = try c.decodeIfPresent(SidebarWorktreeMetadata.self, forKey: .sidebar)
         self.ports = try c.decodeIfPresent([WorktreePort].self, forKey: .ports) ?? []
@@ -274,6 +279,7 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(creationProgress, forKey: .creationProgress)
         try c.encode(path, forKey: .path)
         try c.encode(displayName, forKey: .displayName)
         try c.encode(repoDisplayName, forKey: .repoDisplayName)

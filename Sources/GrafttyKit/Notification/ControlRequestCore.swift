@@ -121,7 +121,7 @@ public enum ControlRequestCore {
         case .createWorktree(let request):
             return await CLIWorktreeCreationRequestHandler.begin(request, platform: platform.worktreeCreation)
         case .worktreeCreateStatus(let operationID):
-            guard let status = platform.worktreeCreation.worktreeCreations.status(operationID: operationID) else {
+            guard let status = platform.worktreeCreation.worktreeCreationStatus(operationID: operationID) else {
                 return .error("unknown or expired worktree creation operation")
             }
             return .worktreeCreate(status)

@@ -148,7 +148,38 @@ public extension AppState {
         var placeholder = WorktreeEntry(path: worktreePath, branch: branch.branchName, createdAt: createdAt,
             creationOrigin: creationOrigin ?? .init(date: createdAt, source: .user))
         placeholder.state = .creating
+        placeholder.creationProgress = WorktreeCreationProgress(startedAt: createdAt)
         repos[repoIdx].worktrees.append(placeholder)
         return .success(worktreePath)
+    }
+}
+
+
+extension AppState {
+    public mutating func recordCreationOutput(_ output: WorktreeCreationOutput, at path: String, operationID: String? = nil) {
+        guard let index = indices(forWorktreePath: path),
+              repos[index.repo].worktrees[index.worktree].creationProgress?.isPending == true,
+              operationID == nil || repos[index.repo].worktrees[index.worktree].creationProgress?.operationID == operationID else { return }
+        repos[index.repo].worktrees[index.worktree].creationProgress?.output = output.text
+        repos[index.repo].worktrees[index.worktree].creationProgress?.outputTruncated = output.truncated
+    }
+
+    public mutating func transitionCreation(at path: String, to phase: WorktreeCreationProgress.Phase,
+                                           error: String? = nil, now: Date = Date(), operationID: String? = nil) {
+        guard let index = indices(forWorktreePath: path),
+              operationID == nil || repos[index.repo].worktrees[index.worktree].creationProgress?.operationID == operationID else { return }
+        if phase == .failed {
+            // Keep diagnostics inspectable without offering to open a path Git
+            // may never have created. Discovery can later resurrect a real checkout.
+            if repos[index.repo].worktrees[index.worktree].state == .creating {
+                if !FileManager.default.fileExists(atPath: path + "/.git") {
+                    repos[index.repo].worktrees[index.worktree].markStale(at: now)
+                } else {
+                    repos[index.repo].worktrees[index.worktree].state = .closed
+                }
+            }
+            repos[index.repo].worktrees[index.worktree].cancelExpectedLaunch()
+        }
+        repos[index.repo].worktrees[index.worktree].creationProgress?.transition(to: phase, error: error, now: now)
     }
 }

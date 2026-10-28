@@ -55,12 +55,25 @@ struct MobileWorktreeCreation {
         var rows = snapshot
         for item in pending {
             if let index = rows.firstIndex(where: item.matches) {
-                rows[index] = item.creatingRow(path: rows[index].path)
+                // Prefer host progress once the placeholder has a matching row.
+                // In particular, never hide its failed/interrupted outcome.
+                if rows[index].creationProgress == nil {
+                    rows[index] = item.creatingRow(path: rows[index].path)
+                }
             } else {
                 rows.append(item.creatingRow(path: item.worktreePath ?? item.placeholder.path))
             }
         }
         return rows
+    }
+
+    /// Pending rows outside the currently selected project must use the same
+    /// authoritative progress as rows in the main list.
+    func pendingRows(in snapshot: [WorktreePanes]) -> [WorktreePanes] {
+        pending.map { item in
+            if let row = snapshot.first(where: item.matches), row.creationProgress != nil { return row }
+            return item.creatingRow(path: item.worktreePath ?? item.placeholder.path)
+        }
     }
 
     mutating func takeReadySelection(in snapshot: [WorktreePanes], generation: UInt64) -> WorktreePanes? {

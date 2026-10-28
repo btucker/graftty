@@ -88,11 +88,19 @@ public struct CLIRunner: CLIExecutor {
         return env
     }
 
+    func captureStreaming(command: String, args: [String], at directory: String,
+                          limit: Int, onOutput: @escaping @Sendable (Data) -> Void) async throws -> CLIOutput {
+        try await execute(command: command, args: args, at: directory, timeout: nil,
+                          captureLimit: limit, onOutput: onOutput)
+    }
+
     private func execute(
         command: String,
         args: [String],
         at directory: String,
-        timeout: Duration?
+        timeout: Duration?,
+        captureLimit: Int? = nil,
+        onOutput: (@Sendable (Data) -> Void)? = nil
     ) async throws -> CLIOutput {
         let output: SubprocessOutput
         do {
@@ -100,6 +108,8 @@ public struct CLIRunner: CLIExecutor {
                 executable: "/usr/bin/env",
                 arguments: [command] + args,
                 directory: directory,
+                captureLimit: captureLimit,
+                onOutput: onOutput,
                 timeout: timeout,
                 timeoutLabel: command,
                 terminatesOnCancellation: terminatesOnCancellation
@@ -113,8 +123,14 @@ public struct CLIRunner: CLIExecutor {
         } catch {
             throw CLIError.launchFailed(command: command, message: error.localizedDescription)
         }
-        let stdout = String(data: output.stdout, encoding: .utf8) ?? ""
-        let stderr = String(data: output.stderr, encoding: .utf8) ?? ""
+        func decode(_ bytes: Data) -> String {
+            // A rolling capture may start inside a scalar. Preserve legacy
+            // decoding for callers that requested a complete capture.
+            if captureLimit != nil { return String(decoding: bytes, as: UTF8.self) }
+            return String(data: bytes, encoding: .utf8) ?? ""
+        }
+        let stdout = decode(output.stdout)
+        let stderr = decode(output.stderr)
 
         // `/usr/bin/env` exits with 127 and emits "env: <cmd>: No such file
         // or directory" on stderr when the command is not found. The prefix

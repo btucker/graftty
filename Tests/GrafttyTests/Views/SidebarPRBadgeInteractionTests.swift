@@ -77,6 +77,56 @@ struct SidebarPRBadgeInteractionTests {
         }
     }
 
+    @Test("The creating row passes output-inspector clicks through the production selection overlay")
+    func creationOutputOwnsItsClickTarget() async throws {
+        var worktree = WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature", state: .creating)
+        worktree.creationProgress = WorktreeCreationProgress()
+        worktree.creationProgress?.startedAt = Date().addingTimeInterval(-612)
+        worktree.creationProgress?.transition(to: .git)
+        worktree.creationProgress?.output = "Preparing worktree (new branch 'feature')\nHEAD is now at a5bfc04 initial\npost-checkout: waiting for shared setup lock\n"
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])
+        var selections = 0
+        let hosting = NSHostingView(rootView: WorktreeBlock(
+            worktree: worktree, repoID: repo.id, isActive: false, isDropTarget: false,
+            groupsPanes: false, theme: .fallback, appState: .constant(AppState(repos: [repo])),
+            reorderingEnabled: true, onSelect: { selections += 1 }, onMovePane: { _, _ in },
+            onPaneTargeted: { _ in }, menu: { _ in NSMenu() }
+        ) {
+            WorktreeRow(entry: worktree, isActive: false, displayName: "feature", isMainCheckout: false,
+                theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+        } panes: { EmptyView() }
+            .background(GhosttyTheme.fallback.sidebarBackground)
+            .foregroundStyle(GhosttyTheme.fallback.foreground))
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 320, height: 70),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(150))
+        hosting.layoutSubtreeIfNeeded()
+        let overlay = try #require(findDragView(in: hosting))
+        let rect = try #require(overlay.excludedRects.first)
+        let location = overlay.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+        let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: window)
+        let point = try #require(overlay.superview).convert(location, from: nil)
+        #expect(overlay.hitTest(point, event: down) == nil)
+        let visibleWindows = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
+        try click(at: location, in: window, dragView: overlay)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(selections == 0)
+        let popover = try #require(NSApp.windows.first { $0.isVisible && !visibleWindows.contains(ObjectIdentifier($0)) })
+        defer { popover.orderOut(nil) }
+        if let directory = ProcessInfo.processInfo.environment["GRAFTTY_SIDEBAR_RENDER_DIR"] {
+            let url = URL(fileURLWithPath: directory, isDirectory: true)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            for (name, view) in [("creation-row", hosting as NSView), ("creation-output", try #require(popover.contentView))] {
+                let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent(name + ".png"))
+            }
+        }
+    }
+
     private func findDragView(in view: NSView) -> WorktreeDragSourceView? {
         if let drag = view as? WorktreeDragSourceView { return drag }
         return view.subviews.lazy.compactMap(findDragView).first

@@ -98,6 +98,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var autoTrackLastAttempt: GitAutoTracking.Target?
     /// Initial activity for a newly added worktree. Legacy entries have no creation time.
     public var createdAt: Date?
+    public var creationProgress: WorktreeCreationProgress?
     public var state: WorktreeState
     /// Wall-clock time when this entry most recently transitioned to
     /// `.stale`. Persisted so the stale-worktree auto-dismiss grace
@@ -167,6 +168,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.createdAt = createdAt
         self.history = creationOrigin.map { WorktreeHistory(origin: $0) }
             ?? createdAt.map { WorktreeHistory(origin: .init(date: $0, source: .unknown)) }
+        self.creationProgress = nil
         self.state = state
         self.staleSince = state == .stale ? (staleSince ?? Date()) : nil
         self.attention = attention
@@ -188,7 +190,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, paneAttention,
+        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -206,6 +208,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
         self.history = try container.decodeIfPresent(WorktreeHistory.self, forKey: .history)
             ?? createdAt.map { WorktreeHistory(origin: .init(date: $0, source: .unknown)) }
+        self.creationProgress = try container.decodeIfPresent(WorktreeCreationProgress.self, forKey: .creationProgress)
+        self.creationProgress?.interruptAfterRestart()
         self.state = try container.decode(WorktreeState.self, forKey: .state)
         self.staleSince = try container.decodeIfPresent(Date.self, forKey: .staleSince)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)

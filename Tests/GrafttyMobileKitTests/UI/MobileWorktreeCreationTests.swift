@@ -54,6 +54,21 @@ struct MobileWorktreeCreationTests {
         #expect(creation.isEmpty)
     }
 
+    @Test("Pending rows preserve authoritative progress in the list and compact project picker")
+    func pendingRowsPreserveHostProgress() {
+        var creation = MobileWorktreeCreation()
+        let existing = row(path: "existing", state: .running, layout: pane)
+        _ = creation.begin(placeholder: row(path: "temporary"), knownPaths: [existing.path], generation: 1)
+        var progress = WorktreeCreationProgress()
+        progress.output = "waiting for hook lock"
+        let hostRow = row().with(creationProgress: progress)
+        #expect(creation.rows(in: [existing, hostRow]) == [existing, hostRow])
+        #expect(creation.pendingRows(in: [existing, hostRow]) == [hostRow])
+        progress.transition(to: .failed, error: "setup failed")
+        let failed = row(state: .stale).with(creationProgress: progress)
+        #expect(creation.pendingRows(in: [existing, failed]) == [failed])
+    }
+
     @Test("Existing rows and other repositories cannot replace the pending creation")
     func preservesUnrelatedRows() {
         var creation = MobileWorktreeCreation()

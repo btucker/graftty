@@ -86,7 +86,8 @@ extension WorktreePanes {
                 for: entry, projectID: inputs.projectID, folders: inputs.folders?.map(\.name) ?? [],
                 repositoryPath: repo.path, folderIDs: inputs.folders?.map(\.id)),
             ports: inputs.ports,
-            portBindings: inputs.portBindings
+            portBindings: inputs.portBindings,
+            creationProgress: entry.creationProgress
         )
     }
 }

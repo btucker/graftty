@@ -6,7 +6,7 @@ import GrafttyProtocol
 struct Worktree: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Create, remove, pin, and unpin worktrees",
-        subcommands: [WorktreeAdd.self, WorktreeRemove.self, WorktreePin.self, WorktreeUnpin.self, WorktreeKeepAwake.self]
+        subcommands: [WorktreeAdd.self, WorktreeStatus.self, WorktreeRemove.self, WorktreePin.self, WorktreeUnpin.self, WorktreeKeepAwake.self]
     )
 }
 
@@ -41,6 +41,8 @@ struct WorktreeAdd: ParsableCommand {
         prints the pending operation ID and stable message address. The app
         waits for Git and its hooks to finish, then launches the agent even
         after this CLI exits. Use --wait to block until launch is accepted.
+        Inspect progress and recent Git/hook output with `graftty worktree status <operation-id>`.
+        Creation does not resume after a host restart; Git/hooks may still run.
         Initial agent prompts are also saved in the worktree's durable inbox
         so an agent launched later can recover the task.
         Send guidance with `graftty team send --stdin <address>`; messages
@@ -172,6 +174,8 @@ struct WorktreeAdd: ParsableCommand {
                     let path = WorktreeAgentLaunchCommand.shellLiteral(operation.worktreePath)
                     let address = WorktreeAgentLaunchCommand.shellLiteral(operation.messageAddress)
                     writeLine("pending operation=\(operation.operationID)  worktree=\(path)  address=\(address)")
+                    let remoteOption = remote.map { " --remote " + WorktreeAgentLaunchCommand.shellLiteral($0) } ?? ""
+                    writeLine("inspect=graftty worktree status \(WorktreeAgentLaunchCommand.shellLiteral(operation.operationID))\(remoteOption)")
                     if let agent {
                         writeLine("agent=\(agent)  launch=after-worktree-ready  message-with=graftty team send --stdin \(address)")
                         writeLine("handoff=pending  parent-action=pause delegated scope and confirm child reachability with graftty team list --json")
@@ -374,6 +378,42 @@ struct WorktreeAdd: ParsableCommand {
         }
     }
 
+}
+
+struct WorktreeStatus: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "status",
+        abstract: "Inspect worktree creation progress and recent Git/hook output")
+
+    @Argument(help: "Operation ID printed by worktree add")
+    var operationID: String
+
+    @Option(name: .long, help: "Mac that owns this creation")
+    var remote: String?
+
+    @Flag(name: .long, help: "Print the status as JSON")
+    var json = false
+
+    func run() throws {
+        let request: NotificationMessage = remote.map {
+            .remoteWorktree(target: $0, request: .status(operationID: operationID))
+        } ?? .worktreeCreateStatus(operationID: operationID)
+        let status = try CLIEnv.expect(CLIEnv.sendRequest(request), for: "worktree status") {
+            if case .worktreeCreate(let status) = $0 { status } else { nil }
+        }
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            print(String(decoding: try encoder.encode(status), as: UTF8.self))
+        } else {
+            print("\(status.progress?.label ?? status.state.rawValue)  worktree=\(status.worktreePath)")
+            if let progress = status.progress {
+                print("Elapsed: \(Int(progress.elapsed()))s")
+                if progress.outputTruncated { print("[Earlier output omitted; showing recent output]") }
+                if !progress.output.isEmpty { print(progress.output) }
+            }
+            if let error = status.error ?? status.progress?.error { print(WorktreeCreationProgress.plainText(error)) }
+        }
+    }
 }
 
 struct WorktreeRemove: ParsableCommand {

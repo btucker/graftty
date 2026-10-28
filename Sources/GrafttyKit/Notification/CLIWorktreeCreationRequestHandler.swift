@@ -38,6 +38,23 @@ public protocol CLIWorktreeCreationPlatform: AnyObject {
 
 public extension CLIWorktreeCreationPlatform {
     func creationDestinationError(worktreePath: String, repo: RepoEntry) -> String? { nil }
+
+    /// Live launch status and persisted diagnostics share the same lookup for
+    /// local and paired CLI callers. A restart never resumes the launch task.
+    func worktreeCreationStatus(operationID: String) -> WorktreeCreateStatus? {
+        if var status = worktreeCreations.status(operationID: operationID) {
+            if let progress = state.worktree(forPath: status.worktreePath)?.creationProgress,
+               progress.operationID == operationID { status.progress = progress }
+            return status
+        }
+        guard let entry = state.repos.flatMap(\.worktrees).first(where: {
+            $0.creationProgress?.operationID == operationID
+        }), let progress = entry.creationProgress, !progress.isPending else { return nil }
+        return WorktreeCreateStatus(operationID: operationID,
+            state: progress.phase == .ready ? .ready : .failed,
+            worktreePath: entry.path, messageAddress: entry.path,
+            error: progress.error, progress: progress)
+    }
 }
 
 /// `graftty worktree add`, local or from a paired Mac: admits the request
@@ -53,7 +70,7 @@ public enum CLIWorktreeCreationRequestHandler {
         let worktreeCreations = platform.worktreeCreations
         let callerPath = request.callerWorktree
         let operationID = request.operationID ?? UUID().uuidString.lowercased()
-        if let existing = worktreeCreations.status(operationID: operationID) {
+        if let existing = platform.worktreeCreationStatus(operationID: operationID) {
             return .worktreeCreate(existing)
         }
         defer { worktreeCreations.discardBaseCapture(operationID: operationID) }
@@ -79,7 +96,7 @@ public enum CLIWorktreeCreationRequestHandler {
         }
         // Ref resolution suspends this handler. A retry may have completed
         // the same preparation and started the operation in the meantime.
-        if let retained = worktreeCreations.status(operationID: operationID) {
+        if let retained = platform.worktreeCreationStatus(operationID: operationID) {
             return .worktreeCreate(retained)
         }
 
@@ -140,6 +157,11 @@ public enum CLIWorktreeCreationRequestHandler {
             return .error(error.userMessage ?? "could not begin worktree creation")
         }
 
+        if let index = platform.state.indices(forWorktreePath: worktreePath) {
+            platform.state.repos[index.repo].worktrees[index.worktree].creationProgress?.operationID = operationID
+            try? platform.stateDidChange()
+        }
+
         if let agentRuntime, launch.promptFile != nil,
            let index = platform.state.indices(forWorktreePath: worktreePath) {
             platform.state.repos[index.repo].worktrees[index.worktree]
@@ -176,7 +198,7 @@ public enum CLIWorktreeCreationRequestHandler {
             },
             agentRuntime: agentRuntime
         )
-        let status = worktreeCreations.start(
+        var status = worktreeCreations.start(
             worktreePath: worktreePath,
             messageAddress: worktreePath,
             stagedPromptFile: launch.promptFile,
@@ -191,6 +213,7 @@ public enum CLIWorktreeCreationRequestHandler {
             try? platform.stateDidChange()
             return failure
         }
+        status.progress = platform.state.worktree(forPath: worktreePath)?.creationProgress
         return .worktreeCreate(status)
     }
 }

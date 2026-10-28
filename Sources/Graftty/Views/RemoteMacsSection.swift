@@ -670,6 +670,7 @@ struct RemoteMacsSection: View {
             branch: worktree.displayBranch,
             state: WorktreeState(worktree.state)
         )
+        entry.creationProgress = worktree.creationProgress
         entry.emoji = worktree.sidebar?.emoji
         return entry
     }
