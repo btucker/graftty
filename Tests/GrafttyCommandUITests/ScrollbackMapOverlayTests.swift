@@ -67,7 +67,7 @@ private func render(_ view: some View, size: CGSize, named name: String) throws 
 }
 
 @MainActor
-@Suite("@spec CONTEXT-34: While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages, marks closer than 3 points merged into one, and a box showing the current viewport, and shall hide the card while no message is located.")
+@Suite("@spec CONTEXT-34: While a worktree's agent pane is shown on Mac or mobile and its scrollback holds located human inputs or peer messages, the application shall float a small translucent scrollback map card at the pane's top-right whose strip spans the whole scrollback, with orange marks for human inputs, accent-blue marks for peer messages and agent responses, marks closer than 3 points merged into one, and a box showing the current viewport, and shall hide the card while no message is located.")
 struct ScrollbackMapPresenceTests {
     @Test func rowsMapProportionallyOntoTheStrip() {
         let layout = ScrollbackMapLayout(height: 100, totalRows: 1000)
@@ -134,8 +134,73 @@ struct ScrollbackMapPresenceTests {
 }
 
 @MainActor
-@Suite("@spec CONTEXT-35: When the user hovers over the scrollback map on Mac, or drags along it on Mac or mobile, the application shall show a label to the left of the strip with the nearest mark's message, the human input verbatim or the peer message's gist with a sparkle when generated, and while dragging shall scroll the terminal live to center the row under the pointer or finger; when the user clicks or taps a mark, the application shall scroll that mark's row to the top of the terminal.")
+@Suite("@spec CONTEXT-35: When the user hovers over the scrollback map card including its padding on Mac or with a pointer on mobile, or drags along it on Mac or mobile, the application shall show a label to the left of the strip with the nearest mark's message, the human input verbatim or the peer message's gist with a sparkle when generated, and while dragging shall scroll the terminal live to center the row under the pointer or finger; when the user clicks or taps a mark, the application shall scroll that mark's row to the top of the terminal.")
 struct ScrollbackMapScrubTests {
+    @Test(arguments: [2.0, 17.0, 32.0])
+    func clickingTheWholeCardAboveANativeTerminalScrolls(x: Double) async throws {
+        _ = NSApplication.shared
+        let terminal = MapTerminalFixture()
+        let timeline = sampleTimeline()
+        let map = ScrollbackMap.locate(ScrollbackMap.messages(in: timeline), rows: sampleRows())
+        let viewport = ScrollbackViewport(offset: 520, length: 60, total: 600)
+        var scrolled: [Int] = []
+        let content = MapTerminalRepresentable(view: terminal)
+            .overlay(alignment: .topTrailing) {
+                ScrollbackMapOverlay(map: map, viewport: viewport, entries: ScrollbackMapEntry.entries(in: timeline),
+                                     scroll: { scrolled.append($0) })
+                    .padding(10)
+            }
+            .onTapGesture { }
+        let host = NSHostingView(rootView: content)
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 400, height: 300),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
+        let pointer = try #require(descendants(host).compactMap { $0 as? ScrollbackMapPointerView }.first)
+        let markY = ScrollbackMapLayout(map: map, viewport: viewport).y(forRow: 40)
+        let point = pointer.convert(NSPoint(x: x, y: ScrollbackMapLayout.stripInset.top + markY), to: nil)
+        let hit = host.hitTest(host.superview?.convert(point, from: nil) ?? point)
+        #expect(hit === pointer, "The map must own hit testing above the represented terminal")
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+            window.sendEvent(event)
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(scrolled == [40], "The full visible card must receive clicks above the native terminal, including its padding")
+        #expect(terminal.clicks == 0, "Map clicks must not reach the terminal")
+
+        pointer.scrollWheel(with: MapWheelEvent(point: point))
+        #expect(terminal.wheels == 1, "Wheel scrolling over the map must reach the terminal behind it")
+
+        var hovers: [CGFloat?] = []
+        let onHover = pointer.onHover
+        pointer.onHover = { hovers.append($0); onHover?($0) }
+        let moved = try #require(NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        pointer.mouseMoved(with: moved)
+        pointer.mouseExited(with: moved)
+        #expect(hovers.count == 2 && hovers[0] != nil && hovers[1] == nil, "Hovering anywhere on the card shows and clears its label")
+
+        for (type, row) in [(NSEvent.EventType.leftMouseDown, 40), (.leftMouseDragged, 300), (.leftMouseUp, 300)] {
+            let y = ScrollbackMapLayout.stripInset.top + ScrollbackMapLayout(map: map, viewport: viewport).y(forRow: row)
+            let location = pointer.convert(NSPoint(x: x, y: y), to: nil)
+            let event = try #require(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
+            window.sendEvent(event)
+        }
+        #expect(scrolled.last == 270, "Dragging centers the pointer's row rather than clicking the nearest mark")
+        #expect(terminal.clicks == 0)
+    }
+
     @Test func scrubbingCentersTheRowUnderThePointer() {
         let layout = ScrollbackMapLayout(height: 100, totalRows: 1000)
         #expect(layout.scrubTopRow(atY: 50, viewportLength: 40) == 480)
@@ -205,6 +270,29 @@ struct ScrollbackMapScrubTests {
                 size: CGSize(width: 320, height: 200), named: name)
         }
     }
+}
+
+@MainActor
+private final class MapWheelEvent: NSEvent {
+    let point: NSPoint
+    init(point: NSPoint) { self.point = point; super.init() }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override var locationInWindow: NSPoint { point }
+    override var type: NSEvent.EventType { .scrollWheel }
+}
+
+private final class MapTerminalFixture: NSView {
+    var clicks = 0
+    var wheels = 0
+    override var isFlipped: Bool { true }
+    override func mouseDown(with event: NSEvent) { clicks += 1 }
+    override func scrollWheel(with event: NSEvent) { wheels += 1 }
+}
+
+private struct MapTerminalRepresentable: NSViewRepresentable {
+    let view: MapTerminalFixture
+    func makeNSView(context: Context) -> MapTerminalFixture { view }
+    func updateNSView(_ nsView: MapTerminalFixture, context: Context) { }
 }
 
 @Suite("@spec CONTEXT-36: While the pointer is not over the scrollback map and no drag is in progress, the application shall draw the card at 40 percent opacity, and shall draw it fully opaque while it is hovered, dragged, or touched, changing without animation when Reduce Motion is on.")

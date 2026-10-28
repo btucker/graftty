@@ -7,7 +7,7 @@ import Testing
 import AppKit
 #endif
 
-@Suite("@spec CONTEXT-26: When Context history shows a peer message, the application shall show text that fits one line verbatim without running a model, otherwise show an on-device Apple Intelligence summary marked as generated when available, and otherwise show the truncated first sentence or line unmarked, generating each text at most once per process.")
+@Suite("@spec CONTEXT-26: When Context history shows a peer message or visible agent response, the application shall show single-line text of at most 80 characters verbatim without running a model, otherwise show an on-device Apple Intelligence summary marked as generated when available, and otherwise show the first sentence or line unmarked, limiting summaries and fallbacks to 240 characters while allowing them to wrap, generating each text at most once per process.")
 struct PeerMessageGistTests {
     private final class Calls: @unchecked Sendable {
         private let lock = NSLock()
@@ -28,8 +28,8 @@ struct PeerMessageGistTests {
     }
 
     @Test func longOrMultilineTextUsesGeneratedSummary() async {
-        let provider = PeerMessageGistProvider { _ in "  Layout verified on both platforms.\nExtra line" }
-        #expect(await provider.gist(for: long) == PeerMessageGist(text: "Layout verified on both platforms.", isGenerated: true))
+        let provider = PeerMessageGistProvider { _ in "  Layout verified on both platforms.\nMap navigation restored." }
+        #expect(await provider.gist(for: long) == PeerMessageGist(text: "Layout verified on both platforms. Map navigation restored.", isGenerated: true))
         #expect(await provider.gist(for: "Line one\nLine two").isGenerated)
     }
 
@@ -39,12 +39,22 @@ struct PeerMessageGistTests {
                          PeerMessageGistProvider { _ in "   " }] {
             #expect(await provider.gist(for: long) == PeerMessageGist(text: "I checked the layout on both platforms.", isGenerated: false))
             #expect(await provider.gist(for: "\nFirst line\nSecond line") == PeerMessageGist(text: "First line", isGenerated: false))
-            let run = String(repeating: "word ", count: 40)
+            let run = String(repeating: "word ", count: 70)
             let gist = await provider.gist(for: run)
             #expect(!gist.isGenerated)
-            #expect(gist.text.count <= 80)
+            #expect(gist.text.count <= 240)
             #expect(gist.text.hasSuffix("…"))
         }
+    }
+
+    @Test func summariesKeepEnoughTextToWrap() async {
+        let summary = "Updated the build workflows so pull requests run the modern migration checks and retain the dependency coverage required by the integration branch."
+        let provider = PeerMessageGistProvider { _ in summary }
+        #expect(await provider.gist(for: long) == PeerMessageGist(text: summary, isGenerated: true))
+        #expect(PeerMessageGist.immediate(summary).text == summary)
+        let unpunctuated = String(repeating: "word ", count: 70)
+        #expect(PeerMessageGist.immediate(unpunctuated).text.count <= 240)
+        #expect(PeerMessageGist.immediate(unpunctuated).text.hasSuffix("…"))
     }
 
     @Test func leadingListMarkerIsNotTheFirstSentence() {

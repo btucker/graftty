@@ -35,14 +35,21 @@ public struct AttentionFileProgressEvent: Codable, Sendable {
     public let userInput: WorktreeHistory.UserInput?
 }
 
+public struct AttentionFileResponseEvent: Codable, Sendable {
+    public let worktree: String
+    public let response: WorktreeHistory.AgentResponse
+}
+
 public enum AttentionFileActivityEvent: Sendable {
     case stop(AttentionFileStopEvent)
     case progress(AttentionFileProgressEvent)
+    case response(AttentionFileResponseEvent)
 
     var occurredAt: Date {
         switch self {
         case .stop(let event): event.stoppedAt
         case .progress(let event): event.progressedAt
+        case .response(let event): Date(timeIntervalSinceReferenceDate: event.response.timestamp)
         }
     }
 }
@@ -193,6 +200,14 @@ public struct AttentionFileHandoff: Sendable {
         )
     }
 
+    public func response(_ response: WorktreeHistory.AgentResponse, worktree: String) throws {
+        guard !worktree.isEmpty, !response.text.isEmpty else { throw AttentionFileHandoffError.invalidRecap }
+        try ensureDirectory()
+        let event = AttentionFileResponseEvent(worktree: worktree, response: response)
+        let name = "response-\(key(for: worktree + "\0" + response.id)).json"
+        try JSONEncoder().encode(event).write(to: rootDirectory.appendingPathComponent(name), options: .atomic)
+    }
+
     /// Replays durable events after a restart and removes each file only after
     /// its handler returns. Repeating a card after an app crash is safer than
     /// silently losing the stopped turn.
@@ -263,12 +278,13 @@ public struct AttentionFileHandoff: Sendable {
             options: [.skipsHiddenFiles]
         ).filter {
             $0.pathExtension == "json" && ($0.lastPathComponent.hasPrefix("stop-")
-                || (includeProgress && $0.lastPathComponent.hasPrefix("progress-")))
+                || (includeProgress && ($0.lastPathComponent.hasPrefix("progress-") || $0.lastPathComponent.hasPrefix("response-"))))
         }
         var events: [(URL, AttentionFileActivityEvent)] = []
         for file in files {
             let values = try file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-            guard values.isRegularFile == true, (values.fileSize ?? 0) <= 16_384 else {
+            let maximumSize = file.lastPathComponent.hasPrefix("response-") ? 65_536 : 16_384
+            guard values.isRegularFile == true, (values.fileSize ?? 0) <= maximumSize else {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }
@@ -277,6 +293,9 @@ public struct AttentionFileHandoff: Sendable {
             if file.lastPathComponent.hasPrefix("stop-") {
                 event = (try? JSONDecoder().decode(AttentionFileStopEvent.self, from: data))
                     .map { AttentionFileActivityEvent.stop($0) }
+            } else if file.lastPathComponent.hasPrefix("response-") {
+                event = (try? JSONDecoder().decode(AttentionFileResponseEvent.self, from: data))
+                    .map { AttentionFileActivityEvent.response($0) }
             } else {
                 event = (try? JSONDecoder().decode(AttentionFileProgressEvent.self, from: data))
                     .map { AttentionFileActivityEvent.progress($0) }
@@ -289,6 +308,7 @@ public struct AttentionFileHandoff: Sendable {
             switch event {
             case .stop(let value): worktree = value.worktree
             case .progress(let value): worktree = value.worktree
+            case .response(let value): worktree = value.worktree
             }
             guard acceptingWorktree(worktree) else { continue }
             events.append((file, event))
@@ -300,6 +320,7 @@ public struct AttentionFileHandoff: Sendable {
             switch event {
             case .stop(let stop): isValid = !stop.worktree.isEmpty && stop.recap?.isValid != false
             case .progress(let progress): isValid = !progress.worktree.isEmpty
+            case .response(let response): isValid = !response.worktree.isEmpty && !response.response.text.isEmpty
             }
             guard isValid else {
                 try? FileManager.default.removeItem(at: file)
@@ -339,7 +360,7 @@ public struct AttentionFileHandoff: Sendable {
         return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
-    fileprivate func ensureDirectory() throws {
+    func ensureDirectory() throws {
         try FileManager.default.createDirectory(
             at: rootDirectory,
             withIntermediateDirectories: true,

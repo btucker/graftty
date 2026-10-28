@@ -730,6 +730,9 @@ struct GrafttyApp: App {
             handoff: attentionHandoff,
             apply: { activity in
                 switch activity {
+                case .response(let event):
+                    guard let index = binding.wrappedValue.indices(forWorktreePath: event.worktree) else { return }
+                    binding.wrappedValue.repos[index.repo].worktrees[index.worktree].recordAgentResponse(event.response)
                 case .progress(let event):
                     guard let index = binding.wrappedValue.indices(forWorktreePath: event.worktree) else { return }
                     if let input = event.userInput {

@@ -128,6 +128,9 @@ public extension HeadlessHostRuntime {
     func consumeAttentionActivities(handoff: AttentionFileHandoff = AttentionFileHandoff()) throws {
         try handoff.consumeActivities(acceptingWorktree: { state.worktree(forPath: $0) != nil }) { event in
             switch event {
+            case .response(let response):
+                guard let index = state.indices(forWorktreePath: response.worktree) else { return }
+                state.repos[index.repo].worktrees[index.worktree].recordAgentResponse(response.response)
             case .stop(let stop):
                 guard state.worktree(forPath: stop.worktree) != nil else { return }
                 ControlRequestCore.recordHookLiveness(callerPath: stop.worktree, runtime: stop.runtime, event: .stop,

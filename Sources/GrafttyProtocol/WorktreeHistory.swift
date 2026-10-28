@@ -5,8 +5,32 @@ import Crypto
 #endif
 import Foundation
 
-/// Creation and actual human input are retained independently of agent reports.
+/// Creation, human input and visible agent responses survive independently of agent reports.
 public struct WorktreeHistory: Codable, Sendable, Hashable {
+    /// @spec CONTEXT-40
+    /// When a provider emits a visible agent response, the application shall retain it once in worktree history independently of attention, order it between human inputs and other events by its original time, and show its wrapping summary with the original text available on expansion on Mac and mobile.
+    public struct AgentResponse: Codable, Sendable, Hashable, Identifiable {
+        public let id: String
+        public let timestamp: Double
+        public let text: String
+        public let runtime: String
+        public let wasTruncated: Bool
+
+        public init(id: String, text: String, at date: Date, runtime: String) {
+            self.id = id
+            timestamp = date.timeIntervalSinceReferenceDate
+            self.runtime = runtime
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            var bytes = 0
+            let prefix = trimmed.prefix(4000).prefix { character in
+                bytes += String(character).utf8.count
+                return bytes <= 16_000
+            }
+            self.text = String(prefix)
+            wasTruncated = prefix.endIndex != trimmed.endIndex
+        }
+    }
+
     public struct Origin: Codable, Sendable, Hashable {
         public enum Source: String, Codable, Sendable { case user, worktree, unknown }
         public var timestamp: Double
@@ -59,6 +83,7 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
 
     public var origin: Origin?
     public private(set) var inputs: [UserInput]
+    public private(set) var responses: [AgentResponse] = []
     private var launchPromptDigest: String?
     private var launchRuntime: String?
     private var consumedLaunchInputID: UUID?
@@ -66,6 +91,31 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
     public init(origin: Origin? = nil) {
         self.origin = origin
         inputs = []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case origin, inputs, responses, launchPromptDigest, launchRuntime, consumedLaunchInputID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        origin = try values.decodeIfPresent(Origin.self, forKey: .origin)
+        inputs = try values.decodeIfPresent([UserInput].self, forKey: .inputs) ?? []
+        responses = try values.decodeIfPresent([AgentResponse].self, forKey: .responses) ?? []
+        launchPromptDigest = try values.decodeIfPresent(String.self, forKey: .launchPromptDigest)
+        launchRuntime = try values.decodeIfPresent(String.self, forKey: .launchRuntime)
+        consumedLaunchInputID = try values.decodeIfPresent(UUID.self, forKey: .consumedLaunchInputID)
+    }
+
+    public mutating func record(_ response: AgentResponse) {
+        guard !response.text.isEmpty else { return }
+        if let index = responses.firstIndex(where: { $0.id == response.id }) {
+            responses[index] = response
+        } else {
+            responses.append(response)
+        }
+        responses.sort { $0.timestamp < $1.timestamp }
+        if responses.count > 128 { responses.removeFirst(responses.count - 128) }
     }
 
     public mutating func expectLaunchPrompt(_ prompt: String, runtime: String) {
@@ -102,7 +152,7 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
 /// One chronological projection drives both native clients and all expansion modes.
 public struct WorktreeTimeline: Sendable {
     public struct Event: Identifiable, Equatable, Sendable {
-        public enum Kind: Sendable { case creation, user, agentMessage, checkpoint }
+        public enum Kind: Sendable { case creation, user, agentMessage, agentResponse, checkpoint }
         public let id: String
         public let kind: Kind
         public let timestamp: Double?
@@ -152,7 +202,7 @@ public struct WorktreeTimeline: Sendable {
             switch event.kind {
             case .user: self.init(kind: .inputs, events: [event])
             case .agentMessage: self.init(kind: .peerMessages, events: [event])
-            case .creation, .checkpoint: self.init(kind: .event, events: [event])
+            case .creation, .checkpoint, .agentResponse: self.init(kind: .event, events: [event])
             }
         }
 
@@ -199,6 +249,11 @@ public struct WorktreeTimeline: Sendable {
                     completed: part.text + (input.wasTruncated && index == parts.count - 1 ? "…" : ""),
                     decisions: [], sourceWorktreePath: sourcePath)
             }
+        }
+        result += (history?.responses ?? []).map { response in
+            Event(id: response.id, kind: .agentResponse, timestamp: response.timestamp,
+                  title: response.runtime == "claude" ? "Claude" : "Codex",
+                  completed: response.text + (response.wasTruncated ? "…" : ""), decisions: [])
         }
         result = result.enumerated().sorted {
             let left = $0.element.timestamp ?? 0, right = $1.element.timestamp ?? 0
