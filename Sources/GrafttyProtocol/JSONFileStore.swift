@@ -43,6 +43,7 @@ public struct JSONFileStore<Value: Codable>: Sendable {
     private let createsDirectory: Bool
     private let posixPermissions: Int16?
     private let backupNaming: CorruptBackupNaming
+    private let readData: @Sendable (URL) throws -> Data
     var moveItem: @Sendable (URL, URL) throws -> Void = {
         try FileManager.default.moveItem(at: $0, to: $1)
     }
@@ -53,7 +54,8 @@ public struct JSONFileStore<Value: Codable>: Sendable {
         outputFormatting: JSONEncoder.OutputFormatting = [],
         createsDirectory: Bool = true,
         posixPermissions: Int16? = nil,
-        backupNaming: CorruptBackupNaming = .dotMilliseconds
+        backupNaming: CorruptBackupNaming = .dotMilliseconds,
+        readData: @escaping @Sendable (URL) throws -> Data = { try Data(contentsOf: $0) }
     ) {
         self.fileURL = fileURL
         self.dates = dates
@@ -61,13 +63,14 @@ public struct JSONFileStore<Value: Codable>: Sendable {
         self.createsDirectory = createsDirectory
         self.posixPermissions = posixPermissions
         self.backupNaming = backupNaming
+        self.readData = readData
     }
 
     /// Returns `nil` when the file does not exist. Read failures rethrow as
     /// the underlying file error; malformed contents throw `DecodingError`,
     /// so callers can tell corruption apart from an unreadable file.
     public func load() throws -> Value? {
-        try load(readData: { try Data(contentsOf: $0) })
+        try load(readData: readData)
     }
 
     func load(readData: (URL) throws -> Data) throws -> Value? {
@@ -80,18 +83,14 @@ public struct JSONFileStore<Value: Codable>: Sendable {
         return try decode(data)
     }
 
-    /// Loads the value, or `nil` when the file is missing, unreadable or
-    /// malformed. Malformed contents are first moved aside; backup failures
-    /// throw so a caller cannot proceed to overwrite the only evidence.
-    /// Recovery retries before a write must also propagate read errors.
-    public func loadMovingAsideCorruptFile(ignoringReadErrors: Bool = true) throws -> Value? {
+    /// Loads the value, or `nil` when the file is missing or malformed.
+    /// Malformed contents are first moved aside. Read and backup failures
+    /// throw so a caller cannot replace data it has not loaded or preserved.
+    public func loadMovingAsideCorruptFile() throws -> Value? {
         do {
             return try load()
         } catch is DecodingError {
             try moveAsideCorruptFile()
-            return nil
-        } catch {
-            if !ignoringReadErrors { throw error }
             return nil
         }
     }

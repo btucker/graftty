@@ -21,6 +21,9 @@ public struct AppState: Codable, Sendable, Equatable {
 
     // Failed recovery is transient bookkeeping, outside the persisted value.
     private var pendingCorruptBackup: PendingCorruptBackup? = nil
+    // A fallback snapshot has none of the unreadable file's rows. It must
+    // never be saved, even after read access returns; reload the state first.
+    private var loadError: (any Error)? = nil
     private enum CodingKeys: String, CodingKey {
         case repos, selectedWorktreePath, windowFrame, sidebarNavigation, sidebarWidth
     }
@@ -41,7 +44,7 @@ public struct AppState: Codable, Sendable, Equatable {
                 let original = source.deletingLastPathComponent().resolvingSymlinksInPath()
                     .appendingPathComponent(source.lastPathComponent)
                 guard destination == original else { return }
-                _ = try file.loadMovingAsideCorruptFile(ignoringReadErrors: false)
+                _ = try file.loadMovingAsideCorruptFile()
                 pending = false
             }
         }
@@ -354,6 +357,7 @@ public struct AppState: Codable, Sendable, Equatable {
     }
 
     public func save(to directory: URL) throws {
+        if let loadError { throw loadError }
         let file = Self.file(in: directory)
         try pendingCorruptBackup?.recoverBeforeSaving(file)
         try file.save(self)
@@ -374,13 +378,25 @@ public struct AppState: Codable, Sendable, Equatable {
     ///
     /// A missing file is not corruption — returns empty without a
     /// backup, matching `load`'s fresh-install behavior.
+    /// Other read errors preserve the file and return a fallback that rejects
+    /// saves with that error. Reload successfully before resuming persistence.
     public static func loadOrFreshBackingUpCorruption(
         from directory: URL,
         now: () -> Date = { Date() }
     ) -> AppState {
+        loadOrFreshBackingUpCorruption(from: directory, now: now, readData: { try Data(contentsOf: $0) })
+    }
+
+    static func loadOrFreshBackingUpCorruption(
+        from directory: URL,
+        now: () -> Date = { Date() },
+        readData: (URL) throws -> Data
+    ) -> AppState {
         do {
-            return try load(from: directory)
-        } catch {
+            return try file(in: directory).decode(readData(directory.appendingPathComponent(fileName)))
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return AppState()
+        } catch is DecodingError {
             var fresh = AppState()
             do {
                 try file(in: directory).moveAsideCorruptFile(now: now())
@@ -389,6 +405,11 @@ public struct AppState: Codable, Sendable, Equatable {
                 fresh.pendingCorruptBackup = PendingCorruptBackup(source: file(in: directory).fileURL)
                 NSLog("[Graftty] failed to back up corrupt state: %@", String(describing: error))
             }
+            return fresh
+        } catch {
+            var fresh = AppState()
+            fresh.loadError = error
+            NSLog("[Graftty] failed to read state; saving disabled until reload: %@", String(describing: error))
             return fresh
         }
     }
