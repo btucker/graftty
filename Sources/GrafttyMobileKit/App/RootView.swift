@@ -497,7 +497,7 @@ public struct RootView: View {
         let project = showsProjectRail ? pickerProject : nil
         let leaf = worktree?.layout?.leaves.first { $0.sessionName == appState.focusedPaneId }
             ?? worktree?.layout?.leaves.first
-        let session = leaf.map { SessionStep(host: host, worktreePath: worktree?.path,
+        let session = worktree?.showsCreationProgress == true ? nil : leaf.map { SessionStep(host: host, worktreePath: worktree?.path,
             sessionName: $0.sessionName, title: $0.displayTitle,
             worktreeProject: pickerProject) }
         return CompactSelection(host: host, project: project, worktree: worktree, session: session)
@@ -512,6 +512,11 @@ public struct RootView: View {
     /// terminal, or the worktree detail when it has no single session.
     static func applyCompactWorktreeSelection(_ wt: WorktreePanes, host: Host, project: SidebarProject?,
                                               appState: IPadAppState, navigationPath: inout NavigationPath) {
+        if wt.showsCreationProgress {
+            appState.select(hostID: host.id, worktreePath: wt.path, paneID: nil)
+            navigationPath.append(WorktreeStep(host: host, worktree: wt, project: project))
+            return
+        }
         appState.select(hostID: host.id, worktreePath: wt.path, paneID: wt.layout?.leaves.first?.sessionName)
         switch MobileNavigationDecision.decide(layout: wt.layout) {
         case let .session(sessionName, title):

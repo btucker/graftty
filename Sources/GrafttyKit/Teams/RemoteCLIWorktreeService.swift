@@ -15,9 +15,8 @@ public enum RemoteCLIWorktreeService {
     ) async -> RemoteTeamResponse {
         let origin: WorktreeHistory.Origin?
         if case .create(let creation) = request { origin = creation.historyOrigin() } else { origin = nil }
-        let creations = platform.worktreeCreations
         return await handle(request, from: device, repos: repos,
-            status: { creations.status(operationID: $0) },
+            status: { platform.worktreeCreationStatus(operationID: $0) },
             create: { message in
                 guard case .createWorktree(let local) = message else { return .error("Expected local worktree creation") }
                 return await CLIWorktreeCreationRequestHandler.begin(local, creationOrigin: origin, platform: platform)
@@ -66,8 +65,11 @@ public enum RemoteCLIWorktreeService {
         }
         switch response {
         case .worktreeCreate(let result):
+            var progress = result.progress
+            progress?.operationID = id
             return .worktreeCreate(.init(operationID: id, state: result.state,
-                worktreePath: result.worktreePath, messageAddress: result.worktreePath, error: result.error))
+                worktreePath: result.worktreePath, messageAddress: result.worktreePath,
+                error: result.error, progress: progress))
         case .error(let message): return .error(message)
         default: return .error("Unexpected local worktree creation response")
         }

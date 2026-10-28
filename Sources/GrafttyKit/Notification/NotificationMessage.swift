@@ -612,23 +612,26 @@ public struct WorktreeCreateStatus: Codable, Sendable, Equatable {
     public let worktreePath: String
     public let messageAddress: String
     public let error: String?
+    public var progress: WorktreeCreationProgress?
 
     public init(
         operationID: String,
         state: WorktreeCreateState,
         worktreePath: String,
         messageAddress: String,
-        error: String? = nil
+        error: String? = nil,
+        progress: WorktreeCreationProgress? = nil
     ) {
         self.operationID = operationID
         self.state = state
         self.worktreePath = worktreePath
         self.messageAddress = messageAddress
         self.error = error
+        self.progress = progress
     }
 
     enum CodingKeys: String, CodingKey {
-        case state, error
+        case state, error, progress
         case operationID = "operation_id"
         case worktreePath = "worktree_path"
         case messageAddress = "message_address"

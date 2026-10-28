@@ -9,7 +9,8 @@ struct MobileWorktreeRowPresentation {
     let showsWorktreeQuestion: Bool
 
     init(context: SidebarWorktreeContext) {
-        let leaves = context.worktree.state == .running ? context.worktree.layout?.leaves ?? [] : []
+        let leaves = context.worktree.state == .running && !context.worktree.showsCreationProgress
+            ? context.worktree.layout?.leaves ?? [] : []
         self.leaves = leaves
         worktreeAttentionCount = leaves.isEmpty ? context.pending.count : 0
         questionPaneID = context.question == nil ? nil : context.questionPaneID.flatMap { route in

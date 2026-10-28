@@ -101,7 +101,7 @@ enum AddWorktreeFlow {
     /// Phase two: run `git worktree add`, discover the result, arm
     /// watchers, and spawn the first terminal. On success the
     /// placeholder transitions from `.creating` to `.running`; on
-    /// failure the placeholder is removed and the error is returned for
+    /// failure the diagnostic row is retained and the error is returned for
     /// the caller to surface.
     ///
     /// `worktreePath` must equal what `beginCreate` returned so the
@@ -121,7 +121,14 @@ enum AddWorktreeFlow {
         terminalStartTiming: TerminalStartTiming
     ) async -> Swift.Result<Result, FlowError> {
         let before = appState.wrappedValue
-        defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
+        let operationID = before.worktree(forPath: worktreePath)?.creationProgress?.operationID
+        var succeeded = false
+        var failureMessage = "Creation did not finish. See Git and hook output for details."
+        defer {
+            appState.wrappedValue.transitionCreation(at: worktreePath,
+                to: succeeded ? .ready : .failed, error: succeeded ? nil : failureMessage, operationID: operationID)
+            GrafttyApp.persistAppStateIfChanged(appState, from: before)
+        }
         // For .useExisting, the start point is the existing branch itself;
         // git takes it from argv. For .createNew, an explicit CLI base wins;
         // otherwise default to origin's main.
@@ -133,6 +140,9 @@ enum AddWorktreeFlow {
         }
         let startPoint = await GitWorktreeAdd.startPoint(for: branch, base: base, repoPath: repoPath)
 
+        GrafttyApp.persistingChanges(to: appState) {
+            appState.wrappedValue.transitionCreation(at: worktreePath, to: .git, operationID: operationID)
+        }
         do {
             try await GitWorktreeAdd.add(
                 repoPath: repoPath,
@@ -142,12 +152,25 @@ enum AddWorktreeFlow {
                 // Explicit pseudo-refs such as HEAD and @ are worktree-local.
                 // Resolve them to an immutable commit in the CLI caller's
                 // worktree before running the mutation from the repo root.
-                startPointResolutionPath: base == nil ? nil : baseResolutionPath
+                startPointResolutionPath: base == nil ? nil : baseResolutionPath,
+                onOutput: { output in
+                    GrafttyApp.persistingChanges(to: appState) {
+                        appState.wrappedValue.recordCreationOutput(output, at: worktreePath, operationID: operationID)
+                    }
+                }
             )
         } catch {
-            removePlaceholder(at: worktreePath, appState: appState)
+            failureMessage = WorktreeCreationError(gitAddFailure: error).userMessage ?? "git worktree add failed"
             return .failure(WorktreeCreationError(gitAddFailure: error))
         }
+
+        guard appState.wrappedValue.worktree(forPath: worktreePath)?.creationProgress?.operationID == operationID else {
+            return .failure(.discoveryFailed("creation row was replaced while Git ran"))
+        }
+        GrafttyApp.persistingChanges(to: appState) {
+            appState.wrappedValue.transitionCreation(at: worktreePath, to: .startingPane, operationID: operationID)
+        }
+        failureMessage = "Git finished, but pane startup did not complete."
 
         // Eager discovery so the new entry is in appState before we
         // attempt to spawn its terminal. FSEvents on `.git/worktrees/`
@@ -157,7 +180,7 @@ enum AddWorktreeFlow {
         do {
             discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
         } catch {
-            removePlaceholder(at: worktreePath, appState: appState)
+            failureMessage = "Could not discover the created worktree: \(error)"
             return .failure(.discoveryFailed("\(error)"))
         }
 
@@ -308,6 +331,7 @@ enum AddWorktreeFlow {
             )
         }
         let sessionName = ZmxLauncher.sessionName(for: firstSessionID)
+        succeeded = true
         return .success(Result(sessionName: sessionName, worktreePath: worktreePath))
     }
 
@@ -360,15 +384,4 @@ enum AddWorktreeFlow {
         )
     }
 
-    /// Drops the placeholder when phase two fails. The placeholder owns
-    /// no surfaces and no caches yet — `beginCreate` only inserted a
-    /// model entry — so `removeWorktree`'s plain remove is sufficient
-    /// (it also clears `selectedWorktreePath` defensively, though
-    /// `selectWorktree` already refuses to focus a `.creating` row).
-    private static func removePlaceholder(
-        at worktreePath: String,
-        appState: Binding<AppState>
-    ) {
-        appState.wrappedValue.removeWorktree(atPath: worktreePath)
-    }
 }

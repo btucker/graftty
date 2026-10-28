@@ -256,12 +256,13 @@ public final class HeadlessHostRuntime {
     }
 
     /// Phase two for a `.creating` row: Git, then the first pane. A Git
-    /// failure drops the row; a pane failure leaves the worktree closed.
+    /// failure retains a stale diagnostic row; a pane failure leaves it closed.
     func finishCreatingWorktree(_ plan: CLIWorktreeCreationPlan, relativeGitPaths: Bool = false,
         prepareEnvironment: (@MainActor @Sendable (String) async throws -> Void)? = nil) async throws -> String {
         let path = plan.worktreePath
+        let operationID = state.worktree(forPath: path)?.creationProgress?.operationID
         do { try acquire(path) } catch {
-            _ = state.removeWorktree(atPath: path)
+            state.transitionCreation(at: path, to: .failed, error: error.localizedDescription, operationID: operationID)
             try? save()
             throw error
         }
@@ -270,16 +271,25 @@ public final class HeadlessHostRuntime {
             if let agent = plan.agentRuntime { try await agentSetup.ensure(agent) }
             guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
             let startPoint = await GitWorktreeAdd.startPoint(for: plan.branch, base: plan.base, repoPath: plan.repoPath)
-            try await GitWorktreeAdd.add(repoPath: plan.repoPath, worktreePath: path, branch: plan.branch, startPoint: startPoint, relativePaths: relativeGitPaths)
+            state.transitionCreation(at: path, to: .git, operationID: operationID)
+            try? save()
+            try await GitWorktreeAdd.add(repoPath: plan.repoPath, worktreePath: path, branch: plan.branch,
+                startPoint: startPoint, relativePaths: relativeGitPaths, onOutput: { [self] output in
+                    state.recordCreationOutput(output, at: path, operationID: operationID)
+                    try? save()
+                })
         } catch {
-            _ = state.removeWorktree(atPath: path)
+            state.transitionCreation(at: path, to: .failed, error: WorktreeCreationError(gitAddFailure: error).userMessage ?? error.localizedDescription, operationID: operationID)
             try? save()
             throw error
         }
+        state.transitionCreation(at: path, to: .startingPane, operationID: operationID)
         do {
             try save() // Retain successful Git creation even if shell startup fails.
         } catch {
             closeCreatingRow(path)
+            state.transitionCreation(at: path, to: .failed, error: error.localizedDescription, operationID: operationID)
+            try? save()
             throw error
         }
         if let repo = state.repo(forWorktreePath: path) {
@@ -290,9 +300,14 @@ public final class HeadlessHostRuntime {
             try await prepareEnvironment?(path)
             try Task.checkCancellation()
             guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
-            return try await openUnlocked(path, command: plan.initialCommand)
+            let session = try await openUnlocked(path, command: plan.initialCommand)
+            state.transitionCreation(at: path, to: .ready, operationID: operationID)
+            try? save()
+            return session
         } catch {
             closeCreatingRow(path)
+            state.transitionCreation(at: path, to: .failed, error: error.localizedDescription, operationID: operationID)
+            try? save()
             throw error
         }
     }

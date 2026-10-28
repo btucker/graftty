@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 /// Creates a new git worktree for a repository.
 ///
@@ -27,7 +28,8 @@ public enum GitWorktreeAdd {
         branch: BranchSelection,
         startPoint: String?,
         startPointResolutionPath: String? = nil,
-        relativePaths: Bool = false
+        relativePaths: Bool = false,
+        onOutput: (@MainActor @Sendable (WorktreeCreationOutput) -> Void)? = nil
     ) async throws {
         if case .useExisting(let name, .local) = branch {
             let ref = "refs/heads/\(name)"
@@ -63,11 +65,22 @@ public enum GitWorktreeAdd {
             startPoint: resolvedStartPoint
         )
         if relativePaths { args.insert("--relative-paths", at: 2) }
+        let stream = AsyncStream<WorktreeCreationOutput>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let buffer = WorktreeCreationOutputBuffer(continuation: stream.continuation)
+        let consumer = Task { @MainActor in
+            for await output in stream.stream { onOutput?(output) }
+        }
         let result: CLIOutput
         do {
-            result = try await GitRunner.captureAll(args: args, at: repoPath)
-        } catch let err as CLIError {
-            throw Error.cliFailure(err)
+            result = try await CLIRunner().captureStreaming(command: "git", args: args, at: repoPath,
+                limit: WorktreeCreationProgress.maximumOutputBytes, onOutput: { buffer.append($0) })
+            buffer.finish()
+            await consumer.value
+        } catch {
+            buffer.finish()
+            await consumer.value
+            if let err = error as? CLIError { throw Error.cliFailure(err) }
+            throw error
         }
         guard result.exitCode == 0 else {
             throw Error.gitFailed(

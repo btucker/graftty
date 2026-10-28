@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Testing
 import GrafttyProtocol
+import GrafttyCommandUI
 import GrafttyKit
 @testable import Graftty
 
@@ -74,6 +75,71 @@ struct SidebarPRBadgeInteractionTests {
             #expect(paneSelections == 1)
             #expect(selections == 1)
             #expect(openedURLs == [url])
+        }
+    }
+
+    @Test("@spec GIT-5.5: While a worktree is creating, the application shall show a working indicator, hide terminal panes and Git statistics, suppress worktree actions, and allow selecting the row to inspect creation in the terminal content area.")
+    func creationOutputOwnsItsClickTarget() async throws {
+        var worktree = WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature", state: .creating)
+        worktree.creationProgress = WorktreeCreationProgress()
+        worktree.creationProgress?.startedAt = Date().addingTimeInterval(-612)
+        worktree.creationProgress?.transition(to: .git)
+        worktree.creationProgress?.output = "Preparing worktree (new branch 'feature')\nHEAD is now at a5bfc04 initial\npost-checkout: waiting for shared setup lock\n"
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])
+        var selections = 0
+        let hosting = NSHostingView(rootView: WorktreeBlock(
+            worktree: worktree, repoID: repo.id, isActive: false, isDropTarget: false,
+            groupsPanes: false, theme: .fallback, appState: .constant(AppState(repos: [repo])),
+            reorderingEnabled: true, onSelect: { selections += 1 }, onMovePane: { _, _ in },
+            onPaneTargeted: { _ in }, menu: { _ in NSMenu() }
+        ) {
+            WorktreeRow(entry: worktree, isActive: false, displayName: "feature", isMainCheckout: false,
+                theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
+        } panes: { EmptyView() }
+            .background(GhosttyTheme.fallback.sidebarBackground)
+            .foregroundStyle(GhosttyTheme.fallback.foreground))
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 320, height: 70),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(150))
+        hosting.layoutSubtreeIfNeeded()
+        let overlay = try #require(findDragView(in: hosting))
+        #expect(overlay.excludedRects.isEmpty)
+        let location = overlay.convert(NSPoint(x: overlay.bounds.midX, y: overlay.bounds.midY), to: nil)
+        let down = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: window)
+        let point = try #require(overlay.superview).convert(location, from: nil)
+        // Dispatch directly to the production nonmodal row target. A native
+        // Button.mouseDown can enter AppKit tracking and block a headless CI
+        // runner before the synthetic mouseUp can be delivered.
+        let hit = try #require(overlay.hitTest(point, event: down))
+        #expect(hit === overlay)
+        hit.mouseDown(with: down)
+        hit.mouseUp(with: try NSEvent.syntheticClick(.leftMouseUp, at: location, in: window))
+        #expect(selections == 1)
+        if let directory = ProcessInfo.processInfo.environment["GRAFTTY_SIDEBAR_RENDER_DIR"] {
+            let progress = try #require(worktree.creationProgress)
+            let detail = NSHostingView(rootView: MainWindowDetailLayout {
+                Text("repo / feature").font(.caption).padding(12)
+            } content: {
+                WorktreeCreationDetailView(progress: progress,
+                    foreground: GhosttyTheme.fallback.foreground, background: GhosttyTheme.fallback.background)
+            }.background(GhosttyTheme.fallback.background).foregroundStyle(GhosttyTheme.fallback.foreground))
+            let detailWindow = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 800, height: 440),
+                styleMask: .borderless, backing: .buffered, defer: false)
+            detailWindow.contentView = detail
+            detailWindow.orderFront(nil)
+            defer { detailWindow.orderOut(nil) }
+            try await Task.sleep(for: .milliseconds(100))
+            let url = URL(fileURLWithPath: directory, isDirectory: true)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            for (name, view) in [("creation-row", hosting as NSView), ("creation-output", detail as NSView)] {
+                view.layoutSubtreeIfNeeded()
+                let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent(name + ".png"))
+            }
         }
     }
 

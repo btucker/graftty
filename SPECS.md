@@ -810,13 +810,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.4** When the user submits the Add Worktree sheet and validation passes (the target repository is still tracked and no entry already exists at `<repoPath>/.worktrees/<name>`), the application shall (a) insert a placeholder `WorktreeEntry` for the target path in the `.creating` state, (b) dismiss the sheet immediately, and (c) run `git worktree add` in a detached `Task` so a slow git invocation — typically blocked on `pre-commit` / `post-checkout` hooks that can take seconds — does not hold the sheet open. Without this, the sheet's `ProgressView` would block all sidebar interaction for the duration of the hook chain.
 
-**GIT-5.5** While a worktree entry is in the `.creating` state, the sidebar row shall render a `ProgressView` in place of its type icon (`house` / `arrow.triangle.branch` / `arrow.triangle.pull`), shall suppress the divergence-stats gutter (no on-disk repo to diff against), shall hide pane title rows beneath it (no surfaces exist yet), and shall present an empty right-click context menu (Stop, Delete Worktree, Open in Finder would all either error or race the in-flight create). A click on the row shall be a no-op for selection purposes — the user keeps their previous worktree focused — until the placeholder transitions out of `.creating`.
+**GIT-5.5** While a worktree is creating, the application shall show a working indicator, hide terminal panes and Git statistics, suppress worktree actions, and allow selecting the row to inspect creation in the terminal content area.
 
 **GIT-5.6** When `git worktree add` started by `GIT-5.4` succeeds, the application shall (a) adopt git's resolved branch label onto the placeholder, (b) arm the path / HEAD-reflog / content watchers and seed divergence stats for the new path, (c) spawn the first terminal surface, (d) transition the entry from `.creating` to `.running`, and (e) flip `selectedWorktreePath` to the new worktree so the user ends up focused on it (matching the pre-optimistic flow's "submit → ends up on new worktree" outcome).
 
-**GIT-5.7** When `git worktree add` started by `GIT-5.4` fails, the application shall (a) remove the `.creating` placeholder from the sidebar and (b) present an `NSAlert` titled "Could not create worktree" whose informative text shows git's stderr (or "git worktree add failed" when stderr is empty). Inline error display in the sheet is no longer reachable since `GIT-5.4` already dismissed the sheet on submit. Mirrors `GIT-1.2` / `GIT-4.4` / `GIT-4.11`'s alert-not-silent-return policy on the symmetric create path.
+**GIT-5.7** When `git worktree add` started by `GIT-5.4` fails, the application shall (a) retain the row with failed creation diagnostics that can be inspected in the sidebar and (b) present an `NSAlert` titled "Could not create worktree" whose informative text shows git's stderr (or "git worktree add failed" when stderr is empty). Inline error display in the sheet is no longer reachable since `GIT-5.4` already dismissed the sheet on submit. Mirrors `GIT-1.2` / `GIT-4.4` / `GIT-4.11`'s alert-not-silent-return policy on the symmetric create path.
 
-**GIT-5.8** While a worktree entry is in the `.creating` state, the reconciler (`WorktreeReconciler.reconcile`) shall not transition the entry to `.stale` even when the path is absent from `git worktree list --porcelain` output. The placeholder is in flight by definition — git hasn't finished writing its admin entry yet — and only `AddWorktreeFlow` is permitted to clear the placeholder (success → `.running`, failure → remove). Without this guard, an FSEvents tick on `.git/worktrees/` that fires before git's admin write completes (or one driven by an unrelated change in another worktree) would briefly flash the spinning placeholder to `.stale`.
+**GIT-5.8** While a worktree entry is in the `.creating` state, the reconciler (`WorktreeReconciler.reconcile`) shall not transition the entry to `.stale` even when the path is absent from `git worktree list --porcelain` output. The placeholder is in flight by definition — git hasn't finished writing its admin entry yet — and only `AddWorktreeFlow` is permitted to clear the placeholder (success → `.running`, failure → retained diagnostics). Without this guard, an FSEvents tick on `.git/worktrees/` that fires before git's admin write completes (or one driven by an unrelated change in another worktree) would briefly flash the spinning placeholder to `.stale`.
 
 **GIT-5.9** When persisting `WorktreeEntry` to `state.json`, the application shall encode `.creating` as `.closed`. The `.creating` state is in-memory-only; if the app crashes mid-creation, the next launch's reconciler classifies the entry from `git worktree list --porcelain` rather than restoring a phantom spinner that would never resolve.
 
@@ -849,6 +849,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-5.23** When a paired client creates a worktree, the application shall register its first pane for terminal attachment and listening-port discovery without requiring a Mac terminal renderer or changing the Mac's selected worktree.
 
 **GIT-5.24** When a paired client first attaches to a newly created worktree's zsh or bash terminal, the application shall supply the host's default command to shell startup, honor the first-pane-only preference, and suppress a second default-command launch when a Mac renderer later attaches.
+
+**GIT-5.25** While Git and its worktree hooks are running, the application shall publish bounded stdout and stderr before Git exits, without waiting for a CLI connection.
+
+**GIT-5.26** While creation is pending, discovery shall preserve the creating row and its progress whether Git has registered the worktree yet or not.
+
+**GIT-5.27** When creation moves from Git and hooks to pane startup and then finishes or fails, the application shall retain the bounded output with a fixed completion time and the terminal outcome.
+
+**GIT-5.28** When saved creation progress was pending at host shutdown, the application shall restore it as interrupted, retain its output, and state that Git or hooks may still run without automatic pane launch.
+
+**GIT-5.29** When a creation operation is inspected, the application shall expose only that operation's output, including for paired callers and after a host restart.
+
+**GIT-5.30** When a creating worktree is selected, the application shall display its progress and output in the terminal content area, switch to the terminal on success, and retain failed or interrupted diagnostics until a terminal is explicitly opened.
 
 ### GIT-6.x — Auto-tracking Pinned Agents
 
@@ -2090,7 +2102,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.16** When the mobile client decodes a `WorktreePanes` payload from a server that predates the sidebar-mirror fields (state, branch, isMainCheckout, prBadge, stats, attentionText), the application shall fall back to safe defaults — empty branch, `.running` state, no PR badge, no stats, no attention — rather than fail decoding, so a version mismatch in either direction keeps the mobile picker functional.
 
-**IOS-4.17** When the user selects a worktree from the picker (`IOS-4.1`) and that worktree's pane layout is a single leaf, the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree-detail screen (`IOS-4.10`). The system edge-swipe-back gesture and the in-app back button (`IOS-5.5`) shall return the user to the worktree picker.
+**IOS-4.17** When the user selects a worktree from the picker (`IOS-4.1`) whose creation is not in progress and whose pane layout is a single leaf, the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree-detail screen (`IOS-4.10`). The system edge-swipe-back gesture and the in-app back button (`IOS-5.5`) shall return the user to the worktree picker.
 
 **IOS-4.18** While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), it shall identify itself with `DisplayClientRole.preview`, report `visible=false`, never claim display ownership, never forward libghostty bytes to the server, and never send takeover or `ownerResize` frames. Preview sizing shall render the authoritative grid locally; only fullscreen terminal input or an explicit fullscreen Take Control action can change the display owner.
 
@@ -2312,7 +2324,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.4** When `.listRepositories` returns an empty list, the sheet shall render an empty-state "No repositories tracked — open a repository in Graftty on the Mac first." and shall not show the input fields. The iOS app shall not implement repository-adding (the Mac-side file-picker + security-scoped bookmark mint has no iOS equivalent).
 
-**IOS-9.5** When a valid mobile Add Worktree form is submitted, the application shall dismiss the form immediately and display a non-selectable creating row in the target repository while creation runs.
+**IOS-9.5** When a valid mobile Add Worktree form is submitted, the application shall dismiss the form immediately and display a creating row in the target repository while creation runs, allowing inspection once host progress arrives.
 
 **IOS-9.6** When the user swipes a worktree row in `WorktreePickerView` that is neither the repo's main checkout nor in an in-flight state (`.creating` / `.deleting`), the application shall reveal a trailing destructive action labeled "Delete" for non-stale rows and "Dismiss" for `.stale` rows. Rows for the main checkout or for in-flight worktrees shall expose no swipe action.
 
@@ -3582,7 +3594,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.53** When a headless host creates a new branch without an explicit base, the application shall start it from the branch that origin names as its default rather than from the main checkout's current HEAD, as the Mac app does.
 
-**REMOTE-22.54** If a headless host is polled for a worktree creation or removal that it does not retain, then the application shall answer with the Mac app's unknown-or-expired message, and finished results shall expire after the retention period.
+**REMOTE-22.54** If a headless host is polled for a worktree creation or removal that it does not retain, then the application shall answer with the Mac app's unknown-or-expired message, and launch rendezvous results shall expire after the retention period while creation diagnostics remain on the worktree row.
 
 **REMOTE-22.55** When paired Macs create or poll worktrees on a headless host with the same operation ID, the application shall retain independent operations for each peer and the local CLI, and shall reject a stranger's status poll.
 

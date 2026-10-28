@@ -26,7 +26,9 @@ struct MultiPaneDetailView: View {
 
     var body: some View {
         Group {
-            if let layout = worktree.layout {
+            if worktree.showsCreationProgress {
+                MobileCreationDetailView(host: host, worktree: worktree, theme: theme)
+            } else if let layout = worktree.layout {
                 render(layout, at: .root)
             } else {
                 ContentUnavailableView(

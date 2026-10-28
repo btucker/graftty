@@ -108,6 +108,107 @@ struct HeadlessWorktreeLifecycleTests {
         return status.worktreePath
     }
 
+    @Test("Creation status and snapshots expose live hook output, then retain the final result", arguments: [false, true])
+    func creationDiagnosticsEndToEnd(fail: Bool) async throws {
+        let host = try await host()
+        defer { try? FileManager.default.removeItem(at: host.root) }
+        // A branch collision makes Git fail before pane startup.
+        if fail { try await git(["branch", "feature"], at: host.repo) }
+        let hook = host.root.appendingPathComponent(".git/hooks/post-checkout")
+        let release = host.root.appendingPathComponent("release-hook")
+        try """
+        #!/bin/sh
+        echo 'setting up environment'
+        echo 'waiting for setup lock' >&2
+        while [ ! -f '\(release.path)' ]; do sleep 0.02; done
+        """.write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        let response = await create(host, name: "feature")
+        guard case .worktreeCreate(let admitted) = response else { Issue.record("not admitted"); return }
+        if !fail {
+            let deadline = ContinuousClock.now + .seconds(5)
+            var observed: WorktreeCreateStatus?
+            while ContinuousClock.now < deadline {
+                if case .worktreeCreate(let status) = await host.runtime.handle(.worktreeCreateStatus(operationID: admitted.operationID)),
+                   status.progress?.output.contains("waiting for setup lock") == true {
+                    observed = status
+                    break
+                }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            // Release before assertions so a failing test cannot leave its hook running.
+            try Data().write(to: release)
+            #expect(observed?.state == .pending)
+            #expect(observed?.progress?.phase == .git)
+            #expect(host.terminals.starts.isEmpty)
+        }
+        let completed = try await finished(host, response)
+        #expect(completed.state == (fail ? .failed : .ready))
+        #expect(completed.progress?.phase == (fail ? .failed : .ready))
+        #expect(completed.progress?.finishedAt != nil)
+        let entry = try #require(host.runtime.state.worktree(forPath: completed.worktreePath))
+        #expect(entry.creationProgress == completed.progress)
+        if fail {
+            #expect(entry.state == .stale)
+            #expect(entry.creationProgress?.output.contains("already exists") == true)
+        } else {
+            #expect(entry.creationProgress?.output.contains("setting up environment") == true)
+        }
+        let saved = try AppState.load(from: host.runtime.configuration.stateDirectory)
+        #expect(saved.worktree(forPath: entry.path)?.creationProgress == entry.creationProgress)
+        // The in-memory operation store is empty in a new runtime. Diagnostics
+        // remain queryable from persisted worktree state.
+        let restarted = try HeadlessHostRuntime(configuration: host.runtime.configuration,
+            terminals: LifecycleTerminals(), initialState: saved)
+        guard case .worktreeCreate(let retained) = await restarted.handle(.worktreeCreateStatus(operationID: admitted.operationID)) else {
+            Issue.record("saved diagnostics were lost"); return
+        }
+        #expect(retained.progress == completed.progress)
+    }
+
+    @Test("A nonzero post-checkout hook retains the actual checkout and its diagnostics")
+    func failedHookRetainsCheckout() async throws {
+        let host = try await host()
+        defer { try? FileManager.default.removeItem(at: host.root) }
+        let hook = host.root.appendingPathComponent(".git/hooks/post-checkout")
+        try "#!/bin/sh\necho 'environment setup failed' >&2\nexit 7\n".write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        let completed = try await finished(host, await create(host, name: "hook-failed"))
+        #expect(completed.state == .failed)
+        #expect(completed.progress?.output.contains("environment setup failed") == true)
+        #expect(host.runtime.state.worktree(forPath: completed.worktreePath)?.state == .closed)
+        #expect(host.terminals.starts.isEmpty)
+    }
+
+    @Test("@spec GIT-5.29: When a creation operation is inspected, the application shall expose only that operation's output, including for paired callers and after a host restart.")
+    func statusIsolationAndInterruptedRestart() async throws {
+        let host = try await host()
+        defer { try? FileManager.default.removeItem(at: host.root) }
+        let old = try await finished(host, await create(host, name: "old"))
+        let path = old.worktreePath
+        host.runtime.state.removeWorktree(atPath: path)
+        var replacement = WorktreeEntry(path: path, branch: "replacement", state: .creating)
+        replacement.creationProgress = WorktreeCreationProgress(operationID: "replacement")
+        replacement.creationProgress?.output = "private replacement output"
+        host.runtime.state.repos[0].worktrees.append(replacement)
+        guard case .worktreeCreate(let retained) = await host.runtime.handle(.worktreeCreateStatus(operationID: old.operationID)) else {
+            Issue.record("old result missing"); return
+        }
+        #expect(retained.state == .ready)
+        #expect(retained.progress == nil)
+        try host.runtime.save()
+        let restarted = try HeadlessHostRuntime(configuration: host.runtime.configuration,
+            terminals: LifecycleTerminals(), initialState: AppState.load(from: host.runtime.configuration.stateDirectory))
+        guard case .worktreeCreate(let interrupted) = await restarted.handle(.worktreeCreateStatus(operationID: "replacement")) else {
+            Issue.record("interrupted diagnostics missing"); return
+        }
+        #expect(interrupted.state == .failed)
+        #expect(interrupted.progress?.phase == .interrupted)
+        #expect(interrupted.progress?.output == "private replacement output")
+        #expect(interrupted.error == WorktreeCreationProgress.interruptionMessage)
+        #expect(await restarted.handle(.worktreeCreateStatus(operationID: old.operationID)) == .error("unknown or expired worktree creation operation"))
+    }
+
     @Test("@spec REMOTE-22.50: If a headless host receives a worktree creation request from an untracked caller, with an invalid worktree name, with an agent prompt but no agent runtime, or with an obsolete prompt loader, then the application shall reject it with the Mac app's message before acknowledging an operation.")
     func creationAdmissionMatchesTheMac() async throws {
         let host = try await host()
@@ -180,7 +281,7 @@ struct HeadlessWorktreeLifecycleTests {
         #expect(try await git(["rev-parse", "feature"], at: clone).trimmingCharacters(in: .whitespacesAndNewlines) == defaultHead)
     }
 
-    @Test("@spec REMOTE-22.54: If a headless host is polled for a worktree creation or removal that it does not retain, then the application shall answer with the Mac app's unknown-or-expired message, and finished results shall expire after the retention period.")
+    @Test("@spec REMOTE-22.54: If a headless host is polled for a worktree creation or removal that it does not retain, then the application shall answer with the Mac app's unknown-or-expired message, and launch rendezvous results shall expire after the retention period while creation diagnostics remain on the worktree row.")
     func operationResultsExpireLikeTheMac() async throws {
         let host = try await host()
         defer { try? FileManager.default.removeItem(at: host.root) }
@@ -194,8 +295,11 @@ struct HeadlessWorktreeLifecycleTests {
         try #require(status.state == .ready)
         // The Mac's ten-minute retention, read with an explicit clock.
         let creations = host.runtime.worktreeCreations
-        #expect(creations.status(operationID: status.operationID, now: Date().addingTimeInterval(9 * 60)) == status)
+        var launchStatus = status
+        launchStatus.progress = nil
+        #expect(creations.status(operationID: status.operationID, now: Date().addingTimeInterval(9 * 60)) == launchStatus)
         #expect(creations.status(operationID: status.operationID, now: Date().addingTimeInterval(11 * 60)) == nil)
+        #expect(await host.runtime.handle(.worktreeCreateStatus(operationID: status.operationID)) == .worktreeCreate(status))
     }
 
     @Test("@spec REMOTE-22.55: When paired Macs create or poll worktrees on a headless host with the same operation ID, the application shall retain independent operations for each peer and the local CLI, and shall reject a stranger's status poll.")
@@ -228,6 +332,9 @@ struct HeadlessWorktreeLifecycleTests {
             }
             #expect(status.operationID == operationID)
             #expect(status.state == .ready, "\(status.error ?? "")")
+            #expect(status.progress?.phase == .ready)
+            #expect(status.progress?.operationID == operationID)
+            #expect(status.progress?.output.isEmpty == false)
             #expect(status.worktreePath == host.repo + "/.worktrees/" + name)
             return status
         }

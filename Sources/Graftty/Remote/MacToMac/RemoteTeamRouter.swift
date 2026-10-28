@@ -217,7 +217,7 @@ final class RemoteTeamRouter {
                 }
                 let address = try RemoteTeamAddress(deviceID: device, worktreePath: status.worktreePath)
                 return .worktreeCreate(.init(operationID: status.operationID, state: status.state,
-                    worktreePath: status.worktreePath, messageAddress: address.rawValue, error: status.error))
+                    worktreePath: status.worktreePath, messageAddress: address.rawValue, error: status.error, progress: status.progress))
             case .error(let message): return .error(message)
             case .ok, .members:
                 throw RemoteWorktreeError("Unexpected response; update Graftty on both Macs")

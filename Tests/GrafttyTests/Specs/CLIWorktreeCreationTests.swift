@@ -27,6 +27,8 @@ struct CLIWorktreeCreationTests {
             #expect(lines.contains { $0.contains("pending") && $0.contains("slow-create") })
             #expect(lines.contains { $0.contains("address='/repo/.worktrees/fix'") })
             #expect(!lines.contains { $0.hasPrefix("created ") })
+            #expect(lines.contains { $0.hasPrefix("inspect=graftty worktree status 'slow-create'") })
+            if command.remote != nil { #expect(lines.contains { $0.contains("--remote 'Studio'") }) }
         }
     }
 

@@ -25,6 +25,31 @@ struct IPadRootLayoutSelectionTests {
         )
     }
 
+    @Test("Selecting creation shows diagnostics, and readiness selects the new terminal without an early focus request")
+    func creationSelectionTransitionsToFirstPane() {
+        let appState = freshAppState()
+        appState.selectedHostId = sampleHost().id
+        var progress = WorktreeCreationProgress()
+        progress.transition(to: .git)
+        let creating = WorktreePanes(path: "/repo/new", displayName: "new", repoDisplayName: "repo",
+            displayBranch: "new", state: .creating, isMainCheckout: false, prBadge: nil, stats: nil,
+            attentionText: nil, layout: nil, creationProgress: progress)
+        appState.latestWorktrees = [creating]
+        IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: creating)
+        #expect(appState.selectedWorktreePath == creating.path)
+        #expect(appState.focusedPaneId == nil)
+        #expect(appState.pendingFocusRequests == 0)
+        progress.transition(to: .ready)
+        let ready = WorktreePanes(path: creating.path, displayName: "new", repoDisplayName: "repo",
+            displayBranch: "new", state: .running, isMainCheckout: false, prBadge: nil, stats: nil,
+            attentionText: nil, layout: .leaf(sessionName: "created", title: "shell", attentionText: nil,
+                isBusy: false, attentionSource: nil), creationProgress: progress)
+        IPadRootLayout.onWorktreeListChanged(appState: appState, list: [ready])
+        #expect(appState.focusedPaneId == "created")
+        #expect(appState.pendingFocusRequests > 0)
+        #expect(!ready.showsCreationProgress)
+    }
+
     @Test("shared Ghostty shortcut converter is visible to mobile Xcode tests")
     func sharedGhosttyShortcutConverterIsVisible() {
         #expect(KeyboardShortcutFromChord.shortcut(from: .init(key: "tab", modifiers: [.control])) != nil)

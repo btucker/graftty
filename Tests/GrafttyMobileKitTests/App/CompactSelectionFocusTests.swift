@@ -33,6 +33,20 @@ struct CompactSelectionFocusTests {
         #expect(state.focusRequestCount == 0)
     }
 
+    @Test func pendingCreationWithLayoutStillSelectsDiagnostics() throws {
+        let (state, host, running) = try fixture()
+        var progress = WorktreeCreationProgress()
+        progress.transition(to: .startingPane)
+        let row = running.with(creationProgress: progress)
+        var path = NavigationPath()
+        RootView.applyCompactWorktreeSelection(row, host: host, project: nil, appState: state, navigationPath: &path)
+        var expected = NavigationPath()
+        expected.append(WorktreeStep(host: host, worktree: row, project: nil))
+        #expect(path == expected)
+        #expect(state.focusedPaneId == nil)
+        #expect(state.focusRequestCount == 0)
+    }
+
     @Test func compactPaneTapDoesNotRequestFocus() throws {
         let (state, host, row) = try fixture()
         let leaf = try #require(row.layout?.leaves.last)

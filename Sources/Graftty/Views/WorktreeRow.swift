@@ -226,6 +226,10 @@ struct WorktreeRow: View {
                 case .label:
                     VStack(alignment: .leading, spacing: 2) {
                         branchLabel
+                        if let progress = entry.creationProgress {
+                            WorktreeCreationProgressView(progress: progress)
+                                .foregroundStyle(theme.sidebarSecondaryText)
+                        }
                         if let brief = brief ?? entry.brief {
                             Text(brief.context ?? brief.completed)
                                 .font(.caption).lineLimit(2)

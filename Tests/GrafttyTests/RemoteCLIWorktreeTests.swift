@@ -63,6 +63,10 @@ struct RemoteCLIWorktreeTests {
         let router = RemoteTeamRouter()
         let device = RemoteDeviceID(value: "destination")
         let request = creation(project: "app")
+        var progress = WorktreeCreationProgress(operationID: request.operationID)
+        progress.output = "hook waiting"
+        progress.transition(to: .ready)
+        let expectedProgress = progress
         router.register(deviceID: device, connectionID: UUID(), label: "Other Mac",
             closeForReconnect: viewer ? { @Sendable in } : nil) { data in
             guard case .worktree(let request) = try JSONDecoder().decode(RemoteTeamRequest.self, from: data) else {
@@ -76,12 +80,13 @@ struct RemoteCLIWorktreeTests {
             }
             return try JSONEncoder().encode(RemoteTeamResponse.worktreeCreate(.init(
                 operationID: request.operationID, state: .ready,
-                worktreePath: "/remote/.worktrees/fix", messageAddress: "/remote/.worktrees/fix")))
+                worktreePath: "/remote/.worktrees/fix", messageAddress: "/remote/.worktrees/fix", progress: expectedProgress)))
         }
         for operation in [RemoteWorktreeRequest.create(request), .status(operationID: request.operationID)] {
             let response = await router.worktree(target: viewer ? device.value : "Other Mac", request: operation, repos: [])
             guard case .worktreeCreate(let status) = response else { Issue.record("Expected creation status"); return }
             #expect(status.operationID == "op-1")
+            #expect(status.progress == expectedProgress)
             #expect(RemoteTeamAddress(rawValue: status.messageAddress)?.deviceID == device)
             #expect(RemoteTeamAddress(rawValue: status.messageAddress)?.worktreePath == status.worktreePath)
         }

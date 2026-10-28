@@ -18,6 +18,16 @@ public struct WorktreeDetailView: View {
     /// failing closed when no authenticated channel is available.
     @Environment(\.remoteConnectionCoordinator) private var coordinator
 
+    @Environment(\.remoteWorktreeUpdates) private var worktreeUpdates
+    @State private var liveCreation: CreationSnapshot?
+    private var creationIdentity: CreationIdentity {
+        .init(hostID: host.id, path: worktree.path, operationID: worktree.creationProgress?.operationID)
+    }
+    private var currentWorktree: WorktreePanes {
+        if let liveCreation, liveCreation.identity == creationIdentity { return liveCreation.worktree }
+        return worktree
+    }
+
     @State private var baseConfig: String?
     @State private var baseConfigHostID: UUID?
     @State private var preferredStyle: UIUserInterfaceStyle = .unspecified
@@ -35,7 +45,9 @@ public struct WorktreeDetailView: View {
 
     public var body: some View {
         Group {
-            if let layout = worktree.layout {
+            if currentWorktree.showsCreationProgress {
+                MobileCreationDetailView(host: host, worktree: currentWorktree)
+            } else if let layout = currentWorktree.layout {
                 PaneLayoutView(
                     layout: layout,
                     baseConfig: baseConfig,
@@ -52,8 +64,12 @@ public struct WorktreeDetailView: View {
                 )
             }
         }
-        .navigationTitle(worktree.displayName)
+        .navigationTitle(currentWorktree.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: CreationKey(identity: creationIdentity,
+            isReady: LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked))) {
+            await observeCreation()
+        }
         .task(id: ConfigurationKey(
             hostID: host.id,
             isReady: LiveSessionReadiness.isActive(
@@ -89,7 +105,8 @@ public struct WorktreeDetailView: View {
         // `.inactive` phases preserve live transport; `.background` suspends
         // transport without releasing preview surfaces, and `.active +
         // unlocked` resumes those same clients.
-        .task(id: PoolKey(layout: worktree.layout, scene: scenePhase, gateUnlocked: gate.isUnlocked)) {
+        .task(id: PoolKey(layout: currentWorktree.layout, showsCreationProgress: currentWorktree.showsCreationProgress,
+                         scene: scenePhase, gateUnlocked: gate.isUnlocked)) {
             await driveLifecycle()
         }
         .onDisappear {
@@ -101,8 +118,48 @@ public struct WorktreeDetailView: View {
         }
     }
 
+    private struct CreationIdentity: Hashable {
+        let hostID: UUID
+        let path: String
+        let operationID: String?
+    }
+
+    private struct CreationSnapshot {
+        let identity: CreationIdentity
+        let worktree: WorktreePanes
+    }
+
+    private struct CreationKey: Hashable {
+        let identity: CreationIdentity
+        let isReady: Bool
+    }
+
+    /// The compact picker leaves the screen while diagnostics are selected.
+    /// Keep observing the shared push feed here, rather than freezing the
+    /// navigation destination's initial snapshot or opening a terminal early.
+    private func observeCreation() async {
+        guard currentWorktree.showsCreationProgress,
+              LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked),
+              let updates = worktreeUpdates?(host) else { return }
+        for await update in updates {
+            guard !Task.isCancelled else { return }
+            guard case .frame(.snapshot(let rows, _)) = update,
+                  let row = rows.first(where: { $0.path == worktree.path }),
+                  row.creationProgress?.operationID == worktree.creationProgress?.operationID else { continue }
+            // Publish readiness before navigating. A lifecycle restart or
+            // return to this destination must not consume a replay twice.
+            liveCreation = CreationSnapshot(identity: creationIdentity, worktree: row)
+            if !row.showsCreationProgress, row.state == .running,
+               row.layout?.isLeaf == true, let pane = row.layout?.leaves.first {
+                onSelectPane(pane.sessionName)
+                return
+            }
+        }
+    }
+
     private struct PoolKey: Hashable {
         let layout: PaneLayoutNode?
+        let showsCreationProgress: Bool
         let scene: ScenePhase
         let gateUnlocked: Bool
     }
@@ -122,7 +179,7 @@ public struct WorktreeDetailView: View {
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
-        guard let layout = worktree.layout else { return }
+        guard !currentWorktree.showsCreationProgress, let layout = currentWorktree.layout else { return }
         // IOS-4.14: skip the preview terminal pool for single-pane worktrees.
         guard !layout.isLeaf else {
             previews?.stopAll()

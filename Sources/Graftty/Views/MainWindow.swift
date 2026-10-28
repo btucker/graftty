@@ -198,7 +198,15 @@ struct MainWindow: View {
                 )
             } content: {
                 if let selectedRemoteMac {
-                    if selectedRemoteWorktreePath != nil,
+                    if let row = selectedRemoteWorktreeSnapshot, row.showsCreationProgress,
+                       let progress = row.creationProgress {
+                        WorktreeCreationDetailView(progress: progress,
+                            foreground: terminalManager.theme.foreground, background: terminalManager.theme.background,
+                            onOpenTerminal: row.state == .closed ? {
+                                remoteViewer.selectRemoteWorktree(selectedRemoteMac, worktreePath: row.path,
+                                    acknowledging: false, inspectingCreation: false)
+                            } : nil)
+                    } else if selectedRemoteWorktreePath != nil,
                        remoteViewer.splitTree.root != nil {
                         TerminalContentView(
                             terminalManager: terminalManager,
@@ -222,6 +230,13 @@ struct MainWindow: View {
                             description: Text(selectedRemoteMac.lastKnownBaseURL?.absoluteString ?? "Remote Mac selected.")
                         )
                     }
+                } else if let row = selectedWorktree, row.showsCreationProgress,
+                          let progress = row.creationProgress {
+                    WorktreeCreationDetailView(progress: progress,
+                        foreground: terminalManager.theme.foreground, background: terminalManager.theme.background,
+                        onOpenTerminal: row.state == .closed ? {
+                            _ = selectWorktree(row.path, acknowledging: false, inspectingCreation: false)
+                        } : nil)
                 } else if let worktree = selectedWorktreeBinding {
                     TerminalContentView(
                         terminalManager: terminalManager,
@@ -822,15 +837,17 @@ struct MainWindow: View {
     }
 
     @discardableResult
-    private func selectWorktree(_ path: String, acknowledging: Bool) -> Bool {
-        guard terminalManager.wakeWorktree(path) else { return false }
-        // In-flight rows have no surfaces to focus and no PR / stats
-        // to refresh — let the user keep their current worktree until
-        // the owning flow finalizes (`.creating → .running`, or
-        // `.deleting → removed`).
-        if let wt = appState.worktree(forPath: path), wt.state.isInFlight {
-            return false
+    private func selectWorktree(_ path: String, acknowledging: Bool, inspectingCreation: Bool = true) -> Bool {
+        if inspectingCreation, let worktree = appState.worktree(forPath: path), worktree.showsCreationProgress {
+            if let previous = appState.selectedWorktreePath, previous != path {
+                setWorktreeSurfacesVisible(false, worktreePath: previous)
+            }
+            remoteViewer.leaveForLocalSelection()
+            appState.selectedWorktreePath = path
+            return true
         }
+        guard appState.worktree(forPath: path)?.state.isInFlight != true,
+              terminalManager.wakeWorktree(path) else { return false }
         remoteViewer.leaveForLocalSelection()
         let previousPath = appState.selectedWorktreePath
         appState.selectedWorktreePath = path

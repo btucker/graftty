@@ -216,13 +216,12 @@ final class RemoteWorktreeViewerController: ObservableObject {
 
     /// In-flight rows (creating, deleting) cannot be selected.
     func canSelectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String) -> Bool {
-        Self.directWorktree(
-            worktreePath,
-            in: model.worktreePanesByRemote[RemoteMacIdentity(remoteMac)]
-        )?.state.isInFlight != true
+        guard let row = Self.directWorktree(worktreePath,
+            in: model.worktreePanesByRemote[RemoteMacIdentity(remoteMac)]) else { return true }
+        return !row.state.isInFlight || row.showsCreationProgress
     }
 
-    func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String, acknowledging: Bool) {
+    func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String, acknowledging: Bool, inspectingCreation: Bool = true) {
         guard canSelectRemoteWorktree(remoteMac, worktreePath: worktreePath) else { return }
         let identity = RemoteMacIdentity(remoteMac)
         let previousIdentity = selectedRemoteIdentity
@@ -252,6 +251,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
         }
         synchronizeRemoteWorktree(remoteMac: remoteMac, worktreePath: worktreePath)
         if selectedWorktreeSnapshot?.state == .closed,
+           (!inspectingCreation || selectedWorktreeSnapshot?.showsCreationProgress != true),
            !openingRemoteWorktrees.contains(target) {
             openingRemoteWorktrees.insert(target)
             Task { @MainActor in
@@ -273,7 +273,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
                 }
             }
         }
-        if acknowledging { Task {
+        if acknowledging, selectedWorktreeSnapshot?.showsCreationProgress != true { Task {
             await model.acknowledgeViewedAttention(
                 on: remoteMac,
                 worktreePath: worktreePath,
