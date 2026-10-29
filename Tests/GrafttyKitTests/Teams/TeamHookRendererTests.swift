@@ -61,28 +61,15 @@ struct TeamHookRendererTests {
         }
     }
 
-    @Test("Stop recap request uses a blocking decision.")
-    func recapRequestUsesStopDecision() throws {
-        let json = try #require(JSONSerialization.jsonObject(
-            with: Data(TeamHookRenderer.requestRecap().utf8)
-        ) as? [String: String])
-        #expect(json["decision"] == "block")
-        #expect(json["reason"]?.contains("graftty attention report --stdin") == true)
-        #expect(json["reason"]?.contains("context") == true)
-        #expect(json["reason"]?.contains("historyEntry") == true)
-        #expect(json["reason"]?.contains("Omit historyEntry for routine updates") == true)
-        #expect(json["reason"]?.contains("emojiAlternatives") == true)
-        #expect(json["reason"]?.contains("already reported without an emoji") == true)
-    }
-
-    @Test("@spec AGENT-3.24: When the Stop hook requests an Attention recap, the application shall instruct the agent not to mention the report in its response unless the report command fails.")
-    func recapRequestKeepsReportSilent() throws {
-        let json = try #require(JSONSerialization.jsonObject(
-            with: Data(TeamHookRenderer.requestRecap().utf8)
-        ) as? [String: String])
-        let reason = try #require(json["reason"])
-        #expect(reason.contains("Do not mention the report"))
-        #expect(reason.contains("If the command fails, say so"))
+    @Test("@spec AGENT-3.24: When a user turn starts, the application shall remind the agent to report an Attention recap during that turn without requesting another final response or acknowledging routine team notifications.")
+    func turnReminderKeepsReportSilent() throws {
+        let json = try TeamHookRenderer.userPromptSubmit()
+        let context = try additionalContext(from: json)
+        #expect(context.contains("graftty attention report --stdin"))
+        #expect(context.contains("before your final response"))
+        #expect(context.contains("Do not mention the report"))
+        #expect(context.contains("routine team notifications"))
+        #expect(!json.contains("\"decision\""))
     }
 
     @Test("SessionStart appends GRAFTTY.md instructions after the skill guidance.")

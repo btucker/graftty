@@ -37,7 +37,7 @@ final class AgentIntegrationNotificationProbe {
         GrafttyApp.recordStoppedTurn(callerPath: event.worktree, runtime: event.runtime,
             callerAgentID: event.agentID, sessionID: event.sessionID,
             paneSessionName: event.paneSessionName, recap: event.recap,
-            stoppedAt: event.stoppedAt, appState: binding, terminalManager: terminalManager,
+            stoppedAt: event.stoppedAt, recapReportedAt: event.recapReportedAt, turnID: event.turnID, appState: binding, terminalManager: terminalManager,
             postNotification: { self.pending.append($0) })
     }
 
@@ -56,6 +56,8 @@ final class AgentIntegrationNotificationProbe {
         }
         try handoff.consumeActivities(acceptingWorktree: { self.runtime.state.worktree(forPath: $0) != nil }) { activity in
             switch activity {
+            case .recap(let event):
+                self.runtime.state.recordAgentRecap(event.recap, callerPath: event.worktree, reportedAt: event.reportedAt)
             case .response(let event):
                 guard let index = self.runtime.state.indices(forWorktreePath: event.worktree) else { return }
                 self.runtime.state.repos[index.repo].worktrees[index.worktree].recordAgentResponse(event.response)

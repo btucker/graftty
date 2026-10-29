@@ -14,4 +14,17 @@ public enum AgentStopHookFilter {
     public static func isSubagentStop(stdinJSON: [String: Any]) -> Bool {
         stdinJSON["agent_id"] is String
     }
+    /// Codex supplies a turn ID. Claude supplies a transcript path instead;
+    /// its file position distinguishes another reply even when no user-prompt
+    /// hook ran (for example, a native peer notification).
+    public static func turnID(stdinJSON: [String: Any]) -> String? {
+        if let turnID = stdinJSON["turn_id"] as? String, !turnID.isEmpty { return turnID }
+        guard let path = stdinJSON["transcript_path"] as? String, path.hasPrefix("/"),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let number = attributes[.systemFileNumber] as? NSNumber,
+              let size = attributes[.size] as? NSNumber else { return nil }
+        return "transcript:\(path):\(number):\(size)"
+    }
+
 }

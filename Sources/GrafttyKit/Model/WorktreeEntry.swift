@@ -124,6 +124,13 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// Recent provider progress timestamps let viewed stopped cards retire
     /// even after acknowledging them cleared `unseenAgentStop`.
     public var agentProgressTimes: [String: Double]
+    /// Recent completed report timestamps fence file/socket retries even
+    /// when handoff cleanup fails or the app restarts.
+    public struct ConsumedAgentReport: Codable, Sendable, Equatable {
+        public let reportedAt: Double
+        public let turnID: String?
+    }
+    public var consumedAgentReports: [String: ConsumedAgentReport]
     /// Pane-scoped attention slots keyed by pane `PaneSlotID`. Driven by
     /// shell-integration events (`COMMAND_FINISHED`) that are emitted by
     /// one specific pane — so the ping must land on that pane's sidebar
@@ -179,6 +186,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.lastAgentStop = nil
         self.brief = nil
         self.agentProgressTimes = [:]
+        self.consumedAgentReports = [:]
         self.paneAttention = [:]
         self.paneSessions = [:]
         self.paneTitleMetadata = [:]
@@ -193,7 +201,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // upgrades rather than failing to decode and silently losing
     // everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, paneAttention,
+        case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, consumedAgentReports, paneAttention,
              paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID
         case focusedPaneSlotID = "focusedTerminalID"
     }
@@ -223,6 +231,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.brief = try container.decodeIfPresent(WorktreeBrief.self, forKey: .brief)
             ?? legacyReport.flatMap { stop in stop.recap.map { WorktreeBrief(recap: $0, at: stop.stoppedAt) } }
         self.agentProgressTimes = try container.decodeIfPresent([String: Double].self, forKey: .agentProgressTimes) ?? [:]
+        self.consumedAgentReports = try container.decodeIfPresent([String: ConsumedAgentReport].self, forKey: .consumedAgentReports) ?? [:]
         self.paneAttention = try container.decodeIfPresent(
             [PaneSlotID: Attention].self,
             forKey: .paneAttention
@@ -254,14 +263,20 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         attention != nil || !paneAttention.isEmpty || unseenAgentStop != nil
     }
 
-    public mutating func recordAgentStop(_ stop: SidebarAgentStop) {
+    /// Report content persists independently of unread completion attention.
+    public mutating func recordAgentRecap(_ recap: AttentionRecap, at reportedAt: Date) {
+        guard brief.map({ $0.updatedAt < reportedAt.timeIntervalSinceReferenceDate }) ?? true else { return }
+        if brief == nil { brief = WorktreeBrief(recap: recap, at: reportedAt) }
+        else {
+            let boundary = history?.inputs.last(where: { $0.timestamp <= reportedAt.timeIntervalSinceReferenceDate })
+                .map { Date(timeIntervalSinceReferenceDate: $0.timestamp) }
+            brief?.update(recap, at: reportedAt, preservingCheckpointBefore: boundary)
+        }
+    }
+
+    public mutating func recordAgentStop(_ stop: SidebarAgentStop, recapReportedAt: Date? = nil) {
         if let recap = stop.recap {
-            if brief == nil { brief = WorktreeBrief(recap: recap, at: stop.stoppedAt) }
-            else {
-                let boundary = history?.inputs.last(where: { $0.timestamp <= stop.timestamp })
-                    .map { Date(timeIntervalSinceReferenceDate: $0.timestamp) }
-                brief?.update(recap, at: stop.stoppedAt, preservingCheckpointBefore: boundary)
-            }
+            recordAgentRecap(recap, at: recapReportedAt ?? stop.stoppedAt)
         }
         unseenAgentStop = stop
         lastAgentStop = stop

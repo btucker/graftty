@@ -24,6 +24,16 @@ public struct AttentionFileStopEvent: Codable, Sendable {
     public let paneSessionName: String?
     public let recap: AttentionRecap?
     public let stoppedAt: Date
+    public var recapReportedAt: Date? = nil
+    public var turnID: String? = nil
+}
+
+/// The CLI publishes this independently of the provider's eventual Stop.
+public struct AttentionFileRecapEvent: Codable, Sendable, Equatable {
+    public let worktree: String
+    public let agentID: String
+    public let recap: AttentionRecap
+    public let reportedAt: Date
 }
 
 public struct AttentionFileProgressEvent: Codable, Sendable {
@@ -41,12 +51,14 @@ public struct AttentionFileResponseEvent: Codable, Sendable {
 }
 
 public enum AttentionFileActivityEvent: Sendable {
+    case recap(AttentionFileRecapEvent)
     case stop(AttentionFileStopEvent)
     case progress(AttentionFileProgressEvent)
     case response(AttentionFileResponseEvent)
 
     var occurredAt: Date {
         switch self {
+        case .recap(let event): event.reportedAt
         case .stop(let event): event.stoppedAt
         case .progress(let event): event.progressedAt
         case .response(let event): Date(timeIntervalSinceReferenceDate: event.response.timestamp)
@@ -88,37 +100,53 @@ public struct AttentionFileHandoff: Sendable {
             throw AttentionFileHandoffError.invalidRecap
         }
         try ensureDirectory()
+        let lease = try ExclusiveFileLock(url: rootDirectory.appendingPathComponent(".handoff.lock"))
+        defer { withExtendedLifetime(lease) {} }
         let data = try JSONEncoder().encode(recap)
         try data.write(to: reportURL(worktree: worktree, agentID: agentID), options: .atomic)
     }
 
-    /// A native provider session can lack wrapper registration (for example,
-    /// one started before Graftty refreshed its plugin). Its Stop hook may
-    /// also be absent, so publish the explicit report as a stopped card now.
-    /// The receipt prevents a later matching Stop hook from replacing it.
-    public func publishUnmanaged(
-        _ recap: AttentionRecap,
-        worktree: String,
-        agentID: String,
-        runtime: TeamHookRuntime,
-        sessionID: String?,
-        paneSessionName: String?
-    ) throws {
+    /// Publish the brief now and retain the full report as the current turn's
+    /// receipt. Stop verifies it and attaches `need` to completion attention.
+    public func publish(_ recap: AttentionRecap, worktree: String, agentID: String) throws {
         guard recap.isValid, !worktree.isEmpty, !agentID.isEmpty else {
             throw AttentionFileHandoffError.invalidRecap
         }
         try ensureDirectory()
-        let receipt = publishedURL(worktree: worktree, agentID: agentID)
-        try Data(String(Date().timeIntervalSince1970).utf8).write(to: receipt, options: .atomic)
-        do {
-            try enqueueStop(AttentionFileStopEvent(
-                worktree: worktree, agentID: agentID, runtime: runtime,
-                sessionID: sessionID, paneSessionName: paneSessionName,
-                recap: recap, stoppedAt: Date()
-            ))
-        } catch {
-            try? FileManager.default.removeItem(at: receipt)
-            throw error
+        let lease = try ExclusiveFileLock(url: rootDirectory.appendingPathComponent(".handoff.lock"))
+        defer { withExtendedLifetime(lease) {} }
+        let event = AttentionFileRecapEvent(worktree: worktree, agentID: agentID, recap: recap, reportedAt: Date())
+        let data = try JSONEncoder().encode(event)
+        let name = "recap-\(UUID().uuidString).json"
+        // Commit the receipt only after the publication event is durable. If
+        // writing the receipt fails, Stop can still request its fallback.
+        try data.write(to: rootDirectory.appendingPathComponent(name), options: .atomic)
+        try data.write(to: reportURL(worktree: worktree, agentID: agentID), options: .atomic)
+    }
+
+    /// Read-only transport fallback. A report remains readable even if the
+    /// directory can no longer accept the completion event.
+    public func publishedReport(worktree: String, agentID: String) -> AttentionFileRecapEvent? {
+        guard let data = try? Data(contentsOf: reportURL(worktree: worktree, agentID: agentID)),
+              let report = try? JSONDecoder().decode(AttentionFileRecapEvent.self, from: data),
+              report.worktree == worktree, report.agentID == agentID, report.recap.isValid else { return nil }
+        return report
+    }
+
+    /// A socket completion must also retire its matching file receipt. Never
+    /// delete a newer report that arrived while the socket request was running.
+    public func acknowledgeSocketStop(worktree: String, agentID: String?, sessionID: String?,
+                                      turnID: String?, reportedAt: Date?) throws {
+        try ensureDirectory()
+        let lease = try ExclusiveFileLock(url: rootDirectory.appendingPathComponent(".handoff.lock"))
+        defer { withExtendedLifetime(lease) {} }
+        if let agentID, let reportedAt,
+           publishedReport(worktree: worktree, agentID: agentID)?.reportedAt == reportedAt {
+            try FileManager.default.removeItem(at: reportURL(worktree: worktree, agentID: agentID))
+        }
+        if agentID != nil || sessionID != nil || turnID != nil {
+            try Data((turnID ?? "current").utf8).write(
+                to: markerURL(worktree: worktree, agentID: agentID, sessionID: sessionID), options: .atomic)
         }
     }
 
@@ -133,9 +161,12 @@ public struct AttentionFileHandoff: Sendable {
         stoppedAt: Date = Date()
     ) throws -> AttentionFileStopAction {
         try ensureDirectory()
-        let marker = turnID.map { _ in markerURL(worktree: worktree, agentID: agentID, sessionID: sessionID) }
-        if let marker, let turnID,
-           (try? String(contentsOf: marker, encoding: .utf8)) == turnID {
+        let lease = try ExclusiveFileLock(url: rootDirectory.appendingPathComponent(".handoff.lock"))
+        defer { withExtendedLifetime(lease) {} }
+        let marker = agentID != nil || sessionID != nil || turnID != nil
+            ? markerURL(worktree: worktree, agentID: agentID, sessionID: sessionID) : nil
+        let completedTurn = turnID ?? "current"
+        if let marker, (try? String(contentsOf: marker, encoding: .utf8)) == completedTurn {
             return .queued
         }
         if let agentID {
@@ -143,22 +174,18 @@ public struct AttentionFileHandoff: Sendable {
             if let timestamp = try? String(contentsOf: receipt, encoding: .utf8),
                let reportedAt = TimeInterval(timestamp),
                (0..<600).contains(Date().timeIntervalSince1970 - reportedAt) {
-                if let marker, let turnID {
-                    try? Data(turnID.utf8).write(to: marker, options: .atomic)
-                }
+                if let marker { try? Data(completedTurn.utf8).write(to: marker, options: .atomic) }
                 try? FileManager.default.removeItem(at: receipt)
                 return .queued
             }
             try? FileManager.default.removeItem(at: receipt)
         }
         let report = agentID.map { reportURL(worktree: worktree, agentID: $0) }
-        let recap = try report.flatMap { url -> AttentionRecap? in
-            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-            return try JSONDecoder().decode(AttentionRecap.self, from: Data(contentsOf: url))
-        }
-        // Older clients and cached skills can stage text without an identity.
-        // Keep that report available during the one permitted correction turn.
-        if recap?.emoji == nil, agentID != nil, !stopHookActive { return .requestRecap }
+        let data = report.flatMap { try? Data(contentsOf: $0) }
+        let published = data.flatMap { try? JSONDecoder().decode(AttentionFileRecapEvent.self, from: $0) }
+        // Raw recap files were staged by older CLIs. Keep accepting those.
+        let recap = published?.recap ?? data.flatMap { try? JSONDecoder().decode(AttentionRecap.self, from: $0) }
+        if recap == nil, agentID?.isEmpty == false, !stopHookActive { return .requestRecap }
         let event = AttentionFileStopEvent(
             worktree: worktree,
             agentID: agentID,
@@ -166,13 +193,13 @@ public struct AttentionFileHandoff: Sendable {
             sessionID: sessionID,
             paneSessionName: paneSessionName,
             recap: recap,
-            stoppedAt: stoppedAt
+            stoppedAt: stoppedAt,
+            recapReportedAt: published?.reportedAt,
+            turnID: turnID
         )
         try enqueueStop(event)
-        if let marker, let turnID {
-            try? Data(turnID.utf8).write(to: marker, options: .atomic)
-        }
-        if recap != nil, let report { try? FileManager.default.removeItem(at: report) }
+        if let marker { try? Data(completedTurn.utf8).write(to: marker, options: .atomic) }
+        if let report { try? FileManager.default.removeItem(at: report) }
         return .queued
     }
 
@@ -184,10 +211,23 @@ public struct AttentionFileHandoff: Sendable {
         runtime: TeamHookRuntime,
         sessionID: String?,
         progressedAt: Date = Date(),
-        userPrompt: String? = nil
+        userPrompt: String? = nil,
+        startsTurn: Bool = false
     ) throws {
         guard !worktree.isEmpty else { throw AttentionFileHandoffError.invalidRecap }
         try ensureDirectory()
+        let lease = try ExclusiveFileLock(url: rootDirectory.appendingPathComponent(".handoff.lock"))
+        defer { withExtendedLifetime(lease) {} }
+        if startsTurn {
+            var receipts = [markerURL(worktree: worktree, agentID: agentID, sessionID: sessionID)]
+            if let agentID {
+                receipts += [reportURL(worktree: worktree, agentID: agentID),
+                             publishedURL(worktree: worktree, agentID: agentID)]
+            }
+            for url in receipts where FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
         let event = AttentionFileProgressEvent(
             worktree: worktree, agentID: agentID, runtime: runtime,
             sessionID: sessionID, progressedAt: progressedAt,
@@ -278,7 +318,7 @@ public struct AttentionFileHandoff: Sendable {
             options: [.skipsHiddenFiles]
         ).filter {
             $0.pathExtension == "json" && ($0.lastPathComponent.hasPrefix("stop-")
-                || (includeProgress && ($0.lastPathComponent.hasPrefix("progress-") || $0.lastPathComponent.hasPrefix("response-"))))
+                || (includeProgress && ($0.lastPathComponent.hasPrefix("progress-") || $0.lastPathComponent.hasPrefix("response-") || $0.lastPathComponent.hasPrefix("recap-"))))
         }
         var events: [(URL, AttentionFileActivityEvent)] = []
         for file in files {
@@ -293,6 +333,9 @@ public struct AttentionFileHandoff: Sendable {
             if file.lastPathComponent.hasPrefix("stop-") {
                 event = (try? JSONDecoder().decode(AttentionFileStopEvent.self, from: data))
                     .map { AttentionFileActivityEvent.stop($0) }
+            } else if file.lastPathComponent.hasPrefix("recap-") {
+                event = (try? JSONDecoder().decode(AttentionFileRecapEvent.self, from: data))
+                    .map { AttentionFileActivityEvent.recap($0) }
             } else if file.lastPathComponent.hasPrefix("response-") {
                 event = (try? JSONDecoder().decode(AttentionFileResponseEvent.self, from: data))
                     .map { AttentionFileActivityEvent.response($0) }
@@ -306,6 +349,7 @@ public struct AttentionFileHandoff: Sendable {
             }
             let worktree: String
             switch event {
+            case .recap(let value): worktree = value.worktree
             case .stop(let value): worktree = value.worktree
             case .progress(let value): worktree = value.worktree
             case .response(let value): worktree = value.worktree
@@ -318,6 +362,7 @@ public struct AttentionFileHandoff: Sendable {
         for (file, event) in events.prefix(100) {
             let isValid: Bool
             switch event {
+            case .recap(let report): isValid = !report.worktree.isEmpty && !report.agentID.isEmpty && report.recap.isValid
             case .stop(let stop): isValid = !stop.worktree.isEmpty && stop.recap?.isValid != false
             case .progress(let progress): isValid = !progress.worktree.isEmpty
             case .response(let response): isValid = !response.worktree.isEmpty && !response.response.text.isEmpty
@@ -351,7 +396,7 @@ public struct AttentionFileHandoff: Sendable {
 
     private func markerURL(worktree: String, agentID: String?, sessionID: String?) -> URL {
         rootDirectory.appendingPathComponent(
-            "turn-\(key(for: "\(worktree)\0\(sessionID ?? agentID ?? "unknown")")).txt"
+            "turn-\(key(for: "\(worktree)\0\(agentID ?? "unknown")\0\(sessionID ?? "unknown")")).txt"
         )
     }
 

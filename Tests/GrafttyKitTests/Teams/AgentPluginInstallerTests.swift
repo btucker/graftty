@@ -659,6 +659,27 @@ struct AgentPluginInstallerTests {
         }
     }
 
+    @Test("@spec AGENT-6.61: When Graftty installs provider Stop hooks, the application shall use executable command handlers for Codex and Claude so recap delivery is neither skipped as an unsupported prompt handler nor delegated to a tool-less evaluator.")
+    func stopHooksUseSupportedExecutableHandlers() throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        _ = try AgentPluginInstaller().prepare(destinationRoot: destination)
+        for provider in ["codex", "claude"] {
+            let data = try Data(contentsOf: destination.appendingPathComponent("\(provider)/plugins/graftty/hooks/hooks.json"))
+            let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let hooks = try #require(root["hooks"] as? [String: Any])
+            let groups = try #require(hooks["Stop"] as? [[String: Any]])
+            let handlers = groups.flatMap { $0["hooks"] as? [[String: Any]] ?? [] }
+            #expect(!handlers.isEmpty)
+            for handler in handlers {
+                #expect(handler["type"] as? String == "command")
+                let command = try #require(handler["command"] as? String)
+                #expect(command.contains("team hook \(provider) stop"))
+                #expect(command.contains("GRAFTTY_DISABLE_AGENT_HOOKS"))
+            }
+        }
+    }
+
     @Test("""
     @spec AGENT-6.10: When the user prepares native agent integration, the application shall materialize validated Codex and Claude marketplace snapshots containing separate Graftty Attention and team skills plus lifecycle hooks that use the bundled CLI and honor the hook opt-out, then present provider-native install and update commands without silently changing provider trust configuration.
     """)
