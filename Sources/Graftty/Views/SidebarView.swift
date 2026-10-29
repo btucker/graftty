@@ -142,37 +142,12 @@ struct SidebarView: View {
         return SidebarActivityCounts(items: pending + working)
     }
 
-    private func pendingNavigationRows(local projectedLocal: [WorktreePanes], promoted: [WorktreePanes]) -> [WorktreePanes] {
-        let local = Dictionary(projectedLocal.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
-        let remote = displayedRemoteRows
-        func localRows(_ nodes: [SidebarWorktreeNode]) -> [WorktreePanes] {
-            nodes.flatMap { node in
-                switch node {
-                case .worktree(let row, _): return local[row.path].map { [$0] } ?? []
-                case .folder(_, _, let children): return localRows(children)
-                }
-            }
-        }
-        return [SidebarWorktreeSection.pinned, .tasks].flatMap { section in
-            let localSectionRows = orderedSidebarRepos.flatMap { repo in
-                let rows = displayedWorktrees(in: repo).filter {
-                    SidebarHostNavigation.isPinned($0, in: repo) == (section == .pinned)
-                }
-                return localRows(SidebarWorktreeHierarchy.nodes(for: rows, inRepoAtPath: repo.path,
-                    defaultBranch: remoteBranchStore.resolvedDefaultBranch(forRepoAt: repo.path, hint: repo.defaultBranchHint)))
-            }
-            let remoteRows = remoteMacsModel.savedRemoteMacs.flatMap { mac in
-                let rows = (remote[RemoteMacIdentity(mac)] ?? []).filter { ($0.origin?.relayDepth ?? 0) == 0 }
-                var seen: Set<String> = []
-                let projects = rows.map(SidebarProjection.projectID).filter { seen.insert($0).inserted }
-                return projects.flatMap { id in
-                    SidebarWorktreeReportOrder.displayedWorktrees(rows.filter { SidebarProjection.projectID($0) == id }, section: section)
-                }.compactMap { raw in
-                    promoted.first { $0.sidebar?.id == raw.sidebar?.id && SidebarProjection.projectID($0) == SidebarProjection.projectID(raw) }
-                }
-            }
-            return localSectionRows + remoteRows
-        }
+    private func pinnedMembership(in rows: [WorktreePanes]) -> Set<String> {
+        let projectFilter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
+        return Set(rows.filter {
+            (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter)
+                && ($0.isMainCheckout || $0.sidebar?.isPinned == true)
+        }.map { SidebarProjection.projectID($0) + "\u{0}" + $0.path })
     }
 
     private func contextForLocalWorktree(_ worktree: WorktreeEntry, repo: RepoEntry, displayName: String) -> SidebarWorktreeContext {
@@ -213,30 +188,6 @@ struct SidebarView: View {
         navigation.finishOpening(visit, succeeded: opened, navigateToProject: opened)
         if !opened { navigationError = "This target is unavailable or its request has changed." }
         return opened
-    }
-
-    @ViewBuilder private func pendingNavigationButton(local: [WorktreePanes], promoted: [WorktreePanes]) -> some View {
-        let projectFilter = SidebarLayoutPolicy.projectFilter(selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail)
-        let rows = pendingNavigationRows(local: local, promoted: promoted).filter { $0.state.hasOnDiskWorktree && (projectFilter == nil || SidebarProjection.projectID($0) == projectFilter) }
-        let count = rows.filter { !navigation.worktreeContext($0).pending.isEmpty }.count
-        if count > 0 {
-            Button("\(count) pending") {
-                let selected: String? = {
-                    if let identity = selectedRemoteIdentity, let path = selectedRemoteWorktreePath {
-                        return rows.first {
-                            guard let route = remoteMacsModel.relayRouter.resolveWorktree($0.path) else { return false }
-                            return route.identity == identity && route.path == path
-                        }?.path
-                    }
-                    return appState.selectedWorktreePath
-                }()
-                if let item = navigation.nextPendingWorktree(in: rows, projectID: projectFilter, after: selected),
-                   let row = rows.first(where: { $0.path == item.worktreeID }) {
-                    Task { _ = await openReport(navigation.worktreeContext(row)) }
-                }
-            }.buttonStyle(.plain).font(.caption).foregroundStyle(.orange).padding(.vertical, 5)
-                .accessibilityHint("Open the next worktree with a pending request")
-        }
     }
 
     private var projectIcons: [String: Data] {
@@ -423,19 +374,15 @@ struct SidebarView: View {
                     Text(navigationError).font(.caption).foregroundStyle(.red).padding(8)
                 }
                     ScrollViewReader { proxy in
-                        SidebarWorktreeViewport {
+                        SidebarWorktreeViewport(pinnedMembership: pinnedMembership(in: local + promoted),
+                                                showsDivider: navigation.query.isEmpty) {
                             if navigation.query.isEmpty {
                                 worktreeRows(section: .pinned, activityCounts: counts, remoteContexts: promotedContexts)
                                     .padding(.horizontal, showsProjectRail ? 6 : 10)
                             }
                         } controls: {
                             if navigation.query.isEmpty {
-                                VStack(spacing: 0) {
-                                    SidebarWorktreeDivider().frame(height: 1).allowsHitTesting(false)
-                                    selectedProjectAddWorktreeHeader
-                                    pendingNavigationButton(local: local, promoted: promoted)
-                                        .padding(.horizontal, showsProjectRail ? 6 : 10)
-                                }
+                                selectedProjectAddWorktreeHeader
                             }
                         } content: {
                             if showsProjectRail {

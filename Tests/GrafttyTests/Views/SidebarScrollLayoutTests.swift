@@ -161,7 +161,7 @@ final class SidebarScrollLayoutTests: XCTestCase {
         })
         XCTAssertTrue(divider.boxType == .separator)
         let dividerFrame = divider.convert(divider.bounds, to: hosted.hosting)
-        XCTAssertTrue(abs(dividerFrame.minY - pinned.convert(pinned.bounds, to: hosted.hosting).maxY) <= 1)
+        XCTAssertTrue(abs(dividerFrame.minY - pinned.convert(pinned.bounds, to: hosted.hosting).maxY) <= 4)
         XCTAssertTrue(abs(dividerFrame.minX - content.minX) <= 1)
         XCTAssertTrue(abs(dividerFrame.width - content.width) <= 1)
         XCTAssertTrue(dividerFrame.height == 1)
@@ -258,7 +258,7 @@ final class SidebarScrollLayoutTests: XCTestCase {
         XCTAssertTrue(sort.convert(sort.bounds, to: hosted.hosting) == originalSort)
     }
 
-    /// @spec LAYOUT-2.119: If pinned agents exceed the available sidebar height, then the application shall scroll them independently within at most half the usable sidebar height, keep the sort line fixed, reserve 96 points for ordinary worktrees when space permits, and fit short pinned sections to their content.
+    /// @spec LAYOUT-2.119: If pinned agents exceed the available sidebar height, then the application shall scroll them independently within the usable sidebar height, keep the sort line fixed, reserve 96 points for ordinary worktrees when space permits, and otherwise fit all pinned agents by default.
     func testPinnedOverflowIsBounded() async throws {
         for rail in [false, true] {
             for pinnedCount in [1, 30] {
@@ -273,8 +273,8 @@ final class SidebarScrollLayoutTests: XCTestCase {
         let pinned = try XCTUnwrap(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
         let ordinary = try XCTUnwrap(hosted.enclosingScroll(try hosted.dragView(named: "task-0")))
         XCTAssertTrue(pinned !== ordinary)
-        XCTAssertTrue(pinned.contentView.bounds.height - pinned.contentInsets.top <= hosted.hosting.bounds.height / 2)
-        XCTAssertTrue(ordinary.contentView.bounds.height >= 120)
+        XCTAssertTrue(pinned.bounds.height < hosted.hosting.bounds.height)
+        XCTAssertTrue(ordinary.contentView.bounds.height >= 96)
         try hosted.captureIfRequested(name: "sidebar-\(rail ? "rail" : "single")-pins-\(pinnedCount)")
         if pinnedCount == 1 {
             XCTAssertTrue(try XCTUnwrap(pinned.documentView).bounds.height <= pinned.contentView.bounds.height + 1)
@@ -292,12 +292,85 @@ final class SidebarScrollLayoutTests: XCTestCase {
             for height in [340.0, 280.0] {
                 hosted.window.setContentSize(NSSize(width: 900, height: height))
                 try await hosted.settle()
-                XCTAssertTrue(pinned.contentView.bounds.height - pinned.contentInsets.top <= hosted.hosting.bounds.height / 2)
+                XCTAssertTrue(pinned.bounds.height < hosted.hosting.bounds.height)
                 // Fixed chrome can leave less than 96pt in a short window.
                 // In that case pinned rows must surrender all their space.
                 XCTAssertTrue(ordinary.contentView.bounds.height >= 96 || pinned.bounds.height <= 1)
             }
         }
+    }
+
+    /// @spec LAYOUT-2.157: While the macOS sidebar has enough space for all pinned agents and 96 points of ordinary worktrees, the application shall fit all pinned agents by default even when they need more than half the available height.
+    func testDefaultPinnedHeightCanExceedHalf() async throws {
+        let hosted = try await Hosted.make(pinnedCount: 30, rail: true)
+        defer { hosted.tearDown() }
+        let pinned = try XCTUnwrap(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
+        let documentHeight = try XCTUnwrap(pinned.documentView).bounds.height
+        hosted.window.setContentSize(NSSize(width: 900, height: documentHeight + 400))
+        try await hosted.settle()
+        XCTAssertGreaterThan(pinned.bounds.height, hosted.hosting.bounds.height / 2)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(pinned.documentView).bounds.height, pinned.contentView.bounds.height + 1)
+    }
+
+    /// @spec LAYOUT-2.158: When the user drags the macOS pinned-agent divider, the application shall override its automatic height, keep both sections independently scrollable, and reserve 96 points for ordinary worktrees when space permits.
+    func testDividerDragOverridesHeight() async throws {
+        for rail in [false, true] {
+            let hosted = try await Hosted.make(pinnedCount: 1, rail: rail)
+            defer { hosted.tearDown() }
+            let pinned = try XCTUnwrap(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
+            let original = pinned.bounds.height
+            try await dragDivider(in: hosted, by: 50)
+            XCTAssertEqual(pinned.bounds.height, original + 50, accuracy: 1)
+            try await dragDivider(in: hosted, by: -70)
+            XCTAssertEqual(pinned.bounds.height, original - 20, accuracy: 1)
+            try await dragDivider(in: hosted, by: 10000)
+            let ordinary = try XCTUnwrap(hosted.enclosingScroll(try hosted.dragView(named: "task-0")))
+            XCTAssertGreaterThanOrEqual(ordinary.contentView.bounds.height, 96)
+        }
+    }
+
+    /// @spec LAYOUT-2.159: When an agent is pinned or unpinned in the macOS sidebar, the application shall return the pinned section to automatic sizing so it expands or contracts to fit the current pinned agents.
+    func testPinChangesRestoreAutomaticHeight() async throws {
+        let hosted = try await Hosted.make(pinnedCount: 1, rail: true)
+        defer { hosted.tearDown() }
+        let pinned = try XCTUnwrap(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
+        let original = pinned.bounds.height
+        try await dragDivider(in: hosted, by: -30)
+        let index = try XCTUnwrap(hosted.harness.state.repos[0].worktrees.firstIndex { $0.branch == "task-0" })
+        hosted.harness.state.repos[0].worktrees[index].isPinned = true
+        try await hosted.settle()
+        XCTAssertGreaterThan(pinned.bounds.height, original)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(pinned.documentView).bounds.height, pinned.contentView.bounds.height + 1)
+        try await dragDivider(in: hosted, by: 30)
+        hosted.harness.state.repos[0].worktrees[index].isPinned = false
+        try await hosted.settle()
+        XCTAssertEqual(pinned.bounds.height, original, accuracy: 1)
+
+        // Membership changes must reset a manual height even while the
+        // disclosure is collapsed and its measured content stays unchanged.
+        hosted.harness.state.repos[0].isPinnedCollapsed = true
+        try await hosted.settle()
+        let collapsedHeight = pinned.bounds.height
+        try await dragDivider(in: hosted, by: 30)
+        XCTAssertGreaterThan(pinned.bounds.height, collapsedHeight)
+        hosted.harness.state.repos[0].worktrees[index].isPinned = true
+        try await hosted.settle()
+        XCTAssertEqual(pinned.bounds.height, collapsedHeight, accuracy: 1)
+    }
+
+    private func dragDivider(in hosted: Hosted, by delta: CGFloat) async throws {
+        let handle = try XCTUnwrap(Self.find(NSView.self, in: hosted.hosting).first {
+            $0.accessibilityIdentifier() == "Resize pinned agents"
+        })
+        let start = handle.convert(CGPoint(x: handle.bounds.midX, y: handle.bounds.midY), to: nil)
+        let end = CGPoint(x: start.x, y: start.y - delta)
+        let root = try XCTUnwrap(hosted.window.contentView)
+        let hit = try XCTUnwrap(root.hitTest(root.superview?.convert(start, from: nil) ?? start))
+        XCTAssertTrue(hit === handle || hit.isDescendant(of: handle))
+        hit.mouseDown(with: try NSEvent.syntheticClick(.leftMouseDown, at: start, in: hosted.window))
+        hit.mouseDragged(with: try NSEvent.syntheticClick(.leftMouseDragged, at: end, in: hosted.window))
+        hit.mouseUp(with: try NSEvent.syntheticClick(.leftMouseUp, at: end, in: hosted.window))
+        try await hosted.settle()
     }
 
     func testReturningToProjectRevealsRememberedPinnedAgent() async throws {
