@@ -1112,6 +1112,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PERSIST-5.14** If corrupt pinned-host data cannot be moved aside during a connection metadata refresh, then the client shall surface the recovery error and preserve the original file.
 
+**PERSIST-5.15** If AppState recovery encounters a non-decoding read error, then the application shall preserve the original file without a corrupt backup and reject saves of the fallback state until the original state is reloaded.
+
+**PERSIST-5.16** If corrupt-file recovery encounters a non-decoding read error, then the application shall throw the read error and leave the original file and backup names unchanged.
+
+**PERSIST-5.17** If a trusted-peer list cannot be read for a non-decoding reason, then the application shall reject reads and mutations with the read error and preserve all saved peers for a later retry.
+
+**PERSIST-5.18** If a pinned-host list cannot be read for a non-decoding reason, then the application shall reject reads and mutations with the read error and preserve all saved pins for a later retry.
+
+**PERSIST-5.19** If an observable list encounters a non-decoding read error, then the application shall leave it unloaded and block writes until a later load succeeds so mutations retain the persisted rows.
+
 **PERSIST-5.20** When a JSONFileStore publishes a file, the application shall synchronize its contents and then fsync the containing directory once before returning success, propagating synchronization failures.
 
 **PERSIST-5.21** When a JSONFileStore writes with a custom POSIX mode, the application shall apply that mode before publication and preserve it at the destination.

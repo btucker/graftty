@@ -10,6 +10,21 @@ import Glibc
 
 @Suite("JSONFileStore")
 struct JSONFileStoreTests {
+    @Test("@spec PERSIST-5.16: If corrupt-file recovery encounters a non-decoding read error, then the application shall throw the read error and leave the original file and backup names unchanged.")
+    func transientReadFailurePropagatesFromRecovery() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("value.json")
+        let original = JSONFileStore<[String]>(fileURL: url)
+        try original.save(["saved"])
+        let bytes = try Data(contentsOf: url)
+        let denied = JSONFileStore<[String]>(fileURL: url, readData: { _ in
+            throw CocoaError(.fileReadNoPermission)
+        })
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.loadMovingAsideCorruptFile() }
+        #expect(try Data(contentsOf: url) == bytes)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["value.json"])
+    }
     private struct Record: Codable, Equatable {
         var name: String
         var at: Date
@@ -219,7 +234,7 @@ struct JSONFileStoreTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).count == 1)
     }
 
-    @Test("loadMovingAsideCorruptFile() treats a missing or unreadable file as absent without a backup")
+    @Test("loadMovingAsideCorruptFile() returns nil only for absence and throws for unreadable files without a backup")
     func loadMovingAsideLeavesUnreadableFilesAlone() throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -231,9 +246,8 @@ struct JSONFileStoreTests {
         // A directory where the file should be: unreadable, not malformed.
         let blocked = JSONFileStore<Record>(fileURL: dir.appendingPathComponent("sub"))
         try FileManager.default.createDirectory(at: blocked.fileURL, withIntermediateDirectories: true)
-        #expect(try blocked.loadMovingAsideCorruptFile() == nil)
         #expect(throws: (any Error).self) {
-            try blocked.loadMovingAsideCorruptFile(ignoringReadErrors: false)
+            try blocked.loadMovingAsideCorruptFile()
         }
         #expect(FileManager.default.fileExists(atPath: blocked.fileURL.path))
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted() == ["sub", "x.json"])

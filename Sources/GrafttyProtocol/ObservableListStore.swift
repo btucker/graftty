@@ -13,14 +13,15 @@ import Observation
 /// `loadIfNeeded()` reads off the main actor; mutations call
 /// `ensureLoaded()` first so a write that races ahead of the async load
 /// builds on the persisted rows instead of clobbering them with an empty
-/// list. A missing or unreadable file reads as empty; malformed contents
-/// read as empty and are moved aside only under `.moveAside`.
+/// list. A missing file reads as empty; malformed contents read as empty
+/// and are moved aside only under `.moveAside`. Other read errors leave
+/// the store unloaded and block writes until a later load succeeds.
 @MainActor
 @Observable
 public final class ObservableListStore<Element: Codable & Sendable> {
 
     public enum CorruptFilePolicy: Sendable {
-        /// Keep the unreadable file beside the original before the next write replaces it.
+        /// Keep the malformed file beside the original before the next write replaces it.
         case moveAside
         /// Let the next write replace it.
         case discard
@@ -37,10 +38,12 @@ public final class ObservableListStore<Element: Codable & Sendable> {
     private let isLoadable: @Sendable (Element) -> Bool
     private let areInIncreasingOrder: (Element, Element) -> Bool
     private var corruptBackupFailed = false
+    private var loadError: (any Error)?
 
     private enum BackgroundRead: Sendable {
         case loaded([Element])
         case malformed
+        case failed(any Error)
     }
 
     /// - Parameters:
@@ -74,17 +77,13 @@ public final class ObservableListStore<Element: Codable & Sendable> {
         guard !hasLoaded else { return }
         switch loaded {
         case .loaded(let rows):
-            elements = rows.sorted(by: areInIncreasingOrder)
-            hasLoaded = true
+            publishLoaded(rows)
         case .malformed:
             // Re-read on the owning actor before recovery. A background read
             // must never rename a file that a later write has replaced.
-            switch corruptFile {
-            case .moveAside: ensureLoaded()
-            case .discard:
-                elements = []
-                hasLoaded = true
-            }
+            ensureLoaded()
+        case .failed(let error):
+            recordReadFailure(error)
         }
     }
 
@@ -92,21 +91,32 @@ public final class ObservableListStore<Element: Codable & Sendable> {
     /// No-op when already loaded.
     public func ensureLoaded() {
         guard !hasLoaded else { return }
-        do {
-            elements = try Self.read(file, corruptFile: corruptFile, isLoadable: isLoadable)
-                .sorted(by: areInIncreasingOrder)
-        } catch {
-            corruptBackupFailed = true
-            NSLog("[Graftty] failed to back up corrupt %@: %@", file.fileURL.path, String(describing: error))
+        switch Self.readInBackground(file, isLoadable: isLoadable) {
+        case .loaded(let rows):
+            publishLoaded(rows)
+        case .malformed:
+            if corruptFile == .moveAside {
+                do {
+                    try file.moveAsideCorruptFile()
+                } catch {
+                    corruptBackupFailed = true
+                    NSLog("[Graftty] failed to back up corrupt %@: %@", file.fileURL.path, String(describing: error))
+                }
+            }
+            publishLoaded([])
+        case .failed(let error):
+            recordReadFailure(error)
         }
-        hasLoaded = true
     }
 
     /// Persists `list` and, only once the write succeeds, publishes it as
     /// loaded, so a pending `loadIfNeeded()` cannot replace it.
     public func write(_ list: [Element]) throws {
+        // Never re-read here: the caller already built `list` from the
+        // published rows. A retry must load them before building a mutation.
+        if let loadError { throw loadError }
         if corruptBackupFailed {
-            _ = try file.loadMovingAsideCorruptFile(ignoringReadErrors: false)
+            _ = try file.loadMovingAsideCorruptFile()
         }
         try file.save(list)
         elements = list.sorted(by: areInIncreasingOrder)
@@ -114,16 +124,15 @@ public final class ObservableListStore<Element: Codable & Sendable> {
         corruptBackupFailed = false
     }
 
-    nonisolated private static func read(
-        _ file: JSONFileStore<[Element]>,
-        corruptFile: CorruptFilePolicy,
-        isLoadable: (Element) -> Bool
-    ) throws -> [Element] {
-        let rows = switch corruptFile {
-        case .moveAside: try file.loadMovingAsideCorruptFile()
-        case .discard: try? file.load()
-        }
-        return (rows ?? []).filter(isLoadable)
+    private func publishLoaded(_ rows: [Element]) {
+        elements = rows.sorted(by: areInIncreasingOrder)
+        hasLoaded = true
+        loadError = nil
+    }
+
+    private func recordReadFailure(_ error: any Error) {
+        loadError = error
+        NSLog("[Graftty] failed to read %@: %@", file.fileURL.path, String(describing: error))
     }
 
     nonisolated private static func readInBackground(
@@ -135,7 +144,7 @@ public final class ObservableListStore<Element: Codable & Sendable> {
         } catch is DecodingError {
             return .malformed
         } catch {
-            return .loaded([])
+            return .failed(error)
         }
     }
 }

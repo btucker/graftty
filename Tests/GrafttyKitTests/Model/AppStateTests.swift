@@ -7,6 +7,31 @@ import GrafttyTestSupport
 @Suite("AppState Tests")
 struct AppStateTests {
 
+    @Test("@spec PERSIST-5.15: If AppState recovery encounters a non-decoding read error, then the application shall preserve the original file without a corrupt backup and reject saves of the fallback state until the original state is reloaded.")
+    func transientReadFailurePreservesAppState() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let original = AppState(repos: [RepoEntry(path: "/saved", displayName: "Saved", worktrees: [])])
+        try original.save(to: dir)
+        let url = dir.appendingPathComponent("state.json")
+        let bytes = try Data(contentsOf: url)
+
+        var fallback = AppState.loadOrFreshBackingUpCorruption(from: dir, readData: { _ in
+            throw CocoaError(.fileReadNoPermission)
+        })
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["state.json"])
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        fallback.sidebarWidth = 300
+        // Reads already work again. A snapshot built without the original rows is still unsafe to save.
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try fallback.save(to: dir) }
+        #expect(try Data(contentsOf: url) == bytes)
+        var recovered = AppState.loadOrFreshBackingUpCorruption(from: dir)
+        #expect(recovered == original)
+        recovered.sidebarWidth = 300
+        try recovered.save(to: dir)
+        #expect(try AppState.load(from: dir).repos == original.repos)
+    }
+
     @Test func emptyStateHasNoRepos() {
         let state = AppState()
         #expect(state.repos.isEmpty)

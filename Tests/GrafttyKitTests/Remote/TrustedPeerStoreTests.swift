@@ -12,6 +12,29 @@ import GrafttyTestSupport
 
 @Suite("TrustedPeerStore Tests")
 struct TrustedPeerStoreTests {
+    @Test("@spec PERSIST-5.17: If a trusted-peer list cannot be read for a non-decoding reason, then the application shall reject reads and mutations with the read error and preserve all saved peers for a later retry.")
+    func transientReadFailurePreservesPeers() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = TrustedPeerStore(directory: dir)
+        let saved = makePeer()
+        let added = makePeer()
+        try store.add(saved)
+        let url = dir.appendingPathComponent("trusted-peers.json")
+        let bytes = try Data(contentsOf: url)
+        let denied = TrustedPeerStore(directory: dir, readData: { _ in
+            throw CocoaError(.fileReadNoPermission)
+        })
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.list() }
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.add(added) }
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.upsertAfterPairing(added) }
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.remove(id: saved.id) }
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.update(saved) }
+        #expect(try Data(contentsOf: url) == bytes)
+        try store.add(added)
+        #expect(Set(try store.list().map(\.id)) == [saved.id, added.id])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).allSatisfy { !$0.contains(".corrupt") })
+    }
     @Test
     func omittedWorktreeManagementFollowsTerminalControl() {
         let disabled = PairedDeviceCapabilities(

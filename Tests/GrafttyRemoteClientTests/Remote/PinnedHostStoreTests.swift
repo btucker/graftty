@@ -12,6 +12,30 @@ import Glibc
 
 @Suite("PinnedHostStore Tests")
 struct PinnedHostStoreTests {
+    @Test("@spec PERSIST-5.18: If a pinned-host list cannot be read for a non-decoding reason, then the application shall reject reads and mutations with the read error and preserve all saved pins for a later retry.")
+    func transientReadFailurePreservesPins() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = PinnedHostStore(directory: dir)
+        let saved = makeHost()
+        let added = makeHost()
+        try store.add(saved)
+        let url = dir.appendingPathComponent("pinned-hosts.json")
+        let bytes = try Data(contentsOf: url)
+        let denied = PinnedHostStore(directory: dir, readData: { _ in
+            throw CocoaError(.fileReadNoPermission)
+        })
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.list() }
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.add(added) }
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.upsertAfterPairing(added) }
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.remove(id: saved.id) }
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.update(saved) }
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try denied.refreshConnectionMetadata(saved) }
+        #expect(try Data(contentsOf: url) == bytes)
+        try store.add(added)
+        #expect(Set(try store.list().map(\.id)) == [saved.id, added.id])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["pinned-hosts.json"])
+    }
 
     @Test("@spec PERSIST-5.14: If corrupt pinned-host data cannot be moved aside during a connection metadata refresh, then the client shall surface the recovery error and preserve the original file.", .enabled(if: geteuid() != 0, "Root bypasses directory write permissions"))
     func connectionRefreshPreservesCorruptionWhenBackupFails() throws {

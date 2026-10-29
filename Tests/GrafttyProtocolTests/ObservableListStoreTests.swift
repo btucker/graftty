@@ -41,6 +41,49 @@ private struct GatedListRow: Codable, Sendable, Equatable {
 @Suite("ObservableListStore")
 @MainActor
 struct ObservableListStoreTests {
+    private final class ReadControl: @unchecked Sendable {
+        private let lock = NSLock()
+        private var denied = true
+        func allow() { lock.withLock { denied = false } }
+        func read(_ url: URL) throws -> Data {
+            if lock.withLock({ denied }) { throw CocoaError(.fileReadNoPermission) }
+            return try Data(contentsOf: url)
+        }
+    }
+
+    @Test("@spec PERSIST-5.19: If an observable list encounters a non-decoding read error, then the application shall leave it unloaded and block writes until a later load succeeds so mutations retain the persisted rows.", arguments: [false, true], [false, true])
+    func transientReadFailurePreservesList(asyncLoad: Bool, discard: Bool) async throws {
+        let url = makeFileURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let original = JSONFileStore<[Row]>(fileURL: url)
+        let saved = Row(name: "saved", rank: 1)
+        let added = Row(name: "added", rank: 2)
+        try original.save([saved])
+        let bytes = try Data(contentsOf: url)
+        let control = ReadControl()
+        let store = ObservableListStore(
+            file: JSONFileStore<[Row]>(fileURL: url, readData: { try control.read($0) }),
+            corruptFile: discard ? .discard : .moveAside,
+            areInIncreasingOrder: { $0.rank > $1.rank }
+        )
+        if asyncLoad { await store.loadIfNeeded() } else { store.ensureLoaded() }
+        #expect(!store.hasLoaded)
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try store.write(store.elements + [added]) }
+        #expect(try Data(contentsOf: url) == bytes)
+
+        control.allow()
+        // Restored read access alone cannot make a list built from empty safe to write.
+        #expect(throws: CocoaError(.fileReadNoPermission)) { try store.write([added]) }
+        #expect(try Data(contentsOf: url) == bytes)
+        if asyncLoad { await store.loadIfNeeded() } else { store.ensureLoaded() }
+        #expect(store.hasLoaded)
+        #expect(store.elements == [saved])
+        try store.write(store.elements + [added])
+        #expect(try original.load() == [saved, added])
+        #expect(store.elements == [added, saved])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path) == ["rows.json"])
+    }
+
     private struct Row: Codable, Sendable, Equatable {
         var name: String
         var rank: Int
