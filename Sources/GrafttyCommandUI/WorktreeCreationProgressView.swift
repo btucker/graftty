@@ -10,13 +10,15 @@ public struct WorktreeCreationProgressView: View {
 
     public var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            HStack(spacing: 4) {
-                Image(systemName: progress.creationSymbolName).accessibilityHidden(true)
-                Text(progress.label)
-                Text(progress.duration(at: context.date)).monospacedDigit()
+            if progress.showsInSidebar(at: context.date) {
+                HStack(spacing: 4) {
+                    Image(systemName: progress.creationSymbolName).accessibilityHidden(true)
+                    Text(progress.label)
+                    Text(progress.duration(at: context.date)).monospacedDigit()
+                }
+                .font(.caption)
+                .lineLimit(1)
             }
-            .font(.caption)
-            .lineLimit(1)
         }
     }
 }

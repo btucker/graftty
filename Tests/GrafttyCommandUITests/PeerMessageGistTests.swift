@@ -7,7 +7,7 @@ import Testing
 import AppKit
 #endif
 
-@Suite("@spec CONTEXT-26: When Context history shows a peer message or visible agent response, the application shall show single-line text of at most 80 characters verbatim without running a model, otherwise show an on-device Apple Intelligence summary marked as generated when available, and otherwise show the first sentence or line unmarked, limiting summaries and fallbacks to 240 characters while allowing them to wrap, generating each text at most once per process.")
+@Suite("@spec CONTEXT-26: When Context history shows a peer message or completed agent turn, the application shall show single-line text of at most 80 characters verbatim without running a model, otherwise show an on-device Apple Intelligence summary marked as generated when available, and otherwise show the first sentence or line of the last message unmarked, limiting summaries and fallbacks to 240 characters within a four-line expandable preview, generating each summary input at most once per process.")
 struct PeerMessageGistTests {
     private final class Calls: @unchecked Sendable {
         private let lock = NSLock()
