@@ -63,11 +63,10 @@ class DispatchSampleTests(unittest.TestCase):
         self.assertEqual(original, {'CI': 'false', 'GRAFTTY_GHOSTTY_PACKAGE_PATH': '/renderer'})
 
     def test_real_capture_requires_the_ci_paging_renderer_configuration(self):
-        for environment in [{}, {'GRAFTTY_GHOSTTY_PACKAGE_PATH': '/renderer'},
-                            {'GRAFTTY_REQUIRE_PAGED_HISTORY': '1'},
-                            {'GRAFTTY_GHOSTTY_PACKAGE_PATH': '', 'GRAFTTY_REQUIRE_PAGED_HISTORY': '1'}]:
+        for environment in [{}, {'GRAFTTY_GHOSTTY_PACKAGE_PATH': '/renderer'}]:
             with self.subTest(environment=environment), self.assertRaises(ValueError):
                 gcd_probe.require_ci_renderer(environment)
+        self.assertIsNone(gcd_probe.require_ci_renderer({'GRAFTTY_REQUIRE_PAGED_HISTORY': '1'}))
         self.assertEqual(gcd_probe.require_ci_renderer({
             'GRAFTTY_GHOSTTY_PACKAGE_PATH': '/renderer', 'GRAFTTY_REQUIRE_PAGED_HISTORY': '1'}), '/renderer')
 

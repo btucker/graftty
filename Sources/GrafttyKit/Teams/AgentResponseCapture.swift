@@ -13,13 +13,16 @@ public struct AgentResponseCapture {
         var offset: UInt64 = 0
         var fileNumber: UInt64
         var discardingLine = false
+        var lastResponse: WorktreeHistory.AgentResponse?
+        var lastResponseWorktree: String?
     }
 
     public let handoff: AttentionFileHandoff
 
     public init(handoff: AttentionFileHandoff = AttentionFileHandoff()) { self.handoff = handoff }
 
-    public func capture(payload: [String: Any], runtime: TeamHookRuntime, worktree: String, sessionID: String?) throws {
+    public func capture(payload: [String: Any], runtime: TeamHookRuntime, worktree: String, sessionID: String?,
+                        turnCompleted: Bool = false) throws {
         guard !AgentStopHookFilter.isSubagentStop(stdinJSON: payload),
               let sessionID, !sessionID.isEmpty,
               let path = payload["transcript_path"] as? String, path.hasPrefix("/") else { return }
@@ -45,7 +48,13 @@ public struct AgentResponseCapture {
         let isInitialScan = saved == nil || saved?.fileNumber != number || (saved?.offset ?? 0) > size
         var cursor = saved ?? Cursor(fileNumber: number)
         if isInitialScan { cursor = Cursor(fileNumber: number) }
-        guard cursor.offset < size else { return }
+        guard cursor.offset < size else {
+            if turnCompleted {
+                try completeTurn(cursor: &cursor)
+                try JSONEncoder().encode(cursor).write(to: cursorURL, options: .atomic)
+            }
+            return
+        }
         // Backfill only the recent tail on first observation. Once established,
         // stream every unread record so large tool results cannot erase replies.
         let limit = 2 * 1024 * 1024
@@ -70,6 +79,8 @@ public struct AgentResponseCapture {
                     if let response = Self.response(from: pending, runtime: runtime,
                                                      sessionID: sessionID, offset: recordOffset) {
                         try handoff.response(response, worktree: worktree)
+                        cursor.lastResponse = response
+                        cursor.lastResponseWorktree = worktree
                     }
                 }
                 pending.removeAll(keepingCapacity: true)
@@ -87,7 +98,17 @@ public struct AgentResponseCapture {
             }
             cursor.offset = cursor.discardingLine ? readOffset : recordOffset
         }
+        if turnCompleted { try completeTurn(cursor: &cursor) }
         try JSONEncoder().encode(cursor).write(to: cursorURL, options: .atomic)
+    }
+
+    /// Claude's final text can already have been drained at the previous tool boundary.
+    private func completeTurn(cursor: inout Cursor) throws {
+        guard var response = cursor.lastResponse, let destination = cursor.lastResponseWorktree,
+              response.isFinal != true else { return }
+        response.isFinal = true
+        try handoff.response(response, worktree: destination)
+        cursor.lastResponse = response
     }
 
     static func response(from data: Data, runtime: TeamHookRuntime, sessionID: String,
@@ -138,6 +159,9 @@ public struct AgentResponseCapture {
         }
         let key = SHA256.hash(data: Data("\(runtime.rawValue)\0\(sessionID)\0\(sourceID)".utf8))
             .map { String(format: "%02x", $0) }.joined()
-        return WorktreeHistory.AgentResponse(id: "response:\(key)", text: text, at: date, runtime: runtime.rawValue)
+        let phase = message["phase"] as? String ?? message["channel"] as? String
+        let isFinal = ["final", "final_answer"].contains(phase ?? "") || message["stop_reason"] as? String == "end_turn"
+        return WorktreeHistory.AgentResponse(id: "response:\(key)", text: text, at: date, runtime: runtime.rawValue,
+                                            sessionID: sessionID, isFinal: isFinal)
     }
 }

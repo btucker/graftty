@@ -8,18 +8,24 @@ import Foundation
 /// Creation, human input and visible agent responses survive independently of agent reports.
 public struct WorktreeHistory: Codable, Sendable, Hashable {
     /// @spec CONTEXT-40
-    /// When a provider emits a visible agent response, the application shall retain it once in worktree history independently of attention, order it between human inputs and other events by its original time, and show its wrapping summary with the original text available on expansion on Mac and mobile.
+    /// When a provider emits a visible agent response, the application shall retain it once in worktree history independently of attention, order it between human inputs and other events by its original time, and include it in one expandable turn summary with the captured text available on Mac and mobile.
     public struct AgentResponse: Codable, Sendable, Hashable, Identifiable {
         public let id: String
         public let timestamp: Double
         public let text: String
         public let runtime: String
         public let wasTruncated: Bool
+        /// Older histories lack provider session and completion metadata.
+        public let sessionID: String?
+        public var isFinal: Bool?
 
-        public init(id: String, text: String, at date: Date, runtime: String) {
+        public init(id: String, text: String, at date: Date, runtime: String,
+                    sessionID: String? = nil, isFinal: Bool? = nil) {
             self.id = id
             timestamp = date.timeIntervalSinceReferenceDate
             self.runtime = runtime
+            self.sessionID = sessionID
+            self.isFinal = isFinal
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             var bytes = 0
             let prefix = trimmed.prefix(4000).prefix { character in
@@ -110,6 +116,9 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
     public mutating func record(_ response: AgentResponse) {
         guard !response.text.isEmpty else { return }
         if let index = responses.firstIndex(where: { $0.id == response.id }) {
+            // Completion also freezes the final text and session metadata against
+            // stale partial deliveries, including handoffs from older app versions.
+            if responses[index].isFinal == true, response.isFinal != true { return }
             responses[index] = response
         } else {
             responses.append(response)
@@ -161,6 +170,8 @@ public struct WorktreeTimeline: Sendable {
         public let decisions: [String]
         public var isExplicitEntry: Bool = false
         public var sourceWorktreePath: String? = nil
+        public var responseSessionID: String? = nil
+        public var isFinalResponse: Bool? = nil
 
         public var sourceWorktreeName: String? {
             sourceWorktreePath.map { URL(fileURLWithPath: $0).lastPathComponent }
@@ -169,9 +180,9 @@ public struct WorktreeTimeline: Sendable {
 
     /// @spec CONTEXT-25
     /// A row is one event, a fold of older checkpoints, a run of peer messages
-    /// from one sender, or a run of nearby human inputs.
+    /// from one sender, an agent turn, or a run of nearby human inputs.
     public struct Row: Identifiable, Sendable {
-        public enum Kind: Sendable { case event, folded, peerMessages, inputs }
+        public enum Kind: Sendable { case event, folded, peerMessages, inputs, agentTurn }
         public struct Entry: Identifiable, Equatable, Sendable {
             public var id: String { event.id }
             public let event: Event
@@ -183,10 +194,20 @@ public struct WorktreeTimeline: Sendable {
         /// Peer runs collapse consecutive exact duplicates; other rows keep every event.
         public let entries: [Entry]
         public var isGroup: Bool { kind == .folded }
+        public let isComplete: Bool
 
-        init(kind: Kind, events: [Event]) {
+        /// Intermediate updates stay available on expansion, but do not enter the model prompt.
+        public var summaryInput: String {
+            guard let last = events.last, events.count > 1 else { return events[0].completed }
+            return "First agent message:\n\(events[0].completed)\n\nLast agent message:\n\(last.completed)"
+        }
+
+        public var fullText: String { events.map(\.completed).joined(separator: "\n\n") }
+
+        init(kind: Kind, events: [Event], isComplete: Bool = true) {
             self.kind = kind
             self.events = events
+            self.isComplete = isComplete
             var entries: [Entry] = []
             for event in events {
                 if kind == .peerMessages, let last = entries.last, last.event.completed == event.completed {
@@ -202,7 +223,8 @@ public struct WorktreeTimeline: Sendable {
             switch event.kind {
             case .user: self.init(kind: .inputs, events: [event])
             case .agentMessage: self.init(kind: .peerMessages, events: [event])
-            case .creation, .checkpoint, .agentResponse: self.init(kind: .event, events: [event])
+            case .agentResponse: self.init(kind: .agentTurn, events: [event], isComplete: event.isFinalResponse != false)
+            case .creation, .checkpoint: self.init(kind: .event, events: [event])
             }
         }
 
@@ -253,7 +275,9 @@ public struct WorktreeTimeline: Sendable {
         result += (history?.responses ?? []).map { response in
             Event(id: response.id, kind: .agentResponse, timestamp: response.timestamp,
                   title: response.runtime == "claude" ? "Claude" : "Codex",
-                  completed: response.text + (response.wasTruncated ? "…" : ""), decisions: [])
+                  completed: response.text + (response.wasTruncated ? "…" : ""), decisions: [],
+                  responseSessionID: response.runtime + ":" + (response.sessionID ?? "legacy"),
+                  isFinalResponse: response.isFinal)
         }
         result = result.enumerated().sorted {
             let left = $0.element.timestamp ?? 0, right = $1.element.timestamp ?? 0
@@ -291,6 +315,7 @@ public struct WorktreeTimeline: Sendable {
         let folds = !showAll && events.count > 8
         let recent = Set(events.filter { $0.kind == .checkpoint }.suffix(2).map(\.id))
         var rows: [Row] = []
+        var turns: [String: Int] = [:]
         var run: [Event] = []
         func flush() {
             guard !run.isEmpty else { return }
@@ -298,11 +323,27 @@ public struct WorktreeTimeline: Sendable {
             run.removeAll(keepingCapacity: true)
         }
         for (index, event) in events.enumerated() {
+            if event.kind == .user || event.kind == .agentMessage {
+                // An interrupted turn still gets a summary once the next input arrives.
+                for rowIndex in turns.values {
+                    rows[rowIndex] = Row(kind: .agentTurn, events: rows[rowIndex].events)
+                }
+                turns.removeAll()
+            }
             if folds, index > 0, event.kind == .checkpoint, !event.isExplicitEntry, !recent.contains(event.id) {
                 run.append(event)
             } else {
                 flush()
-                if let merged = rows.last?.merging(event) {
+                if event.kind == .agentResponse, let session = event.responseSessionID {
+                    if let rowIndex = turns[session] {
+                        rows[rowIndex] = Row(kind: .agentTurn, events: rows[rowIndex].events + [event],
+                                             isComplete: event.isFinalResponse != false)
+                    } else {
+                        turns[session] = rows.count
+                        rows.append(Row(event))
+                    }
+                    if event.isFinalResponse == true { turns[session] = nil }
+                } else if let merged = rows.last?.merging(event) {
                     rows[rows.count - 1] = merged
                 } else {
                     rows.append(Row(event))

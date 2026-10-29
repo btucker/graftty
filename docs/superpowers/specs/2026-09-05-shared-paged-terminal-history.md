@@ -1,16 +1,21 @@
 # Paged terminal history on Mac and mobile
 
-The agreed product direction is to make a terminal usable before loading its
-older scrollback. Mac and mobile share the paging contract. This document
-proposes the implementation boundaries; the feature is not implemented yet.
-Pending requirements are recorded as TERM-12.1 through TERM-12.10 in
-[TermTodo.swift](../../../Tests/GrafttyTests/Specs/TermTodo.swift).
+Mac and mobile share the implemented paging contract. A terminal restores its
+current screen before loading older scrollback. The active requirements and
+behavioral tests are generated into [SPECS.md](../../../SPECS.md) from `@spec`
+annotations.
 
-The [core and native-surface experiment](../../../scripts/ghostty-paging/RESULTS.md)
-now verifies incremental history, live output, and selections with a 100,000-line
-fixture on AppKit and UIKit. It includes a dependency patch for content jumping
-when a page arrives at the top of loaded history. The bridge remains test-only;
-production wrapper integration, resize recovery, and demand export are outstanding.
+The dependency fork now owns the native engine pin, paging patches, Swift wrapper,
+compiled archives, and build provenance. Development, CI, and release builds
+consume one published package revision. Graftty retains an explicit local override
+for dependency development, validated against that package's own receipt. See the
+[dependency build instructions](../../../scripts/ghostty-paging/BUILD.md).
+The engine snapshot format and zmx producer remain unchanged by this consolidation.
+
+The [original experiment results](../../../scripts/ghostty-paging/RESULTS.md)
+record the incremental-history investigation on AppKit and UIKit. Its native
+probes and patch stack have moved into `btucker/libghostty-spm/Paging`. The design
+sections below explain the attachment and recovery boundaries.
 
 ## Opening time must not depend on the entire history
 
