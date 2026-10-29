@@ -252,8 +252,14 @@ public struct WorktreeTimeline: Sendable {
                          isExplicitEntry: isExplicit)
         }
         result += (history?.inputs ?? []).flatMap { input -> [Event] in
-            let parts = input.source.map { [WorktreePromptContent.Part(source: $0, text: input.text)] }
-                ?? WorktreePromptContent.parts(in: input.text)
+            let parts: [WorktreePromptContent.Part]
+            if let source = input.source, source != .user {
+                parts = [.init(source: source, text: input.text)]
+            } else {
+                // Older captures classified provider task notifications as user
+                // input. Reclassify their envelopes when projecting saved history.
+                parts = WorktreePromptContent.parts(in: input.text)
+            }
             return parts.enumerated().compactMap { index, part in
                 let kind: Event.Kind
                 let title: String

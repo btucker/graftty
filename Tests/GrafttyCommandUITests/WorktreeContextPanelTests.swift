@@ -7,7 +7,7 @@ import Testing
 
 @MainActor
 struct WorktreeContextPanelTests {
-    @Test("@spec CONTEXT-27: When Context is opened on Mac or mobile, the application shall pin the current brief above the timeline, capped at half the panel height and scrolling internally only when it exceeds that cap, and shall scroll the oldest-first timeline independently, opening at its latest event.", arguments: [260.0, 390.0])
+    @Test("@spec CONTEXT-27: When Context is opened on Mac or mobile, the application shall pin the current brief above the timeline, capped at half the panel height by default and scrolling internally only when it exceeds its allocated height, and shall scroll the oldest-first timeline independently, opening at its latest event.", arguments: [260.0, 390.0])
     func pinnedBriefAboveBottomAnchoredTimeline(width: Double) async throws {
         let panelHeight = 700.0
         let start = Date(timeIntervalSince1970: 1_792_411_200)
@@ -145,6 +145,58 @@ struct WorktreeContextPanelTests {
         #expect(collapsed.last.map { $0 > expandedHeight + 100 } == true, "A reader scrolled far away sees the collapsed brief")
         let restored = try await settledHeights(afterScrollingTo: 10)
         #expect(restored.allSatisfy { abs($0 - expandedHeight) < 1 }, "Returning to the bottom restores the brief for good: \(restored)")
+    }
+
+    @Test("@spec CONTEXT-46: When the user drags the divider between the Context summary and timeline on Mac or mobile, the application shall resize those sections independently, reserve 96 points for each when space permits, retain the chosen height during content updates, and restore automatic sizing when switching worktrees.", arguments: [false, true])
+    func dividerResizesBriefAndTimeline(collapsesBrief: Bool) async throws {
+        func panel(_ path: String, decisions: Int = 30) -> some View {
+            WorktreeContextPanel(context: Self.context(path: path, decisions: decisions), collapsesBrief: collapsesBrief,
+                onClose: {}).frame(width: 320, height: 700)
+        }
+        let (window, host) = try await Self.host(panel("/task"), height: 700)
+        defer { window.close() }
+        let views = Self.find(NSScrollView.self, in: host).sorted {
+            $0.convert($0.bounds, to: nil).maxY > $1.convert($1.bounds, to: nil).maxY
+        }
+        let summary = try #require(views.first)
+        let timeline = try #require(views.last)
+        #expect(summary !== timeline)
+        let originalSummary = summary.bounds.height, originalTimeline = timeline.bounds.height
+        func handle(in view: NSView) -> NSView? {
+            if view.accessibilityIdentifier() == "Resize context summary" { return view }
+            return view.subviews.lazy.compactMap { handle(in: $0) }.first
+        }
+        func drag(by delta: Double) async throws {
+            let divider = try #require(handle(in: host))
+            let start = divider.convert(NSPoint(x: divider.bounds.midX, y: divider.bounds.midY), to: nil)
+            func event(_ type: NSEvent.EventType, translation: Double) throws -> NSEvent {
+                try #require(NSEvent.mouseEvent(with: type, location: .init(x: start.x, y: start.y - translation),
+                    modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 0, clickCount: 1, pressure: 1))
+            }
+            divider.mouseDown(with: try event(.leftMouseDown, translation: 0))
+            for translation in [delta / 2, delta] {
+                divider.mouseDragged(with: try event(.leftMouseDragged, translation: translation))
+                try await Self.settle(host)
+            }
+            divider.mouseUp(with: try event(.leftMouseUp, translation: delta))
+            try await Self.settle(host)
+        }
+        try await drag(by: 80)
+        #expect(abs(summary.bounds.height - originalSummary - 80) < 1)
+        #expect(abs(timeline.bounds.height - originalTimeline + 80) < 1)
+        try await drag(by: -50)
+        #expect(abs(summary.bounds.height - originalSummary - 30) < 1)
+        host.rootView = panel("/task", decisions: 40)
+        try await Self.settle(host)
+        #expect(abs(summary.bounds.height - originalSummary - 30) < 1)
+        try await drag(by: 10000)
+        #expect(timeline.bounds.height >= 96)
+        try await drag(by: -10000)
+        #expect(abs(summary.bounds.height - 96) < 1)
+        host.rootView = panel("/other")
+        try await Self.settle(host)
+        #expect(Self.find(NSScrollView.self, in: host).allSatisfy { $0.bounds.height > 96 })
     }
 
     private static func find<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {

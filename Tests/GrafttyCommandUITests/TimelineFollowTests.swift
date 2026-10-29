@@ -40,7 +40,7 @@ struct TimelineFollowTests {
         #expect(follow.isAtBottom == expected)
     }
 
-    @Test("@spec CONTEXT-29: When the mobile Context drawer timeline is scrolled more than half the panel height away from the latest event, the application shall collapse the pinned brief to a one-line bar showing the title with the next step, or the pending question when one is waiting, shall expand the full brief when the bar is tapped, and shall restore the full brief only when the bar is tapped or the reader returns to the bottom, so that the brief changing size cannot toggle it back.")
+    @Test("@spec CONTEXT-29: When the mobile Context drawer timeline is scrolled farther from the latest event than half the panel height or the chosen summary height, whichever is greater, the application shall collapse the pinned brief to a one-line bar showing the title with the next step, or the pending question when one is waiting, shall expand the full brief when the bar is tapped, and shall restore the full brief only when the bar is tapped or the reader returns to the bottom, so that the brief changing size cannot toggle it back.")
     func mobileBriefCollapsesWhileScrolledAway() {
         let far = 1000.0, panel = 800.0
         var mobile = TimelineFollow(collapsesBrief: true)
@@ -72,6 +72,21 @@ struct TimelineFollowTests {
             == .init(title: "Ship it", detail: "Merge now?", isQuestion: true))
         #expect(TimelineFollow.collapsedSummary(title: "Ship it", next: nil, question: nil)
             == .init(title: "Ship it", detail: nil, isQuestion: false))
+    }
+
+    @Test func enlargedBriefDoesNotToggleBackAfterCollapsing() {
+        let panelHeight = 800.0, briefHeight = 650.0, delta = briefHeight - 44
+        var follow = TimelineFollow(collapsesBrief: true)
+        follow.scrolled(distanceFromBottom: 500, panelHeight: panelHeight, briefHeight: briefHeight)
+        #expect(!follow.showsCollapsedBrief)
+        follow.scrolled(distanceFromBottom: briefHeight + 25, panelHeight: panelHeight, briefHeight: briefHeight)
+        #expect(follow.showsCollapsedBrief)
+        follow.scrolled(distanceFromBottom: briefHeight + 25 - delta, panelHeight: panelHeight, briefHeight: briefHeight)
+        #expect(follow.showsCollapsedBrief, "Collapsing the enlarged summary cannot return to the bottom")
+        follow.scrolled(distanceFromBottom: 24, panelHeight: panelHeight, briefHeight: briefHeight)
+        #expect(!follow.showsCollapsedBrief)
+        follow.scrolled(distanceFromBottom: 24 + delta, panelHeight: panelHeight, briefHeight: briefHeight)
+        #expect(!follow.showsCollapsedBrief, "Restoring cannot immediately collapse the summary again")
     }
 
     /// Collapsing the brief grows the timeline from the top, which shrinks the distance

@@ -308,7 +308,8 @@ struct TimelineMessageLine: View {
         let text = turn?.fullText ?? event.completed
         let request = Request(text: turn?.summaryInput ?? text, isReady: turn?.isComplete ?? true)
         let fallback = turn?.events.last?.completed ?? text
-        let shown = gist ?? (request.isReady ? PeerMessageGist.verbatim(request.text) : nil)
+        let firstResponse = turn.map { PeerMessageGist(text: $0.events[0].completed, isGenerated: false) }
+        let shown = gist ?? firstResponse ?? PeerMessageGist.verbatim(request.text)
         VStack(alignment: .leading, spacing: 4) {
             Button { expanded.toggle() } label: {
                 VStack(alignment: .leading, spacing: 4) {
@@ -334,8 +335,10 @@ struct TimelineMessageLine: View {
                     HStack {
                         Label("AI summary", systemImage: "sparkles").hidden().fixedSize()
                             .overlay(alignment: .leading) {
-                                if shown == nil {
-                                    Text(request.isReady ? "Summarizing…" : "Working…")
+                                if !request.isReady {
+                                    Text("Working…")
+                                } else if gist == nil, PeerMessageGist.verbatim(request.text) == nil {
+                                    Text("Summarizing…")
                                 } else if shown?.isGenerated == true {
                                     Label("AI summary", systemImage: "sparkles").fixedSize()
                                 }

@@ -1,20 +1,13 @@
-import AppKit
+import GrafttyCommandUI
 import SwiftUI
 
-/// A native separator keeps its drawing and measured bounds together.
-struct SidebarWorktreeDivider: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSBox {
-        let divider = SidebarSeparatorBox()
-        divider.boxType = .separator
-        divider.setAccessibilityIdentifier("Worktree list divider")
-        return divider
+struct SidebarWorktreeDivider: View {
+    static var thickness: CGFloat { HorizontalResizeDivider.thickness }
+    var onResize: (CGFloat) -> Void
+    var onResizeEnd: () -> Void
+
+    var body: some View {
+        HorizontalResizeDivider(label: "Resize pinned agents", separatorIdentifier: "Worktree list divider",
+            onResize: onResize, onResizeEnd: onResizeEnd)
     }
-
-    func updateNSView(_ divider: NSBox, context: Context) {}
-}
-
-/// NSBox adds two points above and below its separator alignment rect.
-/// Keep the native bounds inside the one-point SwiftUI divider allocation.
-private final class SidebarSeparatorBox: NSBox {
-    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsets() }
 }

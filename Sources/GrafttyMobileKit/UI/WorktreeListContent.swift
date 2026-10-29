@@ -530,8 +530,6 @@ public struct WorktreeListContent: View {
             VStack(spacing: 0) {
                 TextField("Find any project or worktree", text: $navigation.query)
                     .textFieldStyle(.roundedBorder).padding(.horizontal, 12)
-                pendingButton(worktrees, projectID: SidebarLayoutPolicy.projectFilter(
-                    selectedID: navigation.selectedProjectID, showsProjectRail: showsProjectRail))
                 worktreeList(worktrees.filter { navigation.worktreeContext($0).matches(query: navigation.query) })
             }
         } else if isSidebar {
@@ -594,7 +592,6 @@ public struct WorktreeListContent: View {
                 Text("The owning Mac is offline.").font(.caption).foregroundStyle(.secondary)
             }
             TextField("Find any project or worktree", text: $navigation.query).textFieldStyle(.roundedBorder).padding(.horizontal, 10).padding(.bottom, 8)
-            pendingButton(worktrees, projectID: selectedProjectID)
             worktreeList(worktrees.filter {
                 navigation.query.isEmpty ? SidebarProjection.projectID($0) == selectedProjectID
                     : navigation.worktreeContext($0).matches(query: navigation.query)
@@ -621,23 +618,6 @@ public struct WorktreeListContent: View {
             .buttonStyle(.plain)
             .disabled(!worktree.showsCreationProgress)
         }
-    }
-
-    @ViewBuilder
-    private func pendingButton(_ worktrees: [WorktreePanes], projectID: String?) -> some View {
-        let count = MobilePaneAttention.pendingCount(worktrees: worktrees.filter {
-            projectID == nil || SidebarProjection.projectID($0) == projectID
-        }, currentWorktree: nil, navigation: navigation)
-        if count > 0 {
-            Button("\(count) pending") {
-                guard let item = navigation.nextPendingWorktree(in: displayedWorktrees(worktrees), projectID: projectID, after: selectedWorktreePath ?? projectID.flatMap { navigation.rememberedWorktrees[$0] }) else { return }
-                Task { await openReportTarget(item, worktrees: worktrees) }
-            }.font(.caption).padding(.horizontal, 10).padding(.bottom, 6)
-        }
-    }
-
-    private func displayedWorktrees(_ worktrees: [WorktreePanes]) -> [WorktreePanes] {
-        MobilePaneAttention.displayedWorktrees(worktrees)
     }
 
     private func showReport(_ worktree: WorktreePanes) {
