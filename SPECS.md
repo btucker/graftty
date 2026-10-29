@@ -3526,7 +3526,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.4** If headless pane startup fails, then the application shall preserve the prior persisted layout and return an error.
 
-**REMOTE-22.5** When a headless host receives local team messages and agent hooks, the application shall persist inbox messages and expose a reported recap on the next stopped turn.
+**REMOTE-22.5** When a headless host receives local team messages and agent hooks, the application shall persist inbox messages, publish a reported brief immediately, and expose its completion attention on the next stopped turn.
 
 **REMOTE-22.6** When a headless host registers a repository, the application shall discover its Git worktrees and persist one canonical registration.
 
@@ -4274,9 +4274,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.8** When Codex emits PermissionRequest before its approval reviewer decides whether user input is required, the application shall not create needs-input attention.
 
-**AGENT-3.9** When an agent reports a recap with a task-specific emoji between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.
+**AGENT-3.9** When an agent reports a recap with a task-specific emoji, the application shall retain it for the current turn and attach it to completion attention once without requesting another turn.
 
-**AGENT-3.10** When an agent stops without reporting a recap, the application shall request one continuation once, then show a generic stopped card if the continued turn still has no report.
+**AGENT-3.10** When an agent stops without reporting a recap, the application shall request a recap as a fallback and allow completion if that correction turn also fails.
 
 **AGENT-3.11** While several agents share a worktree, the application shall accept only a recap from the agent whose stopped turn is being handled.
 
@@ -4284,29 +4284,39 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.13** When a sandboxed agent reports a recap and then stops, the application shall consume one durable stopped-turn file containing that recap without requiring control-socket access.
 
-**AGENT-3.14** When a sandboxed agent stops without a recap, the Stop hook shall request one recap once and then queue a generic stopped card if the continued turn still has none.
+**AGENT-3.14** When a sandboxed agent stops without a recap, the Stop hook shall request a recap as a fallback and allow completion if that correction turn also fails.
 
 **AGENT-3.15** When stopped-turn files exist before or arrive after the Attention watcher starts, the application shall process both through directory events with a periodic scan as backup.
 
-**AGENT-3.16** When duplicate Stop hooks run for the same Codex turn, the application shall queue one stopped card and shall not request another recap after the first hook consumes it.
+**AGENT-3.16** When duplicate Stop hooks run for the same provider turn, the application shall queue one stopped card and shall not request another recap after the first hook consumes it.
 
 **AGENT-3.17** When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.
 
 **AGENT-3.18** When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.
 
-**AGENT-3.19** When a tracked agent has no Graftty wrapper identity, a valid recap shall appear in Attention immediately, and its next matching Stop hook shall not create a duplicate card.
+**AGENT-3.19** When a tracked agent has no Graftty wrapper identity, its recap shall publish immediately under its native identity, and its matching Stop hook shall create completion attention once.
 
-**AGENT-3.20** When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from the first non-empty native session ID or thread ID.
+**AGENT-3.20** When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from the first non-empty thread ID or native session ID.
 
 **AGENT-3.21** When an agent resumes in a sandbox after a stopped turn, the application shall consume its durable progress event and clear only an older stopped card from that session.
 
 **AGENT-3.22** When a new Attention report omits its task-specific emoji, the CLI shall reject it with an actionable error before staging it, while older saved recaps remain decodable.
 
-**AGENT-3.23** When a staged recap lacks an emoji, the Stop hook shall request one correction, preserve the recap if no correction arrives, and accept a corrected report without another continuation.
+**AGENT-3.23** When a staged recap lacks an emoji, the Stop hook shall preserve the legacy recap without requesting a correction turn.
 
-**AGENT-3.24** When the Stop hook requests an Attention recap, the application shall instruct the agent not to mention the report in its response unless the report command fails.
+**AGENT-3.24** When a user turn starts, the application shall remind the agent to report an Attention recap during that turn without requesting another final response or acknowledging routine team notifications.
 
 **AGENT-3.25** When an absolute GRAFTTY_ATTENTION_DIR is configured, the application shall use that directory for Attention handoff so isolated provider tests cannot publish into the user's notification queue.
+
+**AGENT-3.26** When an agent reports from a sandbox that cannot inspect its delivery socket, the application shall resolve its registered identity using current process identity and worktree and pane ownership without requiring socket reachability.
+
+**AGENT-3.27** When a new user turn starts, the application shall discard that agent's report and completion receipts so a later Stop cannot reuse an earlier turn's report.
+
+**AGENT-3.29** When a registered agent reports its recap, the CLI shall publish its brief immediately through the private file handoff before Stop runs.
+
+**AGENT-3.30** When the app receives an Attention recap, it shall persist the brief immediately while reserving stopped attention and its notification for the actual Stop hook.
+
+**AGENT-3.31** When a report recovers after completion through another delivery path, the application shall ignore duplicate completion and record newer provider turns without reusing the consumed recap.
 
 ### AGENT-4.x
 
@@ -4472,7 +4482,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.48** When an older Graftty session invokes `graftty team hook` without `--skill-managed`, the CLI shall handle it exactly as a provider-plugin hook, and shall keep accepting the `--skill-managed` flag as a hidden no-op.
 
-**AGENT-6.49** If Graftty is unreachable, busy, or reports an error for a SessionStart hook run inside a Graftty terminal, the CLI shall still emit the Graftty skill guidance; outside a Graftty terminal, and for every other event, it shall emit an empty hook result.
+**AGENT-6.49** If Graftty is unreachable, busy, or reports an error inside a Graftty terminal, then the CLI shall emit skill guidance for SessionStart and a recap reminder for UserPromptSubmit; outside a Graftty terminal and for other events it shall emit an empty hook result.
 
 **AGENT-6.50** When Graftty prepares provider plugins, the application shall bundle a `graftty-preview` skill for both providers that directs agents to resolve Markdown image references, include Markdown image embeds in responses, show files with graftty preview in a native tray and create self-contained HTML when a visual explains something better, forbid imgcat, kitten icat, direct tty writes, and terminal queries, and report failures or missing previews without claiming delivery before falling back to graftty open.
 
@@ -4495,6 +4505,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.59** When the managed Codex wrapper launches the interactive Codex TUI, the application shall pass --no-alt-screen so the TUI runs inline and its transcript reaches terminal scrollback, and if the user already passed --no-alt-screen before any -- separator, then the application shall not pass it a second time.
 
 **AGENT-6.60** When Graftty spawns an interactive terminal shell for Mac or GrafttyMobile, the application shall set CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 in that shell's environment, replacing any inherited value, so Claude Code started in the pane renders inline and its transcript reaches terminal scrollback.
+
+**AGENT-6.61** When Graftty installs provider Stop hooks, the application shall use executable command handlers for Codex and Claude so recap delivery is neither skipped as an unsupported prompt handler nor delegated to a tool-less evaluator.
 
 ## CLI — CLI
 

@@ -14,7 +14,7 @@ replace the previous brief, so retaining unchanged context and decisions is usef
 History entries tell the story of what changed and why. Most reports need no
 history entry; do not invent a milestone just because a turn ended.
 
-Before ending a top-level turn in a tracked worktree, run:
+During each top-level turn in a tracked worktree, run this before your final response:
 
 ```sh
 graftty attention report --stdin <<'GRAFTTY_ATTENTION_7F3A91C2'
@@ -34,6 +34,11 @@ Keep each field brief:
 - Optional `historyEntry`: an object with a `headline` of at most 160 characters and optional `detail` of at most 300 characters. Record a discovery, decision, changed request, or major outcome that helps the user remember how the work got here. The headline must say what changed; use detail only to explain why or supply evidence. Omit it for routine updates, repeated conclusions, and ordinary test runs. Do not copy the current brief or accumulated decisions. Distinguish proposals from accepted decisions and attempted work from verified results. A new entry adds to history; reusing a headline does not edit an earlier entry.
 - Legacy `checkpoint` is accepted for older agents. Use `historyEntry` for new reports; do not send both.
 - Optional `purposeChanged`: set to `true` only when the problem or goal actually changes. Then provide the new title and problem context, and the decisions that still apply. Finishing a step or changing implementation approach does not by itself change the worktree's purpose.
+
+Report during the ordinary turn. The command publishes the brief immediately.
+Stop verifies the report and asks for a correction only if it is missing. If reporting fails, mention the failure in your ordinary
+response. Do not send an extra final response for a recap. Routine team membership
+and merge notifications that require no action need no visible acknowledgment.
 
 The report uses a private file handoff, so it needs no control-socket permission. Do not mention the report in your response unless the command fails; then mention the failure in your final response.
 

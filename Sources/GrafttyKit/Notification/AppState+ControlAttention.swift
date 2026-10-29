@@ -63,18 +63,41 @@ public extension AppState {
         repos[index.repo].worktrees[index.worktree].attention = nil
     }
 
+    /// Publishes retained context without marking the agent stopped.
+    mutating func recordAgentRecap(_ recap: AttentionRecap, callerPath: String, reportedAt: Date) {
+        guard let index = indices(forWorktreePath: callerPath) else { return }
+        SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &repos)
+        repos[index.repo].worktrees[index.worktree].recordAgentRecap(recap, at: reportedAt)
+    }
+
+    func hasConsumedAgentReport(callerPath: String, runtime: TeamHookRuntime, callerAgentID: String?,
+                                sessionID: String?, reportedAt: Date) -> Bool {
+        guard let key = AgentHookAttentionIdentity.key(runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID),
+              let consumed = worktree(forPath: callerPath)?.consumedAgentReports[key] else { return false }
+        return consumed.reportedAt >= reportedAt.timeIntervalSinceReferenceDate
+    }
+
     /// Records a provider's stopped turn on the sidebar. Stops older than
     /// the same session's last progress, older than the recorded stop, or
     /// identical to it are dropped. Returns the notification to post.
     mutating func recordStoppedTurn(callerPath: String, runtime: TeamHookRuntime, callerAgentID: String?,
                                     sessionID: String?, paneSessionName: String?, recap: AttentionRecap?,
-                                    stoppedAt: Date, paneTitle: (PaneSlotID, WorktreeEntry) -> String?) -> AgentStopNotificationContent? {
+                                    stoppedAt: Date, recapReportedAt: Date? = nil, turnID: String? = nil, paneTitle: (PaneSlotID, WorktreeEntry) -> String?) -> AgentStopNotificationContent? {
         let worktree = worktree(forPath: callerPath)
+        let owner = AgentHookAttentionIdentity.key(runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID)
+        let consumed = owner.flatMap { worktree?.consumedAgentReports[$0] }
+        let isConsumed = recapReportedAt.map { date in
+            consumed.map { $0.reportedAt >= date.timeIntervalSinceReferenceDate } ?? false
+        } ?? false
+        // A recovered duplicate is a no-op. A distinct provider turn still
+        // completes, but cannot reuse the old recap or its pending question.
+        if isConsumed, turnID == nil || consumed?.turnID == turnID { return nil }
+        let effectiveRecap = isConsumed ? nil : recap
         let paneSlot = paneSessionName.flatMap { worktree?.paneSlot(forSessionName: $0) }
         let stop = SidebarAgentStop(
             agentName: runtime.displayName,
             stoppedAt: stoppedAt,
-            recap: recap,
+            recap: effectiveRecap,
             paneTitle: paneSlot.flatMap { slot in worktree.flatMap { paneTitle(slot, $0) } },
             paneSlotID: paneSlot?.id.uuidString,
             providerSessionKey: AgentHookAttentionIdentity.key(
@@ -88,9 +111,17 @@ public extension AppState {
             if previous.timestamp == stop.timestamp, previous.providerSessionKey == stop.providerSessionKey,
                previous.recap == stop.recap { return nil }
         }
-        SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &repos)
+        SidebarHostNavigation.adoptReportedEmoji(effectiveRecap, worktreePath: callerPath, in: &repos)
         guard let index = indices(forWorktreePath: callerPath) else { return nil }
-        repos[index.repo].worktrees[index.worktree].recordAgentStop(stop)
+        repos[index.repo].worktrees[index.worktree].recordAgentStop(stop, recapReportedAt: recapReportedAt)
+        if let recapReportedAt, let key = stop.providerSessionKey {
+            let latestReport = max(consumed?.reportedAt ?? -.infinity, recapReportedAt.timeIntervalSinceReferenceDate)
+            repos[index.repo].worktrees[index.worktree].consumedAgentReports[key] = .init(reportedAt: latestReport, turnID: turnID)
+            if repos[index.repo].worktrees[index.worktree].consumedAgentReports.count > 20,
+               let oldest = repos[index.repo].worktrees[index.worktree].consumedAgentReports.min(by: { $0.value.reportedAt < $1.value.reportedAt })?.key {
+                repos[index.repo].worktrees[index.worktree].consumedAgentReports.removeValue(forKey: oldest)
+            }
+        }
         let recorded = repos[index.repo].worktrees[index.worktree]
         return AgentStopNotification.stoppedTurnContent(
             runtime: runtime, worktreeName: WorktreeNameSanitizer.sanitize(recorded.branch),

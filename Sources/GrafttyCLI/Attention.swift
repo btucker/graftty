@@ -22,7 +22,7 @@ struct AttentionDirectory: ParsableCommand {
 struct AttentionReport: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "report",
-        abstract: "Stage an agent recap for its next stopped turn"
+        abstract: "Publish an agent recap before finishing its turn"
     )
 
     @Flag(name: .long, help: "Read recap JSON with title, completed, next, emoji, and optional context, need, emojiAlternatives, purposeChanged, historyEntry (headline and optional detail), legacy checkpoint, and decisions")
@@ -34,21 +34,11 @@ struct AttentionReport: ParsableCommand {
         let recap = try Self.decodeRecap(data)
         let worktree = try CLIEnv.resolveWorktree()
         let handoff = AttentionFileHandoff()
-        if let agentID = AttentionReportIdentity.currentAgentID(worktreePath: worktree) {
-            try handoff.stage(recap, worktree: worktree, agentID: agentID)
-        } else if let agent = AttentionReportIdentity.unmanagedAgent(
-            environment: ProcessInfo.processInfo.environment
-        ) {
-            try handoff.publishUnmanaged(
-                recap, worktree: worktree, agentID: agent.agentID,
-                runtime: agent.runtime, sessionID: agent.sessionID,
-                paneSessionName: TeamRegisterPaneResolver.paneSessionName(
-                    env: ProcessInfo.processInfo.environment
-                )
-            )
-        } else {
+        guard let agentID = AttentionReportIdentity.currentAgentID(worktreePath: worktree)
+            ?? AttentionReportIdentity.unmanagedAgent(environment: ProcessInfo.processInfo.environment)?.agentID else {
             throw ValidationError("an active agent session is required")
         }
+        try handoff.publish(recap, worktree: worktree, agentID: agentID)
     }
 
     static func decodeRecap(_ data: Data) throws -> AttentionRecap {
