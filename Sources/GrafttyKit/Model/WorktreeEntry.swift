@@ -254,14 +254,20 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         attention != nil || !paneAttention.isEmpty || unseenAgentStop != nil
     }
 
-    public mutating func recordAgentStop(_ stop: SidebarAgentStop) {
+    /// Report content persists independently of unread completion attention.
+    public mutating func recordAgentRecap(_ recap: AttentionRecap, at reportedAt: Date) {
+        guard brief.map({ $0.updatedAt < reportedAt.timeIntervalSinceReferenceDate }) ?? true else { return }
+        if brief == nil { brief = WorktreeBrief(recap: recap, at: reportedAt) }
+        else {
+            let boundary = history?.inputs.last(where: { $0.timestamp <= reportedAt.timeIntervalSinceReferenceDate })
+                .map { Date(timeIntervalSinceReferenceDate: $0.timestamp) }
+            brief?.update(recap, at: reportedAt, preservingCheckpointBefore: boundary)
+        }
+    }
+
+    public mutating func recordAgentStop(_ stop: SidebarAgentStop, recapReportedAt: Date? = nil) {
         if let recap = stop.recap {
-            if brief == nil { brief = WorktreeBrief(recap: recap, at: stop.stoppedAt) }
-            else {
-                let boundary = history?.inputs.last(where: { $0.timestamp <= stop.timestamp })
-                    .map { Date(timeIntervalSinceReferenceDate: $0.timestamp) }
-                brief?.update(recap, at: stop.stoppedAt, preservingCheckpointBefore: boundary)
-            }
+            recordAgentRecap(recap, at: recapReportedAt ?? stop.stoppedAt)
         }
         unseenAgentStop = stop
         lastAgentStop = stop

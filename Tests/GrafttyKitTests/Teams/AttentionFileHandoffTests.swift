@@ -5,6 +5,110 @@ import GrafttyProtocol
 
 @Suite("Attention file handoff")
 struct AttentionFileHandoffTests {
+    @Test("@spec AGENT-3.29: When a registered agent reports its recap, the CLI shall publish its brief immediately through the private file handoff before Stop runs.")
+    func reportPublishesBeforeStop() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        let recap = AttentionRecap(title: "Quiet completion", completed: "Published", next: "Review", emoji: "🔇")
+        try handoff.publish(recap, worktree: "/repo", agentID: "codex-1")
+        #expect(try handoff.consumeActivities { _ in } == 1)
+        #expect(try handoff.consumeStops { _ in } == 0)
+    }
+
+    @Test("Published report survives tool progress and duplicate completion without a second publication", arguments: [TeamHookRuntime.codex, .claude])
+    func publishedReportCompletesOnce(runtime: TeamHookRuntime) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        let recap = AttentionRecap(title: "Quiet completion", completed: "Published", next: "Review", need: "Approve?", emoji: "🔇")
+        try handoff.publish(recap, worktree: "/repo", agentID: "agent")
+        var reports: [AttentionFileRecapEvent] = []
+        #expect(try handoff.consumeActivities { if case .recap(let report) = $0 { reports.append(report) } } == 1)
+        try handoff.progress(worktree: "/repo", agentID: "agent", runtime: runtime, sessionID: "s")
+        for _ in 0..<2 {
+            #expect(try handoff.stop(worktree: "/repo", agentID: "agent", runtime: runtime,
+                sessionID: "s", paneSessionName: nil, stopHookActive: false, turnID: "turn") == .queued)
+        }
+        var stops: [AttentionFileStopEvent] = []
+        #expect(try handoff.consumeStops { stops.append($0) } == 1)
+        #expect(stops.first?.recap == recap)
+        #expect(stops.first?.recapReportedAt == reports.first?.reportedAt)
+        // Completion markers preserve duplicate handling after the report receipt is consumed.
+        #expect(try handoff.stop(worktree: "/repo", agentID: "agent", runtime: runtime,
+            sessionID: "s", paneSessionName: nil, stopHookActive: true, turnID: "turn") == .queued)
+        #expect(try handoff.consumeStops { _ in } == 0)
+    }
+
+    @Test("A missing-report correction can report and complete using the original provider turn ID")
+    func correctiveReportIsNotMistakenForDuplicateStop() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        for _ in 0..<2 {
+            #expect(try handoff.stop(worktree: "/repo", agentID: "agent", runtime: .codex,
+                sessionID: "s", paneSessionName: nil, stopHookActive: false, turnID: "turn") == .requestRecap)
+        }
+        #expect(try handoff.consumeStops { _ in } == 0)
+        let recap = AttentionRecap(title: "Correction", completed: "Reported", next: "Review", emoji: "🔇")
+        try handoff.publish(recap, worktree: "/repo", agentID: "agent")
+        #expect(try handoff.stop(worktree: "/repo", agentID: "agent", runtime: .codex,
+            sessionID: "s", paneSessionName: nil, stopHookActive: true, turnID: "turn") == .queued)
+        var stops: [AttentionFileStopEvent] = []
+        #expect(try handoff.consumeStops { stops.append($0) } == 1)
+        #expect(stops.first?.recap == recap)
+    }
+
+    @Test("A distinct native peer turn cannot reuse the previous turn's report without UserPromptSubmit")
+    func peerTurnDoesNotReuseCompletedReport() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        try handoff.publish(AttentionRecap(title: "First", completed: "Done", next: "Review", emoji: "🔇"), worktree: "/repo", agentID: "agent")
+        #expect(try handoff.stop(worktree: "/repo", agentID: "agent", runtime: .codex,
+            sessionID: "s", paneSessionName: nil, stopHookActive: false, turnID: "first") == .queued)
+        #expect(try handoff.stop(worktree: "/repo", agentID: "agent", runtime: .codex,
+            sessionID: "s", paneSessionName: nil, stopHookActive: false, turnID: "second") == .requestRecap)
+    }
+
+    @Test("Socket completion retires only its report and fences duplicate file Stops")
+    func socketCompletionAcknowledgesMatchingReceipt() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        let recap = AttentionRecap(title: "Report", completed: "Done", next: "Review", emoji: "🔇")
+        try handoff.publish(recap, worktree: "/repo", agentID: "agent")
+        let report = try #require(handoff.publishedReport(worktree: "/repo", agentID: "agent"))
+        try handoff.acknowledgeSocketStop(worktree: "/repo", agentID: "agent", sessionID: "s", turnID: "first", reportedAt: report.reportedAt)
+        #expect(handoff.publishedReport(worktree: "/repo", agentID: "agent") == nil)
+        #expect(try handoff.stop(worktree: "/repo", agentID: "agent", runtime: .codex,
+            sessionID: "s", paneSessionName: nil, stopHookActive: false, turnID: "first") == .queued)
+        #expect(try handoff.stop(worktree: "/repo", agentID: "agent", runtime: .codex,
+            sessionID: "s", paneSessionName: nil, stopHookActive: false, turnID: "second") == .requestRecap)
+        try handoff.publish(recap, worktree: "/repo", agentID: "agent")
+        let newer = try #require(handoff.publishedReport(worktree: "/repo", agentID: "agent"))
+        try handoff.acknowledgeSocketStop(worktree: "/repo", agentID: "agent", sessionID: "s", turnID: "first", reportedAt: report.reportedAt)
+        #expect(handoff.publishedReport(worktree: "/repo", agentID: "agent") == newer)
+    }
+
+    @Test("A marker-write failure does not retry an already queued completion through another transport")
+    func committedStopSurvivesMarkerFailure() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        _ = try handoff.stop(worktree: "/repo", agentID: "agent", runtime: .codex,
+            sessionID: "s", paneSessionName: nil, stopHookActive: true, turnID: "first")
+        _ = try handoff.consumeStops { _ in }
+        let marker = try #require(FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil).first { $0.lastPathComponent.hasPrefix("turn-") })
+        try FileManager.default.removeItem(at: marker)
+        try FileManager.default.createDirectory(at: marker, withIntermediateDirectories: false)
+        let recap = AttentionRecap(title: "Report", completed: "Done", next: "Review", emoji: "🔇")
+        try handoff.publish(recap, worktree: "/repo", agentID: "agent")
+        #expect(try handoff.stop(worktree: "/repo", agentID: "agent", runtime: .codex,
+            sessionID: "s", paneSessionName: nil, stopHookActive: false, turnID: "second") == .queued)
+        #expect(try handoff.consumeStops { _ in } == 1)
+    }
+
     @Test("@spec REMOTE-23.9: When a host consumes Attention events, the application shall retain events for worktrees owned by another host.")
     func retainsOtherHostsEvents() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -87,8 +191,8 @@ struct AttentionFileHandoffTests {
         }
     }
 
-    @Test("@spec AGENT-3.19: When a tracked agent has no Graftty wrapper identity, a valid recap shall appear in Attention immediately, and its next matching Stop hook shall not create a duplicate card.")
-    func unmanagedAgentReportAppearsWithoutStopHook() throws {
+    @Test("@spec AGENT-3.19: When a tracked agent has no Graftty wrapper identity, its recap shall publish immediately under its native identity, and its matching Stop hook shall create completion attention once.")
+    func nativeAgentPublishesBeforeStop() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-attention-unmanaged-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -96,17 +200,16 @@ struct AttentionFileHandoffTests {
         let recap = AttentionRecap(title: "Copy wrapped prose", completed: "Fixed mid-line copy.",
                                    next: "Verify in the installed app.", emoji: "📋")
 
-        try handoff.publishUnmanaged(recap, worktree: "/repo/copy-new-lines",
-                                     agentID: "codex-session", runtime: .codex,
-                                     sessionID: "thread-1", paneSessionName: nil)
+        try handoff.publish(recap, worktree: "/repo/copy-new-lines", agentID: "codex-session")
         var events: [AttentionFileStopEvent] = []
-        #expect(try handoff.consumeStops { events.append($0) } == 1)
-        #expect(events.first?.recap == recap)
+        #expect(try handoff.consumeStops { events.append($0) } == 0)
+        #expect(try handoff.consumeActivities { _ in } == 1)
         #expect(try handoff.stop(worktree: "/repo/copy-new-lines",
                                  agentID: "codex-session", runtime: .codex,
                                  sessionID: "thread-1", paneSessionName: nil,
                                  stopHookActive: false, turnID: "turn-1") == .queued)
-        #expect(try handoff.consumeStops { events.append($0) } == 0)
+        #expect(try handoff.consumeStops { events.append($0) } == 1)
+        #expect(events.first?.recap == recap)
     }
 
     @Test("@spec AGENT-3.13: When a sandboxed agent reports a recap and then stops, the application shall consume one durable stopped-turn file containing that recap without requiring control-socket access.")
@@ -135,8 +238,8 @@ struct AttentionFileHandoffTests {
         #expect(try handoff.consumeStops { events.append($0) } == 0)
     }
 
-    @Test("@spec AGENT-3.14: When a sandboxed agent stops without a recap, the Stop hook shall queue a generic stopped card without requesting a continuation.")
-    func missingRecapStopsQuietly() throws {
+    @Test("@spec AGENT-3.14: When a sandboxed agent stops without a recap, the Stop hook shall request a recap as a fallback and allow completion if that correction turn also fails.")
+    func missingRecapRequestsOneFallback() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-attention-handoff-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -145,6 +248,12 @@ struct AttentionFileHandoffTests {
         #expect(try handoff.stop(
             worktree: "/repo/one", agentID: "codex-1", runtime: .codex,
             sessionID: nil, paneSessionName: nil, stopHookActive: false
+        ) == .requestRecap)
+
+        #expect(try handoff.consumeStops { _ in } == 0)
+        #expect(try handoff.stop(
+            worktree: "/repo/one", agentID: "codex-1", runtime: .codex,
+            sessionID: nil, paneSessionName: nil, stopHookActive: true
         ) == .queued)
 
         var events: [AttentionFileStopEvent] = []
@@ -152,17 +261,19 @@ struct AttentionFileHandoffTests {
         #expect(events.first?.recap == nil)
     }
 
-    @Test("@spec AGENT-3.27: When a new user turn starts, the application shall discard that agent's unconsumed recap and native-report receipt so a later Stop cannot reuse an earlier turn's report.")
+    @Test("@spec AGENT-3.27: When a new user turn starts, the application shall discard that agent's report and completion receipts so a later Stop cannot reuse an earlier turn's report.")
     func newTurnDiscardsUnconsumedReport() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let handoff = AttentionFileHandoff(rootDirectory: root)
         let recap = AttentionRecap(title: "Old turn", completed: "Old progress", next: "Review", emoji: "🧪")
-        try handoff.stage(recap, worktree: "/repo", agentID: "codex-1")
+        try handoff.publish(recap, worktree: "/repo", agentID: "codex-1")
         try handoff.progress(worktree: "/repo", agentID: "codex-1", runtime: .codex,
             sessionID: "thread", startsTurn: true)
-        _ = try handoff.stop(worktree: "/repo", agentID: "codex-1", runtime: .codex,
-            sessionID: "thread", paneSessionName: nil, stopHookActive: false, turnID: "new")
+        #expect(try handoff.stop(worktree: "/repo", agentID: "codex-1", runtime: .codex,
+            sessionID: "thread", paneSessionName: nil, stopHookActive: false, turnID: "new") == .requestRecap)
+        #expect(try handoff.stop(worktree: "/repo", agentID: "codex-1", runtime: .codex,
+            sessionID: "thread", paneSessionName: nil, stopHookActive: true, turnID: "new") == .queued)
         var events: [AttentionFileStopEvent] = []
         #expect(try handoff.consumeStops { events.append($0) } == 1)
         #expect(events.first?.recap == nil)
@@ -202,7 +313,7 @@ struct AttentionFileHandoffTests {
             try Data(String(repeating: "reply\n", count: turn + 1).utf8).write(to: transcript)
             for _ in 0..<2 {
                 _ = try handoff.stop(worktree: "/repo", agentID: "claude-1", runtime: .claude,
-                    sessionID: "session", paneSessionName: nil, stopHookActive: false,
+                    sessionID: "session", paneSessionName: nil, stopHookActive: true,
                     turnID: AgentStopHookFilter.turnID(stdinJSON: ["transcript_path": transcript.path]))
             }
             #expect(try handoff.consumeStops { _ in } == 1)

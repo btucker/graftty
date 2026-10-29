@@ -290,7 +290,7 @@ struct TeamHook: ParsableCommand {
             activity: providerSleepActivity
         ))
         if event == .stop,
-           let _ = try? AttentionFileHandoff().stop(
+           let action = try? AttentionFileHandoff().stop(
                 worktree: worktreePath,
                 agentID: attentionAgentID(),
                 runtime: runtime,
@@ -299,8 +299,12 @@ struct TeamHook: ParsableCommand {
                 stopHookActive: stopHookActive,
                 turnID: stopTurnID
            ) {
-            print("{}")
+            print(action == .requestRecap ? TeamHookRenderer.requestRecap() : "{}")
             return
+        }
+        let fallbackAgentID = event == .stop ? attentionAgentID() : nil
+        let fallbackReport = fallbackAgentID.flatMap {
+            AttentionFileHandoff().publishedReport(worktree: worktreePath, agentID: $0)
         }
         do {
             let response = try SocketClient.sendExpectingResponse(
@@ -316,11 +320,19 @@ struct TeamHook: ParsableCommand {
                     attentionReason: attentionReason,
                     stopHookActive: stopHookActive,
                     providerSleepActivity: providerSleepActivity,
-                    turnID: stopTurnID
+                    turnID: stopTurnID,
+                    fallbackReport: fallbackReport
                 )
             )
             switch response {
             case .teamHookOutput(let output):
+                if event == .stop, output == "{}" {
+                    // The socket already committed completion. Cleanup failure
+                    // cannot turn that success into another correction request.
+                    try? AttentionFileHandoff().acknowledgeSocketStop(
+                        worktree: worktreePath, agentID: fallbackAgentID, sessionID: resolvedSessionID,
+                        turnID: stopTurnID, reportedAt: fallbackReport?.reportedAt)
+                }
                 print(output)
             case .error, .serverBusy:
                 if event == .postToolUse || event == .postToolUseFailure {

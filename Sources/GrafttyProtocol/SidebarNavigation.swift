@@ -90,7 +90,7 @@ public struct SidebarSnapshot: Codable, Sendable, Equatable {
 }
 
 /// Short agent-authored context for the next stopped-turn card.
-/// @spec AGENT-3.9: When an agent reports a recap between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.
+/// @spec AGENT-3.9: When an agent reports a recap with a task-specific emoji, the application shall retain it for the current turn and attach it to completion attention once without requesting another turn.
 /// @spec AGENT-3.17: When an agent reports task context, the application shall validate and retain it while decoding older recaps without a context field.
 /// @spec AGENT-3.18: When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.
 public struct AttentionRecap: Codable, Sendable, Hashable {

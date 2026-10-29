@@ -50,7 +50,18 @@ public enum TeamHookRenderer {
         try hookJSON(eventName: "UserPromptSubmit", additionalContext: recapGuidance)
     }
 
-    static let recapGuidance = "During this turn, load the `graftty` skill and run `graftty attention report --stdin` before your final response. Include the stable title, problem and motivation in context, verified completed work, next steps, decisions, task-specific emoji and emojiAlternatives, and historyEntry only for a meaningful change. Do not mention the report unless it fails. Do not send an extra final response for the recap or acknowledge routine team notifications that require no action. Stop records the available recap without asking for a follow-up turn."
+    static let recapGuidance = "During this turn, load the `graftty` skill and run `graftty attention report --stdin` before your final response. Include the stable title, problem and motivation in context, verified completed work, next steps, decisions, task-specific emoji and emojiAlternatives, and historyEntry only for a meaningful change. Do not mention the report unless it fails. Do not send an extra final response for the recap or acknowledge routine team notifications that require no action. The command publishes your brief immediately. Stop verifies the report and asks for a correction only if it is missing."
+
+    /// Only a missing report reaches this fallback. `stop_hook_active` lets
+    /// the correction turn finish even if the report command fails again.
+    public static func requestRecap() -> String {
+        let payload = [
+            "decision": "block",
+            "reason": "This turn has no Graftty Attention report. Load the `graftty` skill and run `graftty attention report --stdin` now. Send brief JSON with title, context, completed, next, decisions, emoji, emojiAlternatives, and historyEntry only for a meaningful change. Preserve the stable purpose and its motivation. Do not repeat your answer or acknowledge the recap. If reporting fails, finish; Stop will not ask again during this correction turn."
+        ]
+        let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
 
     public static func claudePostToolUse(messages: [TeamInboxMessage]) throws -> String {
         guard !messages.isEmpty else { return "{}" }

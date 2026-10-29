@@ -63,12 +63,19 @@ public extension AppState {
         repos[index.repo].worktrees[index.worktree].attention = nil
     }
 
+    /// Publishes retained context without marking the agent stopped.
+    mutating func recordAgentRecap(_ recap: AttentionRecap, callerPath: String, reportedAt: Date) {
+        guard let index = indices(forWorktreePath: callerPath) else { return }
+        SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &repos)
+        repos[index.repo].worktrees[index.worktree].recordAgentRecap(recap, at: reportedAt)
+    }
+
     /// Records a provider's stopped turn on the sidebar. Stops older than
     /// the same session's last progress, older than the recorded stop, or
     /// identical to it are dropped. Returns the notification to post.
     mutating func recordStoppedTurn(callerPath: String, runtime: TeamHookRuntime, callerAgentID: String?,
                                     sessionID: String?, paneSessionName: String?, recap: AttentionRecap?,
-                                    stoppedAt: Date, paneTitle: (PaneSlotID, WorktreeEntry) -> String?) -> AgentStopNotificationContent? {
+                                    stoppedAt: Date, recapReportedAt: Date? = nil, paneTitle: (PaneSlotID, WorktreeEntry) -> String?) -> AgentStopNotificationContent? {
         let worktree = worktree(forPath: callerPath)
         let paneSlot = paneSessionName.flatMap { worktree?.paneSlot(forSessionName: $0) }
         let stop = SidebarAgentStop(
@@ -90,7 +97,7 @@ public extension AppState {
         }
         SidebarHostNavigation.adoptReportedEmoji(recap, worktreePath: callerPath, in: &repos)
         guard let index = indices(forWorktreePath: callerPath) else { return nil }
-        repos[index.repo].worktrees[index.worktree].recordAgentStop(stop)
+        repos[index.repo].worktrees[index.worktree].recordAgentStop(stop, recapReportedAt: recapReportedAt)
         let recorded = repos[index.repo].worktrees[index.worktree]
         return AgentStopNotification.stoppedTurnContent(
             runtime: runtime, worktreeName: WorktreeNameSanitizer.sanitize(recorded.branch),

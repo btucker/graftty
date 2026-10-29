@@ -13,6 +13,24 @@ struct AttentionRecapCoordinatorTests {
         need: nil, emoji: "🧪"
     )
 
+    @Test("An older file receipt cannot replace a newer pending socket report")
+    func pendingReportTimeIsMonotonic() {
+        let coordinator = AttentionRecapCoordinator()
+        var old = recap
+        old.completed = "Old"
+        coordinator.report(recap, worktree: "/repo", agentID: "agent", reportedAt: Date(timeIntervalSince1970: 200))
+        #expect(!coordinator.report(old, worktree: "/repo", agentID: "agent", reportedAt: Date(timeIntervalSince1970: 100)))
+        #expect(coordinator.stop(worktree: "/repo", agentID: "agent", stopHookActive: false, turnID: "turn") == .record(recap))
+    }
+
+    @Test("A distinct native peer turn cannot reuse a completed socket report without UserPromptSubmit")
+    func peerTurnDoesNotReuseCompletedReport() {
+        let coordinator = AttentionRecapCoordinator()
+        coordinator.report(recap, worktree: "/repo", agentID: "agent")
+        #expect(coordinator.stop(worktree: "/repo", agentID: "agent", stopHookActive: false, turnID: "first") == .record(recap))
+        #expect(coordinator.stop(worktree: "/repo", agentID: "agent", stopHookActive: false, turnID: "second") == .requestRecap)
+    }
+
     @Test("Socket recap without emoji is preserved without a correction turn")
     func legacyRecapStopsQuietly() {
         let coordinator = AttentionRecapCoordinator()
@@ -22,18 +40,18 @@ struct AttentionRecapCoordinatorTests {
         #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .record(legacy))
     }
 
-    @Test("@spec AGENT-3.9: When an agent reports a recap with a task-specific emoji between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.")
-    func reportedRecapIsConsumedOnce() {
+    @Test("@spec AGENT-3.9: When an agent reports a recap with a task-specific emoji, the application shall retain it for the current turn and attach it to completion attention once without requesting another turn.")
+    func reportedRecapCompletesOnce() {
         let coordinator = AttentionRecapCoordinator()
         coordinator.report(recap, worktree: "/repo/one", agentID: "codex-1")
         #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .record(recap))
-        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: true) == .record(nil))
+        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: true) == .alreadyRecorded)
     }
 
-    @Test("@spec AGENT-3.10: When an agent stops without reporting a recap, the application shall show a generic stopped card without requesting a continuation.")
-    func missingRecapStopsQuietly() {
+    @Test("@spec AGENT-3.10: When an agent stops without reporting a recap, the application shall request a recap as a fallback and allow completion if that correction turn also fails.")
+    func missingRecapRequestsOneFallback() {
         let coordinator = AttentionRecapCoordinator()
-        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .record(nil))
+        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .requestRecap)
         #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: true) == .record(nil))
     }
 
@@ -43,7 +61,7 @@ struct AttentionRecapCoordinatorTests {
         coordinator.report(recap, worktree: "/repo/one", agentID: "codex-1")
         coordinator.report(recap, worktree: "/repo/one", agentID: "codex-2")
         coordinator.beginTurn(worktree: "/repo/one", agentID: "codex-1")
-        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .record(nil))
+        #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-1", stopHookActive: false) == .requestRecap)
         #expect(coordinator.stop(worktree: "/repo/one", agentID: "codex-2", stopHookActive: false) == .record(recap))
     }
 

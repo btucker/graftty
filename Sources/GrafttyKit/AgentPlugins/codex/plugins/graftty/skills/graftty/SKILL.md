@@ -35,8 +35,8 @@ Keep each field brief:
 - Legacy `checkpoint` is accepted for older agents. Use `historyEntry` for new reports; do not send both.
 - Optional `purposeChanged`: set to `true` only when the problem or goal actually changes. Then provide the new title and problem context, and the decisions that still apply. Finishing a step or changing implementation approach does not by itself change the worktree's purpose.
 
-Report during the ordinary turn. Stop records the available recap and never asks
-for a recap follow-up turn. If reporting fails, mention the failure in your ordinary
+Report during the ordinary turn. The command publishes the brief immediately.
+Stop verifies the report and asks for a correction only if it is missing. If reporting fails, mention the failure in your ordinary
 response. Do not send an extra final response for a recap. Routine team membership
 and merge notifications that require no action need no visible acknowledgment.
 

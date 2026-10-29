@@ -62,7 +62,10 @@ public enum ControlRequestCore {
             guard recap.isValid, platform.state.worktree(forPath: callerPath) != nil else {
                 return .error("invalid attention recap or unknown worktree")
             }
-            platform.attentionRecaps.report(recap, worktree: callerPath, agentID: callerAgentID)
+            let reportedAt = Date()
+            platform.state.recordAgentRecap(recap, callerPath: callerPath, reportedAt: reportedAt)
+            do { try platform.stateDidChange() } catch { return .error(String(describing: error)) }
+            platform.attentionRecaps.report(recap, worktree: callerPath, agentID: callerAgentID, reportedAt: reportedAt)
             return .ok
         case .teamSend(let request):
             return await teamSend(request, platform: platform)
@@ -105,7 +108,7 @@ public enum ControlRequestCore {
             return await teamHook(callerPath: request.callerWorktree, callerAgentID: request.callerAgentID,
                                   runtime: request.runtime, event: request.event, sessionID: request.sessionID,
                                   paneSessionName: request.paneSessionName, attentionReason: request.attentionReason,
-                                  stopHookActive: request.stopHookActive, turnID: request.turnID, platform: platform)
+                                  stopHookActive: request.stopHookActive, turnID: request.turnID, fallbackReport: request.fallbackReport, platform: platform)
         case .capabilities:
             // ATTN-2.27
             let supported = platform.controlCapabilities
@@ -177,10 +180,10 @@ public enum ControlRequestCore {
     /// Records a stopped turn and posts its notification through the platform.
     public static func recordStoppedTurn(callerPath: String, runtime: TeamHookRuntime, callerAgentID: String?,
                                          sessionID: String?, paneSessionName: String?, recap: AttentionRecap?,
-                                         stoppedAt: Date, platform: any ControlPlatform) {
+                                         stoppedAt: Date, recapReportedAt: Date? = nil, platform: any ControlPlatform) {
         if let notification = platform.state.recordStoppedTurn(
             callerPath: callerPath, runtime: runtime, callerAgentID: callerAgentID, sessionID: sessionID,
-            paneSessionName: paneSessionName, recap: recap, stoppedAt: stoppedAt,
+            paneSessionName: paneSessionName, recap: recap, stoppedAt: stoppedAt, recapReportedAt: recapReportedAt,
             paneTitle: { platform.paneTitle(for: $0, in: $1) }
         ) {
             platform.postAgentNotification(notification, worktreePath: callerPath)
@@ -274,20 +277,29 @@ public enum ControlRequestCore {
     private static func teamHook(callerPath: String, callerAgentID: String?, runtime: TeamHookRuntime,
                                  event: TeamHookEvent, sessionID: String?, paneSessionName: String?,
                                  attentionReason: AgentHookAttentionReason?, stopHookActive: Bool, turnID: String?,
+                                 fallbackReport: AttentionFileRecapEvent?,
                                  platform: any ControlPlatform) async -> ResponseMessage {
         recordHookLiveness(callerPath: callerPath, runtime: runtime, event: event, sessionID: sessionID ?? callerAgentID,
                            paneSessionName: paneSessionName, attentionReason: attentionReason, platform: platform)
         let action = AgentHookAttentionTransition.action(event: event, reason: attentionReason)
         switch action {
         case .recordStoppedTurn:
+            if let report = fallbackReport, report.worktree == callerPath,
+               report.agentID == callerAgentID, report.recap.isValid,
+               platform.attentionRecaps.report(report.recap, worktree: callerPath, agentID: report.agentID, reportedAt: report.reportedAt) {
+                platform.state.recordAgentRecap(report.recap, callerPath: callerPath, reportedAt: report.reportedAt)
+            }
+            let reportedAt = platform.attentionRecaps.reportedAt(worktree: callerPath, agentID: callerAgentID)
             switch platform.attentionRecaps.stop(worktree: callerPath, agentID: callerAgentID,
                                                  stopHookActive: stopHookActive, turnID: turnID) {
+            case .requestRecap:
+                return .teamHookOutput(TeamHookRenderer.requestRecap())
             case .alreadyRecorded:
                 return .teamHookOutput("{}")
             case .record(let recap):
                 recordStoppedTurn(callerPath: callerPath, runtime: runtime, callerAgentID: callerAgentID,
                                   sessionID: sessionID, paneSessionName: paneSessionName, recap: recap,
-                                  stoppedAt: Date(), platform: platform)
+                                  stoppedAt: Date(), recapReportedAt: reportedAt, platform: platform)
             }
         case .record(let reason):
             if let notification = platform.state.recordAgentAttention(

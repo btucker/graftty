@@ -128,6 +128,8 @@ public extension HeadlessHostRuntime {
     func consumeAttentionActivities(handoff: AttentionFileHandoff = AttentionFileHandoff()) throws {
         try handoff.consumeActivities(acceptingWorktree: { state.worktree(forPath: $0) != nil }) { event in
             switch event {
+            case .recap(let report):
+                state.recordAgentRecap(report.recap, callerPath: report.worktree, reportedAt: report.reportedAt)
             case .response(let response):
                 guard let index = state.indices(forWorktreePath: response.worktree) else { return }
                 state.repos[index.repo].worktrees[index.worktree].recordAgentResponse(response.response)
@@ -138,7 +140,7 @@ public extension HeadlessHostRuntime {
                     attentionReason: nil, platform: controlPlatform)
                 ControlRequestCore.recordStoppedTurn(callerPath: stop.worktree, runtime: stop.runtime,
                     callerAgentID: stop.agentID, sessionID: stop.sessionID, paneSessionName: stop.paneSessionName,
-                    recap: stop.recap, stoppedAt: stop.stoppedAt, platform: controlPlatform)
+                    recap: stop.recap, stoppedAt: stop.stoppedAt, recapReportedAt: stop.recapReportedAt, platform: controlPlatform)
             case .progress(let progress):
                 guard let index = state.indices(forWorktreePath: progress.worktree) else { return }
                 if let input = progress.userInput {

@@ -730,6 +730,8 @@ struct GrafttyApp: App {
             handoff: attentionHandoff,
             apply: { activity in
                 switch activity {
+                case .recap(let event):
+                    binding.wrappedValue.recordAgentRecap(event.recap, callerPath: event.worktree, reportedAt: event.reportedAt)
                 case .response(let event):
                     guard let index = binding.wrappedValue.indices(forWorktreePath: event.worktree) else { return }
                     binding.wrappedValue.repos[index.repo].worktrees[index.worktree].recordAgentResponse(event.response)
@@ -761,7 +763,7 @@ struct GrafttyApp: App {
                         callerPath: event.worktree, runtime: event.runtime,
                         callerAgentID: event.agentID, sessionID: event.sessionID,
                         paneSessionName: event.paneSessionName, recap: event.recap,
-                        stoppedAt: event.stoppedAt, appState: binding,
+                        stoppedAt: event.stoppedAt, recapReportedAt: event.recapReportedAt, appState: binding,
                         terminalManager: tm
                     )
                 }

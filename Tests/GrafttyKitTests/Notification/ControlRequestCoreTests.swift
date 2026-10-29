@@ -83,6 +83,56 @@ struct ControlRequestCoreTests {
         }
     }
 
+    @Test("@spec AGENT-3.30: When the app receives an Attention recap, it shall persist the brief immediately while reserving stopped attention and its notification for the actual Stop hook.")
+    func recapPublishesBeforeCompletion() async throws {
+        let platform = try RecordingPlatform()
+        let recap = AttentionRecap(title: "Immediate report", completed: "Published", next: "Review", need: "Approve?", emoji: "🔇")
+        #expect(await ControlRequestCore.handleRequest(.attentionReport(callerWorktree: "/repo", callerAgentID: "codex-a", recap: recap), platform: platform) == .ok)
+        #expect(platform.state.worktree(forPath: "/repo")?.brief?.completed == "Published")
+        #expect(platform.state.worktree(forPath: "/repo")?.emoji == "🔇")
+        #expect(platform.state.worktree(forPath: "/repo")?.unseenAgentStop == nil)
+        #expect(platform.notifications.isEmpty)
+        #expect(platform.stateChanges == 1)
+        _ = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .postToolUse, sessionID: "s", paneSessionName: nil), platform: platform)
+        let result = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .stop, sessionID: "s", paneSessionName: nil, turnID: "turn"), platform: platform)
+        #expect(result == .teamHookOutput("{}"))
+        #expect(platform.state.worktree(forPath: "/repo")?.unseenAgentStop?.recap?.need == "Approve?")
+        #expect(platform.notifications.count == 1)
+    }
+
+    @Test("Completing an earlier report preserves a newer brief and does not repeat its history entry")
+    func completionDoesNotRepublishOldBrief() async throws {
+        let platform = try RecordingPlatform()
+        let first = AttentionRecap(title: "Reports", completed: "First", next: "Review", need: "Approve first?",
+            emoji: "🔇", historyEntry: .init(headline: "First report"))
+        let second = AttentionRecap(title: "Reports", completed: "Second", next: "Review", emoji: "🔇",
+            historyEntry: .init(headline: "Second report"))
+        _ = await ControlRequestCore.handleRequest(.attentionReport(callerWorktree: "/repo", callerAgentID: "codex-a", recap: first), platform: platform)
+        _ = await ControlRequestCore.handleRequest(.attentionReport(callerWorktree: "/repo", callerAgentID: "codex-b", recap: second), platform: platform)
+        _ = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .stop, sessionID: "s", paneSessionName: nil, turnID: "turn"), platform: platform)
+        #expect(platform.state.worktree(forPath: "/repo")?.brief?.completed == "Second")
+        #expect(platform.state.worktree(forPath: "/repo")?.brief?.history.map(\.title) == ["First report", "Second report"])
+        #expect(platform.state.worktree(forPath: "/repo")?.unseenAgentStop?.recap?.need == "Approve first?")
+    }
+
+    @Test("Socket Stop fallback carries a file-published report without a correction or stale reuse")
+    func socketFallbackVerifiesFileReport() async throws {
+        let platform = try RecordingPlatform()
+        let handoff = AttentionFileHandoff(rootDirectory: platform.root.appendingPathComponent("handoff"))
+        let recap = AttentionRecap(title: "Fallback", completed: "Published", next: "Review", need: "Approve?", emoji: "🔇")
+        try handoff.publish(recap, worktree: "/repo", agentID: "codex-a")
+        let report = try #require(handoff.publishedReport(worktree: "/repo", agentID: "codex-a"))
+        let request = NotificationMessage.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .stop, sessionID: "s", paneSessionName: nil, turnID: "first", fallbackReport: report)
+        let roundTripped = try JSONDecoder().decode(NotificationMessage.self, from: JSONEncoder().encode(request))
+        #expect(await ControlRequestCore.handleRequest(roundTripped, platform: platform) == .teamHookOutput("{}"))
+        #expect(platform.state.worktree(forPath: "/repo")?.unseenAgentStop?.recap?.need == "Approve?")
+        #expect(platform.notifications.count == 1)
+        #expect(await ControlRequestCore.handleRequest(roundTripped, platform: platform) == .teamHookOutput("{}"))
+        #expect(platform.notifications.count == 1)
+        let next = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .stop, sessionID: "s", paneSessionName: nil, turnID: "second", fallbackReport: report), platform: platform)
+        #expect(next == .teamHookOutput(TeamHookRenderer.requestRecap()))
+    }
+
     @Test("fire-and-forget messages apply only on the message path and answer nil on the request path")
     func fireAndForgetSplit() async throws {
         let platform = try RecordingPlatform()

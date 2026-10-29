@@ -727,7 +727,7 @@ struct HeadlessHostRuntimeTests {
             #expect(worktree.attention?.text == (update == "acknowledge" ? nil : update == "notify" ? "new" : "original"))
         }
     }
-    @Test("@spec REMOTE-22.5: When a headless host receives local team messages and agent hooks, the application shall persist inbox messages and expose a reported recap on the next stopped turn.")
+    @Test("@spec REMOTE-22.5: When a headless host receives local team messages and agent hooks, the application shall persist inbox messages, publish a reported brief immediately, and expose its completion attention on the next stopped turn.")
     func teamAndAttention() async throws {
         let (root, config, initial) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -957,7 +957,13 @@ struct HeadlessHostRuntimeTests {
         let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
         let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("attention"))
         let recap = AttentionRecap(title: "Host done", completed: "Created host", next: "Review host", emoji: "🖥️")
-        try handoff.stage(recap, worktree: root.path, agentID: "codex-test")
+        try handoff.publish(recap, worktree: root.path, agentID: "codex-test")
+        try runtime.consumeAttentionActivities(handoff: handoff)
+        #expect(runtime.state.worktree(forPath: root.path)?.brief?.completed == "Created host")
+        #expect(try AppState.load(from: root).worktree(forPath: root.path)?.brief?.completed == "Created host")
+        #expect(runtime.state.worktree(forPath: root.path)?.unseenAgentStop == nil)
+        try handoff.progress(worktree: root.path, agentID: "codex-test", runtime: .codex, sessionID: "test")
+        try runtime.consumeAttentionActivities(handoff: handoff)
         #expect(try handoff.stop(worktree: root.path, agentID: "codex-test", runtime: .codex,
             sessionID: "test", paneSessionName: nil, stopHookActive: false) == .queued)
         try runtime.consumeAttentionActivities(handoff: handoff)

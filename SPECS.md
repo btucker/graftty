@@ -3502,7 +3502,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-22.4** If headless pane startup fails, then the application shall preserve the prior persisted layout and return an error.
 
-**REMOTE-22.5** When a headless host receives local team messages and agent hooks, the application shall persist inbox messages and expose a reported recap on the next stopped turn.
+**REMOTE-22.5** When a headless host receives local team messages and agent hooks, the application shall persist inbox messages, publish a reported brief immediately, and expose its completion attention on the next stopped turn.
 
 **REMOTE-22.6** When a headless host registers a repository, the application shall discover its Git worktrees and persist one canonical registration.
 
@@ -4250,9 +4250,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.8** When Codex emits PermissionRequest before its approval reviewer decides whether user input is required, the application shall not create needs-input attention.
 
-**AGENT-3.9** When an agent reports a recap with a task-specific emoji between stopped turns, the application shall show that recap on its next stopped turn and consume it once without requesting another turn.
+**AGENT-3.9** When an agent reports a recap with a task-specific emoji, the application shall retain it for the current turn and attach it to completion attention once without requesting another turn.
 
-**AGENT-3.10** When an agent stops without reporting a recap, the application shall show a generic stopped card without requesting a continuation.
+**AGENT-3.10** When an agent stops without reporting a recap, the application shall request a recap as a fallback and allow completion if that correction turn also fails.
 
 **AGENT-3.11** While several agents share a worktree, the application shall accept only a recap from the agent whose stopped turn is being handled.
 
@@ -4260,7 +4260,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.13** When a sandboxed agent reports a recap and then stops, the application shall consume one durable stopped-turn file containing that recap without requiring control-socket access.
 
-**AGENT-3.14** When a sandboxed agent stops without a recap, the Stop hook shall queue a generic stopped card without requesting a continuation.
+**AGENT-3.14** When a sandboxed agent stops without a recap, the Stop hook shall request a recap as a fallback and allow completion if that correction turn also fails.
 
 **AGENT-3.15** When stopped-turn files exist before or arrive after the Attention watcher starts, the application shall process both through directory events with a periodic scan as backup.
 
@@ -4270,7 +4270,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.18** When an agent reports an emoji for its worktree, the application shall accept one emoji and up to three distinct alternatives while decoding older recaps without emoji fields.
 
-**AGENT-3.19** When a tracked agent has no Graftty wrapper identity, a valid recap shall appear in Attention immediately, and its next matching Stop hook shall not create a duplicate card.
+**AGENT-3.19** When a tracked agent has no Graftty wrapper identity, its recap shall publish immediately under its native identity, and its matching Stop hook shall create completion attention once.
 
 **AGENT-3.20** When a tracked Codex session has no wrapper registration, the CLI shall derive a stable report identity from the first non-empty thread ID or native session ID.
 
@@ -4286,7 +4286,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.26** When an agent reports from a sandbox that cannot inspect its delivery socket, the application shall resolve its registered identity using current process identity and worktree and pane ownership without requiring socket reachability.
 
-**AGENT-3.27** When a new user turn starts, the application shall discard that agent's unconsumed recap and native-report receipt so a later Stop cannot reuse an earlier turn's report.
+**AGENT-3.27** When a new user turn starts, the application shall discard that agent's report and completion receipts so a later Stop cannot reuse an earlier turn's report.
+
+**AGENT-3.29** When a registered agent reports its recap, the CLI shall publish its brief immediately through the private file handoff before Stop runs.
+
+**AGENT-3.30** When the app receives an Attention recap, it shall persist the brief immediately while reserving stopped attention and its notification for the actual Stop hook.
 
 ### AGENT-4.x
 
