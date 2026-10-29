@@ -1,40 +1,14 @@
-name: Build paging renderer
-description: Build the pinned native snapshot APIs used by Mac and mobile terminals.
+name: Select published paging renderer
+description: Use the same pinned paging package as development and release builds.
 runs:
   using: composite
   steps:
-    - uses: actions/cache@v4
-      id: renderer
-      with:
-        path: .dependencies/libghostty-spm
-        key: paging-renderer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ghostty-paging/build-package.sh', 'scripts/ghostty-paging/*.patch', 'scripts/ghostty-paging/recipe.json') }}
-    - if: steps.renderer.outputs.cache-hit != 'true'
+    - name: Select published paging renderer
       shell: bash
       run: |
-        set -euo pipefail
-        case "$(uname -m)" in
-          arm64)
-            arch=aarch64
-            checksum=b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489
-            ;;
-          x86_64)
-            arch=x86_64
-            checksum=0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7
-            ;;
-          *) exit 1 ;;
-        esac
-        compiler="$RUNNER_TEMP/zig-$arch-macos-0.16.0"
-        curl --fail --location --retry 3 "https://ziglang.org/download/0.16.0/zig-$arch-macos-0.16.0.tar.xz" -o "$compiler.tar.xz"
-        echo "$checksum  $compiler.tar.xz" | shasum -a 256 --check
-        tar -xf "$compiler.tar.xz" -C "$RUNNER_TEMP"
-        if ! xcrun metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
-        scripts/ghostty-paging/build-package.sh --zig "$compiler/zig"
-    - name: Select paging renderer
-      shell: bash
-      run: |
-        export GRAFTTY_GHOSTTY_PACKAGE_PATH="$GITHUB_WORKSPACE/.dependencies/libghostty-spm"
-        export GRAFTTY_REQUIRE_PAGED_HISTORY=1
-        echo "GRAFTTY_GHOSTTY_PACKAGE_PATH=$GRAFTTY_GHOSTTY_PACKAGE_PATH" >> "$GITHUB_ENV"
-        echo "GRAFTTY_REQUIRE_PAGED_HISTORY=$GRAFTTY_REQUIRE_PAGED_HISTORY" >> "$GITHUB_ENV"
+        # An inherited dependency-development override must not change CI's package.
+        unset GRAFTTY_GHOSTTY_PACKAGE_PATH
+        echo 'GRAFTTY_GHOSTTY_PACKAGE_PATH=' >> "$GITHUB_ENV"
+        echo 'GRAFTTY_REQUIRE_PAGED_HISTORY=1' >> "$GITHUB_ENV"
         context="$(python3 scripts/ghostty-paging/compiler-context.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/graftty-manifest")"
         echo "GRAFTTY_RENDERER_CONTEXT=$context" >> "$GITHUB_ENV"

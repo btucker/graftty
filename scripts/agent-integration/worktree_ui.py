@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run focused Mobile worktree UI regressions, optionally proving RED first.
 
-Requires the paging-renderer action's GRAFTTY_GHOSTTY_PACKAGE_PATH and
-GRAFTTY_RENDERER_CONTEXT. Uses its existing renderer without rebuilding it.
+Requires the paging-renderer action's GRAFTTY_RENDERER_CONTEXT. Uses the
+published package by default, or an explicit dependency-development override.
 Only BASELINE_FILES are temporarily replaced; current tests remain.
 """
 import argparse
@@ -213,9 +213,9 @@ def main():
         parser.error('Requires macOS and Xcode with an iOS Simulator runtime')
     if options.baseline and os.environ.get('CI', '').lower() not in ('true', '1'):
         parser.error('--baseline temporarily overlays sources and is restricted to an isolated CI checkout (CI=true)')
-    for name in ('GRAFTTY_RENDERER_CONTEXT', 'GRAFTTY_GHOSTTY_PACKAGE_PATH'):
+    for name in ('GRAFTTY_RENDERER_CONTEXT',):
         if not os.environ.get(name):
-            parser.error(f'{name} is required; prepare the shared paging renderer first')
+            parser.error(f'{name} is required; select the published paging renderer first')
     os.environ['GRAFTTY_REQUIRE_PAGED_HISTORY'] = '1'
     options.output = options.output.resolve()
     options.derived_data = options.derived_data.resolve()
@@ -227,7 +227,7 @@ def main():
                'scope': 'Current tests/build configuration; optional baseline replaces only baselineFiles',
                'baselineFiles': list(BASELINE_FILES),
                'rendererContext': os.environ['GRAFTTY_RENDERER_CONTEXT'],
-               'rendererPackage': os.environ['GRAFTTY_GHOSTTY_PACKAGE_PATH'],
+               'rendererPackage': os.environ.get('GRAFTTY_GHOSTTY_PACKAGE_PATH') or 'published Package.resolved',
                'derivedData': str(options.derived_data), 'xcode': capture(['xcodebuild', '-version'])}
     simulator = None
     try:

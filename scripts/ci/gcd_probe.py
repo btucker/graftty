@@ -2,7 +2,6 @@
 """Measure macOS blocked dispatch threads at synchronous Swift Testing boundaries.
 
 Select the same pinned renderer as .github/actions/paging-renderer first:
-  export GRAFTTY_GHOSTTY_PACKAGE_PATH=/path/to/.dependencies/libghostty-spm
   export GRAFTTY_REQUIRE_PAGED_HISTORY=1
   python3 -B scripts/ci/gcd_probe.py run --output /tmp/gcd-evidence
 All builds and test launches use timeout -k 15 1500 scripts/swiftpm. The
@@ -46,9 +45,9 @@ THREAD = re.compile(r'^\s+\d+ Thread_([^\s:]+)[^\n]*\n', re.MULTILINE)
 
 def require_ci_renderer(environment):
     renderer = environment.get('GRAFTTY_GHOSTTY_PACKAGE_PATH')
-    if not renderer or environment.get('GRAFTTY_REQUIRE_PAGED_HISTORY') != '1':
-        raise ValueError('CI capture requires GRAFTTY_GHOSTTY_PACKAGE_PATH and GRAFTTY_REQUIRE_PAGED_HISTORY=1; '
-                         'the published renderer omits CI tests. Use --self-check only for sensor calibration.')
+    if environment.get('GRAFTTY_REQUIRE_PAGED_HISTORY') != '1':
+        raise ValueError('CI capture requires GRAFTTY_REQUIRE_PAGED_HISTORY=1; '
+                         'Use --self-check only for sensor calibration.')
     return renderer
 
 
@@ -182,9 +181,11 @@ def run(args):
         renderer_path = Path(renderer)
         if not renderer_path.is_absolute():
             renderer_path = root / renderer_path
-        stamp = (renderer_path / 'PAGING-BUILD.txt').read_text()
+        stamp = (renderer_path / 'PAGING-BUILD.json').read_text()
         plan['pagingRenderer'] = dict(path=str(renderer_path), stamp=stamp,
                                      stampSHA256=hashlib.sha256(stamp.encode()).hexdigest())
+    else:
+        plan['pagingRenderer'] = dict(published=json.loads((root / 'Package.resolved').read_text())['pins'])
     sources = [Path(__file__).resolve(), root / 'Tests/GrafttyKitTests/Support/DispatchWorkProbeTests.swift',
                root / 'Tests/GrafttyKitTests/Support/DispatchWorkProbe.swift',
                root / 'scripts/ci/test_plan.py', root / 'scripts/ci/test_gcd_probe.py']

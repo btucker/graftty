@@ -3,7 +3,7 @@ import Testing
 
 @Suite("Renderer build compatibility")
 struct RendererBuildTests {
-    @Test("@spec DIST-1.6: When a development build has no explicit renderer override, the build shall use the committed published dependency and diagnose ignored local packages; an explicitly selected stale renderer or a release requiring paging shall fail before compilation.")
+    @Test("@spec DIST-1.6: When Graftty selects its terminal dependency, development, CI, and release builds shall enable paging from the same published revision, diagnose ignored local packages, and reject explicit overrides whose package-owned build provenance does not match their sources and binaries.")
     func rendererSelection() throws {
         try runFixtures()
     }
