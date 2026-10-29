@@ -284,6 +284,7 @@ public enum ControlRequestCore {
         let action = AgentHookAttentionTransition.action(event: event, reason: attentionReason)
         switch action {
         case .recordStoppedTurn:
+            var consumedFallbackReportedAt: Date?
             if let report = fallbackReport, report.worktree == callerPath,
                report.agentID == callerAgentID, report.recap.isValid {
                 if platform.state.hasConsumedAgentReport(callerPath: callerPath, runtime: runtime,
@@ -291,11 +292,13 @@ public enum ControlRequestCore {
                     let key = AgentHookAttentionIdentity.key(runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID)
                     let consumed = key.flatMap { platform.state.worktree(forPath: callerPath)?.consumedAgentReports[$0] }
                     if turnID == nil || consumed?.turnID == turnID { return .teamHookOutput("{}") }
+                    consumedFallbackReportedAt = report.reportedAt
                 } else if platform.attentionRecaps.report(report.recap, worktree: callerPath, agentID: report.agentID, reportedAt: report.reportedAt) {
                     platform.state.recordAgentRecap(report.recap, callerPath: callerPath, reportedAt: report.reportedAt)
                 }
             }
             let reportedAt = platform.attentionRecaps.reportedAt(worktree: callerPath, agentID: callerAgentID)
+                ?? consumedFallbackReportedAt
             switch platform.attentionRecaps.stop(worktree: callerPath, agentID: callerAgentID,
                                                  stopHookActive: stopHookActive, turnID: turnID) {
             case .requestRecap:

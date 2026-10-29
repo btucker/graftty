@@ -177,6 +177,25 @@ struct ControlRequestCoreTests {
         }
     }
 
+    @Test("A failed socket correction updates the persisted turn fence before restart")
+    func genericSocketRecoverySurvivesRestart() async throws {
+        let platform = try RecordingPlatform()
+        let handoff = AttentionFileHandoff(rootDirectory: platform.root.appendingPathComponent("handoff"))
+        let recap = AttentionRecap(title: "Recovery", completed: "Published", next: "Review", need: "Approve?", emoji: "🔇")
+        try handoff.publish(recap, worktree: "/repo", agentID: "codex-a")
+        let report = try #require(handoff.publishedReport(worktree: "/repo", agentID: "codex-a"))
+        _ = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .stop, sessionID: "s", paneSessionName: nil, turnID: "first", fallbackReport: report), platform: platform)
+        #expect(await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .stop, sessionID: "s", paneSessionName: nil, turnID: "second", fallbackReport: report), platform: platform) == .teamHookOutput(TeamHookRenderer.requestRecap()))
+        let failedCorrection = NotificationMessage.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .stop, sessionID: "s", paneSessionName: nil, stopHookActive: true, turnID: "second", fallbackReport: report)
+        #expect(await ControlRequestCore.handleRequest(failedCorrection, platform: platform) == .teamHookOutput("{}"))
+        #expect(platform.notifications.count == 2)
+        #expect(platform.state.worktree(forPath: "/repo")?.unseenAgentStop?.recap == nil)
+        let restarted = try RecordingPlatform()
+        restarted.state = try JSONDecoder().decode(AppState.self, from: JSONEncoder().encode(platform.state))
+        #expect(await ControlRequestCore.handleRequest(failedCorrection, platform: restarted) == .teamHookOutput("{}"))
+        #expect(restarted.notifications.isEmpty)
+    }
+
     @Test("fire-and-forget messages apply only on the message path and answer nil on the request path")
     func fireAndForgetSplit() async throws {
         let platform = try RecordingPlatform()
