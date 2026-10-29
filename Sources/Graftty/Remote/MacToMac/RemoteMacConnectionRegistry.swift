@@ -88,6 +88,10 @@ final class RemoteMacConnectionRegistry {
         Bool
     ) async throws -> Entry
     typealias IdentityProvider = @MainActor @Sendable () throws -> Curve25519.Signing.PrivateKey
+    /// REMOTE-1.15: read once per WebRTC connection attempt, never cached, so
+    /// an unreadable device-ID store fails that attempt and a later attempt
+    /// presents the persisted ID. Direct SSH never sends it (REMOTE-20.18).
+    typealias ClientDeviceIDProvider = @MainActor @Sendable () throws -> RemoteDeviceID
     typealias PinnedHostProvider = @Sendable (RemoteDeviceID) -> PinnedHost?
     typealias PinnedHostUpdater = @Sendable (PinnedHost) throws -> Void
     typealias HostConnectionFactory = @MainActor @Sendable (
@@ -139,7 +143,7 @@ final class RemoteMacConnectionRegistry {
     private var inFlight: [RemoteMacIdentity: InFlightAttempt] = [:]
     private var legacyFactory: IntentAwareConnectionFactory?
     private let identityProvider: IdentityProvider
-    private let clientDeviceID: RemoteDeviceID
+    private let clientDeviceIDProvider: ClientDeviceIDProvider
     private let pinnedHostProvider: PinnedHostProvider
     private let pinnedHostUpdater: PinnedHostUpdater?
     private let signalingClient: SignalingClient
@@ -168,7 +172,9 @@ final class RemoteMacConnectionRegistry {
         self.identityProvider = {
             try identityStore.loadOrGenerateAndPersist()
         }
-        self.clientDeviceID = Self.defaultClientDeviceID()
+        self.clientDeviceIDProvider = {
+            try AppServices.localRemoteDeviceID()
+        }
         self.pinnedHostProvider = { try? pinnedHostStore.get(id: $0) }
         self.pinnedHostUpdater = { try pinnedHostStore.refreshConnectionMetadata($0) }
         self.signalingClient = SignalingClient()
@@ -199,7 +205,7 @@ final class RemoteMacConnectionRegistry {
 
     init(
         identityProvider: @escaping IdentityProvider,
-        clientDeviceID: RemoteDeviceID,
+        clientDeviceIDProvider: @escaping ClientDeviceIDProvider,
         pinnedHostProvider: @escaping PinnedHostProvider,
         pinnedHostUpdater: PinnedHostUpdater? = nil,
         signalingClient: SignalingClient,
@@ -213,7 +219,7 @@ final class RemoteMacConnectionRegistry {
     ) {
         self.legacyFactory = nil
         self.identityProvider = identityProvider
-        self.clientDeviceID = clientDeviceID
+        self.clientDeviceIDProvider = clientDeviceIDProvider
         self.pinnedHostProvider = pinnedHostProvider
         self.pinnedHostUpdater = pinnedHostUpdater
         self.signalingClient = signalingClient
@@ -442,7 +448,10 @@ final class RemoteMacConnectionRegistry {
         let dialLink: DialLink
         switch remoteMac.transport {
         case .directSSH: dialLink = .direct(directConnectionFactory(clientKey, identity.fingerprint))
-        case .webRTC: dialLink = .webRTC(connectionFactory(clientKey, identity.fingerprint))
+        case .webRTC:
+            // Read before allocating the transport so a failed read leaves nothing to close.
+            let clientDeviceID = try clientDeviceIDProvider()
+            dialLink = .webRTC(connectionFactory(clientKey, identity.fingerprint), clientDeviceID: clientDeviceID)
         }
         let connection = dialLink.connection
         await observe(
@@ -469,7 +478,7 @@ final class RemoteMacConnectionRegistry {
                 var refreshed = pinnedHost
                 refreshed.lastConnectedAt = now()
                 refreshedPinnedHost = refreshed
-            case .webRTC(let webRTC):
+            case .webRTC(let webRTC, let clientDeviceID):
                 let routes = RemoteHostDialer.routingRoutes(
                     pinnedHost: pinnedHost,
                     hostRoutes: remoteMac.routes,
@@ -788,25 +797,16 @@ final class RemoteMacConnectionRegistry {
             await close(entry)
         }
     }
-
-    private static func defaultClientDeviceID() -> RemoteDeviceID {
-        do {
-            return try HostDeviceIDStore.shared.loadOrGenerateAndPersist()
-        } catch {
-            assertionFailure("Failed to persist the local remote device ID: \(error)")
-            return RemoteDeviceID.generate()
-        }
-    }
 }
 
 /// The transport a dial attempt negotiates before it has a pane environment.
 private enum DialLink {
-    case webRTC(any WebRTCHostLink)
+    case webRTC(any WebRTCHostLink, clientDeviceID: RemoteDeviceID)
     case direct(any DirectHostLink)
 
     var connection: any RemoteHostLink {
         switch self {
-        case .webRTC(let link): return link
+        case .webRTC(let link, _): return link
         case .direct(let link): return link
         }
     }

@@ -188,7 +188,7 @@ struct AddRemoteMacFormController: Equatable {
 
 struct AddRemoteMacSheet: View {
     @ObservedObject var model: RemoteMacsModel
-    let makePairingDriver: () -> AddRemoteMacPairingDriving
+    let makePairingDriver: () throws -> AddRemoteMacPairingDriving
     let onCancel: () -> Void
     let onPaired: () -> Void
 
@@ -403,7 +403,13 @@ struct AddRemoteMacSheet: View {
         isPairingInFlight = true
         defer { isPairingInFlight = false }
 
-        let driver = makePairingDriver()
+        let driver: AddRemoteMacPairingDriving
+        do {
+            driver = try makePairingDriver()
+        } catch {
+            showPairingFailure(error)
+            return
+        }
         pairingDriver = driver
         do {
             let code = try await driver.beginPairing(baseURL: baseURL)
@@ -423,8 +429,7 @@ struct AddRemoteMacSheet: View {
                 return
             }
             pairingDriver = nil
-            controller.phase = .failed(pairingErrorMessage(error))
-            errorMessage = pairingErrorMessage(error)
+            showPairingFailure(error)
         }
     }
 
@@ -461,9 +466,16 @@ struct AddRemoteMacSheet: View {
             // throw `wrongState`. Drop it and fall to `.failed` so the
             // primary button disables until the user re-selects a target.
             pairingDriver = nil
-            controller.phase = .failed(pairingErrorMessage(error))
-            errorMessage = pairingErrorMessage(error)
+            showPairingFailure(error)
         }
+    }
+
+    /// Disables the primary action until the user re-selects a target.
+    @MainActor
+    private func showPairingFailure(_ error: Error) {
+        let message = pairingErrorMessage(error)
+        controller.phase = .failed(message)
+        errorMessage = message
     }
 
     @MainActor

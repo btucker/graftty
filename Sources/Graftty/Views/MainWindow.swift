@@ -26,7 +26,7 @@ struct MainWindow: View {
     @ObservedObject private var previewWindows = FilePreviewWindows.shared
     @ObservedObject var remoteMacsModel: RemoteMacsModel
     let appStateChanges: AppStateChanges
-    let makeRemoteMacPairingDriver: () -> AddRemoteMacPairingDriving
+    let makeRemoteMacPairingDriver: () throws -> AddRemoteMacPairingDriving
 
     @EnvironmentObject private var updaterController: UpdaterController
 
@@ -74,7 +74,7 @@ struct MainWindow: View {
         hostPairingCoordinator: RemoteMacHostPairingCoordinator,
         remoteMacsModel: RemoteMacsModel,
         appStateChanges: AppStateChanges,
-        makeRemoteMacPairingDriver: @escaping () -> AddRemoteMacPairingDriving
+        makeRemoteMacPairingDriver: @escaping () throws -> AddRemoteMacPairingDriving
     ) {
         _appState = appState
         self.terminalManager = terminalManager
@@ -965,7 +965,7 @@ struct MainWindow: View {
             let store = ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory)
             let key = try store.loadOrGenerateAndPersist()
             linuxHostSetupClient = LinuxHostTrustRequest(
-                deviceID: AppServices.localRemoteDeviceID().value,
+                deviceID: try AppServices.localRemoteDeviceID().value,
                 displayName: AppServices.localHostDisplayName(),
                 publicKey: key.publicKey.rawRepresentation.base64EncodedString()
             )

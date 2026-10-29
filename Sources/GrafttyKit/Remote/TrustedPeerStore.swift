@@ -40,11 +40,16 @@ public final class TrustedPeerStore: @unchecked Sendable {
 
     // MARK: Init
 
-    public init(directory: URL) {
+    public convenience init(directory: URL) {
+        self.init(directory: directory, readData: { try Data(contentsOf: $0) })
+    }
+
+    init(directory: URL, readData: @escaping @Sendable (URL) throws -> Data) {
         file = JSONFileStore(
             fileURL: directory.appendingPathComponent(Self.fileName),
             dates: .iso8601,
-            outputFormatting: [.prettyPrinted, .sortedKeys]
+            outputFormatting: [.prettyPrinted, .sortedKeys],
+            readData: readData
         )
     }
 
@@ -204,9 +209,9 @@ public final class TrustedPeerStore: @unchecked Sendable {
 
     // MARK: Private helpers (call only while holding `lock`)
 
-    /// Read failures and foreign protocol versions yield an empty envelope, so
-    /// operations like revocation remain possible after corruption; malformed
-    /// contents are first moved aside.
+    /// Missing files and foreign protocol versions yield an empty envelope.
+    /// Malformed contents are first moved aside; read and backup failures
+    /// propagate before any mutation can replace the persisted peers.
     private func _load() throws -> Envelope {
         guard let envelope = try file.loadMovingAsideCorruptFile(),
               envelope.version == RemoteAccessProtocol.version else {

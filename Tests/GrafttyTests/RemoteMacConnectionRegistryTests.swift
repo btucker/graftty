@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import GrafttyProtocol
 import GrafttyRemoteClient
+import GrafttyTestSupport
 import Testing
 @testable import Graftty
 @testable import GrafttyKit
@@ -103,6 +104,37 @@ struct RemoteMacConnectionRegistryTests {
             _ = try await registry.connect(to: remote)
         }
         #expect(registry.activeConnectionCount == 0)
+    }
+
+    @Test("@spec REMOTE-1.15: When a Remote Mac WebRTC connection attempt starts, the application shall read the client device ID from the device-ID store for that attempt, so an attempt made while the store is unreadable fails before any signaling offer and a later attempt presents the persisted ID.", .timeLimit(.minutes(1)))
+    func clientDeviceIDIsReadPerAttempt() async throws {
+        let directory = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persisted = RemoteDeviceID(value: "persisted-mac")
+        let store = try flakyHostDeviceIDStore(in: directory, persisted: persisted, failures: 1)
+        let captured = CapturedSignalingRequest()
+        let registry = makeRegistry(
+            clientDeviceIDProvider: { try store.loadOrGenerateAndPersist() },
+            signalingTransport: { request, body in
+                captured.record(request: request, body: body)
+                return try signalingResponse(url: request.url!, answer: TestSignalingAnswer(sdp: "v=0\nanswer\n"))
+            }
+        )
+        let remote = try makeRemoteMac()
+
+        await #expect(throws: CocoaError(.fileReadNoPermission)) {
+            _ = try await registry.connect(to: remote)
+        }
+        #expect(captured.body == nil)
+        #expect(registry.activeConnectionCount == 0)
+
+        _ = try await registry.connect(to: remote)
+        let offer = try JSONDecoder.iso8601().decode(
+            AuthenticatedSignalingOffer.self,
+            from: try #require(captured.body)
+        )
+        #expect(offer.clientDeviceID == persisted)
+        await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
     }
 
     @Test("""
@@ -789,7 +821,27 @@ struct RemoteMacConnectionRegistryTests {
         await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
     }
 
+    @Test("@spec REMOTE-20.18: When a saved direct SSH host connects, the application shall not read the local device ID, so an unreadable device-ID store does not fail a connection that never sends it.", .timeLimit(.minutes(1)))
+    func directConnectionDoesNotReadClientDeviceID() async throws {
+        var remote = try makeRemoteMac(baseURL: nil)
+        remote.transport = .directSSH
+        remote.directEndpoint = try DirectSSHEndpoint(host: "linux.example", port: 8801)
+        let connection = FakeRemoteMacHostConnection(offerSDP: "unused")
+        let registry = makeRegistry(
+            clientDeviceIDProvider: { throw CocoaError(.fileReadNoPermission) },
+            signalingTransport: { _, _ in Issue.record("Direct SSH used signaling"); throw URLError(.unsupportedURL) },
+            directConnectionFactory: { _, _ in connection }
+        )
+
+        _ = try await registry.connect(to: remote)
+        #expect(registry.activeConnectionCount == 1)
+        await registry.disconnectAndWait(identity: RemoteMacIdentity(remote))
+    }
+
     private func makeRegistry(
+        clientDeviceIDProvider: @escaping RemoteMacConnectionRegistry.ClientDeviceIDProvider = {
+            RemoteDeviceID(value: "client-mac")
+        },
         signalingTransport: @escaping SignalingClient.Transport,
         pinnedHostProvider: RemoteMacConnectionRegistry.PinnedHostProvider? = nil,
         pinnedHostUpdater: RemoteMacConnectionRegistry.PinnedHostUpdater? = nil,
@@ -885,7 +937,7 @@ struct RemoteMacConnectionRegistryTests {
             identityProvider: {
                 try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x41, count: 32))
             },
-            clientDeviceID: RemoteDeviceID(value: "client-mac"),
+            clientDeviceIDProvider: clientDeviceIDProvider,
             pinnedHostProvider: effectivePinnedHostProvider,
             pinnedHostUpdater: pinnedHostUpdater,
             signalingClient: SignalingClient(transport: effectiveTransport),

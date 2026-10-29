@@ -65,7 +65,7 @@ final class GrafttyBonjourBrowser: NSObject {
     }
 
     private let browser: NetServiceBrowser
-    private let localDeviceID: RemoteDeviceID
+    private let localDeviceIDProvider: () throws -> RemoteDeviceID
     private let localFingerprint: RemoteIdentityFingerprint
     private let supportedProtocolVersions: Set<String>
     private let onCandidate: (GrafttyBonjourCandidate) -> Void
@@ -76,7 +76,7 @@ final class GrafttyBonjourBrowser: NSObject {
     private(set) var candidates: [GrafttyBonjourCandidate] = []
     private var isBrowsing = false
 
-    init(
+    convenience init(
         localDeviceID: RemoteDeviceID,
         localFingerprint: RemoteIdentityFingerprint,
         supportedProtocolVersions: Set<String>,
@@ -84,7 +84,27 @@ final class GrafttyBonjourBrowser: NSObject {
         onCandidate: @escaping (GrafttyBonjourCandidate) -> Void,
         onCandidateRemoved: @escaping (RemoteMacIdentity) -> Void = { _ in }
     ) {
-        self.localDeviceID = localDeviceID
+        self.init(
+            localDeviceIDProvider: { localDeviceID },
+            localFingerprint: localFingerprint,
+            supportedProtocolVersions: supportedProtocolVersions,
+            browser: browser,
+            onCandidate: onCandidate,
+            onCandidateRemoved: onCandidateRemoved
+        )
+    }
+
+    /// REMOTE-1.18: the device ID only filters out this Mac's own service, so
+    /// it is read per resolution and an unreadable store never stops discovery.
+    init(
+        localDeviceIDProvider: @escaping () throws -> RemoteDeviceID,
+        localFingerprint: RemoteIdentityFingerprint,
+        supportedProtocolVersions: Set<String>,
+        browser: NetServiceBrowser = NetServiceBrowser(),
+        onCandidate: @escaping (GrafttyBonjourCandidate) -> Void,
+        onCandidateRemoved: @escaping (RemoteMacIdentity) -> Void = { _ in }
+    ) {
+        self.localDeviceIDProvider = localDeviceIDProvider
         self.localFingerprint = localFingerprint
         self.supportedProtocolVersions = supportedProtocolVersions
         self.browser = browser
@@ -147,7 +167,7 @@ final class GrafttyBonjourBrowser: NSObject {
     ) {
         guard let candidate = Self.candidate(
             from: service,
-            localDeviceID: localDeviceID,
+            localDeviceID: try? localDeviceIDProvider(),
             localFingerprint: localFingerprint,
             supportedProtocolVersions: supportedProtocolVersions,
             discoveredAt: discoveredAt
@@ -174,7 +194,7 @@ final class GrafttyBonjourBrowser: NSObject {
 
     static func candidate(
         from service: ResolvedService,
-        localDeviceID: RemoteDeviceID,
+        localDeviceID: RemoteDeviceID?,
         localFingerprint: RemoteIdentityFingerprint,
         supportedProtocolVersions: Set<String>,
         discoveredAt: Date
@@ -183,7 +203,8 @@ final class GrafttyBonjourBrowser: NSObject {
               let metadata = try? GrafttyBonjourService.decodeTXT(txtRecordData),
               let filtered = GrafttyBonjourService.filterCandidates(
                   [metadata],
-                  localDeviceID: localDeviceID,
+                  // Without a readable ID, a fingerprint match alone marks this Mac.
+                  localDeviceID: localDeviceID ?? metadata.deviceID,
                   localFingerprint: localFingerprint,
                   supportedProtocolVersions: supportedProtocolVersions
               ).first,

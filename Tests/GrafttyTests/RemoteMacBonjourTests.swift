@@ -115,6 +115,36 @@ struct RemoteMacBonjourTests {
         #expect(candidate == nil)
     }
 
+    @Test("@spec REMOTE-1.18: While the host device-ID store is unreadable, Bonjour discovery shall keep publishing other Macs and shall treat a service advertising this Mac's host-key fingerprint as itself, without generating a device ID.")
+    func discoveryContinuesWhileDeviceIDIsUnreadable() throws {
+        final class PublishedCandidates {
+            var values: [GrafttyBonjourCandidate] = []
+        }
+        let published = PublishedCandidates()
+        let browser = try GrafttyBonjourBrowser(
+            localDeviceIDProvider: { throw CocoaError(.fileReadNoPermission) },
+            localFingerprint: fingerprint(0x44),
+            supportedProtocolVersions: ["1"]
+        ) { candidate in
+            published.values.append(candidate)
+        }
+
+        browser.publishResolvedService(try GrafttyBonjourBrowser.ResolvedService(
+            name: "Self",
+            hostName: "self.local.",
+            port: 9443,
+            txtRecordData: txt(deviceID: localDeviceID, fingerprintByte: 0x44)
+        ), discoveredAt: Date())
+        browser.publishResolvedService(try GrafttyBonjourBrowser.ResolvedService(
+            name: "Studio",
+            hostName: "studio.local.",
+            port: 9443,
+            txtRecordData: txt()
+        ), discoveredAt: Date())
+
+        #expect(published.values.map(\.deviceID) == [RemoteDeviceID(value: "remote-mac")])
+    }
+
     @Test("protocol-incompatible candidates are not published")
     func protocolIncompatibleCandidatesAreNotPublished() throws {
         final class PublishedCandidates {

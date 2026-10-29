@@ -640,11 +640,7 @@ struct GrafttyApp: App {
         }
         let teamInbox = services.teamInbox
         let remoteTeamRouter = services.remoteTeamRouter
-        let localWorktreeOrigin = WorktreeOrigin(
-            deviceID: AppServices.localRemoteDeviceID(),
-            deviceLabel: AppServices.localHostDisplayName(),
-            relayDepth: 0
-        )
+        let localWorktreeOrigin = SidebarHostController.shared.owner
         let worktreeManagement = WorktreeManagement(
             appState: binding, terminalManager: tm, services: services, localOrigin: localWorktreeOrigin
         )
@@ -1161,13 +1157,19 @@ struct GrafttyApp: App {
         }
     }
 
-    private static func remoteAccessStartupMessage(for error: Error) -> String {
+    static func remoteAccessStartupMessage(for error: Error) -> String {
         if let serviceError = error as? AppServices.RemoteMacAccessServiceError {
             switch serviceError {
             case .disabled:
                 return "Paired-device access is disabled in this Graftty configuration."
             case .hostAgentUnavailable:
                 return "Paired-device access is unavailable because WebRTC could not start."
+            case .deviceIDUnavailable(let underlying):
+                return """
+                Paired-device access is unavailable because Graftty could not \
+                read this Mac's device ID. Restart Graftty to try again. \
+                (\(underlying))
+                """
             case .listenerPortUnavailable:
                 break
             }
