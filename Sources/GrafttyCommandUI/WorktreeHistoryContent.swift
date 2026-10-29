@@ -50,6 +50,12 @@ struct WorktreeHistoryContent: View {
                     case .inputs: railed(row.events, title: "You") { inputs(row) }
                     case .peerMessages:
                         railed(row.events, title: row.events[0].sourceWorktreeName ?? row.events[0].title) { peerMessages(row) }
+                    case .agentTurn:
+                        railed(row.events) {
+                            TimelineMessageLine(event: row.events[0], turn: row, secondary: secondary, gists: gists,
+                                reveal: revealInTerminal == nil ? nil : { reveal(row.id) })
+                            missingNote(row.id)
+                        }
                     }
                 }
             }
@@ -122,11 +128,7 @@ struct WorktreeHistoryContent: View {
 
     private func eventRow(_ event: WorktreeTimeline.Event) -> some View {
         railed([event]) {
-            if event.kind == .agentResponse {
-                TimelineMessageLine(event: event, secondary: secondary, gists: gists,
-                    reveal: revealInTerminal == nil ? nil : { reveal(event.id) })
-                missingNote(event.id)
-            } else if !event.completed.isEmpty {
+            if !event.completed.isEmpty {
                 Text(event.completed).font(.callout).lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -286,9 +288,10 @@ struct WorktreeHistoryContent: View {
     private static func date(_ timestamp: Double) -> Date { Date(timeIntervalSinceReferenceDate: timestamp) }
 }
 
-/// A peer message or agent response as a wrapping summary; tapping reveals the original text.
-private struct TimelineMessageLine: View {
+/// Fixed preview space keeps generation from moving the rest of the timeline.
+struct TimelineMessageLine: View {
     let event: WorktreeTimeline.Event
+    var turn: WorktreeTimeline.Row? = nil
     var count: Int = 1
     let secondary: Color
     let gists: PeerMessageGistProvider
@@ -296,31 +299,63 @@ private struct TimelineMessageLine: View {
     @State private var gist: PeerMessageGist?
     @State private var expanded = false
 
+    private struct Request: Hashable {
+        let text: String
+        let isReady: Bool
+    }
+
     var body: some View {
-        let text = event.completed
-        let shown = gist ?? .immediate(text)
+        let text = turn?.fullText ?? event.completed
+        let request = Request(text: turn?.summaryInput ?? text, isReady: turn?.isComplete ?? true)
+        let fallback = turn?.events.last?.completed ?? text
+        let shown = gist ?? (request.isReady ? PeerMessageGist.verbatim(request.text) : nil)
         VStack(alignment: .leading, spacing: 4) {
             Button { expanded.toggle() } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(shown.text).font(.callout).lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if count > 1 {
-                        Text("×\(count)").font(.caption).foregroundStyle(secondary).fixedSize()
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .top, spacing: 6) {
+                        // Lay out four actual lines once. Text and skeleton are overlays,
+                        // so differing glyph metrics cannot change the row's height.
+                        Text("Ag\nAg\nAg\nAg").font(.callout).lineSpacing(2).hidden()
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .overlay(alignment: .topLeading) {
+                                if let shown {
+                                    Text(shown.text).font(.callout).lineSpacing(2)
+                                        .lineLimit(4).truncationMode(.tail)
+                                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                                } else {
+                                    skeleton
+                                }
+                            }
+                        if count > 1 {
+                            Text("×\(count)").font(.caption).foregroundStyle(secondary).fixedSize()
+                        }
                     }
-                    Spacer(minLength: 0)
+                    // Reserve the same footer before and after the generated label arrives.
+                    HStack {
+                        Label("AI summary", systemImage: "sparkles").hidden().fixedSize()
+                            .overlay(alignment: .leading) {
+                                if shown == nil {
+                                    Text(request.isReady ? "Summarizing…" : "Working…")
+                                } else if shown?.isGenerated == true {
+                                    Label("AI summary", systemImage: "sparkles").fixedSize()
+                                }
+                            }
+                        Spacer(minLength: 8)
+                        Text(expanded ? "Show less" : "Show more")
+                    }
+                    .font(.caption2).foregroundStyle(secondary)
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-            .accessibilityHint("Show the full message")
+            .accessibilityLabel(shown?.text ?? (request.isReady ? "Summarizing agent messages" : "Agent turn in progress"))
+            .accessibilityHint(turn == nil ? "Show the full message" : "Show all captured messages in this turn")
             .accessibilityIdentifier("worktree.context.history.message.\(event.id)")
             .contextMenu {
                 if let reveal { Button("Show in Terminal", systemImage: "terminal", action: reveal) }
-            }
-            if shown.isGenerated {
-                Label("AI summary", systemImage: "sparkles").font(.caption2).foregroundStyle(secondary)
             }
             if expanded {
                 Text(text).font(.callout).lineSpacing(2)
@@ -335,6 +370,26 @@ private struct TimelineMessageLine: View {
                 }
             }
         }
-        .task(id: text) { gist = await gists.gist(for: text) }
+        .task(id: request) {
+            gist = nil
+            guard request.isReady else { return }
+            let result = await gists.gist(for: request.text)
+            guard !Task.isCancelled else { return }
+            gist = result.isGenerated ? result : .immediate(fallback)
+        }
+    }
+
+    private var skeleton: some View {
+        GeometryReader { geometry in
+            VStack(alignment: .leading, spacing: 9) {
+                ForEach(Array([0.94, 0.83, 0.91, 0.58].enumerated()), id: \.offset) { _, fraction in
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(secondary.opacity(0.16))
+                        .frame(width: geometry.size.width * fraction, height: 8)
+                }
+            }
+            .padding(.top, 4)
+        }
+        .accessibilityHidden(true)
     }
 }

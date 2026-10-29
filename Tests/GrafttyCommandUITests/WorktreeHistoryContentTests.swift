@@ -53,24 +53,30 @@ struct WorktreeHistoryContentTests {
             try await Task.sleep(for: .milliseconds(100))
             host.layoutSubtreeIfNeeded()
         }
-        try await click(x: width / 2, fromBottom: 198)
+        try await click(x: width / 2, fromBottom: 284)
         #expect(openedPaths == ["/repo/layout"])
         #expect(abs(host.fittingSize.height - collapsedHeight) < 3, "Opening the worktree must not toggle the card")
-        try await click(x: width / 2, fromBottom: 108)
+        try await click(x: width / 2, fromBottom: 202)
         #expect(host.fittingSize.height > collapsedHeight + 400, "Tapping a message must reveal its complete text")
         #expect(openedPaths.count == 1, "Expanding must not navigate to the worktree")
         let expandedHeight = host.fittingSize.height
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
-        try await click(x: 62, fromBottom: 148)
+        try await click(x: 62, fromBottom: 234)
         #expect(host.fittingSize.height > expandedHeight + 25, "The earlier control must reveal the older message")
         window.setContentSize(host.fittingSize)
         host.layoutSubtreeIfNeeded()
         try capture(host, named: "messages-expanded-\(Int(width))")
     }
 
-    @Test(arguments: [260.0, 390.0])
-    func peerSummariesWrapWithoutLosingTheirLastWords(width: Double) {
+    @Test("@spec CONTEXT-43: While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall reserve four text lines and a fixed footer, show a skeleton while awaiting a completed turn or its summary, truncate overflowing previews with an ellipsis, and reveal the captured text on expansion without shifting later rows when generation finishes.")
+    func summariesReserveFourLinesRegardlessOfTextLength() {
+        for width in [260.0, 390.0] {
+            #expect(abs(summaryHeight("Updated the workflows.", width: width) - summaryHeight(String(repeating: "Long summary with enough words to wrap ", count: 20), width: width)) < 1)
+        }
+    }
+
+    private func summaryHeight(_ text: String, width: Double) -> CGFloat {
         func height(_ text: String) -> CGFloat {
             var history = WorktreeHistory()
             history.record(.init(text: "<graftty-peer-message agent=\"/repo/layout#claude\">\(text)</graftty-peer-message>", at: .now))
@@ -79,9 +85,87 @@ struct WorktreeHistoryContentTests {
                 .padding(20).frame(width: width).fixedSize(horizontal: false, vertical: true))
             return host.fittingSize.height
         }
-        let long = "Updated the build workflows so pull requests run the modern migration checks and retain the dependency coverage required by the integration branch."
-        #expect(height(long) > height("Updated the workflows.") + 12,
-                "The summary must grow to fit multiple lines instead of clipping or truncating its conclusion")
+        return height(text)
+    }
+
+    private actor SummaryGate {
+        var inputs: [String] = []
+        private var pending: [CheckedContinuation<String?, Never>] = []
+        private var result: String?
+
+        func summarize(_ text: String) async -> String? {
+            inputs.append(text)
+            if let result { return result }
+            return await withCheckedContinuation { pending.append($0) }
+        }
+
+        func finish(_ text: String) {
+            result = text
+            for continuation in pending { continuation.resume(returning: text) }
+            pending.removeAll()
+        }
+    }
+
+    @Test(arguments: [260.0, 390.0])
+    func turnWaitsForCompletionThenSummarizesEndpointsWithoutMovingFollowingRows(width: Double) async throws {
+        let start = Date()
+        let gate = SummaryGate()
+        let gists = PeerMessageGistProvider { await gate.summarize($0) }
+        var history = WorktreeHistory()
+        func add(_ id: String, _ text: String, final: Bool) {
+            history.record(WorktreeHistory.AgentResponse(id: id, text: text,
+                at: start.addingTimeInterval(Double(history.responses.count)), runtime: "codex",
+                sessionID: "session", isFinal: final))
+        }
+        func content() -> some View {
+            let turn = WorktreeTimeline(history: history, brief: nil).rows(showAll: false)[0]
+            return VStack(alignment: .leading, spacing: 16) {
+                TimelineMessageLine(event: turn.events[0], turn: turn, secondary: .secondary, gists: gists)
+                Text("Following row")
+            }
+            .padding(20).frame(width: width).fixedSize(horizontal: false, vertical: true)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, .dark)
+        }
+        add("first", "I will inspect the timeline.", final: false)
+        let host = NSHostingView(rootView: content())
+        let window = NSWindow(contentRect: .init(origin: NSPoint(x: -10000, y: -10000), size: host.fittingSize),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(80))
+        let workingHeight = host.fittingSize.height
+        add("middle", "This intermediate update must not reach the model.", final: false)
+        host.rootView = content()
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(await gate.inputs.isEmpty)
+        #expect(abs(host.fittingSize.height - workingHeight) < 1)
+        add("last", "Fixed the timeline and checked both clients.", final: true)
+        host.rootView = content()
+        for _ in 0..<100 {
+            if await !gate.inputs.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        host.layoutSubtreeIfNeeded()
+        let pendingHeight = host.fittingSize.height
+        let pendingImage = try snapshot(host)
+        try capture(host, named: "turn-skeleton-\(Int(width))")
+        let summary = "Fixed the timeline on Mac and mobile. Agent turns now use one expandable summary with four reserved lines, keeping later rows in place while the on-device model summarizes the first and last messages."
+        await gate.finish(summary)
+        for _ in 0..<100 {
+            host.layoutSubtreeIfNeeded()
+            if try snapshot(host) != pendingImage { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        host.layoutSubtreeIfNeeded()
+        #expect(await gate.inputs == ["First agent message:\nI will inspect the timeline.\n\nLast agent message:\nFixed the timeline and checked both clients."])
+        #expect(abs(host.fittingSize.height - pendingHeight) < 1)
+        #expect(abs(host.fittingSize.height - workingHeight) < 1)
+        #expect(try snapshot(host) != pendingImage, "The resolved summary must visibly replace the skeleton")
+        try capture(host, named: "turn-summary-\(Int(width))")
     }
 
     @Test(arguments: [260.0, 390.0], [ColorScheme.dark, .light])
@@ -129,9 +213,13 @@ struct WorktreeHistoryContentTests {
         guard let path = ProcessInfo.processInfo.environment["GRAFTTY_HISTORY_RENDER_DIR"] else { return }
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try snapshot(host).write(to: directory.appendingPathComponent(name + ".png"))
+    }
+
+    private func snapshot(_ host: NSView) throws -> Data {
         let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
-        try bitmap.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent(name + ".png"))
+        return try #require(bitmap.representation(using: .png, properties: [:]))
     }
 
     @Test("@spec CONTEXT-15: When Context is opened on Mac or mobile, the application shall show its history section without a disclosure, label human input separately from agent progress, separate rows by local day with Today, Yesterday, or a medium date, and show a short local time for each visible row while fitting the available width.")

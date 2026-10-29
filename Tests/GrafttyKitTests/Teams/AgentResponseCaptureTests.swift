@@ -16,9 +16,36 @@ struct AgentResponseCaptureTests {
         let response = try #require(AgentResponseCapture.response(from: data, runtime: .codex, sessionID: "session"))
         #expect(response.text == "I will implement B on both platforms.")
         #expect(response.timestamp == 814_905_000)
+        #expect(response.sessionID == "session")
+        #expect(response.isFinal == false)
+        #expect(AgentResponseCapture.response(from: try codex("Done.", phase: "final"), runtime: .codex, sessionID: "session")?.isFinal == true)
         #expect(response.id == AgentResponseCapture.response(from: data, runtime: .codex, sessionID: "session", offset: 900)?.id)
         #expect(response.id != AgentResponseCapture.response(from: data, runtime: .codex, sessionID: "another")?.id)
         #expect(AgentResponseCapture.response(from: try codex("Private thoughts", phase: "analysis"), runtime: .codex, sessionID: "session") == nil)
+    }
+
+    @Test("@spec CONTEXT-44: When a provider finishes a turn, the application shall retain its session and final-response boundary, including when the Stop hook follows an already captured message, so that the timeline generates one summary after completion.")
+    func stopMarksAnAlreadyDrainedResponseFinalExactlyOnce() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("session.jsonl")
+        var data = try codex("The final result.")
+        data.append(0x0A)
+        try data.write(to: file)
+        let handoff = AttentionFileHandoff(rootDirectory: root.appendingPathComponent("handoff"))
+        let capture = AgentResponseCapture(handoff: handoff)
+        let payload: [String: Any] = ["transcript_path": file.path]
+        var history = WorktreeHistory()
+        try capture.capture(payload: payload, runtime: .codex, worktree: "/task", sessionID: "session")
+        try handoff.consumeActivities { if case .response(let event) = $0 { history.record(event.response) } }
+        #expect(history.responses.first?.isFinal == false)
+        try capture.capture(payload: payload, runtime: .codex, worktree: "/task", sessionID: "session", turnCompleted: true)
+        try handoff.consumeActivities { if case .response(let event) = $0 { history.record(event.response) } }
+        #expect(history.responses.count == 1)
+        #expect(history.responses.first?.isFinal == true)
+        try capture.capture(payload: payload, runtime: .codex, worktree: "/task", sessionID: "session", turnCompleted: true)
+        #expect(try handoff.consumeActivities { _ in Issue.record("Repeated Stop must not re-publish completion") } == 0)
     }
 
     @Test func claudeCapturesTextWithoutThinkingToolCallsOrSidechains() throws {
@@ -128,6 +155,13 @@ struct AgentResponseCaptureTests {
         _ = try handoff.consumeActivities { _ in }
         try capture.capture(payload: payload, runtime: .codex, worktree: "/task/B", sessionID: "session")
         #expect(try handoff.consumeActivities { _ in Issue.record("Changing directories must not replay old replies") } == 0)
+        try capture.capture(payload: payload, runtime: .codex, worktree: "/task/B", sessionID: "session", turnCompleted: true)
+        let completions = try handoff.consumeActivities {
+            guard case .response(let event) = $0 else { Issue.record("Expected response completion"); return }
+            #expect(event.worktree == "/task/A")
+            #expect(event.response.isFinal == true)
+        }
+        #expect(completions == 1)
     }
 
     @Test func initialTailStartingAtARecordBoundaryKeepsTheFirstCompleteReply() throws {

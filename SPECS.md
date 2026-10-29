@@ -862,6 +862,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.30** When a creating worktree is selected, the application shall display its progress and output in the terminal content area, switch to the terminal on success, and retain failed or interrupted diagnostics until a terminal is explicitly opened.
 
+**GIT-5.31** When worktree creation succeeds on Mac or mobile, the application shall hide the sidebar's Creation complete status one minute after completion while retaining creation diagnostics and keeping pending, failed, and interrupted statuses visible.
+
 ### GIT-6.x — Auto-tracking Pinned Agents
 
 **GIT-6.1** When the user enables auto-tracking on a pinned agent or main checkout, the application shall persist the opt-in across relaunches and default older worktrees to disabled.
@@ -4616,7 +4618,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-26.x
 
-**CONTEXT-26** When Context history shows a peer message or visible agent response, the application shall show single-line text of at most 80 characters verbatim without running a model, otherwise show an on-device Apple Intelligence summary marked as generated when available, and otherwise show the first sentence or line unmarked, limiting summaries and fallbacks to 240 characters while allowing them to wrap, generating each text at most once per process.
+**CONTEXT-26** When Context history shows a peer message or completed agent turn, the application shall show single-line text of at most 80 characters verbatim without running a model, otherwise show an on-device Apple Intelligence summary marked as generated when available, and otherwise show the first sentence or line of the last message unmarked, limiting summaries and fallbacks to 240 characters within a four-line expandable preview, generating each summary input at most once per process.
 
 ### CONTEXT-27.x
 
@@ -4672,11 +4674,23 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-40.x
 
-**CONTEXT-40** When a provider emits a visible agent response, the application shall retain it once in worktree history independently of attention, order it between human inputs and other events by its original time, and show its wrapping summary with the original text available on expansion on Mac and mobile.
+**CONTEXT-40** When a provider emits a visible agent response, the application shall retain it once in worktree history independently of attention, order it between human inputs and other events by its original time, and include it in one expandable turn summary with the captured text available on Mac and mobile.
 
 ### CONTEXT-41.x
 
 **CONTEXT-41** When Codex or Claude hooks expose a session transcript, the application shall capture visible assistant responses incrementally through the durable handoff, exclude reasoning, tool output and subagent responses, tolerate incomplete records, and replay responses without duplicating history or clearing attention.
+
+### CONTEXT-42.x
+
+**CONTEXT-42** When worktree history shows agent responses on Mac or mobile, the application shall show one stable row per agent turn across intervening recaps, summarize only its first and last visible messages, retain all captured messages for expansion, and separate turns at provider completion or a new input.
+
+### CONTEXT-43.x
+
+**CONTEXT-43** While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall reserve four text lines and a fixed footer, show a skeleton while awaiting a completed turn or its summary, truncate overflowing previews with an ellipsis, and reveal the captured text on expansion without shifting later rows when generation finishes.
+
+### CONTEXT-44.x
+
+**CONTEXT-44** When a provider finishes a turn, the application shall retain its session and final-response boundary, including when the Stop hook follows an already captured message, so that the timeline generates one summary after completion.
 
 ## MEM — MEM
 

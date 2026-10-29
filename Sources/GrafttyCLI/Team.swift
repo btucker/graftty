@@ -235,7 +235,7 @@ struct TeamHook: ParsableCommand {
         // Capture commentary at tool boundaries as well as the final Stop. This
         // file handoff works even when the provider cannot reach the app socket.
         try? AgentResponseCapture().capture(payload: stdinPayload, runtime: runtime,
-            worktree: worktreePath, sessionID: resolvedSessionID)
+            worktree: worktreePath, sessionID: resolvedSessionID, turnCompleted: event == .stop)
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )

@@ -204,7 +204,9 @@ public struct AttentionFileHandoff: Sendable {
         guard !worktree.isEmpty, !response.text.isEmpty else { throw AttentionFileHandoffError.invalidRecap }
         try ensureDirectory()
         let event = AttentionFileResponseEvent(worktree: worktree, response: response)
-        let name = "response-\(key(for: worktree + "\0" + response.id)).json"
+        // A final upgrade must survive acknowledgement of an earlier nonfinal file.
+        let version = response.isFinal == true ? "\0final" : ""
+        let name = "response-\(key(for: worktree + "\0" + response.id + version)).json"
         try JSONEncoder().encode(event).write(to: rootDirectory.appendingPathComponent(name), options: .atomic)
     }
 

@@ -5,6 +5,31 @@ import GrafttyProtocol
 
 @Suite("Attention file handoff")
 struct AttentionFileHandoffTests {
+    @Test func completionSurvivesAcknowledgingAnOlderResponse() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let handoff = AttentionFileHandoff(rootDirectory: root)
+        let response = WorktreeHistory.AgentResponse(id: "reply", text: "Done.", at: .now,
+            runtime: "codex", sessionID: "session", isFinal: false)
+        var history = WorktreeHistory()
+        try handoff.response(response, worktree: "/task")
+        let pending = try handoff.takeActivities {
+            if case .response(let event) = $0 { history.record(event.response) }
+        }
+        var completed = response
+        completed.isFinal = true
+        try handoff.response(completed, worktree: "/task")
+        try handoff.remove(pending)
+        #expect(try handoff.consumeActivities {
+            if case .response(let event) = $0 { history.record(event.response) }
+        } == 1)
+        history.record(response)
+        history.record(.init(id: response.id, text: "Stale partial result.", at: .now, runtime: "codex"))
+        #expect(history.responses.count == 1)
+        #expect(history.responses.first?.isFinal == true, "A late nonfinal delivery cannot undo completion")
+        #expect(history.responses == [completed], "A stale delivery cannot replace the final text or session metadata")
+    }
+
     @Test("@spec REMOTE-23.9: When a host consumes Attention events, the application shall retain events for worktrees owned by another host.")
     func retainsOtherHostsEvents() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
