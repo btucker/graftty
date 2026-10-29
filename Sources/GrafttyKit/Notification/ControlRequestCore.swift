@@ -180,10 +180,10 @@ public enum ControlRequestCore {
     /// Records a stopped turn and posts its notification through the platform.
     public static func recordStoppedTurn(callerPath: String, runtime: TeamHookRuntime, callerAgentID: String?,
                                          sessionID: String?, paneSessionName: String?, recap: AttentionRecap?,
-                                         stoppedAt: Date, recapReportedAt: Date? = nil, platform: any ControlPlatform) {
+                                         stoppedAt: Date, recapReportedAt: Date? = nil, turnID: String? = nil, platform: any ControlPlatform) {
         if let notification = platform.state.recordStoppedTurn(
             callerPath: callerPath, runtime: runtime, callerAgentID: callerAgentID, sessionID: sessionID,
-            paneSessionName: paneSessionName, recap: recap, stoppedAt: stoppedAt, recapReportedAt: recapReportedAt,
+            paneSessionName: paneSessionName, recap: recap, stoppedAt: stoppedAt, recapReportedAt: recapReportedAt, turnID: turnID,
             paneTitle: { platform.paneTitle(for: $0, in: $1) }
         ) {
             platform.postAgentNotification(notification, worktreePath: callerPath)
@@ -285,9 +285,15 @@ public enum ControlRequestCore {
         switch action {
         case .recordStoppedTurn:
             if let report = fallbackReport, report.worktree == callerPath,
-               report.agentID == callerAgentID, report.recap.isValid,
-               platform.attentionRecaps.report(report.recap, worktree: callerPath, agentID: report.agentID, reportedAt: report.reportedAt) {
-                platform.state.recordAgentRecap(report.recap, callerPath: callerPath, reportedAt: report.reportedAt)
+               report.agentID == callerAgentID, report.recap.isValid {
+                if platform.state.hasConsumedAgentReport(callerPath: callerPath, runtime: runtime,
+                    callerAgentID: callerAgentID, sessionID: sessionID, reportedAt: report.reportedAt) {
+                    let key = AgentHookAttentionIdentity.key(runtime: runtime, sessionID: sessionID, callerAgentID: callerAgentID)
+                    let consumed = key.flatMap { platform.state.worktree(forPath: callerPath)?.consumedAgentReports[$0] }
+                    if turnID == nil || consumed?.turnID == turnID { return .teamHookOutput("{}") }
+                } else if platform.attentionRecaps.report(report.recap, worktree: callerPath, agentID: report.agentID, reportedAt: report.reportedAt) {
+                    platform.state.recordAgentRecap(report.recap, callerPath: callerPath, reportedAt: report.reportedAt)
+                }
             }
             let reportedAt = platform.attentionRecaps.reportedAt(worktree: callerPath, agentID: callerAgentID)
             switch platform.attentionRecaps.stop(worktree: callerPath, agentID: callerAgentID,
@@ -299,7 +305,7 @@ public enum ControlRequestCore {
             case .record(let recap):
                 recordStoppedTurn(callerPath: callerPath, runtime: runtime, callerAgentID: callerAgentID,
                                   sessionID: sessionID, paneSessionName: paneSessionName, recap: recap,
-                                  stoppedAt: Date(), recapReportedAt: reportedAt, platform: platform)
+                                  stoppedAt: Date(), recapReportedAt: reportedAt, turnID: turnID, platform: platform)
             }
         case .record(let reason):
             if let notification = platform.state.recordAgentAttention(

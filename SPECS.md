@@ -4314,6 +4314,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.30** When the app receives an Attention recap, it shall persist the brief immediately while reserving stopped attention and its notification for the actual Stop hook.
 
+**AGENT-3.31** When a report recovers after completion through another delivery path, the application shall ignore duplicate completion and record newer provider turns without reusing the consumed recap.
+
 ### AGENT-4.x
 
 **AGENT-4.1** When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.

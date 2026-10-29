@@ -25,6 +25,7 @@ public struct AttentionFileStopEvent: Codable, Sendable {
     public let recap: AttentionRecap?
     public let stoppedAt: Date
     public var recapReportedAt: Date? = nil
+    public var turnID: String? = nil
 }
 
 /// The CLI publishes this independently of the provider's eventual Stop.
@@ -193,7 +194,8 @@ public struct AttentionFileHandoff: Sendable {
             paneSessionName: paneSessionName,
             recap: recap,
             stoppedAt: stoppedAt,
-            recapReportedAt: published?.reportedAt
+            recapReportedAt: published?.reportedAt,
+            turnID: turnID
         )
         try enqueueStop(event)
         if let marker { try? Data(completedTurn.utf8).write(to: marker, options: .atomic) }

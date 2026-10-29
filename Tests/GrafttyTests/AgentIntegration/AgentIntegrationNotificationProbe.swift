@@ -37,7 +37,7 @@ final class AgentIntegrationNotificationProbe {
         GrafttyApp.recordStoppedTurn(callerPath: event.worktree, runtime: event.runtime,
             callerAgentID: event.agentID, sessionID: event.sessionID,
             paneSessionName: event.paneSessionName, recap: event.recap,
-            stoppedAt: event.stoppedAt, recapReportedAt: event.recapReportedAt, appState: binding, terminalManager: terminalManager,
+            stoppedAt: event.stoppedAt, recapReportedAt: event.recapReportedAt, turnID: event.turnID, appState: binding, terminalManager: terminalManager,
             postNotification: { self.pending.append($0) })
     }
 

@@ -129,8 +129,52 @@ struct ControlRequestCoreTests {
         #expect(platform.notifications.count == 1)
         #expect(await ControlRequestCore.handleRequest(roundTripped, platform: platform) == .teamHookOutput("{}"))
         #expect(platform.notifications.count == 1)
+        let restarted = try RecordingPlatform()
+        restarted.state = try JSONDecoder().decode(AppState.self, from: JSONEncoder().encode(platform.state))
+        #expect(await ControlRequestCore.handleRequest(roundTripped, platform: restarted) == .teamHookOutput("{}"))
+        #expect(restarted.notifications.isEmpty)
         let next = await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .stop, sessionID: "s", paneSessionName: nil, turnID: "second", fallbackReport: report), platform: platform)
         #expect(next == .teamHookOutput(TeamHookRenderer.requestRecap()))
+    }
+
+    @Test("@spec AGENT-3.31: When a report recovers after completion through another delivery path, the application shall ignore duplicate completion and record newer provider turns without reusing the consumed recap.", arguments: ["first", "second"])
+    func recoveredReceiptCannotCompleteTwice(recoveredTurn: String) async throws {
+        let platform = try RecordingPlatform()
+        let handoff = AttentionFileHandoff(rootDirectory: platform.root.appendingPathComponent("handoff"))
+        let recap = AttentionRecap(title: "Recovery", completed: "Published", next: "Review", need: "Approve?", emoji: "🔇")
+        try handoff.publish(recap, worktree: "/repo", agentID: "codex-a")
+        let report = try #require(handoff.publishedReport(worktree: "/repo", agentID: "codex-a"))
+        let lock = handoff.rootDirectory.appendingPathComponent(".handoff.lock")
+        try FileManager.default.removeItem(at: lock)
+        try FileManager.default.createDirectory(at: lock, withIntermediateDirectories: false)
+        #expect(throws: (any Error).self) {
+            try handoff.stop(worktree: "/repo", agentID: "codex-a", runtime: .codex,
+                sessionID: "s", paneSessionName: nil, stopHookActive: false, turnID: "first")
+        }
+        #expect(await ControlRequestCore.handleRequest(.teamHook(callerWorktree: "/repo", callerAgentID: "codex-a", runtime: .codex, event: .stop, sessionID: "s", paneSessionName: nil, turnID: "first", fallbackReport: report), platform: platform) == .teamHookOutput("{}"))
+        #expect(throws: (any Error).self) {
+            try handoff.acknowledgeSocketStop(worktree: "/repo", agentID: "codex-a", sessionID: "s", turnID: "first", reportedAt: report.reportedAt)
+        }
+        // The completion fence must survive an app restart, independently
+        // of both the in-memory coordinator and the broken handoff directory.
+        platform.state = try JSONDecoder().decode(AppState.self, from: JSONEncoder().encode(platform.state))
+        try FileManager.default.removeItem(at: lock)
+        _ = try handoff.stop(worktree: "/repo", agentID: "codex-a", runtime: .codex,
+            sessionID: "s", paneSessionName: nil, stopHookActive: false, turnID: recoveredTurn)
+        _ = try handoff.consumeStops { event in
+            ControlRequestCore.recordStoppedTurn(callerPath: event.worktree, runtime: event.runtime, callerAgentID: event.agentID,
+                sessionID: event.sessionID, paneSessionName: event.paneSessionName, recap: event.recap, stoppedAt: event.stoppedAt,
+                recapReportedAt: event.recapReportedAt, turnID: event.turnID, platform: platform)
+        }
+        #expect(platform.notifications.count == (recoveredTurn == "first" ? 1 : 2))
+        if recoveredTurn == "second" {
+            #expect(platform.state.worktree(forPath: "/repo")?.unseenAgentStop?.recap == nil)
+            ControlRequestCore.recordStoppedTurn(callerPath: "/repo", runtime: .codex, callerAgentID: "codex-a",
+                sessionID: "s", paneSessionName: nil, recap: recap, stoppedAt: Date().addingTimeInterval(1),
+                recapReportedAt: report.reportedAt.addingTimeInterval(-60), turnID: "third", platform: platform)
+            #expect(platform.state.hasConsumedAgentReport(callerPath: "/repo", runtime: .codex,
+                callerAgentID: "codex-a", sessionID: "s", reportedAt: report.reportedAt))
+        }
     }
 
     @Test("fire-and-forget messages apply only on the message path and answer nil on the request path")

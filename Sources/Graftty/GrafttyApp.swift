@@ -759,7 +759,7 @@ struct GrafttyApp: App {
                         callerPath: event.worktree, runtime: event.runtime,
                         callerAgentID: event.agentID, sessionID: event.sessionID,
                         paneSessionName: event.paneSessionName, recap: event.recap,
-                        stoppedAt: event.stoppedAt, recapReportedAt: event.recapReportedAt, appState: binding,
+                        stoppedAt: event.stoppedAt, recapReportedAt: event.recapReportedAt, turnID: event.turnID, appState: binding,
                         terminalManager: tm
                     )
                 }

@@ -31,13 +31,14 @@ extension GrafttyApp {
         recap: AttentionRecap?,
         stoppedAt: Date,
         recapReportedAt: Date? = nil,
+        turnID: String? = nil,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         postNotification: (@MainActor (AgentStopNotificationContent) -> Void)? = nil
     ) {
         guard let notification = appState.wrappedValue.recordStoppedTurn(
             callerPath: callerPath, runtime: runtime, callerAgentID: callerAgentID, sessionID: sessionID,
-            paneSessionName: paneSessionName, recap: recap, stoppedAt: stoppedAt, recapReportedAt: recapReportedAt,
+            paneSessionName: paneSessionName, recap: recap, stoppedAt: stoppedAt, recapReportedAt: recapReportedAt, turnID: turnID,
             paneTitle: { slot, _ in paneTitle(for: slot, terminalManager: terminalManager) }
         ) else { return }
         postAgentNotification(notification, worktreePath: callerPath, appState: appState, post: postNotification)

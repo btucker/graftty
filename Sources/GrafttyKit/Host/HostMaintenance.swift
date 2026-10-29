@@ -140,7 +140,7 @@ public extension HeadlessHostRuntime {
                     attentionReason: nil, platform: controlPlatform)
                 ControlRequestCore.recordStoppedTurn(callerPath: stop.worktree, runtime: stop.runtime,
                     callerAgentID: stop.agentID, sessionID: stop.sessionID, paneSessionName: stop.paneSessionName,
-                    recap: stop.recap, stoppedAt: stop.stoppedAt, recapReportedAt: stop.recapReportedAt, platform: controlPlatform)
+                    recap: stop.recap, stoppedAt: stop.stoppedAt, recapReportedAt: stop.recapReportedAt, turnID: stop.turnID, platform: controlPlatform)
             case .progress(let progress):
                 guard let index = state.indices(forWorktreePath: progress.worktree) else { return }
                 if let input = progress.userInput {
