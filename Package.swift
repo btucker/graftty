@@ -7,16 +7,16 @@ import Foundation
 // package reference. Local packages are opt-in: manifest evaluation is cached,
 // so filesystem auto-discovery cannot reliably follow dependency changes.
 let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let publishedGhosttyRevision = "da4d8ddc94ba66f89efa5208961a1116357117c3"
+let publishedGhosttyRevision = "5d4d0e38f3220a3bfd5eb2827eea15ae49bc2263"
 #if os(macOS)
 import CryptoKit
 
-struct RendererRecipe: Decodable {
-    let renderer: String
-    let wrapper: String
-    let zig: String
-    let rendererPatches: [String]
-    let wrapperPatches: [String]
+struct PagingBuild: Decodable {
+    let schemaVersion: Int
+    let snapshotABI: String
+    let inputs: [String: String]
+    let wrapperInputs: [String: String]
+    let artifacts: [String: String]
 }
 
 func digest(_ data: Data) -> String {
@@ -24,20 +24,40 @@ func digest(_ data: Data) -> String {
 }
 
 func compatibleRenderer(at path: String) -> Bool {
-    let patchDirectory = repositoryRoot.appendingPathComponent("scripts/ghostty-paging")
-    guard let recipeData = try? Data(contentsOf: patchDirectory.appendingPathComponent("recipe.json")),
-          let recipe = try? JSONDecoder().decode(RendererRecipe.self, from: recipeData),
-          let expectedPatchLines = try? (recipe.rendererPatches + recipe.wrapperPatches).map({ name in
-              "\(digest(try Data(contentsOf: patchDirectory.appendingPathComponent(name + ".patch"))))  \(name).patch"
-          }) else { return false }
-    guard FileManager.default.fileExists(atPath: path + "/Package.swift"),
-          let stamp = try? String(contentsOfFile: path + "/PAGING-BUILD.txt", encoding: .utf8)
-    else { return false }
-    let lines = stamp.split(separator: "\n").map(String.init)
-    return lines.count == 4 + expectedPatchLines.count
-        && Array(lines.prefix(3)) == ["renderer \(recipe.renderer)", "wrapper \(recipe.wrapper)", "zig \(recipe.zig)"]
-        && ["arm64_only true", "arm64_only false"].contains(lines[3])
-        && Array(lines.dropFirst(4)) == expectedPatchLines
+    let root = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+    let framework = root.appendingPathComponent("BinaryTarget/GhosttyKit.xcframework")
+    guard let manifest = try? String(contentsOf: root.appendingPathComponent("Package.swift"), encoding: .utf8),
+          manifest.contains("path: \"BinaryTarget/GhosttyKit.xcframework\""),
+          let data = try? Data(contentsOf: root.appendingPathComponent("PAGING-BUILD.json")),
+          let build = try? JSONDecoder().decode(PagingBuild.self, from: data),
+          build.schemaVersion == 1,
+          build.snapshotABI == "ghostty-8af6897c-paging-1",
+          build.inputs["Paging/recipe.json"] != nil,
+          !build.artifacts.isEmpty else { return false }
+    func matches(_ hashes: [String: String], under directory: URL) -> Bool {
+        hashes.allSatisfy { relative, expected in
+            guard !relative.hasPrefix("/"), !relative.split(separator: "/").contains(".."),
+                  let bytes = try? Data(contentsOf: directory.appendingPathComponent(relative)) else { return false }
+            return digest(bytes) == expected
+        }
+    }
+    guard matches(build.inputs, under: root), matches(build.wrapperInputs, under: root),
+          matches(build.artifacts, under: framework) else { return false }
+    func regularFiles(under directory: URL) -> [URL] {
+        let files = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.isRegularFileKey])
+        return (files?.allObjects as? [URL] ?? []).filter {
+            (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+        }
+    }
+    let sources = root.appendingPathComponent("Sources")
+    let enumerator = FileManager.default.enumerator(atPath: sources.path)
+    let wrapperFiles = Set((enumerator?.allObjects as? [String] ?? []).filter { relative in
+        let file = sources.appendingPathComponent(relative)
+        return file.pathExtension == "swift"
+            && (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+    }.map { "Sources/" + $0 })
+    return !wrapperFiles.isEmpty && wrapperFiles == Set(build.wrapperInputs.keys)
+        && regularFiles(under: framework).count == build.artifacts.count
 }
 
 let localGhosttyPath: String? = {
@@ -45,27 +65,23 @@ let localGhosttyPath: String? = {
           !override.isEmpty else {
         let discovered = repositoryRoot.appendingPathComponent(".dependencies/libghostty-spm").path
         if FileManager.default.fileExists(atPath: discovered) {
-            fputs("Ignoring auto-discovered paging renderer at \(discovered); using the committed published dependency without paging. Set GRAFTTY_GHOSTTY_PACKAGE_PATH explicitly to select a compatible paging renderer.\n", stderr)
+            fputs("Ignoring auto-discovered paging renderer at \(discovered); using the committed published paging dependency. Set GRAFTTY_GHOSTTY_PACKAGE_PATH explicitly for dependency development.\n", stderr)
         }
         return nil
     }
     let path = URL(fileURLWithPath: override, relativeTo: repositoryRoot).standardizedFileURL.path
     guard compatibleRenderer(at: path) else {
-        fatalError("Incompatible paging renderer at \(path). Run scripts/ghostty-paging/build-package.sh or unset GRAFTTY_GHOSTTY_PACKAGE_PATH to use the published development dependency.")
+        fatalError("Incompatible paging renderer at \(path). Rebuild it with libghostty-spm/build.sh, select Package.local.swift, and verify PAGING-BUILD.json, or unset GRAFTTY_GHOSTTY_PACKAGE_PATH to use the published paging dependency.")
     }
     return path
 }()
-if ProcessInfo.processInfo.environment["GRAFTTY_REQUIRE_PAGED_HISTORY"] == "1" && localGhosttyPath == nil {
-    fatalError("This build requires a compatible paging renderer. Run scripts/ghostty-paging/build-package.sh first.")
-}
-
 // Clang's explicit module cache can otherwise reuse libghostty.pcm after
 // Swift Build replaces the staged header at the same include path. A compiler
 // definition changes the module context hash for every Graftty consumer.
 let rendererIdentity: String = try {
     guard let path = localGhosttyPath else { return "published_" + publishedGhosttyRevision }
     var inputs = Data(path.utf8)
-    inputs.append(try Data(contentsOf: URL(fileURLWithPath: path + "/PAGING-BUILD.txt")))
+    inputs.append(try Data(contentsOf: URL(fileURLWithPath: path + "/PAGING-BUILD.json")))
     let framework = URL(fileURLWithPath: path + "/BinaryTarget/GhosttyKit.xcframework")
     let files = FileManager.default.enumerator(at: framework, includingPropertiesForKeys: [.contentModificationDateKey])
     let headers = (files?.allObjects as? [URL] ?? []).filter { $0.pathExtension == "h" || $0.pathExtension == "modulemap" }
@@ -80,7 +96,8 @@ let rendererIdentity: String = try {
 }()
 let rendererSettings: [SwiftSetting] = [
     .unsafeFlags(["-Xcc", "-DGRAFTTY_RENDERER_" + rendererIdentity]),
-] + (localGhosttyPath == nil ? [] : [.define("GRAFTTY_PAGED_HISTORY")])
+    .define("GRAFTTY_PAGED_HISTORY"),
+]
 #else
 let localGhosttyPath: String? = nil
 let rendererSettings: [SwiftSetting] = []

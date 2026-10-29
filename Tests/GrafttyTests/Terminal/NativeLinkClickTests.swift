@@ -8,12 +8,9 @@ struct NativeLinkClickTests {
     """, .enabled(if: ProcessInfo.processInfo.environment["GRAFTTY_LINK_CLICK_TEST_DIR"] != nil))
     func restoredWorkingDirectoryLinks() throws {
         let artifacts = try #require(ProcessInfo.processInfo.environment["GRAFTTY_LINK_CLICK_TEST_DIR"])
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        process.arguments = [root.appendingPathComponent("scripts/ghostty-paging/test-link-clicks.py").path,
+        process.arguments = [artifacts + "/test-link-clicks.py",
                              artifacts + "/link-click-probe", artifacts + "/make-link-fixture"]
         try process.run()
         process.waitUntilExit()

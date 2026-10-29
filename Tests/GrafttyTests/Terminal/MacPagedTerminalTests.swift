@@ -10,6 +10,11 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct MacPagedTerminalTests {
+    @Test("@spec DIST-1.8: When the Mac terminal tests run with the committed dependency, the renderer shall support paging so native checkpoint and history tests execute.")
+    func publishedDependencySupportsPaging() {
+        #expect(MacPagedTerminalRenderer.isSupported)
+    }
+
     @Test("@spec TERM-12.36: When a detached local Mac pane is mounted again, the application shall retain every history line, including history shorter than one viewport, through native paging or legacy replay.", .timeLimit(.minutes(1)), arguments: MacPagedTerminalRenderer.isSupported ? [false, true] : [true], [40, 10000])
     func mountedPaneRestoresDetachedHistory(legacy: Bool, lineCount: Int) async throws {
         let fixture = try await HistoryDaemon.make(lineCount: lineCount, redrawPrompt: legacy)

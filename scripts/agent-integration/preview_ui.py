@@ -299,7 +299,7 @@ def main():
     parser.add_argument('--runtime')
     parser.add_argument('--timeout', type=int, default=1800)
     options = parser.parse_args()
-    for name in ('GRAFTTY_RENDERER_CONTEXT', 'GRAFTTY_GHOSTTY_PACKAGE_PATH'):
+    for name in ('GRAFTTY_RENDERER_CONTEXT',):
         if not os.environ.get(name):
             parser.error(name + ' is required')
     options.output = options.output.resolve()
@@ -318,7 +318,7 @@ def run_validation(options):
     summary = {'result': 'failed', 'currentCommit': capture(['git', 'rev-parse', 'HEAD']),
                'workingTree': capture(['git', 'status', '--short']), 'baseline': options.baseline,
                'xcode': capture(['xcodebuild', '-version']),
-               'rendererPackage': os.environ['GRAFTTY_GHOSTTY_PACKAGE_PATH'],
+               'rendererPackage': os.environ.get('GRAFTTY_GHOSTTY_PACKAGE_PATH') or 'published Package.resolved',
                'rendererContext': os.environ['GRAFTTY_RENDERER_CONTEXT']}
     (options.output / 'source.diff').write_text(capture(['git', 'diff', 'HEAD']))
     simulator = None

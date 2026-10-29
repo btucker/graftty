@@ -374,7 +374,7 @@ Agent-authored messages carry an exact canonical `agent` address and a provider-
 
 ## Building
 
-Requires Xcode 15+ and macOS 14 Sonoma or later.
+Requires Xcode 26 or later to build. Graftty supports macOS 14 Sonoma or later.
 
 ```sh
 swift build
@@ -382,10 +382,9 @@ swift build
 
 Open `Package.swift` in Xcode to run the app.
 
-Before building `Apps/GrafttyMobile/GrafttyMobile.xcodeproj`, follow the
-[paging renderer build instructions](scripts/ghostty-paging/BUILD.md).
-The local renderer provides the parser-grid readiness and output-drain APIs
-needed to preserve follower wrapping during grid changes.
+Mac and GrafttyMobile builds use the same pinned, published paging renderer.
+No native dependency build is required. For renderer development, see the
+[explicit local override instructions](scripts/ghostty-paging/BUILD.md).
 
 ## Developing the web client
 

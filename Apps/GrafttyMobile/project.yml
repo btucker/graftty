@@ -111,6 +111,7 @@ targets:
     settings:
       base:
         SWIFT_VERSION: "5.10"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) GRAFTTY_PAGED_HISTORY"
         SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
         GENERATE_INFOPLIST_FILE: YES
     dependencies:

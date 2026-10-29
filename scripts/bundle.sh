@@ -71,8 +71,7 @@ fi
 echo "→ GRAFTTY_VERSION=$GRAFTTY_VERSION"
 echo "→ GRAFTTY_BUILD_VERSION=$GRAFTTY_BUILD_VERSION"
 if [[ "$CONFIGURATION" == "release" ]]; then
-  # The package manifest validates the recipe and every patch before compiling.
-  export GRAFTTY_GHOSTTY_PACKAGE_PATH="${GRAFTTY_GHOSTTY_PACKAGE_PATH-$REPO/.dependencies/libghostty-spm}"
+  # Published and explicitly overridden packages both provide paging.
   export GRAFTTY_REQUIRE_PAGED_HISTORY=1
 fi
 RENDERER_CONTEXT="$(python3 "$REPO/scripts/ghostty-paging/compiler-context.py" "$REPO" "$REPO/.build")"

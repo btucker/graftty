@@ -182,7 +182,6 @@ jobs:
             --codex "$RUNNER_TEMP/agent-clients/node_modules/.bin/codex" \
             --claude "$RUNNER_TEMP/agent-clients/node_modules/.bin/claude" \
             --cli "$cli" --zmx "$PWD/Resources/zmx-binary/zmx" \
-            --ghostty-package "$PWD/.dependencies/libghostty-spm" \
             --seed "$TEST_SEED" --actions "$TEST_ACTIONS")
           status=0
           "${runner[@]}" "${scenario[@]}" || status=$?

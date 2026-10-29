@@ -1548,9 +1548,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIST-1.5** When a terminal child requests microphone access, the packaged macOS application shall declare why it uses the microphone and carry the audio-input entitlement so macOS can authorize the request for Graftty.
 
-**DIST-1.6** When a development build has no explicit renderer override, the build shall use the committed published dependency and diagnose ignored local packages; an explicitly selected stale renderer or a release requiring paging shall fail before compilation.
+**DIST-1.6** When Graftty selects its terminal dependency, development, CI, and release builds shall enable paging from the same published revision, diagnose ignored local packages, and reject explicit overrides whose package-owned build provenance does not match their sources and binaries.
 
 **DIST-1.7** When the shared wrapper, bundle script, or CI builds with a changed renderer or headers, the build shall apply a distinct Clang module signature to application and dependency targets.
+
+**DIST-1.8** When the Mac terminal tests run with the committed dependency, the renderer shall support paging so native checkpoint and history tests execute.
+
+**DIST-1.9** When the mobile terminal tests run with the committed dependency, the renderer shall support paging so native checkpoint and history tests execute.
 
 ### DIST-2.x — Release Automation
 
