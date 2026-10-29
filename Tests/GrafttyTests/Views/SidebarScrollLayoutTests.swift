@@ -302,14 +302,16 @@ final class SidebarScrollLayoutTests: XCTestCase {
 
     /// @spec LAYOUT-2.157: While the macOS sidebar has enough space for all pinned agents and 96 points of ordinary worktrees, the application shall fit all pinned agents by default even when they need more than half the available height.
     func testDefaultPinnedHeightCanExceedHalf() async throws {
-        let hosted = try await Hosted.make(pinnedCount: 30, rail: true)
+        // Keep this within the fixture's normal window size: CI may constrain
+        // oversized windows to its display, even for an offscreen test window.
+        let hosted = try await Hosted.make(pinnedCount: 3, rail: true)
         defer { hosted.tearDown() }
         let pinned = try XCTUnwrap(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
-        let documentHeight = try XCTUnwrap(pinned.documentView).bounds.height
-        hosted.window.setContentSize(NSSize(width: 900, height: documentHeight + 400))
-        try await hosted.settle()
-        XCTAssertGreaterThan(pinned.bounds.height, hosted.hosting.bounds.height / 2)
+        let ordinary = try XCTUnwrap(hosted.enclosingScroll(try hosted.dragView(named: "task-0")))
+        let usableHeight = pinned.bounds.height + ordinary.bounds.height
+        XCTAssertGreaterThan(pinned.bounds.height, usableHeight / 2)
         XCTAssertLessThanOrEqual(try XCTUnwrap(pinned.documentView).bounds.height, pinned.contentView.bounds.height + 1)
+        XCTAssertGreaterThanOrEqual(ordinary.contentView.bounds.height, 96)
     }
 
     /// @spec LAYOUT-2.158: When the user drags the macOS pinned-agent divider, the application shall override its automatic height, keep both sections independently scrollable, and reserve 96 points for ordinary worktrees when space permits.
