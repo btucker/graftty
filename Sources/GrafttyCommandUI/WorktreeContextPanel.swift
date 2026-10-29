@@ -8,6 +8,9 @@ public struct WorktreeContextPanel: View {
     private let secondary: Color
     private let onClose: () -> Void
     @State private var follow: TimelineFollow
+    @State private var requestedBriefHeight: CGFloat?
+    @State private var renderedBriefHeight: CGFloat = 0
+    @State private var dragStartBriefHeight: CGFloat?
 
     private static let latestID = "worktree.context.timeline.latest"
 
@@ -25,16 +28,27 @@ public struct WorktreeContextPanel: View {
             header
             Divider()
             GeometryReader { geometry in
+                let limit = max(0, geometry.size.height - HorizontalResizeDivider.thickness - 96)
+                let chosenHeight = requestedBriefHeight.map { min(limit, max(min(96, limit), $0)) }
+                let cap = chosenHeight ?? min(geometry.size.height / 2, limit)
                 VStack(spacing: 0) {
-                    pinnedBrief(cap: geometry.size.height / 2)
-                    Divider()
-                    timeline(panelHeight: geometry.size.height)
+                    pinnedBrief(cap: cap)
+                        .frame(height: follow.showsCollapsedBrief ? nil : chosenHeight, alignment: .top)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { renderedBriefHeight = $0 }
+                    HorizontalResizeDivider(label: "Resize context summary", onResize: { translation in
+                        if dragStartBriefHeight == nil { dragStartBriefHeight = renderedBriefHeight }
+                        follow.expandBrief()
+                        requestedBriefHeight = min(limit, max(min(96, limit), (dragStartBriefHeight ?? renderedBriefHeight) + translation))
+                    }, onResizeEnd: { dragStartBriefHeight = nil })
+                    timeline(panelHeight: geometry.size.height, briefHeight: cap)
                 }
             }
         }
         .foregroundStyle(foreground)
         .onChange(of: context.item.worktreeIdentity) { _, _ in
             follow = TimelineFollow(collapsesBrief: follow.collapsesBrief)
+            requestedBriefHeight = nil
+            dragStartBriefHeight = nil
         }
     }
 
@@ -95,7 +109,7 @@ public struct WorktreeContextPanel: View {
         .accessibilityIdentifier("worktree.context.brief.collapsed")
     }
 
-    private func timeline(panelHeight: CGFloat) -> some View {
+    private func timeline(panelHeight: CGFloat, briefHeight: CGFloat) -> some View {
         let timeline = WorktreeTimeline(context)
         return ScrollViewReader { proxy in
             ScrollView {
@@ -111,7 +125,7 @@ public struct WorktreeContextPanel: View {
                     Color.clear.frame(height: 1).id(Self.latestID)
                 }
             }
-            .modifier(TimelineFollowTracking(follow: $follow, panelHeight: panelHeight))
+            .modifier(TimelineFollowTracking(follow: $follow, panelHeight: panelHeight, briefHeight: briefHeight))
             .onChange(of: timeline.events.last?.id) { _, _ in
                 if follow.receivedEvent() { proxy.scrollTo(Self.latestID, anchor: .bottom) }
             }
@@ -142,8 +156,8 @@ public struct WorktreeContextPanel: View {
 /// Opens the timeline at its latest event and reports whether the reader is at its bottom.
 private struct TimelineFollowTracking: ViewModifier {
     @Binding var follow: TimelineFollow
-    /// The brief and timeline together; the brief's cap is half of it.
     let panelHeight: CGFloat
+    let briefHeight: CGFloat
 
     func body(content: Content) -> some View {
         if #available(macOS 15, iOS 18, *) {
@@ -156,7 +170,7 @@ private struct TimelineFollowTracking: ViewModifier {
                 } action: { _, distance in
                     // The distance changes every scrolled point; write only when the follow state changes.
                     var next = follow
-                    next.scrolled(distanceFromBottom: distance, panelHeight: panelHeight)
+                    next.scrolled(distanceFromBottom: distance, panelHeight: panelHeight, briefHeight: briefHeight)
                     if next != follow { follow = next }
                 }
         } else {

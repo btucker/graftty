@@ -69,7 +69,7 @@ struct WorktreeHistoryContentTests {
         try capture(host, named: "messages-expanded-\(Int(width))")
     }
 
-    @Test("@spec CONTEXT-43: While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall reserve four text lines and a fixed footer, show a skeleton while awaiting a completed turn or its summary, truncate overflowing previews with an ellipsis, and reveal the captured text on expansion without shifting later rows when generation finishes.")
+    @Test("@spec CONTEXT-43: While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall reserve four text lines and a fixed footer, show the first agent response until its completed-turn summary is ready and a skeleton while awaiting a peer summary, truncate overflowing previews with an ellipsis, and reveal the captured text on expansion without shifting later rows when generation finishes.")
     func summariesReserveFourLinesRegardlessOfTextLength() {
         for width in [260.0, 390.0] {
             #expect(abs(summaryHeight("Updated the workflows.", width: width) - summaryHeight(String(repeating: "Long summary with enough words to wrap ", count: 20), width: width)) < 1)
@@ -106,7 +106,7 @@ struct WorktreeHistoryContentTests {
         }
     }
 
-    @Test(arguments: [260.0, 390.0])
+    @Test("@spec CONTEXT-47: While an agent turn is running on Mac or mobile, the timeline shall preview its first text response, retain that text through intermediate updates and summary generation, and generate an AI summary from the first and final responses only after the turn completes.", arguments: [260.0, 390.0])
     func turnWaitsForCompletionThenSummarizesEndpointsWithoutMovingFollowingRows(width: Double) async throws {
         let start = Date()
         let gate = SummaryGate()
@@ -126,6 +126,8 @@ struct WorktreeHistoryContentTests {
             .padding(20).frame(width: width).fixedSize(horizontal: false, vertical: true)
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, .dark)
+            .accessibilityElement(children: .contain)
+            .environment(\.accessibilityEnabled, true)
         }
         add("first", "I will inspect the timeline.", final: false)
         let host = NSHostingView(rootView: content())
@@ -138,10 +140,12 @@ struct WorktreeHistoryContentTests {
         defer { window.close() }
         try await Task.sleep(for: .milliseconds(80))
         let workingHeight = host.fittingSize.height
+        #expect(accessibilityLabels(in: host).contains("I will inspect the timeline."))
         add("middle", "This intermediate update must not reach the model.", final: false)
         host.rootView = content()
         try await Task.sleep(for: .milliseconds(80))
         #expect(await gate.inputs.isEmpty)
+        #expect(accessibilityLabels(in: host).contains("I will inspect the timeline."))
         #expect(abs(host.fittingSize.height - workingHeight) < 1)
         add("last", "Fixed the timeline and checked both clients.", final: true)
         host.rootView = content()
@@ -152,7 +156,8 @@ struct WorktreeHistoryContentTests {
         host.layoutSubtreeIfNeeded()
         let pendingHeight = host.fittingSize.height
         let pendingImage = try snapshot(host)
-        try capture(host, named: "turn-skeleton-\(Int(width))")
+        #expect(accessibilityLabels(in: host).contains("I will inspect the timeline."))
+        try capture(host, named: "turn-preview-\(Int(width))")
         let summary = "Fixed the timeline on Mac and mobile. Agent turns now use one expandable summary with four reserved lines, keeping later rows in place while the on-device model summarizes the first and last messages."
         await gate.finish(summary)
         for _ in 0..<100 {
@@ -164,7 +169,7 @@ struct WorktreeHistoryContentTests {
         #expect(await gate.inputs == ["First agent message:\nI will inspect the timeline.\n\nLast agent message:\nFixed the timeline and checked both clients."])
         #expect(abs(host.fittingSize.height - pendingHeight) < 1)
         #expect(abs(host.fittingSize.height - workingHeight) < 1)
-        #expect(try snapshot(host) != pendingImage, "The resolved summary must visibly replace the skeleton")
+        #expect(try snapshot(host) != pendingImage, "The resolved summary must visibly replace the first response")
         try capture(host, named: "turn-summary-\(Int(width))")
     }
 
@@ -207,6 +212,23 @@ struct WorktreeHistoryContentTests {
         #expect(WorktreeHistoryContent.hiddenMessageCount(row, visibleEntries: 2) == 3,
             "Three repeated messages hide behind the control, matching the card's message count")
         #expect(WorktreeHistoryContent.hiddenMessageCount(row, visibleEntries: 3) == 0)
+    }
+
+    private func accessibilityLabels(in root: NSView) -> Set<String> {
+        var pending: [NSObject] = [root], seen: Set<ObjectIdentifier> = [], labels: Set<String> = []
+        let label = NSSelectorFromString("accessibilityLabel")
+        let children = NSSelectorFromString("accessibilityChildren")
+        while let object = pending.popLast(), seen.count < 4096 {
+            guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
+            if object.responds(to: label), let value = object.perform(label)?.takeUnretainedValue() as? String {
+                labels.insert(value)
+            }
+            if object.responds(to: children), let values = object.perform(children)?.takeUnretainedValue() as? [NSObject] {
+                pending.append(contentsOf: values)
+            }
+            if let view = object as? NSView { pending.append(contentsOf: view.subviews) }
+        }
+        return labels
     }
 
     private func capture(_ host: NSView, named name: String) throws {

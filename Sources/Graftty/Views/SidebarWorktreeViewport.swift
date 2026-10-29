@@ -15,7 +15,7 @@ struct SidebarWorktreeViewport<Pinned: View, Controls: View, Content: View>: Vie
 
     var body: some View {
         GeometryReader { geometry in
-            let dividerHeight: CGFloat = showsDivider ? 7 : 0
+            let dividerHeight: CGFloat = showsDivider ? SidebarWorktreeDivider.thickness : 0
             let limit = max(0, geometry.size.height - controlsHeight - dividerHeight - 96)
             let height = pinnedHeight > 0 ? min(requestedHeight ?? pinnedHeight, limit) : 0
             VStack(spacing: 0) {

@@ -34,17 +34,15 @@ public struct TimelineFollow: Equatable, Sendable {
         contentHeight - (offsetY + visibleHeight)
     }
 
-    /// Collapsing or expanding the brief moves the timeline's top edge, and so its
-    /// distance from the bottom, by less than half the panel, because the brief is
-    /// capped there. Collapsing only beyond that distance and restoring only at the
-    /// bottom keeps that resize from toggling the brief back.
-    public mutating func scrolled(distanceFromBottom distance: Double, panelHeight: Double) {
+    /// Keep the collapse threshold beyond the brief's largest resize, so that
+    /// collapsing cannot move the reader to the bottom and immediately expand it.
+    public mutating func scrolled(distanceFromBottom distance: Double, panelHeight: Double, briefHeight: Double = 0) {
         isAtBottom = distance <= Self.bottomTolerance
         if isAtBottom {
             showsJumpToLatest = false
             briefCollapsed = false
             expandsBriefWhileScrolled = false
-        } else if distance > panelHeight / 2 + Self.bottomTolerance, !expandsBriefWhileScrolled {
+        } else if distance > max(panelHeight / 2, briefHeight) + Self.bottomTolerance, !expandsBriefWhileScrolled {
             briefCollapsed = true
         }
     }

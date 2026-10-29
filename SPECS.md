@@ -4644,7 +4644,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-27.x
 
-**CONTEXT-27** When Context is opened on Mac or mobile, the application shall pin the current brief above the timeline, capped at half the panel height and scrolling internally only when it exceeds that cap, and shall scroll the oldest-first timeline independently, opening at its latest event.
+**CONTEXT-27** When Context is opened on Mac or mobile, the application shall pin the current brief above the timeline, capped at half the panel height by default and scrolling internally only when it exceeds its allocated height, and shall scroll the oldest-first timeline independently, opening at its latest event.
 
 ### CONTEXT-28.x
 
@@ -4652,7 +4652,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-29.x
 
-**CONTEXT-29** When the mobile Context drawer timeline is scrolled more than half the panel height away from the latest event, the application shall collapse the pinned brief to a one-line bar showing the title with the next step, or the pending question when one is waiting, shall expand the full brief when the bar is tapped, and shall restore the full brief only when the bar is tapped or the reader returns to the bottom, so that the brief changing size cannot toggle it back.
+**CONTEXT-29** When the mobile Context drawer timeline is scrolled farther from the latest event than half the panel height or the chosen summary height, whichever is greater, the application shall collapse the pinned brief to a one-line bar showing the title with the next step, or the pending question when one is waiting, shall expand the full brief when the bar is tapped, and shall restore the full brief only when the bar is tapped or the reader returns to the bottom, so that the brief changing size cannot toggle it back.
 
 ### CONTEXT-30.x
 
@@ -4708,11 +4708,23 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-43.x
 
-**CONTEXT-43** While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall reserve four text lines and a fixed footer, show a skeleton while awaiting a completed turn or its summary, truncate overflowing previews with an ellipsis, and reveal the captured text on expansion without shifting later rows when generation finishes.
+**CONTEXT-43** While a peer message or agent turn is collapsed in Context history on Mac or mobile, the application shall reserve four text lines and a fixed footer, show the first agent response until its completed-turn summary is ready and a skeleton while awaiting a peer summary, truncate overflowing previews with an ellipsis, and reveal the captured text on expansion without shifting later rows when generation finishes.
 
 ### CONTEXT-44.x
 
 **CONTEXT-44** When a provider finishes a turn, the application shall retain its session and final-response boundary, including when the Stop hook follows an already captured message, so that the timeline generates one summary after completion.
+
+### CONTEXT-45.x
+
+**CONTEXT-45** When provider input contains background task notifications, the application shall omit those generated envelopes from the Mac and mobile timeline, including previously saved user inputs, while preserving surrounding human text and fenced examples.
+
+### CONTEXT-46.x
+
+**CONTEXT-46** When the user drags the divider between the Context summary and timeline on Mac or mobile, the application shall resize those sections independently, reserve 96 points for each when space permits, retain the chosen height during content updates, and restore automatic sizing when switching worktrees.
+
+### CONTEXT-47.x
+
+**CONTEXT-47** While an agent turn is running on Mac or mobile, the timeline shall preview its first text response, retain that text through intermediate updates and summary generation, and generate an AI summary from the first and final responses only after the turn completes.
 
 ## MEM — MEM
 

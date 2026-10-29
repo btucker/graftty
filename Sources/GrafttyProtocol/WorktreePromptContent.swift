@@ -37,7 +37,7 @@ public enum WorktreePromptContent {
     }
 
     private static let opening = try! NSRegularExpression(
-        pattern: #"^[\t ]*<(graftty-peer-message|graftty-system-message|graftty-forge-message|cross-session-message|system-reminder|environment_context)(?=[\s>])[^>]*>"#)
+        pattern: #"^[\t ]*<(graftty-peer-message|graftty-system-message|graftty-forge-message|cross-session-message|system-reminder|environment_context|task-notification)(?=[\s>])[^>]*>"#)
 
     private static func parse(_ text: String, source: Part.Source) -> [Part] {
         var result: [Part] = []
