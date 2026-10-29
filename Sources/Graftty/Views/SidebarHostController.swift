@@ -9,7 +9,27 @@ import GrafttyCommandUI
 @MainActor
 final class SidebarHostController: ObservableObject {
     static let shared = SidebarHostController()
-    let owner = WorktreeOrigin(deviceID: AppServices.localRemoteDeviceID(), deviceLabel: AppServices.localHostDisplayName(), relayDepth: 0)
+    /// The process-wide origin of local projects (also `GrafttyApp`'s
+    /// `localWorktreeOrigin`). It must exist synchronously, so it is the one
+    /// caller that still falls back to a non-persisted ID; remote identity
+    /// (pairing, signaling, Bonjour) surfaces store errors instead (REMOTE-1.14).
+    let owner = WorktreeOrigin(
+        deviceID: SidebarHostController.ownerDeviceIDWithNonPersistedFallback(),
+        deviceLabel: AppServices.localHostDisplayName(),
+        relayDepth: 0
+    )
+
+    private static func ownerDeviceIDWithNonPersistedFallback() -> RemoteDeviceID {
+        do {
+            return try AppServices.localRemoteDeviceID()
+        } catch {
+            NSLog(
+                "[Graftty] local project origin is using a non-persisted device ID because the host device-ID store failed: %@",
+                String(describing: error)
+            )
+            return RemoteDeviceID.generate()
+        }
+    }
     @Published private(set) var icons: [String: Data] = [:]
     let remoteIconCache = ProjectIconCache()
     var remoteIcons: [String: Data] { remoteIconCache.icons }

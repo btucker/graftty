@@ -31,7 +31,7 @@ final class AppServices {
                 }, identity: { @MainActor [weak self] in
                     guard let self, let key = try ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory).load(),
                           let serverKey = self.hostKey() else { throw MCPConnectionFailure.authorization }
-                    return (.init(deviceID: Self.localRemoteDeviceID().value, displayName: Self.localHostDisplayName(),
+                    return (.init(deviceID: try Self.localRemoteDeviceID().value, displayName: Self.localHostDisplayName(),
                                   publicKey: key.publicKey.rawRepresentation.base64EncodedString(),
                                   serverPublicKey: serverKey.publicKey.rawRepresentation.base64EncodedString()), key)
                 }, ready: ready)
@@ -123,7 +123,7 @@ final class AppServices {
     /// than waiting for the peer's next userauth attempt to fail.
     let sshConnectionRegistry = SSHConnectionRegistry()
     let remoteMacsModel: RemoteMacsModel
-    let remoteMacPairingDriverFactory: @MainActor () -> AddRemoteMacPairingDriving
+    let remoteMacPairingDriverFactory: @MainActor () throws -> AddRemoteMacPairingDriving
     let remoteMacAccessEnabled: Bool
     let idleSleepController = IdleSleepController()
     private var lanRemoteAccessServer: LANRemoteAccessServer?
@@ -200,7 +200,7 @@ final class AppServices {
         self.remoteMacsModel = remoteMacsModel
         remoteMacsModel.setTeamRouter(remoteTeamRouter)
         self.remoteMacPairingDriverFactory = {
-            LocalAddRemoteMacPairingDriver(
+            try LocalAddRemoteMacPairingDriver(
                 identityStore: ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory),
                 pinnedHostStore: PinnedHostStore(directory: PinnedHostStore.defaultDirectory),
                 clientDeviceID: Self.localRemoteDeviceID(),
@@ -212,7 +212,7 @@ final class AppServices {
         do {
             let localFingerprint = try localHostFingerprint()
             let browser = GrafttyBonjourBrowser(
-                localDeviceID: Self.localRemoteDeviceID(),
+                localDeviceIDProvider: { try Self.localRemoteDeviceID() },
                 localFingerprint: localFingerprint,
                 supportedProtocolVersions: [String(RemoteAccessProtocol.version)],
                 onCandidate: { [weak remoteMacsModel] candidate in
@@ -276,7 +276,7 @@ final class AppServices {
         let session = HostPairingSession(
             identityStore: identityStore,
             peerStore: peerStore,
-            hostDeviceID: localRemoteDeviceID(),
+            hostDeviceIDProvider: { try localRemoteDeviceID() },
             hostKind: .mac,
             hostDisplayName: localHostDisplayName(),
             pairingURLProvider: { URL(string: "http://0.0.0.0\(PairingRoutes.basePath)")! }
@@ -308,6 +308,12 @@ final class AppServices {
         guard let hostAgentPool else {
             throw RemoteMacAccessServiceError.hostAgentUnavailable
         }
+        let hostDeviceID: RemoteDeviceID
+        do {
+            hostDeviceID = try Self.localRemoteDeviceID()
+        } catch {
+            throw RemoteMacAccessServiceError.deviceIDUnavailable(error)
+        }
 
         let endpoint = RemoteAccessEndpoint(
             host: Self.localLANHostName(),
@@ -321,7 +327,7 @@ final class AppServices {
         let signalingServer = AuthenticatedSignalingServer(
             identityStore: hostIdentityStore,
             peerStore: trustedPeerStore,
-            hostDeviceID: Self.localRemoteDeviceID(),
+            hostDeviceID: hostDeviceID,
             routesProvider: { endpoint.routes() }
         )
         let routeHandler = RemoteMacAccessServices.makeLANRouteHandler(
@@ -395,7 +401,7 @@ final class AppServices {
         let advertiser = GrafttyBonjourAdvertiser(
             port: port,
             label: Self.localHostDisplayName(),
-            deviceID: Self.localRemoteDeviceID(),
+            deviceID: hostDeviceID,
             fingerprint: localHostFingerprint,
             protocolVersion: String(RemoteAccessProtocol.version),
             pairingStatus: .required
@@ -441,6 +447,7 @@ final class AppServices {
         case disabled
         case hostAgentUnavailable
         case listenerPortUnavailable
+        case deviceIDUnavailable(any Error)
     }
 
     private final class RemoteAccessEndpoint: @unchecked Sendable {
@@ -533,13 +540,15 @@ final class AppServices {
         return "\(hostName).local"
     }
 
-    static func localRemoteDeviceID() -> RemoteDeviceID {
-        do {
-            return try HostDeviceIDStore.shared.loadOrGenerateAndPersist()
-        } catch {
-            assertionFailure("Failed to persist the local remote device ID: \(error)")
-            return RemoteDeviceID.generate()
-        }
+    /// The Mac's stable device ID, shared by its host and client roles.
+    /// REMOTE-1.14: store errors propagate rather than mint a replacement, so
+    /// a read failure leaves the calling remote feature unavailable instead
+    /// of advertising an identity no peer trusts. Callers that read per
+    /// attempt (pairing starts, WebRTC dials) recover on their next attempt.
+    nonisolated static func localRemoteDeviceID(
+        store: HostDeviceIDStore = .shared
+    ) throws -> RemoteDeviceID {
+        try store.loadOrGenerateAndPersist()
     }
 
     static func localHostDisplayName() -> String {

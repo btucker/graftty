@@ -88,7 +88,7 @@ public final class HostPairingSession: @unchecked Sendable {
     private let peerStore: TrustedPeerStore
     private let now: () -> Date
     private let nonceGenerator: () -> RemotePairingNonce
-    private let hostDeviceID: RemoteDeviceID
+    private let hostDeviceIDProvider: () throws -> RemoteDeviceID
     private let hostKind: RemoteDeviceKind
     private let hostDisplayName: String
     private let pairingURLProvider: () -> URL
@@ -107,7 +107,7 @@ public final class HostPairingSession: @unchecked Sendable {
 
     // MARK: Init
 
-    public init(
+    public convenience init(
         identityStore: HostIdentityStore,
         peerStore: TrustedPeerStore,
         now: @escaping () -> Date = { Date() },
@@ -119,11 +119,38 @@ public final class HostPairingSession: @unchecked Sendable {
         pairingURLProvider: @escaping () -> URL,
         connectionRoutesProvider: (() -> [RemoteConnectionRoute])? = nil
     ) {
+        self.init(
+            identityStore: identityStore,
+            peerStore: peerStore,
+            now: now,
+            nonceGenerator: nonceGenerator,
+            hostDeviceIDProvider: { hostDeviceID },
+            hostKind: hostKind,
+            hostDisplayName: hostDisplayName,
+            pairingURLProvider: pairingURLProvider,
+            connectionRoutesProvider: connectionRoutesProvider
+        )
+    }
+
+    /// REMOTE-1.16: `hostDeviceIDProvider` is read on every `startPairing`,
+    /// so a device-ID store that is temporarily unreadable fails that start
+    /// instead of fixing an unpersisted ID into the session.
+    public init(
+        identityStore: HostIdentityStore,
+        peerStore: TrustedPeerStore,
+        now: @escaping () -> Date = { Date() },
+        nonceGenerator: @escaping () -> RemotePairingNonce = { RemotePairingNonce.generate() },
+        hostDeviceIDProvider: @escaping () throws -> RemoteDeviceID,
+        hostKind: RemoteDeviceKind,
+        hostDisplayName: String,
+        pairingURLProvider: @escaping () -> URL,
+        connectionRoutesProvider: (() -> [RemoteConnectionRoute])? = nil
+    ) {
         self.identityStore = identityStore
         self.peerStore = peerStore
         self.now = now
         self.nonceGenerator = nonceGenerator
-        self.hostDeviceID = hostDeviceID
+        self.hostDeviceIDProvider = hostDeviceIDProvider
         self.hostKind = hostKind
         self.hostDisplayName = hostDisplayName
         self.pairingURLProvider = pairingURLProvider
@@ -152,6 +179,7 @@ public final class HostPairingSession: @unchecked Sendable {
         guard let hostPublicKey = try identityStore.currentPublicKey() else {
             throw Error.noHostIdentity
         }
+        let hostDeviceID = try hostDeviceIDProvider()
 
         let nonce = nonceGenerator()
         let expiry = Date(
