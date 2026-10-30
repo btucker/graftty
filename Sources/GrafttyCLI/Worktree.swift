@@ -693,6 +693,8 @@ extension ControlCapability {
             "the running Graftty app does not support worktree remove; quit and relaunch the updated app, then retry"
         case .worktreePinnedRemoval:
             "the running Graftty app does not support safe pinned-worktree removal; quit and relaunch the updated app, then retry"
+        case .projectAdd:
+            "the running Graftty app does not support project add; quit and relaunch the updated app, then retry"
         case .worktreePin:
             "the running Graftty app does not support worktree pinning; relaunch the updated app, then retry"
         }
@@ -714,6 +716,8 @@ extension ControlCapability {
             "could not verify worktree remove support; quit and relaunch Graftty, then retry"
         case .worktreePinnedRemoval:
             "could not verify pinned-worktree removal protection; quit and relaunch Graftty, then retry"
+        case .projectAdd:
+            "could not verify project add support; quit and relaunch the updated Graftty app, then retry"
         case .worktreePin:
             "could not verify worktree pinning support; relaunch the updated Graftty app, then retry"
         }

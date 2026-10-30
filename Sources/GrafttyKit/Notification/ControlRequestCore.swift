@@ -115,7 +115,7 @@ public enum ControlRequestCore {
             return .capabilities(ControlCapability.allCases.filter(supported.contains).map(\.rawValue))
         case .agentPromptStagingCapability, .paneAgentCapability, .worktreeBaseCapability,
              .worktreeCreateIdempotencyCapability, .remoteWorktreeCapability, .worktreeRemoveCapability,
-             .worktreePinnedRemovalCapability, .worktreePinCapability:
+             .worktreePinnedRemovalCapability, .worktreePinCapability, .projectAddCapability:
             guard let capability = ControlCapability(legacyProbe: message),
                   platform.controlCapabilities.contains(capability) else {
                 return .error("operation is unavailable on this host")
@@ -142,7 +142,7 @@ public enum ControlRequestCore {
                 return .error("unknown or expired worktree removal operation")
             }
             return .worktreeRemove(status)
-        case .listPanes, .addPane, .closePane, .showPane, .sendPane,
+        case .addProject, .listPanes, .addPane, .closePane, .showPane, .sendPane,
              .previewFiles, .previewImage, .offerResource, .setWorktreePinned,
              .remoteWorktree, .reconnectRemoteMac, .reconnectRemoteClient,
              .mcpConnection, .mcpBridge, .remoteSkills, .remotePlacement, .listRemoteHosts,

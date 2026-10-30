@@ -88,6 +88,8 @@ public struct TeamInboxPageRequest: Sendable, Equatable {
 }
 
 public enum NotificationMessage: Sendable, Equatable {
+    case addProject(path: String)
+    case projectAddCapability
     case linuxSetupIdentity
     case completeLinuxSetup(LinuxHostSetupResult)
     case previewFiles(path: String, targets: [String], paneSessionName: String? = nil)
@@ -235,6 +237,11 @@ extension NotificationMessage: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .addProject(let path):
+            try container.encode("add_project", forKey: .type)
+            try container.encode(path, forKey: .path)
+        case .projectAddCapability:
+            try container.encode("project_add_capability", forKey: .type)
         case .linuxSetupIdentity:
             try container.encode("linux_setup_identity", forKey: .type)
         case .completeLinuxSetup(let result):
@@ -406,6 +413,10 @@ extension NotificationMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
+        case "add_project":
+            self = .addProject(path: try container.decode(String.self, forKey: .path))
+        case "project_add_capability":
+            self = .projectAddCapability
         case "linux_setup_identity":
             self = .linuxSetupIdentity
         case "complete_linux_setup":

@@ -100,6 +100,7 @@ private final class HeadlessRouter {
     let remoteBranchStore = RemoteBranchStore()
     /// Shared across `route` calls so a retry sees the original operation.
     let worktreeCreations = CLIWorktreeCreationStore()
+    let worktreeMonitor = WorktreeMonitor()
     let remoteMacsModel: RemoteMacsModel
 
     init() throws {
@@ -138,7 +139,7 @@ private final class HeadlessRouter {
             terminalManager: terminalManager,
             teamInbox: teamInbox,
             teamEventDispatcher: dispatcher,
-            worktreeMonitor: WorktreeMonitor(),
+            worktreeMonitor: worktreeMonitor,
             statsStore: WorktreeStatsStore(),
             prStatusStore: PRStatusStore(remoteBranchStore: remoteBranchStore),
             worktreeCreations: worktreeCreations,
@@ -805,5 +806,158 @@ struct WindowlessBackgroundSaveTests {
         try await probe.fireArmedSave()
 
         #expect(probe.written.last?.worktree(forPath: repoPath)?.branch == "renamed")
+    }
+}
+
+@MainActor
+struct ProjectAddPersistenceTests {
+    @Test("@spec PROJECT-1.12: When the Mac app registers a Git project, the application shall install repository watchers so external worktree additions update the shared project list without restarting the app.")
+    func watchesExternalWorktreeAdditions() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-watch-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        _ = try await GitRunner.run(args: ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"], at: root.path)
+        let probe = PersistenceProbe()
+        let router = try HeadlessRouter()
+        defer { router.worktreeMonitor.stopAll() }
+        let box = StateBox(AppState())
+        let bridge = WorktreeMonitorBridge(appState: box.binding, statsStore: WorktreeStatsStore(),
+            prStatusStore: PRStatusStore(remoteBranchStore: router.remoteBranchStore), remoteBranchStore: router.remoteBranchStore)
+        router.worktreeMonitor.delegate = bridge
+        try await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            #expect(router.worktreeMonitor.liveFdCountForTesting > 0)
+            _ = try await GitRunner.run(args: ["worktree", "add", "-b", "feature", root.appendingPathComponent("linked").path], at: root.path)
+            let deadline = ContinuousClock.now + .seconds(3)
+            while box.state.repos.first?.worktrees.count != 2 && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(box.state.repos.first?.worktrees.map(\.branch).contains("feature") == true)
+        }
+    }
+
+    @Test("@spec PROJECT-1.13: When a registered repository receives its first commit and an external branch switch, the application shall update its branch in the shared project model without restarting.")
+    func watchesFirstCommitAndBranchSwitchInUnbornProject() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-first-commit-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let probe = PersistenceProbe()
+        let router = try HeadlessRouter()
+        defer { router.worktreeMonitor.stopAll() }
+        let box = StateBox(AppState())
+        let bridge = WorktreeMonitorBridge(appState: box.binding, statsStore: WorktreeStatsStore(),
+            prStatusStore: PRStatusStore(remoteBranchStore: router.remoteBranchStore), remoteBranchStore: router.remoteBranchStore)
+        router.worktreeMonitor.delegate = bridge
+        try await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            _ = try await GitRunner.run(args: ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial"], at: root.path)
+            _ = try await GitRunner.run(args: ["switch", "-c", "feature"], at: root.path)
+            let deadline = ContinuousClock.now + .seconds(3)
+            while box.state.repos.first?.worktrees.first?.branch != "feature" && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(box.state.repos.first?.worktrees.first?.branch == "feature")
+            let descriptors = router.worktreeMonitor.liveFdCountForTesting
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            #expect(router.worktreeMonitor.liveFdCountForTesting == descriptors)
+        }
+    }
+
+    @Test func expiredSocketCannotRegisterWithFreshPreparationBudget() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-expired-socket-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let fixture = try HeadlessRouter()
+        let box = StateBox(AppState())
+        let response = await SocketServer.$requestIsActive.withValue({ false }) {
+            await fixture.route(.addProject(path: root.path), box)
+        }
+        guard case .error(let message) = response else {
+            Issue.record("expired socket must fail even when preparation is fast")
+            return
+        }
+        #expect(message.contains("timed out"))
+        #expect(box.state.repos.isEmpty)
+        #expect(fixture.worktreeMonitor.liveFdCountForTesting == 0)
+    }
+
+    @Test func expiredPreparationCannotRegisterLater() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-expired-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let fixture = try HeadlessRouter()
+        let box = StateBox(AppState())
+        let router = fixture.router(for: box)
+        var instant = ContinuousClock.now
+        let response = await router.addProject(path: root.path, prepare: { path in
+            let prepared = try await ProjectRegistration.prepare(path: path)
+            instant += .seconds(SocketServer.defaultRequestTimeoutSeconds + 1)
+            return prepared
+        }, now: { instant })
+        guard case .error(let message) = response else {
+            Issue.record("expired preparation must fail")
+            return
+        }
+        #expect(message.contains("timed out"))
+        #expect(box.state.repos.isEmpty)
+        #expect(fixture.worktreeMonitor.liveFdCountForTesting == 0)
+    }
+
+    @Test func persistenceFailureIsReportedAndRetryIsSafe() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-save-failure-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let probe = PersistenceProbe()
+        let router = try HeadlessRouter()
+        let box = StateBox(AppState())
+        probe.failWrites(with: CocoaError(.fileWriteNoPermission))
+        await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            guard case .error(let message) = await router.route(.addProject(path: root.path), box) else {
+                Issue.record("save failure must not report success")
+                return
+            }
+            #expect(message.contains(root.path))
+            #expect(probe.written.isEmpty)
+            probe.failWrites(with: nil)
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            #expect(probe.written.last?.repos.count == 1)
+        }
+    }
+
+    @Test("@spec PROJECT-1.11: When the Mac app accepts a project addition, the application shall update its shared project model and persist the registration before replying, including when no window is open.")
+    func additionPersistsBeforeReplyAndRetryPreservesState() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-router-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let probe = PersistenceProbe()
+        let router = try HeadlessRouter()
+        let box = StateBox(AppState())
+        let changes = AppStateChanges()
+        changes.publish(onMarkDirtyOf: probe.persister)
+        try await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            let saved = try #require(probe.written.last)
+            #expect(saved.repos.count == 1)
+            #expect(saved.repos[0].path == CanonicalPath.canonicalize(root.path))
+            #expect(saved.repos[0].worktrees.map(\.branch) == ["trunk"])
+            #expect(box.state == saved)
+            #expect(changes.currentRevision > 0)
+            let owner = WorktreeOrigin(deviceID: .init(value: "test-mac"), deviceLabel: "Mac", relayDepth: 0)
+            let projects = SidebarHostController.shared.localProjects(box.state.repos, owner: owner)
+            #expect(projects.count == 1)
+            #expect(projects.first?.name == saved.repos[0].displayName)
+            #expect(box.state.selectedWorktreePath == nil)
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            #expect(box.state == saved)
+            #expect(probe.written.last == saved)
+            #expect(await router.route(.addProject(path: root.appendingPathComponent("missing").path), box) != .ok)
+            #expect(box.state == saved)
+        }
     }
 }

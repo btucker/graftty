@@ -44,7 +44,7 @@ final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
     /// This host cannot launch an agent in an added pane, and it has no
     /// paired-Mac transport for remote worktree creation.
     var controlCapabilities: Set<ControlCapability> {
-        Set(ControlCapability.allCases).subtracting([.paneAgent, .remoteWorktree])
+        Set(ControlCapability.allCases).subtracting([.paneAgent, .remoteWorktree, .projectAdd])
     }
 
     var worktreeCreation: any CLIWorktreeCreationPlatform { HeadlessWorktreeLifecycle(runtime: runtime) }

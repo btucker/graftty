@@ -4968,6 +4968,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PROJECT-1.5** When decoding a repository entry that lacks the isGitTracked key, the application shall default it to true so pre-feature state.json blobs load unchanged.
 
+**PROJECT-1.6** When a local Git repository is registered, the application shall discover its worktrees and default branch without requiring or creating a commit.
+
+**PROJECT-1.7** When a project is registered through a linked worktree or a symlink, the application shall register the canonical repository once and preserve existing project and pane state on repeated additions.
+
+**PROJECT-1.8** If a project path is missing, is a file, or is not in a Git repository, then project registration shall return an actionable error without initializing Git or changing app state.
+
+**PROJECT-1.9** When graftty project add receives a relative path, the CLI shall resolve it against the caller working directory and register it through the running app without requiring a tracked caller worktree.
+
+**PROJECT-1.10** If the running app is unavailable or does not support project registration, then graftty project add shall fail before sending an addition and explain how to start or update the app.
+
+**PROJECT-1.11** When the Mac app accepts a project addition, the application shall update its shared project model and persist the registration before replying, including when no window is open.
+
+**PROJECT-1.12** When the Mac app registers a Git project, the application shall install repository watchers so external worktree additions update the shared project list without restarting the app.
+
+**PROJECT-1.13** When a registered repository receives its first commit and an external branch switch, the application shall update its branch in the shared project model without restarting.
+
 ### PROJECT-2.x
 
 **PROJECT-2.1** When the Open on GitHub…/Open on GitLab… context-menu item is chosen, the application shall open https://<host>/<owner>/<repo> in the default browser.
