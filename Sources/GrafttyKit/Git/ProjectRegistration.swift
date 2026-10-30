@@ -27,7 +27,19 @@ public struct ProjectRegistration: Sendable {
         case .notARepo:
             throw RegistrationError(message: "Not a Git repository: \(path). Use Add Repository in Graftty to initialize Git or add a project without Git.")
         }
-        let discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
+        let discovered: [DiscoveredWorktree]
+        do {
+            discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
+        } catch let error as GitDiscoveryError {
+            let detail: String
+            switch error {
+            case .gitFailed(.nonZeroExit(_, _, let stderr)):
+                detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            case .gitFailed(let failure):
+                detail = String(describing: failure)
+            }
+            throw RegistrationError(message: "Git discovery failed at \(repoPath): \(detail)")
+        }
         guard discovered.contains(where: { $0.path == selectedPath }) else {
             throw RegistrationError(message: "Git did not report the selected worktree: \(selectedPath)")
         }

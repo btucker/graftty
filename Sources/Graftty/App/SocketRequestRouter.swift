@@ -22,6 +22,7 @@ final class SocketRequestRouter {
     let terminalManager: TerminalManager
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
+    let worktreeMonitor: WorktreeMonitor
     let worktreeManagement: WorktreeManagement
     let remoteBranchStore: RemoteBranchStore
     let agentRegistry: ClaudeSessionRegistry
@@ -47,6 +48,7 @@ final class SocketRequestRouter {
         self.terminalManager = terminalManager
         self.teamInbox = teamInbox
         self.teamEventDispatcher = teamEventDispatcher
+        self.worktreeMonitor = worktreeMonitor
         self.worktreeManagement = WorktreeManagement(
             appState: appState, terminalManager: terminalManager, teamInbox: teamInbox,
             teamEventDispatcher: teamEventDispatcher, worktreeMonitor: worktreeMonitor,
@@ -104,16 +106,7 @@ final class SocketRequestRouter {
     /// Mac-specific dispatch for requests the shared core does not own.
     func handlePaneRequest(_ message: NotificationMessage) async -> ResponseMessage? {
         if case .addProject(let path) = message {
-            do {
-                let registration = try await ProjectRegistration.prepare(path: path)
-                try Task.checkCancellation()
-                registration.apply(to: &appState.wrappedValue)
-                remoteBranchStore.refresh(repoPath: registration.repo.path)
-                try await GrafttyApp.persistAppStateNow(appState.wrappedValue)
-                return .ok
-            } catch {
-                return .error("Could not add project at \(path): \(error.localizedDescription)")
-            }
+            return await addProject(path: path)
         }
         if case .mcpConnection(let request) = message {
             guard let parentMCPConnections else { return .error("Parent MCP service is unavailable") }
@@ -133,6 +126,34 @@ final class SocketRequestRouter {
         }
         return response
     }
+
+    func addProject(
+        path: String,
+        prepare: (String) async throws -> ProjectRegistration = { try await ProjectRegistration.prepare(path: $0) },
+        now: () -> ContinuousClock.Instant = { .now }
+    ) async -> ResponseMessage {
+        // SocketServer releases an expired request without cancelling its task.
+        // Reserve time for persistence and discard slow preparation before it
+        // can register a project after the CLI has reported a lost connection.
+        let deadline = now() + .seconds(SocketServer.defaultRequestTimeoutSeconds - 1)
+        do {
+            let registration = try await prepare(path)
+            try Task.checkCancellation()
+            guard now() < deadline, SocketServer.requestIsActive() else {
+                return .error("Project discovery timed out at \(path); retry when the directory is responsive.")
+            }
+            registration.apply(to: &appState.wrappedValue)
+            if let repo = appState.wrappedValue.repos.first(where: { $0.path == registration.repo.path }) {
+                worktreeMonitor.installRepoWatchers(repo: repo)
+            }
+            remoteBranchStore.refresh(repoPath: registration.repo.path)
+            try await GrafttyApp.persistAppStateNow(appState.wrappedValue)
+            return .ok
+        } catch {
+            return .error("Could not add project at \(path): \(error.localizedDescription)")
+        }
+    }
+
 }
 
 extension SocketRequestRouter {

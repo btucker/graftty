@@ -126,16 +126,32 @@ public final class WorktreeMonitor: @unchecked Sendable {
     /// inode/mtime alone, so a `.write` watcher on HEAD silently misses local
     /// commits. The reflog is appended in place for every HEAD movement.
     public func watchHeadRef(worktreePath: String, repoPath: String) {
-        let reflogPath = resolveHeadLogPath(worktreePath: worktreePath, repoPath: repoPath)
+        let reflogPath = CanonicalPath.canonicalize(resolveHeadLogPath(worktreePath: worktreePath, repoPath: repoPath))
         let key = "head:\(worktreePath)"
-        guard sources[key] == nil else { return }
-        guard let source = createFileWatcher(path: reflogPath, events: [.write, .extend]) else { return }
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            self.delegate?.worktreeMonitorDidDetectBranchChange(self, worktreePath: worktreePath)
+        guard sources[key] == nil, eventStreams[key] == nil else { return }
+        if let source = createFileWatcher(path: reflogPath, events: [.write, .extend]) {
+            source.setEventHandler { [weak self] in
+                guard let self else { return }
+                self.delegate?.worktreeMonitorDidDetectBranchChange(self, worktreePath: worktreePath)
+            }
+            source.resume()
+            sources[key] = source
+        } else {
+            // An unborn repository has no HEAD reflog yet. Observe its log
+            // directory so the first commit and subsequent branch switches
+            // still reach the model. Keep this stream until normal teardown,
+            // avoiding a gap while swapping it for a file watcher.
+            let logDirectory = URL(fileURLWithPath: reflogPath).deletingLastPathComponent().path
+            guard let stream = FSEventsSubscription.make(
+                paths: [logDirectory], queue: queue, latency: 0.1,
+                shouldIgnore: { $0 != reflogPath },
+                onChange: { [weak self] in
+                    guard let self else { return }
+                    self.delegate?.worktreeMonitorDidDetectBranchChange(self, worktreePath: worktreePath)
+                }
+            ) else { return }
+            eventStreams[key] = stream
         }
-        source.resume()
-        sources[key] = source
     }
 
     /// Recursively watches `<repoPath>/.git/logs/refs/remotes/origin/`,

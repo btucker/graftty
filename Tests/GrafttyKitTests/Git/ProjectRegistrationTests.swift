@@ -41,12 +41,28 @@ struct ProjectRegistrationTests {
         var state = AppState()
         first.apply(to: &state)
         state.repos[0].displayName = "Custom project"
+        let slot = PaneSlotID()
+        state.repos[0].worktrees[0].state = .running
+        state.repos[0].worktrees[0].splitTree = SplitTree(root: .leaf(slot))
+        _ = state.repos[0].worktrees[0].ensurePaneSession(for: slot)
         state.selectedWorktreePath = first.selectedWorktreePath
         let original = state
         let duplicate = try await ProjectRegistration.prepare(path: repo.path)
         duplicate.apply(to: &state)
         first.apply(to: &state)
         #expect(state == original)
+    }
+
+    @Test func malformedRepositoryIncludesGitDiagnostic() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        do {
+            _ = try await ProjectRegistration.prepare(path: root.path)
+            Issue.record("malformed repository was accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("not a git repository"))
+        }
     }
 
     @Test("@spec PROJECT-1.8: If a project path is missing, is a file, or is not in a Git repository, then project registration shall return an actionable error without initializing Git or changing app state.")

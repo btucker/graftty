@@ -1588,6 +1588,9 @@ struct MainWindow: View {
                 return
             }
             registration.apply(to: &appState)
+            if let repo = appState.repos.first(where: { $0.path == registration.repo.path }) {
+                worktreeMonitor.installRepoWatchers(repo: repo)
+            }
             remoteBranchStore.refresh(repoPath: registration.repo.path)
             self.selectWorktree(registration.selectedWorktreePath)
 

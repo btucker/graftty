@@ -4980,6 +4980,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PROJECT-1.11** When the Mac app accepts a project addition, the application shall update its shared project model and persist the registration before replying, including when no window is open.
 
+**PROJECT-1.12** When the Mac app registers a Git project, the application shall install repository watchers so external worktree additions update the shared project list without restarting the app.
+
+**PROJECT-1.13** When a registered repository receives its first commit and an external branch switch, the application shall update its branch in the shared project model without restarting.
+
 ### PROJECT-2.x
 
 **PROJECT-2.1** When the Open on GitHub…/Open on GitLab… context-menu item is chosen, the application shall open https://<host>/<owner>/<repo> in the default browser.
