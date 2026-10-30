@@ -214,6 +214,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <array>
       <dict>
         <key>UTTypeIdentifier</key>
+        <string>com.graftty.sidebar-project-move</string>
+        <key>UTTypeDescription</key>
+        <string>Graftty project reorder</string>
+        <key>UTTypeConformsTo</key>
+        <array><string>public.data</string></array>
+      </dict>
+      <dict>
+        <key>UTTypeIdentifier</key>
         <string>com.graftty.sidebar-worktree-move</string>
         <key>UTTypeDescription</key>
         <string>Graftty worktree reorder</string>

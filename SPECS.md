@@ -322,6 +322,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.159** When an agent is pinned or unpinned in the macOS sidebar, the application shall return the pinned section to automatic sizing so it expands or contracts to fit the current pinned agents.
 
+**LAYOUT-2.160** When the user drags a project in the sidebar on Mac or mobile, the application shall show an insertion marker at the hovered row's upper or lower edge and move the project before or after that row only on drop, while rejecting unrelated payloads and disabled reordering.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
