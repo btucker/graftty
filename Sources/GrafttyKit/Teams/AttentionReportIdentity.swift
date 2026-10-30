@@ -9,12 +9,10 @@ public enum AttentionReportIdentity {
     }
 
     public static func unmanagedAgent(environment: [String: String]) -> UnmanagedAgent? {
-        let codexSessionID = environment["CODEX_THREAD_ID"].flatMap { $0.isEmpty ? nil : $0 }
-            ?? environment["CODEX_SESSION_ID"].flatMap { $0.isEmpty ? nil : $0 }
         let session: (TeamHookRuntime, String)?
-        if let id = codexSessionID {
+        if let id = codexSessionID(environment: environment) {
             session = (.codex, id)
-        } else if let id = environment["CLAUDE_SESSION_ID"], !id.isEmpty {
+        } else if let id = claudeSessionID(environment: environment) {
             session = (.claude, id)
         } else {
             session = nil
@@ -25,6 +23,26 @@ public enum AttentionReportIdentity {
             sessionID: sessionID,
             runtime: runtime
         )
+    }
+
+    /// CODEX_SESSION_ID can be a shared ancestor session. Thread identity
+    /// prevents a child from borrowing its parent's pane (AGENT-3.20).
+    static func codexSessionID(environment: [String: String]) -> String? {
+        firstNonEmpty(["CODEX_THREAD_ID", "CODEX_SESSION_ID"], in: environment)
+    }
+
+    /// Claude Code exports its own session as `CLAUDE_CODE_SESSION_ID`, the
+    /// same ID its hooks register, so it outranks a wrapper's explicit
+    /// `CLAUDE_SESSION_ID` (AGENT-3.32).
+    static func claudeSessionID(environment: [String: String]) -> String? {
+        firstNonEmpty(["CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"], in: environment)
+    }
+
+    private static func firstNonEmpty(_ keys: [String], in environment: [String: String]) -> String? {
+        for key in keys {
+            if let value = environment[key], !value.isEmpty { return value }
+        }
+        return nil
     }
 
     public static func currentAgentID(worktreePath: String, runtime: TeamHookRuntime? = nil, sessionID: String? = nil) -> String? {
@@ -71,12 +89,9 @@ public enum AttentionReportIdentity {
             if let sessionID {
                 nativeID = sessionID
             } else if record.runtime == .codex {
-                // CODEX_SESSION_ID can be a shared ancestor session. Thread
-                // identity prevents a child from borrowing its parent's pane.
-                nativeID = environment["CODEX_THREAD_ID"].flatMap { $0.isEmpty ? nil : $0 }
-                    ?? environment["CODEX_SESSION_ID"].flatMap { $0.isEmpty ? nil : $0 }
+                nativeID = codexSessionID(environment: environment)
             } else {
-                nativeID = environment["CLAUDE_SESSION_ID"].flatMap { $0.isEmpty ? nil : $0 }
+                nativeID = claudeSessionID(environment: environment)
             }
             return nativeID == nil || record.runtimeSessionID == nativeID
         }

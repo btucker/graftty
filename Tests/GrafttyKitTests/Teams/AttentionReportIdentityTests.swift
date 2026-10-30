@@ -108,3 +108,48 @@ struct SandboxedAttentionIdentityTests {
     }
 
 }
+
+@Suite("Claude native session identity")
+struct ClaudeNativeSessionIdentityTests {
+    @Test("@spec AGENT-3.32: When a Claude session exports only CLAUDE_CODE_SESSION_ID, the application shall derive the same canonical report identity from it that a registered presence record carries, so a recap files under the identity the app already consumes.")
+    func claudeCodeSessionIDProvidesFallbackIdentity() throws {
+        let agent = try #require(AttentionReportIdentity.unmanagedAgent(environment: [
+            "CLAUDE_CODE_SESSION_ID": "296cf300-7cca-46ca-94da-054b23ab0ea1",
+        ]))
+        #expect(agent.runtime == .claude)
+        #expect(agent.sessionID == "296cf300-7cca-46ca-94da-054b23ab0ea1")
+        #expect(agent.agentID == TeamAgentIdentity(
+            runtime: .claude, nativeSessionID: "296cf300-7cca-46ca-94da-054b23ab0ea1"
+        ).rawValue)
+    }
+
+    @Test("Claude Code's own CLAUDE_CODE_SESSION_ID outranks a wrapper's CLAUDE_SESSION_ID, matching what the hooks register")
+    func claudeCodeSessionIDOutranksWrapperVariable() {
+        let environment = ["CLAUDE_SESSION_ID": "wrapper", "CLAUDE_CODE_SESSION_ID": "native"]
+        #expect(AttentionReportIdentity.unmanagedAgent(environment: environment)?.sessionID == "native")
+        let pid = Int32(ProcessInfo.processInfo.processIdentifier)
+        let presence = TeamPresenceRecord(teamID: "/repo", worktree: "/repo", runtime: .claude,
+            paneSessionName: "pane", pid: pid,
+            processStartTimeMicroseconds: ProcessIdentityReader.startTimeMicroseconds(ofPID: pid),
+            registeredAt: Date(), runtimeSessionID: "native", agentID: "claude-012345abcdef")
+        #expect(AttentionReportIdentity.currentAgentID(worktreePath: "/repo",
+            environment: environment.merging(["ZMX_SESSION": "pane"]) { $1 },
+            records: [presence], isReachable: AttentionReportIdentity.hasCurrentProcessIdentity) == "claude-012345abcdef")
+    }
+
+    @Test("CLAUDE_CODE_SESSION_ID also scopes pane ownership to the registered native session")
+    func claudeCodeSessionIDScopesOwnership() {
+        let pid = Int32(ProcessInfo.processInfo.processIdentifier)
+        let presence = TeamPresenceRecord(teamID: "/repo", worktree: "/repo", runtime: .claude,
+            paneSessionName: "pane", pid: pid,
+            processStartTimeMicroseconds: ProcessIdentityReader.startTimeMicroseconds(ofPID: pid),
+            registeredAt: Date(), runtimeSessionID: "registered", agentID: "claude-012345abcdef")
+        let resolve: (String) -> String? = { sessionID in
+            AttentionReportIdentity.currentAgentID(worktreePath: "/repo",
+                environment: ["ZMX_SESSION": "pane", "CLAUDE_CODE_SESSION_ID": sessionID],
+                records: [presence], isReachable: AttentionReportIdentity.hasCurrentProcessIdentity)
+        }
+        #expect(resolve("registered") == "claude-012345abcdef")
+        #expect(resolve("other") == nil)
+    }
+}

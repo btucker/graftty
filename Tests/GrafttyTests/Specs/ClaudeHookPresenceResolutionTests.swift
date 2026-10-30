@@ -44,6 +44,35 @@ struct ClaudeHookPresenceResolutionTests {
         #expect(waits == 0)
     }
 
+    @Test("""
+    @spec AGENT-6.62: If the Claude Stop hook cannot read a native registry row for its session while the previously registered presence record still names a live process and an existing messaging socket, then the CLI shall keep that record instead of retiring the pane's identity.
+    """, arguments: ["live", "dead-process", "reused-pid", "missing-socket", "no-prior"])
+    func stopRetiresPresenceOnlyWhenPriorEndpointIsGone(_ scenario: String) {
+        let prior = scenario == "no-prior" ? nil : record(sessionID: "current")
+        let retire = TeamHook.shouldRetireClaudePresence(
+            event: .stop,
+            prior: prior,
+            processStartTime: { pid in
+                switch scenario {
+                case "dead-process": nil
+                case "reused-pid": 2_002
+                default: pid == 101 ? 1_001 : nil
+                }
+            },
+            isSocket: { path in scenario != "missing-socket" && path == "/tmp/claude-101.sock" }
+        )
+        #expect(retire == (scenario != "live"))
+    }
+
+    @Test("Routine Claude hooks never retire presence on a failed registry lookup.")
+    func routineHooksKeepPresence() {
+        for event in TeamHookEvent.allCases where event != .stop {
+            #expect(!TeamHook.shouldRetireClaudePresence(
+                event: event, prior: nil, processStartTime: { _ in nil }, isSocket: { _ in false }
+            ))
+        }
+    }
+
     private func record(sessionID: String) -> TeamPresenceRecord {
         TeamPresenceRecord(
             teamID: "/repo",

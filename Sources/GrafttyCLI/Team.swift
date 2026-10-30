@@ -406,7 +406,8 @@ struct TeamHook: ParsableCommand {
         // exact moment native peer delivery exists to wake — so `.stop`
         // refreshes the record rather than deleting it. The record is
         // removed only when the native registry no longer lists a live
-        // session (stale-presence cleanup handles process exit as well).
+        // session and the prior record's endpoint is gone too
+        // (stale-presence cleanup handles process exit as well).
         let registry = ClaudePeerSessionRegistry()
         guard let record = Self.resolveClaudeNativePresence(
             event: event,
@@ -422,7 +423,12 @@ struct TeamHook: ParsableCommand {
             },
             wait: { Thread.sleep(forTimeInterval: 0.02) }
         ) else {
-            if event == .stop {
+            if Self.shouldRetireClaudePresence(
+                event: event,
+                prior: prior,
+                processStartTime: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) },
+                isSocket: { ClaudePeerSessionRegistry.isSocket(atPath: $0) }
+            ) {
                 try? storage.delete(
                     teamID: teamID,
                     worktree: worktreePath,
@@ -438,6 +444,30 @@ struct TeamHook: ParsableCommand {
             event: event,
             storage: storage
         )
+    }
+
+    /// Stop retires a pane's Claude identity only when the native registry
+    /// lists no live session. A registry row that fails to decode — Claude
+    /// 2.1.314 left a stale trailing byte after an ENOSPC rewrite — looks like
+    /// an absent row to the lookup, yet the prior record still names the live
+    /// process and its messaging socket. Deleting it then leaves the pane
+    /// with no identity for recaps, and no later hook recreates it because
+    /// every lookup reads the same broken file (AGENT-6.62).
+    static func shouldRetireClaudePresence(
+        event: TeamHookEvent,
+        prior: TeamPresenceRecord?,
+        processStartTime: (Int32) -> Int64?,
+        isSocket: (String) -> Bool
+    ) -> Bool {
+        guard event == .stop else { return false }
+        guard let prior, prior.pid > 0,
+              let expectedStart = prior.processStartTimeMicroseconds,
+              processStartTime(prior.pid) == expectedStart,
+              case .claude(let socketPath, _)? = prior.transport,
+              isSocket(socketPath) else {
+            return true
+        }
+        return false
     }
 
     /// Claude can invoke SessionStart just before its native peer registry

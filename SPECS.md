@@ -678,6 +678,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.46** When a display owner sends complete terminal mouse reports through an owner-authorized SSH paged attachment, the application shall deliver those bytes without requiring daemon keyboard leadership, preserve ordinary keyboard leadership and passive input behavior, and keep input in order.
 
+**TERM-12.47** While a session's scrollback fits within libghostty's default 50,000,000-byte page budget, the zmx daemon shall retain every row, so a Mac pane reattaching to a 20,000-line session restores every line instead of only the newest 10,000,000 bytes of pages.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -4330,6 +4332,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-3.31** When a report recovers after completion through another delivery path, the application shall ignore duplicate completion and record newer provider turns without reusing the consumed recap.
 
+**AGENT-3.32** When a Claude session exports only CLAUDE_CODE_SESSION_ID, the application shall derive the same canonical report identity from it that a registered presence record carries, so a recap files under the identity the app already consumes.
+
 ### AGENT-4.x
 
 **AGENT-4.1** When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.
@@ -4519,6 +4523,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.60** When Graftty spawns an interactive terminal shell for Mac or GrafttyMobile, the application shall set CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 in that shell's environment, replacing any inherited value, so Claude Code started in the pane renders inline and its transcript reaches terminal scrollback.
 
 **AGENT-6.61** When Graftty installs provider Stop hooks, the application shall use executable command handlers for Codex and Claude so recap delivery is neither skipped as an unsupported prompt handler nor delegated to a tool-less evaluator.
+
+**AGENT-6.62** If the Claude Stop hook cannot read a native registry row for its session while the previously registered presence record still names a live process and an existing messaging socket, then the CLI shall keep that record instead of retiring the pane's identity.
+
+**AGENT-6.63** If a Claude registry row holds a complete JSON object followed by stale bytes from an earlier, longer rewrite, then the application shall read the leading object as that session's row, while a row whose object never completes shall remain unreadable.
 
 ## CLI — CLI
 
