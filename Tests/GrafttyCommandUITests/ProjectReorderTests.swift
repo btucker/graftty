@@ -10,6 +10,23 @@ import AppKit
 
 @Suite("@spec LAYOUT-2.160: When the user drags a project in the sidebar on Mac or mobile, the application shall show an insertion marker at the hovered row's upper or lower edge and move the project before or after that row only on drop, while rejecting unrelated payloads and disabled reordering.")
 struct ProjectReorderTests {
+    @Test func appBundlesDeclareProjectDragType() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let script = try String(contentsOf: root.appendingPathComponent("scripts/bundle.sh"), encoding: .utf8)
+        let start = try #require(script.range(of: "cat > \"$APP/Contents/Info.plist\" <<PLIST\n")?.upperBound)
+        let end = try #require(script.range(of: "\nPLIST", range: start..<script.endIndex)?.lowerBound)
+        let mobile = try Data(contentsOf: root.appendingPathComponent("Apps/GrafttyMobile/GrafttyMobile/Info.plist"))
+        for data in [Data(script[start..<end].utf8), mobile] {
+            let plist = try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+            let declarations = plist["UTExportedTypeDeclarations"] as? [[String: Any]] ?? []
+            let declaration = try #require(declarations.first {
+                $0["UTTypeIdentifier"] as? String == TransferableProjectMove.contentType.identifier
+            })
+            #expect((declaration["UTTypeConformsTo"] as? [String])?.contains("public.data") == true)
+        }
+    }
+
     @Test func projectPayloadRoundTripsThroughItemProvider() async throws {
         let payload = TransferableProjectMove(projectID: "mac:repo")
         let provider = NSItemProvider()
