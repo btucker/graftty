@@ -17,6 +17,15 @@ struct MacPagedTerminalTests {
 
     @Test("@spec TERM-12.36: When a detached local Mac pane is mounted again, the application shall retain every history line, including history shorter than one viewport, through native paging or legacy replay.", .timeLimit(.minutes(1)), arguments: MacPagedTerminalRenderer.isSupported ? [false, true] : [true], [40, 10000])
     func mountedPaneRestoresDetachedHistory(legacy: Bool, lineCount: Int) async throws {
+        try await restoreDetachedHistory(legacy: legacy, lineCount: lineCount)
+    }
+
+    @Test("@spec TERM-12.47: While a session's scrollback fits within libghostty's default 50,000,000-byte page budget, the zmx daemon shall retain every row, so a Mac pane reattaching to a 20,000-line session restores every line instead of only the newest 10,000,000 bytes of pages.", .timeLimit(.minutes(2)), .enabled(if: MacPagedTerminalRenderer.isSupported))
+    func daemonRetainsLibghosttyDefaultScrollbackBudget() async throws {
+        try await restoreDetachedHistory(legacy: false, lineCount: 20000)
+    }
+
+    private func restoreDetachedHistory(legacy: Bool, lineCount: Int) async throws {
         let fixture = try await HistoryDaemon.make(lineCount: lineCount, redrawPrompt: legacy)
         defer { fixture.close() }
         _ = NSApplication.shared
@@ -95,7 +104,7 @@ struct MacPagedTerminalTests {
         }
         let rows = Set(restoredText.split(whereSeparator: \.isNewline).map(String.init))
         let missingRows = (0..<lineCount).filter { !rows.contains(String(format: "history-row-%06d", $0)) }
-        #expect(missingRows.isEmpty, "Missing restored rows: \(missingRows.prefix(30))")
+        #expect(missingRows.isEmpty, "Missing \(missingRows.count) restored rows: \(missingRows.prefix(30))")
         #expect(handle.presentationGrid == nil)
     }
 

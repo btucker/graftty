@@ -90,7 +90,7 @@ if [[ -z "$UPSTREAM_VERSION" ]]; then
     echo "couldn't read upstream version from build.zig.zon" >&2
     exit 1
 fi
-VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-graftty7"
+VERSION="${UPSTREAM_VERSION}-g${COMMIT:0:7}-graftty8"
 
 echo "→ testing patched zmx"
 (
@@ -204,7 +204,7 @@ printf '%s\n' "$VERSION" > "$INSTALL_STAGE/VERSION"
     printf '# zmx %s — built from https://github.com/neurosnap/zmx commit %s\n' \
         "$VERSION" "$COMMIT"
     printf '# Built with Zig %s.\n' "$EXPECTED_ZIG_VERSION"
-    printf '# Graftty patch SHA256 %s — negotiated snapshots + version-tolerant pixel sizing + no same-size redraw.\n' \
+    printf '# Graftty patch SHA256 %s — negotiated snapshots + version-tolerant pixel sizing + no same-size redraw + 50 MB scrollback page budget.\n' \
         "$patch_sha"
     printf '# Paging patch SHA256 %s - current screen first and requested scrollback pages.\n' \
         "$paging_patch_sha"

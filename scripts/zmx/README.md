@@ -31,9 +31,13 @@ that exact source revision and carries these downstream changes:
   probe can consume keystrokes entered immediately after attach, while a
   no-probe seed contains default colors rather than Graftty's actual surface
   state and must not replace the user's theme;
-- preserve Graftty's prior 10 MB scrollback retention budget, with a separate
-  high line ceiling. Upstream's new 2,000-line setting combines with Ghostty's
-  10 KB default byte budget and discards most of a 10,000-line fixture;
+- retain libghostty 1.4's default 50 MB scrollback page budget, with a
+  separate high line ceiling. Ghostty counts page allocations rather than
+  text, so the earlier 10 MB budget kept only about 7,000 rows of a
+  156-column session and reattached panes stopped there. Upstream's new
+  2,000-line setting combines with Ghostty's 10 KB default byte budget and
+  discards most of a 10,000-line fixture. The 50 MB budget ships in
+  `graftty8`; existing daemons keep 10 MB until their sessions restart;
 - preserve zmx's legacy 4-byte `Resize` message while negotiating a separate
   pixel-size extension. The new protocol also bridges the directional tag
   18/19 shapes used by Graftty 0.6 so N-1 pixel-only resizes keep working, and
