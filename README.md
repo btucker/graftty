@@ -331,6 +331,7 @@ worktree's terminal) and `graftty pane send` (inject keystrokes).
 The bundled `graftty` CLI lets a process inside a Graftty pane drive the app, and lets one agent control panes in another worktree.
 
 ```sh
+graftty project add ../my-project             # register a local Git project in the Mac app
 graftty notify "tests passing"               # set a sidebar attention badge
 graftty pane list                            # panes in the current worktree
 graftty pane add --command "claude"          # split + run a command
@@ -357,6 +358,10 @@ graftty pane show drag-files:1 --lines 500   # more scrollback
 graftty pane send drag-files:1 "pnpm test"   # type the command and press Enter
 graftty pane send drag-files:1 "y" --no-enter  # type without committing
 ```
+
+`graftty project add <path>` registers a local Git repository through the running Mac app and saves it before returning success. The sidebar and connected mobile clients use the same project list. The command works from any directory. Relative paths resolve against the caller's working directory. Git roots, linked worktrees, and repositories with no commits are supported. Repeated additions preserve existing project settings and panes, and the command leaves the current selection unchanged.
+
+The command does not initialize Git. For a directory without Git, use **Add Repository** in the Mac app to choose **Initialize Git Repository** or **Add Without Git**. If the running app does not support project registration, quit and relaunch an updated app before retrying. This command registers projects in the Mac app; `graftty-host project add` manages the separate Linux host project list.
 
 `<addr>` is `<id>` (current worktree, that pane), `<worktree>` (worktree's only pane), or `<worktree>:<id>`. Worktree names match what `graftty team list` prints. Run `graftty pane <verb> --help` for examples on every subcommand.
 

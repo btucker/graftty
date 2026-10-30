@@ -11,6 +11,7 @@ public enum ControlCapability: String, CaseIterable, Sendable {
     case worktreeRemove = "worktree_remove"
     case worktreePinnedRemoval = "worktree_pinned_removal"
     case worktreePin = "worktree_pin"
+    case projectAdd = "project_add"
 
     /// The capability an older single-capability probe asks about.
     init?(legacyProbe: NotificationMessage) {
@@ -29,6 +30,7 @@ public enum ControlCapability: String, CaseIterable, Sendable {
         case .remoteWorktree: .remoteWorktreeCapability
         case .worktreeRemove: .worktreeRemoveCapability
         case .worktreePinnedRemoval: .worktreePinnedRemovalCapability
+        case .projectAdd: .projectAddCapability
         case .worktreePin: .worktreePinCapability
         }
     }

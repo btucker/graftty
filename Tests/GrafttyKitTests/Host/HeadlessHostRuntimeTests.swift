@@ -863,7 +863,7 @@ struct HeadlessHostRuntimeTests {
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.attention?.clearAfter == Attention.clearAfterMaxSeconds)
     }
 
-    @Test("The headless host advertises every control capability except pane agents and remote worktrees")
+    @Test("The headless host advertises every control capability except pane agents, remote worktrees, and Mac project registration")
     func headlessCapabilities() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -874,6 +874,7 @@ struct HeadlessHostRuntimeTests {
         ]))
         #expect(await runtime.handle(.paneAgentCapability) == .error("operation is unavailable on this host"))
         #expect(await runtime.handle(.remoteWorktreeCapability) == .error("operation is unavailable on this host"))
+        #expect(await runtime.handle(.projectAddCapability) == .error("operation is unavailable on this host"))
     }
 
     @Test("@spec REMOTE-22.48: When a headless host receives a team send or message for a graftty-mac address, the application shall forward it to the paired peer only for a tracked caller.")

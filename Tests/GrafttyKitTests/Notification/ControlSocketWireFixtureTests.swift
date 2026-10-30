@@ -78,6 +78,8 @@ struct ControlSocketWireFixtureTests {
             (.remotePlacement(host: try host(), request: .status(operationID: operationID)),
              #"{"host":{"deviceID":{"value":"worker"},"fingerprint":{"rawBytes":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},"request":{"status":{"operationID":"00000000-0000-0000-0000-000000000001"}},"type":"remote_placement"}"#),
             (.mcpConnection(.list), #"{"request":{"list":{}},"type":"mcp_connection"}"#),
+            (.addProject(path: "/repo"), #"{"path":"/repo","type":"add_project"}"#),
+            (.projectAddCapability, #"{"type":"project_add_capability"}"#),
             (.linuxSetupIdentity, #"{"type":"linux_setup_identity"}"#),
             (.completeLinuxSetup(try setupResult()),
              #"{"result":{"destination":"alias","identity":{"deviceID":"dev","displayName":"Linux","port":8801,"publicKey":"key"},"openSSH":{"hostname":"h","port":22,"user":"u"},"projectPaths":["/home/u/app"],"toolOutcomes":[{"component":"codex","message":"ok","status":"succeeded"}]},"type":"complete_linux_setup"}"#),
@@ -192,7 +194,7 @@ struct ControlSocketWireFixtureTests {
     /// keep at least one encoding fixture per case.
     static func fixtureCoverage(_ request: NotificationMessage, _ response: ResponseMessage) {
         switch request {
-        case .linuxSetupIdentity, .completeLinuxSetup, .previewFiles, .previewImage, .offerResource, .notify, .clear,
+        case .addProject, .projectAddCapability, .linuxSetupIdentity, .completeLinuxSetup, .previewFiles, .previewImage, .offerResource, .notify, .clear,
              .listPanes, .reconnectRemoteMac, .reconnectRemoteClient, .remoteWorktree, .addPane, .paneAgentCapability,
              .closePane, .showPane, .sendPane, .teamSend, .teamReply, .teamBroadcast, .teamHook,
              .providerActivity, .attentionReport, .teamInbox, .teamInboxAdvance, .teamMembers, .teamList,
@@ -325,7 +327,7 @@ struct ControlSocketWireFixtureTests {
         #expect(TeamHookRuntime.allCases.map(\.rawValue) == ["codex", "claude"])
         #expect(ControlCapability.allCases.map(\.rawValue) == [
             "agent_prompt_staging", "pane_agent", "worktree_base", "worktree_create_idempotency", "remote_worktree",
-            "worktree_remove", "worktree_pinned_removal", "worktree_pin",
+            "worktree_remove", "worktree_pinned_removal", "worktree_pin", "project_add",
         ])
         #expect(TeamHookEvent.allCases.map(\.rawValue) == [
             "session-start", "user-prompt-submit", "pre-tool-use", "post-tool-use", "post-tool-use-failure",

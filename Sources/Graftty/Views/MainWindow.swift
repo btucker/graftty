@@ -1575,18 +1575,11 @@ struct MainWindow: View {
         }
 
         Task { @MainActor in
-            let discovered: [DiscoveredWorktree]
+            let registration: ProjectRegistration
             do {
-                discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
+                registration = try await ProjectRegistration.prepare(path: selectWorktree ?? repoPath)
             } catch {
-                // User-initiated path: the user picked a folder in the
-                // Add Repository dialog. If git discovery fails (folder
-                // isn't a repo, git binary missing, permissions), a
-                // silent `return` leaves the user wondering why nothing
-                // happened. Surface the failure in an alert so they can
-                // pick a different folder or investigate. GIT-1.2.
-                NSLog("[Graftty] addRepoFromPath: discover failed for %@: %@",
-                      repoPath, String(describing: error))
+                NSLog("[Graftty] addRepoFromPath: discover failed for %@: %@", repoPath, String(describing: error))
                 let alert = NSAlert()
                 alert.messageText = "Could not add repository"
                 alert.informativeText = "\(repoPath)\n\n\(String(describing: error))"
@@ -1594,31 +1587,9 @@ struct MainWindow: View {
                 alert.runModal()
                 return
             }
-            let worktrees = discovered.map { WorktreeEntry(path: $0.path, branch: $0.branch) }
-            let displayName = URL(fileURLWithPath: repoPath).lastPathComponent
-            let bookmark = try? RepoBookmark.mint(atPath: repoPath)
-            if bookmark == nil {
-                NSLog("[Graftty] addRepoFromPath: bookmark mint failed for %@; rename-recovery disabled for this entry", repoPath)
-            }
-            // Capture the main-checkout branch at add time so the sidebar
-            // has a stable default-branch label even before the first
-            // origin/HEAD poll lands (or for repos with no remote at all).
-            let mainCheckoutBranch = discovered.first(where: { $0.path == repoPath })?.branch
-            let repo = RepoEntry(
-                path: repoPath,
-                displayName: displayName,
-                worktrees: worktrees,
-                bookmark: bookmark,
-                defaultBranchHint: mainCheckoutBranch
-            )
-            appState.addRepo(repo)
-            remoteBranchStore.refresh(repoPath: repoPath)
-
-            if let wt = selectWorktree {
-                self.selectWorktree(wt)
-            } else if let first = worktrees.first {
-                self.selectWorktree(first.path)
-            }
+            registration.apply(to: &appState)
+            remoteBranchStore.refresh(repoPath: registration.repo.path)
+            self.selectWorktree(registration.selectedWorktreePath)
 
             // After the repo lands in `appState` so the user sees the
             // new sidebar row before the nudge explains why its PR

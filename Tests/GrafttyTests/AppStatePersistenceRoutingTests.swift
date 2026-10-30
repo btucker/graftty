@@ -807,3 +807,60 @@ struct WindowlessBackgroundSaveTests {
         #expect(probe.written.last?.worktree(forPath: repoPath)?.branch == "renamed")
     }
 }
+
+@MainActor
+struct ProjectAddPersistenceTests {
+    @Test func persistenceFailureIsReportedAndRetryIsSafe() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-save-failure-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let probe = PersistenceProbe()
+        let router = try HeadlessRouter()
+        let box = StateBox(AppState())
+        probe.failWrites(with: CocoaError(.fileWriteNoPermission))
+        await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            guard case .error(let message) = await router.route(.addProject(path: root.path), box) else {
+                Issue.record("save failure must not report success")
+                return
+            }
+            #expect(message.contains(root.path))
+            #expect(probe.written.isEmpty)
+            probe.failWrites(with: nil)
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            #expect(probe.written.last?.repos.count == 1)
+        }
+    }
+
+    @Test("@spec PROJECT-1.11: When the Mac app accepts a project addition, the application shall update its shared project model and persist the registration before replying, including when no window is open.")
+    func additionPersistsBeforeReplyAndRetryPreservesState() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("project-add-router-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await GitRunner.run(args: ["init", "-b", "trunk"], at: root.path)
+        let probe = PersistenceProbe()
+        let router = try HeadlessRouter()
+        let box = StateBox(AppState())
+        let changes = AppStateChanges()
+        changes.publish(onMarkDirtyOf: probe.persister)
+        try await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            let saved = try #require(probe.written.last)
+            #expect(saved.repos.count == 1)
+            #expect(saved.repos[0].path == CanonicalPath.canonicalize(root.path))
+            #expect(saved.repos[0].worktrees.map(\.branch) == ["trunk"])
+            #expect(box.state == saved)
+            #expect(changes.currentRevision > 0)
+            let owner = WorktreeOrigin(deviceID: .init(value: "test-mac"), deviceLabel: "Mac", relayDepth: 0)
+            let projects = SidebarHostController.shared.localProjects(box.state.repos, owner: owner)
+            #expect(projects.count == 1)
+            #expect(projects.first?.name == saved.repos[0].displayName)
+            #expect(box.state.selectedWorktreePath == nil)
+            #expect(await router.route(.addProject(path: root.path), box) == .ok)
+            #expect(box.state == saved)
+            #expect(probe.written.last == saved)
+            #expect(await router.route(.addProject(path: root.appendingPathComponent("missing").path), box) != .ok)
+            #expect(box.state == saved)
+        }
+    }
+}

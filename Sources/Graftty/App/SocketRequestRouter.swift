@@ -103,6 +103,18 @@ final class SocketRequestRouter {
 
     /// Mac-specific dispatch for requests the shared core does not own.
     func handlePaneRequest(_ message: NotificationMessage) async -> ResponseMessage? {
+        if case .addProject(let path) = message {
+            do {
+                let registration = try await ProjectRegistration.prepare(path: path)
+                try Task.checkCancellation()
+                registration.apply(to: &appState.wrappedValue)
+                remoteBranchStore.refresh(repoPath: registration.repo.path)
+                try await GrafttyApp.persistAppStateNow(appState.wrappedValue)
+                return .ok
+            } catch {
+                return .error("Could not add project at \(path): \(error.localizedDescription)")
+            }
+        }
         if case .mcpConnection(let request) = message {
             guard let parentMCPConnections else { return .error("Parent MCP service is unavailable") }
             return await parentMCPConnections.handle(request)
