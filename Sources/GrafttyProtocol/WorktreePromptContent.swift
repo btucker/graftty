@@ -37,13 +37,71 @@ public enum WorktreePromptContent {
     }
 
     private static let opening = try! NSRegularExpression(
-        pattern: #"^[\t ]*<(graftty-peer-message|graftty-system-message|graftty-forge-message|cross-session-message|system-reminder|environment_context|task-notification)(?=[\s>])[^>]*>"#)
+        pattern: #"^[\t ]*<(graftty-peer-message|graftty-system-message|graftty-forge-message|cross-session-message|agent-message|system-reminder|environment_context|task-notification)(?=[\s>])[^>]*>"#)
+    private static let inlineCode = try! NSRegularExpression(
+        pattern: #"(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)"#)
+
+    private struct Fence {
+        private var marker: Character?
+        private var length = 0
+
+        /// Consume the delimiter lines and all content inside a Markdown fence.
+        mutating func consume(_ line: String) -> Bool {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let marker {
+                let run = trimmed.prefix(while: { $0 == marker })
+                if run.count >= length, trimmed.dropFirst(run.count).isEmpty { self.marker = nil }
+                return true
+            }
+            guard let first = trimmed.first, first == "`" || first == "~" else { return false }
+            let count = trimmed.prefix(while: { $0 == first }).count
+            guard count >= 3 else { return false }
+            marker = first
+            length = count
+            return true
+        }
+    }
+
+    private static func closingTag(_ name: String, in text: String, from start: String.Index,
+                                   respectingFences: Bool = true) -> Range<String.Index>? {
+        let escaped = NSRegularExpression.escapedPattern(for: name)
+        let tags = try! NSRegularExpression(pattern: "<\(escaped)(?=[\\s>])[^>]*>|</\(escaped)>")
+        var cursor = start
+        var depth = 0
+        var fence = Fence()
+        while cursor < text.endIndex {
+            let lineEnd = text[cursor...].firstIndex(of: "\n").map { text.index(after: $0) } ?? text.endIndex
+            if !respectingFences || !fence.consume(String(text[cursor..<lineEnd])) {
+                var openingBoundary = cursor
+                let lineRange = NSRange(cursor..<lineEnd, in: text)
+                let code = inlineCode.matches(in: text, range: lineRange)
+                for match in tags.matches(in: text, range: lineRange) {
+                    if code.contains(where: { NSLocationInRange(match.range.location, $0.range) }) { continue }
+                    guard let range = Range(match.range, in: text) else { continue }
+                    if text[range].hasPrefix("</") {
+                        if depth == 0 { return range }
+                        depth -= 1
+                        openingBoundary = range.upperBound
+                    } else if text[openingBoundary..<range.lowerBound].allSatisfy(\.isWhitespace) {
+                        // Match the parser's line-start rule, including adjacent
+                        // envelopes after a nested close. Inline mentions stay literal.
+                        depth += 1
+                    }
+                }
+            }
+            cursor = lineEnd
+        }
+        // If Markdown crosses the delivery boundary, recover the balanced
+        // envelope close so the following human input retains its provenance.
+        return respectingFences
+            ? closingTag(name, in: text, from: start, respectingFences: false) : nil
+    }
 
     private static func parse(_ text: String, source: Part.Source) -> [Part] {
         var result: [Part] = []
         var plain = ""
         var cursor = text.startIndex
-        var fence: String?
+        var fence = Fence()
         func flush() {
             let value = plain.trimmingCharacters(in: .whitespacesAndNewlines)
             if !value.isEmpty { result.append(Part(source: source, text: value)) }
@@ -53,14 +111,7 @@ public enum WorktreePromptContent {
             let lineEnd = text[cursor...].firstIndex(of: "\n").map { text.index(after: $0) } ?? text.endIndex
             let line = String(text[cursor..<lineEnd])
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                let marker = String(trimmed.prefix(3))
-                if fence == marker { fence = nil } else if fence == nil { fence = marker }
-                plain += line
-                cursor = lineEnd
-                continue
-            }
-            if fence == nil {
+            if !fence.consume(line) {
                 if trimmed == "Another Claude session sent a message:",
                    text[lineEnd...].drop(while: { $0.isWhitespace }).hasPrefix("<cross-session-message") {
                     cursor = lineEnd
@@ -74,7 +125,7 @@ public enum WorktreePromptContent {
                     let header = String(line[headerRange])
                     let bodyStart = text.index(cursor,
                         offsetBy: line.distance(from: line.startIndex, to: headerRange.upperBound))
-                    let close = text.range(of: "</\(name)>", range: bodyStart..<text.endIndex)
+                    let close = closingTag(name, in: text, from: bodyStart)
                     // A bounded durable input can end inside a generated frame.
                     // Its opening envelope still establishes non-human provenance.
                     let body = String(text[bodyStart..<(close?.lowerBound ?? text.endIndex)])
@@ -83,7 +134,7 @@ public enum WorktreePromptContent {
                         let decoded = attribute("graftty-history-encoding", in: header) == "xml-v1" ? unescape(body) : body
                         let content = decoded.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !content.isEmpty { result.append(Part(source: .agent(attribute("agent", in: header)), text: content)) }
-                    case "cross-session-message":
+                    case "cross-session-message", "agent-message":
                         result += parse(body, source: .agent(attribute("from-name", in: header) ?? attribute("from", in: header)))
                     default: break // Generated system, forge, and hook context.
                     }

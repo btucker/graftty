@@ -256,7 +256,7 @@ public struct WorktreeTimeline: Sendable {
             if let source = input.source, source != .user {
                 parts = [.init(source: source, text: input.text)]
             } else {
-                // Older captures classified provider task notifications as user
+                // Older captures classified some provider envelopes as user
                 // input. Reclassify their envelopes when projecting saved history.
                 parts = WorktreePromptContent.parts(in: input.text)
             }

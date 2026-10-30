@@ -4726,6 +4726,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-47** While an agent turn is running on Mac or mobile, the timeline shall preview its first text response, retain that text through intermediate updates and summary generation, and generate an AI summary from the first and final responses only after the turn completes.
 
+### CONTEXT-48.x
+
+**CONTEXT-48** When Claude provider input contains an agent-message envelope, the application shall display its content as an agent message with its available sender on Mac and mobile, including previously saved user inputs, while preserving surrounding human text and fenced examples.
+
 ## MEM — MEM
 
 ### MEM-1.x
