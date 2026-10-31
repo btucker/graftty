@@ -7,7 +7,7 @@ import Crypto
 #endif
 
 /// Reads only newly appended transcript records. Provider hooks supply the exact
-/// session path; no unrelated sessions or tool output enter the timeline.
+/// session path. Only visible replies and validated human question answers enter the timeline.
 public struct AgentResponseCapture {
     private struct Cursor: Codable {
         var offset: UInt64 = 0
@@ -15,6 +15,7 @@ public struct AgentResponseCapture {
         var discardingLine = false
         var lastResponse: WorktreeHistory.AgentResponse?
         var lastResponseWorktree: String?
+        var inputState: HarnessTimelineTranscriptState?
     }
 
     public let handoff: AttentionFileHandoff
@@ -76,6 +77,12 @@ public struct AgentResponseCapture {
             for newline in chunk.indices where chunk[newline] == 0x0A {
                 if !cursor.discardingLine, pending.count + newline - start <= limit {
                     pending.append(contentsOf: chunk[start..<newline])
+                    var inputState = cursor.inputState ?? HarnessTimelineTranscriptState()
+                    if let input = Self.input(from: pending, runtime: runtime, sessionID: sessionID,
+                                              offset: recordOffset, state: &inputState) {
+                        try handoff.input(input, worktree: worktree, runtime: runtime, sessionID: sessionID)
+                    }
+                    cursor.inputState = inputState
                     if let response = Self.response(from: pending, runtime: runtime,
                                                      sessionID: sessionID, offset: recordOffset) {
                         try handoff.response(response, worktree: worktree)
@@ -100,6 +107,35 @@ public struct AgentResponseCapture {
         }
         if turnCompleted { try completeTurn(cursor: &cursor) }
         try JSONEncoder().encode(cursor).write(to: cursorURL, options: .atomic)
+    }
+
+    static func input(from data: Data, runtime: TeamHookRuntime, sessionID: String, offset: UInt64 = 0,
+                      state: inout HarnessTimelineTranscriptState) -> WorktreeHistory.UserInput? {
+        guard let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              record["isSidechain"] as? Bool != true else { return nil }
+        if let recordedSession = record["sessionId"] as? String ?? record["session_id"] as? String,
+           recordedSession != sessionID { return nil }
+        guard let plugin = HarnessTimelinePlugins.matching(runtime.rawValue).first,
+              let part = plugin.transcriptInput(from: record, state: &state),
+              let date = recordDate(record) else { return nil }
+        let payload = record["payload"] as? [String: Any]
+        let sourceID = record["uuid"] as? String ?? payload?["call_id"] as? String ?? "row:\(offset)"
+        let digest = SHA256.hash(data: Data("input\0\(runtime.rawValue)\0\(sessionID)\0\(sourceID)".utf8))
+            .prefix(16).map { String(format: "%02x", $0) }.joined()
+        let groups = [0..<8, 8..<12, 12..<16, 16..<20, 20..<32].map { range in
+            String(digest[digest.index(digest.startIndex, offsetBy: range.lowerBound)..<digest.index(digest.startIndex, offsetBy: range.upperBound)])
+        }
+        guard let id = UUID(uuidString: groups.joined(separator: "-")) else { return nil }
+        return .init(id: id, text: part.text, at: date, runtime: runtime.rawValue, parts: [part])
+    }
+
+    private static func recordDate(_ record: [String: Any]) -> Date? {
+        guard let timestamp = record["timestamp"] as? String else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: timestamp) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: timestamp)
     }
 
     /// Claude's final text can already have been drained at the previous tool boundary.
@@ -144,15 +180,7 @@ public struct AgentResponseCapture {
             guard ["output_text", "text"].contains(block["type"] as? String ?? "") else { return nil }
             return block["text"] as? String
         }.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let timestamp = record["timestamp"] as? String else { return nil }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        var date = formatter.date(from: timestamp)
-        if date == nil {
-            formatter.formatOptions = [.withInternetDateTime]
-            date = formatter.date(from: timestamp)
-        }
-        guard var date else { return nil }
+        guard !text.isEmpty, var date = recordDate(record) else { return nil }
         if let metadata = message["internal_chat_message_metadata_passthrough"] as? [String: Any],
            let created = metadata["create_time"] as? Double, created.isFinite {
             date = Date(timeIntervalSince1970: created)

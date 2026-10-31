@@ -4740,6 +4740,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-48** When Claude provider input contains an agent-message envelope, the application shall display its content as an agent message with its available sender on Mac and mobile, including previously saved user inputs, while preserving surrounding human text and fenced examples.
 
+### CONTEXT-49.x
+
+**CONTEXT-49** When a harness supplies structured question replies, commands, review results, or interruptions, the application shall normalize them through harness-specific timeline plugins into shared presentation on Mac and mobile, retain surrounding human input, preserve unknown or malformed formats and literal examples, and restore structured content from saved history.
+
+### CONTEXT-50.x
+
+**CONTEXT-50** When a Claude AskUserQuestion result or a Codex request_user_input result supplies human answers in a transcript, the application shall capture one structured reply at its original time through the durable handoff, match Codex answers to their question call across hook invocations, and exclude unrelated tool results, other sessions, and subagents.
+
+### CONTEXT-51.x
+
+**CONTEXT-51** When a structured question reply appears in the shared Mac and mobile timeline, the application shall display each question as secondary text above its readable answer without provider wrappers or transport identifiers, wrapping within the available width.
+
 ## MEM — MEM
 
 ### MEM-1.x

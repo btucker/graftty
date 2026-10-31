@@ -61,21 +61,34 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
         public let promptDigest: String?
         /// Absent in older history or mixed prompts. Those are classified at projection.
         public let source: WorktreePromptContent.Part.Source?
+        /// Structured captures retain their meaning even when their provider JSON exceeded the text limit.
+        public let parts: [WorktreePromptContent.Part]?
 
         fileprivate static func digest(_ prompt: String) -> String {
             SHA256.hash(data: Data(prompt.utf8)).map { String(format: "%02x", $0) }.joined()
         }
 
-        public init(id: UUID = UUID(), text: String, at date: Date, runtime: String? = nil) {
+        public init(id: UUID = UUID(), text: String, at date: Date, runtime: String? = nil,
+                    parts suppliedParts: [WorktreePromptContent.Part]? = nil) {
             self.id = id
             timestamp = date.timeIntervalSinceReferenceDate
             self.runtime = runtime
             promptDigest = Self.digest(text)
-            let parts = WorktreePromptContent.parts(in: text)
+            let parsed = suppliedParts ?? WorktreePromptContent.parts(in: text, runtime: runtime)
             // Capture provenance before bounding text, so truncating a long
             // provider envelope cannot turn it into apparent human input.
-            source = parts.count == 1 ? parts[0].source : (parts.isEmpty ? .generated : nil)
-            let text = (parts.count == 1 ? parts[0].text : WorktreePromptContent.retainedText(from: parts))
+            source = parsed.count == 1 ? parsed[0].source : (parsed.isEmpty ? .generated : nil)
+            var budget = HarnessInputBudget()
+            let bounded = parsed.prefix(32).compactMap { part -> WorktreePromptContent.Part? in
+                guard budget.hasSpace else { return nil }
+                if let content = part.presentation {
+                    return .init(source: part.source, presentation: content.bounded(using: &budget))
+                }
+                return .init(source: part.source, text: budget.take(part.text))
+            }
+            parts = parsed.contains(where: { $0.presentation != nil }) ? bounded : nil
+            let retained = parts ?? parsed
+            let text = (retained.count == 1 ? retained[0].text : WorktreePromptContent.retainedText(from: retained))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             var bytes = 0
             let prefix = text.prefix(2000).prefix { character in
@@ -83,7 +96,7 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
                 return bytes <= 8000
             }
             self.text = String(prefix)
-            wasTruncated = prefix.endIndex != text.endIndex
+            wasTruncated = prefix.endIndex != text.endIndex || (parts != nil && bounded != parsed)
         }
     }
 
@@ -161,7 +174,7 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
 /// One chronological projection drives both native clients and all expansion modes.
 public struct WorktreeTimeline: Sendable {
     public struct Event: Identifiable, Equatable, Sendable {
-        public enum Kind: Sendable { case creation, user, agentMessage, agentResponse, checkpoint }
+        public enum Kind: Sendable { case creation, user, agentMessage, agentResponse, checkpoint, system }
         public let id: String
         public let kind: Kind
         public let timestamp: Double?
@@ -172,6 +185,8 @@ public struct WorktreeTimeline: Sendable {
         public var sourceWorktreePath: String? = nil
         public var responseSessionID: String? = nil
         public var isFinalResponse: Bool? = nil
+        public var presentation: HarnessTimelinePresentation? = nil
+        public var wasTruncated: Bool = false
 
         public var sourceWorktreeName: String? {
             sourceWorktreePath.map { URL(fileURLWithPath: $0).lastPathComponent }
@@ -224,7 +239,7 @@ public struct WorktreeTimeline: Sendable {
             case .user: self.init(kind: .inputs, events: [event])
             case .agentMessage: self.init(kind: .peerMessages, events: [event])
             case .agentResponse: self.init(kind: .agentTurn, events: [event], isComplete: event.isFinalResponse != false)
-            case .creation, .checkpoint: self.init(kind: .event, events: [event])
+            case .creation, .checkpoint, .system: self.init(kind: .event, events: [event])
             }
         }
 
@@ -253,12 +268,14 @@ public struct WorktreeTimeline: Sendable {
         }
         result += (history?.inputs ?? []).flatMap { input -> [Event] in
             let parts: [WorktreePromptContent.Part]
-            if let source = input.source, source != .user {
+            if let captured = input.parts {
+                parts = captured
+            } else if let source = input.source, source != .user {
                 parts = [.init(source: source, text: input.text)]
             } else {
                 // Older captures classified some provider envelopes as user
                 // input. Reclassify their envelopes when projecting saved history.
-                parts = WorktreePromptContent.parts(in: input.text)
+                parts = WorktreePromptContent.parts(in: input.text, runtime: input.runtime)
             }
             return parts.enumerated().compactMap { index, part in
                 let kind: Event.Kind
@@ -270,12 +287,15 @@ public struct WorktreeTimeline: Sendable {
                     kind = .agentMessage
                     title = sender.map { "Message from \($0)" } ?? "Agent sent a message"
                     sourcePath = Self.worktreePath(from: sender)
-                case .generated: return nil
+                case .generated:
+                    guard let presentation = part.presentation else { return nil }
+                    kind = .system; title = presentation.kind.title
                 }
                 return Event(id: input.id.uuidString + (parts.count > 1 ? ":\(index)" : ""),
                     kind: kind, timestamp: input.timestamp, title: title,
                     completed: part.text + (input.wasTruncated && index == parts.count - 1 ? "…" : ""),
-                    decisions: [], sourceWorktreePath: sourcePath)
+                    decisions: [], sourceWorktreePath: sourcePath, presentation: part.presentation,
+                    wasTruncated: input.wasTruncated && index == parts.count - 1)
             }
         }
         result += (history?.responses ?? []).map { response in
@@ -329,7 +349,7 @@ public struct WorktreeTimeline: Sendable {
             run.removeAll(keepingCapacity: true)
         }
         for (index, event) in events.enumerated() {
-            if event.kind == .user || event.kind == .agentMessage {
+            if event.kind == .user || event.kind == .agentMessage || event.presentation?.kind == .interruption {
                 // An interrupted turn still gets a summary once the next input arrives.
                 for rowIndex in turns.values {
                     rows[rowIndex] = Row(kind: .agentTurn, events: rows[rowIndex].events)

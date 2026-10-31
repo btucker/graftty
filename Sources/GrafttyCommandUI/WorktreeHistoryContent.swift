@@ -122,13 +122,15 @@ struct WorktreeHistoryContent: View {
             .padding(.bottom, last ? 0 : 22)
         }
         .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: first.kind == .agentMessage || first.kind == .agentResponse || (first.sourceWorktreePath != nil && openWorktree != nil) ? .contain : .combine)
+        .accessibilityElement(children: first.presentation != nil || first.kind == .agentMessage || first.kind == .agentResponse || (first.sourceWorktreePath != nil && openWorktree != nil) ? .contain : .combine)
         .accessibilityIdentifier("worktree.context.history.event.\(first.id)")
     }
 
     private func eventRow(_ event: WorktreeTimeline.Event) -> some View {
         railed([event]) {
-            if !event.completed.isEmpty {
+            if let presentation = event.presentation {
+                HarnessTimelineContent(presentation: presentation, secondary: secondary, wasTruncated: event.wasTruncated)
+            } else if !event.completed.isEmpty {
                 Text(event.completed).font(.callout).lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -142,17 +144,25 @@ struct WorktreeHistoryContent: View {
     private func inputs(_ row: WorktreeTimeline.Row) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(row.entries) { entry in
-                let line = Text(entry.event.completed).font(.callout).lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if revealInTerminal != nil {
-                    Button { reveal(entry.event.id) } label: { line.contentShape(Rectangle()) }
-                        .buttonStyle(.plain)
-                        .help("Show in terminal")
-                        .accessibilityHint("Show this message in the terminal")
-                        .accessibilityIdentifier("worktree.context.history.reveal.\(entry.id)")
+                if let presentation = entry.event.presentation {
+                    HarnessTimelineContent(presentation: presentation, secondary: secondary, wasTruncated: entry.event.wasTruncated)
+                    if revealInTerminal != nil {
+                        Button("Show in terminal") { reveal(entry.event.id) }
+                            .font(.caption).buttonStyle(.plain).foregroundStyle(secondary)
+                    }
                 } else {
-                    line
+                    let line = Text(entry.event.completed).font(.callout).lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if revealInTerminal != nil {
+                        Button { reveal(entry.event.id) } label: { line.contentShape(Rectangle()) }
+                            .buttonStyle(.plain)
+                            .help("Show in terminal")
+                            .accessibilityHint("Show this message in the terminal")
+                            .accessibilityIdentifier("worktree.context.history.reveal.\(entry.id)")
+                    } else {
+                        line
+                    }
                 }
                 missingNote(entry.event.id)
             }
@@ -249,7 +259,7 @@ struct WorktreeHistoryContent: View {
         switch event.kind {
         case .creation: .accentColor
         case .user: .orange
-        case .checkpoint, .agentMessage, .agentResponse: secondary
+        case .checkpoint, .agentMessage, .agentResponse, .system: secondary
         }
     }
 

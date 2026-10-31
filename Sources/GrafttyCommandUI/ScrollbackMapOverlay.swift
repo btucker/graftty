@@ -29,7 +29,7 @@ public struct ScrollbackMapEntry: Sendable, Equatable {
             case .agentMessage, .agentResponse:
                 entries[event.id] = ScrollbackMapEntry(kind: .peer, text: event.completed, timestamp: event.timestamp,
                                                        sender: event.sourceWorktreeName ?? (event.kind == .agentResponse ? event.title : nil))
-            case .creation, .checkpoint: break
+            case .creation, .checkpoint, .system: break
             }
         }
         return entries
