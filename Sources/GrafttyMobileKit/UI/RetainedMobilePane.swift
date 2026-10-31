@@ -1,6 +1,18 @@
 #if canImport(UIKit)
 import GhosttyTerminal
 import Observation
+import SwiftUI
+
+private struct RetainedMobilePanesKey: EnvironmentKey {
+    static let defaultValue: RetainedPaneClientPool<RetainedMobilePane>? = nil
+}
+
+extension EnvironmentValues {
+    var retainedMobilePanes: RetainedPaneClientPool<RetainedMobilePane>? {
+        get { self[RetainedMobilePanesKey.self] }
+        set { self[RetainedMobilePanesKey.self] = newValue }
+    }
+}
 
 /// The renderer must outlive its route too: incoming terminal bytes need a
 /// live Ghostty surface even when UIKit has detached the pane from its window.

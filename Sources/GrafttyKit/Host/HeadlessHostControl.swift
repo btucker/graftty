@@ -144,6 +144,9 @@ public extension HeadlessHostRuntime {
                     PaneInfo(id: offset + 1, title: worktree.paneTitleMetadata[slot]?.title, focused: worktree.focusedPaneSlotID == slot)
                 })
             case .addPane(let request):
+                guard !isShuttingDown, placements.drain == nil else {
+                    throw HostRuntimeError.busy("Host is shutting down or draining")
+                }
                 if let error = CLIWorktreeCreationPolicy.paneAddError(agentRuntime: request.agentRuntime,
                     command: request.command, agentPrompt: request.agentPrompt) { throw HostRuntimeError.invalid(error) }
                 let launch = try WorktreeAgentLaunchCommand.prepare(agent: request.agentRuntime, prompt: request.agentPrompt,
@@ -155,13 +158,10 @@ public extension HeadlessHostRuntime {
                     if worktree.state == .running, let slot = worktree.focusedPaneSlotID ?? worktree.splitTree.allLeaves.first,
                        let session = worktree.paneSessions[slot] {
                         created = try await splitPane(target: launcher.sessionName(for: session),
-                            direction: PaneControlRequest.SplitDirection(rawValue: request.direction.rawValue) ?? .right, command: launch.command)
+                            direction: PaneControlRequest.SplitDirection(rawValue: request.direction.rawValue) ?? .right,
+                            command: launch.command, managedAgent: request.managedAgent)
                     } else { created = try await openWorktree(request.path, command: launch.command) }
-                    if let managed = request.managedAgent, let index = state.indices(forWorktreePath: request.path),
-                       let ai = state.repos[index.repo].worktrees[index.worktree].agents.firstIndex(where: { $0.id == managed.id }) {
-                        state.repos[index.repo].worktrees[index.worktree].agents[ai].paneSlotID = state.repos[index.repo].worktrees[index.worktree].paneSlot(forSessionName: created)
-                        try save()
-                    }
+                    _ = created // The exact binding was persisted before terminals.start.
                 } catch { launch.discardPromptFile(); throw error }
                 return .ok
             case .closePane(let path, let index): try await closePane(target: paneSession(path, index: index))

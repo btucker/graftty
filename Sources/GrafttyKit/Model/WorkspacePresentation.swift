@@ -2,6 +2,37 @@ import Foundation
 import GrafttyProtocol
 
 public extension WorktreeEntry {
+    /// Canvas zoom must never mount a drawer or a hidden tab a second time.
+    var canvasTree: SplitTree {
+        guard let layout = workspaceLayout else { return splitTree }
+        let tree = layout.visibleSplitTree
+        return tree.withZoom(splitTree.zoomed.flatMap {
+            tree.containsLeaf($0) && (focusedPaneSlotID == nil || focusedPaneSlotID == $0) ? $0 : nil
+        })
+    }
+
+    func newlyClosedAgent(viewedAgentID: String?, previousAgents: [ManagedAgent]) -> ManagedAgent? {
+        guard let viewedAgentID else { return nil }
+        return agents.first { agent in
+            guard agent.id == viewedAgentID, agent.status == .closed,
+                  let previous = previousAgents.first(where: { $0.id == agent.id }) else { return false }
+            return previous.status != .closed
+        }
+    }
+
+    var visiblePaneSlots: Set<PaneSlotID> {
+        let canvas = canvasTree
+        var slots = Set(canvas.zoomed.map { [$0] } ?? canvas.allLeaves)
+        if let layout = workspaceLayout, layout.drawerVisible, let terminal = layout.selectedTerminal {
+            slots.insert(terminal)
+        }
+        return slots
+    }
+
+    func ownsManagedAgent(in slot: PaneSlotID) -> Bool {
+        agents.contains { $0.paneSlotID == slot && $0.status != .closed }
+    }
+
     var navigationTree: SplitTree {
         guard let layout = workspaceLayout, !layout.sessions.isEmpty else { return splitTree }
         let canvas = layout.visibleSplitTree
@@ -16,7 +47,7 @@ public extension WorktreeEntry {
             workspaceLayout?.remove(slot)
             workspaceLayout?.addAgent(slot)
         }
-        workspaceLayout?.reconcile(live: splitTree.allLeaves, agents: Set(agents.compactMap(\.paneSlotID)))
+        workspaceLayout?.reconcile(live: splitTree.allLeaves, agents: Set(agents.filter { $0.status != .closed }.compactMap(\.paneSlotID)))
     }
 }
 

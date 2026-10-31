@@ -54,6 +54,15 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         lastAgent = groups.first?.selected
     }
 
+    public static func clampedDrawerHeight(_ requested: Double, available: Double) -> Double {
+        let maximum = available.isFinite ? max(0, available * 0.7) : 0
+        return min(max(min(120, maximum), requested.isFinite ? requested : 240), maximum)
+    }
+
+    public static func resizedDrawerHeight(_ requested: Double, by delta: Double, available: Double) -> Double {
+        clampedDrawerHeight(clampedDrawerHeight(requested, available: available) + delta, available: available)
+    }
+
     public static func dropEdge(x: Double, y: Double, width: Double, height: Double) -> Edge? {
         if x < width * 0.2 { return .left }
         if x > width * 0.8 { return .right }
@@ -146,12 +155,19 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         for session in sourceGroup.sessions { move(session, to: target) }
     }
 
-    public mutating func reconcile(live: [Session], agents: Set<Session>) {
+    public mutating func reconcile(live: [Session], agents: Set<Session>, preservingSelection: Bool = false) {
+        let previous = self
         let liveSet = Set(live)
         for session in sessions where !liveSet.contains(session) { remove(session) }
         for session in live where !sessions.contains(session) {
             if agents.contains(session) { addAgent(session) }
             else { addTerminal(session) }
+        }
+        if preservingSelection {
+            for group in previous.groups { select(group.selected) }
+            if let lastAgent = previous.lastAgent { select(lastAgent) }
+            if let terminal = previous.selectedTerminal { select(terminal) }
+            drawerVisible = previous.drawerVisible
         }
     }
 }

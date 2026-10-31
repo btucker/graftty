@@ -49,18 +49,21 @@ final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
     var worktreeCreation: any CLIWorktreeCreationPlatform { HeadlessWorktreeLifecycle(runtime: runtime) }
     var worktreeRemoval: any CLIWorktreeRemovalPlatform { HeadlessWorktreeLifecycle(runtime: runtime) }
 
+    func agentSessionNames() async throws -> Set<String> { try await runtime.terminals.sessions() }
+
+    func agentSessionIsAlive(worktree path: String, slot: PaneSlotID) async throws -> Bool {
+        guard let session = state.worktree(forPath: path)?.paneSessions[slot] else { return false }
+        return try await runtime.terminals.sessions().contains(runtime.launcher.sessionName(for: session))
+    }
+
     func closeAgentSession(worktree path: String, slot: PaneSlotID) async throws {
         guard let worktree = state.worktree(forPath: path), let session = worktree.paneSessions[slot] else { return }
         let name = runtime.launcher.sessionName(for: session)
         if try await runtime.terminals.sessions().contains(name) {
             let history = try await runtime.terminals.show(name, lines: Int.max)
-            if let index = state.indices(forWorktreePath: path),
-               let ai = state.repos[index.repo].worktrees[index.worktree].agents.firstIndex(where: { $0.paneSlotID == slot }) {
-                state.repos[index.repo].worktrees[index.worktree].agents[ai].transcript = history
-                try runtime.save()
-            }
+            try await AgentControl.archiveTranscript(history, path: path, slot: slot, session: session, platform: self)
         }
-        try await runtime.closePane(target: name)
+        try await runtime.closePaneSession(target: name)
         guard try await !runtime.terminals.sessions().contains(name) else {
             throw HostRuntimeError.invalid("Agent session is still running")
         }

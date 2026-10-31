@@ -108,7 +108,7 @@ struct MainWindow: View {
                     attentionOpenGeneration &+= 1
                     remoteViewer.focusTerminal(terminalID)
                 }, agentScrollbackMap: agentScrollbackMap)
-                .id(snapshot.path)
+                .id(RemoteWorktreeViewerController.WorktreeKey(identity: RemoteMacIdentity(remote), worktreePath: snapshot.path))
         }
     }
 
@@ -298,7 +298,7 @@ struct MainWindow: View {
                         Divider()
                         WorktreeContextPanel(context: context, foreground: terminalManager.theme.foreground,
                             secondary: terminalManager.theme.foreground.opacity(0.6),
-                            readTranscript: selectedRemoteIdentity == nil ? { id in selectedWorktree?.agents.first { $0.id == id }?.transcript } : nil,
+                            readTranscript: transcriptReader,
                             onClose: { showsWorktreeContext = false })
                             .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
                                 openContextWorktree(path, remoteIdentity: identity)
@@ -555,6 +555,17 @@ struct MainWindow: View {
             return selectedRemoteWorktreePath.map { .remote(identity, $0) }
         }
         return appState.selectedWorktreePath.map { .local($0) }
+    }
+
+    private var transcriptReader: (@MainActor (String) async -> String?)? {
+        guard selectedRemoteIdentity == nil else { return nil }
+        return { id in await readAgentTranscript(id) }
+    }
+
+    private func readAgentTranscript(_ id: String) async -> String? {
+        guard let agent = selectedWorktree?.agents.first(where: { $0.id == id }) else { return nil }
+        do { return try await OffMainIO.run { try AgentArchiveStore().preview(agent) } }
+        catch { return "Could not read transcript: " + error.localizedDescription }
     }
 
     private func historyItem(_ target: WorktreeNavigationTarget) -> BreadcrumbHistoryItem? {
@@ -1233,8 +1244,9 @@ struct MainWindow: View {
 
     private func setWorktreeSurfacesVisible(_ visible: Bool, worktreePath: String) {
         guard let wt = appState.worktree(forPath: worktreePath), wt.state == .running else { return }
+        let visibleSlots = wt.visiblePaneSlots
         for terminalID in wt.splitTree.allLeaves {
-            terminalManager.setVisible(visible, for: terminalID)
+            terminalManager.setVisible(visible && visibleSlots.contains(terminalID), for: terminalID)
         }
     }
 

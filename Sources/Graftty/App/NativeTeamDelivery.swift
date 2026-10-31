@@ -10,6 +10,7 @@ import GrafttyKit
 /// worktrees and again after launch reconciliation.
 @MainActor
 final class NativeTeamDelivery {
+    private var lifecycleTicker: PollingTicker?
     private let services: AppServices
     private let tm: TerminalManager
     private let binding: Binding<AppState>
@@ -109,6 +110,12 @@ final class NativeTeamDelivery {
         // backgrounded for the same reason the stats poller does:
         // agent processes can die at any time and Graftty might not be
         // frontmost when it happens.
+        let lifecycleRouter = SocketRequestRouter(appState: binding, terminalManager: tm, services: services)
+        let lifecycleTicker = PollingTicker(interval: .seconds(2), pauseWhenInactive: { false })
+        self.lifecycleTicker = lifecycleTicker
+        lifecycleTicker.start { await AgentControl.reconcileOutbox(platform: lifecycleRouter) }
+        Task { await AgentControl.reconcileOutbox(platform: lifecycleRouter) }
+
         let presenceTicker = PollingTicker(
             interval: .seconds(30),
             pauseWhenInactive: { false }
@@ -213,7 +220,11 @@ final class NativeTeamDelivery {
     func refreshAndRetryRestoredDelivery() {
         let restoredPresenceRecords = refreshPresenceIndex()
         refreshDeliveryLiveness(records: restoredPresenceRecords)
-        Task { await retryDelivery(records: restoredPresenceRecords) }
+        Task {
+            let platform = SocketRequestRouter(appState: binding, terminalManager: tm, services: services)
+            await AgentControl.reconcileOutbox(platform: platform)
+            await retryDelivery(records: restoredPresenceRecords)
+        }
     }
 
     /// Both native services, in the order a drain pass consults them.

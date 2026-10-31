@@ -102,7 +102,9 @@ enum PaneCommands {
         split: PaneSplit,
         extraInitialInput: String? = nil,
         activateNewPane: Bool = true,
-        preserveZoom: Bool = false
+        preserveZoom: Bool = false,
+        reservedSlot: PaneSlotID? = nil,
+        reservedSession: PaneSessionID? = nil
     ) -> PaneSlotID? {
         let before = appState.wrappedValue
         defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
@@ -125,7 +127,7 @@ enum PaneCommands {
                 }
 
                 let direction: SplitDirection = (split == .right || split == .left) ? .horizontal : .vertical
-                let newID = PaneSlotID()
+                let newID = reservedSlot ?? PaneSlotID()
                 var newTree: SplitTree
                 switch split {
                 case .right, .down:
@@ -137,6 +139,9 @@ enum PaneCommands {
                     newTree = newTree.withZoom(zoomed)
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
+                if let reservedSession {
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].recordPaneSession(reservedSession, for: newID)
+                }
                 let paneSessionID = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                     .ensurePaneSession(for: newID)
                 // TERM-5.5: createSurface can now fail gracefully
@@ -233,6 +238,9 @@ enum PaneCommands {
             }
         }
         guard let currentRepoIdx, let currentWorktreeIdx else { return }
+        // Directory changes do not transfer an assignment or its parent binding.
+        guard !appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx]
+            .ownsManagedAgent(in: terminalID) else { return }
 
         // Longest-prefix match across every repo (handles nested worktrees:
         // a linked worktree at `/r/wt/feature` beats the main checkout at
@@ -455,6 +463,10 @@ enum PaneCommands {
         let before = appState.wrappedValue
         defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         appState.wrappedValue.mutateWorktree(containing: terminalID) { wt in
+            guard (wt.workspaceLayout?.visibleSplitTree ?? wt.splitTree).containsLeaf(terminalID) else {
+                wt.splitTree = wt.splitTree.withZoom(nil)
+                return
+            }
             wt.splitTree = wt.splitTree.togglingZoom(at: terminalID)
         }
     }
@@ -502,6 +514,7 @@ enum PaneCommands {
                 if let layout = wt.workspaceLayout, layout.group(containing: target) != nil {
                     let resized = try layout.visibleSplitTree.resizing(target: target, direction: direction, pixels: pixels, ancestorBounds: bounds)
                     wt.workspaceLayout?.updateGeometry(from: resized)
+                    wt.splitTree = wt.splitTree.withZoom(preserveZoom ? zoomed : nil)
                     didResize = true
                     return
                 }
@@ -541,6 +554,14 @@ enum PaneCommands {
         userInitiated: Bool = false,
         activateReplacement: Bool = true
     ) {
+        if terminalManager.managedPaneClose?(targetID, userInitiated) == true { return }
+        removeEndedPane(appState: appState, terminalManager: terminalManager, targetID: targetID,
+            userInitiated: userInitiated, activateReplacement: activateReplacement)
+    }
+
+    static func removeEndedPane(appState: Binding<AppState>, terminalManager: TerminalManager,
+                                targetID: PaneSlotID, userInitiated: Bool = true,
+                                activateReplacement: Bool = true) {
         let before = appState.wrappedValue
         defer { GrafttyApp.persistAppStateIfChanged(appState, from: before) }
         for repoIdx in appState.wrappedValue.repos.indices {
@@ -565,6 +586,8 @@ enum PaneCommands {
                 _ = appState.wrappedValue.repos[repoIdx]
                     .worktrees[wtIdx].ensurePrimaryPane()
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                    .recordManagedSessionEnd(slot: targetID, reason: "Terminal session ended")
                 terminalManager.destroySurface(terminalID: targetID)
                 let newTree = wt.splitTree.removing(targetID)
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree

@@ -35,6 +35,10 @@ struct ControlRequestCoreTests {
         var platformRequests: [NotificationMessage] = []
         var closedAgentSlots: [PaneSlotID] = []
         var agentCloseFailure: String?
+        var liveAgentSessionNames: Set<String>?
+        var finishCreation: ((CLIWorktreeCreationPlan) -> String?)?
+        var beforeAgentClose: (@MainActor () async -> Void)?
+        var beforeCompletionAppend: (@MainActor () async throws -> Void)?
         var controlCapabilities: Set<ControlCapability> = [.worktreeBase]
 
         init() throws {
@@ -68,13 +72,18 @@ struct ControlRequestCoreTests {
             notifications.append(content)
         }
         func hookDeliveryPolicy(presence: [TeamPresenceRecord]) -> TeamHookDeliveryPolicy { TeamHookDeliveryPolicy() }
-        let worktreeCreations = CLIWorktreeCreationStore()
+        var worktreeCreations = CLIWorktreeCreationStore()
         let worktreeRemovals = CLIWorktreeRemovalStore()
         var worktreeCreation: any CLIWorktreeCreationPlatform { self }
         var worktreeRemoval: any CLIWorktreeRemovalPlatform { self }
         var agentPromptDirectory: URL { root }
-        func saveStateNow() throws {}
-        func finishWorktreeCreation(_ plan: CLIWorktreeCreationPlan) async -> String? { nil }
+        var saveStateNowCalls = 0
+        var saveStateNowError: (any Error)?
+        func saveStateNow() throws {
+            saveStateNowCalls += 1
+            if let saveStateNowError { throw saveStateNowError }
+        }
+        func finishWorktreeCreation(_ plan: CLIWorktreeCreationPlan) async -> String? { finishCreation?(plan) }
         func wakeWorktree(_ path: String) -> Bool { true }
         func removeWorktree(_ path: String, force: Bool) async -> Result<WorktreeRemovalOutcome, WorktreeRemovalError> {
             .success(WorktreeRemovalOutcome(dismissed: false))
@@ -83,12 +92,25 @@ struct ControlRequestCoreTests {
             platformRequests.append(message)
             return .ok
         }
+        func agentSessionNames() async throws -> Set<String> {
+            liveAgentSessionNames ?? Set(state.repos.flatMap(\.worktrees).flatMap { $0.paneSessions.values }.map(ZmxLauncher.sessionName(for:)))
+        }
+        func agentSessionIsAlive(worktree: String, slot: PaneSlotID) async throws -> Bool {
+            guard let session = state.worktree(forPath: worktree)?.paneSessions[slot] else { return false }
+            return liveAgentSessionNames?.contains(ZmxLauncher.sessionName(for: session)) ?? true
+        }
         func closeAgentSession(worktree: String, slot: PaneSlotID) async throws {
+            await beforeAgentClose?()
             if let agentCloseFailure { throw NSError(domain: "AgentTest", code: 1, userInfo: [NSLocalizedDescriptionKey: agentCloseFailure]) }
             closedAgentSlots.append(slot)
             if let index = state.indices(forWorktreePath: worktree) {
                 state.repos[index.repo].worktrees[index.worktree].splitTree = state.repos[index.repo].worktrees[index.worktree].splitTree.removing(slot)
             }
+        }
+        func appendAgentCompletion(repo: RepoEntry, parent: TeamInboxEndpoint, completionID: UUID, body: String) async throws {
+            try await beforeCompletionAppend?()
+            try teamInbox.appendAgentCompletion(teamID: repo.path, teamName: repo.displayName,
+                to: parent, completionID: completionID, body: body)
         }
     }
 

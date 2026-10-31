@@ -338,6 +338,26 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.167** When an agent resumes after completion, the application shall retain earlier assignment results in Context metadata.
 
+**LAYOUT-2.168** When the user zooms a workspace pane, the application shall zoom only a selected canvas tab and shall exclude drawer terminals and hidden tabs from canvas zoom.
+
+**LAYOUT-2.169** While workspace tabs or a terminal drawer are hidden, the application shall restore visibility only for the selected canvas panes and the open drawer, including after zoom changes.
+
+**LAYOUT-2.170** When a remote workspace restores app visibility, the application shall show only that host's device-local selected sessions and keep hidden tabs hidden.
+
+**LAYOUT-2.171** When a viewer receives newly discovered sessions, the application shall preserve its selected tabs and drawer state until a local selection changes them.
+
+**LAYOUT-2.172** When a host explicitly publishes an empty agent inventory, the application shall initially place its ordinary terminals in the drawer while preserving legacy layouts from hosts without agent metadata.
+
+**LAYOUT-2.173** When focus moves to a different canvas group while another pane is zoomed, the application shall reveal the focused pane and retain zoom only when it is explicitly rebound to that pane.
+
+**LAYOUT-2.174** When keyboard resizing changes a workspace split, the application shall clear zoom unless the caller explicitly requests preserving it.
+
+**LAYOUT-2.175** When resizing a terminal drawer after its viewport shrinks, the application shall begin the adjustment at its rendered height and use the same viewport bounds for rendering and resizing.
+
+**LAYOUT-2.176** When cleanup removes the viewed agent's live pane binding, the application shall retain that agent's completed view using its stable agent identity and shall not replace it when another agent closes.
+
+**LAYOUT-2.177** While a terminal attachment is loading or unavailable, the application shall keep its tab header mounted so users can select another session.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -432,7 +452,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-1.3** When the user triggers Stop on a running worktree that has processes which need quit-confirmation, the application shall present a confirmation dialog whose informative text identifies the worktree by its sidebar display name (per `WorktreeEntry.displayName(amongSiblingPaths:)` / `LAYOUT-2.15`), not its raw `branch` value. For worktrees on a detached HEAD or other git sentinel (`(detached)`, `(bare)`, `(unknown)` — see `PR-7.3`), the display name resolves to the directory basename, which reads naturally ("running processes in my-feature") whereas the raw branch would render as "running processes in (detached)".
 
-**TERM-1.4** When the application reopens a closed worktree with a saved multi-pane split tree, it shall designate exactly one pane for first-pane-only default-command eligibility: the remembered primary pane when it is still present in the split tree. Focus changes shall not change the primary pane. State saved before primary-pane persistence shall migrate once from a valid retained focus, then tree order.
+**TERM-1.4** When the application reopens a closed worktree with a saved multi-pane split tree, it shall designate exactly one pane for worktree-level startup-command eligibility: the remembered primary pane when it is still present in the split tree. Focus changes shall not change the primary pane. State saved before primary-pane persistence shall migrate once from a valid retained focus, then tree order.
 
 ### TERM-2.x — Switching Between Worktrees
 
@@ -1518,7 +1538,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-6.2** The `GRAFTTY_SOCK` environment variable shall continue to be set in the spawned shell's environment per `ATTN-2.4`. For zmx-backed native panes, this shall be passed in the host-managed `zmx attach` process environment rather than relying on libghostty surface-spawn env.
 
-**ZMX-6.3** If `GHOSTTY_RESOURCES_DIR` is set (per `CONFIG-2.1`) and the user's shell basename is `zsh`, the host-managed `zmx attach` environment shall set `ZDOTDIR=<ghostty-resources>/shell-integration/zsh` so the inner shell zmx spawns sources Ghostty's zsh integration directly. Without this env construction, precmd hooks do not run, no OSC 7 / OSC 133 sequences are emitted, and `PWD-x.x`, the default-command first-PWD trigger, and shell-integration-driven attention badges go silent.
+**ZMX-6.3** If `GHOSTTY_RESOURCES_DIR` is set (per `CONFIG-2.1`) and the user's shell basename is `zsh`, the host-managed `zmx attach` environment shall set `ZDOTDIR=<ghostty-resources>/shell-integration/zsh` so the inner shell zmx spawns sources Ghostty's zsh integration directly. Without this env construction, precmd hooks do not run, no OSC 7 / OSC 133 sequences are emitted, and `PWD-x.x`, the queued-launch first-PWD trigger, and shell-integration-driven attention badges go silent.
 
 **ZMX-6.4** When agent hooks are enabled for a zsh shell, the host-managed `zmx attach` environment shall set `GHOSTTY_ZSH_ZDOTDIR` to Graftty's agent-hook zsh init directory so Ghostty's zsh integration can restore that directory after loading. If hooks are disabled and no initial command is supplied, then `GHOSTTY_ZSH_ZDOTDIR` shall be omitted; a shell-owned initial command shall still load the init shim without enabling agent hooks.
 
@@ -1708,7 +1728,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-4.7** When the application transitions the forked child into `zmx attach`, the final `execve` shall be performed via `posix_spawn` with `POSIX_SPAWN_SETEXEC | POSIX_SPAWN_SETSIGMASK` and an empty initial signal mask. `fork(2)` preserves the parent's sigmask and plain `execve(2)` carries it across — and the Swift runtime (GCD/Dispatch) blocks a family of signals on its service threads, so a child inheriting that mask starts with SIGWINCH blocked. `zmx attach` installs a SIGWINCH handler to forward PTY resize events to the daemon; if SIGWINCH is blocked the handler never fires, the kernel sets the signal pending, and WebSocket-sent resize events silently vanish until an unrelated signal or explicit unblock drains them. The spawn-level mask reset is the kernel-boundary fix that guarantees the exec'd image starts with every signal unblocked.
 
-**WEB-4.10** When the WebSocket bridge spawns a `zmx attach` child to back a mobile-client session, the application shall propagate the same shell-integration env (`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERMINFO` when ghostty-terminfo is available, and `ZDOTDIR` pointing at Ghostty's zsh shell-integration when the user's shell is zsh) that host-managed native panes use (per `ZMX-6.3` / `ZMX-6.5`). Without this, the WS attach can win the create-session race against the Mac surface's attach (which is slow because it follows `git worktree add` + discovery) and spawn the daemon's user shell with no shell integration — silencing the first-PWD trigger (so the host pane never types the user's default command) and leaving the shell without truecolor.
+**WEB-4.10** When the WebSocket bridge spawns a `zmx attach` child to back a mobile-client session, the application shall propagate the same shell-integration env (`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERMINFO` when ghostty-terminfo is available, and `ZDOTDIR` pointing at Ghostty's zsh shell-integration when the user's shell is zsh) that host-managed native panes use (per `ZMX-6.3` / `ZMX-6.5`). Without this, the WS attach can win the create-session race against the Mac surface's attach (which is slow because it follows `git worktree add` + discovery) and spawn the daemon's user shell with no shell integration — silencing the first-PWD trigger (so the host pane never types the queued launch command) and leaving the shell without truecolor.
 
 **WEB-4.11** If a WebSocket terminal client cannot drain output, then the application shall bound queued output to 8 MiB of payload and 1024 frames per connection, including work awaiting its event loop, and disconnect that client on overflow without silently dropping terminal bytes on an open connection.
 
@@ -2544,7 +2564,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IPAD-2.x — Multi-Pane Detail View
 
-**IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
+**IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render device-local tabs, splits, and a terminal drawer over the worktree's complete host session inventory.
 
 **IPAD-2.2** When `MultiPaneDetailView` renders a `.split(.horizontal, ratio, left, right)`, the application shall render an `HStack` with the two children proportionally sized by `ratio` and a draggable `Divider` between them.
 
@@ -2556,13 +2576,35 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.6** While a focused pane exists in the iPad split tree, the application shall apply the same Ghostty `unfocused-split-fill` and `unfocused-split-opacity` dimming treatment as the Mac to every other live pane, without drawing an iPad-only focus outline. When no pane is focused, no pane shall be dimmed.
 
-**IPAD-2.7** When the user drags a split's divider, the application shall update a per-iPad-client divider-ratio override map keyed by the tree path to that split, without sending any RPC to the host.
+**IPAD-2.7** When the user drags an iPad workspace divider, the application shall persist the ratio in its device-local split tree without sending an RPC to the host or resetting the ratio when tabs change.
 
 **IPAD-2.8** While the regular-width iPad detail is visible, the application shall extend the terminal tree to the top and bottom detail-column edges beneath transparent navigation chrome, keeping split controls over the panes and respecting the sidebar boundary.
 
 **IPAD-2.9** While the iPad detail toolbar offers Split Left, Split Right, Split Up, and Split Down, each button shall use a directional inset-filled rectangle whose filled half indicates where the new pane will be created, matching the Mac terminal context menu rather than using one indistinguishable axis-only icon per opposing pair.
 
 **IPAD-2.10** While the regular-width iPad detail renders a split tree, the application shall observe keyboard frame changes once for the whole tree and derive each embedded pane's keyboard visibility from that shared observation, including a pane mounted while the keyboard is already visible.
+
+**IPAD-2.11** While iPad panes are mounted, the application shall retain each pane's client independently of the recent-pane cache limit and shall reuse the client after its view is hidden.
+
+**IPAD-2.12** When mobile opens or restores a workspace, the application shall make its focused live session visible in the device-local layout before routing input.
+
+**IPAD-2.13** When the user navigates spatially on iPad, the application shall use selected device-local tabs and the visible terminal drawer without changing the host inventory.
+
+**IPAD-2.14** When an iPad split divider is resized, the application shall persist its device-local ratio through tab selection and workspace restoration.
+
+**IPAD-2.15** When the remembered compact agent is no longer live, the application shall return from a terminal to a surviving agent or omit the Back to agent action.
+
+**IPAD-2.16** When an iPad terminal moves between the drawer and a split group, the application shall preserve its identity and restore the prior canvas focus when the drawer hides.
+
+**IPAD-2.17** When the iPad terminal drawer is resized, the application shall persist its height per host and worktree and keep the rendered height within the available viewport.
+
+**IPAD-2.18** While mobile displays agent tabs or its compact agent picker, the application shall distinguish waiting, failed, and finished awaiting cleanup without treating a viewer disconnect as assignment completion.
+
+**IPAD-2.19** When another device adds sessions to an observed worktree, the application shall preserve the iPad's selected tabs, selected terminal, and drawer visibility until a local focus request selects a new session.
+
+**IPAD-2.20** While an iPad workspace is selected, the application shall retain every visited live tab's renderer beyond the recent-pane cache limit and release closed sessions and inactive workspace retention.
+
+**IPAD-2.21** When switching iPad workspaces, the application shall release excess cached clients from the inactive workspace even when the new workspace contains unvisited tabs.
 
 ### IPAD-3.x — Focused-Pane Toolbar
 
@@ -4364,7 +4406,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
-**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject context that directs the agent to the Graftty skills, states that Graftty keeps one implementer per worktree, names `graftty worktree add --agent --prompt-stdin` as the way to delegate work into a new worktree and `graftty pane add --agent --prompt-stdin` as the way to add a reviewer or pair to an existing one, and delivers queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
+**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject context that directs the agent to the Graftty skills, states that Graftty keeps one implementer per worktree, names `graftty agent add --provider --prompt-stdin` as the way to delegate work into a new worktree and `graftty agent add --worktree --provider --prompt-stdin` as the way to add a reviewer or pair to an existing one, and delivers queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
 
 **AGENT-5.4** When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews provenance-tagged session-start team context, completes one turn, and thereby establishes the runtime's idle-message wake path.
 
@@ -4571,6 +4613,90 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.77** When a parent resumes in its bound terminal with a new native session identity, the application shall preserve its managed identity and restore its children's cleanup obligations to that session.
 
 **AGENT-6.78** If a terminal driver accepts agent teardown but the session remains alive, then the application shall preserve its pane mapping and cleanup obligation.
+
+**AGENT-6.79** While an agent cleanup is in flight, the application shall reject overlapping cleanup effects and preserve the first operation's final state.
+
+**AGENT-6.80** If worktree creation fails after accepting an agent launch, then the application shall retain the failed agent identity and launch diagnostics in the caller's project.
+
+**AGENT-6.81** When concurrent agent-add requests reuse a launch operation ID, the application shall return the same persisted agent identity to every caller.
+
+**AGENT-6.82** When a managed terminal changes directory into another registered worktree, the application shall preserve its owning worktree, session binding, and assignment.
+
+**AGENT-6.83** When listing managed agents, the application shall return bounded summaries without discarding stored results, prompts, or transcripts.
+
+**AGENT-6.84** If one completion inbox is unavailable, then the application shall still allow lifecycle inspection and cleanup of other agents.
+
+**AGENT-6.85** When a parent recovers with an already-persisted native identity, the application shall repair children that still reference its previous native identity.
+
+**AGENT-6.86** When an unfinished provider exits, the application shall retain an interrupted outcome for exact parent acknowledgment without claiming successful completion.
+
+**AGENT-6.87** When a provider exits after explicitly finishing, the application shall preserve the completed result and reject resume of the exited process.
+
+**AGENT-6.88** When requesting an agent by exact ID, the application shall provide bounded detail chunks from one immutable snapshot even when the record changes between requests.
+
+**AGENT-6.89** While publishing worktree snapshots, the application shall bound current and previous agent result previews while preserving full stored history.
+
+**AGENT-6.90** When a managed session ends through ordinary pane controls, the application shall preserve an interrupted result until its parent explicitly acknowledges it.
+
+**AGENT-6.91** When a parent has begun cleanup, the application shall reject new children before reserving or launching them.
+
+**AGENT-6.92** If a parent endpoint changes while completion delivery is suspended, then the application shall not apply the old destination's delivery receipt to the new destination.
+
+**AGENT-6.93** When host delivery maintenance runs after restart, the application shall deliver saved pending outcomes without requiring another lifecycle command and continue past a failing outbox item.
+
+**AGENT-6.94** When a provider sends its first session hook during headless startup, the application shall already expose its exact reserved session binding.
+
+**AGENT-6.95** If reserved headless startup fails and rollback cannot end the session, then the application shall retain its exact binding and a failed outcome for parent cleanup.
+
+**AGENT-6.96** When an agent command runs after changing directory, the CLI shall resolve its owning terminal session before its current directory and retain explicit cross-project pane launch compatibility.
+
+**AGENT-6.97** When invoking agent show, the CLI shall require an exact managed ID and expose paged summary listing separately from full retained details.
+
+**AGENT-6.98** When a managed provider is missing or exits, the launch observer shall report its actual exit code and exact reserved identities from the provider's launch environment.
+
+**AGENT-6.99** When a managed task uses the advertised maximum prompt budget, the application shall preserve the whole task and carry lifecycle identity separately without rejecting the staged launch.
+
+**AGENT-6.100** When a reserved managed session is absent after host restart, the application shall retain an interrupted outcome instead of silently relaunching an ordinary shell as that agent.
+
+**AGENT-6.101** When a provider exits after assignment resume, the application shall apply the exact launch-session exit to its current assignment while preserving the earlier completed result.
+
+**AGENT-6.102** When Mac pane controls close a managed terminal, the application shall claim asynchronous teardown before removing its view and preserve a retryable interrupted outcome if teardown fails.
+
+**AGENT-6.103** If a delayed provider exit predates a replacement native session, then the application shall preserve the replacement's running assignment.
+
+**AGENT-6.104** When paginating managed agents, the application shall bound each summary page and return a continuation offset without dropping retained records.
+
+**AGENT-6.105** While a child launch resolves its Git base, the application shall retain its reservation and prevent parent cleanup from orphaning that pending child.
+
+**AGENT-6.106** When publishing agent state, the application shall distinguish provider observation and interrupted outcomes from assignment waiting and viewer disconnection while decoding older metadata.
+
+**AGENT-6.107** While a headless host is shutting down, the application shall reject managed launches in existing worktrees and retain the failed outcome without starting another session.
+
+**AGENT-6.108** When a native provider identity is reused in a new live managed session, the application shall bind new children to the live managed parent rather than its closed historical record.
+
+**AGENT-6.109** When a managed transcript is archived, the application shall durably retain its complete UTF-8 contents outside AppState and retrieve it through bounded exact-ID detail chunks.
+
+**AGENT-6.110** If transcript archival fails, the application shall preserve the inline transcript for retry without publishing a missing archive reference.
+
+**AGENT-6.111** When the user opens a large archived transcript, the application shall load a bounded UTF-8 preview and identify how to retrieve the complete retained text.
+
+**AGENT-6.112** When an ordinary headless pane close targets a managed agent, the application shall preserve its transcript and interrupted outcome and reject teardown while its children require acknowledgment.
+
+**AGENT-6.113** When migrating multiple legacy transcripts, the application shall persist their archive references together without repeatedly serializing the remaining inline history.
+
+**AGENT-6.114** When reconstructing agent details, the CLI shall reject changed or missing snapshot identities, mismatched managed IDs, and noncontiguous chunks instead of combining revisions.
+
+**AGENT-6.115** While draining provider exits, the application shall use the owning host's event directory and retain unknown-agent events and events whose state persistence failed.
+
+**AGENT-6.116** If ordinary managed teardown fails, the application shall preserve the prior process observation and exact session binding together with a retryable interrupted outcome and failure diagnostic.
+
+**AGENT-6.117** If a managed parent closes while a new worktree resolves its base, the application shall reject the child before reserving its destination or starting its launch.
+
+**AGENT-6.118** When a UI-launched provider exits with graftty absent from its shell PATH, the application shall durably observe its exit without requiring a CLI helper lookup.
+
+**AGENT-6.119** When process observation suspends during another session's cleanup, the application shall preserve assignment updates received during that suspension before saving later process observations.
+
+**AGENT-6.120** While an agent provider icon is displayed, the application shall render the bundled Claude or Codex mark with visible template tint.
 
 ## CLI — CLI
 

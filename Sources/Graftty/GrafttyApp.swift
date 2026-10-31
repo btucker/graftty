@@ -701,6 +701,7 @@ struct GrafttyApp: App {
                 terminalManager: tm,
                 services: services
             )
+            socketRouter.installManagedPaneClose()
             try SocketServerStartup.start(
                 server: services.socketServer,
                 onMessage: { message in

@@ -86,6 +86,112 @@ private actor HostDevContainerFake: CLIExecutor {
 
 @Suite @MainActor
 struct HeadlessHostRuntimeTests {
+    @Test("@spec AGENT-6.112: When an ordinary headless pane close targets a managed agent, the application shall preserve its transcript and interrupted outcome and reject teardown while its children require acknowledgment.")
+    func ordinaryManagedCloseUsesSharedTransition() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        let name = try await runtime.openWorktree(root.path)
+        let slot = try #require(runtime.state.worktree(forPath: root.path)?.splitTree.allLeaves.first)
+        var parent = ManagedAgent(name: "Parent", provider: .codex, parent: nil)
+        parent.paneSlotID = slot
+        var child = ManagedAgent(name: "Child", provider: .codex,
+            parent: TeamInboxEndpoint(member: "Parent", worktree: root.path, runtime: "codex", agentID: "codex-123456789abc"))
+        child.parentManagedAgentID = parent.id
+        runtime.state.repos[0].worktrees[0].agents = [parent, child]
+        await #expect(throws: (any Error).self) { try await runtime.closePane(target: name) }
+        #expect(terminal.killed.isEmpty)
+        #expect(runtime.state.repos[0].worktrees[0].agents[0].completion == nil)
+        runtime.state.repos[0].worktrees[0].agents.removeLast()
+        try await runtime.closePane(target: name)
+        let closed = runtime.state.repos[0].worktrees[0].agents[0]
+        #expect(closed.status == .interrupted)
+        #expect(closed.completion?.outcome == .interrupted)
+        #expect(closed.transcript == nil)
+        #expect(try runtime.controlPlatform.agentArchives.read(#require(closed.transcriptArchive)) == "hello")
+        #expect(!terminal.live.contains(name))
+    }
+    @Test("@spec AGENT-6.107: While a headless host is shutting down, the application shall reject managed launches in existing worktrees and retain the failed outcome without starting another session.")
+    func shutdownRejectsManagedPaneLaunch() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        _ = try await runtime.openWorktree(root.path)
+        let starts = terminal.starts.count
+        runtime.isShuttingDown = true
+        let response = await runtime.handle(.agent(.init(action: .add, callerWorktree: root.path,
+            name: "Late child", worktree: root.path, provider: .codex)))
+        guard case .error = response else { Issue.record("Shutdown accepted a managed launch"); return }
+        #expect(terminal.starts.count == starts)
+        #expect(runtime.state.repos[0].worktrees[0].agents.first?.status == .failed)
+        #expect(runtime.state.repos[0].worktrees[0].agents.first?.paneSlotID == nil)
+    }
+    @Test("@spec AGENT-6.100: When a reserved managed session is absent after host restart, the application shall retain an interrupted outcome instead of silently relaunching an ordinary shell as that agent.")
+    func missingManagedSessionIsInterruptedOnRestore() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        let name = try await runtime.openWorktree(root.path)
+        let slot = try #require(runtime.state.worktree(forPath: root.path)?.splitTree.allLeaves.first)
+        var agent = ManagedAgent(name: "Child", provider: .codex, parent: nil)
+        agent.paneSlotID = slot
+        runtime.state.repos[0].worktrees[0].agents = [agent]
+        terminal.live.remove(name)
+        let starts = terminal.starts.count
+        try await runtime.restore()
+        #expect(terminal.starts.count == starts)
+        #expect(runtime.state.repos[0].worktrees[0].agents[0].status == .interrupted)
+        #expect(runtime.state.repos[0].worktrees[0].agents[0].paneSlotID == nil)
+    }
+    @Test("@spec AGENT-6.94: When a provider sends its first session hook during headless startup, the application shall already expose its exact reserved session binding.")
+    func managedBindingExistsDuringStart() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        _ = try await runtime.openWorktree(root.path)
+        terminal.duringStart = {
+            let tree = try #require(runtime.state.worktree(forPath: root.path))
+            let agent = try #require(tree.agents.first)
+            let slot = try #require(agent.paneSlotID)
+            let session = try #require(tree.paneSessions[slot])
+            #expect(session == agent.paneSessionID)
+            _ = try await AgentControl.sessionContext(path: root.path, agentID: "codex-123456789abc",
+                paneSessionName: runtime.launcher.sessionName(for: session), provider: .codex, platform: runtime.controlPlatform)
+        }
+        let response = await runtime.handle(.agent(.init(action: .add, callerWorktree: root.path,
+            name: "Child", worktree: root.path, provider: .codex)))
+        guard case .agents = response else { Issue.record("Launch failed: \(response)"); return }
+        #expect(runtime.state.worktree(forPath: root.path)?.agents.first?.nativeAgentID == "codex-123456789abc")
+    }
+
+    @Test("@spec AGENT-6.95: If reserved headless startup fails and rollback cannot end the session, then the application shall retain its exact binding and a failed outcome for parent cleanup.")
+    func failedRollbackRetainsLiveBinding() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let terminal = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: terminal, initialState: state)
+        _ = try await runtime.openWorktree(root.path)
+        terminal.leavesSessionAliveAfterKill = true
+        terminal.duringStart = {
+            let tree = try #require(runtime.state.worktree(forPath: root.path))
+            let agent = try #require(tree.agents.first)
+            let session = try #require(agent.paneSessionID)
+            terminal.live.insert(runtime.launcher.sessionName(for: session))
+            throw CocoaError(.fileWriteUnknown)
+        }
+        _ = await runtime.handle(.agent(.init(action: .add, callerWorktree: root.path,
+            name: "Child", worktree: root.path, provider: .codex)))
+        let tree = try #require(runtime.state.worktree(forPath: root.path))
+        let child = try #require(tree.agents.first)
+        #expect(child.status == .failed)
+        #expect(child.completion?.outcome == .failed)
+        #expect(child.paneSlotID != nil)
+        #expect(child.paneSlotID.flatMap { tree.paneSessions[$0] } == child.paneSessionID)
+    }
     private func fixture() throws -> (URL, HostConfiguration, AppState) {
         let rawRoot = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent("gh-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)

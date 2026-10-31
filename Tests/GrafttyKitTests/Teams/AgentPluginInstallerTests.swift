@@ -736,10 +736,10 @@ struct AgentPluginInstallerTests {
         }
         let claudeManifest = try String(contentsOf: destination
             .appendingPathComponent("claude/plugins/graftty/.claude-plugin/plugin.json"))
-        #expect(claudeManifest.contains(#""version": "0.3.2""#))
+        #expect(claudeManifest.contains(#""version": "0.3.3""#))
         let codexManifest = try String(contentsOf: destination
             .appendingPathComponent("codex/plugins/graftty/.codex-plugin/plugin.json"))
-        #expect(codexManifest.contains(#""version": "0.3.2""#))
+        #expect(codexManifest.contains(#""version": "0.3.3""#))
     }
 
     @Test("""

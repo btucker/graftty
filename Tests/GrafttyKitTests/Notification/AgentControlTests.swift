@@ -126,4 +126,61 @@ struct AgentControlTests {
         #expect(try platform.teamInbox.messages(teamID: "/repo").first?.to.agentID == "codex-abcdef123456")
     }
 
+    @Test("@spec AGENT-6.79: While an agent cleanup is in flight, the application shall reject overlapping cleanup effects and preserve the first operation's final state.")
+    func overlappingCleanupDoesNotRunTwice() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        var child = ManagedAgent(name: "Child", provider: .codex, parent: nil)
+        child.paneSlotID = platform.state.repos[0].worktrees[0].splitTree.allLeaves.first
+        let completion = try child.finish(assignment: child.assignmentID, result: "Done")
+        platform.state.repos[0].worktrees[0].agents = [child]
+        let request = AgentControlRequest(action: .close, callerWorktree: "/repo", agentID: child.id, completionID: completion.id)
+        var second: ResponseMessage?
+        platform.beforeAgentClose = {
+            platform.beforeAgentClose = nil
+            second = await AgentControl.handle(request, platform: platform)
+        }
+        _ = await AgentControl.handle(request, platform: platform)
+        if case .error = second {} else { Issue.record("Expected an in-progress retry response") }
+        #expect(platform.closedAgentSlots.count == 1)
+        #expect(platform.state.repos[0].worktrees[0].agents[0].status == .closed)
+    }
+
+    @Test("@spec AGENT-6.80: If worktree creation fails after accepting an agent launch, then the application shall retain the failed agent identity and launch diagnostics in the caller's project.")
+    func gitFailureRetainsAgentRecord() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.finishCreation = { plan in
+            platform.state.removeWorktree(atPath: plan.worktreePath)
+            return "Git failed"
+        }
+        let response = await AgentControl.handle(.init(action: .add, callerWorktree: "/repo", name: "review", provider: .codex), platform: platform)
+        guard case .agents(let records) = response, let launched = records.first else { Issue.record("Expected accepted launch: \(response)"); return }
+        for _ in 0..<1000 {
+            if platform.worktreeCreations.status(operationID: launched.operationID!)?.state == .failed { break }
+            await Task.yield()
+        }
+        let retained = platform.state.repos.flatMap(\.worktrees).flatMap(\.agents).first { $0.id == launched.agent.id }
+        #expect(retained?.status == .failed)
+        #expect(retained?.failure?.contains("Git failed") == true)
+    }
+
+    @Test("@spec AGENT-6.81: When concurrent agent-add requests reuse a launch operation ID, the application shall return the same persisted agent identity to every caller.")
+    func concurrentAddReturnsPersistedIdentity() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.worktreeCreations = CLIWorktreeCreationStore(baseResolver: { _, _ in
+            for _ in 0..<10 { await Task.yield() }
+            return String(repeating: "1", count: 40)
+        })
+        let request = AgentControlRequest(action: .add, callerWorktree: "/repo", name: "concurrent", provider: .codex,
+            operationID: UUID().uuidString, base: "HEAD")
+        async let first = AgentControl.handle(request, platform: platform)
+        async let second = AgentControl.handle(request, platform: platform)
+        let responses = await [first, second]
+        let stored = try #require(platform.state.repos.flatMap(\.worktrees).flatMap(\.agents).first)
+        for response in responses {
+            guard case .agents(let records) = response else { Issue.record("Expected agents: \(response)"); continue }
+            #expect(records.first?.agent.id == stored.id)
+        }
+        #expect(platform.state.repos.flatMap(\.worktrees).flatMap(\.agents).count == 1)
+    }
+
 }

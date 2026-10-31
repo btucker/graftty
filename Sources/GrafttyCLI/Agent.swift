@@ -4,7 +4,7 @@ import GrafttyKit
 
 struct Agent: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Create agents and manage assignment completion",
-        subcommands: [AgentAdd.self, AgentList.self, AgentFinish.self, AgentClose.self, AgentResume.self])
+        subcommands: [AgentAdd.self, AgentList.self, AgentShow.self, AgentFinish.self, AgentClose.self, AgentResume.self, AgentObserveExit.self])
 }
 
 struct AgentAdd: ParsableCommand {
@@ -37,7 +37,6 @@ struct AgentAdd: ParsableCommand {
     }
 
     func run() throws {
-        let caller = try CLIEnv.resolveWorktree()
         let target = try worktree.map { address -> String in
             let (path, pane) = try CLIEnv.resolveAddress(address)
             guard pane == nil else { throw ValidationError("--worktree takes a worktree, not a pane") }
@@ -45,42 +44,76 @@ struct AgentAdd: ParsableCommand {
         }
         let initialTask = try promptStdin ? WorktreeAdd.readPromptFromStdin() : prompt
         if let error = WorktreeAgentLaunchCommand.validationError(prompt: initialTask) { throw ValidationError(error) }
-        let request = AgentControlRequest(action: .add, callerWorktree: caller,
-            callerAgentID: TeamMessageInput.currentAgentID(worktreePath: caller),
-            paneSessionName: TeamRegisterPaneResolver.paneSessionName(env: ProcessInfo.processInfo.environment),
-            name: name, worktree: target, provider: provider.flatMap(TeamHookRuntime.init(rawValue:)),
-            prompt: initialTask, operationID: UUID().uuidString.lowercased(), base: base)
-        let records = try AgentCLI.exchange(request)
+        var request = try AgentCLI.request(.add, targetFallback: target)
+        request.name = name; request.worktree = target
+        request.provider = provider.flatMap(TeamHookRuntime.init(rawValue:))
+        request.prompt = initialTask; request.operationID = UUID().uuidString.lowercased(); request.base = base
+        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        var records = try AgentCLI.exchange(request, deadline: deadline)
         if wait, target == nil, let operation = records.first?.operationID {
-            let deadline = Date().addingTimeInterval(TimeInterval(timeout))
-            while true {
-                let response = try CLIEnv.sendRequest(.worktreeCreateStatus(operationID: operation))
-                let status = try CLIEnv.expect(response, for: "agent add") {
-                    if case .worktreeCreate(let status) = $0 { status } else { nil }
-                }
-                if status.state == .ready { break }
-                if status.state == .failed { throw ValidationError(status.error ?? "Agent launch failed") }
-                guard Date() < deadline else { throw ValidationError("Launch is still pending. Inspect graftty worktree status \(operation).") }
-                Thread.sleep(forTimeInterval: 0.25)
-            }
+            let waiter = try WorktreeAdd.parse(["agent-launch", "--wait"])
+            try waiter.waitForCreation(response: CLIEnv.sendRequest(.worktreeCreateStatus(operationID: operation)),
+                                       deadline: deadline, writeLine: { _ in })
+            var refresh = try AgentCLI.request(.list)
+            refresh.agentID = records.first?.agent.id
+            records = try AgentCLI.exchange(refresh, deadline: deadline)
         }
         try AgentCLI.printRecords(records, json: json)
     }
 }
 
 struct AgentList: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "list", abstract: "List agents and retained results in this project")
+    static let configuration = CommandConfiguration(commandName: "list", abstract: "List lightweight agent summaries; use agent show for full retained details")
     @Option(name: .long, help: "Filter by the parent's exact agent ID") var parent: String?
-    @Option(name: .long, help: "starting, running, waiting, awaiting-cleanup, closing, closed, or failed") var status: String?
+    @Option(name: .long, help: "starting, running, waiting, awaiting-cleanup, interrupted, closing, closed, or failed") var status: String?
+    @Option(name: .long, help: "Page offset from the prior response") var offset = 0
+    @Option(name: .long, help: "Maximum summaries, from 1 to 200") var limit = 100
     @Flag(name: .long) var json = false
     func validate() throws {
+        guard offset >= 0, (1...200).contains(limit) else { throw ValidationError("Invalid page range") }
         if let status, ManagedAgent.Status(rawValue: status) == nil { throw ValidationError("Unknown agent status") }
     }
     func run() throws {
         var request = try AgentCLI.request(.list)
         request.parent = parent
+        request.offset = offset; request.limit = limit
         request.status = status.flatMap(ManagedAgent.Status.init(rawValue:))
         try AgentCLI.printRecords(AgentCLI.exchange(request), json: json)
+    }
+}
+
+struct AgentShow: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "show", abstract: "Read one agent's full retained results and transcript by exact managed ID")
+    @Argument var id: String
+    @Flag(name: .long) var json = false
+    func run() throws {
+        var request = try AgentCLI.request(.show)
+        request.agentID = id
+        let data = try AgentCLI.readDetails(request) { try AgentCLI.exchange($0) }
+        if json { print(String(decoding: data, as: UTF8.self)) }
+        else {
+            let agent = try JSONDecoder().decode(ManagedAgent.self, from: data)
+            print("\(agent.id)  \(agent.status.rawValue)  \(agent.name)")
+            for result in agent.results { print("\(result.id): \(result.result)") }
+            if let transcript = agent.transcript { print(transcript) }
+        }
+    }
+}
+
+/// Local durable event transport used by the foreground launch observer.
+struct AgentObserveExit: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "observe-exit", shouldDisplay: false)
+    @Option(name: .long) var id: String
+    @Option(name: .long) var assignment: String
+    @Option(name: .long) var session: String
+    @Option(name: .long) var exitCode: Int
+    @Option(name: .long) var directory: String
+    func run() throws {
+        guard let assignmentID = UUID(uuidString: assignment), let sessionID = UUID(uuidString: session) else {
+            throw ValidationError("Invalid launch observer identity")
+        }
+        try AgentLifecycleHandoff(directory: URL(fileURLWithPath: directory)).publish(.init(agentID: id, assignmentID: assignmentID,
+            sessionID: PaneSessionID(id: sessionID), exitCode: exitCode))
     }
 }
 
@@ -136,18 +169,80 @@ struct AgentResume: ParsableCommand {
 }
 
 enum AgentCLI {
-    static func request(_ action: AgentControlRequest.Action) throws -> AgentControlRequest {
-        let caller = try CLIEnv.resolveWorktree()
+    static func request(_ action: AgentControlRequest.Action, targetFallback: String? = nil) throws -> AgentControlRequest {
+        let caller = try callerWorktree(targetFallback: targetFallback)
         return .init(action: action, callerWorktree: caller,
             callerAgentID: TeamMessageInput.currentAgentID(worktreePath: caller),
             paneSessionName: TeamRegisterPaneResolver.paneSessionName(env: ProcessInfo.processInfo.environment))
     }
-    static func exchange(_ request: AgentControlRequest) throws -> [AgentControlRecord] {
-        try CapabilityProbe.require([.managedAgents], retryTransportFailuresUntil: Date().addingTimeInterval(5))
-        return try CLIEnv.expect(CLIEnv.sendRequest(.agent(request)), for: "agent \(request.action.rawValue)") {
+    static func callerWorktree(targetFallback: String? = nil, state: AppState? = nil,
+                               paneSessionName: String? = TeamRegisterPaneResolver.paneSessionName(env: ProcessInfo.processInfo.environment),
+                               cwdWorktree: () throws -> String = { try WorktreeResolver.resolve() }) throws -> String {
+        let state = state ?? (try? AppState.load(from: AppState.defaultDirectory))
+        if let session = paneSessionName, let owner = state?.repos.flatMap(\.worktrees).first(where: {
+            $0.paneSlot(forSessionName: session) != nil
+        }) {
+            if let targetFallback, state?.repo(forWorktreePath: owner.path)?.path != state?.repo(forWorktreePath: targetFallback)?.path {
+                return targetFallback
+            }
+            return owner.path
+        }
+        let cwd = try? cwdWorktree()
+        if let targetFallback {
+            if let cwd, state?.repo(forWorktreePath: cwd)?.path == state?.repo(forWorktreePath: targetFallback)?.path { return cwd }
+            return targetFallback
+        }
+        guard let cwd else { throw CLIError.notInsideWorktree }
+        return cwd
+    }
+
+    static func exchange(_ request: AgentControlRequest, deadline: Date = Date().addingTimeInterval(10)) throws -> [AgentControlRecord] {
+        try CapabilityProbe.require([.managedAgents], retryTransportFailuresUntil: min(deadline, Date().addingTimeInterval(5)))
+        let response: ResponseMessage
+        if request.action == .add, let operation = request.operationID {
+            response = try WorktreeAdd.sendRequestRetryingTimeout(.agent(request), operationID: operation,
+                deadline: deadline)
+        } else { response = try CLIEnv.sendRequest(.agent(request)) }
+        return try CLIEnv.expect(response, for: "agent \(request.action.rawValue)") {
             if case .agents(let records) = $0 { records } else { nil }
         }
     }
+    /// Every chunk belongs to one exact agent and immutable server snapshot.
+    static func readDetails(_ initialRequest: AgentControlRequest,
+                            exchange: (AgentControlRequest) throws -> [AgentControlRecord]) throws -> Data {
+        guard initialRequest.action == .show, let id = initialRequest.agentID else {
+            throw ValidationError("Agent details require an exact managed ID")
+        }
+        var request = initialRequest
+        request.offset = 0
+        request.detailToken = nil
+        var data = Data()
+        var worktree: String?
+        repeat {
+            let rows = try exchange(request)
+            guard rows.count == 1, let row = rows.first, row.agent.id == id,
+                  let chunk = row.detail, chunk.count <= 64 * 1024,
+                  let token = row.detailToken else { throw ValidationError("Invalid agent detail chunk") }
+            if let expected = request.detailToken, token != expected {
+                throw ValidationError("Agent detail snapshot changed. Run agent show again.")
+            }
+            if let worktree, row.worktree != worktree { throw ValidationError("Agent detail worktree changed") }
+            worktree = row.worktree
+            if let next = row.nextOffset {
+                guard !chunk.isEmpty, next == data.count + chunk.count else {
+                    throw ValidationError("Agent detail chunks are not contiguous")
+                }
+            }
+            data.append(chunk)
+            guard let offset = row.nextOffset else { break }
+            request.offset = offset
+            request.detailToken = token
+        } while true
+        let decoded = try JSONDecoder().decode(ManagedAgent.self, from: data)
+        guard decoded.id == id else { throw ValidationError("Agent detail identity changed") }
+        return data
+    }
+
     static func printRecords(_ records: [AgentControlRecord], json: Bool) throws {
         if json {
             let encoder = JSONEncoder()
@@ -158,6 +253,9 @@ enum AgentCLI {
                 let agent = record.agent
                 print("\(agent.id)  \(agent.status.rawValue)  \(agent.name)  worktree=\(record.worktree)")
                 print("assignment=\(agent.assignmentID.uuidString)" + (record.operationID.map { " operation=\($0)" } ?? ""))
+                if let next = record.nextOffset { print("next-offset=\(next)") }
+                if agent.detailsOmitted == true { print("details=graftty agent show \(agent.id) --json") }
+                if let failure = agent.failure { print("failure=\(failure)") }
                 if let completion = agent.completion {
                     print(completion.result)
                     if agent.status != .closed { print("cleanup=graftty agent close \(agent.id) --completion \(completion.id.uuidString)") }

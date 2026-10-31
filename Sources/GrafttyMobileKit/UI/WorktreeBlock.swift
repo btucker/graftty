@@ -44,6 +44,10 @@ struct WorktreeBlock: View {
                 if !inventoryExpanded, context.question != nil {
                     MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) { SidebarWorktreeQuestion(context: context) }
                 }
+                ForEach(agents.filter { $0.status == "failed" && $0.sessionName == nil }) { agent in
+                    Label("\(agent.name) · Failed", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
             } else { paneRows }
         }
         // IPAD-1.16: active-worktree block highlight (Mac parity).

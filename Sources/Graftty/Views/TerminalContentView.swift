@@ -55,7 +55,7 @@ struct TerminalContentView: View {
         // Zoom fast-path: if one pane is zoomed, render only its leaf full-bleed.
         // All sibling surfaces remain alive in TerminalManager.surfaces — we're
         // only changing which views are mounted, not tearing down PTYs.
-        if let zoomedID = splitTree.wrappedValue.zoomed {
+        if let zoomedID = splitTree.wrappedValue.zoomed, splitTree.wrappedValue.containsLeaf(zoomedID) {
             leafView(zoomedID)
         } else {
             Group {
@@ -98,13 +98,19 @@ struct TerminalContentView: View {
     }
 
     private func leafView(_ terminalID: PaneSlotID) -> AnyView {
+        let content = AnyView(VStack(spacing: 0) {
+            if let paneHeader { paneHeader(terminalID) }
+            surfaceView(terminalID)
+        })
+        return paneDropTarget?(terminalID, content) ?? content
+    }
+
+    private func surfaceView(_ terminalID: PaneSlotID) -> AnyView {
         let isUnfocused = focusedPaneSlotID != nil && terminalID != focusedPaneSlotID
         let dimmingStyle = theme.paneFocusDimmingStyle(isUnfocused: isUnfocused)
         if let handle = terminalManager.handle(for: terminalID) {
             let tm = terminalManager
             let content = AnyView(
-                VStack(spacing: 0) {
-                if let paneHeader { paneHeader(terminalID) }
                 SurfaceViewWrapper(handle: handle, theme: theme, onFocusTerminal: {
                     // AppKit consumes terminal clicks inside the scroll view.
                     // Reconcile model focus directly, without re-focusing all
@@ -151,9 +157,8 @@ struct TerminalContentView: View {
                     }
                     .onAppear { tm.setVisible(true, for: terminalID) }
                     .onDisappear { tm.setVisible(false, for: terminalID) }
-                }
             )
-            return paneDropTarget?(terminalID, content) ?? content
+            return content
         } else {
             return AnyView(
                 Color.black

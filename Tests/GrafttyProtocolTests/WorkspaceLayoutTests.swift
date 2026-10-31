@@ -3,6 +3,17 @@ import Testing
 @testable import GrafttyProtocol
 
 struct WorkspaceLayoutTests {
+    @Test("@spec LAYOUT-2.175: When resizing a terminal drawer after its viewport shrinks, the application shall begin the adjustment at its rendered height and use the same viewport bounds for rendering and resizing.")
+    func drawerResizeStartsAtVisibleHeight() {
+        typealias Layout = WorkspaceLayout<String>
+        #expect(Layout.clampedDrawerHeight(700, available: 600) == 420)
+        #expect(Layout.resizedDrawerHeight(700, by: -40, available: 600) == 380)
+        #expect(Layout.resizedDrawerHeight(700, by: 40, available: 600) == 420)
+        #expect(Layout.clampedDrawerHeight(240, available: 100) == 70)
+        #expect(Layout.clampedDrawerHeight(.nan, available: 600) == 240)
+        #expect(Layout.clampedDrawerHeight(240, available: .infinity) == 0)
+    }
+
     @Test("@spec LAYOUT-2.161: When an agent moves between tabs and split groups, the application shall preserve its session identity and keep each session in exactly one position.")
     func tabsAndSplitsPreserveSessions() throws {
         var layout = WorkspaceLayout<String>()
@@ -48,4 +59,26 @@ struct WorkspaceLayoutTests {
         #expect(layout.root == nil)
         #expect(layout.terminals.isEmpty)
     }
+    @Test("@spec LAYOUT-2.171: When a viewer receives newly discovered sessions, the application shall preserve its selected tabs and drawer state until a local selection changes them.")
+    func passiveDiscoveryKeepsSelection() {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("a"); layout.addTerminal("shell")
+        _ = layout.hideDrawer()
+        layout.reconcile(live: ["a", "b", "shell", "new-shell"], agents: ["a", "b"], preservingSelection: true)
+        #expect(layout.groups.first?.selected == "a")
+        #expect(layout.selectedTerminal == "shell")
+        #expect(!layout.drawerVisible)
+        #expect(Set(layout.sessions) == ["a", "b", "shell", "new-shell"])
+    }
+
+    @Test("@spec LAYOUT-2.172: When a host explicitly publishes an empty agent inventory, the application shall initially place its ordinary terminals in the drawer while preserving legacy layouts from hosts without agent metadata.")
+    func emptyAgentInventoryMeansOrdinaryShells() {
+        let inventory = PaneLayoutNode.leaf(sessionName: "shell", title: "", attentionText: nil, isBusy: false, attentionSource: nil)
+        let modern = WorktreePanes(path: "/repo", displayName: "Main", repoDisplayName: "Repo", displayBranch: "main", state: .running, isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil, layout: inventory, agents: [])
+        let legacy = WorktreePanes(path: "/repo", displayName: "Main", repoDisplayName: "Repo", displayBranch: "main", state: .running, isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil, layout: inventory)
+        #expect(WorkspaceLayout<String>.initial(for: modern).terminals == ["shell"])
+        #expect(WorkspaceLayout<String>.initial(for: modern).groups.isEmpty)
+        #expect(WorkspaceLayout<String>.initial(for: legacy).groups.count == 1)
+    }
+
 }

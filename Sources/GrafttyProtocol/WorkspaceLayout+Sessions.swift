@@ -3,7 +3,7 @@ import Foundation
 public extension WorkspaceLayout where Session == String {
     static func initial(for worktree: WorktreePanes) -> Self {
         guard let inventory = worktree.layout else { return Self() }
-        guard let agents = worktree.agents, !agents.isEmpty else {
+        guard let agents = worktree.agents else {
             var groups: [Group] = []
             func convert(_ node: PaneLayoutNode) -> Node {
                 switch node {

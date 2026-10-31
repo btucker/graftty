@@ -66,6 +66,23 @@ extension WorktreePanes {
     /// The single `WorktreeEntry → WorktreePanes` projection shared by every host.
     public init(entry: WorktreeEntry, repo: RepoEntry, inputs: WorktreeRowInputs) {
         let layoutRoot = entry.state == .running || inputs.includeLayoutWhenStopped ? entry.splitTree.root : nil
+        var resultBudget = 32 * 1024
+        let agentSummaries = entry.agents.map { agent in
+            let result = resultBudget > 0 ? agent.completion.map { AgentTextPreview.prefix($0.result, bytes: min(1024, resultBudget)) } : nil
+            resultBudget -= result?.utf8.count ?? 0
+            let previous = agent.results.suffix(5).filter { $0.id != agent.completion?.id }.suffix(4).map { record in
+                let preview = AgentTextPreview.prefix(record.result, bytes: min(256, resultBudget))
+                resultBudget -= preview.utf8.count
+                return preview
+            }
+            return AgentSessionInfo(id: agent.id, name: AgentTextPreview.prefix(agent.name, bytes: 256), provider: agent.provider.rawValue,
+                status: agent.status.rawValue,
+                sessionName: agent.status == .closed ? nil : agent.paneSlotID.flatMap { entry.paneSessions[$0] }.map(ZmxLauncher.sessionName(for:)),
+                assignmentID: agent.assignmentID.uuidString, completionID: agent.completion?.id.uuidString,
+                result: result, previousResults: previous, failure: agent.failure.map { AgentTextPreview.prefix($0, bytes: 1024) },
+                processObservation: agent.processObservation, outcome: agent.completion?.outcome?.rawValue,
+                resultCount: agent.results.count, resultsAreSummaries: true)
+        }
         self.init(
             path: entry.path,
             displayName: inputs.displayName,
@@ -88,13 +105,7 @@ extension WorktreePanes {
             ports: inputs.ports,
             portBindings: inputs.portBindings,
             creationProgress: entry.creationProgress,
-            agents: entry.agents.map { agent in
-                AgentSessionInfo(id: agent.id, name: agent.name, provider: agent.provider.rawValue,
-                    status: agent.status.rawValue,
-                    sessionName: agent.status == .closed ? nil : agent.paneSlotID.flatMap { entry.paneSessions[$0] }.map(ZmxLauncher.sessionName(for:)),
-                    assignmentID: agent.assignmentID.uuidString, completionID: agent.completion?.id.uuidString,
-                    result: agent.completion?.result, previousResults: agent.results.filter { $0.id != agent.completion?.id }.map(\.result))
-            }
+            agents: agentSummaries
         )
     }
 }

@@ -137,6 +137,16 @@ public enum CLIWorktreeCreationRequestHandler {
             launch.discardPromptFile()
             return .error(error)
         }
+        // Base capture suspended this request. Validate the live parent at
+        // the reservation boundary, including callers without a prior child reservation.
+        if let parentID = request.managedAgent?.parentManagedAgentID {
+            let parent = platform.state.repos.first(where: { $0.path == repo.path })?.worktrees
+                .flatMap(\.agents).first(where: { $0.id == parentID })
+            guard let parent, ![.closing, .closed, .interrupted, .failed].contains(parent.status) else {
+                launch.discardPromptFile()
+                return .error("The creating managed parent is no longer available for child launches.")
+            }
+        }
         let worktreePath: String
         switch platform.state.insertCreatingWorktree(
             repoPath: repo.path,
@@ -160,12 +170,18 @@ public enum CLIWorktreeCreationRequestHandler {
         if let index = platform.state.indices(forWorktreePath: worktreePath) {
             platform.state.repos[index.repo].worktrees[index.worktree].creationProgress?.operationID = operationID
             if let agent = request.managedAgent {
+                // Move the pre-ref-resolution reservation into its destination.
+                for ri in platform.state.repos.indices {
+                    for wi in platform.state.repos[ri].worktrees.indices {
+                        platform.state.repos[ri].worktrees[wi].agents.removeAll { $0.id == agent.id }
+                    }
+                }
                 platform.state.repos[index.repo].worktrees[index.worktree].agents.append(agent)
             }
             try? platform.stateDidChange()
         }
 
-        if let agentRuntime, launch.promptFile != nil,
+        if request.managedAgent == nil, let agentRuntime, launch.promptFile != nil,
            let index = platform.state.indices(forWorktreePath: worktreePath) {
             platform.state.repos[index.repo].worktrees[index.worktree]
                 .expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(agentPrompt), runtime: agentRuntime)
@@ -176,10 +192,12 @@ public enum CLIWorktreeCreationRequestHandler {
         // reaching this write, preventing duplicate inbox copies.
         if let agentRuntime {
             do {
-                try WorktreeAgentLaunchCommand.saveInitialPrompt(
-                    agentPrompt, runtime: agentRuntime, repo: repo,
-                    worktreePath: worktreePath, branchName: request.branchName, inbox: platform.teamInbox
-                )
+                if request.managedAgent == nil {
+                    try WorktreeAgentLaunchCommand.saveInitialPrompt(
+                        agentPrompt, runtime: agentRuntime, repo: repo,
+                        worktreePath: worktreePath, branchName: request.branchName, inbox: platform.teamInbox
+                    )
+                }
                 // A background CLI request may have no window observing state.
                 // Save the launch expectation before its first hook can arrive.
                 try platform.saveStateNow()
@@ -208,6 +226,18 @@ public enum CLIWorktreeCreationRequestHandler {
             operationID: operationID
         ) {
             let failure = await platform.finishWorktreeCreation(plan)
+            // Git failure removes its placeholder. Keep the accepted identity
+            // and diagnostics in the caller's retained worktree instead of
+            // losing the child's only durable record with that placeholder.
+            if let failure, var agent = request.managedAgent,
+               platform.state.worktree(forPath: worktreePath) == nil,
+               let index = platform.state.indices(forWorktreePath: callerPath) {
+                agent.paneSlotID = nil
+                agent.launchFailed(reason: "\(worktreePath): \(failure)")
+                platform.state.repos[index.repo].worktrees[index.worktree].agents.append(agent)
+                do { try platform.saveStateNow() }
+                catch { return "\(failure); could not persist failed agent: \(error.localizedDescription)" }
+            }
             if let agent = request.managedAgent,
                let index = platform.state.indices(forWorktreePath: worktreePath),
                let ai = platform.state.repos[index.repo].worktrees[index.worktree].agents.firstIndex(where: { $0.id == agent.id }) {

@@ -140,7 +140,10 @@ public enum WorktreeAgentLaunchCommand {
         let promptFile = promptDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("prompt")
-        let initialTask = initialPrompt(prompt)
+        let contextualTask = managedAgent?.launchPrompt(prompt) ?? initialPrompt(prompt)
+        // Lifecycle IDs also live in the launch environment and SessionStart context.
+        // A maximum-size user task keeps its entire advertised budget.
+        let initialTask = contextualTask.utf8.count <= maximumPromptBytes ? contextualTask : initialPrompt(prompt)
         guard fileManager.createFile(
             atPath: promptFile.path,
             contents: Data(initialTask.utf8),
@@ -166,11 +169,28 @@ public enum WorktreeAgentLaunchCommand {
         // so csh/tcsh/fish users get the same behavior as zsh users. The
         // sentinel preserves trailing newlines stripped by command substitution.
         let fileLiteral = shellLiteral(promptFile.path)
-        let loader = "_graftty_agent_prompt_file=\(fileLiteral); _graftty_agent_prompt=\"$(/bin/cat \"$_graftty_agent_prompt_file\"; _graftty_status=$?; /usr/bin/printf x; exit \"$_graftty_status\")\" && /bin/rm -f \"$_graftty_agent_prompt_file\" && _graftty_agent_prompt=\"${_graftty_agent_prompt%x}\" && exec \(agent.rawValue) -- \"$_graftty_agent_prompt\""
+        // A managed foreground wrapper observes the actual invocation environment.
+        // Do not exec away the wrapper: command-not-found and later provider exit
+        // must remain observable even when the outer interactive shell survives.
+        let invocation: String
+        let observer: String
+        if let managedAgent, let session = managedAgent.paneSessionID {
+            let report: String
+            do {
+                report = try AgentLifecycleHandoff(directory: promptDirectory.appendingPathComponent("lifecycle"))
+                    .shellExitReport(agentID: managedAgent.id, assignmentID: managedAgent.assignmentID, sessionID: session)
+            } catch {
+                try? fileManager.removeItem(at: promptFile)
+                throw error
+            }
+            observer = "trap \(shellLiteral("_graftty_exit=$?; \(report); exit \"$_graftty_exit\"")) EXIT; "
+            invocation = "\(agent.rawValue) -- \"$_graftty_agent_prompt\""
+        } else { observer = ""; invocation = "exec \(agent.rawValue) -- \"$_graftty_agent_prompt\"" }
+        let loader = "_graftty_agent_prompt_file=\(fileLiteral); _graftty_agent_prompt=\"$(/bin/cat \"$_graftty_agent_prompt_file\"; _graftty_status=$?; /usr/bin/printf x; exit \"$_graftty_status\")\" && /bin/rm -f \"$_graftty_agent_prompt_file\" && _graftty_agent_prompt=\"${_graftty_agent_prompt%x}\" && \(invocation)"
         let identity = managedAgent.map {
             "export GRAFTTY_MANAGED_AGENT_ID=\(shellLiteral($0.id)) GRAFTTY_ASSIGNMENT_ID=\(shellLiteral($0.assignmentID.uuidString)); "
         } ?? ""
-        let command = "/bin/sh -c \(shellLiteral(identity + loader))"
+        let command = "/bin/sh -c \(shellLiteral(identity + observer + loader))"
         return PreparedWorktreeAgentLaunch(command: command, promptFile: promptFile)
     }
 

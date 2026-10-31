@@ -10,7 +10,7 @@ enum AppZmxWriterError: Error {
 /// `SurfaceHandle` via `TerminalManager.handle(forSessionName:)` and
 /// injects the text directly into the pane's PTY using
 /// `SurfaceHandle.typeText(_:)` — the same in-process PTY-write path
-/// used for default-command injection and programmatic pane automation.
+/// used for explicit startup-command delivery and programmatic pane automation.
 ///
 /// Must be called on the main actor because `TerminalManager` is
 /// `@MainActor`-isolated and `SurfaceHandle.typeText` touches libghostty.

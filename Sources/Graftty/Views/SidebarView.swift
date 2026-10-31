@@ -1090,7 +1090,8 @@ struct SidebarView: View {
             for: appState.repos,
             using: remoteBranchStore
         )
-        if let context = PaneMoveMenuContext.resolve(
+        if !appState.repos.flatMap(\.worktrees).contains(where: { $0.ownsManagedAgent(in: terminalID) }),
+           let context = PaneMoveMenuContext.resolve(
             terminalID: terminalID,
             appState: appState,
             shellCwd: terminalManager.shellCwd(for: terminalID),

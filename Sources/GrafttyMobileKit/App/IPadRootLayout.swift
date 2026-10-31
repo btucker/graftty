@@ -8,8 +8,8 @@ import SwiftUI
 /// @spec IPAD-1.1
 /// Regular-width iPad layout. NavigationSplitView with a worktree
 /// sidebar (host header + WorktreeListContent) and a detail column
-/// showing the selected worktree's actual live terminal panes in the same
-/// split tree supplied by the Mac.
+/// showing the selected worktree's live sessions in device-local tabs,
+/// splits, and a terminal drawer.
 public struct IPadRootLayout: View {
     private var railIsCollapsed: Bool {
         SidebarLayoutPolicy.railCollapsed(preference: appState.sidebarNavigation.railCollapsed, isMobile: true, windowWidth: appState.navigationWindowWidth)
@@ -485,6 +485,12 @@ public struct IPadRootLayout: View {
         )?.layout
     }
 
+    private var selectedWorkspaceNavigationLayout: PaneLayoutNode? {
+        guard let hostID = appState.selectedHostId,
+              let worktree = Self.resolveSelectedWorktree(from: appState.latestWorktrees, selectedPath: appState.selectedWorktreePath) else { return nil }
+        return appState.workspaceStore.navigationLayout(hostID: hostID, worktree: worktree)
+    }
+
     private func applySelectedMobileCloseProjection() {
         guard let closeProjection = selectedMobileCloseProjection else {
             return
@@ -521,7 +527,7 @@ public struct IPadRootLayout: View {
         case .split, .closePane:
             return appState.focusedPaneId != nil && paneEnvironment.paneControlClient != nil
         case let .focusPane(direction):
-            guard let layout = selectedWorktreeLayout,
+            guard let layout = selectedWorkspaceNavigationLayout,
                   let pane = appState.focusedPaneId else {
                 return false
             }
@@ -548,7 +554,7 @@ public struct IPadRootLayout: View {
     }
 
     private func focusPane(_ direction: PaneLayoutNavigation.Direction) {
-        guard let layout = selectedWorktreeLayout,
+        guard let layout = selectedWorkspaceNavigationLayout,
               let pane = appState.focusedPaneId,
               let next = PaneLayoutNavigation.spatialNeighbor(
                 in: layout,
@@ -1431,7 +1437,8 @@ struct IPadDetailColumn: View {
                 },
                 ghosttyCommandContext: ghosttyCommandContext,
                 onSelectPane: onSelectPane,
-                onBackToWorktrees: onBackToWorktrees
+                onBackToWorktrees: onBackToWorktrees,
+                workspaceStore: appState.workspaceStore
             )
             .id("\(host.id)-\(worktree.path)")
         } else {

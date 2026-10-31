@@ -31,7 +31,7 @@ The legacy startup controls are in `Sources/Graftty/Views/SettingsView.swift`, u
 
 ## 1. Separate agent records, sessions, and layout
 
-Create durable agent metadata containing a stable agent identifier, provider, display name, host/worktree identity, requesting parent when present, assignment identifier, lifetime policy, and binding to the current provider/terminal session. Preserve existing session addresses through an explicit mapping. A rename or layout move never changes the cleanup target.
+Create durable agent metadata containing a stable agent identifier, provider, display name, host/worktree identity, requesting parent when present, assignment identifier, and binding to the current provider/terminal session. Preserve existing session addresses through an explicit mapping. A rename or layout move never changes the cleanup target.
 
 Keep three concerns separate:
 
@@ -45,7 +45,7 @@ Validation: old state decoding, stable identity across layout changes, restart r
 
 ## 2. Implement the parent completion and cleanup contract
 
-Creation records the parent and returns the child identity before asynchronous launch finishes. Resolve the caller from trusted session metadata, with an explicit parent option for appropriate scripted use. User-created agents without a parent expose completion to the user.
+Creation records the parent and returns the child identity before asynchronous launch finishes. Resolve the caller from its native agent and terminal-session metadata. User-created agents without a parent expose completion to the user.
 
 The proposed command sequence is:
 
@@ -73,7 +73,7 @@ Persist the result and its history/transcript references before accepting comple
 
 Delivery acknowledgement is not cleanup acknowledgement. The child remains awaiting cleanup until a matching close succeeds. The parent's inbox and startup context expose outstanding cleanup even after the original event was read. Do not depend solely on a model remembering an instruction from an old turn.
 
-Closing validates the expected assignment, gracefully ends the correct runtime, confirms teardown, and then removes live views. Repeated closes succeed harmlessly. A failed teardown remains visible and retryable. Never route cleanup through a mutable pane index, provider-only address, or worktree-wide broadcast.
+Closing validates the expected assignment, ends the correct terminal session, confirms teardown, and then removes live views. Repeated closes succeed harmlessly. A failed teardown remains visible and retryable. Never route cleanup through a mutable pane index, provider-only address, or worktree-wide broadcast.
 
 If the parent needs more work, it can resume the child instead. If the parent is unavailable, keep the obligation and expose it to the user. A parent with unfinished children must surface those obligations before it closes; do not silently orphan descendants. Do not recursively kill worktrees or unrelated processes. Explicitly handle independently useful child-owned processes such as dev servers.
 
@@ -81,9 +81,9 @@ Validation: duplicate finish and close, crash between state and event writes, un
 
 ## 3. Unify creation and update the bundled team skill
 
-Add the `agent` command group and shared host operations for add, list/status, finish, and close. Reuse existing worktree creation, remote routing, startup receipt, timeout, and prompt validation behavior. Support structured results with stable agent ID, launch operation ID, host, worktree, and readiness status.
+Add the `agent` command group and shared host operations for add, list/status, finish, and close. Reuse existing worktree creation, startup receipt, timeout, and prompt validation behavior. Preserve the existing paired-host command during migration. Support structured results with stable agent ID, launch operation ID, host, worktree, and readiness status.
 
-An explicit existing worktree must resolve uniquely or fail. It must never silently fall back to creating one. Distinguish accepted launch from a reachable agent. Remote destinations resolve their own provider default and availability.
+An explicit existing worktree must resolve uniquely or fail. It must never silently fall back to creating one. Distinguish accepted launch from a reachable agent. The host receiving an agent request resolves its own provider default.
 
 Keep existing worktree and pane commands for Git and terminal/layout operations. Preserve old agent-launch forms as compatibility paths during migration, implemented through the shared service rather than maintaining separate semantics. New agents should use the new command in examples and guidance.
 
@@ -131,7 +131,7 @@ Validation: attention on hidden tabs, completion while focused, archived-result 
 
 ## 7. Extend remote and mobile presentation
 
-Publish additive agent/session metadata and workspace layout through capability-negotiated snapshots and control operations. Share lifecycle state across clients while keeping selection and view layout local to each device. Opening an agent on iPhone must not rearrange the Mac.
+Publish additive agent/session metadata while preserving the complete legacy pane inventory. Negotiate lifecycle control capabilities and keep each viewer's workspace layout local. Share lifecycle state across clients while keeping selection and view layout local to each device. Opening an agent on iPhone must not rearrange the Mac.
 
 On iPhone, use an agent picker and a bottom Terminal control above keyboard accessories and safe areas. Terminals open full-height with Back to agent. On iPad, use tab groups and a lower drawer when space allows. Retain menus for actions that also support drag or pointer gestures.
 
@@ -150,3 +150,15 @@ Run focused tests while iterating, then `scripts/swiftpm test`. Regenerate `SPEC
 The end-to-end acceptance scenario is a parent creating agents in both the same worktree and a new worktree, with one waiting for input, one failing, and the others completing. The parent receives exact completion events and closes completed children. Results remain accessible, worktree changes survive, the shell keeps running while hidden, and the final active workspace contains only ongoing work. Repeat with a parent restart and a mobile observer.
 
 Before opening the PR, run `/code-review xhigh --fix` as required by AGENTS.md, apply findings, and rerun affected checks. Include the plan, regenerated specs, implementation, migration coverage, screenshots, and validation results in the PR. Record any unrelated failing checks or unverified hardware behavior explicitly.
+
+## Implementation notes
+
+The initial implementation uses one explicit completion policy for managed agents. `finish` records a result; `close --completion` ends that session after the parent handles it. Native end-of-turn hooks only update attention and waiting state. Ordinary closure or provider exit before completion records an interrupted or failed outcome for parent acknowledgment. Failed teardown preserves the live binding and diagnostic for retry. Resume creates a new assignment in a still-live session; it does not restart an exited provider process.
+
+Local compatibility forms (`pane add --agent` and `worktree add --agent`) now call the same agent lifecycle. The existing `worktree add --remote` command remains available for paired-host creation; the new `agent add` command currently targets its connected host. Remote Mac and mobile viewers receive the agent inventory, results, and device-local presentation. They can create ordinary terminals through existing host controls. New agent creation is available through the Mac menu or CLI.
+
+Context shows bounded current and prior result previews on all clients. Local Mac Context also opens a bounded transcript preview. `agent list` returns paginated lifecycle summaries. `agent show <managed-id> --json` retrieves an immutable snapshot of the full retained record in bounded chunks. Full transcripts live in host-owned archive files and are omitted from routine state saves and remote/mobile snapshots. Stored results and transcripts are not truncated.
+
+Existing saved Mac splits migrate in place. Known manually started providers gain a provider identity when their next session-start hook binds the terminal, without moving that view. Native subagents are excluded. New managed agents join tabs, and new shells enter the terminal drawer.
+
+Review fixes also scope zoom and spatial navigation to the visible device-local layout, retain visited iPad tab renderers while their workspace is active, and keep tab controls available while a terminal attachment loads. Hidden tabs and closed drawers do not become visible when the app or worktree is restored.

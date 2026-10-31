@@ -23,7 +23,9 @@ struct WorkspaceContentView: View {
     var agentScrollbackMap: AgentScrollbackMap?
     @Environment(\.agentWorkspaceRequest) private var request
     @State private var archive: ManagedAgent?
+    @State private var archivePreview: String?
     @State private var lastFocused: PaneSlotID?
+    @State private var lastFocusedAgentID: String?
     @State private var failure: String?
     @State private var launching = false
     @State private var resizeStart: Double?
@@ -42,11 +44,14 @@ struct WorkspaceContentView: View {
                             Text(archive.name)
                             Text("Closed").foregroundStyle(.secondary)
                             Spacer()
-                            Button("Back to agents") { self.archive = nil }
+                            Button("Back to agents") {
+                                self.archive = nil
+                                if let slot = layout.lastAgent { focus(slot) }
+                            }
                         }.padding(10)
                         Divider()
                         ScrollView {
-                            Text(archive.transcript ?? archive.completion?.result ?? "")
+                            Text(archivePreview ?? "Loading transcript…")
                                 .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading).padding(12)
                         }
@@ -54,8 +59,7 @@ struct WorkspaceContentView: View {
                 } else if layout.root != nil {
                     TerminalContentView(terminalManager: terminalManager,
                         splitTree: Binding(get: {
-                            let tree = layout.visibleSplitTree
-                            return worktree.splitTree.zoomed.map { tree.withZoom($0) } ?? tree
+                            worktree.canvasTree
                         }, set: { tree in mutate { $0.updateGeometry(from: tree) } }),
                         focusedPaneSlotID: worktree.focusedPaneSlotID, theme: theme, onFocusTerminal: focus,
                         previewWorktreePath: worktree.path, agentScrollbackMap: agentScrollbackMap,
@@ -71,12 +75,14 @@ struct WorkspaceContentView: View {
                     Rectangle().fill(theme.foreground.opacity(0.12)).frame(height: 4)
                         .contentShape(Rectangle())
                         .gesture(DragGesture().onChanged { value in
-                            if resizeStart == nil { resizeStart = layout.drawerHeight }
-                            mutate { $0.drawerHeight = min(max(120, (resizeStart ?? 240) - value.translation.height), max(120, geometry.size.height - 120)) }
+                            if resizeStart == nil { resizeStart = WorkspaceLayout<PaneSlotID>.clampedDrawerHeight(layout.drawerHeight, available: geometry.size.height) }
+                            mutate { $0.drawerHeight = WorkspaceLayout<PaneSlotID>.resizedDrawerHeight(resizeStart ?? 240,
+                                by: -value.translation.height, available: geometry.size.height) }
                         }.onEnded { _ in resizeStart = nil })
                         .accessibilityLabel("Terminal drawer height")
                         .accessibilityAdjustableAction { direction in
-                            mutate { $0.drawerHeight = max(120, min(geometry.size.height - 120, $0.drawerHeight + (direction == .increment ? 40 : -40))) }
+                            mutate { $0.drawerHeight = WorkspaceLayout<PaneSlotID>.resizedDrawerHeight($0.drawerHeight,
+                                by: direction == .increment ? 40 : -40, available: geometry.size.height) }
                         }
                 }
                 drawerHeader
@@ -90,26 +96,50 @@ struct WorkspaceContentView: View {
                             Button("New terminal", action: onNewTerminal)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
-                    }.frame(height: min(layout.drawerHeight, max(120, geometry.size.height * 0.7)))
+                    }.frame(height: WorkspaceLayout<PaneSlotID>.clampedDrawerHeight(layout.drawerHeight, available: geometry.size.height))
                 }
             }
             .background(theme.background)
             .foregroundStyle(theme.foreground)
         }
-        .onAppear { synchronize(); lastFocused = worktree.focusedPaneSlotID }
-        .onChange(of: worktree.path) { _, _ in archive = nil; lastFocused = worktree.focusedPaneSlotID }
-        .onChange(of: worktree.agents) { previous, current in
-            if let closed = current.first(where: { agent in
-                agent.status == .closed && agent.paneSlotID == lastFocused
-                    && previous.first(where: { $0.id == agent.id })?.status != .closed
-            }) { archive = closed }
+        .onAppear {
+            synchronize(); lastFocused = worktree.focusedPaneSlotID
+            lastFocusedAgentID = worktree.agents.first { $0.paneSlotID == lastFocused && $0.status != .closed }?.id
+        }
+        .task(id: archive?.id) {
+            archivePreview = nil
+            guard let archive else { return }
+            do {
+                let preview = try await OffMainIO.run { try AgentArchiveStore().preview(archive) }
+                guard !Task.isCancelled else { return }
+                archivePreview = preview ?? archive.completion?.result ?? "No transcript was available when this session closed."
+            } catch {
+                guard !Task.isCancelled else { return }
+                archivePreview = "Could not read transcript: \(error.localizedDescription)"
+            }
+        }
+        .onChange(of: worktree.path) { _, _ in
+            archive = nil; lastFocused = worktree.focusedPaneSlotID
+            lastFocusedAgentID = worktree.agents.first { $0.paneSlotID == lastFocused && $0.status != .closed }?.id
+        }
+        .onChange(of: worktree.agents) { previous, _ in
+            // Teardown clears the slot before the final closed transition is persisted.
+            if let focused = previous.first(where: { $0.paneSlotID != nil && $0.paneSlotID == lastFocused }) {
+                lastFocusedAgentID = focused.id
+            }
+            if let closed = worktree.newlyClosedAgent(viewedAgentID: lastFocusedAgentID, previousAgents: previous) {
+                archive = closed
+            }
         }
         .onChange(of: worktree.splitTree.allLeaves) { _, _ in synchronize() }
         .onChange(of: worktree.agents.compactMap(\.paneSlotID)) { _, _ in synchronize() }
         .onChange(of: worktree.focusedPaneSlotID) { old, slot in
             if let slot {
+                if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
                 mutate { $0.select(slot) }
-                if old == nil || old.map(worktree.splitTree.containsLeaf) == true { lastFocused = slot; archive = nil }
+                if old == nil || old.map(worktree.splitTree.containsLeaf) == true {
+                    lastFocused = slot; lastFocusedAgentID = agent(slot)?.id; archive = nil
+                }
             }
         }
         .alert("Agent operation failed", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
@@ -128,8 +158,11 @@ struct WorkspaceContentView: View {
                                 HStack(spacing: 6) {
                                     AgentProviderIcon(provider: agent(tab)?.provider.rawValue)
                                     Text(title(tab)).lineLimit(1)
-                                    if let status = agent(tab)?.status, status == .awaitingCleanup {
-                                        Image(systemName: "checkmark.circle").accessibilityLabel("Finished, awaiting cleanup")
+                                    if let agent = agent(tab) {
+                                        AgentStatusBadge(status: agent.status.rawValue,
+                                            needsInput: worktree.paneAttention[tab]?.source == .agentStop,
+                                            failure: agent.failure, disconnected: terminalManager.attachmentFailures[tab] != nil,
+                                            processObservation: agent.processObservation)
                                     } else if worktree.paneAttention[tab] != nil {
                                         Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
                                     }
@@ -210,8 +243,8 @@ struct WorkspaceContentView: View {
         if agent(slot) == nil {
             Button("Move to terminal drawer") { mutate { $0.moveToDrawer(slot) }; focus(slot) }
             Button("Close terminal", role: .destructive) { onCloseTerminal(slot) }
-        } else if let agent = agent(slot), let completion = agent.completion, agent.status == .awaitingCleanup {
-            Button("Close completed agent") { perform(.init(action: .close, callerWorktree: worktree.path, agentID: agent.id, completionID: completion.id)) }
+        } else if let agent = agent(slot), let completion = agent.completion, agent.requiresAcknowledgment {
+            Button(completion.outcome == .interrupted || completion.outcome == .failed ? "Acknowledge and close agent" : "Close completed agent") { perform(.init(action: .close, callerWorktree: worktree.path, agentID: agent.id, completionID: completion.id)) }
         }
     }
 
@@ -291,9 +324,19 @@ struct WorkspaceContentView: View {
     }
     private func mutate(_ action: (inout WorkspaceLayout<PaneSlotID>) -> Void) {
         var next = layout; action(&next); worktree.workspaceLayout = next
+        if let zoomed = worktree.splitTree.zoomed, !next.visibleSplitTree.containsLeaf(zoomed) {
+            worktree.splitTree = worktree.splitTree.withZoom(nil)
+        }
     }
-    private func focus(_ slot: PaneSlotID) { archive = nil; lastFocused = slot; mutate { $0.select(slot) }; onFocusTerminal(slot) }
-    private func synchronize() { worktree.ensureWorkspaceLayout() }
+    private func focus(_ slot: PaneSlotID) {
+        archive = nil; lastFocused = slot; lastFocusedAgentID = agent(slot)?.id
+        if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
+        mutate { $0.select(slot) }; onFocusTerminal(slot)
+    }
+    private func synchronize() {
+        worktree.ensureWorkspaceLayout()
+        if let focused = worktree.focusedPaneSlotID { mutate { $0.select(focused) } }
+    }
     private func receive(_ providers: [NSItemProvider], action: @escaping @MainActor (PaneSlotID) -> Void) -> Bool {
         guard let provider = providers.first else { return false }
         _ = provider.loadObject(ofClass: NSString.self) { object, _ in

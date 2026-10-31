@@ -282,10 +282,15 @@ struct PaneAdd: ParsableCommand {
         if let error = WorktreeAgentLaunchCommand.validationError(prompt: resolvedPrompt) {
             throw ValidationError(error)
         }
-        if agent != nil {
-            // An app without this capability would ignore the agent fields
-            // and report success for a plain split.
-            try CapabilityProbe.require([.paneAgent], retryTransportFailuresUntil: Date().addingTimeInterval(5))
+        if let provider = agent.flatMap(TeamHookRuntime.init(rawValue:)) {
+            var operation = try AgentCLI.request(.add, targetFallback: path)
+            operation.name = provider.displayName
+            operation.worktree = path
+            operation.provider = provider
+            operation.prompt = resolvedPrompt
+            operation.operationID = UUID().uuidString.lowercased()
+            try AgentCLI.printRecords(AgentCLI.exchange(operation), json: false)
+            return
         }
         let response = try CLIEnv.sendRequest(request(path: path, resolvedPrompt: resolvedPrompt))
         try CLIEnv.expectOk(response, for: "pane add")

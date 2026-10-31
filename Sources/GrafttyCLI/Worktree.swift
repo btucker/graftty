@@ -130,6 +130,22 @@ struct WorktreeAdd: ParsableCommand {
             throw ValidationError(error)
         }
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        if remote == nil, let provider = agent.flatMap(TeamHookRuntime.init(rawValue:)) {
+            var operation = try AgentCLI.request(.add)
+            operation.name = name
+            operation.provider = provider
+            operation.prompt = resolvedPrompt
+            operation.operationID = UUID().uuidString.lowercased()
+            operation.base = base
+            operation.branch = branch
+            operation.existing = existing
+            let records = try AgentCLI.exchange(operation, deadline: deadline)
+            try AgentCLI.printRecords(records, json: false)
+            if wait, let id = records.first?.operationID {
+                try waitForCreation(response: CLIEnv.sendRequest(.worktreeCreateStatus(operationID: id)), deadline: deadline)
+            }
+            return
+        }
         // Capability probes use the same two-second request transport as the
         // mutation. Give transient app stalls a short bounded retry window,
         // while preserving most of the caller's timeout for the real work.

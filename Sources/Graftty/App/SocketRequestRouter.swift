@@ -428,7 +428,9 @@ extension SocketRequestRouter {
                   terminalManager: terminalManager,
                   targetID: targetID,
                   split: direction,
-                  extraInitialInput: PaneAgentLaunch.initialInput(launch.command)
+                  extraInitialInput: PaneAgentLaunch.initialInput(launch.command),
+                  reservedSlot: managedAgent?.paneSlotID,
+                  reservedSession: managedAgent?.paneSessionID
               ) else {
             await abandonLaunch()
             return .error("split failed")
@@ -438,7 +440,7 @@ extension SocketRequestRouter {
             appState.wrappedValue.repos[index.repo].worktrees[index.worktree].agents[ai].paneSlotID = newPaneID
             do { try GrafttyApp.persistAppStateSynchronously(appState.wrappedValue) }
             catch {
-                PaneCommands.closePane(appState: appState, terminalManager: terminalManager, targetID: newPaneID, userInitiated: true)
+                PaneCommands.removeEndedPane(appState: appState, terminalManager: terminalManager, targetID: newPaneID, userInitiated: true)
                 await abandonLaunch()
                 return .error("Could not save agent session: \(error.localizedDescription)")
             }
@@ -459,7 +461,7 @@ extension SocketRequestRouter {
                 }
             }
         }
-        if let agentRuntime, let index = appState.wrappedValue.indices(forWorktreePath: path) {
+        if managedAgent == nil, let agentRuntime, let index = appState.wrappedValue.indices(forWorktreePath: path) {
             appState.wrappedValue.repos[index.repo].worktrees[index.worktree]
                 .expectLaunchPrompt(WorktreeAgentLaunchCommand.initialPrompt(agentPrompt), runtime: agentRuntime)
             // As in `createWorktree`: no window may be observing state.

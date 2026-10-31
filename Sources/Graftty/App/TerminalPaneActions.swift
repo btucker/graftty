@@ -65,6 +65,7 @@ enum TerminalPaneActions {
         terminalManager.currentPaneMoveContext = { [appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
                 let state = appState.wrappedValue
+                guard !state.repos.flatMap(\.worktrees).contains(where: { $0.ownsManagedAgent(in: terminalID) }) else { return nil }
                 let defaultBranches = PaneMoveMenuContext.defaultBranches(
                     for: state.repos,
                     using: remoteBranchStore

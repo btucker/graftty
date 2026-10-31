@@ -3,6 +3,19 @@ import Testing
 @testable import GrafttyProtocol
 
 struct AgentSessionInfoTests {
+    @Test("@spec AGENT-6.106: When publishing agent state, the application shall distinguish provider observation and interrupted outcomes from assignment waiting and viewer disconnection while decoding older metadata.")
+    func observationAndOutcomeAreAdditive() throws {
+        let legacy = Data(#"{"id":"agent","name":"Review","provider":"codex","status":"waiting"}"#.utf8)
+        let old = try JSONDecoder().decode(AgentSessionInfo.self, from: legacy)
+        #expect(old.processObservation == nil)
+        #expect(AgentAssignmentStatus(agent: old, needsInput: false) == .waiting)
+        let agent = AgentSessionInfo(id: "agent", name: "Review", provider: "codex", status: "running", sessionName: "session",
+            failure: "Provider exited", processObservation: .exited, outcome: "interrupted", resultCount: 8, resultsAreSummaries: true)
+        let restored = try JSONDecoder().decode(AgentSessionInfo.self, from: JSONEncoder().encode(agent))
+        #expect(restored == agent)
+        #expect(AgentAssignmentStatus(agent: restored, needsInput: true) == .exited)
+        #expect(AgentAssignmentStatus(status: "interrupted") == .interrupted)
+    }
     @Test("@spec LAYOUT-2.165: When publishing agent metadata, the application shall retain every session in the legacy pane inventory so older clients can still reach inactive tabs and drawer terminals.")
     func additiveMetadataRetainsLegacyInventory() throws {
         let row = WorktreePanes(path: "/repo", displayName: "main", repoDisplayName: "repo", displayBranch: "main",

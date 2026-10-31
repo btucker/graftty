@@ -7,7 +7,7 @@ public struct WorktreeContextPanel: View {
     private let foreground: Color
     private let secondary: Color
     private let onClose: () -> Void
-    private let readTranscript: ((String) -> String?)?
+    private let readTranscript: (@MainActor (String) async -> String?)?
     @State private var archivedTranscript: String?
     @State private var follow: TimelineFollow
     @State private var requestedBriefHeight: CGFloat?
@@ -18,7 +18,7 @@ public struct WorktreeContextPanel: View {
 
     public init(context: SidebarWorktreeContext, foreground: Color = .primary,
                 secondary: Color = .secondary, collapsesBrief: Bool = false,
-                readTranscript: ((String) -> String?)? = nil, onClose: @escaping () -> Void) {
+                readTranscript: (@MainActor (String) async -> String?)? = nil, onClose: @escaping () -> Void) {
         self.context = context
         self.foreground = foreground
         self.secondary = secondary
@@ -31,7 +31,7 @@ public struct WorktreeContextPanel: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if let agents = context.worktree.agents?.filter({ $0.result != nil || !($0.previousResults ?? []).isEmpty }), !agents.isEmpty {
+            if let agents = context.worktree.agents?.filter({ ($0.resultCount ?? 0) > 0 || $0.result != nil || !($0.previousResults ?? []).isEmpty }), !agents.isEmpty {
                 DisclosureGroup("Completed agents · \(agents.count)") {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) {
@@ -43,9 +43,14 @@ public struct WorktreeContextPanel: View {
                                         Spacer()
                                         Text(agent.status == "closed" ? "Closed" : agent.status == "awaiting-cleanup" ? "Awaiting cleanup" : agent.status.capitalized).foregroundStyle(secondary)
                                     }
+                                    if agent.resultsAreSummaries == true {
+                                        Text("Result previews · \(agent.resultCount ?? 0) retained assignments").foregroundStyle(secondary)
+                                    }
                                     if let result = agent.result { Text(result).textSelection(.enabled) }
                                     if let readTranscript, agent.status == "closed" {
-                                        Button("Read transcript") { archivedTranscript = readTranscript(agent.id) ?? "No transcript was available when this session closed." }
+                                        Button("Read transcript") {
+                                            Task { archivedTranscript = await readTranscript(agent.id) ?? "No transcript was available when this session closed." }
+                                        }
                                     }
                                     if let previous = agent.previousResults, !previous.isEmpty {
                                         DisclosureGroup("Previous assignments") {

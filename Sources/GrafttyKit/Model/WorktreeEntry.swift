@@ -146,7 +146,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var splitTree: SplitTree
     public var focusedPaneSlotID: PaneSlotID?
     /// The pane that owns worktree-level startup behavior such as a
-    /// first-pane-only default command. Unlike `focusedPaneSlotID`, this
+    /// worktree-level startup command. Unlike `focusedPaneSlotID`, this
     /// does not change as the user moves focus between panes. Persisting
     /// the slot keeps the same pane primary across worktree stops, app
     /// launches, and zmx restarts.

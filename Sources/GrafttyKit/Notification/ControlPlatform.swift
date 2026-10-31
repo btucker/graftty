@@ -35,9 +35,28 @@ public protocol ControlPlatform: ControlTeamPlatform {
     func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage?
     /// Ends the exact session and confirms teardown before removing its live view.
     func closeAgentSession(worktree: String, slot: PaneSlotID) async throws
+    func agentSessionIsAlive(worktree: String, slot: PaneSlotID) async throws -> Bool
+    func agentSessionNames() async throws -> Set<String>
+    func appendAgentCompletion(repo: RepoEntry, parent: TeamInboxEndpoint, completionID: UUID, body: String) async throws
 }
 
 public extension ControlPlatform {
+    var agentArchives: AgentArchiveStore {
+        AgentArchiveStore(directory: worktreeCreation.agentPromptDirectory.appendingPathComponent("archives", isDirectory: true))
+    }
+    func agentSessionNames() async throws -> Set<String> {
+        Set(state.repos.flatMap(\.worktrees).flatMap { $0.paneSessions.values }.map(ZmxLauncher.sessionName(for:)))
+    }
+    func appendAgentCompletion(repo: RepoEntry, parent: TeamInboxEndpoint, completionID: UUID, body: String) async throws {
+        let inbox = teamInbox
+        _ = try await OffMainIO.run {
+            try inbox.appendAgentCompletion(teamID: repo.path, teamName: repo.displayName,
+                to: parent, completionID: completionID, body: body)
+        }
+    }
+    func agentSessionIsAlive(worktree: String, slot: PaneSlotID) async throws -> Bool {
+        state.worktree(forPath: worktree)?.paneSessions[slot] != nil
+    }
     func closeAgentSession(worktree: String, slot: PaneSlotID) async throws {
         throw AgentControlError.unavailable
     }

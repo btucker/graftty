@@ -149,6 +149,7 @@ struct SingleSessionView: View {
     /// container so the SwiftUI control-bar buttons can cancel an
     /// active selection per IOS-11.7.
     @State private var paneContainerBox = TerminalContainerBox()
+    @State private var retainedAttachmentID = UUID()
     @StateObject private var agentCompletion = AgentCompletionModel()
     @State private var stickyControlActivation:
         TerminalInputContainerView.StickyControlActivation = .inactive
@@ -384,6 +385,7 @@ struct SingleSessionView: View {
             }
         }
         if retainedPanes == nil { client?.stop() }
+        retainedPanes?.detach(retainedPaneKey, owner: retainedAttachmentID)
         client = nil
         if connection != .ended { connection = .connecting }
     }
@@ -457,7 +459,7 @@ struct SingleSessionView: View {
                                 lastAgent: UserDefaults.standard.string(forKey: compactAgentKey),
                                 onNewTerminal: ghosttyCommandContext.flatMap { context in
                                     context.isEnabled(.newSplitDown) ? { context.perform(.ghostty(.newSplitDown)) } : nil
-                                })
+                                }, hostID: step.host.id)
                                 .padding(.bottom, isKeyboardVisible ? 0 : geometry.safeAreaInsets.bottom)
                         }
                         // While the keyboard is up, the control bar is laid out
@@ -817,6 +819,7 @@ struct SingleSessionView: View {
         ) }
         let new: SessionClient
         if let retainedPanes {
+            retainedPanes.attach(retainedPaneKey, owner: retainedAttachmentID)
             new = retainedPanes.acquire(retainedPaneKey) { RetainedMobilePane(client: makeClient()) }.client
         } else {
             new = makeClient()

@@ -74,6 +74,7 @@ public struct RootView: View {
             }
         }
         .environment(\.biometricGate, gate)
+        .environment(\.retainedMobilePanes, retainedPanes)
         .environment(\.remoteConnectionCoordinator, coordinator)
         .environment(\.remoteWorktreeUpdates, RemoteWorktreeUpdatesProvider { [coordinator] host in
             coordinator.isPaired(host) ? coordinator.worktreeUpdates(for: host) : nil
@@ -113,7 +114,6 @@ public struct RootView: View {
         .onChange(of: iPadAppState.latestWorktrees) { _, _ in recordSelectedPane() }
         .onChange(of: iPadAppState.selectedHostId) { _, _ in retainedPanes.stopAll() }
         .onChange(of: horizontalSizeClass) { previous, current in
-            retainedPanes.stopAll()
             guard previous == .regular, current != .regular else { return }
             syncCompactNavigationToSelection()
         }

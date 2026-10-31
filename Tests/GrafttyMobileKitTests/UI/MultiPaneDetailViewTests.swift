@@ -9,9 +9,9 @@ import Testing
 @Suite("iPad actual multi-pane detail")
 struct MultiPaneDetailViewTests {
     @Test("""
-@spec IPAD-2.1: While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
+@spec IPAD-2.1: While a worktree is selected and the iPad layout is regular-width, the detail column shall render device-local tabs, splits, and a terminal drawer over the worktree's complete host session inventory.
 """)
-    func ipad_2_1_usesCompleteMacPaneTree() {
+    func ipad_2_1_usesCompleteHostInventory() {
         let worktree = makeWorktree(layout: Self.layout)
         let view = makeView(worktree: worktree, focusedPaneId: "top")
 
@@ -79,69 +79,22 @@ struct MultiPaneDetailViewTests {
     }
 
     @Test("""
-@spec IPAD-2.7: When the user drags a split's divider, the application shall update a per-iPad-client divider-ratio override map keyed by the tree path to that split, without sending any RPC to the host.
+@spec IPAD-2.7: When the user drags an iPad workspace divider, the application shall persist the ratio in its device-local split tree without sending an RPC to the host or resetting the ratio when tabs change.
 """)
-    func ipad_2_7_ratioOverridesAreLocalAndPathScoped() {
-        let first = IPadPaneSplitIdentity(
-            path: .root.appending(.first),
-            direction: .horizontal,
-            firstAnchor: "left",
-            secondAnchor: "right"
-        )
-        let second = IPadPaneSplitIdentity(
-            path: .root.appending(.second),
-            direction: .vertical,
-            firstAnchor: "top",
-            secondAnchor: "bottom"
-        )
-        var overrides = IPadPaneRatioOverrides()
-
-        overrides[first] = 0.32
-
-        #expect(overrides.ratio(at: first, sourceRatio: 0.5) == 0.32)
-        #expect(overrides.ratio(at: second, sourceRatio: 0.61) == 0.61)
-        overrides[first] = nil
-        #expect(overrides.ratio(at: first, sourceRatio: 0.5) == 0.5)
-    }
-
-    @Test("a replacement split at the same path does not inherit a stale ratio")
-    func replacementSplitDoesNotReusePathOnlyOverride() {
-        let original = IPadPaneSplitIdentity(
-            path: .root,
-            direction: .horizontal,
-            firstAnchor: "left",
-            secondAnchor: "right"
-        )
-        let replacement = IPadPaneSplitIdentity(
-            path: .root,
-            direction: .vertical,
-            firstAnchor: "top",
-            secondAnchor: "bottom"
-        )
-        var overrides = IPadPaneRatioOverrides()
-
-        overrides[original] = 0.2
-
-        #expect(overrides.ratio(at: replacement, sourceRatio: 0.5) == 0.5)
-    }
-
-    @Test("topology changes reset ratio storage without remounting surviving panes")
-    func replacementSplitKeepsItsRenderIdentity() {
-        let original = IPadPaneSplitIdentity(
-            path: .root,
-            direction: .horizontal,
-            firstAnchor: "left",
-            secondAnchor: "right"
-        )
-        let replacement = IPadPaneSplitIdentity(
-            path: .root,
-            direction: .vertical,
-            firstAnchor: "top",
-            secondAnchor: "bottom"
-        )
-
-        #expect(original != replacement)
-        #expect(original.renderIdentity == replacement.renderIdentity)
+    func dividerGeometryPersistsWithoutChangingHostLayout() throws {
+        let defaults = UserDefaults(suiteName: "iPadGeometry-\(UUID())")!
+        let host = UUID(), worktree = makeWorktree(layout: Self.layout)
+        let store = MobileWorkspaceStore(defaults: defaults)
+        store.synchronize(hostID: host, worktree: worktree, focused: "top")
+        store.resize(hostID: host, worktree: worktree, path: .root.appending(.second), ratio: 0.32)
+        let restored = MobileWorkspaceStore(defaults: defaults)
+        restored.synchronize(hostID: host, worktree: worktree, focused: "bottom")
+        guard case .split(_, _, _, let second) = restored.layout(hostID: host, worktree: worktree).root,
+              case .split(_, let ratio, _, _) = second else {
+            Issue.record("Expected nested split geometry"); return
+        }
+        #expect(ratio == 0.32)
+        #expect(worktree.layout == Self.layout)
     }
 
     private func makeView(
@@ -167,7 +120,8 @@ struct MultiPaneDetailViewTests {
                 isEnabled: { _ in false }
             ),
             onSelectPane: { _ in },
-            onBackToWorktrees: {}
+            onBackToWorktrees: {},
+            workspaceStore: MobileWorkspaceStore(defaults: UserDefaults(suiteName: "MultiPaneDetail-\(UUID())")!)
         )
     }
 

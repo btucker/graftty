@@ -559,7 +559,7 @@ struct TeamInboxRequestHandlerTests {
     }
 
     @Test("""
-    @spec AGENT-5.3: When Codex or Claude starts in a team-enabled worktree, the application shall inject context that directs the agent to the Graftty skills, states that Graftty keeps one implementer per worktree, names `graftty worktree add --agent --prompt-stdin` as the way to delegate work into a new worktree and `graftty pane add --agent --prompt-stdin` as the way to add a reviewer or pair to an existing one, and delivers queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
+    @spec AGENT-5.3: When Codex or Claude starts in a team-enabled worktree, the application shall inject context that directs the agent to the Graftty skills, states that Graftty keeps one implementer per worktree, names `graftty agent add --provider --prompt-stdin` as the way to delegate work into a new worktree and `graftty agent add --worktree --provider --prompt-stdin` as the way to add a reviewer or pair to an existing one, and delivers queued messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
     """)
     func sessionStartDeliversQueuedMessagesAndAdvancesCursor() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
@@ -593,10 +593,10 @@ struct TeamInboxRequestHandlerTests {
                 repos: [repo]
             )
 
-            #expect(output.contains("graftty worktree add <name> --agent <codex|claude> --prompt-stdin"))
+            #expect(output.contains("graftty agent add <name> --provider <codex|claude> --prompt-stdin"))
             #expect(output.contains("`graftty-team` skill"))
             #expect(output.contains("one implementer per worktree"))
-            #expect(output.contains("graftty pane add <worktree> --agent <codex|claude> --prompt-stdin"))
+            #expect(output.contains("graftty agent add <name> --worktree <worktree> --provider <codex|claude> --prompt-stdin"))
             #expect(output.contains("queued before launch"))
             #expect(output.contains("<graftty-peer-message agent=\\\"\\/repo\\\" id=\\\"0001\\\">"))
             #expect(!output.lowercased().contains("untrusted peer"))

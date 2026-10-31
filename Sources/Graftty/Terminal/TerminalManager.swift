@@ -394,6 +394,9 @@ final class TerminalManager: ObservableObject {
     /// evict records keyed off the pane's session name. Wired by
     /// `NativeTeamDelivery.install()` during `GrafttyApp.startup()`.
     var paneClosed: ((PaneSlotID, String?) -> Void)?
+    /// Returns true when the lifecycle service owns asynchronous managed teardown.
+    var managedPaneClose: ((PaneSlotID, Bool) -> Bool)?
+    var managedSessionMissing: ((PaneSlotID) throws -> Void)?
 
     /// Fired when cmd-click resolves to a CLI editor; owner spawns a new
     /// pane split-right of the source with `initialInput` as the command.
@@ -673,11 +676,11 @@ final class TerminalManager: ObservableObject {
         for terminalID in splitTree.allLeaves where surfaces[terminalID] == nil {
             guard let paneSessionID = paneSessions[terminalID] else { continue }
             guard canAllocatePTY(for: terminalID) else { continue }
-            clearRehydratedIfDaemonGone(
+            guard clearRehydratedIfDaemonGone(
                 terminalID,
                 paneSessionID: paneSessionID,
                 sessionSnapshot: liveSessionsIfNeeded(for: terminalID)
-            )
+            ) else { continue }
             let zmxSpawnConfiguration = resolveZmxSpawnConfiguration(
                 for: terminalID,
                 paneSessionID: paneSessionID,
@@ -747,7 +750,7 @@ final class TerminalManager: ObservableObject {
 
         guard hostManagedBackend != nil || canAllocatePTY(for: terminalID)
         else { return nil }
-        clearRehydratedIfDaemonGone(terminalID, paneSessionID: paneSessionID, sessionSnapshot: nil)
+        guard clearRehydratedIfDaemonGone(terminalID, paneSessionID: paneSessionID, sessionSnapshot: nil) else { return nil }
 
         let isDirectHostManagedSurface = hostManagedBackend != nil
         let surfaceWorktreePath = isDirectHostManagedSurface
@@ -841,16 +844,16 @@ final class TerminalManager: ObservableObject {
     /// Cold-start session-loss check (ZMX-7.1): if a rehydrated pane's
     /// zmx daemon is gone, the imminent `zmx attach` will create a fresh
     /// daemon. Drop the old pane name and treat the pane as fresh so the
-    /// default command runs.
+    /// queued launch command runs.
     /// `sessionSnapshot` lets callers batch one `zmx list` across many
     /// leaves; pass `nil` to fall back to a per-call check.
     private func clearRehydratedIfDaemonGone(
         _ terminalID: PaneSlotID,
         paneSessionID: PaneSessionID,
         sessionSnapshot: ZmxSessionSnapshot?
-    ) {
+    ) -> Bool {
         guard rehydratedSurfaces.contains(terminalID),
-              let launcher = zmxLauncher else { return }
+              let launcher = zmxLauncher else { return true }
         let name = launcher.sessionName(for: paneSessionID)
         let missing: Bool
         switch sessionSnapshot {
@@ -862,6 +865,11 @@ final class TerminalManager: ObservableObject {
             missing = launcher.isSessionMissing(name)
         }
         if missing {
+            do { try managedSessionMissing?(terminalID) }
+            catch {
+                NSLog("[Graftty] Could not retain interrupted session: %@", error.localizedDescription)
+                return false
+            }
             if let receipt = shellStartupReceipts[terminalID],
                FileManager.default.fileExists(atPath: receipt.path) {
                 shellStartupCommands.removeValue(forKey: terminalID)
@@ -885,6 +893,7 @@ final class TerminalManager: ObservableObject {
                 paneTitleInvalidations.schedule()
             }
         }
+        return true
     }
 
     /// Drop per-instantiation runtime state tied to the current libghostty
@@ -1088,7 +1097,7 @@ final class TerminalManager: ObservableObject {
     }
 
     /// Shared by the Ghostty PWD action and tests. The first prompt commits
-    /// any queued launch command before default-command policy runs.
+    /// any queued launch command.
     func shellBecameReady(for terminalID: PaneSlotID) {
         guard shellReadyFired.insert(terminalID).inserted else { return }
         // Readiness proves a new shell exists, even if its PID was reused.
@@ -1361,7 +1370,7 @@ final class TerminalManager: ObservableObject {
     /// Soft destroy. Releases the libghostty surface (freeing scrollback
     /// + Metal layers via `SurfaceHandle.deinit`) and marks the leaf as
     /// rehydrated so a future surface creation re-attaches to the zmx
-    /// session rather than re-running the default command. Unlike
+    /// session rather than repeating the launch command. Unlike
     /// `destroySurface`, this preserves titles, PWDs, the
     /// pane→session map, and the `shellReadyFired` / `firstPaneMarkers`
     /// labels, and does NOT call `killZmxSession` or fire `paneClosed`.
@@ -1393,7 +1402,7 @@ final class TerminalManager: ObservableObject {
 
     /// Mark a terminal as rehydrated from on-disk state at launch, rather
     /// than freshly opened by the user. Rehydrated panes never auto-run
-    /// a default command — the command is presumed already running under
+    /// a launch command — the command is presumed already running under
     /// zmx from the previous session. Called by
     /// `GrafttyApp.restoreRunningWorktrees` before creating surfaces.
     func markRehydrated(_ terminalID: PaneSlotID) {
