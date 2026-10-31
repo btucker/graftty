@@ -4742,7 +4742,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-49.x
 
-**CONTEXT-49** While Context is visible on Mac or mobile, the application shall use an opaque inspector background blended from the Ghostty background toward its foreground, with greater separation for dark themes than light themes, and a fine foreground-derived edge.
+**CONTEXT-49** While the mobile scrollback map is idle, the application shall show a four-point strip flush with the pane's right edge, retain a fixed 44-point touch target, expand the card inward while held, dragged, or hovered, and collapse it when interaction ends or is cancelled without changing its vertical scrub coordinates.
 
 ### CONTEXT-50.x
 
@@ -4755,6 +4755,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### CONTEXT-52.x
 
 **CONTEXT-52** When the mobile Context drawer uses a different color scheme from its enclosing screen, the application shall apply the Ghostty-derived scheme only inside the drawer and preserve the enclosing screen's appearance when opening or closing it.
+
+### CONTEXT-53.x
+
+**CONTEXT-53** While Context is visible on Mac or mobile, the application shall use an opaque inspector background blended from the Ghostty background toward its foreground, with greater separation for dark themes than light themes, and a fine foreground-derived edge.
 
 ## MEM — MEM
 

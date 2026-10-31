@@ -71,7 +71,7 @@ struct GhosttyThemeCoreTests {
         #expect(abs(veryLightSide.b - 0.94) < 0.001)
     }
 
-    @Test("@spec CONTEXT-49: While Context is visible on Mac or mobile, the application shall use an opaque inspector background blended from the Ghostty background toward its foreground, with greater separation for dark themes than light themes, and a fine foreground-derived edge.")
+    @Test("@spec CONTEXT-53: While Context is visible on Mac or mobile, the application shall use an opaque inspector background blended from the Ghostty background toward its foreground, with greater separation for dark themes than light themes, and a fine foreground-derived edge.")
     func contextBackgroundFollowsTheme() {
         let palettes: [(GhosttyThemeColors.RGB, GhosttyThemeColors.RGB, Double)] = [
             (.init(r: 0.145, g: 0.161, b: 0.184), .init(r: 0.92, g: 0.93, b: 0.94), 0.095),
