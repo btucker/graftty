@@ -4740,6 +4740,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-48** When Claude provider input contains an agent-message envelope, the application shall display its content as an agent message with its available sender on Mac and mobile, including previously saved user inputs, while preserving surrounding human text and fenced examples.
 
+### CONTEXT-49.x
+
+**CONTEXT-49** While the mobile scrollback map is idle, the application shall show a four-point strip flush with the pane's right edge, retain a fixed 44-point touch target, expand the card inward while held, dragged, or hovered, and collapse it when interaction ends or is cancelled without changing its vertical scrub coordinates.
+
 ## MEM — MEM
 
 ### MEM-1.x
