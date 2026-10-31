@@ -3,7 +3,7 @@ import GrafttyProtocol
 import Testing
 @testable import GrafttyKit
 
-@Suite("@spec CONTEXT-50: When a Claude AskUserQuestion result or a Codex request_user_input result supplies human answers in a transcript, the application shall capture one structured reply at its original time through the durable handoff, match each answer to its question call across hook invocations, and exclude unrelated tool results, other sessions, and subagents.")
+@Suite("@spec CONTEXT-51: When a Claude AskUserQuestion result or a Codex request_user_input result supplies human answers in a transcript, the application shall capture one structured reply at its original time through the durable handoff, match each answer to its question call across hook invocations, and exclude unrelated tool results, other sessions, and subagents.")
 struct HarnessQuestionCaptureTests {
     private var claudeQuestion: [String: Any] {
         ["type": "assistant", "sessionId": "session", "timestamp": "2026-10-28T18:29:59Z",

@@ -7,7 +7,7 @@ import Testing
 
 @MainActor
 struct WorktreeHistoryContentTests {
-    @Test("@spec CONTEXT-51: When a structured question reply appears in the shared Mac and mobile timeline, the application shall display each question as secondary text above its readable answer without provider wrappers or transport identifiers, wrapping within the available width.", arguments: [260.0, 390.0], [ColorScheme.dark, .light])
+    @Test("@spec CONTEXT-52: When a structured question reply appears in the shared Mac and mobile timeline, the application shall display each question as secondary text above its readable answer without provider wrappers or transport identifiers, wrapping within the available width.", arguments: [260.0, 390.0], [ColorScheme.dark, .light])
     func harnessRepliesShowReadableQuestionsAndAnswers(width: Double, scheme: ColorScheme) async throws {
         let question = "Should the CLI and graftty-team changes stay part of this design exploration for now, or should I implement them in this worktree too?"
         let answer = "Design together first, then implement"

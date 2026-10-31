@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import GrafttyProtocol
 
-@Suite("@spec CONTEXT-49: When a harness supplies structured question replies, commands, review results, or interruptions, the application shall normalize them through harness-specific timeline plugins into shared presentation on Mac and mobile, retain surrounding human input, preserve unknown or malformed formats and literal examples, and restore structured content from saved history.")
+@Suite("@spec CONTEXT-50: When a harness supplies structured question replies, commands, review results, or interruptions, the application shall normalize them through harness-specific timeline plugins into shared presentation on Mac and mobile, retain surrounding human input, preserve unknown or malformed formats and literal examples, and restore structured content from saved history.")
 struct HarnessTimelinePluginTests {
     private let reply = #"<send_user_message_question_reply>[{"question":"Which approach?","answer":"Design together first, then implement","questionItemId":"opaque-id"},{"question":"Targets?","answer":"Mac and mobile"}]</send_user_message_question_reply>"#
 
