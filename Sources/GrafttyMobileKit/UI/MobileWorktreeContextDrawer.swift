@@ -17,6 +17,7 @@ extension EnvironmentValues {
 /// An edge gesture and an explicit button share a drawer without remounting the terminal.
 struct MobileWorktreeContextDrawer: ViewModifier {
     let context: SidebarWorktreeContext?
+    var theme: GhosttyThemeColors = .fallback
     var showsStandaloneControl = false
     @Environment(\.biometricGate) private var gate
     @Environment(\.scenePhase) private var scenePhase
@@ -61,12 +62,12 @@ struct MobileWorktreeContextDrawer: ViewModifier {
                                 .onTapGesture { close() }
                                 .accessibilityLabel("Close context")
                                 .accessibilityAddTraits(.isButton)
-                            WorktreeContextPanel(context: context, collapsesBrief: true, onClose: close)
+                            WorktreeContextPanel(context: context, theme: theme, collapsesBrief: true, onClose: close)
                                 .environment(\.worktreeContextActions, navigationActions)
                                 .accessibilityAddTraits(.isModal)
                                 .frame(width: min(420, max(0, geometry.size.width - 20)))
                                 .frame(maxHeight: .infinity)
-                                .background(.background)
+                                .preferredColorScheme(theme.isDark ? .dark : .light)
                                 .shadow(color: .black.opacity(0.2), radius: 18, x: -4)
                         }
                     }

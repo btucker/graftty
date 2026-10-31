@@ -133,6 +133,8 @@ struct RemoteBrowserButtonTests {
 
     @Test("@spec CONTEXT-10: While mobile terminal controls are visible, the application shall display an icon-only Context action immediately left of Browser in the same floating control group, retain separate accessible actions, and preserve the mounted terminal and pending request when opening or closing context.", .timeLimit(.minutes(1)))
     func drawerPreservesMountedTerminal() async throws {
+        let theme = GhosttyThemeColors(backgroundRGB: .init(r: 0.98, g: 0.97, b: 0.94),
+            foregroundRGB: .init(r: 0.23, g: 0.25, b: 0.27))
         let recap = AttentionRecap(title: "Worktree context", context: "Help me reload my context when returning to a worktree.",
             completed: "Built a current brief with expandable history.", next: "Try it on a phone.", need: "Does the drawer read well?",
             checkpoint: "Chose the brief with expandable history", decisions: ["Keep the purpose title stable.", "Use native stop notifications."])
@@ -156,7 +158,7 @@ struct RemoteBrowserButtonTests {
                     .padding(12)
             }
             .modifier(MobileWorktreeContextDrawer(context: nil))
-            .modifier(MobileWorktreeContextDrawer(context: navigation.worktreeContext(row)))
+            .modifier(MobileWorktreeContextDrawer(context: navigation.worktreeContext(row), theme: theme))
             .accessibilityElement(children: .contain)
             .environment(\.accessibilityEnabled, true))
         window.rootViewController = host
@@ -180,6 +182,10 @@ struct RemoteBrowserButtonTests {
         try #require(open.accessibilityActivate())
         try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Close context" } }
         try await Task.sleep(for: .milliseconds(350))
+        let drawerImage = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        try #require(drawerImage.pngData()).write(to: controlsDirectory.appendingPathComponent("context-drawer-light.png"))
         #expect(navigation.worktreeContext(row).pending.count == 1)
         let close = try #require(accessibilityObjects(in: host.view).first { $0.accessibilityLabel == "Close context" })
         try #require(close.accessibilityActivate())

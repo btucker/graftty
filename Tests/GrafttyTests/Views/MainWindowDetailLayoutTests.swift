@@ -7,6 +7,44 @@ import GrafttyKit
 @MainActor
 @Suite("Main window detail layout")
 struct MainWindowDetailLayoutTests {
+    @Test("@spec CONTEXT-51: While Context is open on desktop, the application shall reserve its width alongside the terminal below the breadcrumb, shrink the terminal when it opens, and restore that width when it closes without overlaying terminal content.")
+    func contextReservesTerminalWidth() async throws {
+        let terminalProbe = NSView(), inspectorProbe = NSView()
+        func layout(open: Bool) -> some View {
+            MainWindowDetailLayout {
+                Color.gray.frame(height: 30)
+            } content: {
+                Color.black.ignoresSafeArea()
+                    .background(FrameProbe(view: terminalProbe))
+            } inspector: {
+                if open {
+                    Color.gray.frame(width: 360)
+                        .background(FrameProbe(view: inspectorProbe))
+                }
+            }
+        }
+        let host = NSHostingView(rootView: layout(open: false))
+        host.sizingOptions = []
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 1000, height: 700),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil }
+        for open in [false, true, false] {
+            host.rootView = layout(open: open)
+            try await Task.sleep(for: .milliseconds(50))
+            host.layoutSubtreeIfNeeded()
+            let terminal = terminalProbe.convert(terminalProbe.bounds, to: host)
+            #expect(abs(terminal.width - (open ? 640 : 1000)) < 1)
+            if open {
+                let inspector = inspectorProbe.convert(inspectorProbe.bounds, to: host)
+                #expect(terminal.maxX <= inspector.minX)
+                #expect(abs(inspector.maxX - host.bounds.maxX) < 1)
+                #expect(inspector.minY >= 30)
+                #expect(abs(inspector.height - 670) < 1)
+            }
+        }
+    }
+
     enum ContentState: CaseIterable, Sendable {
         case noSelection, noTerminal, remoteUnavailable, terminal
     }

@@ -4740,6 +4740,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-48** When Claude provider input contains an agent-message envelope, the application shall display its content as an agent message with its available sender on Mac and mobile, including previously saved user inputs, while preserving surrounding human text and fenced examples.
 
+### CONTEXT-49.x
+
+**CONTEXT-49** While Context is visible on Mac or mobile, the application shall use an opaque inspector background blended from the Ghostty background toward its foreground, with greater separation for dark themes than light themes, and a fine foreground-derived edge.
+
+### CONTEXT-50.x
+
+**CONTEXT-50** When Context shows an empty or populated brief on Mac or mobile, the application shall align its content to the top of its allocated area and let a short brief use its natural height by default.
+
+### CONTEXT-51.x
+
+**CONTEXT-51** While Context is open on desktop, the application shall reserve its width alongside the terminal below the breadcrumb, shrink the terminal when it opens, and restore that width when it closes without overlaying terminal content.
+
 ## MEM — MEM
 
 ### MEM-1.x

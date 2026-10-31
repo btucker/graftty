@@ -276,23 +276,16 @@ struct MainWindow: View {
                         description: Text("Select a worktree from the sidebar or add a repository.")
                     )
                 }
-            }
-            .safeAreaInset(edge: .trailing, spacing: 0) {
+            } inspector: {
                 if showsWorktreeContext, let context = selectedContext {
-                    HStack(spacing: 0) {
-                        Divider()
-                        WorktreeContextPanel(context: context, foreground: terminalManager.theme.foreground,
-                            secondary: terminalManager.theme.foreground.opacity(0.6),
-                            onClose: { showsWorktreeContext = false })
-                            .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
-                                openContextWorktree(path, remoteIdentity: identity)
-                            }, revealInTerminal: { [identity = selectedRemoteIdentity] request in
-                                await revealInTerminal(request, remoteIdentity: identity)
-                            }))
-                            .frame(width: 360)
-                            .background(terminalManager.theme.background)
-                            .padding(.top, 30)
-                    }
+                    WorktreeContextPanel(context: context, theme: terminalManager.theme.core,
+                        onClose: { showsWorktreeContext = false })
+                        .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
+                            openContextWorktree(path, remoteIdentity: identity)
+                        }, revealInTerminal: { [identity = selectedRemoteIdentity] request in
+                            await revealInTerminal(request, remoteIdentity: identity)
+                        }))
+                        .frame(width: 360)
                 }
             }
             .ignoresSafeArea(.container, edges: .top)

@@ -160,14 +160,14 @@ struct SingleSessionView: View {
     /// The iOS-scaled Mac ghostty config used to build `controller`.
     /// Cached so owner-selected font preferences can be applied without re-fetching.
     @State private var baseConfigText: String?
-    /// Terminal theme background, parsed from the Mac-resolved ghostty config.
+    /// Terminal theme, parsed from the Mac-resolved ghostty config.
     /// Painted behind the whole session so the control-bar row and the strip
     /// revealed during keyboard transitions match the terminal's background
     /// instead of showing system chrome. The Mac resolves themes / named /
     /// palette colors to hex before sending the config, so this matches what
     /// libghostty actually renders. Falls back to the shared default. Parsed
     /// once when `baseConfigText` is assigned rather than on every body.
-    @State private var themeBackgroundColor = GhosttyThemeColors.fallback.background
+    @State private var terminalTheme = GhosttyThemeColors.fallback
     /// Latest owner-selected size. Pinch actions already update the live
     /// Ghostty surface; this state preserves that size across configuration updates.
     @State private var preferredFontSize: Float?
@@ -353,7 +353,7 @@ struct SingleSessionView: View {
             terminalBackground
             sessionView
         }
-        .modifier(MobileWorktreeContextDrawer(context: worktreeContext))
+        .modifier(MobileWorktreeContextDrawer(context: worktreeContext, theme: terminalTheme))
         .alert("Could not open link", isPresented: Binding(
             get: { terminalBrowserError != nil }, set: { if !$0 { terminalBrowserError = nil } }
         )) { Button("OK") { terminalBrowserError = nil } } message: { Text(terminalBrowserError ?? "") }
@@ -409,9 +409,9 @@ struct SingleSessionView: View {
     @ViewBuilder
     private var terminalBackground: some View {
         if isFullScreen {
-            themeBackgroundColor.ignoresSafeArea()
+            terminalTheme.background.ignoresSafeArea()
         } else {
-            themeBackgroundColor
+            terminalTheme.background
         }
     }
 
@@ -607,7 +607,7 @@ struct SingleSessionView: View {
                     controller = retainedPanes?.cached(retainedPaneKey)?.container?.terminalView.controller
                         ?? MobileTerminalControllerFactory.make(configText: text)
                     baseConfigText = text
-                    themeBackgroundColor = GhosttyThemeColors(parsingConfigText: text).background
+                    terminalTheme = GhosttyThemeColors(parsingConfigText: text)
                     preferredFontSize = GhosttyConfigFetcher.lastFontSize(in: text)
                         .map(Float.init)
                 }
