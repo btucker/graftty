@@ -4752,6 +4752,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-51** While Context is open on desktop, the application shall reserve its width alongside the terminal below the breadcrumb, shrink the terminal when it opens, and restore that width when it closes without overlaying terminal content.
 
+### CONTEXT-52.x
+
+**CONTEXT-52** When the mobile Context drawer uses a different color scheme from its enclosing screen, the application shall apply the Ghostty-derived scheme only inside the drawer and preserve the enclosing screen's appearance when opening or closing it.
+
 ## MEM — MEM
 
 ### MEM-1.x

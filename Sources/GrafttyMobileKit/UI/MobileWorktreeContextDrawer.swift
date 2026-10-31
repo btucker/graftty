@@ -67,7 +67,7 @@ struct MobileWorktreeContextDrawer: ViewModifier {
                                 .accessibilityAddTraits(.isModal)
                                 .frame(width: min(420, max(0, geometry.size.width - 20)))
                                 .frame(maxHeight: .infinity)
-                                .preferredColorScheme(theme.isDark ? .dark : .light)
+                                .environment(\.colorScheme, theme.isDark ? .dark : .light)
                                 .shadow(color: .black.opacity(0.2), radius: 18, x: -4)
                         }
                     }
