@@ -4746,7 +4746,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### CONTEXT-50.x
 
-**CONTEXT-50** When a Claude AskUserQuestion result or a Codex request_user_input result supplies human answers in a transcript, the application shall capture one structured reply at its original time through the durable handoff, match Codex answers to their question call across hook invocations, and exclude unrelated tool results, other sessions, and subagents.
+**CONTEXT-50** When a Claude AskUserQuestion result or a Codex request_user_input result supplies human answers in a transcript, the application shall capture one structured reply at its original time through the durable handoff, match each answer to its question call across hook invocations, and exclude unrelated tool results, other sessions, and subagents.
 
 ### CONTEXT-51.x
 

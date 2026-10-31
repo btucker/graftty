@@ -8,12 +8,13 @@ public enum WorktreePromptContent {
         public let source: Source
         public let text: String
         public let presentation: HarnessTimelinePresentation?
+        public let wasTruncated: Bool?
         /// Keep the existing source encoding readable by older paired clients.
         /// Generated context with presentation is a visible session notice.
         var isHidden: Bool { source == .generated && presentation == nil }
 
-        public init(source: Source, text: String, presentation: HarnessTimelinePresentation? = nil) {
-            self.source = source; self.text = text; self.presentation = presentation
+        public init(source: Source, text: String, presentation: HarnessTimelinePresentation? = nil, wasTruncated: Bool? = nil) {
+            self.source = source; self.text = text; self.presentation = presentation; self.wasTruncated = wasTruncated
         }
     }
 
@@ -121,9 +122,11 @@ public enum WorktreePromptContent {
 
     private static func parse(_ text: String, source: Part.Source, plugins: [any HarnessTimelinePlugin],
                               opening: NSRegularExpression) -> [Part] {
+        var suppressesGeneratedPreamble = false
         if source == .user,
            let part = plugins.lazy.compactMap({ $0.parseText(text.trimmingCharacters(in: .whitespacesAndNewlines)) }).first {
-            return part.isHidden ? [] : [part]
+            if !part.isHidden { return [part] }
+            suppressesGeneratedPreamble = true
         }
         var result: [Part] = []
         var plain = ""
@@ -131,7 +134,7 @@ public enum WorktreePromptContent {
         var fence = Fence()
         func flush() {
             let value = plain.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !value.isEmpty {
+            if !value.isEmpty, !suppressesGeneratedPreamble {
                 if source == .user, let part = plugins.lazy.compactMap({ $0.parseText(value) }).first {
                     if !part.isHidden { result.append(part) }
                 } else {
@@ -157,23 +160,27 @@ public enum WorktreePromptContent {
                     let header = String(line[headerRange])
                     let bodyStart = text.index(cursor,
                         offsetBy: line.distance(from: line.startIndex, to: headerRange.upperBound))
-                    let close = closingTag(name, in: text, from: bodyStart)
+                    let plugin = plugins.first(where: { $0.envelopeNames.contains(name) })
+                    let close = plugin?.usesJSONBody(named: name) == true
+                        ? jsonClosingTag(name, in: text, from: bodyStart) : closingTag(name, in: text, from: bodyStart)
                     // A bounded durable input can end inside a generated frame.
                     // Its opening envelope still establishes non-human provenance.
                     let body = String(text[bodyStart..<(close?.lowerBound ?? text.endIndex)])
                     switch name {
                     case "graftty-peer-message":
+                        suppressesGeneratedPreamble = false
                         let decoded = attribute("graftty-history-encoding", in: header) == "xml-v1" ? unescape(body) : body
                         let content = decoded.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !content.isEmpty { result.append(Part(source: .agent(attribute("agent", in: header)), text: content)) }
                     case "graftty-peer-messages":
+                        suppressesGeneratedPreamble = false
                         result += legacyPeerMessages(body)
                     case "graftty-system-message", "graftty-forge-message": break
                     default:
-                        let plugin = plugins.first(where: { $0.envelopeNames.contains(name) })
                         let part = plugin?.parseEnvelope(name: name, header: header, body: body)
                         let unwraps = plugin?.unwrapsNestedEnvelopes(named: name) == true
                         if part?.isHidden == true { break }
+                        suppressesGeneratedPreamble = false
                         if let part, close != nil || (unwraps && Self.isAgent(part.source)) {
                             // A nested user-shaped envelope cannot change a peer's authorship.
                             if unwraps {
@@ -196,6 +203,29 @@ public enum WorktreePromptContent {
         }
         flush()
         return result
+    }
+
+    private static func jsonClosingTag(_ name: String, in text: String, from start: String.Index) -> Range<String.Index>? {
+        let closing = "</\(name)>"
+        let scalars = text.unicodeScalars
+        var quoted = false
+        var escaped = false
+        var cursor = start
+        while cursor < text.endIndex {
+            let character = scalars[cursor]
+            if quoted {
+                if escaped { escaped = false }
+                else if character == "\\" { escaped = true }
+                else if character == "\"" { quoted = false }
+            } else if character == "\"" {
+                quoted = true
+            } else if scalars[cursor...].starts(with: closing.unicodeScalars) {
+                return cursor..<scalars.index(cursor, offsetBy: closing.unicodeScalars.count)
+            }
+            cursor = scalars.index(after: cursor)
+        }
+        // An unterminated JSON string must not absorb later delivery frames.
+        return closingTag(name, in: text, from: start)
     }
 
     private static func isAgent(_ source: Part.Source) -> Bool {

@@ -40,19 +40,37 @@ public struct ClaudeTimelinePlugin: HarnessTimelinePlugin {
            text.contains("\nSummary:") { return .hidden }
         // Slash-command metadata forms one message. Require the complete shape,
         // so a pasted fragment or an unfamiliar command format stays readable.
-        let pattern = #"\A\s*<command-name>([^<]+)</command-name>\s*<command-message>[^<]*</command-message>\s*<command-args>([^<]*)</command-args>\s*\z"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+        guard let match = Self.slashCommand.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               let name = Range(match.range(at: 1), in: text), let args = Range(match.range(at: 2), in: text) else { return nil }
         let command = [String(text[name]), String(text[args])].filter { !$0.isEmpty }.joined(separator: " ")
         return .init(source: .user, presentation: .init(kind: .command, items: [.init(value: command)]))
     }
 
+    private static let slashCommand = try! NSRegularExpression(pattern:
+        #"\A\s*<command-name>([^<]+)</command-name>\s*<command-message>[^<]*</command-message>\s*<command-args>([^<]*)</command-args>\s*\z"#)
+
     public func transcriptInput(from record: [String: Any], state: inout HarnessTimelineTranscriptState) -> WorktreePromptContent.Part? {
-        guard record["type"] as? String == "user", record["isSidechain"] as? Bool != true,
-              let message = record["message"] as? [String: Any], message["role"] as? String == "user",
-              let blocks = message["content"] as? [[String: Any]],
-              blocks.contains(where: { $0["type"] as? String == "tool_result" && $0["is_error"] as? Bool != true }),
+        guard record["isSidechain"] as? Bool != true,
+              let message = record["message"] as? [String: Any], let blocks = message["content"] as? [[String: Any]] else { return nil }
+        if record["type"] as? String == "assistant", message["role"] as? String == "assistant" {
+            for block in blocks where block["type"] as? String == "tool_use" && block["name"] as? String == "AskUserQuestion" {
+                guard let id = block["id"] as? String, let input = block["input"] as? [String: Any],
+                      let questions = input["questions"] as? [[String: Any]] else { continue }
+                state.remember(questions.enumerated().compactMap { index, question in
+                    guard let text = question["question"] as? String else { return nil }
+                    return .init(id: String(index), text: text)
+                }, callID: id)
+            }
+            return nil
+        }
+        guard record["type"] as? String == "user", message["role"] as? String == "user" else { return nil }
+        var matchesQuestionCall = false
+        for block in blocks where block["type"] as? String == "tool_result" {
+            guard let id = block["tool_use_id"] as? String,
+                  state.pendingQuestions.removeValue(forKey: id) != nil else { continue }
+            if block["is_error"] as? Bool != true { matchesQuestionCall = true }
+        }
+        guard matchesQuestionCall,
               let result = record["toolUseResult"] as? [String: Any],
               let questions = result["questions"] as? [[String: Any]], !questions.isEmpty,
               let answers = result["answers"] as? [String: String] else { return nil }

@@ -12,6 +12,10 @@ public struct CodexTimelinePlugin: HarnessTimelinePlugin {
     ]
     public init() {}
 
+    public func usesJSONBody(named name: String) -> Bool {
+        ["send_user_message_question_reply", "subagent_notification", "external_codex_apps_open_page"].contains(name)
+    }
+
     public func transcriptInput(from record: [String: Any], state: inout HarnessTimelineTranscriptState) -> WorktreePromptContent.Part? {
         guard record["type"] as? String == "response_item",
               let payload = record["payload"] as? [String: Any],
@@ -70,10 +74,11 @@ public struct CodexTimelinePlugin: HarnessTimelinePlugin {
             }
             return .init(source: .user, presentation: .init(kind: .questionReply, items: items))
         case "user_shell_command":
-            guard let command = HarnessEnvelope.value("command", in: body), !command.isEmpty else { return nil }
+            guard let fields = HarnessEnvelope.siblingValues(["command", "result"], in: body), !fields[0].isEmpty else { return nil }
+            let command = fields[0]
             var items: [HarnessTimelinePresentation.Item] = [.init(value: command)]
-            if let output = HarnessEnvelope.value("result", in: body), !output.isEmpty {
-                items.append(.init(label: "Output", value: output))
+            if !fields[1].isEmpty {
+                items.append(.init(label: "Output", value: fields[1]))
             }
             return .init(source: .user, presentation: .init(kind: .command, items: items))
         case "turn_aborted":

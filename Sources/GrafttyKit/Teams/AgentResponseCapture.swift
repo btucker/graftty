@@ -77,17 +77,19 @@ public struct AgentResponseCapture {
             for newline in chunk.indices where chunk[newline] == 0x0A {
                 if !cursor.discardingLine, pending.count + newline - start <= limit {
                     pending.append(contentsOf: chunk[start..<newline])
-                    var inputState = cursor.inputState ?? HarnessTimelineTranscriptState()
-                    if let input = Self.input(from: pending, runtime: runtime, sessionID: sessionID,
-                                              offset: recordOffset, state: &inputState) {
-                        try handoff.input(input, worktree: worktree, runtime: runtime, sessionID: sessionID)
-                    }
-                    cursor.inputState = inputState
-                    if let response = Self.response(from: pending, runtime: runtime,
-                                                     sessionID: sessionID, offset: recordOffset) {
-                        try handoff.response(response, worktree: worktree)
-                        cursor.lastResponse = response
-                        cursor.lastResponseWorktree = worktree
+                    if let record = try? JSONSerialization.jsonObject(with: pending) as? [String: Any] {
+                        var inputState = cursor.inputState ?? HarnessTimelineTranscriptState()
+                        if let input = Self.input(from: record, runtime: runtime, sessionID: sessionID,
+                                                  offset: recordOffset, state: &inputState) {
+                            try handoff.input(input, worktree: worktree, runtime: runtime, sessionID: sessionID)
+                        }
+                        cursor.inputState = inputState
+                        if let response = Self.response(from: record, runtime: runtime,
+                                                         sessionID: sessionID, offset: recordOffset) {
+                            try handoff.response(response, worktree: worktree)
+                            cursor.lastResponse = response
+                            cursor.lastResponseWorktree = worktree
+                        }
                     }
                 }
                 pending.removeAll(keepingCapacity: true)
@@ -111,8 +113,13 @@ public struct AgentResponseCapture {
 
     static func input(from data: Data, runtime: TeamHookRuntime, sessionID: String, offset: UInt64 = 0,
                       state: inout HarnessTimelineTranscriptState) -> WorktreeHistory.UserInput? {
-        guard let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              record["isSidechain"] as? Bool != true else { return nil }
+        guard let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return input(from: record, runtime: runtime, sessionID: sessionID, offset: offset, state: &state)
+    }
+
+    private static func input(from record: [String: Any], runtime: TeamHookRuntime, sessionID: String, offset: UInt64,
+                              state: inout HarnessTimelineTranscriptState) -> WorktreeHistory.UserInput? {
+        guard record["isSidechain"] as? Bool != true else { return nil }
         if let recordedSession = record["sessionId"] as? String ?? record["session_id"] as? String,
            recordedSession != sessionID { return nil }
         guard let plugin = HarnessTimelinePlugins.matching(runtime.rawValue).first,
@@ -149,8 +156,13 @@ public struct AgentResponseCapture {
 
     static func response(from data: Data, runtime: TeamHookRuntime, sessionID: String,
                          offset: UInt64 = 0) -> WorktreeHistory.AgentResponse? {
-        guard let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              record["isSidechain"] as? Bool != true else { return nil }
+        guard let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return response(from: record, runtime: runtime, sessionID: sessionID, offset: offset)
+    }
+
+    private static func response(from record: [String: Any], runtime: TeamHookRuntime, sessionID: String,
+                                 offset: UInt64) -> WorktreeHistory.AgentResponse? {
+        guard record["isSidechain"] as? Bool != true else { return nil }
         let message: [String: Any]
         let sourceID: String
         switch runtime {

@@ -8,6 +8,8 @@ public protocol HarnessTimelinePlugin: Sendable {
     func parseEnvelope(name: String, header: String, body: String) -> WorktreePromptContent.Part?
     /// Transparent transport containers can contain Graftty's own delivery frames.
     func unwrapsNestedEnvelopes(named name: String) -> Bool
+    /// JSON string values can contain literal envelope delimiters.
+    func usesJSONBody(named name: String) -> Bool
     func parseText(_ text: String) -> WorktreePromptContent.Part?
     func skipsLine(_ line: String, following: Substring) -> Bool
     /// Only structured human activity belongs here, never arbitrary tool output.
@@ -17,6 +19,7 @@ public protocol HarnessTimelinePlugin: Sendable {
 public extension HarnessTimelinePlugin {
     func parseText(_ text: String) -> WorktreePromptContent.Part? { nil }
     func unwrapsNestedEnvelopes(named name: String) -> Bool { false }
+    func usesJSONBody(named name: String) -> Bool { false }
     func skipsLine(_ line: String, following: Substring) -> Bool { false }
     func transcriptInput(from record: [String: Any], state: inout HarnessTimelineTranscriptState) -> WorktreePromptContent.Part? { nil }
 }
@@ -115,14 +118,47 @@ struct HarnessInputBudget {
 }
 
 extension WorktreePromptContent.Part {
-    public init(source: Source, presentation: HarnessTimelinePresentation) {
-        self.init(source: source, text: presentation.text, presentation: presentation)
+    public init(source: Source, presentation: HarnessTimelinePresentation, wasTruncated: Bool? = nil) {
+        self.init(source: source, text: presentation.text, presentation: presentation, wasTruncated: wasTruncated)
     }
 
     static var hidden: Self { .init(source: .generated, text: "") }
+
+    func bounded(using budget: inout HarnessInputBudget) -> Self {
+        let content = presentation?.bounded(using: &budget)
+        let value = content?.text ?? budget.take(text)
+        return .init(source: source, text: value, presentation: content,
+                     wasTruncated: value != text || content != presentation || wasTruncated == true)
+    }
+
+    func markingTruncated() -> Self {
+        .init(source: source, text: text, presentation: presentation, wasTruncated: true)
+    }
 }
 
 enum HarnessEnvelope {
+    /// Require direct sibling fields, so literals inside one field cannot replace another.
+    static func siblingValues(_ names: [String], in text: String) -> [String]? {
+        guard !names.isEmpty else { return nil }
+        for (name, next) in zip(names, names.dropFirst()) {
+            let boundary = "</" + NSRegularExpression.escapedPattern(for: name)
+                + ">\\s*<" + NSRegularExpression.escapedPattern(for: next) + ">"
+            let regex = try! NSRegularExpression(pattern: boundary)
+            // These envelopes have no escaping contract. Multiple boundaries
+            // are ambiguous, so leave the original message available verbatim.
+            guard regex.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text)) == 1 else { return nil }
+        }
+        let fields = names.map { name in
+            let escaped = NSRegularExpression.escapedPattern(for: name)
+            return "<\(escaped)>(.*?)</\(escaped)>\\s*"
+        }.joined()
+        guard let regex = try? NSRegularExpression(pattern: "(?s)\\A\\s*" + fields + "\\z"),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return nil }
+        return (1...names.count).compactMap { index in
+            Range(match.range(at: index), in: text).map { String(text[$0]).trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+    }
+
     static func value(_ name: String, in text: String) -> String? {
         let tag = NSRegularExpression.escapedPattern(for: name)
         guard let regex = try? NSRegularExpression(pattern: "(?s)<\(tag)>(.*?)</\(tag)>"),

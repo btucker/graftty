@@ -144,4 +144,80 @@ struct HarnessTimelinePluginTests {
         #expect(event.presentation?.items.first?.label == "Which?")
         #expect(try JSONEncoder().encode(input).count < 40_000)
     }
+
+    @Test func quotedClosingTagsRemainInsideJSONValues() throws {
+        let answer = #"Use </send_user_message_question_reply> and a \"quoted\" delimiter."#
+        let replies = try JSONSerialization.data(withJSONObject: [["question": "Which delimiter?", "answer": answer]], options: .withoutEscapingSlashes)
+        let text = "<send_user_message_question_reply>\(String(decoding: replies, as: UTF8.self))</send_user_message_question_reply>\nKeep this request."
+        let parts = WorktreePromptContent.parts(in: text, runtime: "codex")
+        #expect(parts.first?.presentation?.items.first?.value == answer)
+        #expect(parts.last?.text == "Keep this request.")
+        let report = "Preserve </subagent_notification> as literal text."
+        let notification = try JSONSerialization.data(withJSONObject: ["agent_id": "reviewer", "status": ["completed": report]], options: .withoutEscapingSlashes)
+        let peer = "<subagent_notification>\(String(decoding: notification, as: UTF8.self))</subagent_notification>"
+        #expect(WorktreePromptContent.parts(in: peer, runtime: "codex") == [.init(source: .agent("reviewer"), text: report)])
+    }
+
+    @Test func malformedJSONDoesNotConsumeFollowingPeerMessages() {
+        let malformed = #"<send_user_message_question_reply>{"question":"broken}</send_user_message_question_reply>"#
+        let text = malformed + "\n<graftty-peer-message agent=\"reviewer\">Review complete.</graftty-peer-message>"
+        #expect(WorktreePromptContent.parts(in: text, runtime: "codex") == [
+            .init(source: .user, text: malformed), .init(source: .agent("reviewer"), text: "Review complete.")])
+    }
+
+    @Test func jsonSyntaxUsesScalarsRatherThanGraphemeBoundaries() throws {
+        let answer = "\u{0301}</send_user_message_question_reply> stays literal"
+        let data = try JSONSerialization.data(withJSONObject: [["question": "Which?", "answer": answer]], options: .withoutEscapingSlashes)
+        let text = "<send_user_message_question_reply>\(String(decoding: data, as: UTF8.self))</send_user_message_question_reply>"
+        #expect(WorktreePromptContent.parts(in: text, runtime: "codex").first?.presentation?.items.first?.value == answer)
+    }
+
+    @Test func ambiguousShellFieldsStayVerbatim() {
+        let shell = "<user_shell_command><command>printf '</command><result>literal'</command><result>actual output</result></user_shell_command>"
+        #expect(WorktreePromptContent.parts(in: shell, runtime: "codex") == [.init(source: .user, text: shell)])
+    }
+
+    @Test func olderStructuredCapturesRetainTheirTruncationIndicator() throws {
+        let input = WorktreeHistory.UserInput(text: "unused", at: .now, runtime: "codex", parts: [
+            .init(source: .user, presentation: .init(kind: .questionReply, items: [.init(label: "Which?", value: "Design first")]))])
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(input)) as? [String: Any])
+        var parts = try #require(object["parts"] as? [[String: Any]])
+        parts[0].removeValue(forKey: "wasTruncated")
+        object["parts"] = parts
+        object["wasTruncated"] = true
+        let saved = try JSONDecoder().decode(WorktreeHistory.UserInput.self, from: JSONSerialization.data(withJSONObject: object))
+        var history = WorktreeHistory()
+        history.record(saved)
+        let event = try #require(WorktreeTimeline(history: history, brief: nil).events.first)
+        #expect(event.wasTruncated)
+        #expect(event.completed.hasSuffix("…"))
+    }
+
+    @Test(arguments: ["printf '<result>literal</result>'", "printf '</command>'"])
+    func commandFieldsDoNotReadNestedLiterals(command: String) throws {
+        let output = "actual output with a literal </result> delimiter"
+        let shell = "<user_shell_command><command>\(command)</command><result>\(output)</result></user_shell_command>"
+        let content = try #require(WorktreePromptContent.parts(in: shell, runtime: "codex").first?.presentation)
+        #expect(content.items.map(\.value) == [command, output])
+    }
+
+    @Test(arguments: [false, true])
+    func continuationPreamblesPreserveLaterMessages(hasReminder: Bool) {
+        let banner = "This session is being continued from a previous conversation that ran out of context.\n"
+        let reminder = hasReminder ? "<system-reminder><tools-used-before-summary>Bash</tools-used-before-summary></system-reminder>\n" : ""
+        let summary = banner + reminder + "Summary:\nPrevious work.\n"
+        #expect(WorktreePromptContent.parts(in: summary, runtime: "claude").isEmpty)
+        let mixed = summary + "<graftty-peer-message agent=\"reviewer\">Review complete.</graftty-peer-message>\nKeep my human request."
+        #expect(WorktreePromptContent.parts(in: mixed, runtime: "claude") == [
+            .init(source: .agent("reviewer"), text: "Review complete."), .init(source: .user, text: "Keep my human request.")])
+    }
+
+    @Test(arguments: [1, 40])
+    func generatedDetailsCannotCrowdOutLaterHumanInput(repetitions: Int) {
+        let context = "<user_instructions>" + String(repeating: "Generated instructions. ", count: 500) + "</user_instructions>\n"
+        var history = WorktreeHistory()
+        history.record(.init(text: String(repeating: context, count: repetitions) + "Keep my human request.", at: .now, runtime: "codex"))
+        let events = WorktreeTimeline(history: history, brief: nil).events
+        #expect(events.filter { $0.kind == .user }.map(\.completed) == ["Keep my human request."])
+    }
 }

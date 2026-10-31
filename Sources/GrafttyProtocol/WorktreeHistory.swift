@@ -79,13 +79,19 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
             // provider envelope cannot turn it into apparent human input.
             source = parsed.count == 1 ? parsed[0].source : (parsed.isEmpty ? .generated : nil)
             var budget = HarnessInputBudget()
-            let bounded = parsed.prefix(32).compactMap { part -> WorktreePromptContent.Part? in
-                guard budget.hasSpace else { return nil }
-                if let content = part.presentation {
-                    return .init(source: part.source, presentation: content.bounded(using: &budget))
+            var retainedByIndex: [Int: WorktreePromptContent.Part] = [:]
+            // Generated instruction details must never crowd out authored input.
+            for generated in [false, true] {
+                var omitted = false
+                for (index, part) in parsed.enumerated() where (part.source == .generated) == generated {
+                    guard retainedByIndex.count < 32, budget.hasSpace else { omitted = true; continue }
+                    retainedByIndex[index] = part.bounded(using: &budget)
                 }
-                return .init(source: part.source, text: budget.take(part.text))
+                if omitted, let last = retainedByIndex.keys.filter({ (parsed[$0].source == .generated) == generated }).max() {
+                    retainedByIndex[last] = retainedByIndex[last]?.markingTruncated()
+                }
             }
+            let bounded = retainedByIndex.keys.sorted().compactMap { retainedByIndex[$0] }
             parts = parsed.contains(where: { $0.presentation != nil }) ? bounded : nil
             let retained = parts ?? parsed
             let text = (retained.count == 1 ? retained[0].text : WorktreePromptContent.retainedText(from: retained))
@@ -96,7 +102,8 @@ public struct WorktreeHistory: Codable, Sendable, Hashable {
                 return bytes <= 8000
             }
             self.text = String(prefix)
-            wasTruncated = prefix.endIndex != text.endIndex || (parts != nil && bounded != parsed)
+            wasTruncated = prefix.endIndex != text.endIndex
+                || (parts != nil && (bounded.count != parsed.count || bounded.contains { $0.wasTruncated == true }))
         }
     }
 
@@ -291,11 +298,12 @@ public struct WorktreeTimeline: Sendable {
                     guard let presentation = part.presentation else { return nil }
                     kind = .system; title = presentation.kind.title
                 }
+                let truncated = part.wasTruncated ?? (input.wasTruncated && index == parts.count - 1)
                 return Event(id: input.id.uuidString + (parts.count > 1 ? ":\(index)" : ""),
                     kind: kind, timestamp: input.timestamp, title: title,
-                    completed: part.text + (input.wasTruncated && index == parts.count - 1 ? "…" : ""),
+                    completed: part.text + (truncated ? "…" : ""),
                     decisions: [], sourceWorktreePath: sourcePath, presentation: part.presentation,
-                    wasTruncated: input.wasTruncated && index == parts.count - 1)
+                    wasTruncated: truncated)
             }
         }
         result += (history?.responses ?? []).map { response in
