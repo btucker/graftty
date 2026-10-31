@@ -533,7 +533,6 @@ struct SingleSessionView: View {
                     ScrollbackMapOverlayHost(model: model, timeline: timeline,
                                              isVisible: scenePhase == .active && connection == .live)
                         .padding(.top, ScrollbackMapLayout.topInset(belowControlsAt: 12, controlsHeight: controlsHeight))
-                        .padding(.trailing, 12)
                 }
             }
             .overlay(alignment: .bottom) {
