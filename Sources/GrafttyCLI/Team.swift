@@ -220,7 +220,7 @@ struct TeamHook: ParsableCommand {
         let stopHookActive = stdinPayload["stop_hook_active"] as? Bool ?? false
 
         // TEAM-9.1
-        if event == .stop, AgentStopHookFilter.isSubagentStop(stdinJSON: stdinPayload) {
+        if AgentStopHookFilter.isSubagentStop(stdinJSON: stdinPayload) {
             print("{}")
             return
         }
@@ -1145,7 +1145,7 @@ extension TeamPresenceResolution {
     }
 }
 
-private enum TeamMessageInput {
+enum TeamMessageInput {
     static func currentAgentID(worktreePath: String) -> String? {
         let environment = ProcessInfo.processInfo.environment
         let records = (try? TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot()).listAll()) ?? []

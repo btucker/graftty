@@ -19,23 +19,54 @@ struct MultiPaneDetailView: View {
     let onSelectPane: (String) -> Void
     let onBackToWorktrees: () -> Void
 
+    @State private var workspace: WorkspaceLayout<String>?
     @State private var ratioOverrides = IPadPaneRatioOverrides()
     /// The tree's only keyboard subscription; embedded panes read it from
     /// the environment (IPAD-2.10).
     @State private var keyboardFrame = KeyboardFrameObservation()
 
     var body: some View {
+        GeometryReader { geometry in
         Group {
             if worktree.showsCreationProgress {
                 MobileCreationDetailView(host: host, worktree: worktree, theme: theme)
-            } else if let layout = worktree.layout {
-                render(layout, at: .root)
+            } else if let inventory = worktree.layout {
+                VStack(spacing: 0) {
+                    if let visible = currentWorkspace.visiblePaneLayout(in: inventory) {
+                        render(visible, at: .root)
+                    } else {
+                        Text("No active agents").frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    terminalDrawerHeader
+                    if currentWorkspace.drawerVisible, let session = currentWorkspace.selectedTerminal,
+                       let leaf = inventory.leaves.first(where: { $0.sessionName == session }) {
+                        render(.leaf(sessionName: session, title: leaf.title, attentionText: leaf.attentionText,
+                            isBusy: leaf.isBusy, attentionSource: leaf.attentionSource, attentionTimestamp: leaf.attentionTimestamp), at: .root)
+                            .frame(height: min(CGFloat(currentWorkspace.drawerHeight), geometry.size.height * 0.45))
+                    }
+                }
             } else {
                 ContentUnavailableView(
                     "No panes running",
                     systemImage: "terminal"
                 )
             }
+        }
+        }
+        .onAppear {
+            if workspace == nil {
+                workspace = UserDefaults.standard.data(forKey: workspaceKey).flatMap {
+                    try? JSONDecoder().decode(WorkspaceLayout<String>.self, from: $0)
+                } ?? .initial(for: worktree)
+            }
+            reconcileWorkspace()
+        }
+        .onChange(of: worktree) { _, _ in reconcileWorkspace() }
+        .onChange(of: focusedPaneId) { _, selected in
+            if let selected { workspace?.select(selected) }
+        }
+        .onChange(of: workspace) { _, value in
+            if let value, let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: workspaceKey) }
         }
         .environment(\.multiPaneKeyboardFrame, keyboardFrame)
         .padding(.bottom, keyboardFrame.bottomInset)
@@ -61,6 +92,9 @@ struct MultiPaneDetailView: View {
                 focusedPaneId: focusedPaneId
             )
             return AnyView(
+                GeometryReader { geometry in
+                VStack(spacing: 0) {
+                if let group = currentWorkspace.group(containing: sessionName) { tabHeader(group) }
                 MultiPaneLeafView(
                     host: host,
                     worktreePath: worktree.path,
@@ -79,6 +113,18 @@ struct MultiPaneDetailView: View {
                     onBackToWorktrees: onBackToWorktrees
                 )
                 .id(sessionName)
+                }
+                .dropDestination(for: String.self) { sessions, location in
+                    guard let session = sessions.first, currentWorkspace.sessions.contains(session),
+                          let group = currentWorkspace.group(containing: sessionName) else { return false }
+                    if let edge = WorkspaceLayout<String>.dropEdge(x: location.x, y: location.y,
+                        width: geometry.size.width, height: geometry.size.height) {
+                        workspace?.split(session, beside: group.id, edge: edge)
+                    } else { workspace?.move(session, to: group.id) }
+                    onSelectPane(session)
+                    return true
+                }
+                }
             )
 
         case let .split(direction, ratio, first, second):
@@ -105,6 +151,81 @@ struct MultiPaneDetailView: View {
                 .id(identity.renderIdentity)
             )
         }
+    }
+
+    private var workspaceKey: String { "workspace.ipad.\(host.id).\(worktree.path)" }
+    private var currentWorkspace: WorkspaceLayout<String> { workspace ?? .initial(for: worktree) }
+    private func reconcileWorkspace() {
+        var next = currentWorkspace
+        next.reconcile(live: worktree.layout?.leaves.map(\.sessionName) ?? [], agents: Set(worktree.agents?.compactMap(\.sessionName) ?? []))
+        workspace = next
+    }
+    private func selectSession(_ session: String) {
+        workspace?.select(session)
+        onSelectPane(session)
+    }
+    private func sessionTitle(_ session: String) -> String {
+        worktree.agents?.first { $0.sessionName == session }?.name ?? worktree.layout?.title(for: session) ?? "Terminal"
+    }
+    private func tabHeader(_ group: WorkspaceLayout<String>.Group) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(group.sessions, id: \.self) { session in
+                    Button { selectSession(session) } label: {
+                        HStack(spacing: 6) {
+                            AgentProviderIcon(provider: worktree.agents?.first { $0.sessionName == session }?.provider)
+                            Text(sessionTitle(session)).lineLimit(1)
+                        }.padding(.horizontal, 10).frame(minHeight: 44)
+                            .background(group.selected == session ? theme.foreground.opacity(0.10) : .clear)
+                    }.buttonStyle(.plain)
+                        .draggable(session)
+                        .contextMenu {
+                            Menu("Split into pane") {
+                                ForEach(WorkspaceLayout<String>.Edge.allCases, id: \.rawValue) { edge in
+                                    Button(edge.rawValue.capitalized) { workspace?.split(session, beside: group.id, edge: edge); onSelectPane(session) }
+                                        .disabled(group.sessions.count < 2)
+                                }
+                            }
+                            ForEach(currentWorkspace.groups.filter { $0.id != group.id }) { target in
+                                Button("Move to \(sessionTitle(target.selected)) tab group") {
+                                    workspace?.move(session, to: target.id); onSelectPane(session)
+                                }
+                                Button("Merge into \(sessionTitle(target.selected)) tab group") {
+                                    workspace?.merge(group.id, into: target.id); onSelectPane(session)
+                                }
+                            }
+                        }
+                }
+            }
+        }.font(.caption).foregroundStyle(theme.foreground)
+            .dropDestination(for: String.self) { sessions, _ in
+                guard let session = sessions.first, currentWorkspace.sessions.contains(session) else { return false }
+                workspace?.move(session, to: group.id); onSelectPane(session); return true
+            }
+    }
+    private var terminalDrawerHeader: some View {
+        HStack {
+            Button {
+                if currentWorkspace.drawerVisible {
+                    if let previous = workspace?.hideDrawer() { onSelectPane(previous) }
+                } else {
+                    workspace?.drawerVisible = true
+                    if let session = currentWorkspace.selectedTerminal { onSelectPane(session) }
+                }
+            } label: { Label("Terminal", systemImage: "terminal") }
+            if currentWorkspace.drawerVisible {
+                Menu {
+                    ForEach(currentWorkspace.terminals, id: \.self) { session in
+                        Button(sessionTitle(session)) { selectSession(session) }
+                    }
+                } label: { Text(currentWorkspace.selectedTerminal.map(sessionTitle) ?? "No terminals") }
+            }
+            Spacer()
+            Button {
+                ghosttyCommandContext.perform(.ghostty(.newSplitDown))
+            } label: { Image(systemName: "plus") }.accessibilityLabel("New terminal").disabled(!ghosttyCommandContext.isEnabled(.newSplitDown))
+        }.buttonStyle(.plain).font(.callout).padding(.horizontal, 12).frame(minHeight: 44)
+            .foregroundStyle(theme.foreground).background(theme.background)
     }
 
     static func liveSessionNames(in layout: PaneLayoutNode?) -> [String] {

@@ -9,6 +9,7 @@ private final class HostTerminalFake: HostTerminalDriver {
     var starts: [ZmxSpawnConfiguration] = []
     var killed: [String] = []
     var failStart = false
+    var leavesSessionAliveAfterKill = false
     var duringStart: (@MainActor () async throws -> Void)?
     func sessions() async throws -> Set<String> { live }
     func start(_ configuration: ZmxSpawnConfiguration) async throws {
@@ -17,7 +18,7 @@ private final class HostTerminalFake: HostTerminalDriver {
         starts.append(configuration)
         live.insert(configuration.sessionName)
     }
-    func kill(_ session: String) async throws { killed.append(session); live.remove(session) }
+    func kill(_ session: String) async throws { killed.append(session); if !leavesSessionAliveAfterKill { live.remove(session) } }
     func send(_ text: String, to session: String) async throws {}
     func show(_ session: String, lines: Int) async throws -> String { "hello" }
     func detachAll() {}
@@ -863,16 +864,28 @@ struct HeadlessHostRuntimeTests {
         #expect(try AppState.load(from: root).worktree(forPath: root.path)?.attention?.clearAfter == Attention.clearAfterMaxSeconds)
     }
 
-    @Test("The headless host advertises every control capability except pane agents, remote worktrees, and Mac project registration")
+    @Test("@spec AGENT-6.78: If a terminal driver accepts agent teardown but the session remains alive, then the application shall preserve its pane mapping and cleanup obligation.")
+    func closeVerifiesProcessExitBeforeRemovingPane() async throws {
+        let (root, config, state) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let driver = HostTerminalFake()
+        let runtime = try HeadlessHostRuntime(configuration: config, terminals: driver, initialState: state)
+        let session = try await runtime.openWorktree(root.path)
+        driver.leavesSessionAliveAfterKill = true
+        await #expect(throws: (any Error).self) { try await runtime.closePane(target: session) }
+        #expect(runtime.state.worktree(forPath: root.path)?.paneSlot(forSessionName: session) != nil)
+    }
+
+    @Test("The headless host advertises every control capability except remote worktrees and Mac project registration")
     func headlessCapabilities() async throws {
         let (root, config, state) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let runtime = try HeadlessHostRuntime(configuration: config, terminals: HostTerminalFake(), initialState: state)
         #expect(await runtime.handle(.capabilities) == .capabilities([
-            "agent_prompt_staging", "worktree_base", "worktree_create_idempotency", "worktree_remove",
+            "managed_agents", "agent_prompt_staging", "pane_agent", "worktree_base", "worktree_create_idempotency", "worktree_remove",
             "worktree_pinned_removal", "worktree_pin",
         ]))
-        #expect(await runtime.handle(.paneAgentCapability) == .error("operation is unavailable on this host"))
+        #expect(await runtime.handle(.paneAgentCapability) == .ok)
         #expect(await runtime.handle(.remoteWorktreeCapability) == .error("operation is unavailable on this host"))
         #expect(await runtime.handle(.projectAddCapability) == .error("operation is unavailable on this host"))
     }

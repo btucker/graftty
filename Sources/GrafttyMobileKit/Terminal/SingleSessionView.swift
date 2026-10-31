@@ -406,6 +406,24 @@ struct SingleSessionView: View {
         return WorktreeTimeline(context)
     }
 
+    private var compactWorkspace: WorktreePanes? {
+        guard isFullScreen else { return nil }
+        return attentionWorktrees.first { $0.path == step.worktreePath && $0.agents != nil }
+    }
+    private var compactAgentKey: String { "workspace.iphone.agent.\(step.host.id).\(step.worktreePath ?? "")" }
+    private func selectWorkspaceSession(_ target: String) {
+        guard target != step.sessionName, let workspace = compactWorkspace,
+              workspace.layout?.leaves.contains(where: { $0.sessionName == target }) == true else { return }
+        if workspace.agents?.contains(where: { $0.sessionName == step.sessionName }) == true {
+            UserDefaults.standard.set(step.sessionName, forKey: compactAgentKey)
+        }
+        let destination = SessionStep(host: step.host, worktreePath: step.worktreePath, sessionName: target,
+            title: workspace.agents?.first { $0.sessionName == target }?.name ?? workspace.layout?.title(for: target) ?? "Terminal",
+            worktreeProject: step.worktreeProject)
+        if !navigationPath.isEmpty { navigationPath.removeLast() }
+        navigationPath.append(destination)
+    }
+
     @ViewBuilder
     private var terminalBackground: some View {
         if isFullScreen {
@@ -421,7 +439,7 @@ struct SingleSessionView: View {
             case .loading:
                 loadingPlaceholder
             case .terminal:
-                GeometryReader { _ in
+                GeometryReader { geometry in
                     VStack(spacing: 0) {
                         terminalContent
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -433,6 +451,15 @@ struct SingleSessionView: View {
                                         .padding(.bottom, 8)
                                 }
                             }
+                        if isFullScreen, let workspace = compactWorkspace {
+                            CompactAgentBar(worktree: workspace, session: step.sessionName,
+                                onSelect: selectWorkspaceSession,
+                                lastAgent: UserDefaults.standard.string(forKey: compactAgentKey),
+                                onNewTerminal: ghosttyCommandContext.flatMap { context in
+                                    context.isEnabled(.newSplitDown) ? { context.perform(.ghostty(.newSplitDown)) } : nil
+                                })
+                                .padding(.bottom, isKeyboardVisible ? 0 : geometry.safeAreaInsets.bottom)
+                        }
                         // While the keyboard is up, the control bar is laid out
                         // in-flow directly below the terminal. Because this VStack
                         // already lives inside the keyboard-reduced area, the bar
@@ -542,6 +569,7 @@ struct SingleSessionView: View {
                 // so the terminal reserves its height.
                 if connection == .live, !isKeyboardVisible, isPaneFocused {
                     terminalChrome
+                        .padding(.bottom, compactWorkspace != nil && isFullScreen ? 44 : 0)
                 }
             }
             .animation(.easeInOut(duration: 0.25), value: keyboardBottomInset)

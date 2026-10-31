@@ -33,6 +33,14 @@ public protocol ControlPlatform: ControlTeamPlatform {
     /// Requests the core does not own: panes, previews, pins, and
     /// host-specific setup.
     func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage?
+    /// Ends the exact session and confirms teardown before removing its live view.
+    func closeAgentSession(worktree: String, slot: PaneSlotID) async throws
+}
+
+public extension ControlPlatform {
+    func closeAgentSession(worktree: String, slot: PaneSlotID) async throws {
+        throw AgentControlError.unavailable
+    }
 }
 
 /// What team send, reply, inbox, and member requests need. Callers outside

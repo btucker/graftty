@@ -73,6 +73,37 @@ extension SocketRequestRouter: ControlPlatform {
 
     var controlCapabilities: Set<ControlCapability> { Set(ControlCapability.allCases) }
 
+    func closeAgentSession(worktree path: String, slot: PaneSlotID) async throws {
+        guard let worktree = state.worktree(forPath: path),
+              let session = worktree.paneSessions[slot] else { return }
+        guard let launcher = terminalManager.zmxLauncher, launcher.isAvailable else {
+            throw AgentControlError.unavailable
+        }
+        let name = ZmxLauncher.sessionName(for: session)
+        let history = try await OffMainIO.run {
+            guard try launcher.listSessions().contains(name) else { return "" }
+            return try ZmxHistorySubprocessReader(launcher: launcher).history(sessionName: name)
+        }
+        if let index = state.indices(forWorktreePath: path),
+           let ai = state.repos[index.repo].worktrees[index.worktree].agents.firstIndex(where: { $0.paneSlotID == slot }) {
+            state.repos[index.repo].worktrees[index.worktree].agents[ai].transcript = history
+            try GrafttyApp.persistAppStateSynchronously(state)
+        }
+        try await OffMainIO.run {
+            if try launcher.listSessions().contains(name) {
+                let result = try ZmxRunner.captureAll(executable: launcher.executable, args: ["kill", "--force", name],
+                    env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment), timeout: 2)
+                guard result.exitCode == 0, try !launcher.listSessions().contains(name) else {
+                    throw NSError(domain: "AgentCleanup", code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Could not end agent session: \(result.stderr)"])
+                }
+            }
+        }
+        // A slot is immutable. Do not resolve a pane index after the subprocess await.
+        PaneCommands.closePane(appState: appState, terminalManager: terminalManager, targetID: slot,
+                               userInitiated: true, activateReplacement: false)
+    }
+
     func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage? {
         await handlePaneRequest(message)
     }

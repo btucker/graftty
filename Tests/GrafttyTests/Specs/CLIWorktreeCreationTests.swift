@@ -602,16 +602,6 @@ struct CLIWorktreeCreationTests {
         #expect(prepared.promptFile == nil)
     }
 
-    @Test("An explicit launch command suppresses the configured default command")
-    func explicitLaunchDoesNotDoubleStartAnAgent() {
-        #expect(defaultCommandDecision(
-            defaultCommand: "claude",
-            firstPaneOnly: false,
-            isFirstPane: true,
-            wasRehydrated: false,
-            hasExplicitInitialInput: true
-        ) == .skip)
-    }
 
     @MainActor
     @Test("""

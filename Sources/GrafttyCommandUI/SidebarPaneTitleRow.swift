@@ -89,6 +89,7 @@ public struct SidebarPaneTitleText: View {
 public struct SidebarPaneTitleRow<TitleLayout: View>: View {
     let title: SidebarPaneTitleText
     let attentionCount: Int
+    let provider: String?
     let alignment: VerticalAlignment
     /// Built once at init rather than stored as a closure, so SwiftUI can
     /// still diff the row by value.
@@ -109,6 +110,7 @@ public struct SidebarPaneTitleRow<TitleLayout: View>: View {
         attentionStyle: AttentionCapsuleStyle?,
         attentionCount: Int,
         theme: GhosttyThemeColors?,
+        provider: String? = nil,
         alignment: VerticalAlignment = .center,
         @ViewBuilder titleLayout: (SidebarPaneTitleText) -> TitleLayout
     ) {
@@ -117,12 +119,14 @@ public struct SidebarPaneTitleRow<TitleLayout: View>: View {
                                              attentionStyle: attentionStyle, theme: theme)
         self.title = titleText
         self.attentionCount = attentionCount
+        self.provider = provider
         self.alignment = alignment
         self.titleLayout = titleLayout(titleText)
     }
 
     public var body: some View {
         HStack(alignment: alignment, spacing: SidebarPaneLayout.markerSpacing) {
+            if attentionCount > 0 {
             SidebarPaneMarker(
                 attentionCount: attentionCount,
                 isFocused: title.isFocusedPane,
@@ -131,6 +135,10 @@ public struct SidebarPaneTitleRow<TitleLayout: View>: View {
                     isActiveWorktree: title.isActiveWorktree
                 ) ?? .secondary
             )
+            } else {
+                AgentProviderIcon(provider: provider, size: 14)
+                    .foregroundStyle(title.theme?.foreground ?? .secondary)
+            }
             if let attentionStyle = title.attentionStyle {
                 // A plain HStack — not the caller's layout — so the title
                 // truncates instead of the pill wrapping below it.
@@ -154,10 +162,11 @@ public extension SidebarPaneTitleRow where TitleLayout == SidebarPaneTitleText {
         isBusy: Bool,
         attentionStyle: AttentionCapsuleStyle?,
         attentionCount: Int,
-        theme: GhosttyThemeColors?
+        theme: GhosttyThemeColors?,
+        provider: String? = nil
     ) {
         self.init(title: title, isFocusedPane: isFocusedPane, isActiveWorktree: isActiveWorktree,
                   isBusy: isBusy, attentionStyle: attentionStyle, attentionCount: attentionCount,
-                  theme: theme) { $0 }
+                  theme: theme, provider: provider) { $0 }
     }
 }

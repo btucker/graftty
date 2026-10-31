@@ -55,7 +55,7 @@ public final class ZmxHostTerminalDriver: HostTerminalDriver {
                 env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment), timeout: 2)
         }.value
         let remaining = try await sessions()
-        guard result.exitCode == 0 || !remaining.contains(session) else {
+        guard !remaining.contains(session) else {
             throw HostRuntimeError.invalid(result.stderr)
         }
     }

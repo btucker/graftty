@@ -838,6 +838,11 @@ final class RemoteWorktreeViewerController: ObservableObject {
         remoteTerminalSlots[RemoteTerminalKey(identity: identity, worktreePath: worktreePath, sessionName: sessionName)]
     }
 
+    func performWorkspaceCommand(_ command: HostManagedPaneCommand, on slot: PaneSlotID) {
+        guard let source = remoteTerminalSlots.first(where: { $0.value == slot })?.key else { return }
+        handleRemotePaneCommand(command, source: source, sourceTerminalID: slot)
+    }
+
     private func remoteSessionName(for terminalID: PaneSlotID) -> String? {
         remoteTerminalSlots.first(where: { $0.value == terminalID })?.key.sessionName
     }

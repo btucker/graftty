@@ -117,7 +117,7 @@ public enum CLIWorktreeCreationRequestHandler {
            ) {
             do {
                 launch = try WorktreeAgentLaunchCommand.prepare(
-                    agent: agentRuntime, prompt: agentPrompt, exactCommand: nil,
+                    agent: agentRuntime, prompt: agentPrompt, exactCommand: nil, managedAgent: request.managedAgent,
                     promptDirectory: platform.agentPromptDirectory
                 )
             } catch {
@@ -159,6 +159,9 @@ public enum CLIWorktreeCreationRequestHandler {
 
         if let index = platform.state.indices(forWorktreePath: worktreePath) {
             platform.state.repos[index.repo].worktrees[index.worktree].creationProgress?.operationID = operationID
+            if let agent = request.managedAgent {
+                platform.state.repos[index.repo].worktrees[index.worktree].agents.append(agent)
+            }
             try? platform.stateDidChange()
         }
 
@@ -204,7 +207,20 @@ public enum CLIWorktreeCreationRequestHandler {
             stagedPromptFile: launch.promptFile,
             operationID: operationID
         ) {
-            guard let failure = await platform.finishWorktreeCreation(plan) else { return nil }
+            let failure = await platform.finishWorktreeCreation(plan)
+            if let agent = request.managedAgent,
+               let index = platform.state.indices(forWorktreePath: worktreePath),
+               let ai = platform.state.repos[index.repo].worktrees[index.worktree].agents.firstIndex(where: { $0.id == agent.id }) {
+                if let failure {
+                    platform.state.repos[index.repo].worktrees[index.worktree].agents[ai].launchFailed(reason: failure)
+                } else {
+                    let slot = platform.state.repos[index.repo].worktrees[index.worktree].primaryPaneSlotID
+                        ?? platform.state.repos[index.repo].worktrees[index.worktree].splitTree.allLeaves.first
+                    platform.state.repos[index.repo].worktrees[index.worktree].agents[ai].paneSlotID = slot
+                }
+                try? platform.saveStateNow()
+            }
+            guard let failure else { return nil }
             // A background request may have no view persisting removal of
             // a failed placeholder or cancellation of its launch marker.
             if let index = platform.state.indices(forWorktreePath: worktreePath) {

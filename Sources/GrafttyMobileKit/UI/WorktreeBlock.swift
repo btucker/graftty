@@ -5,6 +5,7 @@ import SwiftUI
 
 struct WorktreeBlock: View {
     @Environment(\.editMode) private var editMode
+    @State private var inventoryExpanded = false
     let worktree: WorktreePanes
     var project: SidebarProject? = nil
     var projectIconData: Data? = nil
@@ -34,7 +35,16 @@ struct WorktreeBlock: View {
         // sidebar-style's full per-row padding.
         VStack(alignment: .leading, spacing: 3) {
             worktreeRow
-            paneRows
+            if let agents = worktree.agents, !agents.isEmpty {
+                DisclosureGroup(isExpanded: $inventoryExpanded) { paneRows } label: {
+                    let count = agents.filter { $0.sessionName != nil && $0.status != "closed" }.count
+                    Text("\(count) \(count == 1 ? "agent" : "agents") · \(max(0, (worktree.layout?.leaves.count ?? 0) - count)) terminals")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !inventoryExpanded, context.question != nil {
+                    MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) { SidebarWorktreeQuestion(context: context) }
+                }
+            } else { paneRows }
         }
         // IPAD-1.16: active-worktree block highlight (Mac parity).
         // Painted on the whole VStack so the rounded rectangle spans
@@ -121,7 +131,7 @@ struct WorktreeBlock: View {
                         isFocusedPane: leaf.sessionName == focusedPaneId, isActiveWorktree: isActive,
                         isBusy: leaf.isBusy, attentionStyle: style,
                         attentionCount: context.pending.filter { $0.paneID == leaf.sessionName || ($0.paneID == nil && index == 0) }.count,
-                        theme: theme)
+                        theme: theme, provider: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.provider)
                         .padding(.leading, SidebarPaneLayout.markerLeading)
                     if isQuestionPane {
                         SidebarWorktreeQuestion(context: context)

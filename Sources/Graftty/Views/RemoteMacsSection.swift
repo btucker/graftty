@@ -560,6 +560,7 @@ struct RemoteMacsSection: View {
                                 )
                             },
                             portBindings: (worktree.origin?.relayDepth ?? 0) == 0 ? worktree.portBindings?[leaf.sessionName] ?? [] : [],
+                            provider: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.provider,
                             attentionCount: counts.attentionByPane[leaf.sessionName, default: 0]
                                 + (leaf.sessionName == layout.leaves.first?.sessionName ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0),
                             onOpenPort: { binding in

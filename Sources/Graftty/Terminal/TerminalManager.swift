@@ -1400,7 +1400,7 @@ final class TerminalManager: ObservableObject {
         rehydratedSurfaces.insert(terminalID)
     }
 
-    /// Drop the rehydration label so `defaultCommandDecision` treats a
+    /// Drop the rehydration label so startup handling treats a
     /// pane as fresh. Called by `clearRehydratedIfDaemonGone`.
     func clearRehydrated(_ terminalID: PaneSlotID) {
         if rehydratedSurfaces.remove(terminalID) != nil {
@@ -1471,17 +1471,7 @@ final class TerminalManager: ObservableObject {
            FileManager.default.fileExists(atPath: receipt.path) {
             shellStartupCommands.removeValue(forKey: terminalID)
         }
-        var command = initialCommand ?? (wasRehydrated(terminalID) ? nil : shellStartupCommands[terminalID])
-        if command == nil, !shellReadyFired.contains(terminalID) {
-            let decision = defaultCommandDecision(
-                defaultCommand: defaults.string(forKey: SettingsKeys.defaultCommand) ?? "",
-                firstPaneOnly: defaults.object(forKey: "defaultCommandFirstPaneOnly") as? Bool ?? true,
-                isFirstPane: isFirstPane(terminalID),
-                wasRehydrated: wasRehydrated(terminalID),
-                hasExplicitInitialInput: explicitInitialInputSurfaces.contains(terminalID)
-            )
-            if case .type(let value) = decision { command = value }
-        }
+        let command = initialCommand ?? (wasRehydrated(terminalID) ? nil : shellStartupCommands[terminalID])
         let configuration = ZmxSpawnConfiguration.make(
             launcher: launcher,
             paneSessionID: paneSessionID,

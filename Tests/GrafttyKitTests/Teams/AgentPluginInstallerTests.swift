@@ -758,7 +758,7 @@ struct AgentPluginInstallerTests {
     """)
     func materializedSkillsExplainRealWorktreeDelegation() throws {
         for skill in try preparedSkillTexts(named: "graftty-team") {
-            for token in ["graftty worktree add <name> --agent <codex|claude> --prompt-stdin", "Parent exact address:", "Parent fallback address:", "graftty team list --json", "references/worktrees.md"] {
+            for token in ["graftty agent add <name> --provider codex --prompt-stdin", "agent.nativeAgentID", "completion ID", "graftty team list --json", "references/worktrees.md"] {
                 #expect(skill.contains(token))
             }
             for policy in [
@@ -874,7 +874,7 @@ struct AgentPluginInstallerTests {
     }
 
     @Test("""
-    @spec AGENT-6.45: When Graftty installs the team skill, the application shall state that each worktree has exactly one implementer, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, direct agents to delegate with graftty worktree add and an agent instead, and document graftty pane add with an agent for adding a non-editing reviewer or pair to an existing worktree, addressed by exact agent ID, or by runtime suffix only when no other agent of that runtime shares the worktree.
+    @spec AGENT-6.45: When Graftty installs the team skill, the application shall state that each worktree has exactly one implementer, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, direct agents to delegate with graftty agent add, and document its existing-worktree option for adding a non-editing reviewer or pair to an existing worktree, addressed by exact agent ID, or by runtime suffix only when no other agent of that runtime shares the worktree.
     """)
     func materializedTeamSkillForbidsManualWorktrees() throws {
         let destination = FileManager.default.temporaryDirectory
@@ -889,10 +889,10 @@ struct AgentPluginInstallerTests {
             #expect(!skill.contains("exactly one agent"))
             #expect(skill.contains("`git worktree add`"))
             #expect(skill.contains("worktree-isolated subagents"))
-            #expect(skill.contains("graftty pane add <worktree> --agent <codex|claude> --prompt-stdin"))
+            #expect(skill.contains("--worktree <name-or-path>"))
             #expect(skill.contains("unless the implementer hands off"))
-            #expect(skill.contains("<path>#<runtime>"))
-            #expect(skill.contains("only when no other agent of that runtime shares the worktree"))
+            #expect(skill.contains("exact native address"))
+            #expect(skill.contains("completion ID"))
             let worktrees = try String(contentsOf: destination.appendingPathComponent(
                 "\(provider)/plugins/graftty/skills/graftty-team/references/worktrees.md"
             ))

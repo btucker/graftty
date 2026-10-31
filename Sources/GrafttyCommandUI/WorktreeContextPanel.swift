@@ -7,6 +7,8 @@ public struct WorktreeContextPanel: View {
     private let foreground: Color
     private let secondary: Color
     private let onClose: () -> Void
+    private let readTranscript: ((String) -> String?)?
+    @State private var archivedTranscript: String?
     @State private var follow: TimelineFollow
     @State private var requestedBriefHeight: CGFloat?
     @State private var renderedBriefHeight: CGFloat = 0
@@ -15,11 +17,13 @@ public struct WorktreeContextPanel: View {
     private static let latestID = "worktree.context.timeline.latest"
 
     public init(context: SidebarWorktreeContext, foreground: Color = .primary,
-                secondary: Color = .secondary, collapsesBrief: Bool = false, onClose: @escaping () -> Void) {
+                secondary: Color = .secondary, collapsesBrief: Bool = false,
+                readTranscript: ((String) -> String?)? = nil, onClose: @escaping () -> Void) {
         self.context = context
         self.foreground = foreground
         self.secondary = secondary
         self.onClose = onClose
+        self.readTranscript = readTranscript
         _follow = State(initialValue: TimelineFollow(collapsesBrief: collapsesBrief))
     }
 
@@ -27,6 +31,36 @@ public struct WorktreeContextPanel: View {
         VStack(spacing: 0) {
             header
             Divider()
+            if let agents = context.worktree.agents?.filter({ $0.result != nil || !($0.previousResults ?? []).isEmpty }), !agents.isEmpty {
+                DisclosureGroup("Completed agents · \(agents.count)") {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(agents) { agent in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    HStack {
+                                        AgentProviderIcon(provider: agent.provider)
+                                        Text(agent.name).fontWeight(.medium)
+                                        Spacer()
+                                        Text(agent.status == "closed" ? "Closed" : agent.status == "awaiting-cleanup" ? "Awaiting cleanup" : agent.status.capitalized).foregroundStyle(secondary)
+                                    }
+                                    if let result = agent.result { Text(result).textSelection(.enabled) }
+                                    if let readTranscript, agent.status == "closed" {
+                                        Button("Read transcript") { archivedTranscript = readTranscript(agent.id) ?? "No transcript was available when this session closed." }
+                                    }
+                                    if let previous = agent.previousResults, !previous.isEmpty {
+                                        DisclosureGroup("Previous assignments") {
+                                            ForEach(Array(previous.enumerated()), id: \.offset) { _, result in
+                                                Text(result).textSelection(.enabled).padding(.vertical, 4)
+                                            }
+                                        }
+                                    }
+                                }.font(.caption)
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }.frame(maxHeight: 220)
+                }.padding(.horizontal, 20).padding(.vertical, 8)
+                Divider()
+            }
             GeometryReader { geometry in
                 let limit = max(0, geometry.size.height - HorizontalResizeDivider.thickness - 96)
                 let chosenHeight = requestedBriefHeight.map { min(limit, max(min(96, limit), $0)) }
@@ -45,6 +79,14 @@ public struct WorktreeContextPanel: View {
             }
         }
         .foregroundStyle(foreground)
+        .sheet(isPresented: Binding(get: { archivedTranscript != nil }, set: { if !$0 { archivedTranscript = nil } })) {
+            VStack(spacing: 0) {
+                HStack { Text("Agent transcript").font(.headline); Spacer(); Button("Done") { archivedTranscript = nil } }.padding()
+                Divider()
+                ScrollView { Text(archivedTranscript ?? "").font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding() }
+            }.frame(minWidth: 320, idealWidth: 720, minHeight: 320, idealHeight: 600)
+        }
         .onChange(of: context.item.worktreeIdentity) { _, _ in
             follow = TimelineFollow(collapsesBrief: follow.collapsesBrief)
             requestedBriefHeight = nil

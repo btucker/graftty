@@ -197,17 +197,10 @@ enum TerminalPaneActions {
         // convey. TerminalManager ignores the action; add a dedicated,
         // less-aggressive visual if the need comes back.
 
-        // First prompt on a newly-ready pane → maybe type the user's
-        // default command. `maybeRunDefaultCommand` consults UserDefaults
-        // and the TerminalManager's first-pane / rehydration markers to
-        // decide; most of the time it's a no-op.
+        // Explicit startup input has already been handed to shell startup.
         terminalManager.onShellReady = { [tm = terminalManager] terminalID in
-            MainActor.assumeIsolated {
-                PaneCommands.maybeRunDefaultCommand(
-                    terminalManager: tm,
-                    terminalID: terminalID
-                )
-            }
+            MainActor.assumeIsolated { _ = tm.consumeExplicitInitialInputMarker(terminalID) }
         }
+
     }
 }

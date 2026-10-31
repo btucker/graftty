@@ -96,6 +96,7 @@ struct SidebarView: View {
     @Binding var pendingAddWorktree: AddWorktreeRequest?
 
     /// Hovered drop-target row during a pane drag (PWD-1.5). Nil otherwise.
+    @State private var expandedAgentWorktrees: Set<UUID> = []
     @State private var dropTargetWorktreeID: WorktreeEntry.ID?
 
     /// Virtual folders start expanded. Only explicit user collapses are
@@ -847,6 +848,7 @@ struct SidebarView: View {
                 // longer feed it.
                 attentionStyle: context.question != nil && context.questionPaneID == sessionName ? nil : attention.paneCapsules[terminalID],
                 portBindings: portBindings.bindings[terminalID] ?? [],
+                provider: worktree.agents.first { $0.paneSlotID == terminalID }?.provider.rawValue,
                 attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
                     + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
             )
@@ -888,8 +890,25 @@ struct SidebarView: View {
         ) {
             heading
         } panes: {
-            panes
-            if Self.showsWorktreeQuestion(questionPaneID: context.questionPaneID,
+            if !worktree.agents.isEmpty {
+                DisclosureGroup(isExpanded: Binding(
+                    get: { expandedAgentWorktrees.contains(worktree.id) },
+                    set: { if $0 { expandedAgentWorktrees.insert(worktree.id) } else { expandedAgentWorktrees.remove(worktree.id) } }
+                )) {
+                    panes
+                } label: {
+                    let count = worktree.agents.filter { $0.status != .closed && $0.paneSlotID.map(paneLeaves.contains) == true }.count
+                    Text("\(count) \(count == 1 ? "agent" : "agents") · \(max(0, paneLeaves.count - count)) terminals")
+                        .font(.caption).foregroundStyle(.secondary)
+                }.padding(.horizontal, 12)
+                if !expandedAgentWorktrees.contains(worktree.id), context.question != nil {
+                    SidebarWorktreeQuestionTarget(context: context) { Task { _ = await openReport(context) } }
+                }
+            } else {
+                panes
+            }
+            if (worktree.agents.isEmpty || expandedAgentWorktrees.contains(worktree.id)),
+               Self.showsWorktreeQuestion(questionPaneID: context.questionPaneID,
                                           displayedPaneSessions: paneLeaves.compactMap { worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)) }) {
                 SidebarWorktreeQuestionTarget(context: context) {
                     Task { _ = await openReport(context) }

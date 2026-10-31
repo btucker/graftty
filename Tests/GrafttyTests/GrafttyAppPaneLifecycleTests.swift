@@ -215,7 +215,7 @@ struct GrafttyAppPaneLifecycleTests {
     multi-pane worktree for restoration, it shall mark every leaf as \
     rehydrated and its remembered primary leaf as the sole first-pane-eligible \
     pane, independent of the retained focus, so later missing-session recovery \
-    can restart one default command without touching surviving sessions.
+    can recreate missing shells without touching surviving sessions.
     """)
     func runningRestoreRetainsOnePrimaryMarkerForSessionLoss() {
         let left = PaneSlotID()

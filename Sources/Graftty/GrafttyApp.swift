@@ -260,6 +260,10 @@ struct GrafttyApp: App {
                 appStateChanges: services.appStateChanges,
                 makeRemoteMacPairingDriver: services.remoteMacPairingDriverFactory
             )
+                .environment(\.agentWorkspaceRequest, { request in
+                    let router = SocketRequestRouter(appState: $appState, terminalManager: terminalManager, services: services)
+                    return await router.handleRequest(.agent(request)) ?? .error("Agent operation returned no response")
+                })
                 .environmentObject(webController)
                 .environmentObject(updaterController)
                 .environmentObject(portBindingsModel)

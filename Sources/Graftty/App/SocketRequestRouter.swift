@@ -263,7 +263,7 @@ extension SocketRequestRouter {
             return listPanes(path: path, appState: appState, terminalManager: terminalManager)
         case .addPane(let request):
             return await addPane(path: request.path, direction: request.direction, command: request.command,
-                                 agentRuntime: request.agentRuntime, agentPrompt: request.agentPrompt, teamInbox: teamInbox,
+                                 agentRuntime: request.agentRuntime, agentPrompt: request.agentPrompt, managedAgent: request.managedAgent, teamInbox: teamInbox,
                                  appState: appState, terminalManager: terminalManager)
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
@@ -347,6 +347,7 @@ extension SocketRequestRouter {
         command: String?,
         agentRuntime: TeamHookRuntime?,
         agentPrompt: String?,
+        managedAgent: ManagedAgent?,
         teamInbox: TeamInbox,
         appState: Binding<AppState>,
         terminalManager: TerminalManager
@@ -357,6 +358,9 @@ extension SocketRequestRouter {
             agentPrompt: agentPrompt
         ) {
             return .error(error)
+        }
+        if managedAgent != nil, appState.wrappedValue.worktree(forPath: path)?.state == .closed {
+            _ = PaneCommands.startWorktree(path: path, appState: appState, terminalManager: terminalManager)
         }
         func splitTargetError() -> String? {
             guard let wt = appState.wrappedValue.worktree(forPath: path) else { return "not tracked" }
@@ -378,11 +382,11 @@ extension SocketRequestRouter {
         }
         if let agentRuntime {
             do {
-                launch = try WorktreeAgentLaunchCommand.prepare(agent: agentRuntime, prompt: agentPrompt, exactCommand: nil)
+                launch = try WorktreeAgentLaunchCommand.prepare(agent: agentRuntime, prompt: agentPrompt, exactCommand: nil, managedAgent: managedAgent)
             } catch {
                 return .error("could not stage agent prompt: \(error.localizedDescription)")
             }
-            if let repo = appState.wrappedValue.repo(forWorktreePath: path),
+            if managedAgent == nil, let repo = appState.wrappedValue.repo(forWorktreePath: path),
                let branch = appState.wrappedValue.worktree(forPath: path)?.branch {
                 // Map pane sessions on the main actor; read presence inside the
                 // off-main save, after its pending-task check (AGENT-6.57).
@@ -428,6 +432,16 @@ extension SocketRequestRouter {
               ) else {
             await abandonLaunch()
             return .error("split failed")
+        }
+        if let managedAgent, let index = appState.wrappedValue.indices(forWorktreePath: path),
+           let ai = appState.wrappedValue.repos[index.repo].worktrees[index.worktree].agents.firstIndex(where: { $0.id == managedAgent.id }) {
+            appState.wrappedValue.repos[index.repo].worktrees[index.worktree].agents[ai].paneSlotID = newPaneID
+            do { try GrafttyApp.persistAppStateSynchronously(appState.wrappedValue) }
+            catch {
+                PaneCommands.closePane(appState: appState, terminalManager: terminalManager, targetID: newPaneID, userInitiated: true)
+                await abandonLaunch()
+                return .error("Could not save agent session: \(error.localizedDescription)")
+            }
         }
         // ATTN-1.28: destroying the pane removes a prompt file its loader never
         // ran and withdraws the durable task. Both are no-ops once the agent

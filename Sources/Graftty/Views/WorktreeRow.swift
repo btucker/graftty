@@ -45,6 +45,7 @@ struct PaneTitleRow: View {
     /// Hidden while an attention capsule is shown (PORTS-3.4) so an active
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
+    var provider: String? = nil
     var attentionCount: Int = 0
     var onOpenPort: ((PortBinding) -> Void)? = nil
     var shouldRenderPortChips: Bool {
@@ -66,6 +67,7 @@ struct PaneTitleRow: View {
             attentionStyle: attentionStyle,
             attentionCount: attentionCount,
             theme: theme.core,
+            provider: provider,
             alignment: Self.titleAlignment
         ) { titleText in
             FlowLayout(spacing: 4, rowSpacing: 3) {

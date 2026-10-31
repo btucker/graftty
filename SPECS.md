@@ -324,6 +324,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.160** When the user drags a project in the sidebar on Mac or mobile, the application shall show an insertion marker at the hovered row's upper or lower edge and move the project before or after that row only on drop, while rejecting unrelated payloads and disabled reordering.
 
+**LAYOUT-2.161** When an agent moves between tabs and split groups, the application shall preserve its session identity and keep each session in exactly one position.
+
+**LAYOUT-2.162** When the terminal drawer is hidden, the application shall retain its sessions and selected terminal while restoring the previously selected agent.
+
+**LAYOUT-2.163** When workspace sessions close or appear, the application shall remove stale view references, collapse empty groups, and place new agents in tabs and new shells in the terminal drawer.
+
+**LAYOUT-2.164** When migrating an existing split layout to workspace presentation, the application shall preserve the saved split directions, ratios, and session positions.
+
+**LAYOUT-2.165** When publishing agent metadata, the application shall retain every session in the legacy pane inventory so older clients can still reach inactive tabs and drawer terminals.
+
+**LAYOUT-2.166** While workspace tabs are active, the application shall use selected tabs and the visible drawer for spatial navigation without including hidden sessions.
+
+**LAYOUT-2.167** When an agent resumes after completion, the application shall retain earlier assignment results in Context metadata.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -858,7 +872,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.23** When a paired client creates a worktree, the application shall register its first pane for terminal attachment and listening-port discovery without requiring a Mac terminal renderer or changing the Mac's selected worktree.
 
-**GIT-5.24** When a paired client first attaches to a newly created worktree's zsh or bash terminal, the application shall supply the host's default command to shell startup, honor the first-pane-only preference, and suppress a second default-command launch when a Mac renderer later attaches.
+**GIT-5.24** When a local or paired client opens an ordinary terminal, the application shall start a shell without executing a legacy default command or launching the default agent.
 
 **GIT-5.25** While Git and its worktree hooks are running, the application shall publish bounded stdout and stderr before Git exits, without waiting for a CLI connection.
 
@@ -1522,7 +1536,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### ZMX-7.x — Session-Loss Recovery
 
-**ZMX-7.1** When the application restores a worktree's split tree on launch (per `PERSIST-3.x` and `ZMX-4.2`), it shall, before creating each pane's surface, query the live zmx session set and clear the pane's rehydration label if the expected session name is absent. This ensures a freshly-created daemon (the result of `zmx attach`'s create-on-miss semantics) is not mistaken for a surviving session by `defaultCommandDecision`.
+**ZMX-7.1** When the application restores a worktree's split tree on launch (per `PERSIST-3.x` and `ZMX-4.2`), it shall, before creating each pane's surface, query the live zmx session set and clear the pane's rehydration label if the expected session name is absent. This ensures a freshly-created daemon is not mistaken for a surviving session during startup.
 
 **ZMX-7.2** If `zmx list` fails for any reason at the cold-start query site (per `ZMX-7.1`), the application shall treat the result as "session not missing" and take no recovery action — preferring a missed recovery over a spurious rehydration clear.
 
@@ -1530,7 +1544,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-7.4** At application launch, before any terminal surface is spawned, the application shall `unsetenv(...)` inherited process environment variables whose values would hijack downstream spawns into the parent shell's scope. The list shall include at minimum: `ZMX_SESSION`, `GIT_DIR`, and `GIT_WORK_TREE`.
 
-**ZMX-7.5** When the application prepares a persisted running multi-pane worktree for restoration, it shall mark every leaf as rehydrated and its remembered primary leaf as the sole first-pane-eligible pane, independent of the retained focus, so later missing-session recovery can restart one default command without touching surviving sessions.
+**ZMX-7.5** When the application prepares a persisted running multi-pane worktree for restoration, it shall mark every leaf as rehydrated and its remembered primary leaf as the sole first-pane-eligible pane, independent of the retained focus, so later missing-session recovery can recreate missing shells without touching surviving sessions.
 
 ### ZMX-8.x — Manual Restart
 
@@ -4488,9 +4502,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-6.43** When Graftty installs the recap skill, the application shall instruct agents not to mention the Attention report in their response to the user unless the report command fails.
 
-**AGENT-6.44** When an agent session starts, the application shall instruct the agent to keep one implementer per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, to delegate new-worktree work with graftty worktree add and an agent, and to add a reviewer or pair to an existing worktree with graftty pane add and an agent that does not edit files unless the implementer hands off.
+**AGENT-6.44** When an agent session starts, the application shall instruct the agent to keep one implementer per worktree by never creating a worktree itself, including through git, provider worktree tools, or other skills, to delegate new-worktree work with graftty agent add, and to add a reviewer or pair to an existing worktree with graftty agent add and its existing-worktree option for an agent that does not edit files unless the implementer hands off.
 
-**AGENT-6.45** When Graftty installs the team skill, the application shall state that each worktree has exactly one implementer, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, direct agents to delegate with graftty worktree add and an agent instead, and document graftty pane add with an agent for adding a non-editing reviewer or pair to an existing worktree, addressed by exact agent ID, or by runtime suffix only when no other agent of that runtime shares the worktree.
+**AGENT-6.45** When Graftty installs the team skill, the application shall state that each worktree has exactly one implementer, forbid creating worktrees through git, provider worktree tools, worktree-isolated subagents, or other skills, direct agents to delegate with graftty agent add, and document its existing-worktree option for adding a non-editing reviewer or pair to an existing worktree, addressed by exact agent ID, or by runtime suffix only when no other agent of that runtime shares the worktree.
 
 **AGENT-6.46** While the current Codex and Claude provider plugin integration is not installed, the Agent Teams Settings pane shall warn that agents will not be connected to Graftty until the plugins are installed and offer the install action; once the current integration is installed, the warning shall disappear.
 
@@ -4527,6 +4541,36 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.62** If the Claude Stop hook cannot read a native registry row for its session while the previously registered presence record still names a live process and an existing messaging socket, then the CLI shall keep that record instead of retiring the pane's identity.
 
 **AGENT-6.63** If a Claude registry row holds a complete JSON object followed by stale bytes from an earlier, longer rewrite, then the application shall read the leading object as that session's row, while a row whose object never completes shall remain unreadable.
+
+**AGENT-6.64** When an agent launch resolves its provider, the application shall prefer an explicit provider over the configured default and require a choice if neither exists.
+
+**AGENT-6.65** When migrating a legacy default command, the application shall recognize a bare Claude or Codex command, retain the original command, and require an explicit choice for commands with custom arguments or shell syntax.
+
+**AGENT-6.66** When an agent explicitly finishes an assignment, the application shall retain its result and completion identity until cleanup succeeds, including across persistence and repeated finish requests.
+
+**AGENT-6.67** When a completed agent resumes, the application shall reject completion and cleanup requests for its earlier assignment while preserving the earlier result.
+
+**AGENT-6.68** While an agent is running or waiting for input, the application shall require explicit assignment completion before parent cleanup.
+
+**AGENT-6.69** When a child finishes, the application shall durably notify its exact parent once and retain the cleanup obligation independently of inbox delivery.
+
+**AGENT-6.70** When an agent requests completion for a different terminal session, the application shall reject it without changing the target assignment.
+
+**AGENT-6.71** When adding an agent to an explicit worktree, the application shall record the parent and launch identity before creating its terminal and shall reject an unknown worktree without creating another.
+
+**AGENT-6.72** When invoking agent add, the CLI shall accept an optional existing worktree and provider, preserve the prompt, and reject conflicting prompt sources or an unsupported provider.
+
+**AGENT-6.73** When invoking agent close, the CLI shall require the completion identity so cleanup cannot target a newer assignment by accident.
+
+**AGENT-6.74** When parent cleanup succeeds, the application shall close only the completed child's bound session, retain its result, and make repeated cleanup harmless.
+
+**AGENT-6.75** If agent teardown fails, then the application shall retain the live session and cleanup obligation for a later retry.
+
+**AGENT-6.76** When a native subagent starts inside a managed terminal, the application shall preserve the top-level agent identity and assignment.
+
+**AGENT-6.77** When a parent resumes in its bound terminal with a new native session identity, the application shall preserve its managed identity and restore its children's cleanup obligations to that session.
+
+**AGENT-6.78** If a terminal driver accepts agent teardown but the session remains alive, then the application shall preserve its pane mapping and cleanup obligation.
 
 ## CLI — CLI
 

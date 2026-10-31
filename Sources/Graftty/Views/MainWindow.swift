@@ -100,6 +100,18 @@ struct MainWindow: View {
         let repository: RemoteRepositoryInfo
     }
 
+    @ViewBuilder private func remoteWorkspaceContent(for remote: RemoteMac) -> some View {
+        if let snapshot = selectedRemoteWorktreeSnapshot {
+            RemoteWorkspaceContentView(viewer: remoteViewer, terminalManager: terminalManager,
+                worktree: snapshot, identity: RemoteMacIdentity(remote), focused: focusedRemoteTerminalID,
+                onFocus: { terminalID in
+                    attentionOpenGeneration &+= 1
+                    remoteViewer.focusTerminal(terminalID)
+                }, agentScrollbackMap: agentScrollbackMap)
+                .id(snapshot.path)
+        }
+    }
+
     var body: some View {
         NavigationSplitView(
             columnVisibility: $columnVisibility
@@ -208,18 +220,8 @@ struct MainWindow: View {
                             } : nil)
                     } else if selectedRemoteWorktreePath != nil,
                        remoteViewer.splitTree.root != nil {
-                        TerminalContentView(
-                            terminalManager: terminalManager,
-                            splitTree: $remoteViewer.splitTree,
-                            focusedPaneSlotID: focusedRemoteTerminalID,
-                            theme: terminalManager.theme,
-                            onFocusTerminal: { terminalID in
-                                attentionOpenGeneration &+= 1
-                                remoteViewer.focusTerminal(terminalID)
-                            },
-                            agentScrollbackMap: agentScrollbackMap
-                        )
-                        .padding(.leading, 6)
+                        remoteWorkspaceContent(for: selectedRemoteMac)
+                            .padding(.leading, 6)
                     } else if remoteViewer.isOpeningSelectedWorktree {
                         ProgressView("Starting remote worktree…")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -238,14 +240,9 @@ struct MainWindow: View {
                             _ = selectWorktree(row.path, acknowledging: false, inspectingCreation: false)
                         } : nil)
                 } else if let worktree = selectedWorktreeBinding {
-                    TerminalContentView(
+                    WorkspaceContentView(
                         terminalManager: terminalManager,
-                        splitTree: Binding(
-                            get: { worktree.wrappedValue.splitTree },
-                            set: { worktree.wrappedValue.splitTree = $0 }
-                        ),
-                        focusedPaneSlotID: worktree.wrappedValue.focusedPaneSlotID,
-                        theme: terminalManager.theme,
+                        worktree: worktree,
                         onFocusTerminal: { terminalID in
                             attentionOpenGeneration &+= 1
                             // Persist the focus change on the model BEFORE
@@ -263,7 +260,25 @@ struct MainWindow: View {
                             }
                             terminalManager.setFocus(terminalID)
                         },
-                        previewWorktreePath: selectedWorktree?.path,
+                        onNewTerminal: {
+                            worktree.wrappedValue.ensureWorkspaceLayout()
+                            if let target = worktree.wrappedValue.splitTree.allLeaves.first {
+                                if let slot = PaneCommands.splitPane(appState: $appState, terminalManager: terminalManager,
+                                    targetID: target, split: .down) {
+                                    worktree.wrappedValue.workspaceLayout?.addTerminal(slot)
+                                }
+                            } else {
+                                _ = PaneCommands.startWorktree(path: worktree.wrappedValue.path, appState: $appState,
+                                    terminalManager: terminalManager)
+                                if let slot = worktree.wrappedValue.splitTree.allLeaves.first {
+                                    worktree.wrappedValue.workspaceLayout?.addTerminal(slot)
+                                }
+                            }
+                        },
+                        onCloseTerminal: { slot in
+                            PaneCommands.closePane(appState: $appState, terminalManager: terminalManager,
+                                targetID: slot, userInitiated: true)
+                        },
                         agentScrollbackMap: agentScrollbackMap
                     )
                     // A hair of breathing room so terminal text doesn't
@@ -283,6 +298,7 @@ struct MainWindow: View {
                         Divider()
                         WorktreeContextPanel(context: context, foreground: terminalManager.theme.foreground,
                             secondary: terminalManager.theme.foreground.opacity(0.6),
+                            readTranscript: selectedRemoteIdentity == nil ? { id in selectedWorktree?.agents.first { $0.id == id }?.transcript } : nil,
                             onClose: { showsWorktreeContext = false })
                             .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
                                 openContextWorktree(path, remoteIdentity: identity)

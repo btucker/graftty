@@ -87,7 +87,14 @@ extension WorktreePanes {
                 repositoryPath: repo.path, folderIDs: inputs.folders?.map(\.id)),
             ports: inputs.ports,
             portBindings: inputs.portBindings,
-            creationProgress: entry.creationProgress
+            creationProgress: entry.creationProgress,
+            agents: entry.agents.map { agent in
+                AgentSessionInfo(id: agent.id, name: agent.name, provider: agent.provider.rawValue,
+                    status: agent.status.rawValue,
+                    sessionName: agent.status == .closed ? nil : agent.paneSlotID.flatMap { entry.paneSessions[$0] }.map(ZmxLauncher.sessionName(for:)),
+                    assignmentID: agent.assignmentID.uuidString, completionID: agent.completion?.id.uuidString,
+                    result: agent.completion?.result, previousResults: agent.results.filter { $0.id != agent.completion?.id }.map(\.result))
+            }
         )
     }
 }

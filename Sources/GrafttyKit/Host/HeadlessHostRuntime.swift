@@ -193,6 +193,9 @@ public final class HeadlessHostRuntime {
         try acquire(path)
         defer { busyPaths.remove(path) }
         try await terminals.kill(target)
+        guard try await !terminals.sessions().contains(target) else {
+            throw HostRuntimeError.invalid("Terminal session is still running")
+        }
         let index = try indices(path)
         var worktree = state.repos[index.repo].worktrees[index.worktree]
         worktree.splitTree = worktree.splitTree.removing(slot)

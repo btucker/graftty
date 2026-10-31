@@ -21,7 +21,7 @@ In Codex with restricted network access, use `sandbox_permissions: "require_esca
 
 Keep this execution mode for subsequent control-socket commands. Do not repeat a known denial, change provider sandbox configuration, or enable general networking. If escalation is unavailable or denied, report the limitation and continue independent work. A readable socket or filesystem write grant does not grant connection access.
 
-Team, pane, worktree, image, open, and other app-control commands use the socket. `graftty attention report --stdin`, help, and local-only commands do not need socket permission. Providers that already permit the socket need no elevation. For EPERM, errno 1, or connection failures, read [socket diagnosis](references/socket-diagnosis.md).
+Agent, team, pane, worktree, image, open, and other app-control commands use the socket. `graftty attention report --stdin`, help, and local-only commands do not need socket permission. Providers that already permit the socket need no elevation. For EPERM, errno 1, or connection failures, read [socket diagnosis](references/socket-diagnosis.md).
 
 ## Find a recipient
 
@@ -97,25 +97,49 @@ Replies arrive through hooks; do not poll for completion. For deliberate inspect
 
 ## Delegate a task
 
-Each worktree has exactly one implementer, the agent that edits its checkout. Never create worktrees yourself with `git worktree add`, provider worktree tools, worktree-isolated subagents, or other skills. Subagents sharing your current worktree are allowed.
+Each worktree has exactly one implementer, the agent that edits its checkout. Never create worktrees yourself with `git worktree add`, provider worktree tools, worktree-isolated subagents, or other skills. Harness-native subagents sharing your current worktree remain available. Use them for work inside a provider session. Graftty agents are independent terminal sessions with their own assignments and cleanup; they do not replace native subagents.
 
-To add a reviewer or pair to an existing worktree, run `graftty pane add <worktree> --agent <codex|claude> --prompt-stdin` with the brief on stdin. An added agent does not edit files unless the implementer hands off. Added agents share the worktree path in `graftty team list --json`. The unsuffixed address reaches the earliest reachable agent, and `<path>#<runtime>` reaches the earliest agent of that runtime. Address an added agent by its exact ID. Use `<path>#<runtime>` only when no other agent of that runtime shares the worktree.
+Use `graftty agent add` for a new agent. Omit `--worktree` to create a new worktree. Pass `--worktree <name-or-path>` to share an existing checkout. An added reviewer or pair does not edit files unless the implementer hands off. `--provider claude` or `--provider codex` overrides the host's Default agent selection; omit it to use that setting.
 
-When the user requests delegation, give the child bounded independent work. Avoid tiny or overlapping tasks. Creating a worktree alone does not delegate; launch its agent with the task:
+When the user requests delegation, give the child bounded independent work. Avoid tiny or overlapping tasks:
 
 ```sh
-graftty worktree add <name> --agent <codex|claude> --prompt-stdin <<'GRAFTTY_DELEGATE_7F3A91C2'
+graftty agent add <name> --provider codex --prompt-stdin --json <<'GRAFTTY_DELEGATE_7F3A91C2'
 Objective: <bounded outcome>
 Owned scope: <files or subsystem>
 Verify: <checks>
-Return: send results, changed paths, validation, and commit hash with graftty team send --stdin.
-Parent exact address: <copy from roster>
-Parent fallback address: <worktree_path>#<runtime>
-Use the exact address while reachable; after restart or /clear, use the fallback.
+Return: report the result, changed paths, validation, and commit hash with graftty agent finish --result-stdin.
+Do not finish merely because a turn ends or you need input.
 GRAFTTY_DELEGATE_7F3A91C2
 ```
 
-Save the operation ID, path, and returned stable reply address. Pause the delegated scope until `graftty team list --json` confirms the child is reachable. Then relinquish that scope until reviewing its result. If launch fails without a reachable child, retain ownership and report the failed handoff. Requested delegation needs no separate confirmation and grants no additional authority.
+For a reviewer in the current worktree, add `--worktree '<worktree-name>'`. Save the returned `agent.id`, `agent.assignmentID`, `operationID`, and `worktree`. The managed ID identifies this assignment's lifecycle. `agent.nativeAgentID`, once populated, identifies the provider session for team messages. Do not substitute the managed ID into a native team address. Confirm readiness and copy the exact native address from `graftty team list --json` before messaging. A starting agent or accepted creation is not a reachable child.
+
+Pause the delegated scope until the child is reachable, then relinquish it until reviewing the result. If launch fails without a reachable child, retain ownership and report the failed handoff. Requested delegation needs no separate confirmation and grants no additional authority.
+
+## Finish and clean up assignments
+
+A child explicitly completes its assignment with a result on stdin:
+
+```sh
+graftty agent finish --result-stdin <<'GRAFTTY_RESULT_4B9D2F10'
+<result, PR or commit, changed paths, checks run, and any remaining limitations>
+GRAFTTY_RESULT_4B9D2F10
+```
+
+The launch environment supplies the managed agent and assignment IDs. If those are unavailable, use the exact IDs from the launch context: `graftty agent finish <managed-id> --assignment <assignment-id> --result-stdin`. Keep ordinary Attention recaps separate. Waiting for input, becoming idle, an end-of-turn hook, and process exit do not mean the assignment is complete.
+
+The parent receives a durable completion event naming the child, result, and completion ID. Handle the result, then close that completed assignment:
+
+```sh
+graftty agent close <managed-child-id> --completion <completion-id>
+```
+
+This ends the child's terminal, removes its live view, and retains the result and worktree. Do not use a pane number or delete the worktree as a substitute. Resolve any still-useful child-owned processes before cleanup. A failed close remains pending and can be retried with the same completion ID. Reading or replying to the completion event does not acknowledge cleanup.
+
+After a parent restart, recover obligations with `graftty agent list --parent <native-parent-id> --status awaiting-cleanup --json`. Session-start context also lists pending cleanup. Repeated finish and close requests are idempotent for the same assignment. If more work is needed before teardown, `graftty agent resume <managed-child-id> --json` creates a new assignment in that still-live session. Give the child the new assignment ID and further instructions through its exact native address. An old completion cannot close the resumed assignment. Closed terminals are not resumed by this command.
+
+Before closing your own assignment, handle outstanding children. An unavailable parent leaves results and cleanup pending for recovery or user action. Do not send routine acknowledgements or repeatedly poll an active child.
 
 Read only the reference relevant to the operation:
 

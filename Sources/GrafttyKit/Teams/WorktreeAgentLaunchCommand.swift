@@ -116,6 +116,7 @@ public enum WorktreeAgentLaunchCommand {
         agent: TeamHookRuntime?,
         prompt: String?,
         exactCommand: String?,
+        managedAgent: ManagedAgent? = nil,
         promptDirectory: URL = AppState.defaultDirectory
             .appendingPathComponent("agent-launch-prompts", isDirectory: true),
         fileManager: FileManager = .default
@@ -166,7 +167,10 @@ public enum WorktreeAgentLaunchCommand {
         // sentinel preserves trailing newlines stripped by command substitution.
         let fileLiteral = shellLiteral(promptFile.path)
         let loader = "_graftty_agent_prompt_file=\(fileLiteral); _graftty_agent_prompt=\"$(/bin/cat \"$_graftty_agent_prompt_file\"; _graftty_status=$?; /usr/bin/printf x; exit \"$_graftty_status\")\" && /bin/rm -f \"$_graftty_agent_prompt_file\" && _graftty_agent_prompt=\"${_graftty_agent_prompt%x}\" && exec \(agent.rawValue) -- \"$_graftty_agent_prompt\""
-        let command = "/bin/sh -c \(shellLiteral(loader))"
+        let identity = managedAgent.map {
+            "export GRAFTTY_MANAGED_AGENT_ID=\(shellLiteral($0.id)) GRAFTTY_ASSIGNMENT_ID=\(shellLiteral($0.assignmentID.uuidString)); "
+        } ?? ""
+        let command = "/bin/sh -c \(shellLiteral(identity + loader))"
         return PreparedWorktreeAgentLaunch(command: command, promptFile: promptFile)
     }
 

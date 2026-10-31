@@ -41,14 +41,30 @@ final class HeadlessControlPlatform: ControlPlatform, ControlRemoteTeamRouting {
     }
     func postAgentNotification(_ content: AgentStopNotificationContent, worktreePath: String) {}
     func hookDeliveryPolicy(presence: [TeamPresenceRecord]) -> TeamHookDeliveryPolicy { TeamHookDeliveryPolicy() }
-    /// This host cannot launch an agent in an added pane, and it has no
-    /// paired-Mac transport for remote worktree creation.
+    /// Paired-Mac worktree creation and project registration are unavailable here.
     var controlCapabilities: Set<ControlCapability> {
-        Set(ControlCapability.allCases).subtracting([.paneAgent, .remoteWorktree, .projectAdd])
+        Set(ControlCapability.allCases).subtracting([.remoteWorktree, .projectAdd])
     }
 
     var worktreeCreation: any CLIWorktreeCreationPlatform { HeadlessWorktreeLifecycle(runtime: runtime) }
     var worktreeRemoval: any CLIWorktreeRemovalPlatform { HeadlessWorktreeLifecycle(runtime: runtime) }
+
+    func closeAgentSession(worktree path: String, slot: PaneSlotID) async throws {
+        guard let worktree = state.worktree(forPath: path), let session = worktree.paneSessions[slot] else { return }
+        let name = runtime.launcher.sessionName(for: session)
+        if try await runtime.terminals.sessions().contains(name) {
+            let history = try await runtime.terminals.show(name, lines: Int.max)
+            if let index = state.indices(forWorktreePath: path),
+               let ai = state.repos[index.repo].worktrees[index.worktree].agents.firstIndex(where: { $0.paneSlotID == slot }) {
+                state.repos[index.repo].worktrees[index.worktree].agents[ai].transcript = history
+                try runtime.save()
+            }
+        }
+        try await runtime.closePane(target: name)
+        guard try await !runtime.terminals.sessions().contains(name) else {
+            throw HostRuntimeError.invalid("Agent session is still running")
+        }
+    }
 
     func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage? {
         await runtime.hostRequest(message)

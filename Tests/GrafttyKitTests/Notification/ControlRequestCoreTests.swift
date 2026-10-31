@@ -33,6 +33,8 @@ struct ControlRequestCoreTests {
         var liveness: [(TeamHookEvent, String)] = []
         var notifications: [AgentStopNotificationContent] = []
         var platformRequests: [NotificationMessage] = []
+        var closedAgentSlots: [PaneSlotID] = []
+        var agentCloseFailure: String?
         var controlCapabilities: Set<ControlCapability> = [.worktreeBase]
 
         init() throws {
@@ -80,6 +82,13 @@ struct ControlRequestCoreTests {
         func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage? {
             platformRequests.append(message)
             return .ok
+        }
+        func closeAgentSession(worktree: String, slot: PaneSlotID) async throws {
+            if let agentCloseFailure { throw NSError(domain: "AgentTest", code: 1, userInfo: [NSLocalizedDescriptionKey: agentCloseFailure]) }
+            closedAgentSlots.append(slot)
+            if let index = state.indices(forWorktreePath: worktree) {
+                state.repos[index.repo].worktrees[index.worktree].splitTree = state.repos[index.repo].worktrees[index.worktree].splitTree.removing(slot)
+            }
         }
     }
 

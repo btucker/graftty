@@ -138,6 +138,9 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// different rows and do not fall back onto one another.
     public var paneAttention: [PaneSlotID: Attention]
     public var paneSessions: [PaneSlotID: PaneSessionID]
+    /// Retained after terminal teardown so results and parent obligations survive.
+    public var agents: [ManagedAgent] = []
+    public var workspaceLayout: WorkspaceLayout<PaneSlotID>?
     /// Last title and PWD for running panes, saved at application quit.
     public var paneTitleMetadata: [PaneSlotID: PaneTitleMetadata]
     public var splitTree: SplitTree
@@ -191,6 +194,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.paneSessions = [:]
         self.paneTitleMetadata = [:]
         self.splitTree = splitTree
+        self.workspaceLayout = splitTree.root == nil ? WorkspaceLayout() : nil
         self.focusedPaneSlotID = nil
         self.primaryPaneSlotID = nil
     }
@@ -202,13 +206,15 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // everything.
     private enum CodingKeys: String, CodingKey {
         case id, path, branch, emoji, emojiSource, isPinned, autoTrackEnabled, autoTrackLastAttempt, createdAt, creationProgress, state, staleSince, attention, unseenAgentStop, lastAgentStop, brief, history, agentProgressTimes, consumedAgentReports, paneAttention,
-             paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID
+             paneSessions, paneTitleMetadata, splitTree, primaryPaneSlotID, agents, workspaceLayout
         case focusedPaneSlotID = "focusedTerminalID"
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decode(UUID.self, forKey: .id)
+        self.agents = try container.decodeIfPresent([ManagedAgent].self, forKey: .agents) ?? []
+        self.workspaceLayout = try container.decodeIfPresent(WorkspaceLayout<PaneSlotID>.self, forKey: .workspaceLayout)
         self.path = try container.decode(String.self, forKey: .path)
         self.branch = try container.decode(String.self, forKey: .branch)
         self.emoji = try container.decodeIfPresent(String.self, forKey: .emoji)

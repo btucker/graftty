@@ -394,7 +394,7 @@ enum PaneCommands {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                 guard wt.splitTree.containsLeaf(terminalID) else { continue }
-                guard let nextID = wt.splitTree.spatialNeighbor(
+                guard let nextID = wt.navigationTree.spatialNeighbor(
                     of: terminalID,
                     direction: direction.asSpatial
                 ) else {
@@ -469,6 +469,7 @@ enum PaneCommands {
         appState.wrappedValue.mutateWorktree(containing: terminalID) { wt in
             let zoomed = wt.splitTree.zoomed
             wt.splitTree = wt.splitTree.equalizing()
+            if let layout = wt.workspaceLayout { wt.workspaceLayout?.updateGeometry(from: layout.visibleSplitTree.equalizing()) }
             if preserveZoom, let zoomed {
                 wt.splitTree = wt.splitTree.withZoom(zoomed)
             }
@@ -498,6 +499,12 @@ enum PaneCommands {
         appState.wrappedValue.mutateWorktree(containing: target) { wt in
             do {
                 let zoomed = wt.splitTree.zoomed
+                if let layout = wt.workspaceLayout, layout.group(containing: target) != nil {
+                    let resized = try layout.visibleSplitTree.resizing(target: target, direction: direction, pixels: pixels, ancestorBounds: bounds)
+                    wt.workspaceLayout?.updateGeometry(from: resized)
+                    didResize = true
+                    return
+                }
                 wt.splitTree = try wt.splitTree.resizing(
                     target: target,
                     direction: direction,
@@ -605,38 +612,4 @@ enum PaneCommands {
         }
     }
 
-    /// Called on the first `onShellReady` signal for a pane. Reads the
-    /// user's default-command preferences from UserDefaults, consults the
-    /// pure decision function in GrafttyKit, and — if the decision is
-    /// `.type(command)` — types the command into the pane via
-    /// `SurfaceHandle.typeText` followed by `\r` to trigger execution.
-    static func maybeRunDefaultCommand(
-        terminalManager: TerminalManager,
-        terminalID: PaneSlotID
-    ) {
-        let defaults = UserDefaults.standard
-        let command = defaults.string(forKey: SettingsKeys.defaultCommand) ?? ""
-        // `@AppStorage` defaults apply only in the SwiftUI view; when
-        // read directly from UserDefaults the key returns nil on
-        // first run. Treat nil as `true` to match the SettingsView default.
-        let firstPaneOnly = defaults.object(forKey: "defaultCommandFirstPaneOnly") as? Bool ?? true
-
-        let decision = defaultCommandDecision(
-            defaultCommand: command,
-            firstPaneOnly: firstPaneOnly,
-            isFirstPane: terminalManager.isFirstPane(terminalID),
-            wasRehydrated: terminalManager.wasRehydrated(terminalID),
-            hasExplicitInitialInput: terminalManager.consumeExplicitInitialInputMarker(terminalID)
-        )
-
-        switch decision {
-        case .skip:
-            return
-        case .type(let trimmedCommand):
-            // The default-command auto-injection runs once when a fresh
-            // pane's shell becomes ready — programmatic input, not a
-            // user keystroke. IOS-12.1's silent gate stays closed.
-            terminalManager.handle(for: terminalID)?.typeText(trimmedCommand + "\r", claimEngagement: false)
-        }
-    }
 }

@@ -53,7 +53,7 @@ struct GrafttyCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "graftty",
         abstract: "Graftty terminal multiplexer CLI",
-        subcommands: [Project.self, Open.self, Image.self, Notify.self, Pane.self, Worktree.self, Remote.self, Provider.self, Team.self, Attention.self, InternalGroup.self]
+        subcommands: [Project.self, Open.self, Image.self, Notify.self, Agent.self, Pane.self, Worktree.self, Remote.self, Provider.self, Team.self, Attention.self, InternalGroup.self]
     )
 }
 

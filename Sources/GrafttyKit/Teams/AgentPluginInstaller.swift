@@ -103,7 +103,8 @@ public struct AgentPluginInstaller: Sendable {
     /// Revision 10: the plugins became the only agent integration, so users
     /// who declined revision 9 while legacy wrapper hooks still worked must
     /// be offered again.
-    public static let integrationRevision = 10
+    // Revision 11: unified agent creation and explicit parent cleanup instructions.
+    public static let integrationRevision = 11
 
     private let resourceRoot: URL?
     private let grafttyCLIPath: String

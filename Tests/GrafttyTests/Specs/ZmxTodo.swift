@@ -54,7 +54,7 @@ struct ZmxTodo {
     func zmx_6_1() async throws { }
 
     @Test("""
-@spec ZMX-7.1: When the application restores a worktree's split tree on launch (per `PERSIST-3.x` and `ZMX-4.2`), it shall, before creating each pane's surface, query the live zmx session set and clear the pane's rehydration label if the expected session name is absent. This ensures a freshly-created daemon (the result of `zmx attach`'s create-on-miss semantics) is not mistaken for a surviving session by `defaultCommandDecision`.
+@spec ZMX-7.1: When the application restores a worktree's split tree on launch (per `PERSIST-3.x` and `ZMX-4.2`), it shall, before creating each pane's surface, query the live zmx session set and clear the pane's rehydration label if the expected session name is absent. This ensures a freshly-created daemon is not mistaken for a surviving session during startup.
 """, .disabled("not yet implemented"))
     func zmx_7_1() async throws { }
 

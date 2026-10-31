@@ -20,6 +20,8 @@ struct TerminalContentView: View {
     let onFocusTerminal: (PaneSlotID) -> Void
     var previewWorktreePath: String? = nil
     var agentScrollbackMap: AgentScrollbackMap? = nil
+    var paneHeader: ((PaneSlotID) -> AnyView)? = nil
+    var paneDropTarget: ((PaneSlotID, AnyView) -> AnyView)? = nil
 
     private var previewPane: PaneSlotID? {
         ImagePreviewLayout.visiblePane(tree: splitTree.wrappedValue, focused: focusedPaneSlotID)
@@ -100,7 +102,9 @@ struct TerminalContentView: View {
         let dimmingStyle = theme.paneFocusDimmingStyle(isUnfocused: isUnfocused)
         if let handle = terminalManager.handle(for: terminalID) {
             let tm = terminalManager
-            return AnyView(
+            let content = AnyView(
+                VStack(spacing: 0) {
+                if let paneHeader { paneHeader(terminalID) }
                 SurfaceViewWrapper(handle: handle, theme: theme, onFocusTerminal: {
                     // AppKit consumes terminal clicks inside the scroll view.
                     // Reconcile model focus directly, without re-focusing all
@@ -146,7 +150,10 @@ struct TerminalContentView: View {
                         onFocusTerminal(terminalID)
                     }
                     .onAppear { tm.setVisible(true, for: terminalID) }
+                    .onDisappear { tm.setVisible(false, for: terminalID) }
+                }
             )
+            return paneDropTarget?(terminalID, content) ?? content
         } else {
             return AnyView(
                 Color.black

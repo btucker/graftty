@@ -58,6 +58,8 @@ public enum ControlRequestCore {
         switch message {
         case .notify, .clear, .providerActivity:
             return nil
+        case .agent(let request):
+            return await AgentControl.handle(request, platform: platform)
         case .attentionReport(let callerPath, let callerAgentID, let recap):
             guard recap.isValid, platform.state.worktree(forPath: callerPath) != nil else {
                 return .error("invalid attention recap or unknown worktree")
@@ -326,6 +328,17 @@ public enum ControlRequestCore {
         case .none:
             break
         }
+        if let index = platform.state.indices(forWorktreePath: callerPath), let session = paneSessionName,
+           let slot = platform.state.repos[index.repo].worktrees[index.worktree].paneSlot(forSessionName: session),
+           let ai = platform.state.repos[index.repo].worktrees[index.worktree].agents.firstIndex(where: {
+               $0.paneSlotID == slot && $0.nativeAgentID == callerAgentID && callerAgentID != nil
+           }) {
+            switch action {
+            case .record: platform.state.repos[index.repo].worktrees[index.worktree].agents[ai].observeWaiting(true)
+            case .clear: platform.state.repos[index.repo].worktrees[index.worktree].agents[ai].observeWaiting(false)
+            case .none, .recordStoppedTurn: break
+            }
+        }
         // A `.none` transition (PreToolUse, PermissionRequest) leaves state
         // untouched, so the headless host skips a state write per tool call.
         if action != AgentHookAttentionAction.none {
@@ -374,6 +387,10 @@ public enum ControlRequestCore {
                     ),
                     applicationSupportDirectory: platform.instructionsDirectory
                 )
+                instructions += "\n\n" + (try await AgentControl.sessionContext(path: callerPath, agentID: currentAgentID,
+                    paneSessionName: paneSessionName, provider: runtime,
+                    isSubagent: presenceRecords.contains { $0.isSubagent == true && TeamAgentDirectory.identity(for: $0).rawValue == currentAgentID },
+                    platform: platform))
             }
             let handler = teamHandler(platform: platform, policy: policy)
             // ATTN-2.19: hook delivery parses the full inbox history and
