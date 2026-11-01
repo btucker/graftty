@@ -51,7 +51,7 @@ public struct ScrollbackMap: Sendable, Equatable {
             switch event.kind {
             case .user: Message(eventID: event.id, kind: .input, text: event.completed)
             case .agentMessage, .agentResponse: Message(eventID: event.id, kind: .peer, text: event.completed)
-            case .creation, .checkpoint: nil
+            case .creation, .checkpoint, .system: nil
             }
         }
     }
