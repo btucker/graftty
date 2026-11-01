@@ -64,12 +64,20 @@ final class MacPagedTerminalRenderer: PagedTerminalRenderer {
     }
 
     func resize(cols: UInt16, rows: UInt16) async throws {
+        try await setSourceGrid(cols: cols, rows: rows)
+        prepareGrid(try DisplayGrid(cols: cols, rows: rows))
+        try Task.checkCancellation()
+    }
+
+    func setSourceGrid(cols: UInt16, rows: UInt16) async throws {
         #if GRAFTTY_PAGED_HISTORY
         try Task.checkCancellation()
         guard surface.withSurface({ ghostty_surface_set_source_grid($0, cols, rows) }) == true else {
             throw Error.gridUnavailable
         }
-        prepareGrid(try DisplayGrid(cols: cols, rows: rows))
+        // Live acknowledgments update parser dimensions only. Preparing a restore
+        // grid here briefly gives an owner the follower's fitted frame and shadow,
+        // then removes them again when MacPagedAttachment finishes the grid event.
         try Task.checkCancellation()
         #else
         throw Error.invalidSnapshot

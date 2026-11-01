@@ -10,6 +10,31 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct MacPagedTerminalTests {
+    @Test("@spec TERM-12.50: When a Mac terminal receives a live source-grid acknowledgment, the application shall update its parser grid without refitting the owner viewport or entering checkpoint-restore presentation.")
+    func liveGridDoesNotRefitOwnerViewport() async throws {
+        let terminal = try NativeCanvas()
+        defer { terminal.close() }
+        var preparations: [DisplayGrid?] = []
+        let renderer = MacPagedTerminalRenderer(surface: terminal.access, prepareGrid: {
+            preparations.append($0)
+            terminal.prepareGrid($0)
+        })
+        let coordinator = PagedTerminalCoordinator(renderer: renderer, send: { _ in })
+        let before = ghostty_surface_size(terminal.raw)
+        let source = try DisplayGrid(cols: before.columns, rows: max(1, before.rows / 2))
+        let applied = try await coordinator.handle(.grid(cols: source.cols, rows: source.rows))
+        #expect(applied == source)
+        #expect(preparations.isEmpty)
+        try await Task.sleep(for: .milliseconds(100))
+        let after = ghostty_surface_size(terminal.raw)
+        #expect(after.width_px == before.width_px)
+        #expect(after.height_px == before.height_px)
+        #expect(ghostty_surface_grid_matches(terminal.raw, source.cols, source.rows))
+        // Initial restoration still has to fit the checkpoint's physical grid.
+        try await renderer.resize(cols: source.cols, rows: source.rows)
+        #expect(preparations == [source])
+    }
+
     @Test("@spec DIST-1.8: When the Mac terminal tests run with the committed dependency, the renderer shall support paging so native checkpoint and history tests execute.")
     func publishedDependencySupportsPaging() {
         #expect(MacPagedTerminalRenderer.isSupported)

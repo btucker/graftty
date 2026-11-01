@@ -23,15 +23,26 @@ public struct AgentProviderIcon: View {
     }
 
     private static func load(_ name: String) -> Image? {
-        guard let url = CommandUIResourceBundle.bundle?.url(forResource: name, withExtension: "png") else { return nil }
         #if os(macOS)
-        guard let image = NSImage(contentsOf: url) else { return nil }
+        guard let image = nativeProviderImage(name) else { return nil }
         return Image(nsImage: image)
         #else
+        guard let url = CommandUIResourceBundle.bundle?.url(forResource: name, withExtension: "png") else { return nil }
         guard let image = UIImage(contentsOfFile: url.path) else { return nil }
         return Image(uiImage: image)
         #endif
     }
+
+    #if os(macOS)
+    static func nativeProviderImage(_ name: String) -> NSImage? {
+        guard let url = CommandUIResourceBundle.bundle?.url(forResource: name, withExtension: "png") else { return nil }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        // AppKit menus read the native image size, ignoring SwiftUI's frame.
+        image.size = NSSize(width: 16, height: 16)
+        image.isTemplate = true
+        return image
+    }
+    #endif
 
     public var body: some View {
         Group {

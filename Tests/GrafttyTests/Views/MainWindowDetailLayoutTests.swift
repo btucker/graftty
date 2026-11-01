@@ -51,10 +51,11 @@ struct MainWindowDetailLayoutTests {
         }
     }
 
-    @Test("@spec LAYOUT-1.13: While agent tabs are visible, the application shall keep Back, Forward, and the repository/worktree breadcrumb in a separate visible window header above the tabs.", arguments: [false, true])
+    @Test("@spec LAYOUT-1.13: While agent tabs are visible, the application shall keep Back, Forward, the repository/worktree breadcrumb, and Context visible and clickable in the window header above the tabs.", arguments: [false, true])
     func workspaceKeepsWindowNavigation(sidebarHidden: Bool) async throws {
         _ = NSApplication.shared
         let headerProbe = NSView(), contentProbe = NSView()
+        var backClicks = 0, forwardClicks = 0, contextClicks = 0
         let manager = TerminalManager(socketPath: "/tmp/workspace-navigation-test-unused.sock")
         let root = NavigationSplitView(columnVisibility: .constant(sidebarHidden ? .detailOnly : .all)) {
             Text("Worktrees").frame(minWidth: 220)
@@ -67,7 +68,8 @@ struct MainWindowDetailLayoutTests {
                     historyItems: [.init(target: .local("/repo/agent-workspace"), repoName: "graftty",
                         worktreeName: "agent-workspace", branchName: "agent-workspace", remoteMacName: nil)],
                     currentTarget: .local("/repo/agent-workspace"),
-                    onGoBack: {}, onGoForward: {}, onSelectHistory: { _ in }, onRefreshPR: {}, onToggleContext: {})
+                    onGoBack: { backClicks += 1 }, onGoForward: { forwardClicks += 1 },
+                    onSelectHistory: { _ in }, onRefreshPR: {}, onToggleContext: { contextClicks += 1 })
                     .background(FrameProbe(view: headerProbe))
             } content: {
                 content(state: .workspace, manager: manager)
@@ -105,6 +107,20 @@ struct MainWindowDetailLayoutTests {
             }
         }
         #expect(visibleHeaderPixels > 50, "Navigation must be drawn, not merely assigned a frame beneath the titlebar")
+        for x in [header.minX + (sidebarHidden ? 156 : 12) + 12,
+                  header.minX + (sidebarHidden ? 156 : 12) + 38, header.maxX - 40] {
+            let location = hosting.convert(NSPoint(x: x, y: header.midY), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try #require(NSEvent.mouseEvent(with: type, location: location,
+                    modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                window.sendEvent(event)
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(backClicks == 1)
+        #expect(forwardClicks == 1)
+        #expect(contextClicks == 1)
         if let directory = ProcessInfo.processInfo.environment["GRAFTTY_TEST_SCREENSHOT_DIR"] {
             try #require(bitmap.representation(using: .png, properties: [:]))
                 .write(to: URL(fileURLWithPath: directory).appendingPathComponent("workspace-navigation-\(sidebarHidden ? "collapsed" : "expanded").png"))

@@ -32,7 +32,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.12** While the macOS window detail is visible, the application shall keep its breadcrumb header at the top and reserve the remaining height for content, including when no terminal pane is open and after resizing.
 
-**LAYOUT-1.13** While agent tabs are visible, the application shall keep Back, Forward, and the repository/worktree breadcrumb in a separate visible window header above the tabs.
+**LAYOUT-1.13** While agent tabs are visible, the application shall keep Back, Forward, the repository/worktree breadcrumb, and Context visible and clickable in the window header above the tabs.
 
 ### LAYOUT-2.x — Sidebar — Repository List
 
@@ -365,6 +365,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.179** When the user opens an empty terminal drawer, the application shall request its first terminal automatically; reopening a populated drawer shall reuse its selected terminal.
 
 **LAYOUT-2.180** When the user clicks empty space in the terminal drawer bar, the application shall toggle the drawer, while clicks on its individual controls shall perform only their own actions.
+
+**LAYOUT-2.181** When the terminal drawer opens or closes, the application shall retain the mounted agent surface and resize it directly to the final canvas viewport without intermediate terminal sizes.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -721,6 +723,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-12.46** When a display owner sends complete terminal mouse reports through an owner-authorized SSH paged attachment, the application shall deliver those bytes without requiring daemon keyboard leadership, preserve ordinary keyboard leadership and passive input behavior, and keep input in order.
 
 **TERM-12.47** While a session's scrollback fits within libghostty's default 50,000,000-byte page budget, the zmx daemon shall retain every row, so a Mac pane reattaching to a 20,000-line session restores every line instead of only the newest 10,000,000 bytes of pages.
+
+**TERM-12.50** When a Mac terminal receives a live source-grid acknowledgment, the application shall update its parser grid without refitting the owner viewport or entering checkpoint-restore presentation.
 
 ## GIT — Worktree Discovery & Monitoring
 
@@ -4711,6 +4715,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.121** When an already-running top-level provider sends a hook without a recorded agent identity, the application shall recover its provider identity in the existing session without adopting native subagents.
 
 **AGENT-6.122** If recovering an existing agent identity fails to persist, then the application shall continue processing its activity hook and retry identity recovery on a later hook.
+
+**AGENT-6.123** When a provider mark appears in a native Mac menu, the application shall use a 16-point template image so menu rows keep their standard size and tint.
 
 ## CLI — CLI
 

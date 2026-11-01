@@ -8,8 +8,10 @@ struct MainWindowDetailLayout<Header: View, Content: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+                .zIndex(1)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
                 // Workspace backgrounds must not extend into the titlebar
                 // safe area and cover the preceding breadcrumb controls.
                 .clipped()

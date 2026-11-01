@@ -5,6 +5,13 @@ import Testing
 
 @MainActor
 struct AgentProviderIconTests {
+    @Test("@spec AGENT-6.123: When a provider mark appears in a native Mac menu, the application shall use a 16-point template image so menu rows keep their standard size and tint.", arguments: ["claude", "codex"])
+    func nativeMenuMarkHasStandardSize(_ provider: String) throws {
+        let image = try #require(AgentProviderIcon.nativeProviderImage(provider))
+        #expect(image.size == NSSize(width: 16, height: 16))
+        #expect(image.isTemplate)
+    }
+
     @Test("@spec AGENT-6.120: While an agent provider icon is displayed, the application shall render the bundled Claude or Codex mark with visible template tint.", arguments: ["claude", "codex"])
     func providerMarkRenders(_ provider: String) throws {
         #expect(AgentProviderIcon.providerImage(provider) != nil)
