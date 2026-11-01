@@ -133,6 +133,8 @@ struct RemoteBrowserButtonTests {
 
     @Test("@spec CONTEXT-10: While mobile terminal controls are visible, the application shall display an icon-only Context action immediately left of Browser in the same floating control group, retain separate accessible actions, and preserve the mounted terminal and pending request when opening or closing context.", .timeLimit(.minutes(1)))
     func drawerPreservesMountedTerminal() async throws {
+        let theme = GhosttyThemeColors(backgroundRGB: .init(r: 0.98, g: 0.97, b: 0.94),
+            foregroundRGB: .init(r: 0.23, g: 0.25, b: 0.27))
         let recap = AttentionRecap(title: "Worktree context", context: "Help me reload my context when returning to a worktree.",
             completed: "Built a current brief with expandable history.", next: "Try it on a phone.", need: "Does the drawer read well?",
             checkpoint: "Chose the brief with expandable history", decisions: ["Keep the purpose title stable.", "Use native stop notifications."])
@@ -156,7 +158,7 @@ struct RemoteBrowserButtonTests {
                     .padding(12)
             }
             .modifier(MobileWorktreeContextDrawer(context: nil))
-            .modifier(MobileWorktreeContextDrawer(context: navigation.worktreeContext(row)))
+            .modifier(MobileWorktreeContextDrawer(context: navigation.worktreeContext(row), theme: theme))
             .accessibilityElement(children: .contain)
             .environment(\.accessibilityEnabled, true))
         window.rootViewController = host
@@ -180,11 +182,63 @@ struct RemoteBrowserButtonTests {
         try #require(open.accessibilityActivate())
         try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Close context" } }
         try await Task.sleep(for: .milliseconds(350))
+        let drawerImage = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        try #require(drawerImage.pngData()).write(to: controlsDirectory.appendingPathComponent("context-drawer-light.png"))
         #expect(navigation.worktreeContext(row).pending.count == 1)
         let close = try #require(accessibilityObjects(in: host.view).first { $0.accessibilityLabel == "Close context" })
         try #require(close.accessibilityActivate())
         try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Worktree context" } }
         #expect(window.rootViewController === host)
+    }
+
+    @Test("@spec CONTEXT-56: When the mobile Context drawer uses a different color scheme from its enclosing screen, the application shall apply the Ghostty-derived scheme only inside the drawer and preserve the enclosing screen's appearance when opening or closing it.", arguments: [false, true])
+    func drawerAppearanceStaysLocal(lightInspector: Bool) async throws {
+        let theme = GhosttyThemeColors(backgroundRGB: lightInspector ? .init(r: 0.98, g: 0.97, b: 0.94) : .init(r: 0.15, g: 0.16, b: 0.18),
+            foregroundRGB: lightInspector ? .init(r: 0.23, g: 0.25, b: 0.27) : .init(r: 0.92, g: 0.93, b: 0.94))
+        let expected: ColorScheme = lightInspector ? .dark : .light
+        let row = WorktreePanes(path: "/task", displayName: "Task", repoDisplayName: "graftty", displayBranch: "task",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: nil)
+        var underlyingScheme: ColorScheme?
+        var openContext: (() -> Void)?
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        window.overrideUserInterfaceStyle = lightInspector ? .dark : .light
+        let host = UIHostingController(rootView: ContextAppearanceProbe { scheme, open in
+            underlyingScheme = scheme
+            openContext = open
+        }
+            .modifier(MobileWorktreeContextDrawer(context: SidebarWorktreeContext(worktree: row), theme: theme))
+            .accessibilityElement(children: .contain).environment(\.accessibilityEnabled, true))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        try await waitUntil { openContext != nil && underlyingScheme == expected }
+        let open = try #require(openContext)
+        open()
+        try await waitUntil { accessibilityObjects(in: host.view).contains { $0.accessibilityLabel == "Close context" } }
+        try await Task.sleep(for: .milliseconds(350))
+        #expect(underlyingScheme == expected, "The drawer must not change its enclosing screen's color scheme")
+        let close = try #require(accessibilityObjects(in: host.view).first { $0.accessibilityLabel == "Close context" })
+        try #require(close.accessibilityActivate())
+        try await Task.sleep(for: .milliseconds(350))
+        #expect(underlyingScheme == expected)
+    }
+
+    private struct ContextAppearanceProbe: View {
+        @Environment(\.colorScheme) private var scheme
+        @Environment(\.openWorktreeContext) private var open
+        let report: (ColorScheme, (() -> Void)?) -> Void
+
+        var body: some View {
+            Color.clear
+                .onAppear { report(scheme, open) }
+                .onChange(of: scheme) { _, _ in report(scheme, open) }
+        }
     }
 
     @Test("@spec CONTEXT-11: When the selected iPad worktree has no focused terminal pane, the application shall retain an accessible icon-only Context action that opens its worktree context without starting or focusing a pane.", .timeLimit(.minutes(1)))

@@ -60,7 +60,75 @@ struct WorktreeContextPanelTests {
         #expect(frames[1].height > panelHeight / 3, "The timeline keeps the remaining height")
     }
 
-    private static func context(path: String, decisions: Int = 1) -> SidebarWorktreeContext {
+    @Test("@spec CONTEXT-54: When Context shows an empty or populated brief on Mac or mobile, the application shall align its content to the top of its allocated area and let a short brief use its natural height by default.", arguments: [false, true])
+    func briefStartsAtTop(hasBrief: Bool) async throws {
+        let context = Self.context(path: "/task", decisions: 0, hasBrief: hasBrief)
+        func panel(height: Double) -> some View {
+            WorktreeContextPanel(context: context, foreground: .white, secondary: .white.opacity(0.65), onClose: {})
+                .frame(width: 320, height: height).background(.black).environment(\.colorScheme, .dark)
+        }
+        let (window, host) = try await Self.host(panel(height: 700), height: 700)
+        defer { window.close() }
+        for height in [700.0, 1100.0] {
+            host.rootView = panel(height: height)
+            window.setContentSize(.init(width: 320, height: height))
+            try await Self.settle(host)
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let scale = Double(bitmap.pixelsHigh) / height
+            let firstTextY = (Int(70 * scale)..<Int(400 * scale)).first { y in
+                (Int(24 * scale)..<Int(290 * scale)).contains { x in
+                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return false }
+                    return color.redComponent > 0.8 && color.greenComponent > 0.8 && color.blueComponent > 0.8
+                }
+            }
+            #expect(Double(try #require(firstTextY)) / scale < 140, "Brief text must start immediately under the header")
+            if !hasBrief {
+                let timeline = try #require(Self.find(NSScrollView.self, in: host).first)
+                let frame = timeline.convert(timeline.bounds, to: host)
+                #expect(frame.minY < 300, "The empty brief must not reserve half of a tall panel")
+            }
+        }
+    }
+
+    @Test func contextUsesOpaqueThemeSurface() async throws {
+        let themes: [(String, GhosttyThemeColors)] = [
+            ("dark", .init(backgroundRGB: .init(r: 0.145, g: 0.161, b: 0.184),
+                foregroundRGB: .init(r: 0.92, g: 0.93, b: 0.94))),
+            ("light", .init(backgroundRGB: .init(r: 0.98, g: 0.97, b: 0.94),
+                foregroundRGB: .init(r: 0.23, g: 0.25, b: 0.27))),
+            ("warm", .init(backgroundRGB: .init(r: 0.16, g: 0.15, b: 0.13),
+                foregroundRGB: .init(r: 0.90, g: 0.86, b: 0.76)))
+        ]
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("graftty-context-sidebar-renders")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for (name, theme) in themes {
+            for hasBrief in [false, true] {
+                let panel = WorktreeContextPanel(context: Self.context(path: "/task", decisions: 0, hasBrief: hasBrief),
+                    theme: theme, onClose: {})
+                    .frame(width: 360, height: 800).background(.red)
+                    .environment(\.colorScheme, theme.isDark ? .dark : .light)
+                let (window, host) = try await Self.host(panel, height: 800, width: 360)
+                defer { window.close() }
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let scale = Double(bitmap.pixelsWide) / 360
+                // Compare the cached sRGB channel values without applying a second profile conversion.
+                let fill = try #require(bitmap.colorAt(x: Int(8 * scale), y: Int(70 * scale)))
+                let expected = theme.contextBackgroundRGB
+                #expect(abs(fill.redComponent - expected.r) < 0.01)
+                #expect(abs(fill.greenComponent - expected.g) < 0.01)
+                #expect(abs(fill.blueComponent - expected.b) < 0.01)
+                #expect(fill.alphaComponent > 0.99)
+                let edge = try #require(bitmap.colorAt(x: 0, y: Int(70 * scale)))
+                #expect(abs(edge.redComponent - fill.redComponent) > 0.02, "The inspector must have a visible leading edge")
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: directory.appendingPathComponent("\(name)-\(hasBrief ? "brief" : "empty").png"))
+            }
+        }
+    }
+
+    private static func context(path: String, decisions: Int = 1, hasBrief: Bool = true) -> SidebarWorktreeContext {
         let start = Date(timeIntervalSince1970: 1_792_411_200)
         var history = WorktreeHistory(origin: .init(date: start, source: .user))
         for index in 0..<40 {
@@ -71,12 +139,12 @@ struct WorktreeContextPanelTests {
             at: start)
         return SidebarWorktreeContext(worktree: WorktreePanes(path: path, displayName: "Task", repoDisplayName: "Project",
             displayBranch: "task", state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
-            layout: nil, sidebar: .init(id: path, projectID: "p", brief: brief, history: history)))
+            layout: nil, sidebar: .init(id: path, projectID: "p", brief: hasBrief ? brief : nil, history: history)))
     }
 
-    private static func host<V: View>(_ view: V, height: Double) async throws -> (window: NSWindow, host: NSHostingView<V>) {
+    private static func host<V: View>(_ view: V, height: Double, width: Double = 320) async throws -> (window: NSWindow, host: NSHostingView<V>) {
         let host = NSHostingView(rootView: view)
-        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 320, height: height),
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: width, height: height),
             styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host

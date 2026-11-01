@@ -4756,6 +4756,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CONTEXT-52** When a structured question reply appears in the shared Mac and mobile timeline, the application shall display each question as secondary text above its readable answer without provider wrappers or transport identifiers, wrapping within the available width.
 
+### CONTEXT-53.x
+
+**CONTEXT-53** While Context is visible on Mac or mobile, the application shall use an opaque inspector background blended from the Ghostty background toward its foreground, with greater separation for dark themes than light themes, and a fine foreground-derived edge.
+
+### CONTEXT-54.x
+
+**CONTEXT-54** When Context shows an empty or populated brief on Mac or mobile, the application shall align its content to the top of its allocated area and let a short brief use its natural height by default.
+
+### CONTEXT-55.x
+
+**CONTEXT-55** While Context is open on desktop, the application shall reserve its width alongside the terminal below the breadcrumb, shrink the terminal when it opens, and restore that width when it closes without overlaying terminal content.
+
+### CONTEXT-56.x
+
+**CONTEXT-56** When the mobile Context drawer uses a different color scheme from its enclosing screen, the application shall apply the Ghostty-derived scheme only inside the drawer and preserve the enclosing screen's appearance when opening or closing it.
+
 ## MEM — MEM
 
 ### MEM-1.x

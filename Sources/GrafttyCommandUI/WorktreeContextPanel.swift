@@ -4,6 +4,7 @@ import SwiftUI
 /// A pinned brief above an independently scrolling, bottom-anchored timeline.
 public struct WorktreeContextPanel: View {
     public let context: SidebarWorktreeContext
+    private let theme: GhosttyThemeColors
     private let foreground: Color
     private let secondary: Color
     private let onClose: () -> Void
@@ -14,11 +15,12 @@ public struct WorktreeContextPanel: View {
 
     private static let latestID = "worktree.context.timeline.latest"
 
-    public init(context: SidebarWorktreeContext, foreground: Color = .primary,
-                secondary: Color = .secondary, collapsesBrief: Bool = false, onClose: @escaping () -> Void) {
+    public init(context: SidebarWorktreeContext, theme: GhosttyThemeColors = .fallback, foreground: Color? = nil,
+                secondary: Color? = nil, collapsesBrief: Bool = false, onClose: @escaping () -> Void) {
         self.context = context
-        self.foreground = foreground
-        self.secondary = secondary
+        self.theme = theme
+        self.foreground = foreground ?? theme.foreground
+        self.secondary = secondary ?? theme.foreground.opacity(0.68)
         self.onClose = onClose
         _follow = State(initialValue: TimelineFollow(collapsesBrief: collapsesBrief))
     }
@@ -26,7 +28,7 @@ public struct WorktreeContextPanel: View {
     public var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            theme.contextSeparator.frame(height: 1)
             GeometryReader { geometry in
                 let limit = max(0, geometry.size.height - HorizontalResizeDivider.thickness - 96)
                 let chosenHeight = requestedBriefHeight.map { min(limit, max(min(96, limit), $0)) }
@@ -45,6 +47,10 @@ public struct WorktreeContextPanel: View {
             }
         }
         .foregroundStyle(foreground)
+        .background(theme.contextBackground)
+        .overlay(alignment: .leading) {
+            theme.contextSeparator.frame(width: 1).allowsHitTesting(false)
+        }
         .onChange(of: context.item.worktreeIdentity) { _, _ in
             follow = TimelineFollow(collapsesBrief: follow.collapsesBrief)
             requestedBriefHeight = nil
@@ -54,8 +60,8 @@ public struct WorktreeContextPanel: View {
 
     private var header: some View {
         HStack {
-            Label("Context", systemImage: "text.alignleft")
-                .font(.callout).fontWeight(.medium)
+            Label("Context", systemImage: "sidebar.right")
+                .font(.callout).fontWeight(.semibold)
             Spacer()
             Button(action: onClose) {
                 Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
@@ -63,7 +69,7 @@ public struct WorktreeContextPanel: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Close context")
             .accessibilityIdentifier("worktree.context.close")
-        }.padding(.horizontal, 20).padding(.vertical, 8)
+        }.padding(.horizontal, 20).padding(.vertical, 3)
     }
 
     @ViewBuilder private func pinnedBrief(cap: CGFloat) -> some View {
@@ -73,12 +79,14 @@ public struct WorktreeContextPanel: View {
             let brief = WorktreeBriefContent(context: context, foreground: foreground, secondary: secondary,
                 includesHistory: false)
                 .padding(.horizontal, 24).padding(.vertical, 20)
+                .fixedSize(horizontal: false, vertical: true)
             // The brief scrolls on its own only when it is taller than its cap.
-            ViewThatFits(in: .vertical) {
-                brief
-                ScrollView { brief }
+            CappedBriefLayout(maxHeight: max(0, cap)) {
+                ViewThatFits(in: .vertical) {
+                    brief
+                    ScrollView { brief }
+                }
             }
-            .frame(maxHeight: max(0, cap))
             .accessibilityIdentifier("worktree.context.brief")
         }
     }
@@ -150,6 +158,22 @@ public struct WorktreeContextPanel: View {
         }
         // Another worktree gets a fresh scroll view, so it opens at its own latest event.
         .id(context.item.worktreeIdentity)
+    }
+}
+
+/// Measures before placement so the timeline opens with its final viewport height.
+private struct CappedBriefLayout: Layout {
+    let maxHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let ideal = subviews[0].sizeThatFits(.init(width: proposal.width, height: nil))
+        return CGSize(width: proposal.width ?? ideal.width,
+            height: min(ideal.height, maxHeight, proposal.height ?? maxHeight))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews[0].place(at: bounds.origin, anchor: .topLeading,
+            proposal: .init(width: bounds.width, height: bounds.height))
     }
 }
 
