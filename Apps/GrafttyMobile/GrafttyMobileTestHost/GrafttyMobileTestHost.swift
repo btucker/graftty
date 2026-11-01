@@ -86,7 +86,6 @@ private struct IPadWorkspaceFixture: View {
             IPadDetailColumn(host: host, appState: state, paneEnvironment: .empty,
                 ghosttyCommandContext: .init(keybindingSet: .loading, perform: { _ in }, isEnabled: { _ in false }),
                 onSelectPane: { state.focusedPaneId = $0 }, onBackToWorktrees: {})
-                .navigationBarTitleDisplayMode(.inline)
                 .overlay(alignment: .bottom) {
                     Text(state.focusedPaneId ?? "none").accessibilityIdentifier("workspace.focus")
                         .allowsHitTesting(false)

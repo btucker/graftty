@@ -13,19 +13,21 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         }
     }
 
-    /// @spec IPAD-1.31: While an iPad workspace is visible, the application shall title the navigation bar with the worktree's emoji and name on its emoji wash, offer its agents from the title menu, gather Worktree context, previews, the focused pane's browser, the terminal drawer toggle, and split actions in one toolbar group, show no drawer bar while the drawer is closed, and show Back to worktrees only while the sidebar is hidden.
+    /// @spec IPAD-1.31: While an iPad workspace is visible, the application shall title the navigation bar inline with the worktree's name on its emoji wash, offer its agents from the title menu, keep the summary and tabs directly under the navigation bar, gather Worktree context, previews, the focused pane's browser, the terminal drawer toggle, and split actions in one toolbar group, show no drawer bar while the drawer is closed, and show Back to worktrees only while the sidebar is hidden.
     func testWorkspaceLeadsWithIdentityAndOneControlGroup() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
         let app = XCUIApplication()
         app.launchArguments = ["--ipad-workspace-fixture"]
         app.launch()
         defer { app.terminate() }
-        let navigation = app.navigationBars["🧭 Workspace"]
+        let navigation = app.navigationBars["Workspace"]
         XCTAssertTrue(navigation.waitForExistence(timeout: 10), app.debugDescription)
-        // The navigation bar is identified by its title: the worktree's emoji and name.
+        // The navigation bar is identified by its title, the worktree's name.
         let alpha = app.buttons["workspace.tab.alpha"]
         XCTAssertTrue(alpha.waitForExistence(timeout: 5))
         XCTAssertLessThan(navigation.frame.maxY, alpha.frame.minY + 1, "Tabs are not below the titled navigation bar")
+        XCTAssertLessThan(alpha.frame.minY - navigation.frame.maxY, 30,
+            "Empty space pushes the header down: tabs \(alpha.frame) under navigation \(navigation.frame)")
         XCTAssertTrue(navigation.buttons["worktree.context.open"].exists, "Worktree context is not in the toolbar group")
         XCTAssertTrue(navigation.buttons["workspace.more"].exists, "Split actions are not in the toolbar's More menu")
         XCTAssertFalse(navigation.buttons["Split Right"].exists, "Split actions still sit directly in the toolbar")
@@ -49,11 +51,11 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         app.launchArguments = ["--ipad-workspace-fixture"]
         app.launch()
         defer { app.terminate() }
-        let navigation = app.navigationBars["🧭 Workspace"]
+        let navigation = app.navigationBars["Workspace"]
         XCTAssertTrue(navigation.waitForExistence(timeout: 10))
         let back = navigation.buttons["worktree.history.back"]
         let forward = navigation.buttons["worktree.history.forward"]
-        let title = navigation.staticTexts["🧭 Workspace"].exists ? navigation.staticTexts["🧭 Workspace"] : navigation.buttons["🧭 Workspace"]
+        let title = navigation.staticTexts["Workspace"].exists ? navigation.staticTexts["Workspace"] : navigation.buttons["Workspace"]
         XCTAssertTrue(back.waitForExistence(timeout: 5) && forward.exists && title.exists, app.debugDescription)
         XCTAssertLessThan(back.frame.midX, forward.frame.midX)
         XCTAssertLessThan(forward.frame.maxX, title.frame.minX + 1, "History buttons are not left of the name")
@@ -71,7 +73,7 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         let beta = app.buttons["workspace.tab.beta"]
         XCTAssertTrue(alpha.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(beta.exists)
-        let navigation = app.navigationBars["🧭 Workspace"]
+        let navigation = app.navigationBars["Workspace"]
         XCTAssertTrue(navigation.waitForExistence(timeout: 5))
         XCTAssertGreaterThanOrEqual(beta.frame.minY, navigation.frame.maxY - 1,
             "Tabs are underneath navigation chrome: \(beta.frame), \(navigation.frame)")

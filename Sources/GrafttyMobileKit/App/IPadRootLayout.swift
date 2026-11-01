@@ -1541,7 +1541,10 @@ struct IPadDetailColumn: View {
             }
             // IPAD-1.31: the system title carries the worktree's name; its
             // menu jumps to the worktree's agents and shells.
-            .navigationTitle(Self.title(for: worktree))
+            // Inline and centered: a large title would open a scroll-linked
+            // gap above the tabs. The watermark already shows the emoji.
+            .navigationTitle(worktree.displayName)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbarTitleMenu {
                 let overview = MobileWorktreeOverview(worktree: worktree, context: appState.sidebarNavigation.worktreeContext(worktree))
                 ForEach(overview.agents) { agent in
@@ -1567,11 +1570,6 @@ struct IPadDetailColumn: View {
                 systemImage: "list.bullet.indent"
             )
         }
-    }
-
-    static func title(for worktree: WorktreePanes) -> String {
-        if case .emoji(let emoji) = worktree.iconIdentity { return "\(emoji) \(worktree.displayName)" }
-        return worktree.displayName
     }
 
     private func canNavigateHistory(forward: Bool) -> Bool {
