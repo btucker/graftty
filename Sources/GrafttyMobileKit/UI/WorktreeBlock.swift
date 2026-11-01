@@ -208,6 +208,10 @@ struct WorktreeRowContent: View {
                     .foregroundStyle(typeIconStyle)
                 }
             }
+            .alignmentGuide(.firstTextBaseline) { dimensions in
+                let font = UIFont.systemFont(ofSize: 11, weight: .semibold)
+                return dimensions[VerticalAlignment.center] + (font.ascender + font.descender) / 2
+            }
     }
 
     /// Themed dim for closed/creating/deleting (falls back to system

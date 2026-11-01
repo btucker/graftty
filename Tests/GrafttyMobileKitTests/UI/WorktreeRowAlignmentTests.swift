@@ -82,9 +82,30 @@ struct WorktreeRowAlignmentTests {
         host.rootView = content(reference, opening: false)
         try await Task.sleep(for: .milliseconds(50))
         host.view.layoutIfNeeded()
-        let normalTitle = try #require(accessibilityObjects(in: host.view).first { $0.accessibilityLabel == row.displayName })
         let normalBounds = try #require(accessibilityObjects(in: host.view).compactMap { $0 as? RowBoundsView }.first)
-        #expect(abs(normalTitle.accessibilityFrame.minY - titleFrame.minY) < 1)
+        let normalImage = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        // UIKit can merge the only accessible Text into its row when the
+        // decorative identity replaces the spinner. Its accessibility frame
+        // then covers the row, not the glyphs. Compare the rendered title area.
+        let localTitle = host.view.convert(titleFrame, from: window.screen.coordinateSpace)
+        let rowFrame = normalBounds.convert(normalBounds.bounds, to: host.view)
+        let titleRegion = CGRect(x: localTitle.minX, y: rowFrame.minY,
+            width: localTitle.width, height: rowFrame.height)
+        func titlePixels(_ image: UIImage) throws -> Data {
+            let region = titleRegion.applying(CGAffineTransform(scaleX: image.scale, y: image.scale)).integral
+            let crop = try #require(image.cgImage?.cropping(to: region))
+            var pixels = [UInt8](repeating: 0, count: crop.width * crop.height * 4)
+            try pixels.withUnsafeMutableBytes { buffer in
+                let context = try #require(CGContext(data: buffer.baseAddress, width: crop.width, height: crop.height,
+                    bitsPerComponent: 8, bytesPerRow: crop.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
+            }
+            return Data(pixels)
+        }
+        #expect(try titlePixels(image) == titlePixels(normalImage))
         #expect(abs(normalBounds.bounds.height - rowHeight) < 1)
     }
 
