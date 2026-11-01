@@ -46,6 +46,8 @@ struct CompactAgentBar: View {
             Spacer(minLength: 0)
             if selectedAgent == nil, let target = MobileWorkspaceStore.previousAgent(lastAgent, in: worktree) {
                 Button { onSelect(target) } label: { Label("Back to agent", systemImage: "arrow.uturn.backward") }
+            } else if terminals.isEmpty, let onNewTerminal {
+                Button(action: onNewTerminal) { Label("Terminal", systemImage: "terminal") }
             } else {
                 Menu {
                     ForEach(terminals, id: \.sessionName) { terminal in

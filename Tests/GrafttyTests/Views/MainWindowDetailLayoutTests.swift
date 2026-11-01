@@ -2,13 +2,14 @@ import AppKit
 import SwiftUI
 import Testing
 import GrafttyKit
+import GrafttyProtocol
 @testable import Graftty
 
 @MainActor
 @Suite("Main window detail layout")
 struct MainWindowDetailLayoutTests {
     enum ContentState: CaseIterable, Sendable {
-        case noSelection, noTerminal, remoteUnavailable, terminal
+        case noSelection, noTerminal, remoteUnavailable, terminal, workspace
     }
 
     @Test("@spec LAYOUT-1.12: While the macOS window detail is visible, the application shall keep its breadcrumb header at the top and reserve the remaining height for content, including when no terminal pane is open and after resizing.",
@@ -19,7 +20,7 @@ struct MainWindowDetailLayoutTests {
         let contentProbe = NSView()
         let manager = TerminalManager(socketPath: "/tmp/detail-layout-test-unused.sock")
         let layout = MainWindowDetailLayout {
-            BreadcrumbBar(repoName: nil, worktreeDisplayName: nil, worktreeEmoji: nil,
+            BreadcrumbBar(repoName: "graftty", worktreeDisplayName: "agent-workspace", worktreeEmoji: nil,
                 worktreePath: nil, branchName: nil, isHomeCheckout: false,
                 prInfo: nil, theme: .fallback, sidebarHidden: sidebarHidden,
                 canGoBack: false, canGoForward: false, historyItems: [], currentTarget: nil,
@@ -50,6 +51,66 @@ struct MainWindowDetailLayoutTests {
         }
     }
 
+    @Test("@spec LAYOUT-1.13: While agent tabs are visible, the application shall keep Back, Forward, and the repository/worktree breadcrumb in a separate visible window header above the tabs.", arguments: [false, true])
+    func workspaceKeepsWindowNavigation(sidebarHidden: Bool) async throws {
+        _ = NSApplication.shared
+        let headerProbe = NSView(), contentProbe = NSView()
+        let manager = TerminalManager(socketPath: "/tmp/workspace-navigation-test-unused.sock")
+        let root = NavigationSplitView(columnVisibility: .constant(sidebarHidden ? .detailOnly : .all)) {
+            Text("Worktrees").frame(minWidth: 220)
+        } detail: {
+            MainWindowDetailLayout {
+                BreadcrumbBar(repoName: "graftty", worktreeDisplayName: "agent-workspace", worktreeEmoji: nil,
+                    worktreePath: "/repo/agent-workspace", branchName: "agent-workspace", isHomeCheckout: false,
+                    prInfo: nil, theme: .fallback, sidebarHidden: sidebarHidden,
+                    canGoBack: true, canGoForward: true,
+                    historyItems: [.init(target: .local("/repo/agent-workspace"), repoName: "graftty",
+                        worktreeName: "agent-workspace", branchName: "agent-workspace", remoteMacName: nil)],
+                    currentTarget: .local("/repo/agent-workspace"),
+                    onGoBack: {}, onGoForward: {}, onSelectHistory: { _ in }, onRefreshPR: {}, onToggleContext: {})
+                    .background(FrameProbe(view: headerProbe))
+            } content: {
+                content(state: .workspace, manager: manager)
+                    .background(FrameProbe(view: contentProbe))
+            }
+            .ignoresSafeArea(.container, edges: .top)
+        }
+        .environment(\.colorScheme, .dark)
+        let hosting = NSHostingView(rootView: root)
+        hosting.sizingOptions = []
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.contentView = hosting
+        defer { window.orderOut(nil); window.contentView = nil }
+        window.orderFront(nil)
+        try await Task.sleep(for: .milliseconds(100))
+        hosting.layoutSubtreeIfNeeded()
+        let header = headerProbe.convert(headerProbe.bounds, to: hosting)
+        let workspace = contentProbe.convert(contentProbe.bounds, to: hosting)
+        #expect(header.height >= 30)
+        #expect(header.minY >= hosting.bounds.minY - 1)
+        #expect(workspace.minY >= header.maxY - 1)
+        let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let scale = CGFloat(bitmap.pixelsWide) / hosting.bounds.width
+        var visibleHeaderPixels = 0
+        for x in Int(header.minX * scale)..<min(bitmap.pixelsWide, Int(header.maxX * scale)) {
+            for y in max(0, Int(header.minY * scale))..<min(bitmap.pixelsHigh, Int(header.maxY * scale)) {
+                if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                   color.redComponent > 0.5 && color.greenComponent > 0.5 && color.blueComponent > 0.5 {
+                    visibleHeaderPixels += 1
+                }
+            }
+        }
+        #expect(visibleHeaderPixels > 50, "Navigation must be drawn, not merely assigned a frame beneath the titlebar")
+        if let directory = ProcessInfo.processInfo.environment["GRAFTTY_TEST_SCREENSHOT_DIR"] {
+            try #require(bitmap.representation(using: .png, properties: [:]))
+                .write(to: URL(fileURLWithPath: directory).appendingPathComponent("workspace-navigation-\(sidebarHidden ? "collapsed" : "expanded").png"))
+        }
+    }
+
     @ViewBuilder
     private func content(state: ContentState, manager: TerminalManager) -> some View {
         switch state {
@@ -64,6 +125,23 @@ struct MainWindowDetailLayoutTests {
                 description: Text("Remote Mac selected."))
         case .terminal:
             Color.black
+        case .workspace:
+            let slot = PaneSlotID(), second = PaneSlotID()
+            let worktree: WorktreeEntry = {
+                var entry = WorktreeEntry(path: "/repo/agent-workspace", branch: "agent-workspace",
+                    state: .running, splitTree: SplitTree(root: .leaf(slot)).inserting(second, at: slot, direction: .horizontal))
+                var codex = ManagedAgent(name: "Implement workspace", provider: .codex, parent: nil)
+                codex.paneSlotID = slot
+                var claude = ManagedAgent(name: "Review lifecycle", provider: .claude, parent: nil)
+                claude.paneSlotID = second
+                entry.agents = [codex, claude]
+                var layout = WorkspaceLayout<PaneSlotID>()
+                layout.addAgent(slot); layout.addAgent(second); layout.select(slot)
+                entry.workspaceLayout = layout
+                return entry
+            }()
+            WorkspaceContentView(terminalManager: manager, worktree: .constant(worktree),
+                onFocusTerminal: { _ in }, onNewTerminal: {}, onCloseTerminal: { _ in })
         }
     }
 

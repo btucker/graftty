@@ -795,7 +795,11 @@ struct SidebarView: View {
         let attention = SidebarAttentionLayout.layout(for: worktree)
         let context = contextForLocalWorktree(worktree, repo: repo, displayName: displayName)
         let isDropTarget = dropTargetWorktreeID == worktree.id
-        let groupsPanes = showsProjectRail && worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty
+        let agentSessions = Set(context.worktree.sidebarAgentLeaves.map(\.sessionName))
+        let paneLeaves = worktree.state == .running ? worktree.splitTree.allLeaves.filter {
+            worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)).map(agentSessions.contains) == true
+        } : []
+        let groupsPanes = showsProjectRail && !paneLeaves.isEmpty
         let projectID = localProjectID(repo)
         let project = projects.first { $0.id == projectID }
             ?? SidebarProject(id: projectID, repositoryID: repo.id.uuidString, name: repo.displayName)
@@ -816,7 +820,8 @@ struct SidebarView: View {
             ),
             prBadge: prBadge,
             attentionStyle: attention.worktreeCapsule,
-            attentionCount: worktree.state == .running && !worktree.splitTree.allLeaves.isEmpty ? 0 : activityCounts.attentionByWorktree[worktree.path, default: 0],
+            attentionCount: max(0, activityCounts.attentionByWorktree[worktree.path, default: 0]
+                - agentSessions.reduce(0) { $0 + activityCounts.attentionByPane[$1, default: 0] }),
             project: project, projectIconData: iconStore.iconData(for: repo),
             identityMenu: worktree.path == repo.path ? nil : { anchor in
                 WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
@@ -830,12 +835,11 @@ struct SidebarView: View {
             SleepingWorktreeIndicator(state: terminalManager.worktreeSleepState, path: worktree.path)
         }
         .contentShape(Rectangle())
-        let paneLeaves = worktree.state == .running ? worktree.splitTree.allLeaves : []
         let paneRow: (PaneSlotID) -> PaneTitleRow = { terminalID in
             let sessionName = worktree.paneSessions[terminalID]
                 .map(ZmxLauncher.sessionName(for:))
             return PaneTitleRow(
-                title: terminalManager.displayTitle(for: terminalID),
+                title: worktree.agents.first { $0.paneSlotID == terminalID }?.name ?? terminalManager.displayTitle(for: terminalID),
                 isActiveWorktree: isActive,
                 isFocusedPane: isActive
                     && worktree.focusedPaneSlotID == terminalID,
@@ -850,7 +854,6 @@ struct SidebarView: View {
                 portBindings: portBindings.bindings[terminalID] ?? [],
                 provider: worktree.agents.first { $0.paneSlotID == terminalID }?.provider.rawValue,
                 attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
-                    + (terminalID == worktree.splitTree.allLeaves.first ? activityCounts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0)
             )
         }
         let panes = ForEach(paneLeaves, id: \.self) { terminalID in
@@ -890,15 +893,15 @@ struct SidebarView: View {
         ) {
             heading
         } panes: {
-            if !worktree.agents.isEmpty {
+            if !paneLeaves.isEmpty {
                 DisclosureGroup(isExpanded: Binding(
                     get: { expandedAgentWorktrees.contains(worktree.id) },
                     set: { if $0 { expandedAgentWorktrees.insert(worktree.id) } else { expandedAgentWorktrees.remove(worktree.id) } }
                 )) {
                     panes
                 } label: {
-                    let count = worktree.agents.filter { $0.status != .closed && $0.paneSlotID.map(paneLeaves.contains) == true }.count
-                    Text("\(count) \(count == 1 ? "agent" : "agents") · \(max(0, paneLeaves.count - count)) terminals")
+                    let count = paneLeaves.count
+                    Text("\(count) \(count == 1 ? "agent" : "agents")")
                         .font(.caption).foregroundStyle(.secondary)
                 }.padding(.horizontal, 12)
                 if !expandedAgentWorktrees.contains(worktree.id), context.question != nil {
@@ -907,7 +910,7 @@ struct SidebarView: View {
             } else {
                 panes
             }
-            if (worktree.agents.isEmpty || expandedAgentWorktrees.contains(worktree.id)),
+            if (paneLeaves.isEmpty || expandedAgentWorktrees.contains(worktree.id)),
                Self.showsWorktreeQuestion(questionPaneID: context.questionPaneID,
                                           displayedPaneSessions: paneLeaves.compactMap { worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)) }) {
                 SidebarWorktreeQuestionTarget(context: context) {

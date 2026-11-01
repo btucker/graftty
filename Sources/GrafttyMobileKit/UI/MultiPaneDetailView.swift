@@ -168,12 +168,17 @@ struct MultiPaneDetailView: View {
                         HStack(spacing: 6) {
                             AgentProviderIcon(provider: worktree.agents?.first { $0.sessionName == session }?.provider)
                             Text(sessionTitle(session)).lineLimit(1)
+                                .fontWeight(group.selected == session ? .medium : .regular)
                             if let agent = worktree.agents?.first(where: { $0.sessionName == session }) {
                                 MobileAgentStatusBadge(agent: agent, hostID: host.id,
                                     needsInput: worktree.layout?.leaves.first { $0.sessionName == session }?.attentionSource == .agentStop)
                             }
                         }.padding(.horizontal, 10).frame(minHeight: 44)
-                            .background(group.selected == session ? theme.foreground.opacity(0.10) : .clear)
+                            .foregroundStyle(theme.foreground.opacity(group.selected == session ? 1 : 0.65))
+                            .overlay(alignment: .bottom) {
+                                Rectangle().fill(group.selected == session ? theme.foreground.opacity(0.55) : .clear)
+                                    .frame(height: 2)
+                            }
                     }.buttonStyle(.plain)
                         .draggable(session)
                         .contextMenu {
@@ -205,16 +210,7 @@ struct MultiPaneDetailView: View {
     }
     private var terminalDrawerHeader: some View {
         HStack {
-            Button {
-                if currentWorkspace.drawerVisible {
-                    let previous = currentWorkspace.lastAgent
-                    mutate { _ = $0.hideDrawer() }
-                    if let previous { onSelectPane(previous) }
-                } else {
-                    mutate { $0.drawerVisible = true }
-                    if let session = currentWorkspace.selectedTerminal { onSelectPane(session) }
-                }
-            } label: {
+            Button(action: toggleDrawer) {
                 Label(currentWorkspace.terminals.isEmpty ? "Terminal" : "Terminal · \(currentWorkspace.terminals.count)", systemImage: "terminal")
             }
             if currentWorkspace.drawerVisible {
@@ -248,6 +244,20 @@ struct MultiPaneDetailView: View {
             } label: { Image(systemName: "plus") }.accessibilityLabel("New terminal").disabled(!ghosttyCommandContext.isEnabled(.newSplitDown))
         }.buttonStyle(.plain).font(.callout).padding(.horizontal, 12).frame(minHeight: 44)
             .foregroundStyle(theme.foreground).background(theme.background)
+            .terminalDrawerHitArea(onToggle: toggleDrawer)
+    }
+
+    private func toggleDrawer() {
+        if currentWorkspace.drawerVisible {
+            let previous = currentWorkspace.lastAgent
+            mutate { _ = $0.hideDrawer() }
+            if let previous { onSelectPane(previous) }
+        } else {
+            var needsTerminal = false
+            mutate { needsTerminal = $0.openDrawer() }
+            if needsTerminal { ghosttyCommandContext.perform(.ghostty(.newSplitDown)) }
+            else if let session = currentWorkspace.selectedTerminal { onSelectPane(session) }
+        }
     }
 
     private func drawerResizeHandle(available: Double) -> some View {

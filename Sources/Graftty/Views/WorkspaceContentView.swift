@@ -158,6 +158,7 @@ struct WorkspaceContentView: View {
                                 HStack(spacing: 6) {
                                     AgentProviderIcon(provider: agent(tab)?.provider.rawValue)
                                     Text(title(tab)).lineLimit(1)
+                                        .fontWeight(group?.selected == tab ? .medium : .regular)
                                     if let agent = agent(tab) {
                                         AgentStatusBadge(status: agent.status.rawValue,
                                             needsInput: worktree.paneAttention[tab]?.source == .agentStop,
@@ -166,17 +167,22 @@ struct WorkspaceContentView: View {
                                     } else if worktree.paneAttention[tab] != nil {
                                         Image(systemName: "circle.fill").font(.system(size: 5)).accessibilityLabel("Needs attention")
                                     }
-                                }.padding(.horizontal, 10).padding(.vertical, 7)
-                                    .background(group?.selected == tab ? theme.foreground.opacity(0.10) : .clear)
+                                }.padding(.horizontal, 12).padding(.vertical, 9)
+                                    .foregroundStyle(theme.foreground.opacity(group?.selected == tab ? 1 : 0.65))
+                                    .overlay(alignment: .bottom) {
+                                        Rectangle().fill(group?.selected == tab ? theme.foreground.opacity(0.55) : .clear)
+                                            .frame(height: 2)
+                                    }
                             }.buttonStyle(.plain)
                                 .accessibilityAddTraits(group?.selected == tab ? .isSelected : [])
                                 .draggable(tab.id.uuidString)
                                 .contextMenu { tabMenu(tab, group: group?.id) }
                         }
+                        newAgentMenu
                     }
                 }
-                newAgentMenu
-            }.font(.system(size: 12))
+            }.font(.system(size: 13))
+                .overlay(alignment: .bottom) { theme.foreground.opacity(0.08).frame(height: 1) }
                 .onDrop(of: [UTType.text], isTargeted: nil) { providers in
                     receive(providers) { session in if let id = group?.id { mutate { $0.move(session, to: id) }; focus(session) } }
                 }
@@ -250,17 +256,7 @@ struct WorkspaceContentView: View {
 
     private var drawerHeader: some View {
         HStack(spacing: 10) {
-            Button {
-                if layout.drawerVisible {
-                    var next = layout
-                    let previous = next.hideDrawer()
-                    worktree.workspaceLayout = next
-                    if let previous { onFocusTerminal(previous) }
-                } else {
-                    mutate { $0.drawerVisible = true }
-                    if let slot = layout.selectedTerminal { focus(slot) }
-                }
-            } label: {
+            Button(action: toggleDrawer) {
                 Label(layout.terminals.isEmpty ? "Terminal" : "Terminal · \(layout.terminals.count)", systemImage: "terminal")
             }.buttonStyle(.plain).help(layout.drawerVisible ? "Hide terminal" : "Show terminal")
             if layout.drawerVisible {
@@ -287,6 +283,21 @@ struct WorkspaceContentView: View {
             }
         }.font(.system(size: 12)).padding(.horizontal, 12).frame(height: 30)
             .background(theme.foreground.opacity(0.04))
+            .terminalDrawerHitArea(onToggle: toggleDrawer)
+    }
+
+    private func toggleDrawer() {
+        var next = layout
+        if next.drawerVisible {
+            let previous = next.hideDrawer()
+            worktree.workspaceLayout = next
+            if let previous { onFocusTerminal(previous) }
+        } else {
+            let needsTerminal = next.openDrawer()
+            worktree.workspaceLayout = next
+            if needsTerminal { onNewTerminal() }
+            else if let slot = next.selectedTerminal { focus(slot) }
+        }
     }
 
     private var newAgentMenu: some View {
@@ -302,6 +313,7 @@ struct WorkspaceContentView: View {
             }
         } label: { Label("New agent", systemImage: "plus") }
             .menuStyle(.borderlessButton).fixedSize().disabled(launching)
+            .foregroundStyle(theme.foreground.opacity(0.7))
             .padding(.horizontal, 8)
     }
 

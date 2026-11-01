@@ -6,6 +6,23 @@ import GrafttyProtocol
 
 @MainActor
 struct BreadcrumbBarTests {
+    @Test("@spec LAYOUT-1.3: While a worktree is selected, the application shall show its repository and worktree as a breadcrumb above the agent tabs, keeping the full branch name and filesystem path in hover help instead of the navigation label.")
+    func branchDetailDoesNotCompeteWithAgentTabs() throws {
+        func bar(_ branch: String) -> BreadcrumbBar {
+            BreadcrumbBar(repoName: "Project", worktreeDisplayName: "analytics-dashboard", worktreeEmoji: nil,
+                worktreePath: "/repo/.worktrees/analytics-dashboard", branchName: branch, isHomeCheckout: false,
+                prInfo: nil, theme: .fallback, sidebarHidden: false, canGoBack: true, canGoForward: false,
+                historyItems: [], currentTarget: nil, onGoBack: {}, onGoForward: {}, onSelectHistory: { _ in }, onRefreshPR: {})
+        }
+        func render(_ bar: BreadcrumbBar) throws -> Data {
+            let image = try #require(ImageRenderer(content: bar.frame(width: 900, height: 44)).cgImage)
+            return try #require(image.dataProvider?.data) as Data
+        }
+        #expect(try render(bar("main")) == render(bar("CARP-5794-launch-kpis-traffic-by-source")))
+        #expect(bar("main").currentLocationAccessibilityValue.contains("Branch main"))
+        #expect(bar("main").currentLocationHelp == "/repo/.worktrees/analytics-dashboard\nBranch main")
+    }
+
     @Test("@spec LAYOUT-1.6: When the breadcrumb displays a selected worktree, the application shall show its project icon for the home checkout or its assigned emoji for a linked worktree before its name, using the remote snapshot identity without falling back to a local worktree identity.")
     func selectedWorktreeEmoji() {
         #expect(BreadcrumbBar.selectedWorktreeEmoji(localEmoji: "🌲", remoteWorktree: nil) == "🌲")

@@ -126,17 +126,21 @@ public struct SidebarPaneTitleRow<TitleLayout: View>: View {
 
     public var body: some View {
         HStack(alignment: alignment, spacing: SidebarPaneLayout.markerSpacing) {
-            if attentionCount > 0 {
-            SidebarPaneMarker(
-                attentionCount: attentionCount,
-                isFocused: title.isFocusedPane,
-                arrowColor: title.theme?.paneArrow(
-                    isFocusedPane: title.isFocusedPane,
-                    isActiveWorktree: title.isActiveWorktree
-                ) ?? .secondary
-            )
-            } else {
+            if provider != nil {
                 AgentProviderIcon(provider: provider, size: 14)
+                    .foregroundStyle(title.theme?.foreground ?? .secondary)
+            }
+            if attentionCount > 0 {
+                SidebarPaneMarker(
+                    attentionCount: attentionCount,
+                    isFocused: title.isFocusedPane,
+                    arrowColor: title.theme?.paneArrow(
+                        isFocusedPane: title.isFocusedPane,
+                        isActiveWorktree: title.isActiveWorktree
+                    ) ?? .secondary
+                )
+            } else if provider == nil {
+                AgentProviderIcon(provider: nil, size: 14)
                     .foregroundStyle(title.theme?.foreground ?? .secondary)
             }
             if let attentionStyle = title.attentionStyle {

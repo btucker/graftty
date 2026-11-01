@@ -498,10 +498,13 @@ struct RemoteMacsSection: View {
         let identity = RemoteMacIdentity(remoteMac)
         let isActive = selectedRemoteIdentity == identity
             && selectedRemoteWorktreePath == worktree.path
-        let groupsPanes = !showsMacHierarchy && worktree.layout?.leaves.isEmpty == false
+        let agentLeaves = worktree.sidebarAgentLeaves
+        let groupsPanes = !showsMacHierarchy && !agentLeaves.isEmpty
         let context = contextForWorktree(worktree)
         let reportPane = SidebarProjection.attentionPaneRoute(for: context.item, in: worktree)
-        let questionPane = context.question == nil ? nil : reportPane
+        let questionPane = context.question == nil ? nil : reportPane.flatMap { route in
+            agentLeaves.contains { $0.sessionName == route } ? route : nil
+        }
         let pending = context.pending
         let counts = SidebarActivityCounts(items: SidebarProjection.activity([worktree]).filter { raw in
             pending.contains { item in
@@ -529,7 +532,8 @@ struct RemoteMacsSection: View {
                     source: worktree.attentionSource
                 )
             },
-            attentionCount: worktree.layout?.leaves.isEmpty == false ? 0 : counts.attentionByWorktree[worktree.path, default: 0],
+            attentionCount: max(0, counts.attentionByWorktree[worktree.path, default: 0]
+                - agentLeaves.reduce(0) { $0 + counts.attentionByPane[$1.sessionName, default: 0] }),
             project: project, projectIconData: projectIcons[projectID],
             reportButton: reportController.map { SidebarReportButton(controller: $0, context: context, theme: theme) },
             brief: context.brief
@@ -537,8 +541,8 @@ struct RemoteMacsSection: View {
         .frame(minHeight: showsMacHierarchy ? 0 : (groupsPanes ? 28 : 44))
         .contentShape(Rectangle())
         let panes = Group {
-            if let layout = worktree.layout {
-                ForEach(layout.leaves, id: \.sessionName) { leaf in
+            if !agentLeaves.isEmpty {
+                ForEach(agentLeaves, id: \.sessionName) { leaf in
                     Button {
                         onSelectRemotePane(
                             remoteMac,
@@ -547,7 +551,7 @@ struct RemoteMacsSection: View {
                         )
                     } label: {
                         PaneTitleRow(
-                            title: leaf.title,
+                            title: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.name ?? leaf.title,
                             isActiveWorktree: isActive,
                             isFocusedPane: isActive
                                 && selectedRemotePaneSessionName == leaf.sessionName,
@@ -561,8 +565,7 @@ struct RemoteMacsSection: View {
                             },
                             portBindings: (worktree.origin?.relayDepth ?? 0) == 0 ? worktree.portBindings?[leaf.sessionName] ?? [] : [],
                             provider: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.provider,
-                            attentionCount: counts.attentionByPane[leaf.sessionName, default: 0]
-                                + (leaf.sessionName == layout.leaves.first?.sessionName ? counts.unassignedAttentionByWorktree[worktree.path, default: 0] : 0),
+                            attentionCount: counts.attentionByPane[leaf.sessionName, default: 0],
                             onOpenPort: { binding in
                                 Task {
                                     do {

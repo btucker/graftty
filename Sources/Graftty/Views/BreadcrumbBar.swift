@@ -87,10 +87,10 @@ struct BreadcrumbBar: View {
                     .foregroundColor(theme.foreground.opacity(0.8))
             }
         }
-        .font(.callout)
+        .font(.system(size: 12))
         .padding(.leading, sidebarHidden ? Self.collapsedInset : Self.expandedInset)
         .padding(.trailing, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(theme.background)
         // Follow NavigationSplitView's column slide.
         .animation(.easeInOut(duration: 0.25), value: sidebarHidden)
@@ -171,12 +171,6 @@ struct BreadcrumbBar: View {
                 identityView
                 worktreeLabel(worktreeDisplayName)
             }
-            if let branchName {
-                Text("(\(branchName))")
-                    .font(.caption)
-                    .foregroundColor(theme.foreground.opacity(0.55))
-                    .padding(.leading, 2)
-            }
 
             if repoName == nil && worktreeDisplayName == nil {
                 Text("Recent Worktrees")
@@ -190,7 +184,7 @@ struct BreadcrumbBar: View {
     var identityView: WorktreeIdentityView {
         WorktreeIdentityView(identity: iconIdentity,
             project: project ?? SidebarProject(id: worktreePath ?? "", repositoryID: worktreePath ?? "", name: repoName ?? ""),
-            imageData: projectIconData, size: 18)
+            imageData: projectIconData, size: 14)
     }
 
     var iconIdentity: WorktreeIconIdentity {
@@ -205,16 +199,12 @@ struct BreadcrumbBar: View {
     private func worktreeLabel(_ name: String) -> some View {
         Text(name)
             .italic(isHomeCheckout)
-            .fontWeight(isHomeCheckout ? .regular : .medium)
-            .foregroundColor(theme.foreground)
-            .help(worktreePath ?? "")
-            .overlay(underline, alignment: .bottom)
+            .fontWeight(.regular)
+            .foregroundColor(theme.foreground.opacity(0.8))
+            .help(currentLocationHelp)
     }
 
-    private var underline: some View {
-        Rectangle()
-            .fill(theme.foreground.opacity(0.3))
-            .frame(height: 0.5)
-            .offset(y: 1)
+    var currentLocationHelp: String {
+        [worktreePath, branchName.map { "Branch \($0)" }].compactMap { $0 }.joined(separator: "\n")
     }
 }

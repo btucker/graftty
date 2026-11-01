@@ -23,7 +23,7 @@ public struct AgentProviderIcon: View {
     }
 
     private static func load(_ name: String) -> Image? {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "png") else { return nil }
+        guard let url = CommandUIResourceBundle.bundle?.url(forResource: name, withExtension: "png") else { return nil }
         #if os(macOS)
         guard let image = NSImage(contentsOf: url) else { return nil }
         return Image(nsImage: image)

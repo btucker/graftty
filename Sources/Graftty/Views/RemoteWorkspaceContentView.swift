@@ -53,14 +53,7 @@ struct RemoteWorkspaceContentView: View {
                         }
                 }
                 HStack {
-                    Button {
-                        if layout.drawerVisible {
-                            if let previous = workspace?.hideDrawer() { select(previous) }
-                        } else {
-                            workspace?.drawerVisible = true
-                            if let selected = layout.selectedTerminal { select(selected) }
-                        }
-                    } label: { Label("Terminal", systemImage: "terminal") }
+                    Button(action: toggleDrawer) { Label("Terminal", systemImage: "terminal") }
                     if layout.drawerVisible {
                         Menu(layout.selectedTerminal.map(title) ?? "No terminals") {
                             ForEach(layout.terminals, id: \.self) { session in
@@ -75,12 +68,9 @@ struct RemoteWorkspaceContentView: View {
                         }.menuStyle(.borderlessButton).fixedSize().draggable(layout.selectedTerminal ?? "")
                     }
                     Spacer()
-                    Button {
-                        if let target = focused ?? viewer.splitTree.allLeaves.first {
-                            viewer.performWorkspaceCommand(.split(.down), on: target)
-                        }
-                    } label: { Image(systemName: "plus") }.help("New terminal")
+                    Button(action: newTerminal) { Image(systemName: "plus") }.help("New terminal")
                 }.buttonStyle(.plain).font(.caption).padding(.horizontal, 12).frame(height: 30)
+                    .terminalDrawerHitArea(onToggle: toggleDrawer)
                 if layout.drawerVisible, let session = layout.selectedTerminal,
                    let leaf = worktree.layout?.leaves.first(where: { $0.sessionName == session }) {
                     surface(.leaf(sessionName: session, title: leaf.title, attentionText: leaf.attentionText,
@@ -225,6 +215,7 @@ struct RemoteWorkspaceContentView: View {
                             HStack(spacing: 6) {
                                 AgentProviderIcon(provider: worktree.agents?.first { $0.sessionName == session }?.provider)
                                 Text(title(session)).lineLimit(1)
+                                    .fontWeight(group.selected == session ? .medium : .regular)
                                 if let agent = worktree.agents?.first(where: { $0.sessionName == session }) {
                                     AgentStatusBadge(status: agent.status,
                                         needsInput: worktree.layout?.leaves.first { $0.sessionName == session }?.attentionSource == .agentStop,
@@ -232,7 +223,12 @@ struct RemoteWorkspaceContentView: View {
                                         disconnected: slot(session).map { terminalManager.attachmentFailures[$0] != nil } ?? false,
                                         processObservation: agent.processObservation)
                                 }
-                            }.padding(8).background(group.selected == session ? Color.primary.opacity(0.1) : .clear)
+                            }.padding(.horizontal, 12).padding(.vertical, 9)
+                                .foregroundStyle(terminalManager.theme.foreground.opacity(group.selected == session ? 1 : 0.65))
+                                .overlay(alignment: .bottom) {
+                                    Rectangle().fill(group.selected == session ? terminalManager.theme.foreground.opacity(0.55) : .clear)
+                                        .frame(height: 2)
+                                }
                         }.buttonStyle(.plain).draggable(session)
                             .contextMenu {
                                 ForEach(WorkspaceLayout<String>.Edge.allCases, id: \.rawValue) { edge in
@@ -249,13 +245,33 @@ struct RemoteWorkspaceContentView: View {
                             }
                     }
                 }
-            }.font(.caption)
+            }.font(.system(size: 13))
                 .dropDestination(for: String.self) { sessions, _ in
                     guard let session = sessions.first, layout.sessions.contains(session) else { return false }
                     workspace?.move(session, to: group.id); select(session); return true
                 }
         }
     }
+    private func toggleDrawer() {
+        var next = layout
+        if next.drawerVisible {
+            let previous = next.hideDrawer()
+            workspace = next
+            if let previous { select(previous) }
+        } else {
+            let needsTerminal = next.openDrawer()
+            workspace = next
+            if needsTerminal { newTerminal() }
+            else if let selected = next.selectedTerminal { select(selected) }
+        }
+    }
+
+    private func newTerminal() {
+        if let target = focused ?? viewer.splitTree.allLeaves.first {
+            viewer.performWorkspaceCommand(.split(.down), on: target)
+        }
+    }
+
     private func reconcile() {
         workspace?.reconcile(live: worktree.layout?.leaves.map(\.sessionName) ?? [],
             agents: Set(worktree.agents?.compactMap(\.sessionName) ?? []), preservingSelection: true)

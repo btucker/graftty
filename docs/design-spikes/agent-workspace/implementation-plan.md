@@ -111,9 +111,9 @@ Add a versioned workspace presentation model: split nodes contain tab groups; ea
 
 Session ownership must outlive the mounted terminal view. Switching tabs, hiding the drawer, or moving a session between groups preserves the process, scrollback, input routing, and stable identity. Keep rendering/subscription costs bounded for inactive views.
 
-On Mac, add agent tabs above the canvas. Dragging a tab to an edge creates a split; dragging to another group moves the tab. Pane-header menus expose Move to tab group and Merge groups, with keyboard-accessible equivalents. Collapse empty groups predictably and retain focus through moves.
+On Mac, retain Back/Forward, a quiet project/worktree breadcrumb, and Context in the window header. Put the full branch and path in breadcrumb hover help. Agent tabs form the primary row above the canvas, with provider marks and an underline on the selected tab. Place New agent immediately after the last tab. Dragging a tab to an edge creates a split; dragging to another group moves the tab. Pane-header menus expose Move to tab group and Merge groups, with keyboard-accessible equivalents. Collapse empty groups predictably and retain focus through moves.
 
-Add a labeled bottom Terminal bar spanning the agent canvas. Display the number of terminal sessions, with no misleading zero badge. Opening an empty drawer offers New terminal. Opening an existing drawer selects the last-used terminal. Hiding preserves processes and restores prior agent focus. Persist height and visibility per worktree and device. Allow a terminal to move into a split when desired.
+Add a labeled bottom Terminal bar spanning the agent canvas. Display the number of terminal sessions, with no misleading zero badge. Clicking anywhere in the bar outside its controls toggles the drawer. Opening an empty drawer creates its first terminal automatically. Show and hide it immediately without a slide animation. Opening an existing drawer selects the last-used terminal. Hiding preserves processes and restores prior agent focus. Persist height and visibility per worktree and device. Allow a terminal to move into a split when desired.
 
 Keep destructive Close agent or Close terminal separate from Hide view. Existing CLI close semantics must not silently become non-destructive hide operations. The UI must make the target and consequence clear.
 
@@ -121,7 +121,7 @@ Validation: tab/split transitions, drag destinations, menu equivalence, session 
 
 ## 6. Update sidebar, Context, and completion presentation
 
-Keep worktrees as the primary sidebar navigation. Show aggregate agent counts and attention, with direct navigation to an agent that needs input. Avoid repeating a full agent inventory in both the sidebar and tab strip by default; preserve an explicit expanded inventory where useful.
+Keep worktrees as the primary sidebar navigation. Show aggregate agent counts and attention, with direct navigation to an agent that needs input. Avoid repeating a full agent inventory in both the sidebar and tab strip by default; preserve an explicit expanded agent inventory where useful. Omit ordinary terminals from sidebar rows and counts. Keep provider marks visible beside agent names even when they have attention badges. Unassigned reports and reports on hidden shells stay on the worktree heading.
 
 After the parent closes an agent, remove its active tab/row and retain the result and transcript reference in Context. If the user is reading that transcript, preserve a read-only completed view until they leave or dismiss it, without stealing focus or rearranging their active split unexpectedly.
 

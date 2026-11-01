@@ -10,6 +10,9 @@ struct MainWindowDetailLayout<Header: View, Content: View>: View {
             header
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Workspace backgrounds must not extend into the titlebar
+                // safe area and cover the preceding breadcrumb controls.
+                .clipped()
         }
     }
 }

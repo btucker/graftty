@@ -12,7 +12,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.2** The sidebar shall be resizable via a drag handle between the sidebar and the terminal content area.
 
-**LAYOUT-1.3** The terminal content area shall display a breadcrumb bar above the terminal split layout showing, in order: the selected repository's display name, a `/` separator, the worktree's display name (rendered italic as `root` for the repository's main checkout, otherwise the sibling-disambiguated name per `LAYOUT-2.15`), and the branch name in parentheses at caption weight. The worktree's full filesystem path shall be available as a hover tooltip on the worktree-name element rather than rendered inline. When the worktree has a resolved PR/MR, the trailing edge of the breadcrumb shall additionally show the PR button per `PR-3.x`.
+**LAYOUT-1.3** While a worktree is selected, the application shall show its repository and worktree as a breadcrumb above the agent tabs, keeping the full branch name and filesystem path in hover help instead of the navigation label.
 
 **LAYOUT-1.4** While the sidebar is hidden (`NavigationSplitViewVisibility.detailOnly`), the breadcrumb bar shall apply a leading inset wide enough to clear the window's traffic-light buttons and the sidebar-toggle button so its text remains legible at the window's left edge. While the sidebar is visible, the breadcrumb shall use its standard 12pt leading padding because the sidebar column already offsets the detail content past the traffic lights.
 
@@ -31,6 +31,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-1.11** When assistive technology focuses the breadcrumb button, the application shall expose the selected repository, worktree, and branch alongside the recent-worktrees action.
 
 **LAYOUT-1.12** While the macOS window detail is visible, the application shall keep its breadcrumb header at the top and reserve the remaining height for content, including when no terminal pane is open and after resizing.
+
+**LAYOUT-1.13** While agent tabs are visible, the application shall keep Back, Forward, and the repository/worktree breadcrumb in a separate visible window header above the tabs.
 
 ### LAYOUT-2.x — Sidebar — Repository List
 
@@ -357,6 +359,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **LAYOUT-2.176** When cleanup removes the viewed agent's live pane binding, the application shall retain that agent's completed view using its stable agent identity and shall not replace it when another agent closes.
 
 **LAYOUT-2.177** While a terminal attachment is loading or unavailable, the application shall keep its tab header mounted so users can select another session.
+
+**LAYOUT-2.178** While a worktree is shown in the sidebar, the application shall list only its live agent sessions with provider identity and retain ordinary terminals in the complete workspace inventory.
+
+**LAYOUT-2.179** When the user opens an empty terminal drawer, the application shall request its first terminal automatically; reopening a populated drawer shall reuse its selected terminal.
+
+**LAYOUT-2.180** When the user clicks empty space in the terminal drawer bar, the application shall toggle the drawer, while clicks on its individual controls shall perform only their own actions.
 
 ### LAYOUT-3.x — Adding Repositories
 
@@ -1381,6 +1389,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **CONFIG-2.6** The application shall resolve GrafttyKit's SwiftPM resource bundle, including the Linux host maintenance installer, from the packaged `.app` layout (`Contents/Resources/`), falling back to `Bundle.module` only for `swift test`/`swift run`, so a distributed app does not trap on SwiftPM's generated accessor (which probes only the `.app` root and the compiling machine's `.build` path — neither present once shipped).
 
 **CONFIG-2.7** If GrafttyKit's resource bundle uses either SwiftPM's flat layout or the standard macOS `Contents/Resources` layout produced by Swift 6.4's build system, then the application shall locate the bundled web client assets, agent plugin payload, Codex wrapper template, and vendored ghostty runtime resources.
+
+**CONFIG-2.8** When provider marks are loaded in a packaged application, the application shall resolve their shipped resource bundle without accessing the build machine's bundle path, and shall fall back to a terminal icon if that bundle is missing.
 
 ## DIVERGE — Worktree Divergence Indicator
 
@@ -4697,6 +4707,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.119** When process observation suspends during another session's cleanup, the application shall preserve assignment updates received during that suspension before saving later process observations.
 
 **AGENT-6.120** While an agent provider icon is displayed, the application shall render the bundled Claude or Codex mark with visible template tint.
+
+**AGENT-6.121** When an already-running top-level provider sends a hook without a recorded agent identity, the application shall recover its provider identity in the existing session without adopting native subagents.
+
+**AGENT-6.122** If recovering an existing agent identity fails to persist, then the application shall continue processing its activity hook and retry identity recovery on a later hook.
 
 ## CLI — CLI
 

@@ -281,6 +281,12 @@ public enum ControlRequestCore {
                                  attentionReason: AgentHookAttentionReason?, stopHookActive: Bool, turnID: String?,
                                  fallbackReport: AttentionFileRecapEvent?,
                                  platform: any ControlPlatform) async -> ResponseMessage {
+        if event != .sessionStart {
+            // Identity enrichment must not block activity, attention, or inbox delivery.
+            // Failed persistence leaves the session unbound for the next hook to retry.
+            try? await AgentControl.recoverObservedSession(path: callerPath, agentID: callerAgentID,
+                paneSessionName: paneSessionName, provider: runtime, platform: platform)
+        }
         recordHookLiveness(callerPath: callerPath, runtime: runtime, event: event, sessionID: sessionID ?? callerAgentID,
                            paneSessionName: paneSessionName, attentionReason: attentionReason, platform: platform)
         let action = AgentHookAttentionTransition.action(event: event, reason: attentionReason)

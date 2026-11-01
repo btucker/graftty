@@ -3,6 +3,26 @@ import Testing
 @testable import GrafttyProtocol
 
 struct WorkspaceLayoutTests {
+    @Test("@spec LAYOUT-2.179: When the user opens an empty terminal drawer, the application shall request its first terminal automatically; reopening a populated drawer shall reuse its selected terminal.")
+    func openingDrawerRequestsFirstShell() {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("agent")
+        let needsCreation = layout.openDrawer()
+        #expect(needsCreation)
+        #expect(layout.drawerVisible)
+        let duplicateOpen = layout.openDrawer()
+        #expect(!duplicateOpen)
+        layout.addTerminal("shell")
+        #expect(layout.hideDrawer() == "agent")
+        let reopen = layout.openDrawer()
+        #expect(!reopen)
+        #expect(layout.selectedTerminal == "shell")
+        layout.remove("shell")
+        _ = layout.hideDrawer()
+        let afterClose = layout.openDrawer()
+        #expect(afterClose)
+    }
+
     @Test("@spec LAYOUT-2.175: When resizing a terminal drawer after its viewport shrinks, the application shall begin the adjustment at its rendered height and use the same viewport bounds for rendering and resizing.")
     func drawerResizeStartsAtVisibleHeight() {
         typealias Layout = WorkspaceLayout<String>

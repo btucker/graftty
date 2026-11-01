@@ -71,7 +71,8 @@ struct MobileWorktreePresentationTests {
                 #expect(presentation.showsWorktreeQuestion == !hasDisplayedMatch)
                 #expect(presentation.questionPaneID == (hasDisplayedMatch ? "reported" : nil))
                 #expect(presentation.leaves.count == (state == .running ? layout?.leaves.count ?? 0 : 0))
-                #expect(presentation.worktreeAttentionCount == (presentation.leaves.isEmpty ? 1 : 0))
+                // This report has no pane binding, so it stays on the worktree heading.
+                #expect(presentation.worktreeAttentionCount == 1)
                 #expect(context.pending.count == 1)
             }
         }
@@ -84,6 +85,15 @@ struct MobileWorktreePresentationTests {
         .leaf(sessionName: session, title: title, attentionText: nil, isBusy: false, attentionSource: nil)
     }
 
+    @Test("Shell questions remain at the worktree when shell rows are omitted")
+    func hiddenShellKeepsWorktreeQuestion() {
+        let worktree = row("question", layout: leaf("reported", title: "Reported"), question: true).with(agents: [])
+        let presentation = MobileWorktreeRowPresentation(context: SidebarWorktreeContext(worktree: worktree))
+        #expect(presentation.leaves.isEmpty)
+        #expect(presentation.questionPaneID == nil)
+        #expect(presentation.showsWorktreeQuestion)
+    }
+
     private func row(_ path: String, project: String = "project", pinned: Bool? = nil,
                      layout: PaneLayoutNode? = nil, state: WorktreeWireState = .running,
                      question: Bool = false) -> WorktreePanes {
@@ -92,6 +102,7 @@ struct MobileWorktreePresentationTests {
             paneTitle: "Reported") : nil
         return .init(path: path, displayName: path, repoDisplayName: project, displayBranch: path,
             state: state, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
-            layout: layout, sidebar: .init(id: path, projectID: project, unseenAgentStop: stop, isPinned: pinned))
+            layout: layout, sidebar: .init(id: path, projectID: project, unseenAgentStop: stop, isPinned: pinned),
+            agents: layout?.leaves.map { .init(id: $0.sessionName, name: $0.title, provider: "codex", status: "running", sessionName: $0.sessionName) })
     }
 }

@@ -29,6 +29,27 @@ public enum AgentControl {
         var accessed: Date
     }
     private static var detailSnapshots: [UUID: DetailSnapshot] = [:]
+
+    /// Older live providers may not send SessionStart again after an app update.
+    /// Recover their identity once, using hooks rather than guessing from titles.
+    public static func recoverObservedSession(path: String, agentID: String?, paneSessionName: String?,
+                                               provider: TeamHookRuntime, platform: any ControlPlatform) async throws {
+        guard let agentID, let session = paneSessionName else { return }
+        func needsObservation() -> Bool {
+            guard let worktree = platform.state.worktree(forPath: path),
+                  let slot = worktree.paneSlot(forSessionName: session) else { return false }
+            return !worktree.agents.contains { $0.paneSlotID == slot && $0.status != .closed }
+        }
+        guard needsObservation() else { return }
+        let presence = platform.teamPresence
+        let records = try await OffMainIO.run { try presence.listAll() }
+        guard needsObservation(), !records.contains(where: {
+            $0.isSubagent == true && TeamAgentDirectory.identity(for: $0).rawValue == agentID
+        }) else { return }
+        _ = try await sessionContext(path: path, agentID: agentID, paneSessionName: session,
+            provider: provider, platform: platform)
+    }
+
     public static func sessionContext(path: String, agentID: String?, paneSessionName: String?,
                                       provider: TeamHookRuntime, isSubagent: Bool = false, platform: any ControlPlatform) async throws -> String {
         guard !isSubagent else { return "" }

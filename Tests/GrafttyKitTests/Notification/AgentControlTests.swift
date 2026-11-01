@@ -4,6 +4,43 @@ import Testing
 
 @MainActor
 struct AgentControlTests {
+    @Test("@spec AGENT-6.122: If recovering an existing agent identity fails to persist, then the application shall continue processing its activity hook and retry identity recovery on a later hook.")
+    func failedIdentityRecoveryDoesNotBlockHooks() async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        platform.saveStateNowError = NSError(domain: "test", code: 1)
+        let hook = NotificationMessage.teamHook(callerWorktree: "/repo", callerAgentID: "codex-123456789abc",
+            runtime: .codex, event: .preToolUse, sessionID: "native", paneSessionName: platform.paneSession)
+        #expect(await ControlRequestCore.handleRequest(hook, platform: platform) == .teamHookOutput("{}"))
+        #expect(platform.liveness.count == 1)
+        #expect(platform.state.repos[0].worktrees[0].agents.isEmpty)
+        platform.saveStateNowError = nil
+        _ = await ControlRequestCore.handleRequest(hook, platform: platform)
+        #expect(platform.state.repos[0].worktrees[0].agents.count == 1)
+    }
+
+    @Test("@spec AGENT-6.121: When an already-running top-level provider sends a hook without a recorded agent identity, the application shall recover its provider identity in the existing session without adopting native subagents.", arguments: [TeamHookRuntime.claude, .codex], [false, true])
+    func ordinaryHookRecoversProviderIdentity(provider: TeamHookRuntime, subagent: Bool) async throws {
+        let platform = try ControlRequestCoreTests.RecordingPlatform()
+        let session = platform.paneSession
+        let nativeID = TeamAgentIdentity(runtime: provider, nativeSessionID: "existing").rawValue
+        if subagent {
+            try platform.teamPresence.write(.init(teamID: "repo", worktree: "/repo", runtime: provider,
+                paneSessionName: session, pid: 1, registeredAt: Date(), agentID: nativeID, isSubagent: true))
+        }
+        let before = platform.state.repos[0].worktrees[0].paneSessions
+        let hook = NotificationMessage.teamHook(callerWorktree: "/repo", callerAgentID: nativeID,
+            runtime: provider, event: .postToolUse, sessionID: "native", paneSessionName: session)
+        _ = await ControlRequestCore.handleRequest(hook, platform: platform)
+        _ = await ControlRequestCore.handleRequest(hook, platform: platform)
+        let agents = platform.state.repos[0].worktrees[0].agents
+        #expect(agents.count == (subagent ? 0 : 1))
+        if !subagent {
+            #expect(agents.first?.provider == provider)
+            #expect(agents.first?.nativeAgentID == nativeID)
+        }
+        #expect(platform.state.repos[0].worktrees[0].paneSessions == before)
+    }
+
     @Test("@spec AGENT-6.74: When parent cleanup succeeds, the application shall close only the completed child's bound session, retain its result, and make repeated cleanup harmless.")
     func cleanupUsesStableSession() async throws {
         let platform = try ControlRequestCoreTests.RecordingPlatform()

@@ -104,6 +104,14 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         }
     }
 
+    /// Returns whether opening the drawer requires its first terminal.
+    @discardableResult
+    public mutating func openDrawer() -> Bool {
+        let needsTerminal = !drawerVisible && terminals.isEmpty
+        drawerVisible = true
+        return needsTerminal
+    }
+
     @discardableResult
     public mutating func hideDrawer() -> Session? {
         drawerVisible = false

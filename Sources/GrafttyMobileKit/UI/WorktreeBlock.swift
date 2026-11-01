@@ -35,20 +35,20 @@ struct WorktreeBlock: View {
         // sidebar-style's full per-row padding.
         VStack(alignment: .leading, spacing: 3) {
             worktreeRow
-            if let agents = worktree.agents, !agents.isEmpty {
+            if !worktree.sidebarAgentLeaves.isEmpty {
                 DisclosureGroup(isExpanded: $inventoryExpanded) { paneRows } label: {
-                    let count = agents.filter { $0.sessionName != nil && $0.status != "closed" }.count
-                    Text("\(count) \(count == 1 ? "agent" : "agents") · \(max(0, (worktree.layout?.leaves.count ?? 0) - count)) terminals")
+                    let count = worktree.sidebarAgentLeaves.count
+                    Text("\(count) \(count == 1 ? "agent" : "agents")")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if !inventoryExpanded, context.question != nil {
                     MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) { SidebarWorktreeQuestion(context: context) }
                 }
-                ForEach(agents.filter { $0.status == "failed" && $0.sessionName == nil }) { agent in
-                    Label("\(agent.name) · Failed", systemImage: "exclamationmark.triangle")
-                        .font(.caption).foregroundStyle(.orange)
-                }
             } else { paneRows }
+            ForEach((worktree.agents ?? []).filter { $0.status == "failed" && $0.sessionName == nil }) { agent in
+                Label("\(agent.name) · Failed", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
         }
         // IPAD-1.16: active-worktree block highlight (Mac parity).
         // Painted on the whole VStack so the rounded rectangle spans
@@ -123,18 +123,18 @@ struct WorktreeBlock: View {
     @ViewBuilder
     private var paneRows: some View {
         let presentation = MobileWorktreeRowPresentation(context: context)
-        ForEach(Array(presentation.leaves.enumerated()), id: \.element.sessionName) { index, leaf in
+        ForEach(presentation.leaves, id: \.sessionName) { leaf in
             let isQuestionPane = presentation.questionPaneID == leaf.sessionName
-            let effective = leaf.attentionText ?? (index == 0 ? worktree.attentionText : nil)
+            let effective = leaf.attentionText
             let style = isQuestionPane ? nil : effective.map {
-                AttentionCapsuleStyle.from(text: $0, source: leaf.attentionText != nil ? leaf.attentionSource : worktree.attentionSource)
+                AttentionCapsuleStyle.from(text: $0, source: leaf.attentionSource)
             }
             MobileWorktreeReportTarget(onOpen: { onSelectPane(leaf) }, onReport: onReport) {
                 VStack(alignment: .leading, spacing: 4) {
-                    SidebarPaneTitleRow(title: leaf.title,
+                    SidebarPaneTitleRow(title: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.name ?? leaf.title,
                         isFocusedPane: leaf.sessionName == focusedPaneId, isActiveWorktree: isActive,
                         isBusy: leaf.isBusy, attentionStyle: style,
-                        attentionCount: context.pending.filter { $0.paneID == leaf.sessionName || ($0.paneID == nil && index == 0) }.count,
+                        attentionCount: context.pending.filter { $0.paneID == leaf.sessionName }.count,
                         theme: theme, provider: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.provider)
                         .padding(.leading, SidebarPaneLayout.markerLeading)
                     if isQuestionPane {
