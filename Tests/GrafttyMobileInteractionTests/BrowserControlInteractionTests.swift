@@ -59,6 +59,34 @@ final class RecentPaneInteractionTests: XCTestCase {
         XCTAssertTrue(status.waitForNonExistence(timeout: 5))
         screenshot("Ordinary Back returns to worktrees")
     }
+
+    /// @spec IPAD-2.26: While a compact agent workspace shows the software keyboard, the application shall keep the terminal and its key accessory bar above the keyboard.
+    func testAgentWorkspaceTerminalStaysAboveKeyboard() throws {
+        for arguments in [["--empty-agent-list"], ["--agent-workspace"]] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--recent-panes-fixture"] + arguments
+            app.launch()
+            defer { app.terminate() }
+            let alpha = app.buttons["Open alpha"]
+            XCTAssertTrue(alpha.waitForExistence(timeout: 10))
+            alpha.tap()
+            let terminal = app.textViews.firstMatch
+            XCTAssertTrue(terminal.waitForExistence(timeout: 10))
+            terminal.tap()
+            let keyboard = app.keyboards.firstMatch
+            try XCTSkipUnless(keyboard.waitForExistence(timeout: 5), "The simulator has a hardware keyboard connected.")
+            let submit = app.buttons["Submit return"]
+            XCTAssertTrue(submit.waitForExistence(timeout: 5), "\(arguments): the key accessory bar is missing")
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "Keyboard over alpha \(arguments)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            XCTAssertLessThanOrEqual(terminal.frame.maxY, keyboard.frame.minY + 1,
+                "\(arguments): terminal \(terminal.frame) extends behind keyboard \(keyboard.frame)")
+            XCTAssertLessThanOrEqual(submit.frame.maxY, keyboard.frame.minY + 1,
+                "\(arguments): accessory bar \(submit.frame) is behind keyboard \(keyboard.frame)")
+        }
+    }
 }
 
 final class WorktreeContextInteractionTests: XCTestCase {

@@ -354,7 +354,12 @@ private final class RecentPaneFixtureModel {
             let paneIDs = Dictionary(uniqueKeysWithValues: layout.leaves.map { ($0.sessionName, "slot-" + $0.sessionName) })
             let row = WorktreePanes(path: "/repo/\(name)", displayName: name, repoDisplayName: "Project", displayBranch: name,
                 state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
-                layout: layout, sidebar: .init(id: name, projectID: "project", paneIDs: paneIDs, paneSlotIDs: Array(paneIDs.values)))
+                layout: layout, sidebar: .init(id: name, projectID: "project", paneIDs: paneIDs, paneSlotIDs: Array(paneIDs.values)),
+                // Hosts with managed-agent support send an empty list for
+                // worktrees that have never run an agent.
+                agents: ProcessInfo.processInfo.arguments.contains("--agent-workspace")
+                    ? [.init(id: "agent-\(name)", name: "Codex \(name)", provider: "codex", status: "running", sessionName: route)]
+                    : ProcessInfo.processInfo.arguments.contains("--empty-agent-list") ? [] : nil)
             state.recentPanes.record(hostID: host.id, hostLabel: host.label, worktree: row, sessionName: route)
             guard name != "removed" else { continue }
             rows.append(row)

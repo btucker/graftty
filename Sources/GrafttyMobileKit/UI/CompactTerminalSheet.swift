@@ -6,6 +6,7 @@ struct CompactTerminalSheet<Content: View>: View {
     let worktree: WorktreePanes
     @Bindable var presentation: CompactTerminalPresentation
     let create: () async throws -> String?
+    var theme: GhosttyThemeColors = .fallback
     @ViewBuilder let content: (String) -> Content
 
     var body: some View {
@@ -27,7 +28,7 @@ struct CompactTerminalSheet<Content: View>: View {
                     Image(systemName: "xmark").frame(width: 36, height: 36)
                 }.accessibilityLabel("Hide terminal")
             }.font(.callout).buttonStyle(.plain).padding(.horizontal, 16).padding(.top, 12)
-                .background(.bar)
+                .foregroundStyle(theme.foreground).background(theme.background)
             if let error = presentation.error {
                 Text(error).font(.callout).foregroundStyle(.secondary).padding()
             }
@@ -47,6 +48,9 @@ struct CompactTerminalSheet<Content: View>: View {
             presentation.expirePendingCreation()
         }
         .ignoresSafeArea(.keyboard)
+        .foregroundStyle(theme.foreground)
+        .environment(\.colorScheme, theme.isDark ? .dark : .light)
+        .presentationBackground(theme.background)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }

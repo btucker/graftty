@@ -9,6 +9,7 @@ struct CompactAgentBar: View {
     let session: String
     let onSelect: (String) -> Void
     var hostID: UUID? = nil
+    var theme: GhosttyThemeColors = .fallback
 
     private var agents: [AgentSessionInfo] { worktree.agents?.filter { $0.presentationSessionName != nil } ?? [] }
     private var selectedAgent: AgentSessionInfo? { agents.first { $0.presentationSessionName == session } }
@@ -39,7 +40,8 @@ struct CompactAgentBar: View {
             }.disabled(agents.isEmpty)
             Spacer(minLength: 0)
         }.font(.callout).buttonStyle(.plain).padding(.horizontal, 14).frame(minHeight: 44)
-            .background(.bar)
+            .foregroundStyle(theme.foreground).background(theme.background)
+            .environment(\.colorScheme, theme.isDark ? .dark : .light)
     }
 }
 

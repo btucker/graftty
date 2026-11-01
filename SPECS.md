@@ -2638,6 +2638,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.24** While a compact Terminal sheet is visible, the application shall reserve only the keyboard overlap within its safe content bounds.
 
+**IPAD-2.25** While a compact worktree has no agent with a presentable session, the application shall present its terminal panes full screen without the agent bar, the Terminal sheet, or the agent placeholder.
+
+**IPAD-2.26** While a compact agent workspace shows the software keyboard, the application shall keep the terminal and its key accessory bar above the keyboard.
+
 ### IPAD-3.x — Focused-Pane Toolbar
 
 **IPAD-3.1** When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall expose a focused-pane toolbar containing Split Right, Split Down, Split Left, Split Up, Swap, and Close controls.

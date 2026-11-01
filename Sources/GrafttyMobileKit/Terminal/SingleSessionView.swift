@@ -96,7 +96,12 @@ struct SingleSessionView: View {
     private let isTerminalSheet: Bool
     @State private var terminalSheet = CompactTerminalPresentation()
     @State private var terminalSheetWorktree: WorktreePanes?
-    @State private var containerBottomInset: CGFloat = 0
+    /// IPAD-2.26: contained routes keep the home-indicator inset, so their
+    /// keyboard padding subtracts the gap between the window bottom and the
+    /// content bottom. A safe-area inset alone would include the keyboard.
+    @State private var windowBottom: CGFloat = 0
+    @State private var containedContentBottom: CGFloat = 0
+    private var containerBottomInset: CGFloat { max(0, windowBottom - containedContentBottom) }
     private var isCompactShellRoute: Bool { compactWorkspace != nil && sessionAgent == nil }
     /// Embedded panes let their shared multi-pane parent manage the keyboard
     /// inset once for the whole split tree.
@@ -365,7 +370,11 @@ struct SingleSessionView: View {
             terminalBackground
             sessionView
         }
-        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { containerBottomInset = $0 }
+        // IPAD-2.26: explicit padding is the only keyboard avoidance. Without
+        // this, SwiftUI also avoids the keyboard and the UIKit terminal
+        // expands back into the keyboard safe area.
+        .ignoresSafeArea(.keyboard, edges: isTerminalSheet || compactWorkspace != nil ? .bottom : [])
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY + $0.safeAreaInsets.bottom } action: { windowBottom = $0 }
         .modifier(MobileWorktreeContextDrawer(context: worktreeContext, theme: terminalTheme, onShowAgent: { id in
             guard let session = compactWorkspace?.agents?.first(where: { $0.id == id })?.presentationSessionName else { return }
             selectWorkspaceSession(session)
@@ -378,7 +387,7 @@ struct SingleSessionView: View {
         }
         .sheet(isPresented: $terminalSheet.isPresented) {
             if let workspace = compactWorkspace ?? terminalSheetWorktree {
-                CompactTerminalSheet(worktree: workspace, presentation: terminalSheet, create: createCompactTerminal) { session in
+                CompactTerminalSheet(worktree: workspace, presentation: terminalSheet, create: createCompactTerminal, theme: terminalTheme) { session in
                     SingleSessionView(step: SessionStep(host: step.host, worktreePath: step.worktreePath,
                         sessionName: session, title: workspace.layout?.title(for: session) ?? "Terminal", worktreeProject: step.worktreeProject),
                         navigationPath: .constant(NavigationPath()), isFullScreen: false, isTerminalSheet: true,
@@ -442,7 +451,7 @@ struct SingleSessionView: View {
 
     private var compactWorkspace: WorktreePanes? {
         guard isFullScreen else { return nil }
-        return attentionWorktrees.first { $0.path == step.worktreePath && $0.agents != nil } ?? terminalSheetWorktree
+        return CompactTerminalPresentation.agentWorkspace(path: step.worktreePath, rows: attentionWorktrees, fallback: terminalSheetWorktree)
     }
     private var sessionAgent: AgentSessionInfo? {
         (attentionWorktrees.first { $0.path == step.worktreePath } ?? terminalSheetWorktree)?.agents?.first {
@@ -514,13 +523,14 @@ struct SingleSessionView: View {
     private var sessionView: some View {
         VStack(spacing: 0) {
             if let workspace = compactWorkspace {
-                Text(workspace.displayName).font(.subheadline).lineLimit(1)
+                Text(workspace.displayName).font(.subheadline).lineLimit(1).foregroundStyle(terminalTheme.foreground)
                     .frame(maxWidth: .infinity).padding(.leading, 68).padding(.trailing, 120).frame(height: 64)
-                CompactAgentBar(worktree: workspace, session: step.sessionName, onSelect: selectWorkspaceSession, hostID: step.host.id)
+                CompactAgentBar(worktree: workspace, session: step.sessionName, onSelect: selectWorkspaceSession, hostID: step.host.id, theme: terminalTheme)
             }
             if isCompactShellRoute {
                 ContentUnavailableView("Select an agent", systemImage: "terminal",
                     description: Text("Choose an agent above, or open Terminal below."))
+                    .foregroundStyle(terminalTheme.foreground)
             } else if let agent = completedAgent, let path = step.worktreePath {
                 VStack(spacing: 0) {
                     MobileAgentConversationView(host: step.host, worktreePath: path, agent: agent)
@@ -568,7 +578,7 @@ struct SingleSessionView: View {
                         Spacer()
                         Image(systemName: "chevron.up").font(.caption)
                     }.padding(.horizontal, 16).frame(minHeight: 44).contentShape(Rectangle())
-                }.buttonStyle(.plain).background(.bar)
+                }.buttonStyle(.plain).foregroundStyle(terminalTheme.foreground).background(terminalTheme.background)
             }
         }
         // IOS-6.9: explicit bottom padding lifts the terminal above
@@ -583,6 +593,7 @@ struct SingleSessionView: View {
         // system sidebar-toggle button stays available, and respects
         // the column's bounds so the sidebar doesn't visually overlap.
         .modifier(FullScreenChrome(enabled: isFullScreen, contained: isTerminalSheet || compactWorkspace != nil))
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { containedContentBottom = $0 }
             .overlay(alignment: .topLeading) {
                 if isFullScreen || (isEmbeddedPane && isPaneFocused && onBackToWorktrees != nil) {
                     backButton

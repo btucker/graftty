@@ -20,6 +20,15 @@ final class CompactTerminalPresentation {
         return worktree.layout?.leaves.filter { !agents.contains($0.sessionName) } ?? []
     }
 
+    /// @spec IPAD-2.25
+    /// Hosts send an agents list for every worktree, often empty. Only a
+    /// worktree with an agent the phone can show uses the agent workspace.
+    static func agentWorkspace(path: String?, rows: [WorktreePanes], fallback: WorktreePanes?) -> WorktreePanes? {
+        guard let row = rows.first(where: { $0.path == path }) ?? fallback.flatMap({ $0.path == path ? $0 : nil }),
+              row.agents?.contains(where: { $0.presentationSessionName != nil }) == true else { return nil }
+        return row
+    }
+
     func open(in worktree: WorktreePanes, create: () async throws -> String?) async {
         isPresented = true
         guard !isCreating else { return }

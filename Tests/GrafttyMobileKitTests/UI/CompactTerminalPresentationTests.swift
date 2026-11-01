@@ -81,6 +81,24 @@ struct CompactTerminalPresentationTests {
         #expect(presentation.error == nil)
     }
 
+    @Test("@spec IPAD-2.25: While a compact worktree has no agent with a presentable session, the application shall present its terminal panes full screen without the agent bar, the Terminal sheet, or the agent placeholder.")
+    func plainWorktreesStayOffTheAgentWorkspace() {
+        let shellOnly = worktree(shells: ["shell"])
+        func row(_ agents: [AgentSessionInfo]?) -> WorktreePanes {
+            WorktreePanes(path: shellOnly.path, displayName: shellOnly.displayName, repoDisplayName: shellOnly.repoDisplayName,
+                displayBranch: shellOnly.displayBranch, state: .running, isMainCheckout: true, prBadge: nil, stats: nil,
+                attentionText: nil, layout: shellOnly.layout, agents: agents)
+        }
+        let closedWithoutSession = AgentSessionInfo(id: "old", name: "Old", provider: "codex", status: "closed", sessionName: nil)
+        for plain in [row(nil), row([]), row([closedWithoutSession])] {
+            #expect(CompactTerminalPresentation.agentWorkspace(path: "/repo", rows: [plain], fallback: plain) == nil)
+        }
+        #expect(CompactTerminalPresentation.agentWorkspace(path: "/repo", rows: [], fallback: row([])) == nil)
+        #expect(CompactTerminalPresentation.agentWorkspace(path: "/repo", rows: [shellOnly], fallback: nil) == shellOnly)
+        #expect(CompactTerminalPresentation.agentWorkspace(path: "/repo", rows: [], fallback: shellOnly) == shellOnly)
+        #expect(CompactTerminalPresentation.agentWorkspace(path: "/other", rows: [shellOnly], fallback: nil) == nil)
+    }
+
     private func worktree(shells: [String]) -> WorktreePanes {
         let sessions = ["agent"] + shells
         let layout = sessions.dropFirst().reduce(PaneLayoutNode.leaf(sessionName: "agent", title: "Agent", attentionText: nil, isBusy: false, attentionSource: nil)) { tree, session in
