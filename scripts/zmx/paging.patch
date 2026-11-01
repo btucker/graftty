@@ -200,7 +200,7 @@ diff --git a/src/loop.zig b/src/loop.zig
                  .cols = cols,
                  .rows = rows,
              };
-+            if (term.cols != cols or term.rows != rows) self.mutation_epoch +%= 1;
++            if (paging.resizeInvalidatesHistory(term, cols, rows)) self.mutation_epoch +%= 1;
              try term.resize(gpa, opts);
 +            try self.broadcastPagedGrid(gpa, term);
  
@@ -382,13 +382,13 @@ diff --git a/src/loop.zig b/src/loop.zig
  
          const ws = clientWinsize(client, pty_fd, rows, cols);
          _ = cross.c.ioctl(pty_fd, cross.c.TIOCSWINSZ, &ws);
-+        if (term.cols != cols or term.rows != rows) self.mutation_epoch +%= 1;
++        if (paging.resizeInvalidatesHistory(term, cols, rows)) self.mutation_epoch +%= 1;
          try resizeTerm(gpa, term, cols, rows);
 +        try self.broadcastPagedGrid(gpa, term);
          std.log.debug(
              "resize rows={d} cols={d} xpixel={d} ypixel={d}",
              .{ rows, cols, ws.ws_xpixel, ws.ws_ypixel },
-@@ -1937,3 +2119,84 @@
+@@ -1937,3 +2119,160 @@
      const pay3 = client_req.write_buf.items[@sizeOf(ipc.Header)..];
      try std.testing.expectEqualStrings("DISPLAY=:99\n", pay3);
  }
@@ -473,11 +473,87 @@ diff --git a/src/loop.zig b/src/loop.zig
 +    try std.testing.expectEqual(ipc.Tag.PagedEnded, header.tag);
 +    try std.testing.expectEqual(@as(i32, 7), std.mem.bytesToValue(i32, client.write_buf.items[@sizeOf(ipc.Header)..]));
 +}
++
++test "paged history preserves safe height-only Resize and Init and rejects exposed history" {
++    const alloc = std.testing.allocator;
++    for ([_]bool{ false, true }) |via_init| {
++        for ([_]bool{ false, true }) |exposes_history| {
++            var term = try ghostty_vt.Terminal.init(std.testing.io, alloc, .{
++                .cols = 80,
++                .rows = 24,
++                .max_scrollback_bytes = null,
++                .max_scrollback_lines = null,
++            });
++            defer term.deinit(alloc);
++            var stream = term.vtStream();
++            defer stream.deinit();
++            for (0..2000) |i| {
++                var buf: [40]u8 = undefined;
++                stream.nextSlice(try std.fmt.bufPrint(&buf, "height-row-{d:0>6}\r\n", .{i}));
++            }
++            const fds = try lib_posix.pipe2(.{});
++            defer lib_posix.close(fds[1]);
++            var client: Client = .{
++                .alloc = alloc,
++                .socket_fd = fds[0],
++                .read_buf = try ipc.SocketBuffer.init(alloc),
++                .write_buf = .empty,
++            };
++            defer client.deinit(alloc);
++            var daemon = testDaemon();
++            daemon.leader_client_fd = client.socket_fd;
++            var checkpoint = try paging.Checkpoint.capture(alloc, &term, .ground, daemon.mutation_epoch);
++            defer checkpoint.deinit();
++            var reader: std.Io.Reader = .fixed(checkpoint.ready);
++            var decoder = ghostty_vt.snapshot.Decoder.init(&reader);
++            var decoded = try decoder.ready(alloc, std.testing.io, .{ .max_continuation_bytes = 4096 });
++            defer decoded.deinit(alloc);
++            var restored = decoded.toOwned();
++            defer restored.deinit(alloc);
++            const heights: []const u16 = if (exposes_history) &.{ 1000, 24 } else &.{ 30, 16, 24 };
++            for (heights) |rows| {
++                const size: ipc.Resize = .{ .cols = 80, .rows = rows };
++                if (via_init) {
++                    try daemon.handleInit(alloc, std.testing.io, &client, -1, &term, &stream, std.mem.asBytes(&size));
++                } else {
++                    try daemon.handleResize(alloc, &client, -1, &term, std.mem.asBytes(&size));
++                }
++                try restored.resize(alloc, .{ .cols = 80, .rows = rows });
++            }
++            if (exposes_history) {
++                try std.testing.expectError(error.CheckpointExpired, checkpoint.next(.primary, 0, ipc.PAGED_PAGE_LIMIT, daemon.mutation_epoch));
++                continue;
++            }
++            var ordinal: u64 = 0;
++            while (true) : (ordinal += 1) {
++                const reply = try checkpoint.next(.primary, ordinal, ipc.PAGED_PAGE_LIMIT, daemon.mutation_epoch);
++                if (reply == .done) break;
++                var page_reader: std.Io.Reader = .fixed(reply.page.bytes);
++                try std.testing.expectEqual(reply.page.rows, try ghostty_vt.snapshot.history.decodePage(&page_reader, alloc, restored.screens.active));
++            }
++            const original = try term.screens.active.dumpStringAlloc(alloc, .{ .screen = .{} });
++            defer alloc.free(original);
++            const imported = try restored.screens.active.dumpStringAlloc(alloc, .{ .screen = .{} });
++            defer alloc.free(imported);
++            try std.testing.expectEqualStrings(original, imported);
++            // A width round trip still expires the checkpoint, including cached retries.
++            for ([_]u16{ 40, 80 }) |cols| {
++                const size: ipc.Resize = .{ .cols = cols, .rows = 24 };
++                if (via_init) {
++                    try daemon.handleInit(alloc, std.testing.io, &client, -1, &term, &stream, std.mem.asBytes(&size));
++                } else {
++                    try daemon.handleResize(alloc, &client, -1, &term, std.mem.asBytes(&size));
++                }
++            }
++            try std.testing.expectError(error.CheckpointExpired, checkpoint.next(.primary, ordinal - 1, ipc.PAGED_PAGE_LIMIT, daemon.mutation_epoch));
++        }
++    }
++}
 diff --git a/src/paging.zig b/src/paging.zig
 new file mode 100644
 --- /dev/null
 +++ b/src/paging.zig
-@@ -0,0 +1,426 @@
+@@ -0,0 +1,446 @@
 +//! Demand snapshot export. The owner serializes capture/next with terminal
 +//! mutations. Checkpoints borrow terminal pages through tracked pins and must
 +//! be released before the terminal is destroyed or moved.
@@ -488,11 +564,31 @@ new file mode 100644
 +pub const Screen = vt.ScreenSet.Key;
 +const Pin = vt.PageList.Pin;
 +
++/// Height-only changes preserve encoded widths. Growing beyond the active
++/// backing pages can expose unsent history to live edits, so that growth
++/// still needs recovery. Walk only the bounded active tail, not all history.
++pub fn resizeInvalidatesHistory(terminal: *vt.Terminal, cols: u16, rows: u16) bool {
++    if (cols != terminal.cols) return true;
++    if (rows <= terminal.rows) return false;
++    var it = terminal.screens.all.iterator();
++    while (it.next()) |entry| {
++        const screen = terminal.screens.get(entry.key).?;
++        const first = screen.pages.getTopLeft(.active).node;
++        if (first.prev == null) continue;
++        var resident_rows: usize = 0;
++        var node: ?@TypeOf(first) = first;
++        while (node) |current| : (node = current.next)
++            resident_rows += current.rows();
++        if (rows > resident_rows) return true;
++    }
++    return false;
++}
++
 +pub const Checkpoint = struct {
 +    alloc: Allocator,
 +    terminal: *vt.Terminal,
-+    /// Caller-owned mutation counter. Increment before any resize, history
-+    /// rewrite, or reset whose semantics should expire retained checkpoints.
++    /// Caller-owned mutation counter. Increment before an incompatible resize,
++    /// history rewrite, or reset whose semantics should expire retained checkpoints.
 +    mutation_epoch: u64,
 +    ready: []const u8,
 +    screens: std.EnumMap(Screen, Cursor),

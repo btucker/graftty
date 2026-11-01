@@ -724,6 +724,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-12.47** While a session's scrollback fits within libghostty's default 50,000,000-byte page budget, the zmx daemon shall retain every row, so a Mac pane reattaching to a 20,000-line session restores every line instead of only the newest 10,000,000 bytes of pages.
 
+**TERM-12.48** When a terminal's height changes within its current backing pages without changing its columns, the application shall keep retained older history fetchable on Mac and mobile without requiring a replacement checkpoint, including after a height round trip.
+
+**TERM-12.49** If a height increase exposes older backing pages to live screen edits, then the application shall require checkpoint recovery on Mac and mobile even after the original height is restored, rather than import potentially edited history.
+
 **TERM-12.50** When a Mac terminal receives a live source-grid acknowledgment, the application shall update its parser grid without refitting the owner viewport or entering checkpoint-restore presentation.
 
 ## GIT — Worktree Discovery & Monitoring

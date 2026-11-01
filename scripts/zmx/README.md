@@ -87,6 +87,16 @@ export behavior until their sessions are deliberately restarted. A new client
 labels an old daemon's oversized-page refusal as a transfer limit, rather than
 client memory exhaustion. Upgrading the app does not restart active sessions.
 
+Starting with `graftty9`, height-only resizes within the current screen's backing
+pages preserve pending history checkpoints, including resizes caused by a new
+client attaching. These changes preserve row widths, so older pages remain
+compatible. A height increase that exposes older backing pages still expires
+checkpoints because live screen edits could change unsent rows. Width changes
+also expire checkpoints, even if the terminal later returns to its original
+width. History clearing, screen replacement, and pruning still reject discarded
+pages. Existing daemon processes keep their previous resize behavior until their
+sessions restart.
+
 `zmx attach --replay-grid` is the host's legacy VT bridge mode. It prefixes
 stdout with `GFTGRID1`, then two little-endian u16 fields for columns and rows,
 before any clear-screen or replay bytes. The dimensions come from the decoded
