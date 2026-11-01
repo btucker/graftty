@@ -184,29 +184,30 @@ struct WorktreeRowContent: View {
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder
     private var typeIcon: some View {
-        if worktree.state.isInFlight || isOpening {
-            // Supply the title's text baseline; ProgressView's UIKit baseline
-            // does not identify the center of the worktree's icon slot.
-            Text(" ")
-                .font(.system(size: 11, weight: .semibold))
-                .hidden()
-                .frame(width: 14)
-                .overlay { ProgressView().controlSize(.mini) }
-        } else if worktree.iconIdentity != .none {
-            WorktreeIdentityView(identity: worktree.iconIdentity,
-                project: project ?? SidebarProjection.projects([worktree])[0],
-                imageData: projectIconData, size: 18)
-        } else {
-            Image(systemName: WorktreeRowIcon.symbolName(
-                isMainCheckout: worktree.isMainCheckout,
-                hasPR: worktree.prBadge != nil
-            ))
-            .font(.system(size: 11))
-            .foregroundStyle(typeIconStyle)
-            .frame(width: 14)
-        }
+        // All identity states share the title baseline and an 18pt slot.
+        // An emoji's intrinsic text metrics must not move the title when
+        // the slot changes to a progress indicator.
+        Text(" ")
+            .font(.system(size: 11, weight: .semibold))
+            .hidden()
+            .frame(width: 18, height: 18)
+            .overlay {
+                if worktree.state.isInFlight || isOpening {
+                    ProgressView().controlSize(.mini)
+                } else if worktree.iconIdentity != .none {
+                    WorktreeIdentityView(identity: worktree.iconIdentity,
+                        project: project ?? SidebarProjection.projects([worktree])[0],
+                        imageData: projectIconData, size: 18)
+                } else {
+                    Image(systemName: WorktreeRowIcon.symbolName(
+                        isMainCheckout: worktree.isMainCheckout,
+                        hasPR: worktree.prBadge != nil
+                    ))
+                    .font(.system(size: 11))
+                    .foregroundStyle(typeIconStyle)
+                }
+            }
     }
 
     /// Themed dim for closed/creating/deleting (falls back to system
