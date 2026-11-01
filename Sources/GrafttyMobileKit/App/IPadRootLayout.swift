@@ -1351,7 +1351,7 @@ struct IPadDetailColumn: View {
         content
             .modifier(MobileWorktreeContextDrawer(context: selectedWorktree.map {
                 appState.sidebarNavigation.worktreeContext($0)
-            }, showsStandaloneControl: !hasFocusedTerminal))
+            }, theme: appState.theme, showsStandaloneControl: !hasFocusedTerminal))
             .modifier(IPadTerminalDetailChrome())
             .toolbar {
                 // IPAD-1.11: the conditional wraps the whole

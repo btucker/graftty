@@ -249,7 +249,7 @@ struct TeamHook: ParsableCommand {
                 agentID: attentionAgentID(),
                 runtime: runtime,
                 sessionID: resolvedSessionID,
-                userPrompt: event == .userPromptSubmit ? WorktreeUserPrompt.text(from: stdinPayload) : nil,
+                userPrompt: event == .userPromptSubmit ? WorktreeUserPrompt.text(from: stdinPayload, runtime: runtime.rawValue) : nil,
                 startsTurn: event == .sessionStart || event == .userPromptSubmit
             )
         }
