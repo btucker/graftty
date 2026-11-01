@@ -964,6 +964,21 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
+@spec IOS-6.46: When a two-finger trackpad scroll reaches an iPad terminal, the application shall scroll the terminal and shall not start a pointer-drag text selection.
+""")
+    func trackpadScrollDoesNotDriveSelection() throws {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let pointerOnly = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+        let pans = container.terminalView.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer } ?? []
+        let selectionDrag = try #require(pans.first { $0.allowedTouchTypes == pointerOnly },
+                                         "libghostty's pointer-drag selection pan is missing")
+        #expect(selectionDrag.allowedScrollTypesMask.isEmpty,
+                "Scroll events reach the pointer-drag selection pan, so trackpad scrolling selects text")
+        #expect(pans.contains { $0 !== selectionDrag && $0.allowedScrollTypesMask.contains(.continuous) },
+                "No terminal recognizer receives trackpad scroll events")
+    }
+
+    @Test("""
 @spec IOS-11.1: While a focused terminal pane is interactive, the application shall handle libghostty's built-in long-press selection request through `TerminalInputContainerView` and present a menu at the touch point containing **Select**, **Select All**, and (when the clipboard contains text or an image at menu-build time) **Paste**, without installing a competing long-press recognizer on the container.
 """)
     func terminalLongPressUsesGhosttySelectionRequestDelegate() throws {
