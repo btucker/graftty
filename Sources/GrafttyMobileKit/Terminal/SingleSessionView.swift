@@ -107,6 +107,8 @@ struct SingleSessionView: View {
     /// inset once for the whole split tree.
     let isEmbeddedPane: Bool
     private let embeddedPaneHeader: AnyView?
+    /// Shown under an embedded pane's tabs, such as an input request.
+    private let embeddedPaneBanner: AnyView?
     /// Fired from the terminal's UIKit touch observer before focus/input is
     /// attempted, allowing the split tree to select this leaf first.
     let onPaneInteraction: (() -> Void)?
@@ -329,6 +331,7 @@ struct SingleSessionView: View {
         isPaneFocused: Bool = true,
         isEmbeddedPane: Bool = false,
         embeddedPaneHeader: AnyView? = nil,
+        embeddedPaneBanner: AnyView? = nil,
         isTerminalSheet: Bool = false,
         onPaneInteraction: (() -> Void)? = nil,
         onBackToWorktrees: (() -> Void)? = nil,
@@ -353,6 +356,7 @@ struct SingleSessionView: View {
         self.isTerminalSheet = isTerminalSheet
         self.isEmbeddedPane = isEmbeddedPane
         self.embeddedPaneHeader = embeddedPaneHeader
+        self.embeddedPaneBanner = embeddedPaneBanner
         self.onPaneInteraction = onPaneInteraction
         self.onBackToWorktrees = onBackToWorktrees
         self.fontSizeStore = fontSizeStore
@@ -544,6 +548,7 @@ struct SingleSessionView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("workspace.pane.header")
             }
+            if isEmbeddedPane, let embeddedPaneBanner { embeddedPaneBanner }
             if let workspace = compactWorkspace {
                 Text(workspace.displayName).font(.subheadline).lineLimit(1).foregroundStyle(terminalTheme.foreground)
                     .frame(maxWidth: .infinity).padding(.leading, 68).padding(.trailing, 120).frame(height: 64)

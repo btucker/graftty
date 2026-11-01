@@ -43,7 +43,6 @@ struct RemoteWorkspaceContentView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                WorkspaceInputRequest(context: attentionContext, selectedSession: layout.focusedSession, onSelect: select)
                 if let visible = layout.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) {
                     surface(visible, headers: true)
                 } else {
@@ -240,6 +239,7 @@ struct RemoteWorkspaceContentView: View {
 
     @ViewBuilder private func header(_ id: PaneSlotID) -> some View {
         if let group = layout.groups.first(where: { slot($0.selected) == id }) {
+          VStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack {
                     ForEach(group.sessions, id: \.self) { session in
@@ -294,7 +294,17 @@ struct RemoteWorkspaceContentView: View {
                     guard let session = sessions.first?.session, layout.sessions.contains(session) else { return false }
                     workspace?.move(session, to: group.id); select(session); return true
                 }
+            // LAYOUT-2.196: an agent's input request sits under its pane's tabs.
+            if group.id == inputRequestGroupID {
+                WorkspaceInputRequest(context: attentionContext, selectedSession: layout.focusedSession, onSelect: select)
+            }
+          }
         }
+    }
+    private var inputRequestGroupID: UUID? {
+        guard attentionContext?.question != nil else { return nil }
+        let session = attentionContext?.questionPaneID ?? layout.focusedSession
+        return session.flatMap { layout.group(containing: $0)?.id } ?? layout.groups.first?.id
     }
     private func toggleDrawer() {
         var next = layout

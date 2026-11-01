@@ -40,9 +40,6 @@ struct WorkspaceContentView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                WorkspaceInputRequest(context: attentionContext, selectedSession: worktree.presentationPane.flatMap { worktree.paneSessions[$0] }.map(ZmxLauncher.sessionName(for:))) { session in
-                    if let slot = worktree.paneSessions.first(where: { ZmxLauncher.sessionName(for: $0.value) == session })?.key { selectTab(slot) }
-                }
                 if layout.root != nil {
                     TerminalContentView(terminalManager: terminalManager,
                         splitTree: Binding(get: {
@@ -153,7 +150,24 @@ struct WorkspaceContentView: View {
                 .onDrop(of: [WorkspaceTabDrag.contentType], isTargeted: nil) { providers in
                     receive(providers) { session in if let id = group?.id { mutate { $0.move(session, to: id) }; focus(session) } }
                 }
+            // LAYOUT-2.196: an agent's input request sits under its pane's tabs.
+            if let group, group.id == inputRequestGroupID { inputRequestBanner }
+        }
+    }
 
+    /// The tab group under which a live input request shows: the asking
+    /// agent's group, else the focused one.
+    private var inputRequestGroupID: UUID? {
+        guard attentionContext?.question != nil else { return nil }
+        let asking = attentionContext?.questionPaneID.flatMap { session in
+            worktree.paneSessions.first { ZmxLauncher.sessionName(for: $0.value) == session }?.key
+        }
+        return (asking ?? worktree.presentationPane).flatMap { layout.group(containing: $0)?.id } ?? layout.groups.first?.id
+    }
+
+    private var inputRequestBanner: some View {
+        WorkspaceInputRequest(context: attentionContext, selectedSession: worktree.presentationPane.flatMap { worktree.paneSessions[$0] }.map(ZmxLauncher.sessionName(for:))) { session in
+            if let slot = worktree.paneSessions.first(where: { ZmxLauncher.sessionName(for: $0.value) == session })?.key { selectTab(slot) }
         }
     }
 

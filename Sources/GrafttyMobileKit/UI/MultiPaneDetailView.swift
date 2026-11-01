@@ -36,7 +36,6 @@ struct MultiPaneDetailView: View {
                 MobileCreationDetailView(host: host, worktree: worktree, theme: theme)
             } else if worktree.layout != nil || currentWorkspace.root != nil {
                 VStack(spacing: 0) {
-                    WorkspaceInputRequest(context: context, selectedSession: focusedPaneId, onSelect: selectSession)
                     if let visible = currentWorkspace.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) {
                         render(visible, at: .root)
                     } else {
@@ -98,6 +97,7 @@ struct MultiPaneDetailView: View {
                     VStack(spacing: 0) {
                         if let agent = worktree.agents?.first(where: { $0.presentationSessionName == sessionName && $0.isCompleted }) {
                             if let group = currentWorkspace.group(containing: sessionName) { tabHeader(group) }
+                            if currentWorkspace.group(containing: sessionName)?.id == inputRequestGroupID { inputRequestBanner }
                             MobileAgentConversationView(host: host, worktreePath: worktree.path, agent: agent)
                                 .onTapGesture { onSelectPane(sessionName) }
                         } else {
@@ -118,7 +118,9 @@ struct MultiPaneDetailView: View {
                             },
                             onBackToWorktrees: onBackToWorktrees,
                             retainedPanes: retainedPanes,
-                            paneHeader: currentWorkspace.group(containing: sessionName).map { AnyView(tabHeader($0)) }
+                            paneHeader: currentWorkspace.group(containing: sessionName).map { AnyView(tabHeader($0)) },
+                            paneBanner: currentWorkspace.group(containing: sessionName)?.id == inputRequestGroupID
+                                ? AnyView(inputRequestBanner) : nil
                         )
                         .id(sessionName)
                         }
@@ -151,6 +153,18 @@ struct MultiPaneDetailView: View {
                 .id(path)
             )
         }
+    }
+
+    /// LAYOUT-2.196: an agent's input request sits under its pane's tabs:
+    /// the asking agent's group, else the focused one.
+    private var inputRequestGroupID: UUID? {
+        guard context.question != nil else { return nil }
+        let session = context.questionPaneID ?? focusedPaneId
+        return session.flatMap { currentWorkspace.group(containing: $0)?.id } ?? currentWorkspace.groups.first?.id
+    }
+
+    private var inputRequestBanner: some View {
+        WorkspaceInputRequest(context: context, selectedSession: focusedPaneId, onSelect: selectSession)
     }
 
     private var currentWorkspace: WorkspaceLayout<String> { workspaceStore.layout(hostID: host.id, worktree: worktree) }
@@ -391,6 +405,7 @@ private struct MultiPaneLeafView: View {
     let onBackToWorktrees: () -> Void
     let retainedPanes: RetainedPaneClientPool<RetainedMobilePane>?
     var paneHeader: AnyView? = nil
+    var paneBanner: AnyView? = nil
 
     @State private var unusedNavigationPath = NavigationPath()
 
@@ -410,6 +425,7 @@ private struct MultiPaneLeafView: View {
             isPaneFocused: isFocused,
             isEmbeddedPane: true,
             embeddedPaneHeader: paneHeader,
+            embeddedPaneBanner: paneBanner,
             onPaneInteraction: onSelect,
             onBackToWorktrees: onBackToWorktrees,
             retainedPanes: retainedPanes

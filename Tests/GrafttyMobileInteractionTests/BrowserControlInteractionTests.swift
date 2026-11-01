@@ -67,6 +67,29 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         XCTAssertFalse(forward.isEnabled, "Forward is enabled with no later worktree")
     }
 
+    /// @spec LAYOUT-2.196: While an agent has a live input request, the application shall show the request directly under the tabs of the asking agent's pane, or of the focused pane when the request belongs to no pane, rather than above every pane's tabs.
+    func testInputRequestSitsUnderTheAskingPanesTabs() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
+        let app = XCUIApplication()
+        app.launchArguments = ["--ipad-workspace-fixture", "--input-request"]
+        app.launch()
+        defer { app.terminate() }
+        let beta = app.buttons["workspace.tab.beta"]
+        let alpha = app.buttons["workspace.tab.alpha"]
+        XCTAssertTrue(beta.waitForExistence(timeout: 10) && alpha.exists, app.debugDescription)
+        let request = app.staticTexts["Pick a color?"]
+        XCTAssertTrue(request.waitForExistence(timeout: 5), "The input request is not shown")
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Pick a color?").count, 1, "The request shows more than once")
+        XCTAssertGreaterThanOrEqual(request.frame.minY, beta.frame.maxY - 1, "The request is above the asking pane's tabs")
+        XCTAssertLessThan(request.frame.minY - beta.frame.maxY, 40, "The request is not directly under the tabs")
+        let navigation = app.navigationBars["Workspace"]
+        XCTAssertGreaterThan(request.frame.minY, navigation.frame.maxY + 30, "The request is above the tab row")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "iPad input request under tabs"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     private func checkWorkspaceTabs(orientation: UIDeviceOrientation) {
         let app = XCUIApplication()
         app.launchArguments = ["--ipad-workspace-fixture"]
