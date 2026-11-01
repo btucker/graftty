@@ -74,6 +74,7 @@ private struct IPadWorkspaceFixture: View {
             layout: .split(direction: .horizontal, ratio: 0.5,
                 left: .leaf(sessionName: "alpha", title: "Agent Alpha", attentionText: nil, isBusy: false, attentionSource: nil),
                 right: .leaf(sessionName: "beta", title: "Agent Beta", attentionText: nil, isBusy: false, attentionSource: nil)),
+            sidebar: .init(id: "workspace", projectID: "project", emoji: "🧭"),
             agents: [.init(id: "alpha", name: "Alpha", provider: "codex", status: "running", sessionName: "alpha"),
                      .init(id: "beta", name: "Beta", provider: "claude", status: "running", sessionName: "beta")])
     }

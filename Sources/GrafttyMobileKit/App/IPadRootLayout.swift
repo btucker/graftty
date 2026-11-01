@@ -1386,31 +1386,20 @@ struct IPadDetailColumn: View {
     let onSelectPane: (String) -> Void
     let onBackToWorktrees: () -> Void
     var onNewTerminal: () -> Void = {}
+    @State private var identityHeight: CGFloat = 0
+    @State private var detailWidth: CGFloat = 0
 
     var body: some View {
         content
-            .modifier(MobileWorktreeContextDrawer(context: selectedWorktree.map {
-                appState.sidebarNavigation.worktreeContext($0)
-            }, theme: appState.theme, showsStandaloneControl: !hasFocusedTerminal, onShowAgent: { id in
-                guard let host, let worktree = selectedWorktree,
-                      let session = worktree.agents?.first(where: { $0.id == id })?.presentationSessionName else { return }
-                appState.workspaceStore.update(hostID: host.id, worktree: worktree) { layout in
-                    if !layout.sessions.contains(session) { layout.addAgent(session) }
-                    layout.select(session)
-                }
-                appState.focusedPaneId = session
-            }))
-            .modifier(IPadTerminalDetailChrome())
+            // Declared inside the context drawer so the toolbar's Context
+            // button can open it (IPAD-1.31).
             .toolbar {
-                if selectedWorktree != nil {
+                if selectedWorktree != nil, appState.columnVisibility == .detailOnly {
                     ToolbarItem(placement: .topBarLeading) {
                         Button(action: onBackToWorktrees) { Image(systemName: "chevron.left") }
                             .accessibilityLabel("Back to worktrees")
                             .accessibilityIdentifier("terminal.back")
                     }
-                }
-                if let host, let worktree = selectedWorktree {
-                    ToolbarItem(placement: .topBarTrailing) { WorktreePreviewMenu(host: host, worktree: worktree.path) }
                 }
 
                 // IPAD-1.11: the conditional wraps the whole
@@ -1430,50 +1419,45 @@ struct IPadDetailColumn: View {
                         .accessibilityLabel("Next pending worktree")
                     }
                 }
-                if shouldShowSplitControls {
-                    // One split implementation: the buttons dispatch through
-                    // the same command context as the keyboard shortcuts, so
-                    // enablement, refresh, and error semantics can't diverge.
+                // IPAD-1.31: one control group. Splits dispatch through the
+                // same command context as the keyboard shortcuts.
+                if let host, let worktree = selectedWorktree {
                     ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button {
-                            ghosttyCommandContext.perform(.ghostty(.newSplitRight))
+                        WorktreeContextToolbarButton()
+                        WorktreePreviewMenu(host: host, worktree: worktree.path)
+                        Menu {
+                            Button { ghosttyCommandContext.perform(.ghostty(.newSplitRight)) } label: {
+                                Label("Split Right", systemImage: GhosttySplitDirection.right.filledPaneSystemImageName)
+                            }
+                            Button { ghosttyCommandContext.perform(.ghostty(.newSplitDown)) } label: {
+                                Label("Split Down", systemImage: GhosttySplitDirection.down.filledPaneSystemImageName)
+                            }
+                            Button { ghosttyCommandContext.perform(.ghostty(.newSplitLeft)) } label: {
+                                Label("Split Left", systemImage: GhosttySplitDirection.left.filledPaneSystemImageName)
+                            }
+                            Button { ghosttyCommandContext.perform(.ghostty(.newSplitUp)) } label: {
+                                Label("Split Up", systemImage: GhosttySplitDirection.up.filledPaneSystemImageName)
+                            }
                         } label: {
-                            Label(
-                                "Split Right",
-                                systemImage: GhosttySplitDirection.right
-                                    .filledPaneSystemImageName
-                            )
+                            Label("More", systemImage: "ellipsis")
                         }
-                        Button {
-                            ghosttyCommandContext.perform(.ghostty(.newSplitDown))
-                        } label: {
-                            Label(
-                                "Split Down",
-                                systemImage: GhosttySplitDirection.down
-                                    .filledPaneSystemImageName
-                            )
-                        }
-                        Button {
-                            ghosttyCommandContext.perform(.ghostty(.newSplitLeft))
-                        } label: {
-                            Label(
-                                "Split Left",
-                                systemImage: GhosttySplitDirection.left
-                                    .filledPaneSystemImageName
-                            )
-                        }
-                        Button {
-                            ghosttyCommandContext.perform(.ghostty(.newSplitUp))
-                        } label: {
-                            Label(
-                                "Split Up",
-                                systemImage: GhosttySplitDirection.up
-                                    .filledPaneSystemImageName
-                            )
-                        }
+                        .disabled(!shouldShowSplitControls)
+                        .accessibilityIdentifier("workspace.more")
                     }
                 }
             }
+            .modifier(MobileWorktreeContextDrawer(context: selectedWorktree.map {
+                appState.sidebarNavigation.worktreeContext($0)
+            }, theme: appState.theme, showsStandaloneControl: false, onShowAgent: { id in
+                guard let host, let worktree = selectedWorktree,
+                      let session = worktree.agents?.first(where: { $0.id == id })?.presentationSessionName else { return }
+                appState.workspaceStore.update(hostID: host.id, worktree: worktree) { layout in
+                    if !layout.sessions.contains(session) { layout.addAgent(session) }
+                    layout.select(session)
+                }
+                appState.focusedPaneId = session
+            }))
+            .modifier(IPadTerminalDetailChrome())
     }
 
     @ViewBuilder
@@ -1485,6 +1469,12 @@ struct IPadDetailColumn: View {
                 description: Text("Tap the chevron at the top of the sidebar.")
             )
         } else if let host, let worktree = selectedWorktree {
+            VStack(spacing: 0) {
+                IPadWorktreeIdentityBar(host: host, worktree: worktree,
+                    context: appState.sidebarNavigation.worktreeContext(worktree), theme: appState.theme,
+                    onSelect: onSelectPane)
+                    .background { Color.clear.worktreeHeaderWash().ignoresSafeArea(edges: .top) }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { identityHeight = $0 }
             MultiPaneDetailView(
                 host: host,
                 worktree: worktree,
@@ -1500,6 +1490,12 @@ struct IPadDetailColumn: View {
                 workspaceStore: appState.workspaceStore,
                 onNewTerminal: onNewTerminal, attentionContext: appState.sidebarNavigation.worktreeContext(worktree)
             )
+            }
+            // IPAD-1.31: one emoji wash band from under the toolbar through
+            // the top row of tabs; each surface draws its slice.
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
+            .coordinateSpace(name: WorktreeHeaderWash.coordinateSpace)
+            .environment(\.worktreeHeaderWashBand, washBand(for: worktree))
             .id("\(host.id)-\(worktree.path)")
         } else {
             ContentUnavailableView(
@@ -1507,6 +1503,16 @@ struct IPadDetailColumn: View {
                 systemImage: "list.bullet.indent"
             )
         }
+    }
+
+    private func washBand(for worktree: WorktreePanes) -> WorktreeHeaderWashBand? {
+        guard let wash = WorktreeHeaderWash(identity: worktree.iconIdentity, project: SidebarProjection.projects([worktree]).first,
+                                            iconData: nil, background: appState.theme.background, isDark: appState.theme.isDark)
+        else { return nil }
+        // The toolbar and status bar sit above the identity bar.
+        let toolbar: CGFloat = 96
+        return WorktreeHeaderWashBand(wash: wash, size: CGSize(width: detailWidth, height: toolbar + identityHeight + 44),
+                                      topExtension: toolbar)
     }
 
     private var selectedWorktree: WorktreePanes? {
@@ -1535,4 +1541,16 @@ struct IPadDetailColumn: View {
             ).isEmpty
     }
 }
+/// Opens the worktree context drawer from the iPad toolbar group.
+private struct WorktreeContextToolbarButton: View {
+    @Environment(\.openWorktreeContext) private var openWorktreeContext
+
+    var body: some View {
+        if let openWorktreeContext {
+            Button(action: openWorktreeContext) { Label("Worktree context", systemImage: "text.alignleft") }
+                .accessibilityIdentifier("worktree.context.open")
+        }
+    }
+}
+
 #endif

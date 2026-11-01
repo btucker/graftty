@@ -537,7 +537,8 @@ struct SingleSessionView: View {
                     remoteOpenControls
                 }
                 .frame(minHeight: 44)
-                .background(terminalTheme.background)
+                // IPAD-1.31: top-row tab headers draw their slice of the wash.
+                .background { terminalTheme.background.worktreeHeaderWash() }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("workspace.pane.header")
             }
@@ -1258,6 +1259,7 @@ struct SingleSessionView: View {
                 isPaneFocused: isPaneFocused,
                 hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
                 onOpenTerminal: compactWorkspace.map { workspace in { openCompactTerminal(in: workspace) } },
+                showsWorktreeContext: !isEmbeddedPane,
                 isPaneOwner: { client?.isOwner == true },
                 canPresentAuthentication: { true },
                 terminalRequest: $terminalBrowserRequest)

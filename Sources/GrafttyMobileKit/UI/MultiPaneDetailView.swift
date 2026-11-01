@@ -228,7 +228,7 @@ struct MultiPaneDetailView: View {
                         }
                 }
             }
-        }.font(.caption).foregroundStyle(theme.foreground)
+        }.font(.subheadline).foregroundStyle(theme.foreground)
             .dropDestination(for: WorkspaceTabDrag.self) { sessions, _ in
                 guard let session = sessions.first?.session, currentWorkspace.sessions.contains(session) else { return false }
                 mutate { $0.move(session, to: group.id) }; onSelectPane(session); return true
@@ -236,9 +236,16 @@ struct MultiPaneDetailView: View {
     }
     private var terminalDrawerHeader: some View {
         HStack {
+            // IPAD-1.31: a labeled drawer bar instead of a lone corner icon.
             Button(action: toggleDrawer) {
-                Label("Terminal", systemImage: "terminal").labelStyle(.iconOnly)
+                HStack(spacing: 6) {
+                    Label(currentWorkspace.terminals.isEmpty ? "Terminal" : "Terminal · \(currentWorkspace.terminals.count)",
+                          systemImage: "apple.terminal")
+                    Image(systemName: currentWorkspace.drawerVisible ? "chevron.down" : "chevron.up").font(.caption2.weight(.semibold))
+                        .foregroundStyle(theme.foreground.opacity(0.5))
+                }
             }
+            .accessibilityIdentifier("workspace.drawer.toggle")
             if currentWorkspace.drawerVisible {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
@@ -268,9 +275,10 @@ struct MultiPaneDetailView: View {
             Spacer()
             Button {
                 onNewTerminal()
-            } label: { Image(systemName: "plus") }.accessibilityLabel("New terminal")
-        }.buttonStyle(.plain).font(.callout).padding(.horizontal, 12).frame(minHeight: 44)
+            } label: { Image(systemName: "plus").frame(width: 44, height: 44) }.accessibilityLabel("New terminal")
+        }.buttonStyle(.plain).font(.callout).padding(.leading, 14).padding(.trailing, 4).frame(minHeight: 44)
             .foregroundStyle(theme.foreground).background(theme.background)
+            .overlay(alignment: .top) { theme.foreground.opacity(0.08).frame(height: 1) }
             .terminalDrawerHitArea(onToggle: toggleDrawer)
     }
 

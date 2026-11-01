@@ -13,6 +13,36 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         }
     }
 
+    /// @spec IPAD-1.31: While an iPad workspace is visible, the application shall lead with the worktree identity on its emoji wash, gather Worktree context, Preview, and split actions in one toolbar group, label the terminal drawer, and show Back only while the sidebar is hidden.
+    func testWorkspaceLeadsWithIdentityAndOneControlGroup() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
+        let app = XCUIApplication()
+        app.launchArguments = ["--ipad-workspace-fixture"]
+        app.launch()
+        defer { app.terminate() }
+        let identity = app.buttons["workspace.identity"]
+        let alpha = app.buttons["workspace.tab.alpha"]
+        XCTAssertTrue(identity.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(alpha.waitForExistence(timeout: 5))
+        XCTAssertLessThan(identity.frame.maxY, alpha.frame.minY + 1, "Identity is not above the tabs")
+        let navigation = app.navigationBars["Workspace"]
+        XCTAssertTrue(navigation.waitForExistence(timeout: 5))
+        let context = navigation.buttons["worktree.context.open"]
+        let more = navigation.buttons["workspace.more"]
+        XCTAssertTrue(context.waitForExistence(timeout: 5), "Worktree context is not in the toolbar group")
+        XCTAssertTrue(more.exists, "Split actions are not in the toolbar's More menu")
+        XCTAssertFalse(navigation.buttons["Split Right"].exists, "Split actions still sit directly in the toolbar")
+        XCTAssertFalse(app.buttons.matching(identifier: "worktree.context.open").count > 1, "A second context control remains")
+        XCTAssertFalse(app.buttons["terminal.back"].exists, "Back is shown while the sidebar is visible")
+        let drawer = app.buttons["workspace.drawer.toggle"]
+        XCTAssertTrue(drawer.exists)
+        XCTAssertTrue(drawer.label.contains("Terminal"), "Drawer bar is unlabeled: \(drawer.label)")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "iPad workspace identity and controls"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     private func checkWorkspaceTabs(orientation: UIDeviceOrientation) {
         let app = XCUIApplication()
         app.launchArguments = ["--ipad-workspace-fixture"]
@@ -31,13 +61,9 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["workspace.focus"].label, "beta")
         alpha.tap()
         XCTAssertEqual(app.staticTexts["workspace.focus"].label, "alpha")
-        let context = app.buttons["worktree.context.open"]
-        XCTAssertTrue(context.waitForExistence(timeout: 5))
         let header = app.otherElements["workspace.pane.header"]
         XCTAssertTrue(header.exists)
-        XCTAssertTrue(header.frame.contains(context.frame), "Resource controls cover terminal content")
         XCTAssertTrue(header.frame.contains(alpha.frame), "Tabs are outside the pane header")
-        XCTAssertGreaterThanOrEqual(context.frame.minY, navigation.frame.maxY - 1)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "iPad workspace chrome and tappable tabs"
         screenshot.lifetime = .keepAlways

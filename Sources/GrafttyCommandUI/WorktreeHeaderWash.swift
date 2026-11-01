@@ -138,3 +138,63 @@ private enum PlatformImage {
         #endif
     }
 }
+
+extension WorktreeHeaderWash {
+    /// Header surfaces draw slices of one band in this coordinate space, so
+    /// the header and every top-row tab header line up seamlessly.
+    public static let coordinateSpace = "worktreeHeaderWash"
+}
+
+/// One wash shared by several header surfaces.
+public struct WorktreeHeaderWashBand: Equatable {
+    public let wash: WorktreeHeaderWash
+    public let size: CGSize
+    /// Space above the coordinate origin the band also covers, such as a
+    /// navigation bar the header extends beneath.
+    public let topExtension: CGFloat
+
+    public init(wash: WorktreeHeaderWash, size: CGSize, topExtension: CGFloat = 0) {
+        self.wash = wash
+        self.size = size
+        self.topExtension = topExtension
+    }
+}
+
+private struct WorktreeHeaderWashBandKey: EnvironmentKey {
+    static let defaultValue: WorktreeHeaderWashBand? = nil
+}
+
+extension EnvironmentValues {
+    public var worktreeHeaderWashBand: WorktreeHeaderWashBand? {
+        get { self[WorktreeHeaderWashBandKey.self] }
+        set { self[WorktreeHeaderWashBandKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Overlays this surface's slice of the header band. Surfaces outside the
+    /// band, such as tab headers of lower split panes, draw nothing.
+    public func worktreeHeaderWash() -> some View {
+        overlay { WorktreeHeaderWashSlice() }
+    }
+}
+
+private struct WorktreeHeaderWashSlice: View {
+    @Environment(\.worktreeHeaderWashBand) private var band
+
+    var body: some View {
+        if let band {
+            GeometryReader { proxy in
+                let origin = proxy.frame(in: .named(WorktreeHeaderWash.coordinateSpace)).origin
+                if origin.y < band.size.height - band.topExtension {
+                    WorktreeHeaderWashView(wash: band.wash)
+                        .frame(width: band.size.width, height: band.size.height)
+                        .offset(x: -origin.x, y: -origin.y - band.topExtension)
+                }
+            }
+            .clipped()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+}

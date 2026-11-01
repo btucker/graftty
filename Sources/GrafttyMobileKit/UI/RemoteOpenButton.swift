@@ -20,6 +20,8 @@ struct RemoteOpenButton: View {
     let hasOwnershipSnapshot: Bool
     /// IPAD-2.27: the compact agent workspace opens its shells from here.
     var onOpenTerminal: (() -> Void)? = nil
+    /// IPAD-1.31: iPad panes leave Worktree context to the toolbar's group.
+    var showsWorktreeContext = true
     @State private var offerSnapshot = RemoteOpenPresentation.ScopedOffers()
     private var browserScope: TerminalBrowserRequest.Scope {
         .init(hostID: host.id, worktree: worktree, sessionName: sessionName, ownerDeviceID: ownerDeviceID)
@@ -212,7 +214,7 @@ struct RemoteOpenButton: View {
 
     @ViewBuilder
     private func floatingControls(actionID: UUID) -> some View {
-        let visible = (isPaneFocused && (openWorktreeContext != nil || onOpenTerminal != nil))
+        let visible = (isPaneFocused && ((showsWorktreeContext && openWorktreeContext != nil) || onOpenTerminal != nil))
             || (imageReady && imageOffer != nil) || (isActive && (isPaneOwner() || !offers.isEmpty))
         // Keep the presentation anchor mounted while scene activity hides the controls.
         ViewThatFits {
@@ -247,7 +249,7 @@ struct RemoteOpenButton: View {
             }
             .disabled(isDownloading)
         }
-        if isPaneFocused, let openWorktreeContext {
+        if isPaneFocused, showsWorktreeContext, let openWorktreeContext {
             TerminalFloatingGlyphButton(systemName: "text.alignleft", accessibilityLabel: "Worktree context",
                 action: openWorktreeContext)
                 .accessibilityIdentifier("worktree.context.open")

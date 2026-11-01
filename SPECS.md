@@ -2612,6 +2612,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.30** When IPadAppState is constructed with an injected UserDefaults suite, the application shall read and write the nested sidebar navigation state through that same suite rather than the standard defaults.
 
+**IPAD-1.31** While an iPad workspace is visible, the application shall lead with the worktree identity on its emoji wash, gather Worktree context, Preview, and split actions in one toolbar group, label the terminal drawer, and show Back only while the sidebar is hidden.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render device-local tabs, splits, and a terminal drawer over the worktree's complete host session inventory.
