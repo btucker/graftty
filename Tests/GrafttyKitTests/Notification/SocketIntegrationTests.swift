@@ -1282,6 +1282,14 @@ struct SocketIntegrationTests {
         let fd = socket(AF_UNIX, GrafttyPOSIX.streamSocket, 0)
         guard fd >= 0 else { throw POSIXError(.ENOTSOCK) }
 
+        // A busy server can close as soon as connect succeeds. Darwin rejects
+        // SO_NOSIGPIPE after that close, so configure it before connecting.
+        guard GrafttyPOSIX.configureNoSigPipe(fd) == 0 else {
+            let error = POSIXError(.init(rawValue: errno) ?? .EIO)
+            close(fd)
+            throw error
+        }
+
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         socketPath.withCString { ptr in
@@ -1308,7 +1316,6 @@ struct SocketIntegrationTests {
             throw POSIXError(.ECONNREFUSED)
         }
 
-        _ = GrafttyPOSIX.configureNoSigPipe(fd)
         return fd
     }
 
