@@ -60,7 +60,7 @@ struct WorktreeContextPanelTests {
         #expect(frames[1].height > panelHeight / 3, "The timeline keeps the remaining height")
     }
 
-    @Test("@spec CONTEXT-50: When Context shows an empty or populated brief on Mac or mobile, the application shall align its content to the top of its allocated area and let a short brief use its natural height by default.", arguments: [false, true])
+    @Test("@spec CONTEXT-54: When Context shows an empty or populated brief on Mac or mobile, the application shall align its content to the top of its allocated area and let a short brief use its natural height by default.", arguments: [false, true])
     func briefStartsAtTop(hasBrief: Bool) async throws {
         let context = Self.context(path: "/task", decisions: 0, hasBrief: hasBrief)
         func panel(height: Double) -> some View {

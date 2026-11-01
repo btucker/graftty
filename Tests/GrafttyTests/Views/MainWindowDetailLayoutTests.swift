@@ -7,7 +7,7 @@ import GrafttyKit
 @MainActor
 @Suite("Main window detail layout")
 struct MainWindowDetailLayoutTests {
-    @Test("@spec CONTEXT-51: While Context is open on desktop, the application shall reserve its width alongside the terminal below the breadcrumb, shrink the terminal when it opens, and restore that width when it closes without overlaying terminal content.")
+    @Test("@spec CONTEXT-55: While Context is open on desktop, the application shall reserve its width alongside the terminal below the breadcrumb, shrink the terminal when it opens, and restore that width when it closes without overlaying terminal content.")
     func contextReservesTerminalWidth() async throws {
         let terminalProbe = NSView(), inspectorProbe = NSView()
         func layout(open: Bool) -> some View {

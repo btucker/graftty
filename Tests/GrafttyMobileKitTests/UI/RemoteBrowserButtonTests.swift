@@ -193,7 +193,7 @@ struct RemoteBrowserButtonTests {
         #expect(window.rootViewController === host)
     }
 
-    @Test("@spec CONTEXT-52: When the mobile Context drawer uses a different color scheme from its enclosing screen, the application shall apply the Ghostty-derived scheme only inside the drawer and preserve the enclosing screen's appearance when opening or closing it.", arguments: [false, true])
+    @Test("@spec CONTEXT-56: When the mobile Context drawer uses a different color scheme from its enclosing screen, the application shall apply the Ghostty-derived scheme only inside the drawer and preserve the enclosing screen's appearance when opening or closing it.", arguments: [false, true])
     func drawerAppearanceStaysLocal(lightInspector: Bool) async throws {
         let theme = GhosttyThemeColors(backgroundRGB: lightInspector ? .init(r: 0.98, g: 0.97, b: 0.94) : .init(r: 0.15, g: 0.16, b: 0.18),
             foregroundRGB: lightInspector ? .init(r: 0.23, g: 0.25, b: 0.27) : .init(r: 0.92, g: 0.93, b: 0.94))
