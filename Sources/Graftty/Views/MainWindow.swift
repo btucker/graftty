@@ -285,6 +285,9 @@ struct MainWindow: View {
                             PaneCommands.closePane(appState: $appState, terminalManager: terminalManager,
                                 targetID: slot, userInitiated: true)
                         },
+                        onActivateTerminal: { terminalID in
+                            makePaneFirstResponder(terminalID, when: { terminalManager.focusedTerminalID == terminalID })
+                        },
                         agentScrollbackMap: agentScrollbackMap
                     )
                     // A hair of breathing room so terminal text doesn't

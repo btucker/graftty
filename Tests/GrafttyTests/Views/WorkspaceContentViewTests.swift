@@ -28,6 +28,31 @@ struct WorkspaceContentViewTests {
         #expect(loads.last! == model.agent.transcriptArchive?.id)
     }
 
+    @Test("@spec LAYOUT-2.190: When the user selects a live agent tab, the application shall give that agent's terminal keyboard focus.")
+    func selectingAgentTabActivatesItsTerminal() async throws {
+        _ = NSApplication.shared
+        let first = PaneSlotID(), second = PaneSlotID()
+        var entry = WorktreeEntry(path: "/repo/tabs", branch: "tabs", state: .running,
+            splitTree: SplitTree(root: .split(.init(direction: .horizontal, ratio: 0.5, left: .leaf(first), right: .leaf(second)))))
+        entry.agents = [("Codex A", first), ("Codex B", second)].map { name, slot in
+            var agent = ManagedAgent(name: name, provider: .codex, parent: nil)
+            agent.paneSlotID = slot
+            return agent
+        }
+        let group = WorkspaceLayout<PaneSlotID>.Group(sessions: [first, second], selected: first)
+        entry.workspaceLayout = WorkspaceLayout(root: .group(group.id), groups: [group])
+        entry.focusedPaneSlotID = first
+        var activated: [PaneSlotID] = []
+        let worktree = Binding(get: { entry }, set: { entry = $0 })
+        let view = WorkspaceContentView(terminalManager: TerminalManager(socketPath: "/tmp/graftty-agent-tab-focus-test.sock"),
+            worktree: worktree, onFocusTerminal: { entry.focusedPaneSlotID = $0 }, onNewTerminal: {}, onCloseTerminal: { _ in },
+            onActivateTerminal: { activated.append($0) })
+        view.selectTab(second)
+        #expect(entry.focusedPaneSlotID == second)
+        #expect(entry.workspaceLayout?.group(containing: second)?.selected == second)
+        #expect(activated == [second])
+    }
+
     private final class CompletedModel: ObservableObject {
         @Published var agent: ManagedAgent
         init() {

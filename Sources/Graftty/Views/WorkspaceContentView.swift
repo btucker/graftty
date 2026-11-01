@@ -20,6 +20,9 @@ struct WorkspaceContentView: View {
     let onFocusTerminal: (PaneSlotID) -> Void
     let onNewTerminal: () -> Void
     let onCloseTerminal: (PaneSlotID) -> Void
+    /// LAYOUT-2.190: explicit tab selection hands keyboard focus to the
+    /// terminal. Clicks inside a terminal already make it first responder.
+    var onActivateTerminal: (PaneSlotID) -> Void = { _ in }
     var agentScrollbackMap: AgentScrollbackMap?
     @Environment(\.agentWorkspaceRequest) private var request
     @State private var failure: String?
@@ -100,7 +103,7 @@ struct WorkspaceContentView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 2) {
                         ForEach(group?.sessions ?? [], id: \.self) { tab in
-                            Button { focus(tab) } label: {
+                            Button { selectTab(tab) } label: {
                                 HStack(spacing: 6) {
                                     AgentProviderIcon(provider: agent(tab)?.provider.rawValue)
                                     Text(title(tab)).lineLimit(1)
@@ -309,12 +312,19 @@ struct WorkspaceContentView: View {
             worktree.splitTree = worktree.splitTree.withZoom(nil)
         }
     }
-    private func focus(_ slot: PaneSlotID) {
+    /// The tab strip's action. Tabs are drag sources, so tests call this
+    /// directly; a synthetic press would enter AppKit's drag tracking loop.
+    func selectTab(_ slot: PaneSlotID) { focus(slot, activate: true) }
+    private func focus(_ slot: PaneSlotID) { focus(slot, activate: false) }
+    private func focus(_ slot: PaneSlotID, activate: Bool) {
         if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
         mutate { $0.select(slot) }
         if worktree.hasCompletedContent(in: slot) {
             terminalManager.clearFocus()
-        } else if worktree.splitTree.containsLeaf(slot) { onFocusTerminal(slot) }
+        } else if worktree.splitTree.containsLeaf(slot) {
+            onFocusTerminal(slot)
+            if activate { onActivateTerminal(slot) }
+        }
     }
     private func synchronize(initial: Bool = false) {
         let hadLayout = worktree.workspaceLayout != nil
