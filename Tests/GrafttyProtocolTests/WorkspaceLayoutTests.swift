@@ -1,0 +1,181 @@
+import Foundation
+import Testing
+@testable import GrafttyProtocol
+
+struct WorkspaceLayoutTests {
+    @Test("@spec LAYOUT-2.186: When an agent tab is dragged before or after another tab in its group, the application shall persist the new order without changing selected sessions, keyboard focus, or terminal identities.")
+    func reorderTabsKeepsSelection() throws {
+        var layout = WorkspaceLayout<String>()
+        for session in ["a", "b", "c", "other"] { layout.addAgent(session) }
+        let group = try #require(layout.groups.first?.id)
+        layout.split("other", beside: group, edge: .right)
+        layout.select("b")
+        layout.addTerminal("shell"); layout.select("shell")
+        let before = layout
+        let movedLast = layout.moveTab("a", relativeTo: "c", after: true)
+        #expect(movedLast)
+        #expect(layout.group(containing: "a")?.sessions == ["b", "c", "a"])
+        let movedFirst = layout.moveTab("a", relativeTo: "b", after: false)
+        #expect(movedFirst)
+        #expect(layout.group(containing: "a")?.sessions == ["a", "b", "c"])
+        let movedSelected = layout.moveTab("b", relativeTo: "c", after: true)
+        #expect(movedSelected)
+        #expect(layout.group(containing: "a")?.sessions == ["a", "c", "b"])
+        #expect(layout.groups.map(\.selected) == before.groups.map(\.selected))
+        #expect(layout.focusedSession == before.focusedSession)
+        #expect(layout.lastAgent == before.lastAgent)
+        #expect(layout.terminals == before.terminals)
+        #expect(layout.selectedTerminal == before.selectedTerminal)
+        #expect(layout.root == before.root)
+        layout.reconcile(live: ["a", "b", "c", "other", "shell"], agents: ["a", "b", "c", "other"], preservingSelection: true)
+        let restored = try JSONDecoder().decode(WorkspaceLayout<String>.self, from: JSONEncoder().encode(layout))
+        #expect(restored == layout)
+        #expect(restored.group(containing: "b")?.sessions == ["a", "c", "b"])
+    }
+
+    @Test func tabDropTransfersAcrossGroupsAndRejectsStaleTargets() throws {
+        var layout = WorkspaceLayout<String>()
+        for session in ["a", "b", "c"] { layout.addAgent(session) }
+        let group = try #require(layout.groups.first?.id)
+        layout.split("c", beside: group, edge: .right)
+        let transferred = layout.moveTab("c", relativeTo: "b", after: false)
+        #expect(transferred)
+        #expect(layout.groups.count == 1)
+        #expect(layout.groups[0].sessions == ["a", "c", "b"])
+        #expect(layout.groups[0].selected == "c")
+        let before = layout
+        let missingSource = layout.moveTab("absent", relativeTo: "a", after: true)
+        let missingTarget = layout.moveTab("a", relativeTo: "absent", after: true)
+        let sameTab = layout.moveTab("a", relativeTo: "a", after: true)
+        #expect(!missingSource && !missingTarget && !sameTab)
+        #expect(layout == before)
+    }
+
+    @Test("@spec AGENT-6.142: When a completed tab is dismissed before its terminal is cleaned up, the application shall preserve that dismissal across inventory updates and allow explicit reopening.")
+    func dismissedCompletionStaysDismissed() throws {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("done"); layout.addAgent("live"); layout.select("done")
+        layout.remove("done")
+        layout.reconcile(live: ["done", "live"], agents: ["done", "live"], completed: ["done"], preservingSelection: true)
+        #expect(layout.sessions == ["live"])
+        #expect(layout.focusedSession == "live")
+        layout.addAgent("done"); layout.select("done")
+        #expect(layout.focusedSession == "done")
+    }
+
+    @Test("@spec AGENT-6.137: When a remote agent terminal is cleaned up, the application shall retain its selected tab and render its completed content without adding a dead session to the host inventory.")
+    func retainedConversationRendersWithoutLiveInventory() throws {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("session"); layout.select("session")
+        let before = layout.root
+        let agent = AgentSessionInfo(id: "agent", name: "Review", provider: "codex", status: "closed", sessionName: nil,
+            completionID: "completion", retainedSessionName: "session", retainedSlotID: UUID().uuidString, canResume: true)
+        layout.reconcile(live: [], agents: [], retained: ["session"], preservingSelection: true)
+        let restored = try JSONDecoder().decode(WorkspaceLayout<String>.self, from: JSONEncoder().encode(layout))
+        #expect(restored.root == before)
+        #expect(restored.focusedSession == "session")
+        #expect(restored.visiblePaneLayout(in: nil, retainedAgents: [agent])?.leaves.map(\.sessionName) == ["session"])
+        layout.remove("session")
+        layout.reconcile(live: [], agents: [], retained: ["session"], preservingSelection: true)
+        #expect(layout.sessions.isEmpty)
+    }
+
+    @Test("@spec LAYOUT-2.179: When the user opens an empty terminal drawer, the application shall request its first terminal automatically; reopening a populated drawer shall reuse its selected terminal.")
+    func openingDrawerRequestsFirstShell() {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("agent")
+        let needsCreation = layout.openDrawer()
+        #expect(needsCreation)
+        #expect(layout.drawerVisible)
+        let duplicateOpen = layout.openDrawer()
+        #expect(!duplicateOpen)
+        layout.addTerminal("shell")
+        #expect(layout.hideDrawer() == "agent")
+        let reopen = layout.openDrawer()
+        #expect(!reopen)
+        #expect(layout.selectedTerminal == "shell")
+        layout.remove("shell")
+        _ = layout.hideDrawer()
+        let afterClose = layout.openDrawer()
+        #expect(afterClose)
+    }
+
+    @Test("@spec LAYOUT-2.175: When resizing a terminal drawer after its viewport shrinks, the application shall begin the adjustment at its rendered height and use the same viewport bounds for rendering and resizing.")
+    func drawerResizeStartsAtVisibleHeight() {
+        typealias Layout = WorkspaceLayout<String>
+        #expect(Layout.clampedDrawerHeight(700, available: 600) == 420)
+        #expect(Layout.resizedDrawerHeight(700, by: -40, available: 600) == 380)
+        #expect(Layout.resizedDrawerHeight(700, by: 40, available: 600) == 420)
+        #expect(Layout.clampedDrawerHeight(240, available: 100) == 70)
+        #expect(Layout.clampedDrawerHeight(.nan, available: 600) == 240)
+        #expect(Layout.clampedDrawerHeight(240, available: .infinity) == 0)
+    }
+
+    @Test("@spec LAYOUT-2.161: When an agent moves between tabs and split groups, the application shall preserve its session identity and keep each session in exactly one position.")
+    func tabsAndSplitsPreserveSessions() throws {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("a")
+        layout.addAgent("b")
+        let first = try #require(layout.groups.first?.id)
+        #expect(layout.groups.count == 1)
+        #expect(layout.groups[0].sessions == ["a", "b"])
+        layout.split("b", beside: first, edge: .right)
+        #expect(layout.groups.count == 2)
+        #expect(Set(layout.sessions) == ["a", "b"])
+        layout.move("b", to: first)
+        #expect(layout.groups.count == 1)
+        #expect(layout.sessions.count == 2)
+        #expect(layout.groups[0].selected == "b")
+    }
+
+    @Test("@spec LAYOUT-2.162: When the terminal drawer is hidden, the application shall retain its sessions and selected terminal while restoring the previously selected agent.")
+    func hidingDrawerRetainsShell() throws {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("agent")
+        layout.addTerminal("shell")
+        layout.select("shell")
+        #expect(layout.drawerVisible)
+        #expect(layout.hideDrawer() == "agent")
+        #expect(!layout.drawerVisible)
+        #expect(layout.selectedTerminal == "shell")
+        #expect(layout.terminals == ["shell"])
+        let restored = try JSONDecoder().decode(WorkspaceLayout<String>.self, from: JSONEncoder().encode(layout))
+        #expect(restored == layout)
+    }
+
+    @Test("@spec LAYOUT-2.163: When workspace sessions close or appear, the application shall remove stale view references, collapse empty groups, and place new agents in tabs and new shells in the terminal drawer.")
+    func reconcileInventory() {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("old")
+        layout.reconcile(live: ["agent", "shell"], agents: ["agent"])
+        #expect(layout.groups.count == 1)
+        #expect(layout.groups[0].sessions == ["agent"])
+        #expect(layout.terminals == ["shell"])
+        layout.reconcile(live: [], agents: [])
+        #expect(layout.groups.isEmpty)
+        #expect(layout.root == nil)
+        #expect(layout.terminals.isEmpty)
+    }
+    @Test("@spec LAYOUT-2.171: When a viewer receives newly discovered sessions, the application shall preserve its selected tabs and drawer state until a local selection changes them.")
+    func passiveDiscoveryKeepsSelection() {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("a"); layout.addTerminal("shell")
+        _ = layout.hideDrawer()
+        layout.reconcile(live: ["a", "b", "shell", "new-shell"], agents: ["a", "b"], preservingSelection: true)
+        #expect(layout.groups.first?.selected == "a")
+        #expect(layout.selectedTerminal == "shell")
+        #expect(!layout.drawerVisible)
+        #expect(Set(layout.sessions) == ["a", "b", "shell", "new-shell"])
+    }
+
+    @Test("@spec LAYOUT-2.172: When a host explicitly publishes an empty agent inventory, the application shall initially place its ordinary terminals in the drawer while preserving legacy layouts from hosts without agent metadata.")
+    func emptyAgentInventoryMeansOrdinaryShells() {
+        let inventory = PaneLayoutNode.leaf(sessionName: "shell", title: "", attentionText: nil, isBusy: false, attentionSource: nil)
+        let modern = WorktreePanes(path: "/repo", displayName: "Main", repoDisplayName: "Repo", displayBranch: "main", state: .running, isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil, layout: inventory, agents: [])
+        let legacy = WorktreePanes(path: "/repo", displayName: "Main", repoDisplayName: "Repo", displayBranch: "main", state: .running, isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil, layout: inventory)
+        #expect(WorkspaceLayout<String>.initial(for: modern).terminals == ["shell"])
+        #expect(WorkspaceLayout<String>.initial(for: modern).groups.isEmpty)
+        #expect(WorkspaceLayout<String>.initial(for: legacy).groups.count == 1)
+    }
+
+}

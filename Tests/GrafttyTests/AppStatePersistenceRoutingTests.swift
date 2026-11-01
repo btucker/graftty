@@ -175,6 +175,31 @@ private func runningWorktreeState() -> (AppState, PaneSlotID) {
     return (state, pane)
 }
 
+@MainActor
+struct ManagedPaneCloseRoutingTests {
+    @Test("@spec AGENT-6.102: When Mac pane controls close a managed terminal, the application shall claim asynchronous teardown before removing its view and preserve a retryable interrupted outcome if teardown fails.")
+    func failedTeardownKeepsManagedPane() async throws {
+        let (initial, slot) = runningWorktreeState()
+        let box = StateBox(initial)
+        var agent = ManagedAgent(name: "Child", provider: .codex, parent: nil)
+        agent.paneSlotID = slot
+        box.state.repos[0].worktrees[0].agents = [agent]
+        let host = try HeadlessRouter()
+        let router = host.router(for: box)
+        let probe = PersistenceProbe()
+        await GrafttyApp.$appStatePersisterOverride.withValue(probe.persister) {
+            router.installManagedPaneClose()
+            PaneCommands.closePane(appState: box.binding, terminalManager: host.terminalManager,
+                targetID: slot, userInitiated: true)
+            #expect(box.state.repos[0].worktrees[0].splitTree.containsLeaf(slot))
+            for _ in 0..<100 where box.state.repos[0].worktrees[0].agents[0].failure == nil { await Task.yield() }
+            #expect(box.state.repos[0].worktrees[0].agents[0].status == .interrupted)
+            #expect(box.state.repos[0].worktrees[0].agents[0].completion?.outcome == .interrupted)
+            #expect(box.state.repos[0].worktrees[0].paneSessions[slot] != nil)
+        }
+    }
+}
+
 @Suite(.serialized)
 @MainActor
 struct AgentLaunchPersistenceTests {
@@ -512,6 +537,7 @@ private func twoPaneState(ratio: Double = 0.3) -> (AppState, PaneSlotID, PaneSlo
         direction: .horizontal, ratio: ratio, left: .leaf(left), right: .leaf(right)
     )))
     worktree.paneSessions = [left: PaneSessionID(), right: PaneSessionID()]
+    worktree.workspaceLayout = .preserving(worktree.splitTree)
     let state = AppState(
         repos: [RepoEntry(path: repoPath, displayName: "repo", worktrees: [worktree])],
         selectedWorktreePath: repoPath

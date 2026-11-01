@@ -9,10 +9,10 @@ struct MobileWorktreeRowPresentation {
     let showsWorktreeQuestion: Bool
 
     init(context: SidebarWorktreeContext) {
-        let leaves = context.worktree.state == .running && !context.worktree.showsCreationProgress
-            ? context.worktree.layout?.leaves ?? [] : []
+        let leaves = context.worktree.sidebarAgentLeaves
         self.leaves = leaves
-        worktreeAttentionCount = leaves.isEmpty ? context.pending.count : 0
+        let sessions = Set(leaves.map(\.sessionName))
+        worktreeAttentionCount = context.pending.filter { $0.paneID.map(sessions.contains) != true }.count
         questionPaneID = context.question == nil ? nil : context.questionPaneID.flatMap { route in
             leaves.contains { $0.sessionName == route } ? route : nil
         }

@@ -117,6 +117,14 @@ public final class HeadlessHostRuntime {
                     let name = launcher.sessionName(for: session)
                     // A surviving daemon needs no new startup attach. Remote
                     // clients will attach when they choose this pane.
+                    if !live.contains(name), state.repos[ri].worktrees[wi].agents.contains(where: { $0.paneSlotID == slot && $0.status != .closed }) {
+                        state.repos[ri].worktrees[wi].recordManagedSessionEnd(slot: slot, reason: "Terminal process was absent after restart")
+                        state.repos[ri].worktrees[wi].splitTree = state.repos[ri].worktrees[wi].splitTree.removing(slot)
+                        state.repos[ri].worktrees[wi].clearPaneSession(for: slot)
+                        if state.repos[ri].worktrees[wi].splitTree.leafCount == 0 { state.repos[ri].worktrees[wi].state = .closed }
+                        _ = state.repos[ri].worktrees[wi].ensurePrimaryPane()
+                        continue
+                    }
                     if !live.contains(name) {
                         try await terminals.start(spawn(session: session, path: path))
                     }
@@ -124,26 +132,26 @@ public final class HeadlessHostRuntime {
             }
         }
         try save()
+        await AgentControl.reconcileOutbox(platform: controlPlatform)
         await refreshPortBindings()
     }
 
-    public func openWorktree(_ path: String, command: String? = nil) async throws -> String {
+    public func openWorktree(_ path: String, command: String? = nil, selectTab: Bool = true) async throws -> String {
         try acquire(path)
         defer { busyPaths.remove(path) }
-        return try await openUnlocked(path, command: command)
+        return try await openUnlocked(path, command: command, selectTab: selectTab)
     }
 
-    func openUnlocked(_ path: String, command: String? = nil) async throws -> String {
+    func openUnlocked(_ path: String, command: String? = nil, selectTab: Bool = true) async throws -> String {
         let initialIndex = try indices(path)
         let initialWorktree = state.repos[initialIndex.repo].worktrees[initialIndex.worktree]
         guard FileManager.default.fileExists(atPath: path) else { throw HostRuntimeError.notFound("worktree directory is missing") }
         if initialWorktree.state == .running, let slot = initialWorktree.splitTree.allLeaves.first,
            let session = initialWorktree.paneSessions[slot] { return launcher.sessionName(for: session) }
-        let slot = PaneSlotID()
-        let session = PaneSessionID()
-        try await terminals.start(spawn(session: session, path: path, command: command))
+        let managed = initialWorktree.agents.first { $0.status == .starting && $0.paneSlotID != nil }
+        let slot = managed?.paneSlotID ?? PaneSlotID()
+        let session = managed?.paneSessionID ?? PaneSessionID()
         let index = try indices(path)
-        // Pane startup may accept attention or pin updates while suspended.
         var worktree = state.repos[index.repo].worktrees[index.worktree]
         worktree.recordPaneSession(session, for: slot)
         worktree.splitTree = SplitTree(root: .leaf(slot))
@@ -152,23 +160,24 @@ public final class HeadlessHostRuntime {
         worktree.state = .running
         let previous = state
         state.repos[index.repo].worktrees[index.worktree] = worktree
-        state.selectedWorktreePath = path
-        do { try save() } catch {
-            state = previous
-            try? await terminals.kill(launcher.sessionName(for: session))
+        if selectTab { state.selectedWorktreePath = path }
+        do { try save() } catch { state = previous; throw error }
+        do { try await terminals.start(spawn(session: session, path: path, command: command)) }
+        catch {
+            await rollbackReservedPane(path: path, slot: slot, session: session, reason: error.localizedDescription)
             throw error
         }
         await refreshPortBindings()
         return launcher.sessionName(for: session)
     }
 
-    public func splitPane(target: String, direction: PaneControlRequest.SplitDirection, command: String? = nil) async throws -> String {
+    public func splitPane(target: String, direction: PaneControlRequest.SplitDirection, command: String? = nil,
+                          managedAgent: ManagedAgent? = nil, selectTab: Bool = true) async throws -> String {
         let (path, slot) = try resolve(target)
         try acquire(path)
         defer { busyPaths.remove(path) }
-        let newSlot = PaneSlotID()
-        let session = PaneSessionID()
-        try await terminals.start(spawn(session: session, path: path, command: command))
+        let newSlot = managedAgent?.paneSlotID ?? PaneSlotID()
+        let session = managedAgent?.paneSessionID ?? PaneSessionID()
         let index = try indices(path)
         var worktree = state.repos[index.repo].worktrees[index.worktree]
         worktree.recordPaneSession(session, for: newSlot)
@@ -176,25 +185,63 @@ public final class HeadlessHostRuntime {
         worktree.splitTree = direction == .left || direction == .up
             ? worktree.splitTree.insertingBefore(newSlot, at: slot, direction: axis)
             : worktree.splitTree.inserting(newSlot, at: slot, direction: axis)
-        worktree.focusedPaneSlotID = newSlot
+        if selectTab { worktree.focusedPaneSlotID = newSlot }
+        else { worktree.splitTree = worktree.splitTree.withZoom(state.repos[index.repo].worktrees[index.worktree].splitTree.zoomed) }
         let previous = state
         state.repos[index.repo].worktrees[index.worktree] = worktree
-        do { try save() } catch {
-            state = previous
-            try? await terminals.kill(launcher.sessionName(for: session))
+        do { try save() } catch { state = previous; throw error }
+        do { try await terminals.start(spawn(session: session, path: path, command: command)) }
+        catch {
+            await rollbackReservedPane(path: path, slot: newSlot, session: session, reason: error.localizedDescription)
             throw error
         }
         await refreshPortBindings()
         return launcher.sessionName(for: session)
     }
 
+    private func rollbackReservedPane(path: String, slot: PaneSlotID, session: PaneSessionID, reason: String) async {
+        let name = launcher.sessionName(for: session)
+        try? await terminals.kill(name)
+        let stillLive = (try? await terminals.sessions().contains(name)) ?? true
+        guard let index = state.indices(forWorktreePath: path) else { return }
+        var worktree = state.repos[index.repo].worktrees[index.worktree]
+        if !stillLive {
+            worktree.splitTree = worktree.splitTree.removing(slot)
+            worktree.clearPaneSession(for: slot)
+            if worktree.splitTree.leafCount == 0 { worktree.state = .closed }
+            if worktree.focusedPaneSlotID == slot { worktree.focusedPaneSlotID = worktree.splitTree.allLeaves.first }
+            _ = worktree.ensurePrimaryPane()
+        }
+        if let ai = worktree.agents.firstIndex(where: { $0.paneSlotID == slot }) {
+            worktree.agents[ai].launchFailed(reason: reason)
+            if stillLive { worktree.agents[ai].processObservation = .disconnected }
+            else { worktree.agents[ai].paneSlotID = nil }
+        }
+        state.repos[index.repo].worktrees[index.worktree] = worktree
+        try? save()
+    }
+
     public func closePane(target: String) async throws {
+        let (path, slot) = try resolve(target)
+        if state.worktree(forPath: path)?.agents.contains(where: { $0.paneSlotID == slot && $0.status != .closed }) == true {
+            try await AgentControl.interruptSession(path: path, slot: slot, platform: controlPlatform)
+            return
+        }
+        try await closePaneSession(target: target)
+    }
+
+    /// The managed adapter archives first and calls this effect without re-entering the lifecycle transition.
+    func closePaneSession(target: String) async throws {
         let (path, slot) = try resolve(target)
         try acquire(path)
         defer { busyPaths.remove(path) }
         try await terminals.kill(target)
+        guard try await !terminals.sessions().contains(target) else {
+            throw HostRuntimeError.invalid("Terminal session is still running")
+        }
         let index = try indices(path)
         var worktree = state.repos[index.repo].worktrees[index.worktree]
+        worktree.recordManagedSessionEnd(slot: slot, reason: "Terminal session ended")
         worktree.splitTree = worktree.splitTree.removing(slot)
         worktree.clearPaneSession(for: slot)
         worktree.paneAttention[slot] = nil
@@ -300,7 +347,7 @@ public final class HeadlessHostRuntime {
             try await prepareEnvironment?(path)
             try Task.checkCancellation()
             guard !isShuttingDown, placements.drain == nil else { throw HostRuntimeError.busy("Host is shutting down or draining") }
-            let session = try await openUnlocked(path, command: plan.initialCommand)
+            let session = try await openUnlocked(path, command: plan.initialCommand, selectTab: plan.selectTab ?? true)
             state.transitionCreation(at: path, to: .ready, operationID: operationID)
             try? save()
             return session

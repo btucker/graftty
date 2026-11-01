@@ -334,7 +334,11 @@ public struct SidebarActivityItem: Codable, Sendable, Hashable, Identifiable {
     public var iconIdentity: WorktreeIconIdentity {
         .resolve(isMainCheckout: isMainCheckout == true, emoji: worktreeEmoji)
     }
-    public var needsAttention: Bool { occurrence != nil && occurrence?.source != .commandFinished }
+    public var needsAttention: Bool {
+        guard occurrence != nil, occurrence?.source != .commandFinished else { return false }
+        if let agentStop { return agentStop.recap?.need?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+        return true
+    }
 
     public struct WorktreeIdentity: Hashable, Sendable, Identifiable {
         public let projectID: String
@@ -381,7 +385,7 @@ public enum SidebarActivityFilter: String, CaseIterable, Codable, Sendable {
     }
 }
 
-/// @spec LAYOUT-2.58: While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and matching pending-attention counts in orange for each project and worktree, excluding viewed history and command-finished markers.
+/// @spec LAYOUT-2.58: While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and identify pending user requests with an orange waiting glyph instead of numeric attention badges, excluding routine recaps and command-finished markers.
 public struct SidebarActivityCounts: Sendable {
     public private(set) var workingByProject: [String: Int] = [:]
     public private(set) var attentionByProject: [String: Int] = [:]

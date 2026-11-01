@@ -15,7 +15,7 @@ public struct SidebarPRBadge: View {
             mergeable: badge.mergeable
         )
         Button {
-            openURL(badge.url)
+            open(using: { openURL($0) })
         } label: {
             Text(verbatim: badge.referenceText)
                 .font(.caption)
@@ -38,6 +38,8 @@ public struct SidebarPRBadge: View {
         .help(Self.badgeTooltip(for: badge))
         .accessibilityLabel(Self.badgeAccessibilityLabel(for: badge, tone: tone))
     }
+
+    func open(using action: (URL) -> Void) { action(badge.url) }
 
     private func color(for tone: PRBadgeStyle.Tone) -> Color {
         switch tone {

@@ -73,6 +73,78 @@ extension SocketRequestRouter: ControlPlatform {
 
     var controlCapabilities: Set<ControlCapability> { Set(ControlCapability.allCases) }
 
+    /// All local destructive pane entry points share this interception, including remote controls.
+    func installManagedPaneClose() {
+        terminalManager.managedSessionMissing = { [weak self] slot in
+            guard let self, let worktree = self.state.repos.flatMap(\.worktrees).first(where: {
+                $0.agents.contains { $0.paneSlotID == slot && $0.status != .closed }
+            }) else { return }
+            try AgentControl.sessionEnded(path: worktree.path, slot: slot,
+                reason: "Terminal process was absent after restart", platform: self)
+        }
+        terminalManager.managedPaneClose = { [weak self] slot, userInitiated in
+            guard let self, let worktree = self.state.repos.flatMap(\.worktrees).first(where: {
+                $0.agents.contains { $0.paneSlotID == slot && $0.status != .closed }
+            }) else { return false }
+            Task { @MainActor in
+                do {
+                    if userInitiated {
+                        try await AgentControl.interruptSession(path: worktree.path, slot: slot, platform: self)
+                    } else if try await !self.agentSessionIsAlive(worktree: worktree.path, slot: slot) {
+                        try AgentControl.sessionEnded(path: worktree.path, slot: slot, reason: "Terminal process exited", platform: self)
+                        PaneCommands.removeEndedPane(appState: self.appState, terminalManager: self.terminalManager,
+                            targetID: slot, activateReplacement: false)
+                        await AgentControl.reconcileOutbox(platform: self)
+                    }
+                    // A dead attachment with a live daemon is not a provider exit.
+                } catch {
+                    NSLog("[Graftty] Managed terminal close remains retryable: %@", error.localizedDescription)
+                }
+            }
+            return true
+        }
+    }
+
+    func agentSessionNames() async throws -> Set<String> {
+        guard let launcher = terminalManager.zmxLauncher, launcher.isAvailable else { throw AgentControlError.unavailable }
+        return try await OffMainIO.run { try launcher.listSessions() }
+    }
+
+    func agentSessionIsAlive(worktree path: String, slot: PaneSlotID) async throws -> Bool {
+        guard let session = state.worktree(forPath: path)?.paneSessions[slot], let launcher = terminalManager.zmxLauncher else { return false }
+        return try await OffMainIO.run { try launcher.listSessions().contains(ZmxLauncher.sessionName(for: session)) }
+    }
+
+    func closeAgentSession(worktree path: String, slot: PaneSlotID) async throws {
+        guard let worktree = state.worktree(forPath: path),
+              let session = worktree.paneSessions[slot] else { return }
+        guard let launcher = terminalManager.zmxLauncher, launcher.isAvailable else {
+            throw AgentControlError.unavailable
+        }
+        let name = ZmxLauncher.sessionName(for: session)
+        let history = try await OffMainIO.run {
+            guard try launcher.listSessions().contains(name) else { return nil as String? }
+            return try ZmxHistorySubprocessReader(launcher: launcher).history(sessionName: name) as String?
+        }
+        if let history {
+            try await AgentControl.archiveTranscript(history, path: path, slot: slot, session: session, platform: self)
+        }
+        try await OffMainIO.run {
+            if try launcher.listSessions().contains(name) {
+                let result = try ZmxRunner.captureAll(executable: launcher.executable, args: ["kill", "--force", name],
+                    env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment), timeout: 2)
+                guard try !launcher.listSessions().contains(name) else {
+                    throw NSError(domain: "AgentCleanup", code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Could not end agent session: \(result.stderr)"])
+                }
+            }
+        }
+        // A slot is immutable. Do not resolve a pane index after the subprocess await.
+        PaneCommands.removeEndedPane(appState: appState, terminalManager: terminalManager, targetID: slot,
+                                    userInitiated: true, activateReplacement: false)
+        try GrafttyApp.persistAppStateSynchronously(state)
+    }
+
     func handlePlatformRequest(_ message: NotificationMessage) async -> ResponseMessage? {
         await handlePaneRequest(message)
     }

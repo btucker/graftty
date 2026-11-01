@@ -108,7 +108,7 @@ struct SidebarNavigationTests {
             sidebar: .init(id: "w", projectID: "r", unseenAgentStop: stop))
         let item = try #require(SidebarProjection.activity([row]).first)
         #expect(item.agentStop?.paneTitle == "Terminal wrap cleanup")
-        #expect(SidebarActivityFilter.needsYou.apply(to: [item], query: "wrap cleanup").count == 1)
+        #expect(SidebarActivityFilter.all.apply(to: [item], query: "wrap cleanup").count == 1)
         #expect(try JSONDecoder().decode(SidebarActivityItem.self, from: JSONEncoder().encode(item)) == item)
     }
 
@@ -186,7 +186,7 @@ struct SidebarNavigationTests {
         #expect(history.entries.first?.item.prBadge == nil)
     }
 
-    @Test("@spec LAYOUT-2.58: While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and matching pending-attention counts in orange for each project and worktree, excluding viewed history and command-finished markers.")
+    @Test("@spec LAYOUT-2.58: While projects and worktrees are displayed, the application shall show working-agent counts in green for each project and identify pending user requests with an orange waiting glyph instead of numeric attention badges, excluding routine recaps and command-finished markers.")
     func activityCountsAgreeAcrossProjectsAndWorktrees() {
         let working = SidebarActivityItem(id: "busy", projectID: "p", worktreeID: "w1", paneID: "agent",
             projectName: "Project", worktreeName: "worktree", title: "Codex", occurrence: nil, isBusy: true)

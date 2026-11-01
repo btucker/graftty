@@ -18,6 +18,13 @@ struct RemoteOpenButton: View {
     let browserConnectionReady: Bool
     let isPaneFocused: Bool
     let hasOwnershipSnapshot: Bool
+    /// IPAD-2.27: the compact agent workspace opens its shells from here.
+    var onOpenTerminal: (() -> Void)? = nil
+    /// IPAD-1.31: iPad panes leave Worktree context to the toolbar's group.
+    var showsWorktreeContext = true
+    /// IPAD-1.31: when set, the pane draws no capsule and hands its browser
+    /// action to the iPad toolbar's single group instead.
+    var exportControls: ((PaneResourceControls?) -> Void)? = nil
     @State private var offerSnapshot = RemoteOpenPresentation.ScopedOffers()
     private var browserScope: TerminalBrowserRequest.Scope {
         .init(hostID: host.id, worktree: worktree, sessionName: sessionName, ownerDeviceID: ownerDeviceID)
@@ -95,6 +102,10 @@ struct RemoteOpenButton: View {
     private var resourceControls: some View {
         let actionID = operationID
         floatingControls(actionID: actionID)
+        .onChange(of: exportControls == nil ? nil : exportedControls(actionID: actionID), initial: true) { _, controls in
+            exportControls?(controls)
+        }
+        .onDisappear { exportControls?(nil) }
         .confirmationDialog("Browser resources", isPresented: $choosingResource) {
             Button("Remote Chrome tabs") { openChromeTabs(actionID: actionID) }.disabled(!isPaneOwner())
             ForEach(offers) { offer in Button(offer.filename) { open(offer, actionID: actionID) } }
@@ -210,7 +221,27 @@ struct RemoteOpenButton: View {
 
     @ViewBuilder
     private func floatingControls(actionID: UUID) -> some View {
-        let visible = (isPaneFocused && openWorktreeContext != nil)
+        // Exported controls keep this view mounted as the sheet anchor.
+        if exportControls != nil { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
+        else { capsuleControls(actionID: actionID) }
+    }
+
+    private func exportedControls(actionID: UUID) -> PaneResourceControls {
+        PaneResourceControls(
+            actionID: actionID,
+            browserAvailable: isActive && (isPaneOwner() || !offers.isEmpty),
+            browserOfferCount: offers.count,
+            isDownloading: isDownloading,
+            openBrowser: {
+                if let offer = RemoteOpenPresentation.directBrowserOffer(in: offers) { open(offer, actionID: actionID) }
+                else if !offers.isEmpty { choosingResource = true }
+                else { openChromeTabs(actionID: actionID) }
+            })
+    }
+
+    @ViewBuilder
+    private func capsuleControls(actionID: UUID) -> some View {
+        let visible = (isPaneFocused && ((showsWorktreeContext && openWorktreeContext != nil) || onOpenTerminal != nil))
             || (imageReady && imageOffer != nil) || (isActive && (isPaneOwner() || !offers.isEmpty))
         // Keep the presentation anchor mounted while scene activity hides the controls.
         ViewThatFits {
@@ -245,10 +276,14 @@ struct RemoteOpenButton: View {
             }
             .disabled(isDownloading)
         }
-        if isPaneFocused, let openWorktreeContext {
+        if isPaneFocused, showsWorktreeContext, let openWorktreeContext {
             TerminalFloatingGlyphButton(systemName: "text.alignleft", accessibilityLabel: "Worktree context",
                 action: openWorktreeContext)
                 .accessibilityIdentifier("worktree.context.open")
+        }
+        if isPaneFocused, let onOpenTerminal {
+            TerminalFloatingGlyphButton(systemName: "apple.terminal", accessibilityLabel: "Terminal", action: onOpenTerminal)
+                .accessibilityHint("Show this worktree's shells")
         }
         ZStack {
             Color.clear.frame(width: 44, height: 44)
@@ -688,6 +723,34 @@ struct NativeImagePreview: UIViewControllerRepresentable {
             self.dismiss = dismiss
         }
         @objc func done() { dismiss() }
+    }
+}
+#endif
+
+#if canImport(UIKit)
+/// A focused pane's browser action, shown in the iPad toolbar.
+struct PaneResourceControls: Equatable {
+    let actionID: UUID
+    let browserAvailable: Bool
+    let browserOfferCount: Int
+    let isDownloading: Bool
+    let openBrowser: () -> Void
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.actionID == rhs.actionID && lhs.browserAvailable == rhs.browserAvailable
+            && lhs.browserOfferCount == rhs.browserOfferCount && lhs.isDownloading == rhs.isDownloading
+    }
+}
+
+private struct WorkspacePaneControlsSinkKey: EnvironmentKey {
+    static let defaultValue: ((String, PaneResourceControls?) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    /// Embedded iPad panes report their controls by session name.
+    var workspacePaneControlsSink: ((String, PaneResourceControls?) -> Void)? {
+        get { self[WorkspacePaneControlsSinkKey.self] }
+        set { self[WorkspacePaneControlsSinkKey.self] = newValue }
     }
 }
 #endif

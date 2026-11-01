@@ -91,10 +91,22 @@ struct SingleSessionView: View {
     let ghosttyCommandContext: MobileGhosttyCommandContext?
     /// Regular-width iPad mounts one real `SingleSessionView` per pane. Only
     /// the selected pane may own UIKit keyboard input and app shortcuts.
-    let isPaneFocused: Bool
+    private let parentPaneFocused: Bool
+    private var isPaneFocused: Bool { parentPaneFocused && !terminalSheet.isPresented }
+    private let isTerminalSheet: Bool
+    @State private var terminalSheet = CompactTerminalPresentation()
+    @State private var terminalSheetWorktree: WorktreePanes?
+    /// IPAD-2.26: contained routes keep the home-indicator inset, so their
+    /// keyboard padding subtracts the gap between the window bottom and the
+    /// content bottom. A safe-area inset alone would include the keyboard.
+    @State private var windowBottom: CGFloat = 0
+    @State private var containedContentBottom: CGFloat = 0
+    private var containerBottomInset: CGFloat { max(0, windowBottom - containedContentBottom) }
+    private var isCompactShellRoute: Bool { compactWorkspace != nil && sessionAgent == nil }
     /// Embedded panes let their shared multi-pane parent manage the keyboard
     /// inset once for the whole split tree.
     let isEmbeddedPane: Bool
+    private let embeddedPaneHeader: AnyView?
     /// Fired from the terminal's UIKit touch observer before focus/input is
     /// attempted, allowing the split tree to select this leaf first.
     let onPaneInteraction: (() -> Void)?
@@ -115,7 +127,10 @@ struct SingleSessionView: View {
     @Environment(\.mobileNotificationPaneActivation) private var notificationPaneActivation
 
     @State private var client: SessionClient?
+    /// IPAD-1.31: embedded panes hand their browser and preview to the toolbar.
+    @Environment(\.workspacePaneControlsSink) private var paneControlsSink
     @State private var connection: ConnectionState = .connecting
+    @State private var connectedAssignment: String?
     /// Per-host TerminalController constructed with the Mac's ghostty
     /// config as its `configSource` — so `baseConfigTemplate` holds
     /// the Mac config, and libghostty-spm's on-trait-change
@@ -149,6 +164,7 @@ struct SingleSessionView: View {
     /// container so the SwiftUI control-bar buttons can cancel an
     /// active selection per IOS-11.7.
     @State private var paneContainerBox = TerminalContainerBox()
+    @State private var retainedAttachmentID = UUID()
     @StateObject private var agentCompletion = AgentCompletionModel()
     @State private var stickyControlActivation:
         TerminalInputContainerView.StickyControlActivation = .inactive
@@ -175,6 +191,7 @@ struct SingleSessionView: View {
     @State private var terminalBrowserError: String?
 
     private var keyboardBottomInset: CGFloat {
+        if terminalSheet.isPresented { return 0 }
         if isEmbeddedPane, let multiPaneKeyboardFrame { return multiPaneKeyboardFrame.bottomInset }
         return observedKeyboardBottomInset
     }
@@ -311,6 +328,8 @@ struct SingleSessionView: View {
         ghosttyCommandContext: MobileGhosttyCommandContext? = nil,
         isPaneFocused: Bool = true,
         isEmbeddedPane: Bool = false,
+        embeddedPaneHeader: AnyView? = nil,
+        isTerminalSheet: Bool = false,
         onPaneInteraction: (() -> Void)? = nil,
         onBackToWorktrees: (() -> Void)? = nil,
         fontSizeStore: TerminalFontSizeStore = .shared,
@@ -330,8 +349,10 @@ struct SingleSessionView: View {
         self.externalPendingFocusRequests = externalPendingFocusRequests
         self.onExternalFocusRequestsConsumed = onExternalFocusRequestsConsumed
         self.ghosttyCommandContext = ghosttyCommandContext
-        self.isPaneFocused = isPaneFocused
+        self.parentPaneFocused = isPaneFocused
+        self.isTerminalSheet = isTerminalSheet
         self.isEmbeddedPane = isEmbeddedPane
+        self.embeddedPaneHeader = embeddedPaneHeader
         self.onPaneInteraction = onPaneInteraction
         self.onBackToWorktrees = onBackToWorktrees
         self.fontSizeStore = fontSizeStore
@@ -340,6 +361,7 @@ struct SingleSessionView: View {
         self.remoteConnectionProvider = remoteConnectionProvider
         self.previewManagementTransport = previewManagementTransport
         self._attentionWorktrees = State(initialValue: attentionWorktrees)
+        self._terminalSheetWorktree = State(initialValue: attentionWorktrees.first { $0.path == step.worktreePath })
         self._client = State(initialValue: initialClient)
         self._controller = State(initialValue: initialController)
         self._connection = State(initialValue: initialClient == nil ? .connecting : .live)
@@ -353,7 +375,32 @@ struct SingleSessionView: View {
             terminalBackground
             sessionView
         }
-        .modifier(MobileWorktreeContextDrawer(context: worktreeContext, theme: terminalTheme))
+        // IPAD-2.26: explicit padding is the only keyboard avoidance. Without
+        // this, SwiftUI also avoids the keyboard and the UIKit terminal
+        // expands back into the keyboard safe area.
+        .ignoresSafeArea(.keyboard, edges: isTerminalSheet || compactWorkspace != nil ? .bottom : [])
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY + $0.safeAreaInsets.bottom } action: { windowBottom = $0 }
+        .modifier(MobileWorktreeContextDrawer(context: worktreeContext, theme: terminalTheme, onShowAgent: { id in
+            guard let session = compactWorkspace?.agents?.first(where: { $0.id == id })?.presentationSessionName else { return }
+            selectWorkspaceSession(session)
+        }))
+        .task(id: isCompactShellRoute) {
+            guard isCompactShellRoute, let workspace = compactWorkspace else { return }
+            terminalSheetWorktree = workspace
+            terminalSheet.select(step.sessionName, in: workspace)
+            await terminalSheet.open(in: workspace, create: createCompactTerminal)
+        }
+        .sheet(isPresented: $terminalSheet.isPresented) {
+            if let workspace = compactWorkspace ?? terminalSheetWorktree {
+                CompactTerminalSheet(worktree: workspace, presentation: terminalSheet, create: createCompactTerminal, theme: terminalTheme) { session in
+                    SingleSessionView(step: SessionStep(host: step.host, worktreePath: step.worktreePath,
+                        sessionName: session, title: workspace.layout?.title(for: session) ?? "Terminal", worktreeProject: step.worktreeProject),
+                        navigationPath: .constant(NavigationPath()), isFullScreen: false, isTerminalSheet: true,
+                        onBackToWorktrees: { terminalSheet.isPresented = false }, fontSizeStore: fontSizeStore, retainedPanes: retainedPanes,
+                        attentionWorktrees: attentionWorktrees, remoteConnectionProvider: remoteConnectionProvider)
+                }
+            }
+        }
         .alert("Could not open link", isPresented: Binding(
             get: { terminalBrowserError != nil }, set: { if !$0 { terminalBrowserError = nil } }
         )) { Button("OK") { terminalBrowserError = nil } } message: { Text(terminalBrowserError ?? "") }
@@ -384,6 +431,7 @@ struct SingleSessionView: View {
             }
         }
         if retainedPanes == nil { client?.stop() }
+        retainedPanes?.detach(retainedPaneKey, owner: retainedAttachmentID)
         client = nil
         if connection != .ended { connection = .connecting }
     }
@@ -406,6 +454,73 @@ struct SingleSessionView: View {
         return WorktreeTimeline(context)
     }
 
+    private var compactWorkspace: WorktreePanes? {
+        guard isFullScreen else { return nil }
+        return CompactTerminalPresentation.agentWorkspace(path: step.worktreePath, rows: attentionWorktrees, fallback: terminalSheetWorktree)
+    }
+    private var sessionAgent: AgentSessionInfo? {
+        (attentionWorktrees.first { $0.path == step.worktreePath } ?? terminalSheetWorktree)?.agents?.first {
+            $0.presentationSessionName == step.sessionName
+        }
+    }
+    private var completedAgent: AgentSessionInfo? { sessionAgent.flatMap { $0.isCompleted ? $0 : nil } }
+
+    private var compactAgentKey: String { "workspace.iphone.agent.\(step.host.id).\(step.worktreePath ?? "")" }
+    private func selectWorkspaceSession(_ target: String) {
+        guard target != step.sessionName, let workspace = compactWorkspace,
+              workspace.layout?.leaves.contains(where: { $0.sessionName == target }) == true
+                || workspace.agents?.contains(where: { $0.presentationSessionName == target }) == true else { return }
+        if workspace.agents?.contains(where: { $0.sessionName == step.sessionName }) == true {
+            UserDefaults.standard.set(step.sessionName, forKey: compactAgentKey)
+        }
+        let destination = SessionStep(host: step.host, worktreePath: step.worktreePath, sessionName: target,
+            title: workspace.agents?.first { $0.presentationSessionName == target }?.name ?? workspace.layout?.title(for: target) ?? "Terminal",
+            worktreeProject: step.worktreeProject)
+        if !navigationPath.isEmpty { navigationPath.removeLast() }
+        navigationPath.append(destination)
+    }
+
+    private func openCompactTerminal(in workspace: WorktreePanes) {
+        terminalSheetWorktree = workspace
+        Task { await terminalSheet.open(in: workspace, create: createCompactTerminal) }
+    }
+
+    private func createCompactTerminal() async throws -> String? {
+        guard let coordinator, let workspace = compactWorkspace else {
+            throw CompactTerminalError.unavailable
+        }
+        if let target = workspace.layout?.leaves.first?.sessionName {
+            let environment = await buildPaneEnvironment(remoteHost: coordinator.connection(for: step.host))
+            guard let control = environment.paneControlClient else { throw CompactTerminalError.unavailable }
+            do {
+                let response = try await control.split(target: target, direction: .down)
+                await environment.close()
+                switch response {
+                case .splitCreated(let session): return session
+                case .error(_, let message): throw CompactTerminalError.host(message)
+                case .ok: return nil // Legacy host: select its pushed shell inventory.
+                }
+            } catch {
+                await environment.close()
+                throw error
+            }
+        }
+        let response = try await coordinator.sendWorktreeManagement(.open(worktreeID: workspace.path), to: step.host)
+        if case .error(_, let message, _, _) = response { throw CompactTerminalError.host(message) }
+        if case .created(_, let session) = response { return session }
+        return nil
+    }
+
+    private enum CompactTerminalError: LocalizedError {
+        case unavailable, host(String)
+        var errorDescription: String? {
+            switch self {
+            case .unavailable: "Connect to the host to open a terminal."
+            case .host(let message): message
+            }
+        }
+    }
+
     @ViewBuilder
     private var terminalBackground: some View {
         if isFullScreen {
@@ -416,7 +531,34 @@ struct SingleSessionView: View {
     }
 
     private var sessionView: some View {
-        Group {
+        VStack(spacing: 0) {
+            if isEmbeddedPane, embeddedPaneHeader != nil || (step.worktreePath != nil && coordinator != nil) {
+                HStack(spacing: 0) {
+                    if let embeddedPaneHeader { embeddedPaneHeader }
+                    else { Spacer(minLength: 0) }
+                    remoteOpenControls
+                }
+                .frame(minHeight: 44)
+                // IPAD-1.31: top-row tab headers draw their slice of the wash.
+                .background { terminalTheme.background.worktreeHeaderWash() }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("workspace.pane.header")
+            }
+            if let workspace = compactWorkspace {
+                Text(workspace.displayName).font(.subheadline).lineLimit(1).foregroundStyle(terminalTheme.foreground)
+                    .frame(maxWidth: .infinity).padding(.leading, 68).padding(.trailing, 120).frame(height: 64)
+                CompactAgentBar(worktree: workspace, session: step.sessionName, onSelect: selectWorkspaceSession, attentionContext: worktreeContext, hostID: step.host.id, host: step.host, theme: terminalTheme)
+            }
+            if isCompactShellRoute {
+                ContentUnavailableView("Select an agent", systemImage: "terminal",
+                    description: Text("Choose an agent above, or open Terminal from the top-right controls."))
+                    .foregroundStyle(terminalTheme.foreground)
+            } else if let agent = completedAgent, let path = step.worktreePath {
+                VStack(spacing: 0) {
+                    MobileAgentConversationView(host: step.host, worktreePath: path, agent: agent)
+
+                }
+            } else {
             switch connection.presentation {
             case .loading:
                 loadingPlaceholder
@@ -447,21 +589,19 @@ struct SingleSessionView: View {
             case .ended:
                 endedBanner
             }
+            }
         }
         // IOS-6.9: explicit bottom padding lifts the terminal above
         // the keyboard. SwiftUI's automatic `.keyboard` safe-area
         // avoidance is unreliable when UITerminalView is the focused
         // responder, so we drive it ourselves.
-        .padding(.bottom, isEmbeddedPane ? 0 : keyboardBottomInset)
-        // IOS-4.8 + IPAD-1.7: fullscreen path bleeds to every edge
-        // (under the notch, home indicator, landscape bands) and hides
-        // the navigation bar so libghostty's background shows through.
-        // The iPad split-column path keeps the navigation bar so its
-        // system sidebar-toggle button stays available, and respects
-        // the column's bounds so the sidebar doesn't visually overlap.
-        .modifier(FullScreenChrome(enabled: isFullScreen))
+        .padding(.bottom, isEmbeddedPane ? 0 : max(0, keyboardBottomInset - ((isTerminalSheet || compactWorkspace != nil) ? containerBottomInset : 0)))
+        // Fullscreen terminals reach the screen edges. Embedded terminals
+        // respect the workspace's header and safe-area boundaries.
+        .modifier(FullScreenChrome(enabled: isFullScreen, contained: isEmbeddedPane || isTerminalSheet || compactWorkspace != nil))
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { containedContentBottom = $0 }
             .overlay(alignment: .topLeading) {
-                if isFullScreen || (isEmbeddedPane && isPaneFocused && onBackToWorktrees != nil) {
+                if isFullScreen {
                     backButton
                         .modifier(TerminalFloatingControlPlacement())
                 }
@@ -478,7 +618,8 @@ struct SingleSessionView: View {
                 if let client, let paging = client.paging, isPaneFocused,
                    client.connectionState == .live, client.imagePasteProgress == nil {
                     PagedHistoryBanner(paging: paging)
-                        .padding(.top, 64)
+                        // Clear the compact workspace's title and agent bar.
+                        .padding(.top, compactWorkspace == nil ? 64 : 116)
                         .padding(.horizontal, 16)
                 }
             }
@@ -509,19 +650,8 @@ struct SingleSessionView: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if let worktree = step.worktreePath, let coordinator {
-                    RemoteOpenButton(host: step.host, worktree: worktree, coordinator: coordinator,
-                                     sessionName: step.sessionName,
-                                     ownerDeviceID: client?.isOwner == true ? coordinator.localDeviceID : nil,
-                                     isActive: isPaneFocused && scenePhase == .active && gate?.state == .unlocked && connection == .live,
-                                     managementTransport: previewManagementTransport,
-                                     browserConnectionReady: connection == .live,
-                                     isPaneFocused: isPaneFocused,
-                                     hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
-                                     isPaneOwner: { client?.isOwner == true },
-                                     canPresentAuthentication: { true },
-                                     terminalRequest: $terminalBrowserRequest)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { floatingControlsHeight = $0 }
+                if !isEmbeddedPane {
+                    remoteOpenControls
                         .modifier(TerminalFloatingControlPlacement())
                         .padding(.trailing, 12)
                 }
@@ -560,8 +690,19 @@ struct SingleSessionView: View {
             // deliberately *not* in the key — it's the state-machine's
             // output, and including it would re-fire the task on every
             // transition (each re-fire only to hit a no-op early return).
-            .task(id: dialKey) {
-                await driveConnection()
+            .task(id: ConversationDialKey(dial: dialKey, completionID: isCompactShellRoute ? "shell-in-sheet" : completedAgent?.completionID, assignmentID: sessionAgent?.assignmentID)) {
+                if let assignment = sessionAgent?.assignmentID, assignment != connectedAssignment {
+                    let replaced = completedAgent == nil && RetainedMobilePane.discardPreviousAssignment(
+                        from: retainedPanes, key: retainedPaneKey, assignmentID: assignment)
+                    if completedAgent == nil && (replaced || connectedAssignment != nil || connection == .ended) {
+                        detachSession()
+                        retainedPanes?.remove(retainedPaneKey)
+                        connection = .connecting
+                    }
+                    connectedAssignment = assignment
+                }
+                if completedAgent == nil && !isCompactShellRoute { await driveConnection() }
+                else { detachSession() }
             }
             .task(id: dialKey) {
                 guard LiveSessionReadiness.isActive(
@@ -611,7 +752,7 @@ struct SingleSessionView: View {
                         .map(Float.init)
                 }
             }
-            .task(id: AttentionObservationKey(dial: dialKey, focused: isPaneFocused)) { await observeAttention() }
+            .task(id: AttentionObservationKey(dial: dialKey, focused: parentPaneFocused)) { await observeAttention() }
             .task(id: notificationRecoveryKey) {
                 guard !Task.isCancelled, notificationRecoveryKey.isReady, let client,
                       client.sessionName == step.sessionName,
@@ -676,6 +817,12 @@ struct SingleSessionView: View {
     private struct DialKey: Hashable {
         let scene: ScenePhase
         let gateUnlocked: Bool
+    }
+
+    private struct ConversationDialKey: Hashable {
+        let dial: DialKey
+        let completionID: String?
+        let assignmentID: String?
     }
 
     private struct AttentionObservationKey: Hashable {
@@ -743,7 +890,8 @@ struct SingleSessionView: View {
         if let cached = retainedPanes?.cached(retainedPaneKey) {
             if cached.client.connectionState == .ended {
                 retainedPanes?.remove(retainedPaneKey)
-                connection = .ended
+                client?.stop(); client = nil
+                await verifyThenOpen()
                 return
             }
             if cached.requiresValidation, let coordinator {
@@ -789,7 +937,8 @@ struct SingleSessionView: View {
         ) }
         let new: SessionClient
         if let retainedPanes {
-            new = retainedPanes.acquire(retainedPaneKey) { RetainedMobilePane(client: makeClient()) }.client
+            retainedPanes.attach(retainedPaneKey, owner: retainedAttachmentID)
+            new = retainedPanes.acquire(retainedPaneKey) { RetainedMobilePane(client: makeClient(), assignmentID: sessionAgent?.assignmentID) }.client
         } else {
             new = makeClient()
             new.start()
@@ -860,7 +1009,7 @@ struct SingleSessionView: View {
     }
 
     private func observeAttention() async {
-        guard isFullScreen, isPaneFocused, let coordinator,
+        guard isFullScreen, parentPaneFocused, let coordinator,
               LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
         for await update in coordinator.worktreeUpdates(for: step.host) {
             // An update already handed over when SwiftUI cancelled this task
@@ -875,6 +1024,7 @@ struct SingleSessionView: View {
                 sidebarNavigation?.reconcile(worktrees: rows, projects: projects)
                 recentPaneActions?.history.reconcile(hostID: step.host.id, worktrees: rows, projects: projects)
                 attentionWorktrees = rows
+                if let current = rows.first(where: { $0.path == step.worktreePath }) { terminalSheetWorktree = current }
                 recordRecentVisit()
             }
         }
@@ -1099,6 +1249,28 @@ struct SingleSessionView: View {
         }
     }
 
+    @ViewBuilder
+    private var remoteOpenControls: some View {
+        if !isTerminalSheet, let worktree = step.worktreePath, let coordinator {
+            RemoteOpenButton(host: step.host, worktree: worktree, coordinator: coordinator,
+                sessionName: step.sessionName,
+                ownerDeviceID: client?.isOwner == true ? coordinator.localDeviceID : nil,
+                isActive: isPaneFocused && scenePhase == .active && gate?.state == .unlocked && connection == .live,
+                managementTransport: previewManagementTransport,
+                browserConnectionReady: connection == .live,
+                isPaneFocused: isPaneFocused,
+                hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
+                onOpenTerminal: compactWorkspace.map { workspace in { openCompactTerminal(in: workspace) } },
+                showsWorktreeContext: !isEmbeddedPane,
+                exportControls: isEmbeddedPane ? paneControlsSink.map { sink in { sink(step.sessionName, $0) } } : nil,
+                isPaneOwner: { client?.isOwner == true },
+                canPresentAuthentication: { true },
+                terminalRequest: $terminalBrowserRequest)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { floatingControlsHeight = $0 }
+                .fixedSize(horizontal: isEmbeddedPane, vertical: isEmbeddedPane)
+        }
+    }
+
     /// Followers scale an authoritative canvas; owners use the physical viewport.
     @ViewBuilder
     private var terminalContent: some View {
@@ -1122,7 +1294,7 @@ struct SingleSessionView: View {
             session: client.session,
             controller: controller,
             authoritativeGrid: client.snapshotCanvasGrid,
-            reservesTopChromeSpace: true,
+            reservesTopChromeSpace: !isEmbeddedPane && !isTerminalSheet && compactWorkspace == nil,
             showsAdditionalHistory: true,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)
@@ -1372,33 +1544,22 @@ struct SingleSessionView: View {
     }
 }
 
-/// Two distinct chrome behaviors composed into one modifier:
-/// * Edge-to-edge bleed (`.ignoresSafeArea`) is on for BOTH paths — the
-///   terminal fills the entire detail column (and entire screen on
-///   iPhone), matching the Mac sidebar's title-bar-hidden look. Without
-///   this on iPad the nav bar carves ~44pt off the top and the home
-///   indicator carves ~25pt off the bottom, making the terminal short.
-/// * Hiding the navigation bar (`.toolbar(.hidden, …)`) is iPhone-only.
-///   The iPad split-column path keeps the nav bar present but
-///   transparent (`.toolbarBackground(.hidden, …)`) so the system's
-///   sidebar-toggle button floats over the terminal — like the Mac
-///   sidebar toggle floats next to the traffic lights — without
-///   stealing height from the terminal.
+/// Fullscreen routes fill the screen. Contained routes, including embedded
+/// iPad panes, respect the header and safe-area bounds supplied by their parent.
 private struct FullScreenChrome: ViewModifier {
     let enabled: Bool
+    var contained = false
 
     func body(content: Content) -> some View {
-        if enabled {
+        if contained { content.ignoresSafeArea(.keyboard).toolbar(enabled ? .hidden : .automatic, for: .navigationBar) }
+        else if enabled {
             content
                 .ignoresSafeArea()
                 .toolbar(.hidden, for: .navigationBar)
         } else {
             content
-                // IPAD-1.10: top/bottom edges only — the terminal
-                // extends under the navigation bar and home indicator
-                // but stays within the column's horizontal bounds so
-                // the sidebar shifts the terminal rather than
-                // overlapping it.
+                // Standalone regular-width routes keep their edge-to-edge
+                // presentation; embedded workspaces use the contained branch.
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
                 .toolbarBackground(.hidden, for: .navigationBar)
         }

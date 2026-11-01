@@ -3,6 +3,7 @@ import Foundation
 /// A control-socket feature the CLI checks before relying on it, so an older
 /// running app refuses a newer CLI's request instead of half-applying it.
 public enum ControlCapability: String, CaseIterable, Sendable {
+    case managedAgents = "managed_agents"
     case agentPromptStaging = "agent_prompt_staging"
     case paneAgent = "pane_agent"
     case worktreeBase = "worktree_base"
@@ -23,6 +24,7 @@ public enum ControlCapability: String, CaseIterable, Sendable {
     /// `.ok`.
     public var legacyProbe: NotificationMessage {
         switch self {
+        case .managedAgents: .agent(.init(action: .capability, callerWorktree: ""))
         case .agentPromptStaging: .agentPromptStagingCapability
         case .paneAgent: .paneAgentCapability
         case .worktreeBase: .worktreeBaseCapability

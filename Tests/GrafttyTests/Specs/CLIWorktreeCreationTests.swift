@@ -602,16 +602,6 @@ struct CLIWorktreeCreationTests {
         #expect(prepared.promptFile == nil)
     }
 
-    @Test("An explicit launch command suppresses the configured default command")
-    func explicitLaunchDoesNotDoubleStartAnAgent() {
-        #expect(defaultCommandDecision(
-            defaultCommand: "claude",
-            firstPaneOnly: false,
-            isFirstPane: true,
-            wasRehydrated: false,
-            hasExplicitInitialInput: true
-        ) == .skip)
-    }
 
     @MainActor
     @Test("""
@@ -893,7 +883,7 @@ struct CLIWorktreeCreationTests {
     func teamSkillDocumentsWorktreeAddressWorkflow() throws {
         let skill = try GrafttyTeamSkillText.load()
         let options = try GrafttyTeamSkillText.load(reference: "worktrees")
-        for token in ["graftty worktree add <name> --agent <codex|claude>", "graftty team send --stdin '<address>'", "--prompt-stdin"] {
+        for token in ["graftty agent add <name> --provider codex", "graftty team send --stdin '<address>'", "--prompt-stdin"] {
             #expect(skill.contains(token))
         }
         for token in ["--base <ref>", "--base HEAD", "--existing", "--wait", "--timeout"] {

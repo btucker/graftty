@@ -208,7 +208,14 @@ final class WorktreeManagement: CLIWorktreeCreationPlatform, CLIWorktreeRemovalP
             terminalStartTiming: AddWorktreeFlow.terminalStartTiming(for: .cli)
         )
         switch result {
-        case .success: return nil
+        case .success:
+            if plan.selectTab == true, let provider = plan.agentRuntime,
+               let tree = state.worktree(forPath: plan.worktreePath), let slot = tree.firstPane,
+               let session = tree.paneSessions[slot] {
+                AgentNotificationActivation.shared.enqueue(.init(runtime: provider, worktreePath: plan.worktreePath,
+                    sessionID: "", paneSessionName: ZmxLauncher.sessionName(for: session), attentionTimestamp: Date()))
+            }
+            return nil
         case .failure(let error): return error.operationFailureMessage
         }
     }

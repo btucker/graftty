@@ -11,6 +11,30 @@ import Testing
 @Suite("Remote worktree viewer mutation queue")
 @MainActor
 struct RemoteWorktreeViewerControllerTests {
+    @Test("@spec LAYOUT-2.183: When a remote worktree is selected again from its sidebar rows, the application shall preserve its current agent tab.")
+    func sidebarReselectionKeepsCurrentAgent() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
+        viewer.controller.selectRemotePane(viewer.mac, worktreePath: ViewerHarness.path, sessionName: "b", acknowledging: false)
+        await viewer.settle()
+        viewer.controller.selectRemoteWorktree(viewer.mac, worktreePath: ViewerHarness.path, acknowledging: false)
+        await viewer.settle()
+        #expect(viewer.controller.selectedRemotePaneSessionName == "b")
+    }
+
+    @Test("@spec LAYOUT-2.170: When a remote workspace restores app visibility, the application shall show only that host's device-local selected sessions and keep hidden tabs hidden.")
+    func workspaceVisibilitySurvivesAppUnhide() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
+        let a = try viewer.terminal("a"), b = try viewer.terminal("b")
+        viewer.controller.setWorkspaceVisibleSessions(["b"], identity: viewer.identity, worktreePath: ViewerHarness.path)
+        _ = viewer.controller.setAppVisible(false)
+        #expect(viewer.surfaces.visibility[a] == false)
+        #expect(viewer.surfaces.visibility[b] == false)
+        _ = viewer.controller.setAppVisible(true)
+        await viewer.settle()
+        #expect(viewer.surfaces.visibility[a] == false)
+        #expect(viewer.surfaces.visibility[b] == true)
+    }
+
     @Test("Selecting creation diagnostics does not open a remote worktree until explicitly requested", arguments: [WorktreeCreationProgress.Phase.git, .failed, .interrupted])
     func creationSelectionDoesNotLaunchEarly(phase: WorktreeCreationProgress.Phase) async throws {
         var progress = WorktreeCreationProgress()
@@ -913,6 +937,7 @@ private final class FakeViewerSurfaces: RemoteWorktreeViewerSurfaces {
     private(set) var live: Set<PaneSlotID> = []
     private(set) var destroyed: [PaneSlotID] = []
     private(set) var focused: PaneSlotID?
+    private(set) var visibility: [PaneSlotID: Bool] = [:]
     private var sessionBySurface: [PaneSlotID: String] = [:]
     private var handlers: [PaneSlotID: (HostManagedPaneCommand) -> Void] = [:]
     private var unexpectedCloses: [PaneSlotID: () -> Void] = [:]
@@ -968,6 +993,7 @@ private final class FakeViewerSurfaces: RemoteWorktreeViewerSurfaces {
 
     func setVisible(_ visible: Bool, for terminalID: PaneSlotID) {
         events += 1
+        visibility[terminalID] = visible
     }
 
     func setFocus(_ terminalID: PaneSlotID) {

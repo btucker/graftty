@@ -39,10 +39,10 @@ struct MobileTerminalBackButton: View {
             }
             .overlay(alignment: .topTrailing) {
                 if pendingCount > 0 {
-                    Text(pendingCount > 99 ? "99+" : "\(pendingCount)")
-                        .font(.caption2.bold()).monospacedDigit().foregroundStyle(.white)
-                        .padding(.horizontal, 5).frame(minWidth: 20, minHeight: 20)
-                        .background(.orange, in: Capsule()).offset(x: 5, y: -5)
+                    Image(systemName: "hand.raised.fill")
+                        .font(.caption2).foregroundStyle(.orange)
+                        .frame(width: 20, height: 20)
+                        .background(.regularMaterial, in: Circle()).offset(x: 5, y: -5)
                         .allowsHitTesting(false).accessibilityHidden(true)
                 }
             }

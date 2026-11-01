@@ -304,7 +304,7 @@ final class SidebarScrollLayoutTests: XCTestCase {
     func testDefaultPinnedHeightCanExceedHalf() async throws {
         // Keep this within the fixture's normal window size: CI may constrain
         // oversized windows to its display, even for an offscreen test window.
-        let hosted = try await Hosted.make(pinnedCount: 3, rail: true)
+        let hosted = try await Hosted.make(pinnedCount: 5, rail: true)
         defer { hosted.tearDown() }
         let pinned = try XCTUnwrap(hosted.enclosingScroll(try hosted.dragView(named: "pinned-0")))
         let ordinary = try XCTUnwrap(hosted.enclosingScroll(try hosted.dragView(named: "task-0")))

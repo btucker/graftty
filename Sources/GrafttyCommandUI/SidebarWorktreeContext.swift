@@ -57,10 +57,18 @@ public struct SidebarWorktreeContext: Equatable {
                 && !(candidate.agentStop != nil && (resumed || busy))
                 && !(candidate.agentStop.map { $0.timestamp < (stop?.timestamp ?? -.infinity) } ?? false)
         }
-        let currentQuestion = pending.contains { $0.id == target.id && $0.occurrence == target.occurrence }
+        let stoppedQuestion = pending.contains { $0.id == target.id && $0.occurrence == target.occurrence }
             ? stop?.recap?.need : nil
-        self.question = currentQuestion
-        self.questionPaneID = currentQuestion == nil ? nil : route
+        let providerRequest = pending.first { $0.agentStop == nil && $0.occurrence?.source == .agentStop }
+        self.question = stoppedQuestion ?? providerRequest?.occurrence?.text
+        self.questionPaneID = stoppedQuestion != nil ? route : providerRequest?.paneID
+    }
+
+    /// The sidebar and workspace tabs derive input state from the same live requests.
+    public func needsInput(session: String) -> Bool {
+        (question != nil && questionPaneID == session) || pending.contains {
+            $0.paneID == session && $0.agentStop == nil && $0.occurrence?.source == .agentStop
+        }
     }
 
     public func matches(query: String) -> Bool {

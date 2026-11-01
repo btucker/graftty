@@ -561,11 +561,22 @@ public final class TerminalInputContainerView: UIView,
         terminalView.gestureRecognizers?
             .compactMap { $0 as? UIPanGestureRecognizer }
             .forEach { recognizer in
+                // IOS-6.46: libghostty's pointer-drag selection pan must not
+                // receive scroll events, or a two-finger trackpad scroll
+                // drives a text selection instead of scrolling.
+                guard !Self.isPointerDragSelection(recognizer) else { return }
                 recognizer.allowedScrollTypesMask = [.continuous, .discrete]
                 if recognizer.delegate == nil {
                     recognizer.delegate = terminalView
                 }
             }
+    }
+
+    /// libghostty's mouse/trackpad click-drag selection recognizer.
+    static func isPointerDragSelection(_ recognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = recognizer as? UIPanGestureRecognizer else { return false }
+        return pan.allowedTouchTypes == [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+            && pan.allowedScrollTypesMask.isEmpty
     }
 
     @objc private func handleFocusKeyboardInputTap(_ recognizer: UITapGestureRecognizer) {
@@ -600,8 +611,13 @@ public final class TerminalInputContainerView: UIView,
             let scrollPan = (recognizer as? UIPanGestureRecognizer).map {
                 !$0.allowedScrollTypesMask.isEmpty
             } ?? false
-            let suppressed = (selectionPanRecognizer.isEnabled && !scrollPan)
-                || (authoritativeGrid != nil && (recognizer is UIPinchGestureRecognizer || scrollPan))
+            // Followers scroll the snapshot canvas; libghostty's pointer-drag
+            // selection stays off there as it was before IOS-6.46.
+            let pointerDrag = Self.isPointerDragSelection(recognizer)
+            // Pointer drags never compete with the finger selection pan.
+            let suppressed = (selectionPanRecognizer.isEnabled && !scrollPan && !pointerDrag)
+                || (authoritativeGrid != nil && (recognizer is UIPinchGestureRecognizer || scrollPan
+                    || pointerDrag))
             let id = ObjectIdentifier(recognizer)
             if suppressed {
                 if suppressedTerminalGestures[id] == nil {

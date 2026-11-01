@@ -73,7 +73,7 @@ private struct WorktreeBlockClickColumn: View {
         } panes: {
             ForEach(paneLeaves, id: \.self) { terminalID in
                 Button {
-                    harness.paneSelections.append(terminalID)
+                    harness.selections.append(worktree.path)
                 } label: {
                     PaneTitleRow(title: "shell", isActiveWorktree: isActive, isFocusedPane: false,
                                  isBusy: false, theme: .fallback, attentionStyle: nil, portBindings: [])
@@ -201,7 +201,7 @@ struct WorktreeBlockClickTargetTests {
         }
     }
 
-    @Test("@spec LAYOUT-2.145: When the user clicks a local macOS worktree block, the application shall select that worktree, focus the requesting pane when its inline question is clicked, and preserve embedded controls and pane selection.", arguments: [false, true])
+    @Test("@spec LAYOUT-2.145: When the user clicks a local macOS worktree block, the application shall select that worktree, focus the requesting pane when its inline question is clicked, and preserve embedded controls and the previously selected agent tab.", arguments: [false, true])
     func questionAndSurroundingSpaceSelectWorktree(reorderingEnabled: Bool) async throws {
         let hosted = try await Hosted.make(rowCount: Self.rowCount)
         defer { hosted.tearDown() }
@@ -351,8 +351,9 @@ struct WorktreeBlockClickTargetTests {
         func expectPaneClickSelects(_ pane: PaneSlotID) async throws {
             let frame = try #require(harness.paneFrames[pane])
             let outcome = try await click(at: CGPoint(x: frame.midX, y: frame.midY))
-            #expect(outcome.paneSelections == [pane])
-            #expect(outcome.selections.isEmpty)
+            let owner = try #require(harness.repo.worktrees.first { $0.splitTree.containsLeaf(pane) })
+            #expect(outcome.paneSelections.isEmpty)
+            #expect(outcome.selections == [owner.path])
         }
 
         /// Clicks like AppKit does: resolve the hit view from the window's

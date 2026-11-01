@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import GrafttyCommandUI
 import GrafttyProtocol
 import SwiftUI
 import UIKit
@@ -11,6 +12,10 @@ public struct WorktreeDetailView: View {
     public let host: Host
     public let worktree: WorktreePanes
     public let onSelectPane: (_ sessionName: String) -> Void
+    let sidebarNavigation: SidebarNavigationState?
+    private var context: SidebarWorktreeContext {
+        sidebarNavigation?.worktreeContext(currentWorktree) ?? SidebarWorktreeContext(worktree: currentWorktree)
+    }
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
     /// Resolves the per-host `RemoteHostConnection` for the preview pool
@@ -36,35 +41,28 @@ public struct WorktreeDetailView: View {
     public init(
         host: Host,
         worktree: WorktreePanes,
+        sidebarNavigation: SidebarNavigationState? = nil,
         onSelectPane: @escaping (_ sessionName: String) -> Void
     ) {
         self.host = host
         self.worktree = worktree
+        self.sidebarNavigation = sidebarNavigation
         self.onSelectPane = onSelectPane
     }
 
+    private var theme: GhosttyThemeColors { GhosttyThemeColors(parsingConfigText: baseConfig ?? "") }
+    /// IOS-4.55: worktrees with agents get agent cards instead of pane tiles.
+    private var overview: MobileWorktreeOverview? {
+        guard !currentWorktree.showsCreationProgress,
+              CompactTerminalPresentation.agentWorkspace(path: currentWorktree.path, rows: [currentWorktree], fallback: nil) != nil
+        else { return nil }
+        return MobileWorktreeOverview(worktree: currentWorktree, context: context)
+    }
+
     public var body: some View {
-        Group {
-            if currentWorktree.showsCreationProgress {
-                MobileCreationDetailView(host: host, worktree: currentWorktree)
-            } else if let layout = currentWorktree.layout {
-                PaneLayoutView(
-                    layout: layout,
-                    baseConfig: baseConfig,
-                    previewClient: { previews?.clients[$0] },
-                    preferredInterfaceStyle: preferredStyle
-                ) { sessionName in
-                    onSelectPane(sessionName)
-                }
-            } else {
-                ContentUnavailableView(
-                    "No panes running",
-                    systemImage: "terminal",
-                    description: Text("Start a pane in Graftty on the Mac to see it here.")
-                )
-            }
-        }
-        .navigationTitle(currentWorktree.displayName)
+        content
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { WorktreePreviewMenu(host: host, worktree: worktree.path) } }
+        .navigationTitle(currentWorktree.showsCreationProgress ? currentWorktree.displayName : "")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: CreationKey(identity: creationIdentity,
             isReady: LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked))) {
@@ -105,7 +103,7 @@ public struct WorktreeDetailView: View {
         // `.inactive` phases preserve live transport; `.background` suspends
         // transport without releasing preview surfaces, and `.active +
         // unlocked` resumes those same clients.
-        .task(id: PoolKey(layout: currentWorktree.layout, showsCreationProgress: currentWorktree.showsCreationProgress,
+        .task(id: PoolKey(layout: currentWorktree.layout, showsCreationProgress: currentWorktree.showsCreationProgress, usesOverview: overview != nil,
                          scene: scenePhase, gateUnlocked: gate.isUnlocked)) {
             await driveLifecycle()
         }
@@ -116,6 +114,59 @@ public struct WorktreeDetailView: View {
             // dies with this view when it is actually popped.
             previews?.suspendAll()
         }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let overview {
+            ScrollView {
+                VStack(spacing: 0) {
+                    MobileWorktreeIdentityHeader(worktree: currentWorktree, purpose: overview.purpose, theme: theme)
+                    MobileWorktreeOverviewView(host: host, overview: overview, theme: theme, onSelect: onSelectPane)
+                }
+            }
+            .background(alignment: .top) { MobileWorktreeHeaderWash(worktree: currentWorktree, theme: theme) }
+            .background(theme.background.ignoresSafeArea())
+            .environment(\.colorScheme, theme.isDark ? .dark : .light)
+            .toolbarBackground(.hidden, for: .navigationBar)
+        } else {
+            VStack(spacing: 0) {
+                if !currentWorktree.showsCreationProgress {
+                    MobileWorktreeIdentityHeader(worktree: currentWorktree,
+                        purpose: MobileWorktreeOverview(worktree: currentWorktree, context: context).purpose, theme: theme)
+                }
+                paneContent
+            }
+            .background(alignment: .top) {
+                if !currentWorktree.showsCreationProgress { MobileWorktreeHeaderWash(worktree: currentWorktree, theme: theme) }
+            }
+        }
+    }
+
+
+    @ViewBuilder
+    private var paneContent: some View {
+        Group {
+            if currentWorktree.showsCreationProgress {
+                MobileCreationDetailView(host: host, worktree: currentWorktree)
+            } else if let layout = currentWorktree.layout {
+                PaneLayoutView(
+                    layout: layout,
+                    baseConfig: baseConfig,
+                    previewClient: { previews?.clients[$0] },
+                    preferredInterfaceStyle: preferredStyle
+                ) { sessionName in
+                    onSelectPane(sessionName)
+                }
+            } else {
+                ContentUnavailableView(
+                    "No panes running",
+                    systemImage: "terminal",
+                    description: Text("Start a pane in Graftty on the Mac to see it here.")
+                )
+            }
+        }
+
     }
 
     private struct CreationIdentity: Hashable {
@@ -138,14 +189,19 @@ public struct WorktreeDetailView: View {
     /// Keep observing the shared push feed here, rather than freezing the
     /// navigation destination's initial snapshot or opening a terminal early.
     private func observeCreation() async {
-        guard currentWorktree.showsCreationProgress,
-              LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked),
+        guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked),
               let updates = worktreeUpdates?(host) else { return }
+        let observesCreation = currentWorktree.showsCreationProgress
         for await update in updates {
             guard !Task.isCancelled else { return }
             guard case .frame(.snapshot(let rows, _)) = update,
-                  let row = rows.first(where: { $0.path == worktree.path }),
-                  row.creationProgress?.operationID == worktree.creationProgress?.operationID else { continue }
+                  let row = rows.first(where: { $0.path == worktree.path }) else { continue }
+            // IOS-4.55: agent cards follow live status after creation too.
+            guard observesCreation else {
+                liveCreation = CreationSnapshot(identity: creationIdentity, worktree: row)
+                continue
+            }
+            guard row.creationProgress?.operationID == worktree.creationProgress?.operationID else { continue }
             // Publish readiness before navigating. A lifecycle restart or
             // return to this destination must not consume a replay twice.
             liveCreation = CreationSnapshot(identity: creationIdentity, worktree: row)
@@ -160,6 +216,7 @@ public struct WorktreeDetailView: View {
     private struct PoolKey: Hashable {
         let layout: PaneLayoutNode?
         let showsCreationProgress: Bool
+        let usesOverview: Bool
         let scene: ScenePhase
         let gateUnlocked: Bool
     }
@@ -180,6 +237,12 @@ public struct WorktreeDetailView: View {
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
         guard !currentWorktree.showsCreationProgress, let layout = currentWorktree.layout else { return }
+        // IOS-4.55: agent cards render from metadata, not live pane previews.
+        guard overview == nil else {
+            previews?.stopAll()
+            previews = nil
+            return
+        }
         // IOS-4.14: skip the preview terminal pool for single-pane worktrees.
         guard !layout.isLeaf else {
             previews?.stopAll()

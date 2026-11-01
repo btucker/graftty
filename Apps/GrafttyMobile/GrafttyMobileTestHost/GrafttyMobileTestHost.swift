@@ -23,8 +23,12 @@ struct GrafttyMobileTestHost: App {
             #if GRAFTTY_BROWSER_CONTROL_FIXTURE
             if let endpoint = Self.agentIntegrationEndpoint {
                 AgentIntegrationFixture(endpoint: endpoint).ignoresSafeArea()
+            } else if ProcessInfo.processInfo.arguments.contains("--ipad-workspace-fixture") {
+                IPadWorkspaceFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--recent-panes-fixture") {
                 RecentPaneFixture()
+            } else if ProcessInfo.processInfo.arguments.contains("--worktree-overview-fixture") {
+                WorktreeOverviewFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--context-fixture") {
                 WorktreeContextFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--scrollback-fixture") {
@@ -45,7 +49,7 @@ struct GrafttyMobileTestHost: App {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--agent-integration-url"),
               arguments.indices.contains(index + 1) else {
-            if arguments.contains(where: ["--recent-panes-fixture", "--context-fixture", "--scrollback-fixture",
+            if arguments.contains(where: ["--ipad-workspace-fixture", "--recent-panes-fixture", "--context-fixture", "--worktree-overview-fixture", "--scrollback-fixture",
                 "--image-controls-fixture", "--browser-control-fixture"].contains) { return nil }
             // A notification launches the executable through Springboard,
             // which does not retain XCUIApplication's launch arguments.
@@ -57,6 +61,87 @@ struct GrafttyMobileTestHost: App {
 }
 
 #if GRAFTTY_BROWSER_CONTROL_FIXTURE
+/// Actual iPad workspace chrome and tab routing, without live remote dialing.
+@MainActor
+private struct IPadWorkspaceFixture: View {
+    private let host = Host(label: "Studio", baseURL: URL(string: "https://fixture.invalid")!)
+    @State private var state = IPadAppState(defaults: UserDefaults(suiteName: "ipad-workspace-fixture-\(UUID())")!)
+    @State private var coordinator = RemoteConnectionCoordinator()
+
+    private var row: WorktreePanes {
+        WorktreePanes(path: "/repo/workspace", displayName: "Workspace", repoDisplayName: "Project", displayBranch: "workspace",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "alpha", title: "Agent Alpha", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: .leaf(sessionName: "beta", title: "Agent Beta", attentionText: nil, isBusy: false, attentionSource: nil)),
+            sidebar: .init(id: "workspace", projectID: "project",
+                           brief: WorktreeBrief(recap: AttentionRecap(title: "Rethink panes and tabs", context: "Keep agent work easy to find",
+                                                                      completed: "", next: ""), at: Date()),
+                           emoji: "🧭"),
+            agents: [.init(id: "alpha", name: "Alpha", provider: "codex", status: "running", sessionName: "alpha"),
+                     .init(id: "beta", name: "Beta", provider: "claude", status: "running", sessionName: "beta")])
+    }
+
+    var body: some View {
+        NavigationSplitView(columnVisibility: .constant(.all)) {
+            Text("Worktrees").navigationTitle("Studio")
+        } detail: {
+            IPadDetailColumn(host: host, appState: state, paneEnvironment: .empty,
+                ghosttyCommandContext: .init(keybindingSet: .loading, perform: { _ in }, isEnabled: { _ in false }),
+                onSelectPane: { state.focusedPaneId = $0 }, onBackToWorktrees: {})
+                .overlay(alignment: .bottom) {
+                    Text(state.focusedPaneId ?? "none").accessibilityIdentifier("workspace.focus")
+                        .allowsHitTesting(false)
+                }
+        }
+        .environment(\.remoteConnectionCoordinator, coordinator)
+        .environment(\.scenePhase, .inactive)
+        .preferredColorScheme(state.theme.isDark ? .dark : .light)
+        .onAppear {
+            state.selectedHostId = host.id
+            state.latestWorktrees = [row]
+            state.selectedWorktreePath = row.path
+            state.focusedPaneId = "alpha"
+        }
+    }
+}
+
+/// The phone worktree screen with agents in every state. No live dialing.
+private struct WorktreeOverviewFixture: View {
+    private let host = Host(label: "Studio", baseURL: URL(string: "https://fixture.invalid")!)
+    private let row: WorktreePanes = {
+        func leaf(_ session: String, _ title: String, busy: Bool = true, stop: String? = nil) -> PaneLayoutNode {
+            .leaf(sessionName: session, title: title, attentionText: stop, isBusy: busy, attentionSource: stop == nil ? nil : .agentStop)
+        }
+        let leaves = [leaf("claude", "Mobile regressions in branch",
+                           stop: "The shared Mac test run passed all 43 tests in 7 suites. Should I push PR 806 now?"),
+                      leaf("codex", "Reimagine agent-centric UI"), leaf("old", "Fix sidebar fixtures"),
+                      leaf("shell", "./scripts/bundle.sh install")]
+        let layout = leaves.dropFirst().reduce(leaves[0]) { PaneLayoutNode.split(direction: .horizontal, ratio: 0.5, left: $0, right: $1) }
+        let brief = WorktreeBrief(recap: AttentionRecap(title: "Agent workspaces, tabs and sidebar",
+            context: "Make the current worktree recognizable at a glance", completed: "", next: ""), at: Date())
+        return WorktreePanes(path: "/repo/reconsider-pans-tabs-sidebar", displayName: "reconsider-pans-tabs-sidebar",
+            repoDisplayName: "graftty", displayBranch: "reconsider-pans-tabs-sidebar", state: .running, isMainCheckout: false,
+            prBadge: nil, stats: nil, attentionText: nil, layout: layout,
+            sidebar: .init(id: "wt", projectID: "graftty", brief: brief, emoji: "🧭"),
+            agents: [
+                .init(id: "1", name: "Codex", provider: "codex", status: "running", sessionName: "codex"),
+                .init(id: "2", name: "Claude", provider: "claude", status: "running", sessionName: "claude"),
+                .init(id: "3", name: "Codex", provider: "codex", status: "closed", sessionName: nil, completionID: "c",
+                      result: "Corrected stale sidebar and attention fixtures; 2,261 Mac tests pass.", retainedSessionName: "old"),
+            ])
+    }()
+    @State private var selected = "none"
+
+    var body: some View {
+        NavigationStack {
+            WorktreeDetailView(host: host, worktree: row) { selected = $0 }
+                .overlay(alignment: .bottom) { Text("Selected \(selected)").font(.caption2).accessibilityIdentifier("Overview selection") }
+        }
+        .environment(\.scenePhase, .inactive)
+    }
+}
+
 private struct WorktreeContextFixture: View {
     @State private var mounts = 0
     @State private var coordinator = RemoteConnectionCoordinator()
@@ -285,6 +370,9 @@ private struct ImageControlsFixture: View {
 @MainActor
 private struct RecentPaneFixture: View {
     @State private var model = RecentPaneFixtureModel()
+    /// The agent workspace's top-right controls need a coordinator.
+    @State private var coordinator: RemoteConnectionCoordinator? =
+        ProcessInfo.processInfo.arguments.contains("--agent-workspace") ? RemoteConnectionCoordinator() : nil
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
@@ -316,6 +404,7 @@ private struct RecentPaneFixture: View {
         .environment(\.recentPaneActions, .init(history: model.state.recentPanes, open: { entry in
             Task { await model.open(entry) }
         }))
+        .environment(\.remoteConnectionCoordinator, coordinator)
         // Prevent unrelated live dialing in this deterministic fixture.
         .environment(\.scenePhase, .inactive)
         .alert("Could not open pane", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
@@ -354,7 +443,12 @@ private final class RecentPaneFixtureModel {
             let paneIDs = Dictionary(uniqueKeysWithValues: layout.leaves.map { ($0.sessionName, "slot-" + $0.sessionName) })
             let row = WorktreePanes(path: "/repo/\(name)", displayName: name, repoDisplayName: "Project", displayBranch: name,
                 state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
-                layout: layout, sidebar: .init(id: name, projectID: "project", paneIDs: paneIDs, paneSlotIDs: Array(paneIDs.values)))
+                layout: layout, sidebar: .init(id: name, projectID: "project", paneIDs: paneIDs, paneSlotIDs: Array(paneIDs.values)),
+                // Hosts with managed-agent support send an empty list for
+                // worktrees that have never run an agent.
+                agents: ProcessInfo.processInfo.arguments.contains("--agent-workspace")
+                    ? [.init(id: "agent-\(name)", name: "Codex \(name)", provider: "codex", status: "running", sessionName: route)]
+                    : ProcessInfo.processInfo.arguments.contains("--empty-agent-list") ? [] : nil)
             state.recentPanes.record(hostID: host.id, hostLabel: host.label, worktree: row, sessionName: route)
             guard name != "removed" else { continue }
             rows.append(row)

@@ -27,6 +27,33 @@ private final class ChromeSmokePage: ChannelInboundHandler, @unchecked Sendable 
 
 @Suite(.serialized)
 struct DedicatedChromeBackendTests {
+    @Test("@spec CHROME-1.18: When a dedicated Chrome process is still starting, the application shall allow up to fifteen seconds for its DevTools endpoint to appear while honoring cancellation and detecting process exit.", .timeLimit(.minutes(1)))
+    func slowColdLaunch() async throws {
+        let root = URL.temporaryDirectory.appendingPathComponent("graftty-slow-chrome-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let launcher = root.appendingPathComponent("chrome")
+        // Delay the real process beyond the old five-second startup limit.
+        // exec preserves the PID so production cleanup still owns Chrome.
+        try """
+        #!/bin/sh
+        /bin/sleep 6
+        exec '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' "$@"
+
+        """.write(to: launcher, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: launcher.path)
+        let backend = DedicatedChromeBackend(testProfile: root.appendingPathComponent("profile"), executable: launcher)
+        do {
+            let state = try await backend.perform(.list, authorize: { true })
+            #expect(!state.tabs.isEmpty)
+        } catch {
+            await backend.shutdownForTesting()
+            try? FileManager.default.removeItem(at: root)
+            throw error
+        }
+        await backend.shutdownForTesting()
+        try FileManager.default.removeItem(at: root)
+    }
+
     @Test("@spec CHROME-1.8: If pane ownership changes while an OAuth dispatch receipt is persisted, then the application shall recheck ownership before Chrome navigation and release the unsent receipt for a later authorized retry.", .timeLimit(.minutes(1)))
     func nativeOfferRevokedBeforeDispatch() async throws {
         let root = URL.temporaryDirectory.appendingPathComponent("graftty-native-revoke-\(UUID())")

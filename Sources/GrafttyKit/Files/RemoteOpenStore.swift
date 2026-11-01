@@ -4,7 +4,7 @@ import GrafttyProtocol
 /// Holds explicit file offers, never a remotely supplied filesystem path.
 /// Bytes are snapshotted so edits on the host cannot corrupt an in-flight preview.
 public actor RemoteOpenStore {
-    public static let shared = RemoteOpenStore()
+    public static let shared = RemoteOpenStore(previewDirectory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("Graftty/WorktreePreviews", isDirectory: true))
     private struct Entry {
         let offer: RemoteOpenOffer
         let worktree: String
@@ -13,7 +13,31 @@ public actor RemoteOpenStore {
         let previewRevision: UInt64?
     }
     private var entries: [Entry] = []
-    public init() {}
+    private var catalog: WorktreePreviewCatalog
+    public init(previewDirectory: URL? = nil) { catalog = WorktreePreviewCatalog(directory: previewDirectory) }
+
+    public func publishPreviews(_ snapshots: [FilePreviewLoader.Snapshot], worktree: String,
+                                paneSessionName: String, ownerDeviceID: RemoteDeviceID?,
+                                previewRevision: UInt64 = 0, now: Date = Date()) throws -> [RemoteOpenOffer] {
+        purge(now: now)
+        guard !entries.contains(where: { $0.worktree == worktree && $0.offer.paneSessionName == paneSessionName
+            && ($0.previewRevision ?? 0) > previewRevision }) else { throw Failure.superseded }
+        // Stored offers have no automatic recipient. Only the live, expiring
+        // delivery overlay below can ask a device to open a preview.
+        let published = try catalog.publish(snapshots, worktree: worktree, paneSessionName: paneSessionName)
+        entries.removeAll { $0.worktree == worktree && $0.offer.paneSessionName == paneSessionName && $0.previewRevision != nil }
+        guard let ownerDeviceID else { return published }
+        let deliveries = published.map { offer in
+            RemoteOpenOffer(id: offer.id, filename: offer.filename, byteCount: offer.byteCount,
+                paneSessionName: offer.paneSessionName, previewKind: offer.previewKind,
+                previewOwnerDeviceID: ownerDeviceID, previewGroupID: offer.previewGroupID)
+        }
+        for offer in deliveries {
+            entries.append(Entry(offer: offer, worktree: worktree, bytes: Data(),
+                expires: now.addingTimeInterval(900), previewRevision: previewRevision))
+        }
+        return deliveries
+    }
 
     public enum Failure: LocalizedError {
         case invalidFile, invalidBrowserOwner, tooLarge, expired, invalidOffset, superseded
@@ -126,11 +150,16 @@ public actor RemoteOpenStore {
 
     public func list(worktree: String, now: Date = Date()) -> [RemoteOpenOffer] {
         purge(now: now)
-        return entries.filter { $0.worktree == worktree }.map(\.offer)
+        let stored = (try? catalog.list(worktree: worktree)) ?? []
+        let delivery = entries.filter { $0.worktree == worktree }.map(\.offer)
+        let overrides = Dictionary(uniqueKeysWithValues: delivery.map { ($0.id, $0) })
+        let storedIDs = Set(stored.map(\.id))
+        return delivery.filter { !storedIDs.contains($0.id) } + stored.map { overrides[$0.id] ?? $0 }
     }
 
     public func read(id: UUID, worktree: String, offset: Int, now: Date = Date()) throws -> Data {
         purge(now: now)
+        if let bytes = try catalog.read(id: id, worktree: worktree, offset: offset) { return bytes }
         guard let entry = entries.first(where: { $0.offer.id == id && $0.worktree == worktree }) else {
             throw Failure.expired
         }

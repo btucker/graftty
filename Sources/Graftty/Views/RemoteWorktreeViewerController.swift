@@ -72,9 +72,31 @@ protocol RemoteWorktreeViewerSurfaces: AnyObject {
 
 @MainActor
 final class RemoteWorktreeViewerController: ObservableObject {
+    /// Device-local presentation handles navigation/geometry before host mutations.
+    var workspaceCommandHandler: ((HostManagedPaneCommand, PaneSlotID) -> Bool)?
     struct WorktreeKey: Hashable {
         var identity: RemoteMacIdentity
         var worktreePath: String
+    }
+    private var workspaceVisibility: (key: WorktreeKey, sessions: Set<String>)?
+
+    func setWorkspaceVisibleSessions(_ sessions: Set<String>, identity: RemoteMacIdentity, worktreePath: String) {
+        workspaceVisibility = (WorktreeKey(identity: identity, worktreePath: worktreePath), sessions)
+        if selectedRemoteIdentity == identity && selectedRemoteWorktreePath == worktreePath {
+            setRemoteSurfacesVisible(appIsVisible)
+        }
+    }
+
+    func clearWorkspaceVisibility(identity: RemoteMacIdentity, worktreePath: String) {
+        if workspaceVisibility?.key == WorktreeKey(identity: identity, worktreePath: worktreePath) {
+            workspaceVisibility = nil
+        }
+    }
+
+    private func workspaceShows(_ session: String, identity: RemoteMacIdentity, path: String) -> Bool {
+        guard let visibility = workspaceVisibility,
+              visibility.key == WorktreeKey(identity: identity, worktreePath: path) else { return true }
+        return visibility.sessions.contains(session)
     }
 
     // What the window draws. The queue reassigns these on every
@@ -221,6 +243,17 @@ final class RemoteWorktreeViewerController: ObservableObject {
         return !row.state.isInFlight || row.showsCreationProgress
     }
 
+    func createDrawerTerminal() {
+        if let target = splitTree.allLeaves.first {
+            performWorkspaceCommand(.split(.down), on: target)
+        } else if let remoteMac = selectedRemoteMac, let path = selectedRemoteWorktreePath {
+            Task { @MainActor in
+                let response = await model.openWorktree(on: remoteMac, worktreePath: path)
+                if case .error(_, let message, _, _) = response { presentError(message) }
+            }
+        }
+    }
+
     func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String, acknowledging: Bool, inspectingCreation: Bool = true) {
         guard canSelectRemoteWorktree(remoteMac, worktreePath: worktreePath) else { return }
         let identity = RemoteMacIdentity(remoteMac)
@@ -251,6 +284,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
         }
         synchronizeRemoteWorktree(remoteMac: remoteMac, worktreePath: worktreePath)
         if selectedWorktreeSnapshot?.state == .closed,
+           selectedWorktreeSnapshot?.agents?.contains(where: \.isCompleted) != true,
            (!inspectingCreation || selectedWorktreeSnapshot?.showsCreationProgress != true),
            !openingRemoteWorktrees.contains(target) {
             openingRemoteWorktrees.insert(target)
@@ -753,7 +787,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
                     let isSelected = selectedRemoteIdentity == identity
                         && selectedRemoteWorktreePath == worktreePath
                     surfaces.setVisible(
-                        isSelected && appIsVisible,
+                        isSelected && appIsVisible && workspaceShows(leaf.sessionName, identity: identity, path: worktreePath),
                         for: terminalID
                     )
                     let shouldFocus = focusSelection
@@ -838,6 +872,11 @@ final class RemoteWorktreeViewerController: ObservableObject {
         remoteTerminalSlots[RemoteTerminalKey(identity: identity, worktreePath: worktreePath, sessionName: sessionName)]
     }
 
+    func performWorkspaceCommand(_ command: HostManagedPaneCommand, on slot: PaneSlotID) {
+        guard let source = remoteTerminalSlots.first(where: { $0.value == slot })?.key else { return }
+        handleRemotePaneCommand(command, source: source, sourceTerminalID: slot)
+    }
+
     private func remoteSessionName(for terminalID: PaneSlotID) -> String? {
         remoteTerminalSlots.first(where: { $0.value == terminalID })?.key.sessionName
     }
@@ -865,6 +904,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
         guard selectedRemoteIdentity == source.identity,
               selectedRemoteWorktreePath == source.worktreePath,
               let remoteMac = selectedRemoteMac else { return }
+        if workspaceCommandHandler?(command, sourceTerminalID) == true { return }
         let target = WorktreeKey(
             identity: source.identity,
             worktreePath: source.worktreePath
@@ -1794,7 +1834,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
               let worktreePath = selectedRemoteWorktreePath else { return }
         for (key, terminalID) in remoteTerminalSlots
         where key.identity == identity && key.worktreePath == worktreePath {
-            surfaces.setVisible(visible, for: terminalID)
+            surfaces.setVisible(visible && workspaceShows(key.sessionName, identity: identity, path: worktreePath), for: terminalID)
         }
     }
 

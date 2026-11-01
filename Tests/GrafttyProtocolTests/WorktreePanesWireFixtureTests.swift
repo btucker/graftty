@@ -34,7 +34,7 @@ struct WorktreePanesWireFixtureTests {
     func fixtureRowsEncodeEveryCodingKey() throws {
         // Keep the released fixture frozen while including fields added since release.
         let currentRows = WorktreePanesWireFixture.rows + [WorktreePanesWireFixture.rows[0].with(
-            creationProgress: WorktreeCreationProgress(operationID: "fixture", startedAt: .distantPast))]
+            creationProgress: WorktreeCreationProgress(operationID: "fixture", startedAt: .distantPast), agents: [])]
         let encoded = try JSONEncoder().encode(currentRows)
         let rows = try #require(try JSONSerialization.jsonObject(with: encoded) as? [[String: Any]])
         let keys = Set(rows.flatMap(\.keys))

@@ -9,6 +9,38 @@ final class FilePreviewWindows: ObservableObject {
     private let history: FilePreviewHistory
     private let inline: ImagePreviewStore
     private var controllers: [String: FilePreviewWindowController] = [:]
+    private struct HiddenPreview {
+        let entry: FilePreviewHistory.Entry
+        let pane: PaneSlotID?
+    }
+    private var hiddenPreviews: [HiddenPreview] = []
+
+    func hiddenEntry(for path: String) -> FilePreviewHistory.Entry? {
+        hiddenPreviews.first { $0.entry.worktreePath == path }?.entry
+    }
+
+    func hide(_ entry: FilePreviewHistory.Entry, inlinePane: PaneSlotID?) {
+        objectWillChange.send()
+        hiddenPreviews.removeAll { $0.entry.worktreePath == entry.worktreePath }
+        hiddenPreviews.insert(HiddenPreview(entry: entry, pane: inlinePane), at: 0)
+        hiddenPreviews = Array(hiddenPreviews.prefix(FilePreviewHistory.maximumEntries))
+        if let inlinePane { inline.dismiss(inlinePane) }
+        else { controllers[entry.worktreePath]?.close() }
+    }
+
+    func restoreHidden(for path: String, inlinePane: PaneSlotID?, resolveWorktree: ((PaneSlotID) -> String?)?) -> Bool {
+        guard let hidden = hiddenPreviews.first(where: { $0.entry.worktreePath == path }) else { return false }
+        if let previousPane = hidden.pane {
+            let target = inlinePane ?? previousPane
+            if resolveWorktree == nil || resolveWorktree?(target) == path {
+                showInline(hidden.entry, pane: target, worktreePath: path)
+                return true
+            }
+        }
+        show(hidden.entry, inlinePane: inlinePane, resolveInlineWorktree: resolveWorktree)
+        return true
+    }
+
     struct InlineTarget: Equatable {
         let id = UUID()
         let worktreePath: String
@@ -31,6 +63,7 @@ final class FilePreviewWindows: ObservableObject {
     func show(_ entry: FilePreviewHistory.Entry, activate: Bool = true,
               inlinePane: PaneSlotID? = nil, resolveInlineWorktree: ((PaneSlotID) -> String?)? = nil) {
         objectWillChange.send()
+        hiddenPreviews.removeAll { $0.entry.worktreePath == entry.worktreePath }
         inline.dismiss(previewID: entry.id)
         let controller: FilePreviewWindowController
         if let existing = controllers[entry.worktreePath] {
@@ -54,6 +87,8 @@ final class FilePreviewWindows: ObservableObject {
     }
 
     func showInline(_ entry: FilePreviewHistory.Entry, pane: PaneSlotID? = nil, worktreePath: String? = nil) {
+        objectWillChange.send()
+        hiddenPreviews.removeAll { $0.entry.worktreePath == entry.worktreePath }
         controllers[entry.worktreePath]?.close()
         let target = pane ?? entry.pane
         let path = worktreePath ?? entry.worktreePath

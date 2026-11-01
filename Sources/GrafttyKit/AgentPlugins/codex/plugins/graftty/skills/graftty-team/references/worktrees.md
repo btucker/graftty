@@ -2,19 +2,22 @@
 
 ## Creation options
 
-Use the delegation example in the [team skill](../SKILL.md) to launch an agent with its first task. Choose options as needed:
+Use `graftty agent add <name> --prompt-stdin --json` to create a worktree and its agent, or pass `--worktree <existing-name-or-path>` to add an agent to a tracked checkout.
 
-- `--base <ref>` selects a local revision; default is the repository's default branch or HEAD. `--base HEAD` includes committed changes only.
-- `--branch <branch>` overrides the normalized worktree name. Add `--existing` for an existing branch in a new directory; this cannot reopen a directory or restart an agent, and conflicts with `--base`.
-- `--prompt-stdin` requires `--agent codex` or `--agent claude` and conflicts with `--prompt`. Use stdin for dynamic or untrusted text; reserve `--prompt` for trusted literals.
-- Creation is asynchronous by default; `--async` makes that explicit. Graftty waits for Git and hooks, then launches the agent after the CLI exits. `--wait` waits until Git finishes and the pane accepts the command, not until the task finishes.
-- `--timeout <seconds>` bounds acceptance, or completion with `--wait`. Default 300; must be positive. Timeout does not cancel accepted creation.
+- `--provider claude|codex` overrides the destination host's Default agent. Without either choice, launch fails with a provider-selection message.
+- `--base <ref>` selects the new branch's starting revision. It is incompatible with `--worktree`; `--base HEAD` includes committed changes only.
+- `--prompt-stdin` conflicts with `--prompt`. Use stdin for dynamic task text.
+- Creation is asynchronous. `--wait` waits for a new worktree to accept the launch, not for task completion.
+- `--timeout <seconds>` bounds `--wait`, defaults to 300, and does not cancel accepted creation.
+- The JSON response retains the managed identity, assignment ID, operation ID, and worktree. Use `graftty worktree status <operation-id>` for a new worktree's Git/hook progress.
 
-The default response begins with `pending`; `--wait` returns `created` on launch acceptance. The returned address is stable across startup, and messages sent before readiness are queued. The initial task also survives in the agent's durable inbox. Confirm child reachability before relinquishing its scope.
+The initial task is retained in the managed record for recovery. Confirm native-agent reachability before relinquishing the delegated scope. Use `graftty agent finish` and the parent's explicit `graftty agent close --completion` for assignment cleanup, as described in the [team skill](../SKILL.md).
+
+The lower-level `graftty worktree add` remains available for explicit branch selection with `--branch` and `--existing`. `graftty pane add --command` creates an ordinary terminal running a specified shell line. These commands are not the preferred agent-creation path.
 
 ## Another Mac
 
-Add `--remote '<Mac-name-or-device-ID>'` over an active control connection. Both Macs must support remote creation and track the project. The destination defaults to the caller's Git origin; equivalent GitHub/GitLab SSH and HTTPS URLs match. Use `--project '<destination-name-or-absolute-repository-path>'` for another project, missing origin, or ambiguous matches, including calls outside a worktree.
+The compatibility command `graftty worktree add <name> --agent <codex|claude>` accepts `--remote '<Mac-name-or-device-ID>'` over an active control connection. Both Macs must support remote creation and track the project. The destination defaults to the caller's Git origin; equivalent GitHub/GitLab SSH and HTTPS URLs match. Use `--project '<destination-name-or-absolute-repository-path>'` for another project, missing origin, or ambiguous matches, including calls outside a worktree.
 
 Branches and `--base` resolve on the destination; `--base HEAD` uses its main checkout. Local commits, edits, and instructions are not transferred.
 
@@ -24,17 +27,15 @@ From your tracked worktree, send a follow-up to the full returned `graftty-mac:/
 
 Inspect `git worktree list` and the roster before retrying creation. Failed hooks may leave directories behind; do not recreate or automatically delete them. Diagnose registration if Git lists a worktree that Graftty does not.
 
-For an existing worktree with no suitable agent, first open it in Graftty; `pane add` needs a running worktree. An agent pane starts even when the worktree is not selected. If panes have no automatic command, launch one:
+For an existing worktree with no suitable agent, use:
 
 ```sh
-graftty pane add '<worktree-name>' --agent codex --prompt-stdin <<'GRAFTTY_PANE_7F3A91C2'
+graftty agent add reviewer --worktree '<worktree-name>' --provider codex --prompt-stdin --json <<'GRAFTTY_AGENT_7F3A91C2'
 <task>
-GRAFTTY_PANE_7F3A91C2
+GRAFTTY_AGENT_7F3A91C2
 ```
 
-Replace `codex` with `claude` as needed. `pane add` takes a worktree name. `--agent` launches the runtime as `worktree add --agent` does; the shell waits until it is ready. `--prompt-stdin` and `--prompt` require `--agent`, and `--command` runs an arbitrary shell line instead. When the worktree has no live or starting agent of that runtime, the task is also saved in the durable inbox. Confirm reachability before relinquishing the task.
-
-The same command adds a reviewer or pair beside a live implementer. If a live or starting agent of the same runtime already uses the worktree, the added agent's task travels only in its launch command, so that agent never receives it. Address the added agent by its exact ID from `graftty team list --json`.
+The host opens a closed worktree as needed. The agent starts even if its views are not selected. Its initial task belongs to its managed record and is not delivered to another agent sharing the same provider. Use the exact native messaging ID after startup.
 
 Inspect with `graftty pane list '<worktree-name>'` and `graftty pane show '<worktree-name>:<id>' --lines 100`, using the 1-based pane ID. `graftty pane send` writes directly to the PTY with no inbox or consent layer and presses Return by default. Run `graftty pane send --help` before using it; use team messages for coordination.
 

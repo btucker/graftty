@@ -230,7 +230,9 @@ struct IPadRootLayoutSelectionTests {
             prBadge: nil,
             stats: nil,
             attentionText: nil,
-            layout: .leaf(sessionName: "session-a", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
+            layout: .split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "session-a", title: "A", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: .leaf(sessionName: "session-b", title: "B", attentionText: nil, isBusy: false, attentionSource: nil))
         )
 
         IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: worktree)
@@ -238,6 +240,10 @@ struct IPadRootLayoutSelectionTests {
         #expect(appState.selectedWorktreePath == "/repo/feat")
         #expect(appState.focusedPaneId == "session-a")
         #expect(appState.focusRequestCount == 1)
+        // Selecting the same worktree through any of its rows retains its tab.
+        appState.focusedPaneId = "session-b"
+        IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: worktree)
+        #expect(appState.focusedPaneId == "session-b")
     }
 
     @Test("""
@@ -335,9 +341,10 @@ struct IPadRootLayoutSelectionTests {
         let split = SingleSessionView(
             step: step,
             navigationPath: .constant(NavigationPath()),
-            isFullScreen: false
+            isFullScreen: false, isEmbeddedPane: true
         )
         #expect(split.isFullScreen == false)
+        #expect(split.isEmbeddedPane)
 
         // iPhone compact path keeps the existing default (fullscreen).
         let compact = SingleSessionView(
@@ -410,20 +417,18 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.10: While `IPadRootLayout` is presented, the detail column's `.ignoresSafeArea(...)` shall be restricted to `[.top, .bottom]` edges so the terminal extends under the navigation bar and home indicator but never bleeds across the leading column boundary into the sidebar's region — the sidebar shifts the terminal horizontally rather than overlapping it.
+@spec IPAD-1.10: While the iPad workspace is presented, the application shall respect the top and horizontal safe-area boundaries, extending only beneath the bottom home indicator so navigation controls cannot cover tabs or overlap the sidebar.
 """)
     func ipad_1_10_terminalRespectsColumnHorizontalBounds() {
-        // The actual edge set lives inside SingleSessionView's
-        // FullScreenChrome modifier; smoke-check the existence of the
-        // isFullScreen=false code path it gates so a future refactor
-        // that flips the default tickles this test.
+        // Embedded panes let their workspace own the container boundaries.
         let host = sampleHost()
         let split = SingleSessionView(
             step: SessionStep(host: host, sessionName: "s", title: "s"),
             navigationPath: .constant(NavigationPath()),
-            isFullScreen: false
+            isFullScreen: false, isEmbeddedPane: true
         )
         #expect(split.isFullScreen == false)
+        #expect(split.isEmbeddedPane)
     }
 
     @Test("""
@@ -585,40 +590,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.15: While `IPadRootLayout` renders a worktree row whose `displayBranch` differs from its `displayName`, the branch label shall appear on a second line directly beneath the display name (caption font, dimmed via `theme.sidebarSecondaryText`) rather than running inline on the same row — so a long worktree name + long branch name don't squish each other or push the trailing divergence gutter off the edge at narrow sidebar widths. When `displayBranch` equals `displayName` (or is empty), the secondary line is omitted and the row stays single-line.
-""")
-    func ipad_1_15_branchOnSecondLineWhenDifferent() {
-        // The "show secondary?" rule lives inline as `displayBranch !=
-        // displayName && !displayBranch.isEmpty`. Verify the rule
-        // outcomes without rendering — the visual placement is wired
-        // in WorktreeRowContent's `VStack(alignment:spacing:)`.
-        let differentBranch = WorktreePanes(
-            path: "/r/feat",
-            displayName: "feat",
-            repoDisplayName: "r",
-            displayBranch: "feature/login-flow",
-            state: .running,
-            isMainCheckout: false,
-            prBadge: nil, stats: nil, attentionText: nil, layout: nil
-        )
-        #expect(differentBranch.displayBranch != differentBranch.displayName)
-        #expect(!differentBranch.displayBranch.isEmpty)
-
-        // Same name+branch → no secondary line.
-        let same = WorktreePanes(
-            path: "/r/main",
-            displayName: "main",
-            repoDisplayName: "r",
-            displayBranch: "main",
-            state: .running,
-            isMainCheckout: true,
-            prBadge: nil, stats: nil, attentionText: nil, layout: nil
-        )
-        #expect(same.displayBranch == same.displayName)
-    }
-
-    @Test("""
-@spec IPAD-1.16: While `IPadRootLayout` is presented, the worktree row whose `path == appState.selectedWorktreePath` shall render with a rounded-rectangle highlight at `theme.foreground.opacity(0.16)` spanning the worktree row and its pane rows (Mac-parity active-block treatment), and the pane row whose `leaf.sessionName == appState.focusedPaneId` shall use the brightest brightness bucket via `theme.paneTitle(isFocusedPane: true, isActiveWorktree: true, …)` plus a bolded arrow + semibold title. Non-focused panes in the active worktree use the active-worktree bucket; panes in other worktrees use the inactive bucket.
+@spec IPAD-1.16: While a worktree is selected on iPad, the application shall highlight its whole sidebar group and retain the existing agent tab selection when an agent row is tapped.
 """)
     func ipad_1_16_activeWorktreeHighlightAndFocusedPaneEmphasis() {
         // Construct WorktreeListContent with selection state set; the

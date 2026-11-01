@@ -44,9 +44,12 @@ public final class IPadAppState {
 
     public var sidebarNavigation: SidebarNavigationState
     let recentPanes: MobileRecentPanes
+    let workspaceStore: MobileWorkspaceStore
     public var navigationWindowWidth: Double = 1100
     public var selectedWorktreePath: String?
     public var focusedPaneId: String?
+    /// IPAD-1.32: toolbar back/forward through visited worktrees.
+    var worktreeHistory = NavigationHistory<String>()
     public var latestWorktrees: [WorktreePanes] = []
     /// Preserve the compact picker across layout changes before iPad data loads.
     /// A different selected project invalidates this fallback; host switches clear it.
@@ -95,6 +98,7 @@ public final class IPadAppState {
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         recentPanes = MobileRecentPanes(defaults: defaults)
+        workspaceStore = MobileWorkspaceStore(defaults: defaults)
         sidebarNavigation = SidebarNavigationState(prefix: "sidebar.mobile", defaults: defaults, collapsed: true)
 
         if let idString = defaults.string(forKey: Keys.selectedHostId),
