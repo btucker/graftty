@@ -294,7 +294,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.143** When mobile pending navigation is invoked, the application shall visit pending worktrees in displayed host order, wrap after the last worktree, and route to its project without entering Attention mode.
 
-**LAYOUT-2.144** While a mobile pane has a pending report question, the application shall show the full Needs your input question beneath the associated pane and suppress its duplicate status label.
+**LAYOUT-2.144** While a mobile pane has a pending report question, the application shall show a compact preview of at most two lines beneath the associated pane, retain the full question for its report and accessibility, and suppress its duplicate status label.
 
 **LAYOUT-2.145** When the user clicks a local macOS worktree block, the application shall select that worktree, focus the requesting pane when its inline question is clicked, and preserve embedded controls and the previously selected agent tab.
 
@@ -384,7 +384,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.189** When a removable linked worktree has a merged PR or MR, the sidebar shall replace its Git divergence counts with a remove button that invokes the existing worktree deletion flow.
 
-**LAYOUT-2.190** When the user selects a live agent tab, the application shall give that agent's terminal keyboard focus.
+**LAYOUT-2.190** When the user selects a live agent or terminal-drawer tab, the application shall give that terminal keyboard focus, including when the tab is already selected.
 
 **LAYOUT-2.191** When an agent publishes a routine stopped-turn recap without an explicit request for the user, the application shall retain the recap without marking the worktree as needing input.
 

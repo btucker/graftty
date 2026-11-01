@@ -28,8 +28,8 @@ struct WorkspaceContentViewTests {
         #expect(loads.last! == model.agent.transcriptArchive?.id)
     }
 
-    @Test("@spec LAYOUT-2.190: When the user selects a live agent tab, the application shall give that agent's terminal keyboard focus.")
-    func selectingAgentTabActivatesItsTerminal() async throws {
+    @Test("@spec LAYOUT-2.190: When the user selects a live agent or terminal-drawer tab, the application shall give that terminal keyboard focus, including when the tab is already selected.", arguments: [false, true])
+    func selectingTabActivatesItsTerminal(inDrawer: Bool) async throws {
         _ = NSApplication.shared
         let first = PaneSlotID(), second = PaneSlotID()
         var entry = WorktreeEntry(path: "/repo/tabs", branch: "tabs", state: .running,
@@ -41,16 +41,28 @@ struct WorkspaceContentViewTests {
         }
         let group = WorkspaceLayout<PaneSlotID>.Group(sessions: [first, second], selected: first)
         entry.workspaceLayout = WorkspaceLayout(root: .group(group.id), groups: [group])
+        if inDrawer {
+            entry.agents = []
+            var layout = WorkspaceLayout<PaneSlotID>()
+            layout.addTerminal(first)
+            layout.addTerminal(second)
+            layout.select(first)
+            entry.workspaceLayout = layout
+        }
         entry.focusedPaneSlotID = first
         var activated: [PaneSlotID] = []
         let worktree = Binding(get: { entry }, set: { entry = $0 })
         let view = WorkspaceContentView(terminalManager: TerminalManager(socketPath: "/tmp/graftty-agent-tab-focus-test.sock"),
             worktree: worktree, onFocusTerminal: { entry.focusedPaneSlotID = $0 }, onNewTerminal: {}, onCloseTerminal: { _ in },
             onActivateTerminal: { activated.append($0) })
-        view.selectTab(second)
-        #expect(entry.focusedPaneSlotID == second)
-        #expect(entry.workspaceLayout?.group(containing: second)?.selected == second)
-        #expect(activated == [second])
+        for _ in 0..<2 {
+            if inDrawer { view.selectTerminalTab(second) }
+            else { view.selectTab(second) }
+            #expect(entry.focusedPaneSlotID == second)
+            if inDrawer { #expect(entry.workspaceLayout?.selectedTerminal == second) }
+            else { #expect(entry.workspaceLayout?.group(containing: second)?.selected == second) }
+        }
+        #expect(activated == [second, second])
     }
 
     private final class CompletedModel: ObservableObject {

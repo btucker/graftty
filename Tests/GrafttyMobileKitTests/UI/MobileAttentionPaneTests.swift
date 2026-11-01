@@ -114,16 +114,39 @@ struct MobileAttentionPaneTests {
         #expect(!navigation.worktreeContext(row).matches(query: "absent report field"))
     }
 
-    @Test("@spec LAYOUT-2.144: While a mobile pane has a pending report question, the application shall show the full Needs your input question beneath the associated pane and suppress its duplicate status label.")
-    func questionFitsWithoutTruncation() {
-        let context = SidebarNavigationState(prefix: "mobile-question.\(UUID())").worktreeContext(worktree())
+    @Test("@spec LAYOUT-2.144: While a mobile pane has a pending report question, the application shall show a compact preview of at most two lines beneath the associated pane, retain the full question for its report and accessibility, and suppress its duplicate status label.")
+    func questionPreviewStaysCompact() throws {
+        let question = String(repeating: "Which device should receive the test? ", count: 7)
+        let context = SidebarWorktreeContext(worktree: worktree(question: question))
         #expect(context.questionPaneID == "session")
-        #expect(context.question == "Which device should receive the test?")
-        let view = UIHostingController(rootView: WorktreeBlock(worktree: context.worktree,
-            theme: nil, isActive: false, isOpening: false, focusedPaneId: nil,
-            context: context, onSelect: {}, onSelectPane: { _ in }, onReport: {}))
-        #expect(view.sizeThatFits(in: CGSize(width: 280, height: 600)).height > 70)
+        #expect(context.question == question)
+        let view = UIHostingController(rootView: SidebarWorktreeQuestion(context: context)
+            .environment(\.accessibilityEnabled, true))
+        let short = UIHostingController(rootView: SidebarWorktreeQuestion(
+            context: SidebarWorktreeContext(worktree: worktree(question: "Proceed?"))))
+        let available = CGSize(width: 280, height: 600)
+        let size = view.sizeThatFits(in: available)
+        #expect(size.width <= available.width)
+        let singleLineHeight = short.sizeThatFits(in: available).height
+        #expect(size.height > singleLineHeight)
+        #expect(size.height <= 2 * singleLineHeight)
 
+        let navigation = SidebarNavigationState(prefix: "mobile-question.\(UUID())")
+        func rowHeight(_ context: SidebarWorktreeContext) -> CGFloat {
+            UIHostingController(rootView: WorktreeBlock(worktree: context.worktree,
+                theme: nil, isActive: false, isOpening: false, focusedPaneId: nil,
+                context: context, onSelect: {}, onSelectPane: { _ in }, onReport: {}))
+                .sizeThatFits(in: available).height
+        }
+        navigation.dismissRequest(in: context)
+        #expect(rowHeight(context) > rowHeight(navigation.worktreeContext(context.worktree)))
+
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.rootViewController = view
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        view.view.layoutIfNeeded()
+        #expect(accessibilityObjects(in: view.view).contains { $0.accessibilityLabel == "Needs your input: " + question })
     }
 
     @Test("@spec PORTS-5.19: While a mobile worktree port row or host browser toolbar is displayed at a compact width, the application shall retain the link and navigation controls while truncating long process and host names.", arguments: [280.0, 320.0, 393.0])
@@ -173,11 +196,12 @@ struct MobileAttentionPaneTests {
         return objects
     }
 
-    private func worktree(progressTimes: [String: Double]? = nil) -> WorktreePanes {
+    private func worktree(progressTimes: [String: Double]? = nil,
+                          question: String = "Which device should receive the test?") -> WorktreePanes {
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSinceReferenceDate: 100),
             recap: .init(title: "Paired-device push notifications",
                          context: "The client integration is committed.", completed: "CI passed.",
-                         next: "Verify delivery on the phone.", need: "Which device should receive the test?"),
+                         next: "Verify delivery on the phone.", need: question),
             paneTitle: "Verify push delivery")
         return WorktreePanes(path: "/repo/push", displayName: "push", repoDisplayName: "graftty",
             displayBranch: "push", state: .running, isMainCheckout: false, prBadge: nil,

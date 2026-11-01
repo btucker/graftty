@@ -31,7 +31,7 @@ struct MobilePaneAttentionTests {
         #expect(MobilePaneAttention.pendingCount(worktrees: [current, viewed, completedCommand], currentWorktree: current.path, navigation: navigation) == 1)
     }
 
-    @Test("A new stop at a previously viewed worktree counts again")
+    @Test("A new input request at a previously viewed worktree counts again")
     func newerOccurrenceCounts() {
         let navigation = SidebarNavigationState(prefix: "pane-attention.\(UUID())")
         let first = worktree("other")
@@ -106,14 +106,34 @@ struct MobilePaneAttentionTests {
         #expect(MobilePaneAttention.openTarget(for: context).title == "Answer the new question")
     }
 
+    @Test("Routine recaps remain searchable without becoming mobile pending-navigation targets")
+    func routineRecapsDoNotRequestInput() {
+        let navigation = SidebarNavigationState(prefix: "mobile-routine.\(UUID())")
+        defer { MobilePaneAttention.consumePendingRoute(for: navigation) }
+        let routine = worktree("routine", need: nil)
+        let blank = worktree("blank", need: " \n")
+        let request = worktree("request")
+        let rows = [routine, blank, request]
+        #expect(MobilePaneAttention.pendingCount(worktrees: rows, currentWorktree: nil, navigation: navigation) == 1)
+        #expect(navigation.worktreeContext(routine).matches(query: "Build passed"))
+        #expect(MobilePaneAttention.open(worktrees: rows, projects: SidebarProjection.projects(rows),
+            navigation: navigation)?.worktreeID == request.path)
+        navigation.dismissRequest(in: navigation.worktreeContext(request))
+        #expect(MobilePaneAttention.pendingCount(worktrees: rows, currentWorktree: nil, navigation: navigation) == 0)
+        #expect(MobilePaneAttention.open(worktrees: rows, projects: SidebarProjection.projects(rows),
+            navigation: navigation) == nil)
+    }
+
     private func worktree(_ name: String, source: AttentionSource = .agentStop, stoppedAt: TimeInterval = 100,
-                          isPinned: Bool? = nil, folders: [String] = [], projectID: String = "project") -> WorktreePanes {
+                          isPinned: Bool? = nil, folders: [String] = [], projectID: String = "project",
+                          need: String? = "Which device should receive the test?") -> WorktreePanes {
         WorktreePanes(path: "/\(name)", displayName: name, repoDisplayName: "Project", displayBranch: name,
             state: .running, isMainCheckout: false, prBadge: nil, stats: nil,
             attentionText: source == .commandFinished ? "Done" : nil,
             attentionSource: source == .commandFinished ? source : nil, layout: nil,
             sidebar: .init(id: name, projectID: projectID, folders: folders, unseenAgentStop: source == .agentStop
-                ? .init(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: stoppedAt)) : nil, isPinned: isPinned))
+                ? .init(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: stoppedAt),
+                    recap: .init(title: "Device verification", completed: "Build passed", next: "Verify on device", need: need)) : nil, isPinned: isPinned))
     }
 }
 
@@ -521,7 +541,8 @@ struct TerminalBackNavigationTests {
         WorktreePanes(path: "/\(name)", displayName: name, repoDisplayName: "Project", displayBranch: name,
             state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil, layout: layout,
             sidebar: .init(id: name, projectID: projectID, unseenAgentStop: pending
-                ? .init(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100)) : nil))
+                ? .init(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                    recap: .init(title: "Device verification", completed: "Build passed", next: "Verify on device", need: "Which device should receive the test?")) : nil))
     }
 }
 

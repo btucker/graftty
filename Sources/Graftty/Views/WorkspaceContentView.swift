@@ -236,7 +236,7 @@ struct WorkspaceContentView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 2) {
                 ForEach(layout.terminals, id: \.self) { slot in
-                    Button { focus(slot) } label: {
+                    Button { selectTerminalTab(slot) } label: {
                         WorkspaceTerminalTitle(terminalManager: terminalManager, invalidations: terminalManager.paneTitleInvalidations, slot: slot, fallback: agent(slot)?.name ?? "Terminal").lineLimit(1).padding(.horizontal, 8).frame(height: 30)
                             .workspaceTabUnderline(selected: layout.selectedTerminal == slot, color: theme.foreground)
                     }.buttonStyle(.plain)
@@ -329,6 +329,7 @@ struct WorkspaceContentView: View {
     /// The tab strip's action. Tabs are drag sources, so tests call this
     /// directly; a synthetic press would enter AppKit's drag tracking loop.
     func selectTab(_ slot: PaneSlotID) { focus(slot, activate: true) }
+    func selectTerminalTab(_ slot: PaneSlotID) { selectTab(slot) }
     private func focus(_ slot: PaneSlotID) { focus(slot, activate: false) }
     private func focus(_ slot: PaneSlotID, activate: Bool) {
         if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
