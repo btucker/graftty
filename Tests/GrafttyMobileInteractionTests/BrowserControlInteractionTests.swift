@@ -60,6 +60,27 @@ final class RecentPaneInteractionTests: XCTestCase {
         screenshot("Ordinary Back returns to worktrees")
     }
 
+    /// @spec IPAD-2.27: While a compact agent workspace is shown, the application shall open its shells from a Terminal button in the top-right controls instead of a bottom bar.
+    func testAgentWorkspaceTerminalLivesInTopControls() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--recent-panes-fixture", "--agent-workspace"]
+        app.launch()
+        defer { app.terminate() }
+        let alpha = app.buttons["Open alpha"]
+        XCTAssertTrue(alpha.waitForExistence(timeout: 10))
+        alpha.tap()
+        let terminal = app.buttons["Terminal"]
+        XCTAssertTrue(terminal.waitForExistence(timeout: 10), "the Terminal control is missing")
+        XCTAssertEqual(app.buttons.matching(identifier: "Terminal").count, 1, "a bottom Terminal bar is still present")
+        XCTAssertLessThan(terminal.frame.midY, app.frame.height * 0.25, "Terminal is not in the top controls: \(terminal.frame)")
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Agent workspace top controls"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        terminal.tap()
+        XCTAssertTrue(app.buttons["Hide terminal"].waitForExistence(timeout: 5), "Terminal did not open the sheet")
+    }
+
     /// @spec IPAD-2.26: While a compact agent workspace shows the software keyboard, the application shall keep the terminal and its key accessory bar above the keyboard.
     func testAgentWorkspaceTerminalStaysAboveKeyboard() throws {
         for arguments in [["--empty-agent-list"], ["--agent-workspace"]] {

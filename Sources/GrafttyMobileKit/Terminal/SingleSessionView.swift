@@ -475,6 +475,11 @@ struct SingleSessionView: View {
         navigationPath.append(destination)
     }
 
+    private func openCompactTerminal(in workspace: WorktreePanes) {
+        terminalSheetWorktree = workspace
+        Task { await terminalSheet.open(in: workspace, create: createCompactTerminal) }
+    }
+
     private func createCompactTerminal() async throws -> String? {
         guard let coordinator, let workspace = compactWorkspace else {
             throw CompactTerminalError.unavailable
@@ -529,7 +534,7 @@ struct SingleSessionView: View {
             }
             if isCompactShellRoute {
                 ContentUnavailableView("Select an agent", systemImage: "terminal",
-                    description: Text("Choose an agent above, or open Terminal below."))
+                    description: Text("Choose an agent above, or open Terminal from the top-right controls."))
                     .foregroundStyle(terminalTheme.foreground)
             } else if let agent = completedAgent, let path = step.worktreePath {
                 VStack(spacing: 0) {
@@ -568,18 +573,6 @@ struct SingleSessionView: View {
                 endedBanner
             }
             }
-            if let workspace = compactWorkspace {
-                Button {
-                    terminalSheetWorktree = workspace
-                    Task { await terminalSheet.open(in: workspace, create: createCompactTerminal) }
-                } label: {
-                    HStack {
-                        Label("Terminal", systemImage: "terminal").labelStyle(.iconOnly)
-                        Spacer()
-                        Image(systemName: "chevron.up").font(.caption)
-                    }.padding(.horizontal, 16).frame(minHeight: 44).contentShape(Rectangle())
-                }.buttonStyle(.plain).foregroundStyle(terminalTheme.foreground).background(terminalTheme.background)
-            }
         }
         // IOS-6.9: explicit bottom padding lifts the terminal above
         // the keyboard. SwiftUI's automatic `.keyboard` safe-area
@@ -612,7 +605,8 @@ struct SingleSessionView: View {
                 if let client, let paging = client.paging, isPaneFocused,
                    client.connectionState == .live, client.imagePasteProgress == nil {
                     PagedHistoryBanner(paging: paging)
-                        .padding(.top, 64)
+                        // Clear the compact workspace's title and agent bar.
+                        .padding(.top, compactWorkspace == nil ? 64 : 116)
                         .padding(.horizontal, 16)
                 }
             }
@@ -652,6 +646,7 @@ struct SingleSessionView: View {
                                      browserConnectionReady: connection == .live,
                                      isPaneFocused: isPaneFocused,
                                      hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
+                                     onOpenTerminal: compactWorkspace.map { workspace in { openCompactTerminal(in: workspace) } },
                                      isPaneOwner: { client?.isOwner == true },
                                      canPresentAuthentication: { true },
                                      terminalRequest: $terminalBrowserRequest)
@@ -676,7 +671,6 @@ struct SingleSessionView: View {
                 // so the terminal reserves its height.
                 if connection == .live, !isKeyboardVisible, isPaneFocused {
                     terminalChrome
-                        .padding(.bottom, compactWorkspace != nil && isFullScreen ? 44 : 0)
                 }
             }
             .animation(.easeInOut(duration: 0.25), value: keyboardBottomInset)

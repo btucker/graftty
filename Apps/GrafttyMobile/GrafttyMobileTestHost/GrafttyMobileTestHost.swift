@@ -285,6 +285,9 @@ private struct ImageControlsFixture: View {
 @MainActor
 private struct RecentPaneFixture: View {
     @State private var model = RecentPaneFixtureModel()
+    /// The agent workspace's top-right controls need a coordinator.
+    @State private var coordinator: RemoteConnectionCoordinator? =
+        ProcessInfo.processInfo.arguments.contains("--agent-workspace") ? RemoteConnectionCoordinator() : nil
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
@@ -316,6 +319,7 @@ private struct RecentPaneFixture: View {
         .environment(\.recentPaneActions, .init(history: model.state.recentPanes, open: { entry in
             Task { await model.open(entry) }
         }))
+        .environment(\.remoteConnectionCoordinator, coordinator)
         // Prevent unrelated live dialing in this deterministic fixture.
         .environment(\.scenePhase, .inactive)
         .alert("Could not open pane", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {

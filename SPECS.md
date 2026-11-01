@@ -2664,6 +2664,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.26** While a compact agent workspace shows the software keyboard, the application shall keep the terminal and its key accessory bar above the keyboard.
 
+**IPAD-2.27** While a compact agent workspace is shown, the application shall open its shells from a Terminal button in the top-right controls instead of a bottom bar.
+
 ### IPAD-3.x — Focused-Pane Toolbar
 
 **IPAD-3.1** When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall expose a focused-pane toolbar containing Split Right, Split Down, Split Left, Split Up, Swap, and Close controls.
