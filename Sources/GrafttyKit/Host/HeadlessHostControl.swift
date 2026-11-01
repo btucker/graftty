@@ -35,6 +35,8 @@ public extension HeadlessHostRuntime {
     func manage(_ request: WorktreeManagementRequest) async -> WorktreeManagementResponse {
         do {
             switch request {
+            case let .agentConversation(path, agentID, action):
+                return await AgentControl.conversation(path: path, agentID: agentID, action: action, platform: controlPlatform)
             case .agentCompletions, .worktreeAgentCompletions:
                 let repos = state.repos
                 let presence = presence

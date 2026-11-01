@@ -96,7 +96,6 @@ struct SidebarView: View {
     @Binding var pendingAddWorktree: AddWorktreeRequest?
 
     /// Hovered drop-target row during a pane drag (PWD-1.5). Nil otherwise.
-    @State private var expandedAgentWorktrees: Set<UUID> = []
     @State private var dropTargetWorktreeID: WorktreeEntry.ID?
 
     /// Virtual folders start expanded. Only explicit user collapses are
@@ -796,9 +795,13 @@ struct SidebarView: View {
         let context = contextForLocalWorktree(worktree, repo: repo, displayName: displayName)
         let isDropTarget = dropTargetWorktreeID == worktree.id
         let agentSessions = Set(context.worktree.sidebarAgentLeaves.map(\.sessionName))
-        let paneLeaves = worktree.state == .running ? worktree.splitTree.allLeaves.filter {
+        let liveAgentLeaves = worktree.state == .running ? worktree.splitTree.allLeaves.filter {
             worktree.paneSessions[$0].map(ZmxLauncher.sessionName(for:)).map(agentSessions.contains) == true
         } : []
+        let retained = worktree.agents.compactMap(\.presentationSlotID).filter {
+            !liveAgentLeaves.contains($0) && worktree.workspaceLayout?.sessions.contains($0) == true
+        }
+        let paneLeaves = liveAgentLeaves + retained
         let groupsPanes = showsProjectRail && !paneLeaves.isEmpty
         let projectID = localProjectID(repo)
         let project = projects.first { $0.id == projectID }
@@ -827,8 +830,7 @@ struct SidebarView: View {
                 WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
                                         onChange: { editWorktreeEmoji(worktree, anchoredTo: anchor) },
                                         onClear: { SidebarHostNavigation.clearEmoji(worktreeID: worktree.id, in: &appState.repos) })
-            },
-            reportButton: SidebarReportButton(controller: reportController, context: context, theme: theme)
+            }
         )
         .frame(minHeight: 24)
         .overlay(alignment: .trailing) {
@@ -839,7 +841,7 @@ struct SidebarView: View {
             let sessionName = worktree.paneSessions[terminalID]
                 .map(ZmxLauncher.sessionName(for:))
             return PaneTitleRow(
-                title: worktree.agents.first { $0.paneSlotID == terminalID }?.name ?? terminalManager.displayTitle(for: terminalID),
+                title: worktree.agents.first { $0.presentationSlotID == terminalID }?.name ?? terminalManager.displayTitle(for: terminalID),
                 isActiveWorktree: isActive,
                 isFocusedPane: false,
                 isBusy: AgentLivenessMerge.isPaneBusy(
@@ -851,7 +853,8 @@ struct SidebarView: View {
                 // longer feed it.
                 attentionStyle: context.question != nil && context.questionPaneID == sessionName ? nil : attention.paneCapsules[terminalID],
                 portBindings: portBindings.bindings[terminalID] ?? [],
-                agent: context.worktree.agents?.first { $0.sessionName == sessionName },
+                needsInput: worktree.paneAttention[terminalID]?.source == .agentStop,
+                agent: context.worktree.agents?.first { $0.id == worktree.agents.first(where: { $0.presentationSlotID == terminalID })?.id },
                 attentionCount: activityCounts.attentionByPane[sessionName ?? "", default: 0]
             )
         }

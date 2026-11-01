@@ -13,21 +13,22 @@ struct CompactAgentBar: View {
     var onNewTerminal: (() -> Void)?
     var hostID: UUID? = nil
 
-    private var agents: [AgentSessionInfo] { worktree.agents?.filter { $0.sessionName != nil && $0.status != "closed" } ?? [] }
+    private var agents: [AgentSessionInfo] { worktree.agents?.filter { $0.presentationSessionName != nil } ?? [] }
     private var terminals: [PaneLayoutNode.Leaf] {
-        let agentSessions = Set(agents.compactMap(\.sessionName))
+        let agentSessions = Set(agents.compactMap(\.presentationSessionName))
         return worktree.layout?.leaves.filter { !agentSessions.contains($0.sessionName) } ?? []
     }
-    private var selectedAgent: AgentSessionInfo? { agents.first { $0.sessionName == session } }
+    private var selectedAgent: AgentSessionInfo? { agents.first { $0.presentationSessionName == session } }
 
     var body: some View {
         HStack(spacing: 14) {
             Menu {
                 ForEach(agents) { agent in
-                    if let target = agent.sessionName {
+                    if let target = agent.presentationSessionName {
                         Button { onSelect(target) } label: {
                             Label {
                                 Text("\(agent.name) · \(AgentAssignmentStatus(agent: agent, needsInput: false).label)")
+                                    .foregroundStyle(agent.isCompleted ? .secondary : .primary)
                             } icon: { AgentProviderIcon(provider: agent.provider) }
                         }
                     }

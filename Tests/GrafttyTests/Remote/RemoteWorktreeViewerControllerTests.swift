@@ -11,6 +11,16 @@ import Testing
 @Suite("Remote worktree viewer mutation queue")
 @MainActor
 struct RemoteWorktreeViewerControllerTests {
+    @Test("@spec LAYOUT-2.183: When a remote worktree is selected again from its sidebar rows, the application shall preserve its current agent tab.")
+    func sidebarReselectionKeepsCurrentAgent() async throws {
+        let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))
+        viewer.controller.selectRemotePane(viewer.mac, worktreePath: ViewerHarness.path, sessionName: "b", acknowledging: false)
+        await viewer.settle()
+        viewer.controller.selectRemoteWorktree(viewer.mac, worktreePath: ViewerHarness.path, acknowledging: false)
+        await viewer.settle()
+        #expect(viewer.controller.selectedRemotePaneSessionName == "b")
+    }
+
     @Test("@spec LAYOUT-2.170: When a remote workspace restores app visibility, the application shall show only that host's device-local selected sessions and keep hidden tabs hidden.")
     func workspaceVisibilitySurvivesAppUnhide() async throws {
         let viewer = try await ViewerHarness.opened(layout: .split(.leaf("a"), .leaf("b")))

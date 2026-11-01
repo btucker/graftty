@@ -24,8 +24,13 @@ final class MobileWorkspaceStore {
         } ?? .initial(for: worktree)
         next.reconcile(live: worktree.layout?.leaves.map(\.sessionName) ?? [],
             agents: Set(worktree.agents?.compactMap(\.sessionName) ?? []),
+            retained: Set(worktree.agents?.compactMap(\.presentationSessionName) ?? []),
+            completed: Set(worktree.agents?.filter(\.isCompleted).compactMap(\.presentationSessionName) ?? []),
             preservingSelection: !revealFocused && layouts[key] != nil)
-        if let focused, revealFocused || !next.terminals.contains(focused) || next.drawerVisible { next.select(focused) }
+        let restoringCompleted = layouts[key] == nil && next.focusedSession.map { selected in
+            worktree.agents?.contains(where: { $0.presentationSessionName == selected && $0.isCompleted }) == true
+        } == true
+        if !restoringCompleted, let focused, revealFocused || layouts[key] == nil { next.select(focused) }
         save(next, key: key)
     }
 
@@ -43,7 +48,7 @@ final class MobileWorkspaceStore {
 
     func navigationLayout(hostID: UUID, worktree: WorktreePanes) -> PaneLayoutNode? {
         let workspace = layout(hostID: hostID, worktree: worktree)
-        let canvas = workspace.visiblePaneLayout(in: worktree.layout)
+        let canvas = workspace.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? [])
         guard workspace.drawerVisible, let selected = workspace.selectedTerminal,
               let terminal = worktree.layout?.leaves.first(where: { $0.sessionName == selected }) else { return canvas }
         let drawer = PaneLayoutNode.leaf(sessionName: selected, title: terminal.title,

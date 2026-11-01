@@ -17,6 +17,7 @@ struct MultiPaneDetailView: View {
     let onSelectPane: (String) -> Void
     let onBackToWorktrees: () -> Void
     let workspaceStore: MobileWorkspaceStore
+    var onNewTerminal: () -> Void = {}
 
     @Environment(\.retainedMobilePanes) private var retainedPanes
     @State private var drawerResizeStart: Double?
@@ -29,9 +30,9 @@ struct MultiPaneDetailView: View {
         GeometryReader { geometry in
             if worktree.showsCreationProgress {
                 MobileCreationDetailView(host: host, worktree: worktree, theme: theme)
-            } else if let inventory = worktree.layout {
+            } else if worktree.layout != nil || currentWorkspace.root != nil {
                 VStack(spacing: 0) {
-                    if let visible = currentWorkspace.visiblePaneLayout(in: inventory) {
+                    if let visible = currentWorkspace.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) {
                         render(visible, at: .root)
                     } else {
                         Text("No active agents").frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -39,13 +40,12 @@ struct MultiPaneDetailView: View {
                     if currentWorkspace.drawerVisible { drawerResizeHandle(available: geometry.size.height) }
                     terminalDrawerHeader
                     if currentWorkspace.drawerVisible, let session = currentWorkspace.selectedTerminal,
-                       let leaf = inventory.leaves.first(where: { $0.sessionName == session }) {
+                       let leaf = worktree.layout?.leaves.first(where: { $0.sessionName == session }) {
                         render(.leaf(sessionName: session, title: leaf.title, attentionText: leaf.attentionText,
                             isBusy: leaf.isBusy, attentionSource: leaf.attentionSource, attentionTimestamp: leaf.attentionTimestamp), at: .root)
                             .frame(height: MobileWorkspaceStore.drawerHeight(currentWorkspace.drawerHeight, available: geometry.size.height))
                     } else if currentWorkspace.drawerVisible {
-                        Button("New terminal") { ghosttyCommandContext.perform(.ghostty(.newSplitDown)) }
-                            .disabled(!ghosttyCommandContext.isEnabled(.newSplitDown))
+                        Button("New terminal") { onNewTerminal() }
                             .frame(maxWidth: .infinity)
                             .frame(height: MobileWorkspaceStore.drawerHeight(currentWorkspace.drawerHeight, available: geometry.size.height))
                     }
@@ -90,6 +90,10 @@ struct MultiPaneDetailView: View {
                 GeometryReader { geometry in
                     VStack(spacing: 0) {
                         if let group = currentWorkspace.group(containing: sessionName) { tabHeader(group) }
+                        if let agent = worktree.agents?.first(where: { $0.presentationSessionName == sessionName && $0.isCompleted }) {
+                            MobileAgentConversationView(host: host, worktreePath: worktree.path, agent: agent)
+                                .onTapGesture { onSelectPane(sessionName) }
+                        } else {
                         MultiPaneLeafView(
                             host: host,
                             worktreePath: worktree.path,
@@ -109,6 +113,7 @@ struct MultiPaneDetailView: View {
                             retainedPanes: retainedPanes
                         )
                         .id(sessionName)
+                        }
                     }
                     .dropDestination(for: String.self) { sessions, location in
                         guard let session = sessions.first, currentWorkspace.sessions.contains(session),
@@ -149,6 +154,10 @@ struct MultiPaneDetailView: View {
         let live = Set(worktree.layout?.leaves.map(\.sessionName) ?? [])
         retainedPanes?.retainWorkspace(Set(live.map { .init(hostID: host.id, sessionName: $0) }), owner: retentionOwner)
         workspaceStore.synchronize(hostID: host.id, worktree: worktree, focused: focusedPaneId, revealFocused: revealFocused)
+        if let selected = currentWorkspace.focusedSession, selected != focusedPaneId,
+           worktree.agents?.contains(where: { $0.presentationSessionName == selected && $0.isCompleted }) == true {
+            onSelectPane(selected)
+        }
         for session in previous.subtracting(live) {
             retainedPanes?.remove(.init(hostID: host.id, sessionName: session))
         }
@@ -158,7 +167,7 @@ struct MultiPaneDetailView: View {
         onSelectPane(session)
     }
     private func sessionTitle(_ session: String) -> String {
-        worktree.agents?.first { $0.sessionName == session }?.name ?? worktree.layout?.title(for: session) ?? "Terminal"
+        worktree.agents?.first { $0.presentationSessionName == session }?.name ?? worktree.layout?.title(for: session) ?? "Terminal"
     }
     private func tabHeader(_ group: WorkspaceLayout<String>.Group) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -166,15 +175,15 @@ struct MultiPaneDetailView: View {
                 ForEach(group.sessions, id: \.self) { session in
                     Button { selectSession(session) } label: {
                         HStack(spacing: 6) {
-                            AgentProviderIcon(provider: worktree.agents?.first { $0.sessionName == session }?.provider)
+                            AgentProviderIcon(provider: worktree.agents?.first { $0.presentationSessionName == session }?.provider)
                             Text(sessionTitle(session)).lineLimit(1)
                                 .fontWeight(group.selected == session ? .medium : .regular)
-                            if let agent = worktree.agents?.first(where: { $0.sessionName == session }) {
+                            if let agent = worktree.agents?.first(where: { $0.presentationSessionName == session }) {
                                 MobileAgentStatusBadge(agent: agent, hostID: host.id,
                                     needsInput: worktree.layout?.leaves.first { $0.sessionName == session }?.attentionSource == .agentStop)
                             }
                         }.padding(.horizontal, 10).frame(minHeight: 44)
-                            .foregroundStyle(theme.foreground.opacity(group.selected == session ? 1 : 0.65))
+                            .foregroundStyle(theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
                             .overlay(alignment: .bottom) {
                                 Rectangle().fill(group.selected == session ? theme.foreground.opacity(0.55) : .clear)
                                     .frame(height: 2)
@@ -196,7 +205,13 @@ struct MultiPaneDetailView: View {
                                     mutate { $0.merge(group.id, into: target.id) }; onSelectPane(session)
                                 }
                             }
-                            if worktree.agents?.contains(where: { $0.sessionName == session }) != true {
+                            if worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true {
+                                Button("Close tab") {
+                                    mutate { $0.remove(session) }
+                                    if let next = currentWorkspace.focusedSession { selectSession(next) }
+                                }
+                            }
+                            if worktree.agents?.contains(where: { $0.presentationSessionName == session }) != true {
                                 Button("Move to terminal drawer") { mutate { $0.moveToDrawer(session) }; selectSession(session) }
                             }
                         }
@@ -240,8 +255,8 @@ struct MultiPaneDetailView: View {
             }
             Spacer()
             Button {
-                ghosttyCommandContext.perform(.ghostty(.newSplitDown))
-            } label: { Image(systemName: "plus") }.accessibilityLabel("New terminal").disabled(!ghosttyCommandContext.isEnabled(.newSplitDown))
+                onNewTerminal()
+            } label: { Image(systemName: "plus") }.accessibilityLabel("New terminal")
         }.buttonStyle(.plain).font(.callout).padding(.horizontal, 12).frame(minHeight: 44)
             .foregroundStyle(theme.foreground).background(theme.background)
             .terminalDrawerHitArea(onToggle: toggleDrawer)
@@ -255,7 +270,7 @@ struct MultiPaneDetailView: View {
         } else {
             var needsTerminal = false
             mutate { needsTerminal = $0.openDrawer() }
-            if needsTerminal { ghosttyCommandContext.perform(.ghostty(.newSplitDown)) }
+            if needsTerminal { onNewTerminal() }
             else if let session = currentWorkspace.selectedTerminal { onSelectPane(session) }
         }
     }

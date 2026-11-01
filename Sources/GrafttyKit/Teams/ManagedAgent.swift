@@ -59,6 +59,7 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
     public var transcript: String?
     /// Host-owned archive. `transcript` is retained only for legacy decoding and full detail transport.
     public var transcriptArchive: AgentTranscriptArchive?
+    public var transcriptHistory: [UUID: AgentTranscriptArchive]?
     public var initialPrompt: String?
     public private(set) var completion: Completion?
     public private(set) var results: [Completion]
@@ -166,6 +167,7 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
     public func summary(maximumResultBytes: Int = 1024) -> Self {
         var value = self
         value.transcript = nil
+        value.transcriptHistory = nil
         value.initialPrompt = nil
         value.retainedResultCount = results.count
         value.results = []
@@ -190,7 +192,12 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         guard status == .closed, let conversation = providerSessionID, !conversation.isEmpty else {
             throw LifecycleError.invalidState
         }
+        if let transcriptArchive { transcriptHistory = (transcriptHistory ?? [:]).merging([assignmentID: transcriptArchive]) { _, new in new } }
+        transcriptArchive = nil
+        transcript = nil
         assignmentID = UUID()
+        launchAssignmentID = assignmentID
+        nativeBindingDate = nil
         completion = nil
         deliveredCompletionID = nil
         deliveryFailure = nil
@@ -201,6 +208,20 @@ public struct ManagedAgent: Codable, Sendable, Equatable, Identifiable {
         if paneSessionID == nil { paneSessionID = PaneSessionID() }
         processObservation = nil
         status = .starting
+    }
+
+    /// A restart that never acquired a live binding is safe to retry after host recovery.
+    public mutating func recoverUnlaunchedConversation() {
+        guard status == .starting, resumingSessionID != nil, let previous = results.last else { return }
+        assignmentID = previous.assignmentID
+        completion = previous
+        launchAssignmentID = previous.assignmentID
+        transcriptArchive = transcriptHistory?[previous.assignmentID]
+        paneSlotID = nil
+        processObservation = .exited
+        resumingSessionID = nil
+        status = .closed
+        failure = "The host stopped before the conversation could restart. Resume session to retry."
     }
 
     public mutating func resume() throws {

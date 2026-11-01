@@ -11,6 +11,12 @@ public struct AgentSessionInfo: Codable, Sendable, Hashable, Identifiable {
     public let completionID: String?
     public let result: String?
     public let previousResults: [String]?
+    public var retainedSessionName: String?
+    public var retainedSlotID: String?
+    public var canResume: Bool?
+    public var transcriptRevision: String?
+    public var presentationSessionName: String? { sessionName ?? retainedSessionName }
+    public var isCompleted: Bool { completionID != nil || status == "closed" }
     public var failure: String?
     public var processObservation: AgentProcessObservation?
     public var outcome: String?
@@ -20,7 +26,10 @@ public struct AgentSessionInfo: Codable, Sendable, Hashable, Identifiable {
     public init(id: String, name: String, provider: String, status: String, sessionName: String?,
                 assignmentID: String? = nil, completionID: String? = nil, result: String? = nil, previousResults: [String]? = nil,
                 failure: String? = nil, processObservation: AgentProcessObservation? = nil,
-                outcome: String? = nil, resultCount: Int? = nil, resultsAreSummaries: Bool? = nil) {
+                outcome: String? = nil, resultCount: Int? = nil, resultsAreSummaries: Bool? = nil, retainedSessionName: String? = nil, retainedSlotID: String? = nil,
+                canResume: Bool? = nil, transcriptRevision: String? = nil) {
+        self.retainedSessionName = retainedSessionName; self.retainedSlotID = retainedSlotID
+        self.canResume = canResume; self.transcriptRevision = transcriptRevision
         self.failure = failure; self.processObservation = processObservation; self.outcome = outcome
         self.resultCount = resultCount; self.resultsAreSummaries = resultsAreSummaries
         self.id = id; self.name = name; self.provider = provider; self.status = status

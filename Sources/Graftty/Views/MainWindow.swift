@@ -31,6 +31,7 @@ struct MainWindow: View {
     @EnvironmentObject private var updaterController: UpdaterController
 
     @State private var showsWorktreeContext = false
+    @State private var requestedRemoteAgent: String?
     @State private var sidebarNavigation = SidebarNavigationState(prefix: "sidebar.mac")
 
     /// Column visibility state — must be a real `@State` rather than a
@@ -107,7 +108,10 @@ struct MainWindow: View {
                 onFocus: { terminalID in
                     attentionOpenGeneration &+= 1
                     remoteViewer.focusTerminal(terminalID)
-                }, agentScrollbackMap: agentScrollbackMap)
+                }, agentScrollbackMap: agentScrollbackMap, requestedAgent: requestedRemoteAgent, consumeAgentRequest: { requestedRemoteAgent = nil }, conversationRequest: { id, action in
+                    try await remoteMacsModel.sendWorktreeManagement(identity: RemoteMacIdentity(remote),
+                        request: .agentConversation(worktreeID: snapshot.path, agentID: id, action: action))
+                })
                 .id(RemoteWorktreeViewerController.WorktreeKey(identity: RemoteMacIdentity(remote), worktreePath: snapshot.path))
         }
     }
@@ -218,8 +222,7 @@ struct MainWindow: View {
                                 remoteViewer.selectRemoteWorktree(selectedRemoteMac, worktreePath: row.path,
                                     acknowledging: false, inspectingCreation: false)
                             } : nil)
-                    } else if selectedRemoteWorktreePath != nil,
-                       remoteViewer.splitTree.root != nil {
+                    } else if selectedRemoteWorktreePath != nil, selectedRemoteWorktreeSnapshot != nil {
                         remoteWorkspaceContent(for: selectedRemoteMac)
                             .padding(.leading, 6)
                     } else if remoteViewer.isOpeningSelectedWorktree {
@@ -294,7 +297,7 @@ struct MainWindow: View {
             } inspector: {
                 if showsWorktreeContext, let context = selectedContext {
                     WorktreeContextPanel(context: context, theme: terminalManager.theme.core,
-                        readTranscript: transcriptReader, onClose: { showsWorktreeContext = false })
+                        readTranscript: transcriptReader, showAgent: agentTabOpener, onClose: { showsWorktreeContext = false })
                         .environment(\.worktreeContextActions, WorktreeContextActions(openWorktree: { [identity = selectedRemoteIdentity] path, _ in
                             openContextWorktree(path, remoteIdentity: identity)
                         }, revealInTerminal: { [identity = selectedRemoteIdentity] request in
@@ -547,6 +550,16 @@ struct MainWindow: View {
             return selectedRemoteWorktreePath.map { .remote(identity, $0) }
         }
         return appState.selectedWorktreePath.map { .local($0) }
+    }
+
+    private var agentTabOpener: ((String) -> Void)? {
+        if selectedRemoteIdentity != nil { return { requestedRemoteAgent = $0 } }
+        guard let worktree = selectedWorktreeBinding else { return nil }
+        return { id in
+            guard let slot = worktree.wrappedValue.showAgentTab(id) else { return }
+            if worktree.wrappedValue.hasCompletedContent(in: slot) { terminalManager.clearFocus() }
+            else { terminalManager.setFocus(slot) }
+        }
     }
 
     private var transcriptReader: (@MainActor (String) async -> String?)? {
@@ -909,7 +922,8 @@ struct MainWindow: View {
                     continue
                 }
 
-                if appState.repos[repoIdx].worktrees[wtIdx].state == .closed {
+                if appState.repos[repoIdx].worktrees[wtIdx].state == .closed,
+                   !appState.repos[repoIdx].worktrees[wtIdx].agents.contains(where: { $0.completion != nil }) {
                     _ = PaneCommands.startWorktree(
                         path: path,
                         appState: $appState,
@@ -948,12 +962,14 @@ struct MainWindow: View {
         // typing immediately after a sidebar click without having to also
         // click into the terminal.
         if let wt = appState.worktree(forPath: path),
-           let target = wt.firstPane {
+           let target = wt.presentationPane, wt.hasCompletedContent(in: target) {
+            terminalManager.clearFocus()
+        } else if let wt = appState.worktree(forPath: path), let target = wt.presentationPane {
             makePaneFirstResponder(
                 target,
                 when: {
                     appState.selectedWorktreePath == path
-                        && appState.worktree(forPath: path)?.firstPane == target
+                        && appState.worktree(forPath: path)?.presentationPane == target
                 }
             )
         }

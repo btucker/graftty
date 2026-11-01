@@ -7,6 +7,41 @@ import GrafttyProtocol
 
 @MainActor
 struct WorkspaceContentViewTests {
+    @Test("@spec AGENT-6.134: When cleanup captures a transcript for the selected finished tab, the application shall refresh its result pane without requiring the user to switch tabs.")
+    func cleanupReloadsMountedTranscript() async throws {
+        _ = NSApplication.shared
+        let model = CompletedModel()
+        var loads: [String?] = []
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 600, height: 400),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = NSHostingView(rootView: CompletedFixture(model: model, load: { agent in
+            loads.append(agent.transcriptArchive?.id)
+            return agent.transcriptArchive == nil ? nil : "Saved transcript"
+        }))
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        for _ in 0..<50 where loads.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(loads.count == 1)
+        model.agent.transcriptArchive = AgentTranscriptArchive(id: String(repeating: "a", count: 64), byteCount: 16)
+        for _ in 0..<50 where loads.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(loads.count == 2)
+        #expect(loads.last! == model.agent.transcriptArchive?.id)
+    }
+
+    private final class CompletedModel: ObservableObject {
+        @Published var agent: ManagedAgent
+        init() {
+            var agent = ManagedAgent(name: "Finished", provider: .codex, parent: nil)
+            _ = try! agent.finish(assignment: agent.assignmentID, result: "Done")
+            self.agent = agent
+        }
+    }
+    private struct CompletedFixture: View {
+        @ObservedObject var model: CompletedModel
+        let load: @MainActor (ManagedAgent) async throws -> String?
+        var body: some View { CompletedAgentContent(agent: model.agent, launching: false, onResume: {}, loadTranscript: load) }
+    }
+
     @Test("@spec AGENT-6.130: When a selected agent has retained result content, the application shall render that content inside its pane while keeping the tab header mounted.")
     func retainedContentKeepsTabHeader() async throws {
         _ = NSApplication.shared
@@ -53,12 +88,16 @@ struct WorkspaceContentViewTests {
         var first = ManagedAgent(name: "Implement workspace", provider: .codex, parent: nil)
         first.paneSlotID = a
         var second = ManagedAgent(name: "Review lifecycle", provider: .claude, parent: nil)
-        second.paneSlotID = b; second.observeWaiting(true)
+        second.paneSlotID = b
+        second.providerSessionID = "saved-conversation"
+        let completion = try second.finish(assignment: second.assignmentID, result: "Reviewed the workspace changes. Completed tabs retain their position and the parent has cleaned up this session.")
+        try second.beginClose(completion: completion.id)
+        second.didClose()
         var entry = WorktreeEntry(path: "/repo/agent-workspace", branch: "agent-workspace", state: .running,
             splitTree: SplitTree(root: .leaf(a)).inserting(b, at: a, direction: .horizontal)
-                .inserting(shell, at: a, direction: .vertical))
+                .inserting(shell, at: a, direction: .vertical).removing(b))
         var layout = WorkspaceLayout<PaneSlotID>()
-        layout.addAgent(a); layout.addAgent(b); layout.addTerminal(shell); layout.select(a)
+        layout.addAgent(a); layout.addAgent(b); layout.addTerminal(shell); _ = layout.hideDrawer(); layout.select(b)
         entry.agents = [first, second]; entry.workspaceLayout = layout; entry.focusedPaneSlotID = a
         let binding = Binding(get: { entry }, set: { entry = $0 })
         let root = WorkspaceContentView(terminalManager: manager, worktree: binding,
@@ -72,7 +111,7 @@ struct WorkspaceContentViewTests {
             let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             host.cacheDisplay(in: host.bounds, to: bitmap)
             try #require(bitmap.representation(using: .png, properties: [:]))
-                .write(to: output.appendingPathComponent("workspace-loading-fixture-\(name).png"))
+                .write(to: output.appendingPathComponent("workspace-completed-fixture-\(name).png"))
         }
     }
 }

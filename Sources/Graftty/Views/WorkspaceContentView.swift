@@ -38,7 +38,7 @@ struct WorkspaceContentView: View {
                         splitTree: Binding(get: {
                             worktree.canvasTree
                         }, set: { tree in mutate { $0.updateGeometry(from: tree) } }),
-                        focusedPaneSlotID: worktree.focusedPaneSlotID, theme: theme, onFocusTerminal: focus,
+                        focusedPaneSlotID: worktree.presentationPane, theme: theme, onFocusTerminal: focus,
                         previewWorktreePath: worktree.path, agentScrollbackMap: agentScrollbackMap,
                         paneHeader: { slot in AnyView(groupHeader(for: slot)) },
                         paneContent: { slot in
@@ -196,7 +196,11 @@ struct WorkspaceContentView: View {
             Button("Move to terminal drawer") { mutate { $0.moveToDrawer(slot) }; focus(slot) }
             Button("Close terminal", role: .destructive) { onCloseTerminal(slot) }
         } else if let agent = agent(slot), agent.status == .closed {
-            Button("Close tab") { mutate { $0.remove(slot) } }
+            Button("Close tab") {
+                mutate { $0.remove(slot) }
+                if let next = layout.focusedSession { focus(next) }
+                else { terminalManager.clearFocus() }
+            }
         } else if let agent = agent(slot), let completion = agent.completion, agent.requiresAcknowledgment {
             Button(completion.outcome == .interrupted || completion.outcome == .failed ? "Acknowledge and close agent" : "Close completed agent") { perform(.init(action: .close, callerWorktree: worktree.path, agentID: agent.id, completionID: completion.id)) }
         }
@@ -293,12 +297,15 @@ struct WorkspaceContentView: View {
     private func focus(_ slot: PaneSlotID) {
         if worktree.splitTree.zoomed != slot { worktree.splitTree = worktree.splitTree.withZoom(nil) }
         mutate { $0.select(slot) }
-        if worktree.splitTree.containsLeaf(slot), agent(slot)?.completion == nil { onFocusTerminal(slot) }
+        if worktree.hasCompletedContent(in: slot) {
+            terminalManager.clearFocus()
+        } else if worktree.splitTree.containsLeaf(slot) { onFocusTerminal(slot) }
     }
     private func synchronize(initial: Bool = false) {
         let hadLayout = worktree.workspaceLayout != nil
         worktree.ensureWorkspaceLayout()
         if initial && !hadLayout, let focused = worktree.focusedPaneSlotID { mutate { $0.select(focused) } }
+        if let slot = worktree.presentationPane, worktree.hasCompletedContent(in: slot) { terminalManager.clearFocus() }
     }
     private func receive(_ providers: [NSItemProvider], action: @escaping @MainActor (PaneSlotID) -> Void) -> Bool {
         guard let provider = providers.first else { return false }
@@ -314,16 +321,18 @@ struct WorkspaceContentView: View {
     }
 }
 
-private struct CompletedAgentContent: View {
+struct CompletedAgentContent: View {
     let agent: ManagedAgent
     let launching: Bool
     let onResume: () -> Void
+    var loadTranscript: @MainActor (ManagedAgent) async throws -> String? = { agent in
+        try await OffMainIO.run { try AgentArchiveStore().preview(agent) }
+    }
     @State private var transcript: String?
     @State private var failure: String?
 
     private var canResume: Bool {
-        agent.status == .closed ? agent.providerSessionID?.isEmpty == false
-            : agent.status == .awaitingCleanup && agent.processObservation != .exited && agent.processObservation != .disconnected
+        agent.providerSessionID?.isEmpty == false && agent.completion != nil && agent.status != .closing
     }
 
     var body: some View {
@@ -335,7 +344,7 @@ private struct CompletedAgentContent: View {
                 Button("Resume session", action: onResume).disabled(launching || !canResume)
             }.padding(12)
             if !canResume {
-                Text(agent.status == .closed ? "This session has no saved conversation ID to resume." : "Acknowledge this session's interruption before resuming.")
+                Text(agent.providerSessionID?.isEmpty != false ? "This session has no saved conversation ID to resume." : "Session cleanup is in progress.")
                     .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12)
             }
             Divider()
@@ -343,14 +352,14 @@ private struct CompletedAgentContent: View {
                 VStack(alignment: .leading, spacing: 16) {
                     if let result = agent.completion?.result { Text(result).textSelection(.enabled) }
                     if let transcript { Text(transcript).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
-                    if let failure { Text(failure).foregroundStyle(.secondary) }
+                    if let failure = failure ?? agent.failure { Text(failure).foregroundStyle(.secondary) }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            .task(id: agent.assignmentID) {
+            .task(id: agent.transcriptArchive?.id ?? agent.assignmentID.uuidString) {
                 transcript = nil; failure = nil
                 do {
-                    let preview = try await OffMainIO.run { try AgentArchiveStore().preview(agent) }
+                    let preview = try await loadTranscript(agent)
                     guard !Task.isCancelled else { return }
                     transcript = preview
                 } catch {

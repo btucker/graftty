@@ -12,6 +12,11 @@ struct RemoteWorkspaceContentView: View {
     let focused: PaneSlotID?
     let onFocus: (PaneSlotID) -> Void
     var agentScrollbackMap: AgentScrollbackMap?
+    var requestedAgent: String? = nil
+    var consumeAgentRequest: () -> Void = {}
+    var conversationRequest: @MainActor (String, AgentConversationAction) async throws -> WorktreeManagementResponse = { _, _ in
+        .error(code: "unavailable", message: "The host connection is unavailable.", forceAllowed: false, shortStatus: nil)
+    }
     @State private var zoomed: PaneSlotID?
     @State private var workspace: WorkspaceLayout<String>?
     @State private var drawerResizeStart: Double?
@@ -20,21 +25,25 @@ struct RemoteWorkspaceContentView: View {
     private var key: String { "remote.workspace.\(identity).\(worktree.path)" }
     private func slot(_ session: String) -> PaneSlotID? {
         viewer.existingTerminalID(identity: identity, worktreePath: worktree.path, sessionName: session)
+            ?? worktree.agents?.first(where: { $0.presentationSessionName == session })?.retainedSlotID
+                .flatMap(UUID.init(uuidString:)).map { PaneSlotID(id: $0) }
     }
     private func title(_ session: String) -> String {
-        worktree.agents?.first { $0.sessionName == session }?.name
+        worktree.agents?.first { $0.presentationSessionName == session }?.name
             ?? worktree.layout?.leaves.first { $0.sessionName == session }?.displayTitle ?? "Terminal"
     }
     private func select(_ session: String) {
         zoomed = nil
         workspace?.select(session)
-        if let id = slot(session) { onFocus(id) }
+        if worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true {
+            terminalManager.clearFocus()
+        } else if let id = slot(session) { onFocus(id) }
     }
 
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                if let visible = layout.visiblePaneLayout(in: worktree.layout) {
+                if let visible = layout.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []) {
                     surface(visible, headers: true)
                 } else {
                     Text("No active agents").frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -76,6 +85,7 @@ struct RemoteWorkspaceContentView: View {
             workspace = UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(WorkspaceLayout<String>.self, from: $0) }
                 ?? .initial(for: worktree)
             reconcile()
+            showRequestedAgent()
             revealFocused()
             publishVisibility()
             viewer.workspaceCommandHandler = handleCommand
@@ -84,6 +94,7 @@ struct RemoteWorkspaceContentView: View {
             viewer.workspaceCommandHandler = nil
             viewer.clearWorkspaceVisibility(identity: identity, worktreePath: worktree.path)
         }
+        .onChange(of: requestedAgent) { _, _ in showRequestedAgent() }
         .onChange(of: worktree) { _, _ in reconcile(); viewer.workspaceCommandHandler = handleCommand }
         .onChange(of: focused) { _, id in
             revealFocused()
@@ -94,6 +105,14 @@ struct RemoteWorkspaceContentView: View {
             if let value, let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: key) }
         }
         .onChange(of: zoomed) { _, _ in publishVisibility() }
+    }
+
+    private func showRequestedAgent() {
+        guard let requestedAgent, let agent = worktree.agents?.first(where: { $0.id == requestedAgent }),
+              let session = agent.presentationSessionName else { return }
+        if !layout.sessions.contains(session) { workspace?.addAgent(session) }
+        select(session)
+        consumeAgentRequest()
     }
 
     private func drawerHeight(_ requested: Double, available: Double) -> Double {
@@ -107,6 +126,12 @@ struct RemoteWorkspaceContentView: View {
     }
 
     private func revealFocused() {
+        if let selected = layout.focusedSession,
+           worktree.agents?.contains(where: { $0.presentationSessionName == selected && $0.isCompleted }) == true {
+            terminalManager.clearFocus()
+            zoomed = nil
+            return
+        }
         if zoomed != focused { zoomed = nil }
         if let focused, let session = layout.sessions.first(where: { slot($0) == focused }) { workspace?.select(session) }
         reconcileZoom()
@@ -142,8 +167,14 @@ struct RemoteWorkspaceContentView: View {
                 guard headers else { return }
                 updateGeometry(tree)
             }), focusedPaneSlotID: focused, theme: terminalManager.theme,
-            onFocusTerminal: onFocus, agentScrollbackMap: agentScrollbackMap,
+            onFocusTerminal: { id in
+                if let session = layout.sessions.first(where: { slot($0) == id }) { select(session) }
+            }, agentScrollbackMap: agentScrollbackMap,
             paneHeader: headers ? { id in AnyView(header(id)) } : nil,
+            paneContent: { id in
+                guard let agent = worktree.agents?.first(where: { $0.presentationSessionName.flatMap(slot) == id && $0.isCompleted }) else { return nil }
+                return AnyView(AgentConversationView(agent: agent) { action in try await conversationRequest(agent.id, action) })
+            },
             paneDropTarget: headers ? { id, content in AnyView(dropTarget(id, content: content)) } : nil)
     }
 
@@ -156,7 +187,7 @@ struct RemoteWorkspaceContentView: View {
     }
 
     private func handleCommand(_ command: HostManagedPaneCommand, _ source: PaneSlotID) -> Bool {
-        let canvas = SplitTree(root: layout.visiblePaneLayout(in: worktree.layout).flatMap(availableNode))
+        let canvas = SplitTree(root: layout.visiblePaneLayout(in: worktree.layout, retainedAgents: worktree.agents ?? []).flatMap(availableNode))
         var navigation = canvas
         if layout.drawerVisible, let terminal = layout.selectedTerminal.flatMap(slot) {
             navigation = SplitTree(root: canvas.root.map { .split(.init(direction: .vertical, ratio: 0.7, left: $0, right: .leaf(terminal))) } ?? .leaf(terminal))
@@ -206,10 +237,10 @@ struct RemoteWorkspaceContentView: View {
                     ForEach(group.sessions, id: \.self) { session in
                         Button { select(session) } label: {
                             HStack(spacing: 6) {
-                                AgentProviderIcon(provider: worktree.agents?.first { $0.sessionName == session }?.provider)
+                                AgentProviderIcon(provider: worktree.agents?.first { $0.presentationSessionName == session }?.provider)
                                 Text(title(session)).lineLimit(1)
                                     .fontWeight(group.selected == session ? .medium : .regular)
-                                if let agent = worktree.agents?.first(where: { $0.sessionName == session }) {
+                                if let agent = worktree.agents?.first(where: { $0.presentationSessionName == session }) {
                                     AgentStatusBadge(status: agent.status,
                                         needsInput: worktree.layout?.leaves.first { $0.sessionName == session }?.attentionSource == .agentStop,
                                         failure: agent.failure,
@@ -217,7 +248,7 @@ struct RemoteWorkspaceContentView: View {
                                         processObservation: agent.processObservation)
                                 }
                             }.padding(.horizontal, 12).padding(.vertical, 9)
-                                .foregroundStyle(terminalManager.theme.foreground.opacity(group.selected == session ? 1 : 0.65))
+                                .foregroundStyle(terminalManager.theme.foreground.opacity(worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true ? 0.4 : group.selected == session ? 1 : 0.65))
                                 .overlay(alignment: .bottom) {
                                     Rectangle().fill(group.selected == session ? terminalManager.theme.foreground.opacity(0.55) : .clear)
                                         .frame(height: 2)
@@ -232,7 +263,14 @@ struct RemoteWorkspaceContentView: View {
                                     Button("Move to \(title(destination.selected)) tabs") { workspace?.move(session, to: destination.id); select(session) }
                                     Button("Merge into \(title(destination.selected)) tabs") { workspace?.merge(group.id, into: destination.id); select(session) }
                                 }
-                                if worktree.agents?.contains(where: { $0.sessionName == session }) != true {
+                                if worktree.agents?.contains(where: { $0.presentationSessionName == session && $0.isCompleted }) == true {
+                                    Button("Close tab") {
+                                        workspace?.remove(session)
+                                        if let next = layout.focusedSession { select(next) }
+                                        else { terminalManager.clearFocus() }
+                                    }
+                                }
+                                if worktree.agents?.contains(where: { $0.presentationSessionName == session }) != true {
                                     Button("Move to terminal drawer") { workspace?.moveToDrawer(session); select(session) }
                                 }
                             }
@@ -260,14 +298,15 @@ struct RemoteWorkspaceContentView: View {
     }
 
     private func newTerminal() {
-        if let target = focused ?? viewer.splitTree.allLeaves.first {
-            viewer.performWorkspaceCommand(.split(.down), on: target)
-        }
+        viewer.createDrawerTerminal()
     }
 
     private func reconcile() {
         workspace?.reconcile(live: worktree.layout?.leaves.map(\.sessionName) ?? [],
-            agents: Set(worktree.agents?.compactMap(\.sessionName) ?? []), preservingSelection: true)
+            agents: Set(worktree.agents?.compactMap(\.sessionName) ?? []),
+            retained: Set(worktree.agents?.compactMap(\.presentationSessionName) ?? []),
+            completed: Set(worktree.agents?.filter(\.isCompleted).compactMap(\.presentationSessionName) ?? []), preservingSelection: true)
         reconcileZoom()
+        if let selected = layout.focusedSession, worktree.agents?.contains(where: { $0.presentationSessionName == selected && $0.isCompleted }) == true { terminalManager.clearFocus() }
     }
 }

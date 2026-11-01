@@ -230,7 +230,9 @@ struct IPadRootLayoutSelectionTests {
             prBadge: nil,
             stats: nil,
             attentionText: nil,
-            layout: .leaf(sessionName: "session-a", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
+            layout: .split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "session-a", title: "A", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: .leaf(sessionName: "session-b", title: "B", attentionText: nil, isBusy: false, attentionSource: nil))
         )
 
         IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: worktree)
@@ -238,6 +240,10 @@ struct IPadRootLayoutSelectionTests {
         #expect(appState.selectedWorktreePath == "/repo/feat")
         #expect(appState.focusedPaneId == "session-a")
         #expect(appState.focusRequestCount == 1)
+        // Selecting the same worktree through any of its rows retains its tab.
+        appState.focusedPaneId = "session-b"
+        IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: worktree)
+        #expect(appState.focusedPaneId == "session-b")
     }
 
     @Test("""

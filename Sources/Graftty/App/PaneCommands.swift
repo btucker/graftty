@@ -401,7 +401,7 @@ enum PaneCommands {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                guard wt.splitTree.containsLeaf(terminalID) else { continue }
+                guard wt.navigationTree.containsLeaf(terminalID) else { continue }
                 guard let nextID = wt.navigationTree.spatialNeighbor(
                     of: terminalID,
                     direction: direction.asSpatial
@@ -417,7 +417,9 @@ enum PaneCommands {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nextID
-                terminalManager.setFocus(nextID)
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].workspaceLayout?.select(nextID)
+                if wt.hasCompletedContent(in: nextID) { terminalManager.clearFocus() }
+                else { terminalManager.setFocus(nextID) }
                 return
             }
         }
@@ -439,7 +441,7 @@ enum PaneCommands {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                let leaves = wt.splitTree.allLeaves
+                let leaves = wt.navigationTree.allLeaves
                 guard let currentIdx = leaves.firstIndex(of: terminalID) else { continue }
                 guard leaves.count > 1 else { return }
                 let nextIdx = forward
@@ -453,7 +455,9 @@ enum PaneCommands {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nextID
-                terminalManager.setFocus(nextID)
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].workspaceLayout?.select(nextID)
+                if wt.hasCompletedContent(in: nextID) { terminalManager.clearFocus() }
+                else { terminalManager.setFocus(nextID) }
                 return
             }
         }
@@ -547,6 +551,25 @@ enum PaneCommands {
     /// user-initiated closes clean up phantom leaves (surface creation
     /// failed, `TERM-5.8`) while keeping the `TERM-5.7` Stop-cascade guard
     /// for libghostty-initiated callbacks.
+    @discardableResult
+    static func dismissCompletedTab(appState: Binding<AppState>, terminalManager: TerminalManager,
+                                    targetID: PaneSlotID) -> Bool {
+        let before = appState.wrappedValue
+        for ri in appState.wrappedValue.repos.indices {
+            for wi in appState.wrappedValue.repos[ri].worktrees.indices {
+                guard appState.wrappedValue.repos[ri].worktrees[wi].dismissCompletedTab(targetID) else { continue }
+                let worktree = appState.wrappedValue.repos[ri].worktrees[wi]
+                if let next = worktree.presentationPane, !worktree.hasCompletedContent(in: next), worktree.splitTree.containsLeaf(next) {
+                    appState.wrappedValue.repos[ri].worktrees[wi].focusedPaneSlotID = next
+                    terminalManager.setFocus(next)
+                } else { terminalManager.clearFocus() }
+                GrafttyApp.persistAppStateIfChanged(appState, from: before)
+                return true
+            }
+        }
+        return false
+    }
+
     static func closePane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,

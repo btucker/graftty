@@ -19,13 +19,28 @@ extension EnvironmentValues {
 @MainActor
 final class RetainedMobilePane: PanePreviewClienting {
     let client: SessionClient
+    let assignmentID: String?
     var container: TerminalInputContainerView? {
         didSet { if container !== oldValue { observePresentation() } }
     }
     private(set) var requiresValidation = false
     var sessionName: String { client.sessionName }
 
-    init(client: SessionClient) { self.client = client }
+    init(client: SessionClient, assignmentID: String? = nil) {
+        self.client = client
+        self.assignmentID = assignmentID
+    }
+
+    /// The same terminal name can belong to a restarted provider invocation.
+    /// Keep the generation with the retained client, beyond a view's lifetime.
+    @discardableResult
+    static func discardPreviousAssignment(from pool: RetainedPaneClientPool<RetainedMobilePane>?,
+                                          key: RetainedPaneClientPool<RetainedMobilePane>.Key,
+                                          assignmentID: String?) -> Bool {
+        guard let assignmentID, let previous = pool?.cached(key), previous.assignmentID != assignmentID else { return false }
+        pool?.remove(key)
+        return true
+    }
     func start() { client.start() }
     func resume() { requiresValidation = false; client.resume() }
     func suspend() { requiresValidation = true; client.suspend() }

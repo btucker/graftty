@@ -3,6 +3,35 @@ import Testing
 @testable import GrafttyProtocol
 
 struct WorkspaceLayoutTests {
+    @Test("@spec AGENT-6.142: When a completed tab is dismissed before its terminal is cleaned up, the application shall preserve that dismissal across inventory updates and allow explicit reopening.")
+    func dismissedCompletionStaysDismissed() throws {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("done"); layout.addAgent("live"); layout.select("done")
+        layout.remove("done")
+        layout.reconcile(live: ["done", "live"], agents: ["done", "live"], completed: ["done"], preservingSelection: true)
+        #expect(layout.sessions == ["live"])
+        #expect(layout.focusedSession == "live")
+        layout.addAgent("done"); layout.select("done")
+        #expect(layout.focusedSession == "done")
+    }
+
+    @Test("@spec AGENT-6.137: When a remote agent terminal is cleaned up, the application shall retain its selected tab and render its completed content without adding a dead session to the host inventory.")
+    func retainedConversationRendersWithoutLiveInventory() throws {
+        var layout = WorkspaceLayout<String>()
+        layout.addAgent("session"); layout.select("session")
+        let before = layout.root
+        let agent = AgentSessionInfo(id: "agent", name: "Review", provider: "codex", status: "closed", sessionName: nil,
+            completionID: "completion", retainedSessionName: "session", retainedSlotID: UUID().uuidString, canResume: true)
+        layout.reconcile(live: [], agents: [], retained: ["session"], preservingSelection: true)
+        let restored = try JSONDecoder().decode(WorkspaceLayout<String>.self, from: JSONEncoder().encode(layout))
+        #expect(restored.root == before)
+        #expect(restored.focusedSession == "session")
+        #expect(restored.visiblePaneLayout(in: nil, retainedAgents: [agent])?.leaves.map(\.sessionName) == ["session"])
+        layout.remove("session")
+        layout.reconcile(live: [], agents: [], retained: ["session"], preservingSelection: true)
+        #expect(layout.sessions.isEmpty)
+    }
+
     @Test("@spec LAYOUT-2.179: When the user opens an empty terminal drawer, the application shall request its first terminal automatically; reopening a populated drawer shall reuse its selected terminal.")
     func openingDrawerRequestsFirstShell() {
         var layout = WorkspaceLayout<String>()

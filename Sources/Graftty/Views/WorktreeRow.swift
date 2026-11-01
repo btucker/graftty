@@ -45,7 +45,7 @@ struct PaneTitleRow: View {
     /// Hidden while an attention capsule is shown (PORTS-3.4) so an active
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
-    var provider: String? = nil
+    var needsInput: Bool = false
     var agent: AgentSessionInfo? = nil
     var attentionCount: Int = 0
     var onOpenPort: ((PortBinding) -> Void)? = nil
@@ -68,7 +68,7 @@ struct PaneTitleRow: View {
             attentionStyle: attentionStyle,
             attentionCount: attentionCount,
             theme: theme.core,
-            provider: provider,
+            needsInput: needsInput,
             agent: agent,
             alignment: Self.titleAlignment
         ) { titleText in
@@ -189,7 +189,6 @@ struct WorktreeRow: View {
     /// Right-click menu for the identity slot (LAYOUT-2.96); nil for rows
     /// whose identity is not editable.
     var identityMenu: ((NSView) -> NSMenu)? = nil
-    var reportButton: SidebarReportButton? = nil
     var brief: WorktreeBrief? = nil
 
     enum LeadingItem: Hashable {

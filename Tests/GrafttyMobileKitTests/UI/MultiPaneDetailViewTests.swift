@@ -8,6 +8,28 @@ import Testing
 @MainActor
 @Suite("iPad actual multi-pane detail")
 struct MultiPaneDetailViewTests {
+    @Test("@spec AGENT-6.140: When iPad restores a selected completed tab, the application shall preserve it across host snapshots and app restart without selecting another live agent.")
+    func completedSelectionSurvivesSnapshotAndRestore() throws {
+        let suite = "CompletedTabs-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let host = UUID()
+        let agent = AgentSessionInfo(id: "finished", name: "Review", provider: "codex", status: "closed", sessionName: nil,
+            completionID: "completion", retainedSessionName: "finished-session", canResume: true)
+        let row = WorktreePanes(path: "/repo", displayName: "main", repoDisplayName: "repo", displayBranch: "main",
+            state: .running, isMainCheckout: true, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .leaf(sessionName: "live", title: "Live", attentionText: nil, isBusy: false, attentionSource: nil), agents: [agent])
+        let store = MobileWorkspaceStore(defaults: defaults)
+        store.synchronize(hostID: host, worktree: row, focused: "live")
+        store.update(hostID: host, worktree: row) { $0.addAgent("finished-session"); $0.select("finished-session") }
+        store.synchronize(hostID: host, worktree: row, focused: "live", revealFocused: false)
+        #expect(store.layout(hostID: host, worktree: row).focusedSession == "finished-session")
+        let restored = MobileWorkspaceStore(defaults: defaults)
+        restored.synchronize(hostID: host, worktree: row, focused: "live")
+        #expect(restored.layout(hostID: host, worktree: row).focusedSession == "finished-session")
+        #expect(restored.navigationLayout(hostID: host, worktree: row)?.leaves.map(\.sessionName).contains("finished-session") == true)
+    }
+
     @Test("""
 @spec IPAD-2.1: While a worktree is selected and the iPad layout is regular-width, the detail column shall render device-local tabs, splits, and a terminal drawer over the worktree's complete host session inventory.
 """)

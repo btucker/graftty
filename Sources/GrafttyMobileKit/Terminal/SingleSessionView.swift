@@ -116,6 +116,7 @@ struct SingleSessionView: View {
 
     @State private var client: SessionClient?
     @State private var connection: ConnectionState = .connecting
+    @State private var connectedAssignment: String?
     /// Per-host TerminalController constructed with the Mac's ghostty
     /// config as its `configSource` — so `baseConfigTemplate` holds
     /// the Mac config, and libghostty-spm's on-trait-change
@@ -354,7 +355,10 @@ struct SingleSessionView: View {
             terminalBackground
             sessionView
         }
-        .modifier(MobileWorktreeContextDrawer(context: worktreeContext, theme: terminalTheme))
+        .modifier(MobileWorktreeContextDrawer(context: worktreeContext, theme: terminalTheme, onShowAgent: { id in
+            guard let session = compactWorkspace?.agents?.first(where: { $0.id == id })?.presentationSessionName else { return }
+            selectWorkspaceSession(session)
+        }))
         .alert("Could not open link", isPresented: Binding(
             get: { terminalBrowserError != nil }, set: { if !$0 { terminalBrowserError = nil } }
         )) { Button("OK") { terminalBrowserError = nil } } message: { Text(terminalBrowserError ?? "") }
@@ -412,15 +416,23 @@ struct SingleSessionView: View {
         guard isFullScreen else { return nil }
         return attentionWorktrees.first { $0.path == step.worktreePath && $0.agents != nil }
     }
+    private var sessionAgent: AgentSessionInfo? {
+        attentionWorktrees.first { $0.path == step.worktreePath }?.agents?.first {
+            $0.presentationSessionName == step.sessionName
+        }
+    }
+    private var completedAgent: AgentSessionInfo? { sessionAgent.flatMap { $0.isCompleted ? $0 : nil } }
+
     private var compactAgentKey: String { "workspace.iphone.agent.\(step.host.id).\(step.worktreePath ?? "")" }
     private func selectWorkspaceSession(_ target: String) {
         guard target != step.sessionName, let workspace = compactWorkspace,
-              workspace.layout?.leaves.contains(where: { $0.sessionName == target }) == true else { return }
+              workspace.layout?.leaves.contains(where: { $0.sessionName == target }) == true
+                || workspace.agents?.contains(where: { $0.presentationSessionName == target }) == true else { return }
         if workspace.agents?.contains(where: { $0.sessionName == step.sessionName }) == true {
             UserDefaults.standard.set(step.sessionName, forKey: compactAgentKey)
         }
         let destination = SessionStep(host: step.host, worktreePath: step.worktreePath, sessionName: target,
-            title: workspace.agents?.first { $0.sessionName == target }?.name ?? workspace.layout?.title(for: target) ?? "Terminal",
+            title: workspace.agents?.first { $0.presentationSessionName == target }?.name ?? workspace.layout?.title(for: target) ?? "Terminal",
             worktreeProject: step.worktreeProject)
         if !navigationPath.isEmpty { navigationPath.removeLast() }
         navigationPath.append(destination)
@@ -437,6 +449,15 @@ struct SingleSessionView: View {
 
     private var sessionView: some View {
         Group {
+            if let agent = completedAgent, let path = step.worktreePath {
+                VStack(spacing: 0) {
+                    MobileAgentConversationView(host: step.host, worktreePath: path, agent: agent)
+                    if isFullScreen, let workspace = compactWorkspace {
+                        CompactAgentBar(worktree: workspace, session: step.sessionName, onSelect: selectWorkspaceSession,
+                            lastAgent: UserDefaults.standard.string(forKey: compactAgentKey), hostID: step.host.id)
+                    }
+                }
+            } else {
             switch connection.presentation {
             case .loading:
                 loadingPlaceholder
@@ -475,6 +496,7 @@ struct SingleSessionView: View {
                 }
             case .ended:
                 endedBanner
+            }
             }
         }
         // IOS-6.9: explicit bottom padding lifts the terminal above
@@ -590,8 +612,19 @@ struct SingleSessionView: View {
             // deliberately *not* in the key — it's the state-machine's
             // output, and including it would re-fire the task on every
             // transition (each re-fire only to hit a no-op early return).
-            .task(id: dialKey) {
-                await driveConnection()
+            .task(id: ConversationDialKey(dial: dialKey, completionID: completedAgent?.completionID, assignmentID: sessionAgent?.assignmentID)) {
+                if let assignment = sessionAgent?.assignmentID, assignment != connectedAssignment {
+                    let replaced = completedAgent == nil && RetainedMobilePane.discardPreviousAssignment(
+                        from: retainedPanes, key: retainedPaneKey, assignmentID: assignment)
+                    if completedAgent == nil && (replaced || connectedAssignment != nil || connection == .ended) {
+                        detachSession()
+                        retainedPanes?.remove(retainedPaneKey)
+                        connection = .connecting
+                    }
+                    connectedAssignment = assignment
+                }
+                if completedAgent == nil { await driveConnection() }
+                else { detachSession() }
             }
             .task(id: dialKey) {
                 guard LiveSessionReadiness.isActive(
@@ -708,6 +741,12 @@ struct SingleSessionView: View {
         let gateUnlocked: Bool
     }
 
+    private struct ConversationDialKey: Hashable {
+        let dial: DialKey
+        let completionID: String?
+        let assignmentID: String?
+    }
+
     private struct AttentionObservationKey: Hashable {
         let dial: DialKey
         let focused: Bool
@@ -773,7 +812,8 @@ struct SingleSessionView: View {
         if let cached = retainedPanes?.cached(retainedPaneKey) {
             if cached.client.connectionState == .ended {
                 retainedPanes?.remove(retainedPaneKey)
-                connection = .ended
+                client?.stop(); client = nil
+                await verifyThenOpen()
                 return
             }
             if cached.requiresValidation, let coordinator {
@@ -820,7 +860,7 @@ struct SingleSessionView: View {
         let new: SessionClient
         if let retainedPanes {
             retainedPanes.attach(retainedPaneKey, owner: retainedAttachmentID)
-            new = retainedPanes.acquire(retainedPaneKey) { RetainedMobilePane(client: makeClient()) }.client
+            new = retainedPanes.acquire(retainedPaneKey) { RetainedMobilePane(client: makeClient(), assignmentID: sessionAgent?.assignmentID) }.client
         } else {
             new = makeClient()
             new.start()

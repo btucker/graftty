@@ -3,6 +3,40 @@ import Testing
 @testable import GrafttyKit
 
 struct AgentLaunchObserverTests {
+    @Test("@spec AGENT-6.136: When a saved Claude or Codex conversation restarts, the launcher shall pass its exact conversation ID as one argument, publish the new assignment environment, and report exits for that new launch.", arguments: [TeamHookRuntime.claude, .codex])
+    func resumedProviderReceivesExactConversation(provider: TeamHookRuntime) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("agent-resume-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = root.appendingPathComponent(provider.rawValue)
+        try "#!/bin/sh\nprintf '%s\\n' \"$GRAFTTY_ASSIGNMENT_ID\" \"$@\" > \"$RESUME_ARGS\"\nexit 9\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        var agent = ManagedAgent(name: "Resume", provider: provider, parent: nil)
+        agent.paneSessionID = PaneSessionID()
+        agent.providerSessionID = "exact conversation's ID"
+        let completion = try agent.finish(assignment: agent.assignmentID, result: "First result")
+        try agent.beginClose(completion: completion.id)
+        agent.didClose()
+        try agent.restartConversation()
+        let prompts = root.appendingPathComponent("prompts")
+        let launch = try WorktreeAgentLaunchCommand.prepare(agent: provider, prompt: "Continue", exactCommand: nil,
+            managedAgent: agent, promptDirectory: prompts)
+        let args = root.appendingPathComponent("args")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", try #require(launch.command)]
+        process.environment = ["PATH": root.path, "RESUME_ARGS": args.path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        let received = try String(contentsOf: args, encoding: .utf8).components(separatedBy: "\n")
+        #expect(Array(received.prefix(4)) == [agent.assignmentID.uuidString, provider == .claude ? "--resume" : "resume", "exact conversation's ID", "--"])
+        let event = try #require(AgentLifecycleHandoff(directory: prompts.appendingPathComponent("lifecycle")).pending().first?.1)
+        #expect(event.assignmentID == agent.launchAssignmentID)
+        #expect(event.exitCode == 9)
+    }
+
     @Test("@spec AGENT-6.118: When a UI-launched provider exits with graftty absent from its shell PATH, the application shall durably observe its exit without requiring a CLI helper lookup.")
     func observesExitWithoutHelperOnPath() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("agent-no-helper-\(UUID().uuidString)")

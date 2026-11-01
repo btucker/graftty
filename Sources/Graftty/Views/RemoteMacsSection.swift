@@ -200,10 +200,11 @@ enum RemoteMacSidebarSelectionReducer {
         worktreePath: String,
         state: inout RemoteMacSidebarSelectionState
     ) {
+        let sameWorktree = state.selectedRemoteIdentity == identity && state.selectedRemoteWorktreePath == worktreePath
         state.selectedWorktreePath = nil
         state.selectedRemoteIdentity = identity
         state.selectedRemoteWorktreePath = worktreePath
-        state.selectedRemotePaneSessionName = nil
+        if !sameWorktree { state.selectedRemotePaneSessionName = nil }
     }
 
     static func selectRemotePane(
@@ -535,7 +536,6 @@ struct RemoteMacsSection: View {
             attentionCount: max(0, counts.attentionByWorktree[worktree.path, default: 0]
                 - agentLeaves.reduce(0) { $0 + counts.attentionByPane[$1.sessionName, default: 0] }),
             project: project, projectIconData: projectIcons[projectID],
-            reportButton: reportController.map { SidebarReportButton(controller: $0, context: context, theme: theme) },
             brief: context.brief
         )
         .frame(minHeight: 24)
@@ -559,6 +559,7 @@ struct RemoteMacsSection: View {
                                 )
                             },
                             portBindings: (worktree.origin?.relayDepth ?? 0) == 0 ? worktree.portBindings?[leaf.sessionName] ?? [] : [],
+                            needsInput: leaf.attentionSource == .agentStop,
                             agent: worktree.agents?.first { $0.sessionName == leaf.sessionName },
                             attentionCount: counts.attentionByPane[leaf.sessionName, default: 0],
                             onOpenPort: { binding in

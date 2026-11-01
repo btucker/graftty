@@ -81,7 +81,11 @@ extension WorktreePanes {
                 assignmentID: agent.assignmentID.uuidString, completionID: agent.completion?.id.uuidString,
                 result: result, previousResults: previous, failure: agent.failure.map { AgentTextPreview.prefix($0, bytes: 1024) },
                 processObservation: agent.processObservation, outcome: agent.completion?.outcome?.rawValue,
-                resultCount: agent.results.count, resultsAreSummaries: true)
+                resultCount: agent.results.count, resultsAreSummaries: true,
+                retainedSessionName: agent.paneSessionID.map(ZmxLauncher.sessionName(for:)),
+                retainedSlotID: agent.presentationSlotID?.id.uuidString,
+                canResume: agent.providerSessionID?.isEmpty == false && agent.completion != nil && agent.status != .closing,
+                transcriptRevision: agent.transcriptArchive?.id)
         }
         self.init(
             path: entry.path,

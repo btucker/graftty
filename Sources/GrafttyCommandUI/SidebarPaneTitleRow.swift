@@ -90,7 +90,7 @@ public struct SidebarPaneTitleText: View {
 public struct SidebarPaneTitleRow<TitleLayout: View>: View {
     let title: SidebarPaneTitleText
     let attentionCount: Int
-    let provider: String?
+    let needsInput: Bool
     let agent: AgentSessionInfo?
     let alignment: VerticalAlignment
     /// Built once at init rather than stored as a closure, so SwiftUI can
@@ -112,7 +112,7 @@ public struct SidebarPaneTitleRow<TitleLayout: View>: View {
         attentionStyle: AttentionCapsuleStyle?,
         attentionCount: Int,
         theme: GhosttyThemeColors?,
-        provider: String? = nil,
+        needsInput: Bool = false,
         agent: AgentSessionInfo? = nil,
         alignment: VerticalAlignment = .center,
         @ViewBuilder titleLayout: (SidebarPaneTitleText) -> TitleLayout
@@ -122,7 +122,7 @@ public struct SidebarPaneTitleRow<TitleLayout: View>: View {
                                              attentionStyle: attentionStyle, isAgent: agent != nil, theme: theme)
         self.title = titleText
         self.attentionCount = attentionCount
-        self.provider = provider
+        self.needsInput = needsInput
         self.agent = agent
         self.alignment = alignment
         self.titleLayout = titleLayout(titleText)
@@ -131,7 +131,7 @@ public struct SidebarPaneTitleRow<TitleLayout: View>: View {
     public var body: some View {
         HStack(alignment: alignment, spacing: SidebarPaneLayout.markerSpacing) {
             if let agent {
-                AgentStatusBadge(status: agent.status, needsInput: title.attentionStyle != nil,
+                AgentStatusBadge(status: agent.status, needsInput: needsInput,
                     failure: agent.failure, processObservation: agent.processObservation)
                     .font(.system(size: 12)).frame(width: 18)
             } else if attentionCount > 0 {
@@ -150,6 +150,7 @@ public struct SidebarPaneTitleRow<TitleLayout: View>: View {
             }
             Spacer(minLength: 0)
         }
+        .opacity(agent?.completionID != nil || agent?.status == "closed" ? 0.5 : 1)
     }
 }
 
@@ -162,11 +163,11 @@ public extension SidebarPaneTitleRow where TitleLayout == SidebarPaneTitleText {
         attentionStyle: AttentionCapsuleStyle?,
         attentionCount: Int,
         theme: GhosttyThemeColors?,
-        provider: String? = nil,
+        needsInput: Bool = false,
         agent: AgentSessionInfo? = nil
     ) {
         self.init(title: title, isFocusedPane: isFocusedPane, isActiveWorktree: isActiveWorktree,
                   isBusy: isBusy, attentionStyle: attentionStyle, attentionCount: attentionCount,
-                  theme: theme, provider: provider, agent: agent) { $0 }
+                  theme: theme, needsInput: needsInput, agent: agent) { $0 }
     }
 }

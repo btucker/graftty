@@ -8,6 +8,7 @@ public struct WorktreeContextPanel: View {
     private let foreground: Color
     private let secondary: Color
     private let onClose: () -> Void
+    private let showAgent: ((String) -> Void)?
     private let readTranscript: (@MainActor (String) async -> String?)?
     @State private var archivedTranscript: String?
     @State private var follow: TimelineFollow
@@ -19,13 +20,14 @@ public struct WorktreeContextPanel: View {
 
     public init(context: SidebarWorktreeContext, theme: GhosttyThemeColors = .fallback, foreground: Color? = nil,
                 secondary: Color? = nil, collapsesBrief: Bool = false,
-                readTranscript: (@MainActor (String) async -> String?)? = nil, onClose: @escaping () -> Void) {
+                readTranscript: (@MainActor (String) async -> String?)? = nil, showAgent: ((String) -> Void)? = nil, onClose: @escaping () -> Void) {
         self.context = context
         self.theme = theme
         self.foreground = foreground ?? theme.foreground
         self.secondary = secondary ?? theme.foreground.opacity(0.68)
         self.onClose = onClose
         self.readTranscript = readTranscript
+        self.showAgent = showAgent
         _follow = State(initialValue: TimelineFollow(collapsesBrief: collapsesBrief))
     }
 
@@ -48,6 +50,7 @@ public struct WorktreeContextPanel: View {
                                     if agent.resultsAreSummaries == true {
                                         Text("Result previews · \(agent.resultCount ?? 0) retained assignments").foregroundStyle(secondary)
                                     }
+                                    if let showAgent { Button("Open agent tab") { showAgent(agent.id) } }
                                     if let result = agent.result { Text(result).textSelection(.enabled) }
                                     if let readTranscript, agent.status == "closed" {
                                         Button("Read transcript") {

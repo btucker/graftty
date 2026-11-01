@@ -20,6 +20,39 @@ public extension WorktreeEntry {
         }
     }
 
+    /// Commands target the visible presentation, which may have no live process.
+    var presentationPane: PaneSlotID? {
+        if let layout = workspaceLayout, let focused = layout.focusedSession,
+           layout.visibleSplitTree.containsLeaf(focused) || (layout.drawerVisible && layout.selectedTerminal == focused) {
+            return focused
+        }
+        if let focusedPaneSlotID {
+            if let group = workspaceLayout?.group(containing: focusedPaneSlotID) { return group.selected }
+            if splitTree.containsLeaf(focusedPaneSlotID) { return focusedPaneSlotID }
+        }
+        return workspaceLayout?.lastAgent ?? splitTree.allLeaves.first
+    }
+
+    func hasCompletedContent(in slot: PaneSlotID) -> Bool {
+        agents.contains { $0.presentationSlotID == slot && ($0.completion != nil || $0.status == .closed) }
+    }
+
+    @discardableResult
+    mutating func showAgentTab(_ id: String) -> PaneSlotID? {
+        guard let slot = agents.first(where: { $0.id == id })?.presentationSlotID else { return nil }
+        ensureWorkspaceLayout()
+        if workspaceLayout?.sessions.contains(slot) != true { workspaceLayout?.addAgent(slot) }
+        workspaceLayout?.select(slot)
+        return slot
+    }
+
+    @discardableResult
+    mutating func dismissCompletedTab(_ slot: PaneSlotID) -> Bool {
+        guard workspaceLayout?.sessions.contains(slot) == true, hasCompletedContent(in: slot) else { return false }
+        workspaceLayout?.remove(slot)
+        return true
+    }
+
     var visiblePaneSlots: Set<PaneSlotID> {
         let canvas = canvasTree
         var slots = Set(canvas.zoomed.map { [$0] } ?? canvas.allLeaves)
@@ -48,7 +81,8 @@ public extension WorktreeEntry {
             workspaceLayout?.addAgent(slot)
         }
         workspaceLayout?.reconcile(live: splitTree.allLeaves, agents: Set(agents.compactMap(\.paneSlotID)),
-            retained: Set(agents.compactMap(\.presentationSlotID)), preservingSelection: true)
+            retained: Set(agents.compactMap(\.presentationSlotID)),
+            completed: Set(agents.filter { $0.completion != nil || $0.status == .closed }.compactMap(\.presentationSlotID)), preservingSelection: true)
     }
 }
 

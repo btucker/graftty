@@ -40,6 +40,8 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     public private(set) var terminals: [Session]
     public private(set) var selectedTerminal: Session?
     public private(set) var lastAgent: Session?
+    /// The active presentation may be retained content with no live terminal.
+    public private(set) var focusedSession: Session?
     public var drawerVisible: Bool
     public var drawerHeight: Double
     public var sessions: [Session] { groups.flatMap(\.sessions) + terminals }
@@ -95,6 +97,8 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     }
 
     public mutating func select(_ session: Session) {
+        guard sessions.contains(session) else { return }
+        focusedSession = session
         if terminals.contains(session) {
             selectedTerminal = session
             drawerVisible = true
@@ -115,6 +119,7 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
     @discardableResult
     public mutating func hideDrawer() -> Session? {
         drawerVisible = false
+        if let lastAgent { select(lastAgent) }
         return lastAgent
     }
 
@@ -128,6 +133,7 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         for group in groups where group.sessions.isEmpty { root = root?.replacing(group.id, with: nil) }
         groups.removeAll { $0.sessions.isEmpty }
         if lastAgent == session { lastAgent = groups.first?.selected }
+        if focusedSession == session { focusedSession = lastAgent ?? selectedTerminal }
     }
 
     public mutating func move(_ session: Session, to target: UUID) {
@@ -163,11 +169,11 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         for session in sourceGroup.sessions { move(session, to: target) }
     }
 
-    public mutating func reconcile(live: [Session], agents: Set<Session>, retained: Set<Session> = [], preservingSelection: Bool = false) {
+    public mutating func reconcile(live: [Session], agents: Set<Session>, retained: Set<Session> = [], completed: Set<Session> = [], preservingSelection: Bool = false) {
         let previous = self
         let liveSet = Set(live).union(retained)
         for session in sessions where !liveSet.contains(session) { remove(session) }
-        for session in live where !sessions.contains(session) {
+        for session in live where !sessions.contains(session) && !completed.contains(session) {
             if agents.contains(session) { addAgent(session) }
             else { addTerminal(session) }
         }
@@ -175,6 +181,7 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
             for group in previous.groups { select(group.selected) }
             if let lastAgent = previous.lastAgent { select(lastAgent) }
             if let terminal = previous.selectedTerminal { select(terminal) }
+            focusedSession = previous.focusedSession.flatMap { sessions.contains($0) ? $0 : nil }
             drawerVisible = previous.drawerVisible
         }
     }

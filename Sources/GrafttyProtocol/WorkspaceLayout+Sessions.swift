@@ -24,14 +24,16 @@ public extension WorkspaceLayout where Session == String {
         return layout
     }
 
-    func visiblePaneLayout(in inventory: PaneLayoutNode?) -> PaneLayoutNode? {
-        guard let inventory else { return nil }
-        let leaves = inventory.leaves
+    func visiblePaneLayout(in inventory: PaneLayoutNode?, retainedAgents: [AgentSessionInfo] = []) -> PaneLayoutNode? {
+        let leaves = inventory?.leaves ?? []
         func render(_ node: Node) -> PaneLayoutNode? {
             switch node {
             case .group(let id):
-                guard let selected = groups.first(where: { $0.id == id })?.selected,
-                      let leaf = leaves.first(where: { $0.sessionName == selected }) else { return nil }
+                guard let selected = groups.first(where: { $0.id == id })?.selected else { return nil }
+                if let agent = retainedAgents.first(where: { $0.presentationSessionName == selected && $0.isCompleted }) {
+                    return .leaf(sessionName: selected, title: agent.name, attentionText: nil, isBusy: false, attentionSource: nil)
+                }
+                guard let leaf = leaves.first(where: { $0.sessionName == selected }) else { return nil }
                 return .leaf(sessionName: leaf.sessionName, title: leaf.title, attentionText: leaf.attentionText,
                     isBusy: leaf.isBusy, attentionSource: leaf.attentionSource, attentionTimestamp: leaf.attentionTimestamp)
             case .split(let vertical, let ratio, let first, let second):

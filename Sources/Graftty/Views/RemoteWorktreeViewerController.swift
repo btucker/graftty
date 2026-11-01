@@ -243,6 +243,17 @@ final class RemoteWorktreeViewerController: ObservableObject {
         return !row.state.isInFlight || row.showsCreationProgress
     }
 
+    func createDrawerTerminal() {
+        if let target = splitTree.allLeaves.first {
+            performWorkspaceCommand(.split(.down), on: target)
+        } else if let remoteMac = selectedRemoteMac, let path = selectedRemoteWorktreePath {
+            Task { @MainActor in
+                let response = await model.openWorktree(on: remoteMac, worktreePath: path)
+                if case .error(_, let message, _, _) = response { presentError(message) }
+            }
+        }
+    }
+
     func selectRemoteWorktree(_ remoteMac: RemoteMac, worktreePath: String, acknowledging: Bool, inspectingCreation: Bool = true) {
         guard canSelectRemoteWorktree(remoteMac, worktreePath: worktreePath) else { return }
         let identity = RemoteMacIdentity(remoteMac)
@@ -273,6 +284,7 @@ final class RemoteWorktreeViewerController: ObservableObject {
         }
         synchronizeRemoteWorktree(remoteMac: remoteMac, worktreePath: worktreePath)
         if selectedWorktreeSnapshot?.state == .closed,
+           selectedWorktreeSnapshot?.agents?.contains(where: \.isCompleted) != true,
            (!inspectingCreation || selectedWorktreeSnapshot?.showsCreationProgress != true),
            !openingRemoteWorktrees.contains(target) {
             openingRemoteWorktrees.insert(target)

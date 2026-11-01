@@ -47,6 +47,7 @@ struct WorktreeBlock: View {
         .padding(.leading, projectColumn ? 8 : 6)
         .padding(.trailing, projectColumn ? 8 : 2)
         .padding(.vertical, projectColumn ? 0 : 3)
+        .frame(minHeight: 44)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(highlightFill)
@@ -123,7 +124,7 @@ struct WorktreeBlock: View {
                         isFocusedPane: false, isActiveWorktree: isActive,
                         isBusy: leaf.isBusy, attentionStyle: style,
                         attentionCount: context.pending.filter { $0.paneID == leaf.sessionName }.count,
-                        theme: theme, agent: worktree.agents?.first { $0.sessionName == leaf.sessionName })
+                        theme: theme, needsInput: leaf.attentionSource == .agentStop, agent: worktree.agents?.first { $0.sessionName == leaf.sessionName })
                         .padding(.leading, 18)
                     if isQuestionPane {
                         SidebarWorktreeQuestion(context: context)

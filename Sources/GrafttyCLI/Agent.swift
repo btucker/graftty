@@ -160,7 +160,7 @@ struct AgentClose: ParsableCommand {
 }
 
 struct AgentResume: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "resume", abstract: "Begin a new assignment in an agent still awaiting cleanup")
+    static let configuration = CommandConfiguration(commandName: "resume", abstract: "Restart a saved provider conversation with a new assignment")
     @Argument var id: String
     @Flag(name: .long) var json = false
     func run() throws {

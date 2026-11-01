@@ -28,6 +28,7 @@ public struct IPadRootLayout: View {
     @Environment(\.remoteConnectionCoordinator) private var coordinator
     @Environment(\.remoteWorktreeUpdates) private var worktreeUpdates
     @State private var paneEnvironment: PaneEnvironment = .empty
+    @State private var mobilePaneCommandError: String?
     @State private var explicitSelectionGeneration: UInt64 = 0
     @State private var pendingMobileSplits: [PendingMobileSplit] = []
     @State private var pendingMobileMutationOrder: [UUID] = []
@@ -179,7 +180,8 @@ public struct IPadRootLayout: View {
                     },
                     onBackToWorktrees: {
                         showWorktreeList()
-                    }
+                    },
+                    onNewTerminal: createDrawerTerminal
                 )
                 .background(appState.theme.background)
             }
@@ -227,6 +229,9 @@ public struct IPadRootLayout: View {
         )) {
             await refreshPaneEnvironment()
         }
+        .alert("Could not create terminal", isPresented: Binding(
+            get: { mobilePaneCommandError != nil }, set: { if !$0 { mobilePaneCommandError = nil } }
+        )) { Button("OK") { mobilePaneCommandError = nil } } message: { Text(mobilePaneCommandError ?? "") }
         .onDisappear {
             Task {
                 await paneEnvironment.close()
@@ -294,7 +299,8 @@ public struct IPadRootLayout: View {
            let wt = list.first(where: { $0.path == path }),
            let pane = appState.focusedPaneId {
             let leaves = wt.layout?.leaves ?? []
-            if !leaves.contains(where: { $0.sessionName == pane }) {
+            if !leaves.contains(where: { $0.sessionName == pane }),
+               wt.agents?.contains(where: { $0.presentationSessionName == pane && $0.isCompleted }) != true {
                 let fallback = leaves.first?.sessionName
                 // Guard the write so unchanged values don't bump
                 // `@Observable` invalidation on every pushed snapshot.
@@ -313,8 +319,14 @@ public struct IPadRootLayout: View {
 
     static func applyWorktreeSelection(appState: IPadAppState, worktree: WorktreePanes) {
         guard !worktree.state.isInFlight || worktree.showsCreationProgress else { return }
+        let leaves = worktree.layout?.leaves ?? []
+        let focused = appState.selectedWorktreePath == worktree.path
+            ? appState.focusedPaneId.flatMap { id in
+                leaves.contains(where: { $0.sessionName == id }) || worktree.agents?.contains(where: { $0.presentationSessionName == id }) == true ? id : nil
+            }
+            : nil
         appState.select(hostID: appState.selectedHostId, worktreePath: worktree.path,
-                        paneID: worktree.layout?.leaves.first?.sessionName,
+                        paneID: focused ?? leaves.first?.sessionName,
                         requestsTerminalFocus: !worktree.showsCreationProgress)
     }
 
@@ -428,7 +440,7 @@ public struct IPadRootLayout: View {
     }
 
     private func selectPane(sessionName: String) {
-        guard let leaf = selectedWorktreeLayout?.leaves.first(where: {
+        guard let leaf = selectedWorkspaceNavigationLayout?.leaves.first(where: {
             $0.sessionName == sessionName
         }) else {
             return
@@ -491,7 +503,13 @@ public struct IPadRootLayout: View {
         return appState.workspaceStore.navigationLayout(hostID: hostID, worktree: worktree)
     }
 
+    private var selectedCompletedAgent: AgentSessionInfo? {
+        guard let worktree = Self.resolveSelectedWorktree(from: appState.latestWorktrees, selectedPath: appState.selectedWorktreePath) else { return nil }
+        return worktree.agents?.first { $0.presentationSessionName == appState.focusedPaneId && $0.isCompleted }
+    }
+
     private func applySelectedMobileCloseProjection() {
+        guard selectedCompletedAgent == nil else { return }
         guard let closeProjection = selectedMobileCloseProjection else {
             return
         }
@@ -524,8 +542,10 @@ public struct IPadRootLayout: View {
     private func isGhosttyCommandEnabled(_ action: GhosttyAction) -> Bool {
         guard let kind = Self.commandKind(for: action) else { return false }
         switch kind {
-        case .split, .closePane:
-            return appState.focusedPaneId != nil && paneEnvironment.paneControlClient != nil
+        case .split:
+            return selectedCompletedAgent == nil && appState.focusedPaneId != nil && paneEnvironment.paneControlClient != nil
+        case .closePane:
+            return selectedCompletedAgent != nil || (appState.focusedPaneId != nil && paneEnvironment.paneControlClient != nil)
         case let .focusPane(direction):
             guard let layout = selectedWorkspaceNavigationLayout,
                   let pane = appState.focusedPaneId else {
@@ -585,10 +605,23 @@ public struct IPadRootLayout: View {
         appState.requestActiveTerminal()
     }
 
+    private func createDrawerTerminal() {
+        if let target = selectedWorktreeLayout?.leaves.first?.sessionName {
+            queueSplitFocusedPane(.down, target: target)
+        } else if let host = selectedHost, let path = appState.selectedWorktreePath, let coordinator {
+            Task { @MainActor in
+                do {
+                    let response = try await coordinator.sendWorktreeManagement(.open(worktreeID: path), to: host)
+                    if case .error(_, let message, _, _) = response { mobilePaneCommandError = message }
+                } catch { mobilePaneCommandError = error.localizedDescription }
+            }
+        }
+    }
+
     private func queueSplitFocusedPane(
-        _ direction: PaneControlRequest.SplitDirection
+        _ direction: PaneControlRequest.SplitDirection, target explicitTarget: String? = nil
     ) {
-        guard let target = effectiveMobilePaneControlTarget,
+        guard let target = explicitTarget ?? effectiveMobilePaneControlTarget,
               let client = paneEnvironment.paneControlClient else {
             return
         }
@@ -977,6 +1010,13 @@ public struct IPadRootLayout: View {
     }
 
     private func queueCloseFocusedPane() {
+        if let agent = selectedCompletedAgent, let session = agent.presentationSessionName,
+           let hostID = appState.selectedHostId,
+           let worktree = Self.resolveSelectedWorktree(from: appState.latestWorktrees, selectedPath: appState.selectedWorktreePath) {
+            appState.workspaceStore.update(hostID: hostID, worktree: worktree) { $0.remove(session) }
+            appState.focusedPaneId = appState.workspaceStore.layout(hostID: hostID, worktree: worktree).focusedSession
+            return
+        }
         guard let target = effectiveMobilePaneControlTarget,
               let client = paneEnvironment.paneControlClient else {
             return
@@ -1346,12 +1386,21 @@ struct IPadDetailColumn: View {
     let ghosttyCommandContext: MobileGhosttyCommandContext
     let onSelectPane: (String) -> Void
     let onBackToWorktrees: () -> Void
+    var onNewTerminal: () -> Void = {}
 
     var body: some View {
         content
             .modifier(MobileWorktreeContextDrawer(context: selectedWorktree.map {
                 appState.sidebarNavigation.worktreeContext($0)
-            }, theme: appState.theme, showsStandaloneControl: !hasFocusedTerminal))
+            }, theme: appState.theme, showsStandaloneControl: !hasFocusedTerminal, onShowAgent: { id in
+                guard let host, let worktree = selectedWorktree,
+                      let session = worktree.agents?.first(where: { $0.id == id })?.presentationSessionName else { return }
+                appState.workspaceStore.update(hostID: host.id, worktree: worktree) { layout in
+                    if !layout.sessions.contains(session) { layout.addAgent(session) }
+                    layout.select(session)
+                }
+                appState.focusedPaneId = session
+            }))
             .modifier(IPadTerminalDetailChrome())
             .toolbar {
                 // IPAD-1.11: the conditional wraps the whole
@@ -1438,7 +1487,8 @@ struct IPadDetailColumn: View {
                 ghosttyCommandContext: ghosttyCommandContext,
                 onSelectPane: onSelectPane,
                 onBackToWorktrees: onBackToWorktrees,
-                workspaceStore: appState.workspaceStore
+                workspaceStore: appState.workspaceStore,
+                onNewTerminal: onNewTerminal
             )
             .id("\(host.id)-\(worktree.path)")
         } else {

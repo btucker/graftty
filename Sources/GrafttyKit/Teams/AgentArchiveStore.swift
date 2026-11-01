@@ -10,6 +10,7 @@ import Crypto
 public struct AgentTranscriptArchive: Codable, Sendable, Equatable {
     public let id: String
     public let byteCount: Int
+    public init(id: String, byteCount: Int) { self.id = id; self.byteCount = byteCount }
 }
 
 public struct AgentArchiveStore: Sendable {

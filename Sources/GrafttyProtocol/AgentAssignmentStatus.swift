@@ -39,7 +39,7 @@ public enum AgentAssignmentStatus: String {
         case .running: "circle"
         case .waiting: "hand.raised"
         case .awaitingCleanup: "checkmark.circle"
-        case .closed: "archivebox"
+        case .closed: "checkmark.circle"
         case .failed, .interrupted, .exited: "exclamationmark.triangle"
         case .disconnected: "wifi.exclamationmark"
         case .unknown: "questionmark.circle"

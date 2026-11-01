@@ -1191,6 +1191,12 @@ final class TerminalManager: ObservableObject {
         return String(decoding: buffer, as: UTF8.self)
     }
 
+    /// Retained results own presentation focus without a terminal input target.
+    func clearFocus() {
+        focusedTerminalID = nil
+        for handle in surfaces.values { handle.setFocus(false) }
+    }
+
     /// Focus exactly one surface (by ID); unfocus the rest.
     func setFocus(_ terminalID: PaneSlotID) {
         guard wakePane(terminalID) else { return }

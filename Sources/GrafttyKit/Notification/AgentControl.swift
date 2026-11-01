@@ -30,6 +30,33 @@ public enum AgentControl {
     }
     private static var detailSnapshots: [UUID: DetailSnapshot] = [:]
 
+    /// Paired-viewer operations always resolve the exact agent within the supplied worktree.
+    public static func conversation(path: String, agentID: String, action: AgentConversationAction,
+                                    platform: any ControlPlatform) async -> WorktreeManagementResponse {
+        guard platform.state.worktree(forPath: path)?.agents.contains(where: { $0.id == agentID }) == true else {
+            return .error(code: "agent-unavailable", message: "This agent is no longer available in this worktree.", forceAllowed: false, shortStatus: nil)
+        }
+        if action == .resume {
+            let response = await handle(.init(action: .resume, callerWorktree: path, agentID: agentID), platform: platform)
+            if case .error(let message) = response {
+                return .error(code: "resume-failed", message: message, forceAllowed: false, shortStatus: nil)
+            }
+        }
+        guard let agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agentID }) else {
+            return .error(code: "agent-unavailable", message: "This agent is no longer available.", forceAllowed: false, shortStatus: nil)
+        }
+        let archives = platform.agentArchives
+        do {
+            let transcript = try await OffMainIO.run { try archives.preview(agent) }
+            let result = agent.completion.map { AgentTextPreview.prefix($0.result, bytes: 128 * 1024) }
+            return .agentConversation(.init(agentID: agent.id, assignmentID: agent.assignmentID.uuidString,
+                result: result, transcript: transcript, failure: agent.failure,
+                canResume: agent.providerSessionID?.isEmpty == false && agent.completion != nil && agent.status != .closing))
+        } catch {
+            return .error(code: "archive-unavailable", message: error.localizedDescription, forceAllowed: false, shortStatus: nil)
+        }
+    }
+
     /// Older live providers may not send SessionStart again after an app update.
     /// Recover their identity once, using hooks rather than guessing from titles.
     public static func recoverObservedSession(path: String, agentID: String?, paneSessionName: String?,
@@ -230,41 +257,48 @@ public enum AgentControl {
                 defer { closingAgents.remove(agent.id) }
                 await consumeExitEvents(agentID: agent.id, platform: platform)
                 agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }) ?? agent
-                if agent.status == .closed {
-                    guard platform.controlCapabilities.contains(.paneAgent) else { throw AgentControlError.unavailable }
-                    guard agent.providerSessionID?.isEmpty == false else {
-                        return .error("The provider conversation ID was not saved. This transcript cannot resume a conversation.")
-                    }
-                    let completed = agent
-                    try agent.restartConversation()
-                    if request.callerAgentID == nil { agent.parent = nil; agent.parentManagedAgentID = nil }
+                guard platform.controlCapabilities.contains(.paneAgent) else { throw AgentControlError.unavailable }
+                guard agent.providerSessionID?.isEmpty == false else {
+                    return .error("The provider conversation ID was not saved. This transcript cannot resume a conversation.")
+                }
+                guard let currentRepo = platform.state.repos.first(where: { $0.path == repoPath }) else { throw AgentControlError.unknownAgent }
+                guard !hasOpenChildren(of: agent, in: currentRepo) else { throw AgentControlError.activeChildren }
+                // A fresh provider invocation receives the new assignment in both its
+                // environment and launch instructions. The old process cannot finish it.
+                if agent.status != .closed {
+                    guard let completion = agent.completion else { throw ManagedAgent.LifecycleError.invalidState }
+                    try agent.beginClose(completion: completion.id)
                     try save(agent, path: path, platform: platform)
-                    let response = await platform.handlePlatformRequest(.addPane(.init(path: path, direction: .right,
-                        command: nil, agentRuntime: agent.provider, agentPrompt: nil, managedAgent: agent)))
-                    if response != .ok {
-                        let reason: String
-                        if case .error(let message) = response { reason = message } else { reason = "Could not resume the provider conversation." }
-                        var restored = completed
-                        // Keep a failed live launch discoverable if host rollback could not remove it.
-                        if let current = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }),
-                           let slot = current.paneSlotID, platform.state.worktree(forPath: path)?.paneSessions[slot] != nil {
-                            restored = current
-                            restored.launchFailed(reason: reason)
-                        }
-                        restored.recordFailure(reason)
-                        try save(restored, path: path, platform: platform)
-                        return .error(reason)
+                    do {
+                        if let slot = agent.paneSlotID { try await platform.closeAgentSession(worktree: path, slot: slot) }
+                        agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }) ?? agent
+                        agent.didClose()
+                        try save(agent, path: path, platform: platform)
+                    } catch {
+                        agent = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }) ?? agent
+                        agent.closeFailed(reason: error.localizedDescription)
+                        try save(agent, path: path, platform: platform)
+                        throw error
                     }
-                } else {
-                    let expectedCompletion = agent.completion?.id
-                    guard let slot = agent.paneSlotID, try await platform.agentSessionIsAlive(worktree: path, slot: slot),
-                          let latest = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }),
-                          latest.assignmentID == agent.assignmentID, latest.completion?.id == expectedCompletion else {
-                        throw ManagedAgent.LifecycleError.invalidState
+                }
+                let completed = agent
+                try agent.restartConversation()
+                if request.callerAgentID == nil { agent.parent = nil; agent.parentManagedAgentID = nil }
+                try save(agent, path: path, platform: platform)
+                let response = await platform.handlePlatformRequest(.addPane(.init(path: path, direction: .right,
+                    command: nil, agentRuntime: agent.provider, agentPrompt: nil, managedAgent: agent)))
+                if response != .ok {
+                    let reason: String
+                    if case .error(let message) = response { reason = message } else { reason = "Could not resume the provider conversation." }
+                    var restored = completed
+                    if let current = platform.state.worktree(forPath: path)?.agents.first(where: { $0.id == agent.id }),
+                       let slot = current.paneSlotID, platform.state.worktree(forPath: path)?.paneSessions[slot] != nil {
+                        restored = current
+                        restored.launchFailed(reason: reason)
                     }
-                    agent = latest
-                    try agent.resume()
-                    try save(agent, path: path, platform: platform)
+                    restored.recordFailure(reason)
+                    try save(restored, path: path, platform: platform)
+                    return .error(reason)
                 }
             case .add, .list, .capability: break
             }
@@ -446,6 +480,14 @@ public enum AgentControl {
         let activeFiles = Set(detailSnapshots.values.map(\.file))
         try? await OffMainIO.run { try archives.removeExpiredDetails(excluding: activeFiles) }
         try? await migrateTranscripts(platform: platform)
+        for worktree in platform.state.repos.flatMap(\.worktrees) {
+            for var agent in worktree.agents where agent.status == .starting && agent.resumingSessionID != nil {
+                guard !closingAgents.contains(agent.id), let slot = agent.paneSlotID,
+                      worktree.paneSessions[slot] == nil else { continue }
+                agent.recoverUnlaunchedConversation()
+                try? save(agent, path: worktree.path, platform: platform)
+            }
+        }
         await consumeExitEvents(platform: platform)
         for path in platform.state.repos.map(\.path) {
             do { try repairParentEndpoints(repoPath: path, platform: platform) } catch { continue }

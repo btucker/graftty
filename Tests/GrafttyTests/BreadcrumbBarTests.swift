@@ -16,9 +16,24 @@ struct BreadcrumbBarTests {
         }
         func render(_ bar: BreadcrumbBar) throws -> Data {
             let image = try #require(ImageRenderer(content: bar.frame(width: 900, height: 44)).cgImage)
-            return try #require(image.dataProvider?.data) as Data
+            var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+            try pixels.withUnsafeMutableBytes { buffer in
+                let context = try #require(CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
+                    bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            }
+            if let directory = ProcessInfo.processInfo.environment["GRAFTTY_TEST_SCREENSHOT_DIR"],
+               let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
+                try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("breadcrumb-\(bar.branchName ?? "none").png"))
+            }
+            return Data(pixels)
         }
-        #expect(try render(bar("main")) == render(bar("CARP-5794-launch-kpis-traffic-by-source")))
+        let baseline = try render(bar("main"))
+        let withLongBranch = try render(bar("CARP-5794-launch-kpis-traffic-by-source"))
+        // CoreGraphics can round an antialiased channel by one level between renders.
+        #expect(baseline.count == withLongBranch.count)
+        #expect(zip(baseline, withLongBranch).allSatisfy { abs(Int($0) - Int($1)) <= 1 })
         #expect(bar("main").currentLocationAccessibilityValue.contains("Branch main"))
         #expect(bar("main").currentLocationHelp == "/repo/.worktrees/analytics-dashboard\nBranch main")
     }

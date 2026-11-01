@@ -368,6 +368,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.181** When the terminal drawer opens or closes, the application shall retain the mounted agent surface and resize it directly to the final canvas viewport without intermediate terminal sizes.
 
+**LAYOUT-2.183** When a remote worktree is selected again from its sidebar rows, the application shall preserve its current agent tab.
+
+**LAYOUT-2.184** While an agent has a notification capsule, the sidebar shall derive its working indicator from the same input-required state as its tab independently of capsule visibility.
+
+**LAYOUT-2.185** When a user adjusts a native horizontal divider through accessibility, the application shall resize by twenty points and commit the adjustment.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -4735,6 +4741,36 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-6.129** When a headless host launches a background agent, the application shall start its provider without changing the selected worktree, focused pane, or selected tab; an explicit tab selection shall focus the new agent.
 
 **AGENT-6.130** When a selected agent has retained result content, the application shall render that content inside its pane while keeping the tab header mounted.
+
+**AGENT-6.131** When a cleaned-up conversation restarts, the application shall accept exits only from the new provider launch and retain the previous assignment result.
+
+**AGENT-6.132** If the host stops after reserving a conversation restart but before binding its terminal, then the application shall recover its completed record and allow another resume attempt.
+
+**AGENT-6.133** When a completed tab is selected and dismissed, the application shall preserve every live terminal and the durable completion record while targeting the visible tab for commands.
+
+**AGENT-6.134** When cleanup captures a transcript for the selected finished tab, the application shall refresh its result pane without requiring the user to switch tabs.
+
+**AGENT-6.135** When a conversation restarts, the application shall retain the previous assignment's transcript archive in history without displaying it as the new assignment's transcript.
+
+**AGENT-6.136** When a saved Claude or Codex conversation restarts, the launcher shall pass its exact conversation ID as one argument, publish the new assignment environment, and report exits for that new launch.
+
+**AGENT-6.137** When a remote agent terminal is cleaned up, the application shall retain its selected tab and render its completed content without adding a dead session to the host inventory.
+
+**AGENT-6.138** When a paired viewer reads or resumes a retained agent conversation, the application shall round-trip its exact worktree and agent identities over the authenticated worktree-management channel.
+
+**AGENT-6.139** When a paired viewer requests a saved conversation, the host shall return bounded content for the exact worktree and reject an agent addressed through a different worktree.
+
+**AGENT-6.140** When iPad restores a selected completed tab, the application shall preserve it across host snapshots and app restart without selecting another live agent.
+
+**AGENT-6.141** If closing a conversation for resume fails after transcript capture, then the application shall retain the captured archive and the current terminal binding for retry.
+
+**AGENT-6.142** When a completed tab is dismissed before its terminal is cleaned up, the application shall preserve that dismissal across inventory updates and allow explicit reopening.
+
+**AGENT-6.143** When a newer completed-tab read overtakes an earlier read, the application shall display only the newest archive and keep any resume operation independently guarded.
+
+**AGENT-6.144** When a user changes completed tabs while a read is pending, the application shall clear the previous tab's content and ignore its late response.
+
+**AGENT-6.145** When a mobile conversation restarts with the same terminal name, the application shall discard the retained previous-assignment client before attaching even if its process-end event has not arrived.
 
 ## CLI — CLI
 
