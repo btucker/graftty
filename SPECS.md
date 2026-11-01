@@ -386,6 +386,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.190** When the user selects a live agent tab, the application shall give that agent's terminal keyboard focus.
 
+**LAYOUT-2.192** While the selected worktree has an emoji, the application shall draw a blurred smear of it from the left and a tilted watermark of it on the right behind the window header and the top row of agent tabs, leaving terminal content and emoji-less worktrees unchanged.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

@@ -108,7 +108,7 @@ struct BreadcrumbBar: View {
         .padding(.leading, sidebarHidden ? Self.collapsedInset : Self.expandedInset)
         .padding(.trailing, 12)
         .padding(.vertical, 6)
-        .background(theme.background)
+        .background { theme.background.worktreeHeaderWash() }
         // Follow NavigationSplitView's column slide.
         .animation(.easeInOut(duration: 0.25), value: sidebarHidden)
     }

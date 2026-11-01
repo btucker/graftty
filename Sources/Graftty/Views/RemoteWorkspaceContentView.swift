@@ -287,6 +287,7 @@ struct RemoteWorkspaceContentView: View {
                     }
                 }
             }.font(.system(size: 13))
+                .background { terminalManager.theme.background.worktreeHeaderWash() }
                 .dropDestination(for: WorkspaceTabDrag.self) { sessions, _ in
                     guard let session = sessions.first?.session, layout.sessions.contains(session) else { return false }
                     workspace?.move(session, to: group.id); select(session); return true

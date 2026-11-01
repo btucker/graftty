@@ -173,7 +173,9 @@ struct MainWindow: View {
             // lights and the sidebar toggle; the detail column does the
             // same for the breadcrumb.
         } detail: {
-            MainWindowDetailLayout {
+            MainWindowDetailLayout(headerWash: WorktreeHeaderWash(
+                emoji: BreadcrumbBar.selectedWorktreeEmoji(localEmoji: selectedWorktree?.emoji, remoteWorktree: selectedRemoteWorktreeSnapshot),
+                background: terminalManager.theme.background, isDark: terminalManager.theme.isDark)) {
                 BreadcrumbBar(
                     repoName: selectedRemoteWorktreeSnapshot?.repoDisplayName
                         ?? selectedRepo?.displayName,

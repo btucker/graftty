@@ -139,6 +139,7 @@ struct WorkspaceContentView: View {
                     }
                 }
             }.font(.system(size: 13))
+                .background { theme.background.worktreeHeaderWash() }
                 .overlay(alignment: .bottom) { theme.foreground.opacity(0.08).frame(height: 1) }
                 .onDrop(of: [WorkspaceTabDrag.contentType], isTargeted: nil) { providers in
                     receive(providers) { session in if let id = group?.id { mutate { $0.move(session, to: id) }; focus(session) } }
