@@ -4094,6 +4094,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CHROME-1.17** When a high-entropy page produces an oversized JPEG at an allowed host viewport, the application shall provide a frame within 512 KiB without changing its CSS dimensions and allow input after that fresh frame.
 
+**CHROME-1.18** When a dedicated Chrome process is still starting, the application shall allow up to fifteen seconds for its DevTools endpoint to appear while honoring cancellation and detecting process exit.
+
 ### CHROME-2.x — Phone controls
 
 **CHROME-2.1** When a phone taps a fitted Chrome frame, the application shall map only image pixels to normalized browser coordinates and reject letterbox taps.
