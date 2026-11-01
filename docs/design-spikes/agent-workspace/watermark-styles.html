@@ -1,0 +1,43 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Graftty · Watermark styles</title><style>
+:root{color-scheme:dark}body{margin:0;background:#17191c;color:#e9ebee;font:13px/1.45 -apple-system,BlinkMacSystemFont,sans-serif}main{max-width:1180px;margin:0 auto;padding:28px 16px 60px}
+h1{font-size:22px;margin:0 0 6px}h2{font-size:13px;font-weight:600;margin:0 0 8px;color:#c9ced6}p{color:#a9aeb6;max-width:76ch;margin:0 0 6px}section{margin-top:26px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
+.h{position:relative;height:76px;border-radius:10px;overflow:hidden;background:#1d1f23;isolation:isolate;box-shadow:0 0 0 .5px #ffffff22}
+.smear{position:absolute;left:-110px;top:50%;font-size:420px;line-height:1;opacity:.55;filter:blur(44px) saturate(1.7);transform:translateY(-50%) scaleX(2.4);transform-origin:left center;z-index:-2}
+.mark{position:absolute;right:-34px;top:50%;font-size:114px;line-height:1;transform:translateY(-50%) rotate(-12deg);z-index:-2}
+.scrim{position:absolute;inset:0;background:linear-gradient(#1d1f232e,#1d1f2357);z-index:-1}
+.crumbs{height:40px;display:flex;align-items:center;gap:6px;padding:0 14px}.m{color:#aeb4bd}
+.tabs{display:flex;height:36px;align-items:flex-end;border-bottom:1px solid #ffffff14}.t{padding:0 12px 9px;color:#aeb4bd;font-size:12.5px;border-bottom:2px solid transparent}.t.sel{color:#e7e9ed;border-bottom-color:#e7e9ed99}
+</style></head><body><main><h1>Watermark styles</h1>
+<p>The current watermark uses a light 2.5pt blur. On a small emoji that reads like an upscaled, low-resolution image rather than a choice. Each row keeps the same left smear and changes only the watermark on the right. Tab rows here start flush at the left edge, matching the spacing fix.</p>
+<section><h2>Soft (current): 2.5pt blur</h2><div class="row"><div class="h"><span class="smear">🦊</span><span class="mark" style="filter:blur(2.5px);opacity:.6">🦊</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🦊 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div><div class="h"><span class="smear">🔥</span><span class="mark" style="filter:blur(2.5px);opacity:.6">🔥</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🔥 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div><div class="h"><span class="smear">🌊</span><span class="mark" style="filter:blur(2.5px);opacity:.6">🌊</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🌊 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div></div></section><section><h2>Crisp: no blur, a little quieter</h2><div class="row"><div class="h"><span class="smear">🦊</span><span class="mark" style="opacity:.5">🦊</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🦊 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div><div class="h"><span class="smear">🔥</span><span class="mark" style="opacity:.5">🔥</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🔥 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div><div class="h"><span class="smear">🌊</span><span class="mark" style="opacity:.5">🌊</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🌊 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div></div></section><section><h2>Crisp, fading left into the smear</h2><div class="row"><div class="h"><span class="smear">🦊</span><span class="mark" style="opacity:.62;-webkit-mask-image:linear-gradient(90deg,transparent,#000 65%);mask-image:linear-gradient(90deg,transparent,#000 65%)">🦊</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🦊 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div><div class="h"><span class="smear">🔥</span><span class="mark" style="opacity:.62;-webkit-mask-image:linear-gradient(90deg,transparent,#000 65%);mask-image:linear-gradient(90deg,transparent,#000 65%)">🔥</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🔥 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div><div class="h"><span class="smear">🌊</span><span class="mark" style="opacity:.62;-webkit-mask-image:linear-gradient(90deg,transparent,#000 65%);mask-image:linear-gradient(90deg,transparent,#000 65%)">🌊</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🌊 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div></div></section><section><h2>Silhouette: one-color mark in the text color</h2><div class="row"><div class="h"><span class="smear">🦊</span><span class="mark" style="filter:brightness(0) invert(1);opacity:.16">🦊</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🦊 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div><div class="h"><span class="smear">🔥</span><span class="mark" style="filter:brightness(0) invert(1);opacity:.16">🔥</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🔥 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div><div class="h"><span class="smear">🌊</span><span class="mark" style="filter:brightness(0) invert(1);opacity:.16">🌊</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🌊 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div></div></section><section><h2>Defocus: clearly out of focus, like depth of field</h2><div class="row"><div class="h"><span class="smear">🦊</span><span class="mark" style="filter:blur(9px);opacity:.75">🦊</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🦊 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div><div class="h"><span class="smear">🔥</span><span class="mark" style="filter:blur(9px);opacity:.75">🔥</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🔥 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div><div class="h"><span class="smear">🌊</span><span class="mark" style="filter:blur(9px);opacity:.75">🌊</span><div class="scrim"></div>
+<div class="crumbs"><span class="m">graftty</span> <span class="m">›</span> 🌊 <b>worktree</b></div>
+<div class="tabs"><span class="t sel">Claude · mobile fixes</span><span class="t">Codex · tab titles</span></div></div></div></section></main></body></html>

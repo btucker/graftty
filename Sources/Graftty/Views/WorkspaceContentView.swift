@@ -23,6 +23,9 @@ struct WorkspaceContentView: View {
     /// LAYOUT-2.190: explicit tab selection hands keyboard focus to the
     /// terminal. Clicks inside a terminal already make it first responder.
     var onActivateTerminal: (PaneSlotID) -> Void = { _ in }
+    /// A hair of breathing room so terminal text doesn't slam into the
+    /// sidebar divider, while tab rows stay flush with the window edge.
+    static let leadingContentInset: CGFloat = 6
     var agentScrollbackMap: AgentScrollbackMap?
     var attentionContext: SidebarWorktreeContext?
     @Environment(\.agentWorkspaceRequest) private var request
@@ -53,7 +56,8 @@ struct WorkspaceContentView: View {
                             return AnyView(CompletedAgentContent(agent: agent, launching: launching,
                                 onResume: { perform(.init(action: .resume, callerWorktree: worktree.path, agentID: agent.id)) }))
                         },
-                        paneDropTarget: { slot, content in AnyView(dropDestination(slot, content: content)) })
+                        paneDropTarget: { slot, content in AnyView(dropDestination(slot, content: content)) },
+                        leadingContentInset: Self.leadingContentInset)
                 } else {
                     VStack(spacing: 12) {
                         Text("No active agents").font(.headline)
@@ -73,7 +77,8 @@ struct WorkspaceContentView: View {
                         if let slot = layout.selectedTerminal {
                             TerminalContentView(terminalManager: terminalManager, splitTree: .constant(SplitTree(root: .leaf(slot))),
                                 focusedPaneSlotID: worktree.focusedPaneSlotID, theme: theme,
-                                onFocusTerminal: focus, previewWorktreePath: worktree.path)
+                                onFocusTerminal: focus, previewWorktreePath: worktree.path,
+                                leadingContentInset: Self.leadingContentInset)
                         } else {
                             Button("New terminal", action: onNewTerminal)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)

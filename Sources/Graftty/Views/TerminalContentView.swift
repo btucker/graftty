@@ -23,6 +23,9 @@ struct TerminalContentView: View {
     var paneHeader: ((PaneSlotID) -> AnyView)? = nil
     var paneContent: ((PaneSlotID) -> AnyView?)? = nil
     var paneDropTarget: ((PaneSlotID, AnyView) -> AnyView)? = nil
+    /// Breathing room between leading-edge pane content and the sidebar
+    /// divider. Pane headers stay flush so tab rows reach the window edge.
+    var leadingContentInset: CGFloat = 0
 
     private var previewPane: PaneSlotID? {
         ImagePreviewLayout.visiblePane(tree: splitTree.wrappedValue, focused: focusedPaneSlotID)
@@ -57,7 +60,7 @@ struct TerminalContentView: View {
         // All sibling surfaces remain alive in TerminalManager.surfaces — we're
         // only changing which views are mounted, not tearing down PTYs.
         if let zoomedID = splitTree.wrappedValue.zoomed, splitTree.wrappedValue.containsLeaf(zoomedID) {
-            leafView(zoomedID)
+            leafView(zoomedID, leading: true)
         } else {
             Group {
                 if let root = splitTree.wrappedValue.root {
@@ -88,21 +91,26 @@ struct TerminalContentView: View {
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
-    private func nodeView(_ node: SplitTree.Node) -> AnyView {
+    private func nodeView(_ node: SplitTree.Node, leading: Bool = true) -> AnyView {
         switch node {
         case .leaf(let terminalID):
-            return leafView(terminalID)
+            return leafView(terminalID, leading: leading)
 
         case .split(let split):
-            return splitView(split)
+            return splitView(split, leading: leading)
         }
     }
 
-    private func leafView(_ terminalID: PaneSlotID) -> AnyView {
+    private func leafView(_ terminalID: PaneSlotID, leading: Bool) -> AnyView {
+        let inset = leading ? leadingContentInset : 0
         let content = AnyView(VStack(spacing: 0) {
             if let paneHeader { paneHeader(terminalID) }
-            if let replacement = paneContent?(terminalID) { replacement }
-            else { surfaceView(terminalID) }
+            Group {
+                if let replacement = paneContent?(terminalID) { replacement }
+                else { surfaceView(terminalID) }
+            }
+            .padding(.leading, inset)
+            .background(inset > 0 ? theme.background : .clear)
         })
         return paneDropTarget?(terminalID, content) ?? content
     }
@@ -174,7 +182,7 @@ struct TerminalContentView: View {
         }
     }
 
-    private func splitView(_ split: SplitTree.Node.Split) -> AnyView {
+    private func splitView(_ split: SplitTree.Node.Split, leading: Bool) -> AnyView {
         // Persist ratio drags back into the owning `SplitTree` binding so
         // layouts survive across restarts. Identify the target split by
         // `(left.allLeaves.first, direction)` — stable during a drag and
@@ -186,8 +194,9 @@ struct TerminalContentView: View {
             SplitRatioContainer(
                 direction: direction,
                 initialRatio: split.ratio,
-                left: { nodeView(split.left) },
-                right: { nodeView(split.right) },
+                left: { nodeView(split.left, leading: leading) },
+                // Only a stacked split's second child shares the leading edge.
+                right: { nodeView(split.right, leading: leading && direction == .vertical) },
                 onRatioChange: { newRatio in
                     guard let anchor = leftAnchor else { return }
                     treeBinding.wrappedValue = treeBinding.wrappedValue.updatingRatio(

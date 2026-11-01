@@ -392,6 +392,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.193** While an agent has a live input request, the application shall use the same waiting state in its sidebar and tab, retain the question when its worktree opens, and clear that state when the request is dismissed or its provider resumes.
 
+**LAYOUT-2.194** While the selected worktree is its project's main checkout, the application shall draw the header wash from the project icon, or from the project's initials in its accent color when the project has no icon.
+
+**LAYOUT-2.195** While a workspace shows agent tabs, the application shall draw each tab row flush with its pane's leading edge and inset only leading-edge pane content from the sidebar divider.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

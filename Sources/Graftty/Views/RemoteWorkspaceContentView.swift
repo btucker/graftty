@@ -182,7 +182,8 @@ struct RemoteWorkspaceContentView: View {
                 guard let agent = worktree.agents?.first(where: { $0.presentationSessionName.flatMap(slot) == id && $0.isCompleted }) else { return nil }
                 return AnyView(AgentConversationView(agent: agent) { action in try await conversationRequest(agent.id, action) })
             },
-            paneDropTarget: headers ? { id, content in AnyView(dropTarget(id, content: content)) } : nil)
+            paneDropTarget: headers ? { id, content in AnyView(dropTarget(id, content: content)) } : nil,
+            leadingContentInset: WorkspaceContentView.leadingContentInset)
     }
 
     private func updateGeometry(_ tree: SplitTree) {

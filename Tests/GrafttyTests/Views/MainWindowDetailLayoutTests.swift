@@ -199,6 +199,32 @@ struct MainWindowDetailLayoutTests {
         }
     }
 
+    @Test("@spec LAYOUT-2.195: While a workspace shows agent tabs, the application shall draw each tab row flush with its pane's leading edge and inset only leading-edge pane content from the sidebar divider.")
+    func tabRowsStayFlushWhileLeadingContentIsInset() async throws {
+        let left = PaneSlotID(), right = PaneSlotID()
+        var probes: [String: NSView] = [:]
+        for key in ["leftHeader", "leftContent", "rightHeader", "rightContent"] { probes[key] = NSView() }
+        let view = TerminalContentView(terminalManager: TerminalManager(socketPath: "/tmp/graftty-flush-tabs-test.sock"),
+            splitTree: .constant(SplitTree(root: .split(.init(direction: .horizontal, ratio: 0.5, left: .leaf(left), right: .leaf(right))))),
+            focusedPaneSlotID: left, theme: .fallback, onFocusTerminal: { _ in },
+            paneHeader: { id in AnyView(Color.clear.frame(height: 30).background(FrameProbe(view: probes[id == left ? "leftHeader" : "rightHeader"]!))) },
+            paneContent: { id in AnyView(Color.clear.background(FrameProbe(view: probes[id == left ? "leftContent" : "rightContent"]!))) },
+            leadingContentInset: 6)
+        let host = NSHostingView(rootView: view)
+        host.sizingOptions = []
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 800, height: 400),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(80))
+        host.layoutSubtreeIfNeeded()
+        func frame(_ key: String) -> NSRect { probes[key]!.convert(probes[key]!.bounds, to: host) }
+        #expect(abs(frame("leftHeader").minX) < 1, "left tab row is inset: \(frame("leftHeader"))")
+        #expect(abs(frame("leftContent").minX - 6) < 1, "left content lost its inset: \(frame("leftContent"))")
+        #expect(abs(frame("rightContent").minX - frame("rightHeader").minX) < 1,
+                "right pane content is inset: \(frame("rightContent")) vs \(frame("rightHeader"))")
+    }
+
     private struct FrameProbe: NSViewRepresentable {
         let view: NSView
         func makeNSView(context: Context) -> NSView { view }

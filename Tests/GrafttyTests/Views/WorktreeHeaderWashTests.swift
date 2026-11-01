@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+import GrafttyProtocol
 @testable import Graftty
 
 @MainActor
@@ -65,5 +66,39 @@ struct WorktreeHeaderWashTests {
             #expect(abs(p.r - base.r) < 0.02 && abs(p.g - base.g) < 0.02 && abs(p.b - base.b) < 0.02,
                     "wash leaked into terminal at (\(x), \(y)): \(p)")
         }
+    }
+
+    @Test("@spec LAYOUT-2.194: While the selected worktree is its project's main checkout, the application shall draw the header wash from the project icon, or from the project's initials in its accent color when the project has no icon.")
+    func mainCheckoutWashUsesProjectIcon() throws {
+        let image = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
+            NSColor(srgbRed: 0.1, green: 0.35, blue: 1, alpha: 1).setFill(); rect.fill(); return true
+        }
+        let png = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?
+            .representation(using: .png, properties: [:]))
+        let project = SidebarProject(id: "repo", repositoryID: "/repo", name: "Graftty", accentHex: "22cc44")
+        let (_, plain) = try render(nil)
+        let base = plain(450, 200)
+
+        // The main checkout ignores any emoji and draws from the blue icon.
+        let iconWash = try #require(WorktreeHeaderWash(identity: .resolve(isMainCheckout: true, emoji: "🔥"),
+            project: project, iconData: png, background: Self.background, isDark: true))
+        let (_, iconed) = try render(iconWash)
+        for (x, y) in [(60, 20), (60, 58)] {
+            let p = iconed(x, y)
+            #expect(p.b - base.b > 0.06 && p.b > p.r + 0.04, "icon smear missing or not blue at (\(x), \(y)): \(p)")
+        }
+        let mark = iconed(870, 40)
+        #expect(mark.b - base.b > 0.06, "icon watermark missing: \(mark)")
+
+        // Without an icon, the wash falls back to the project's green accent.
+        let initialsWash = try #require(WorktreeHeaderWash(identity: .project, project: project, iconData: nil,
+            background: Self.background, isDark: true))
+        let (_, initialed) = try render(initialsWash)
+        let accent = initialed(60, 20)
+        #expect(accent.g - base.g > 0.04 && accent.g > accent.r && accent.g > accent.b, "accent smear missing: \(accent)")
+
+        // A linked worktree without an emoji still gets no wash.
+        #expect(WorktreeHeaderWash(identity: .resolve(isMainCheckout: false, emoji: nil), project: project,
+            iconData: png, background: Self.background, isDark: true) == nil)
     }
 }

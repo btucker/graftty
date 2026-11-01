@@ -174,7 +174,9 @@ struct MainWindow: View {
             // same for the breadcrumb.
         } detail: {
             MainWindowDetailLayout(headerWash: WorktreeHeaderWash(
-                emoji: BreadcrumbBar.selectedWorktreeEmoji(localEmoji: selectedWorktree?.emoji, remoteWorktree: selectedRemoteWorktreeSnapshot),
+                identity: .resolve(isMainCheckout: selectedRemoteWorktreeSnapshot?.isMainCheckout ?? isHomeCheckout,
+                    emoji: BreadcrumbBar.selectedWorktreeEmoji(localEmoji: selectedWorktree?.emoji, remoteWorktree: selectedRemoteWorktreeSnapshot)),
+                project: selectedIdentityProject, iconData: selectedProjectIconData,
                 background: terminalManager.theme.background, isDark: terminalManager.theme.isDark)) {
                 BreadcrumbBar(
                     repoName: selectedRemoteWorktreeSnapshot?.repoDisplayName
@@ -239,7 +241,6 @@ struct MainWindow: View {
                             } : nil)
                     } else if selectedRemoteWorktreePath != nil, selectedRemoteWorktreeSnapshot != nil {
                         remoteWorkspaceContent(for: selectedRemoteMac)
-                            .padding(.leading, 6)
                     } else if remoteViewer.isOpeningSelectedWorktree {
                         ProgressView("Starting remote worktree…")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -302,9 +303,6 @@ struct MainWindow: View {
                         },
                         agentScrollbackMap: agentScrollbackMap, attentionContext: selectedContext
                     )
-                    // A hair of breathing room so terminal text doesn't
-                    // slam into the sidebar divider.
-                    .padding(.leading, 6)
                 } else {
                     ContentUnavailableView(
                         "No Worktree Selected",
