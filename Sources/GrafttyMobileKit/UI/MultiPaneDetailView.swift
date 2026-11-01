@@ -19,6 +19,8 @@ struct MultiPaneDetailView: View {
     let workspaceStore: MobileWorkspaceStore
     var onNewTerminal: () -> Void = {}
     var attentionContext: SidebarWorktreeContext? = nil
+    /// IPAD-1.31: each increment toggles the drawer from the iPad toolbar.
+    var drawerToggleRequests = 0
     private var context: SidebarWorktreeContext { attentionContext ?? SidebarWorktreeContext(worktree: worktree) }
 
     @Environment(\.retainedMobilePanes) private var retainedPanes
@@ -41,7 +43,8 @@ struct MultiPaneDetailView: View {
                         Text("No active agents").frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     if currentWorkspace.drawerVisible { drawerResizeHandle(available: geometry.size.height) }
-                    terminalDrawerHeader
+                    // IPAD-1.31: the toolbar toggles the drawer; no bar while it's closed.
+                    if currentWorkspace.drawerVisible { terminalDrawerHeader }
                     if currentWorkspace.drawerVisible, let session = currentWorkspace.selectedTerminal,
                        let leaf = worktree.layout?.leaves.first(where: { $0.sessionName == session }) {
                         render(.leaf(sessionName: session, title: leaf.title, attentionText: leaf.attentionText,
@@ -63,6 +66,7 @@ struct MultiPaneDetailView: View {
         .onAppear { reconcileWorkspace(revealFocused: true) }
         .onDisappear { retainedPanes?.retainWorkspace([], owner: retentionOwner) }
         .onChange(of: worktree) { _, _ in reconcileWorkspace(revealFocused: false) }
+        .onChange(of: drawerToggleRequests) { _, _ in toggleDrawer() }
         .onChange(of: focusedPaneId) { _, selected in
             if let selected { mutate { $0.select(selected) } }
         }
@@ -245,7 +249,7 @@ struct MultiPaneDetailView: View {
                         .foregroundStyle(theme.foreground.opacity(0.5))
                 }
             }
-            .accessibilityIdentifier("workspace.drawer.toggle")
+            .accessibilityIdentifier("workspace.drawer.close")
             if currentWorkspace.drawerVisible {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {

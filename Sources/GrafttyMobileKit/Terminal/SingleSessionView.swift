@@ -127,6 +127,8 @@ struct SingleSessionView: View {
     @Environment(\.mobileNotificationPaneActivation) private var notificationPaneActivation
 
     @State private var client: SessionClient?
+    /// IPAD-1.31: embedded panes hand their browser and preview to the toolbar.
+    @Environment(\.workspacePaneControlsSink) private var paneControlsSink
     @State private var connection: ConnectionState = .connecting
     @State private var connectedAssignment: String?
     /// Per-host TerminalController constructed with the Mac's ghostty
@@ -1260,6 +1262,7 @@ struct SingleSessionView: View {
                 hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
                 onOpenTerminal: compactWorkspace.map { workspace in { openCompactTerminal(in: workspace) } },
                 showsWorktreeContext: !isEmbeddedPane,
+                exportControls: isEmbeddedPane ? paneControlsSink.map { sink in { sink(step.sessionName, $0) } } : nil,
                 isPaneOwner: { client?.isOwner == true },
                 canPresentAuthentication: { true },
                 terminalRequest: $terminalBrowserRequest)

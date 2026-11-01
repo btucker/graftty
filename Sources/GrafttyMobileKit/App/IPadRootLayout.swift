@@ -181,7 +181,8 @@ public struct IPadRootLayout: View {
                     onBackToWorktrees: {
                         showWorktreeList()
                     },
-                    onNewTerminal: createDrawerTerminal
+                    onNewTerminal: createDrawerTerminal,
+                    onNavigateHistory: navigateHistory
                 )
                 .background(appState.theme.background)
             }
@@ -237,7 +238,11 @@ public struct IPadRootLayout: View {
                 await paneEnvironment.close()
             }
         }
+        .onChange(of: appState.selectedWorktreePath, initial: true) { _, path in
+            appState.worktreeHistory.record(path)
+        }
         .onChange(of: appState.selectedHostId) { _, _ in
+            appState.worktreeHistory = .init()
             explicitSelectionGeneration &+= 1
             pendingMobileSplits.removeAll()
             pendingMobileCloses.removeAll()
@@ -456,6 +461,15 @@ public struct IPadRootLayout: View {
     private func selectWorktree(path: String) {
         guard let wt = appState.latestWorktrees.first(where: { $0.path == path }) else { return }
         selectWorktree(wt)
+    }
+
+    /// IPAD-1.32: steps through visited worktrees that still exist.
+    private func navigateHistory(forward: Bool) {
+        let worktrees = appState.latestWorktrees
+        guard let path = appState.worktreeHistory.navigate(forward: forward, isAvailable: { path in
+            worktrees.contains { $0.path == path }
+        }) else { return }
+        selectWorktree(path: path)
     }
 
     private func navigateWorktree(forward: Bool) {
@@ -1386,8 +1400,13 @@ struct IPadDetailColumn: View {
     let onSelectPane: (String) -> Void
     let onBackToWorktrees: () -> Void
     var onNewTerminal: () -> Void = {}
+    var onNavigateHistory: (Bool) -> Void = { _ in }
     @State private var identityHeight: CGFloat = 0
     @State private var detailWidth: CGFloat = 0
+    @State private var drawerToggleRequests = 0
+    /// Browser and preview actions reported by each embedded pane.
+    @State private var paneControls: [String: PaneResourceControls] = [:]
+    private var focusedPaneControls: PaneResourceControls? { appState.focusedPaneId.flatMap { paneControls[$0] } }
 
     var body: some View {
         content
@@ -1419,12 +1438,40 @@ struct IPadDetailColumn: View {
                         .accessibilityLabel("Next pending worktree")
                     }
                 }
+                // IPAD-1.32: history back and forward, left of the name.
+                if host != nil, selectedWorktree != nil {
+                    ToolbarItemGroup(placement: .topBarLeading) {
+                        Button { onNavigateHistory(false) } label: { Label("Back", systemImage: "chevron.backward") }
+                            .disabled(!canNavigateHistory(forward: false))
+                            .accessibilityIdentifier("worktree.history.back")
+                        Button { onNavigateHistory(true) } label: { Label("Forward", systemImage: "chevron.forward") }
+                            .disabled(!canNavigateHistory(forward: true))
+                            .accessibilityIdentifier("worktree.history.forward")
+                    }
+                }
                 // IPAD-1.31: one control group. Splits dispatch through the
-                // same command context as the keyboard shortcuts.
+                // same command context as the keyboard shortcuts; the focused
+                // pane's browser and preview join it instead of a second capsule.
                 if let host, let worktree = selectedWorktree {
                     ToolbarItemGroup(placement: .topBarTrailing) {
-                        WorktreeContextToolbarButton()
+                        // Exactly one Context action: here while a terminal is
+                        // focused, otherwise the drawer's standalone control (CONTEXT-11).
+                        if hasFocusedTerminal { WorktreeContextToolbarButton() }
+                        // One preview control: the worktree menu. Panes still
+                        // auto-open new previews.
                         WorktreePreviewMenu(host: host, worktree: worktree.path)
+                        if let controls = focusedPaneControls, controls.browserAvailable {
+                            Button(action: controls.openBrowser) {
+                                Label("Browser", systemImage: "globe")
+                            }
+                            .disabled(controls.isDownloading)
+                            .accessibilityValue("\(controls.browserOfferCount) available resources")
+                            .accessibilityIdentifier("workspace.pane.browser")
+                        }
+                        Button { drawerToggleRequests += 1 } label: {
+                            Label("Terminal", systemImage: isDrawerVisible(worktree, host: host) ? "apple.terminal.fill" : "apple.terminal")
+                        }
+                        .accessibilityIdentifier("workspace.drawer.toggle")
                         Menu {
                             Button { ghosttyCommandContext.perform(.ghostty(.newSplitRight)) } label: {
                                 Label("Split Right", systemImage: GhosttySplitDirection.right.filledPaneSystemImageName)
@@ -1448,7 +1495,7 @@ struct IPadDetailColumn: View {
             }
             .modifier(MobileWorktreeContextDrawer(context: selectedWorktree.map {
                 appState.sidebarNavigation.worktreeContext($0)
-            }, theme: appState.theme, showsStandaloneControl: false, onShowAgent: { id in
+            }, theme: appState.theme, showsStandaloneControl: !hasFocusedTerminal, onShowAgent: { id in
                 guard let host, let worktree = selectedWorktree,
                       let session = worktree.agents?.first(where: { $0.id == id })?.presentationSessionName else { return }
                 appState.workspaceStore.update(hostID: host.id, worktree: worktree) { layout in
@@ -1470,9 +1517,9 @@ struct IPadDetailColumn: View {
             )
         } else if let host, let worktree = selectedWorktree {
             VStack(spacing: 0) {
-                IPadWorktreeIdentityBar(host: host, worktree: worktree,
-                    context: appState.sidebarNavigation.worktreeContext(worktree), theme: appState.theme,
-                    onSelect: onSelectPane)
+                IPadWorktreePurposeLine(worktree: worktree,
+                    context: appState.sidebarNavigation.worktreeContext(worktree), theme: appState.theme)
+                    .frame(maxWidth: .infinity, minHeight: 1)
                     .background { Color.clear.worktreeHeaderWash().ignoresSafeArea(edges: .top) }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { identityHeight = $0 }
             MultiPaneDetailView(
@@ -1488,8 +1535,25 @@ struct IPadDetailColumn: View {
                 onSelectPane: onSelectPane,
                 onBackToWorktrees: onBackToWorktrees,
                 workspaceStore: appState.workspaceStore,
-                onNewTerminal: onNewTerminal, attentionContext: appState.sidebarNavigation.worktreeContext(worktree)
+                onNewTerminal: onNewTerminal, attentionContext: appState.sidebarNavigation.worktreeContext(worktree),
+                drawerToggleRequests: drawerToggleRequests
             )
+            }
+            // IPAD-1.31: the system title carries the worktree's name; its
+            // menu jumps to the worktree's agents and shells.
+            .navigationTitle(Self.title(for: worktree))
+            .toolbarTitleMenu {
+                let overview = MobileWorktreeOverview(worktree: worktree, context: appState.sidebarNavigation.worktreeContext(worktree))
+                ForEach(overview.agents) { agent in
+                    Button { onSelectPane(agent.session) } label: { Label(agent.title, systemImage: "sparkles") }
+                }
+                if !overview.terminals.isEmpty { Divider() }
+                ForEach(overview.terminals) { terminal in
+                    Button { onSelectPane(terminal.session) } label: { Label(terminal.title, systemImage: "apple.terminal") }
+                }
+            }
+            .environment(\.workspacePaneControlsSink) { session, controls in
+                if paneControls[session] != controls { paneControls[session] = controls }
             }
             // IPAD-1.31: one emoji wash band from under the toolbar through
             // the top row of tabs; each surface draws its slice.
@@ -1503,6 +1567,22 @@ struct IPadDetailColumn: View {
                 systemImage: "list.bullet.indent"
             )
         }
+    }
+
+    static func title(for worktree: WorktreePanes) -> String {
+        if case .emoji(let emoji) = worktree.iconIdentity { return "\(emoji) \(worktree.displayName)" }
+        return worktree.displayName
+    }
+
+    private func canNavigateHistory(forward: Bool) -> Bool {
+        let worktrees = appState.latestWorktrees
+        return appState.worktreeHistory.target(forward: forward, isAvailable: { path in
+            worktrees.contains { $0.path == path }
+        }) != nil
+    }
+
+    private func isDrawerVisible(_ worktree: WorktreePanes, host: Host) -> Bool {
+        appState.workspaceStore.layout(hostID: host.id, worktree: worktree).drawerVisible
     }
 
     private func washBand(for worktree: WorktreePanes) -> WorktreeHeaderWashBand? {

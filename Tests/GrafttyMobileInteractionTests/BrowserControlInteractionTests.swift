@@ -13,34 +13,52 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         }
     }
 
-    /// @spec IPAD-1.31: While an iPad workspace is visible, the application shall lead with the worktree identity on its emoji wash, gather Worktree context, Preview, and split actions in one toolbar group, label the terminal drawer, and show Back only while the sidebar is hidden.
+    /// @spec IPAD-1.31: While an iPad workspace is visible, the application shall title the navigation bar with the worktree's emoji and name on its emoji wash, offer its agents from the title menu, gather Worktree context, previews, the focused pane's browser, the terminal drawer toggle, and split actions in one toolbar group, show no drawer bar while the drawer is closed, and show Back to worktrees only while the sidebar is hidden.
     func testWorkspaceLeadsWithIdentityAndOneControlGroup() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
         let app = XCUIApplication()
         app.launchArguments = ["--ipad-workspace-fixture"]
         app.launch()
         defer { app.terminate() }
-        let identity = app.buttons["workspace.identity"]
+        let navigation = app.navigationBars["🧭 Workspace"]
+        XCTAssertTrue(navigation.waitForExistence(timeout: 10), app.debugDescription)
+        // The navigation bar is identified by its title: the worktree's emoji and name.
         let alpha = app.buttons["workspace.tab.alpha"]
-        XCTAssertTrue(identity.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(alpha.waitForExistence(timeout: 5))
-        XCTAssertLessThan(identity.frame.maxY, alpha.frame.minY + 1, "Identity is not above the tabs")
-        let navigation = app.navigationBars["Workspace"]
-        XCTAssertTrue(navigation.waitForExistence(timeout: 5))
-        let context = navigation.buttons["worktree.context.open"]
-        let more = navigation.buttons["workspace.more"]
-        XCTAssertTrue(context.waitForExistence(timeout: 5), "Worktree context is not in the toolbar group")
-        XCTAssertTrue(more.exists, "Split actions are not in the toolbar's More menu")
+        XCTAssertLessThan(navigation.frame.maxY, alpha.frame.minY + 1, "Tabs are not below the titled navigation bar")
+        XCTAssertTrue(navigation.buttons["worktree.context.open"].exists, "Worktree context is not in the toolbar group")
+        XCTAssertTrue(navigation.buttons["workspace.more"].exists, "Split actions are not in the toolbar's More menu")
         XCTAssertFalse(navigation.buttons["Split Right"].exists, "Split actions still sit directly in the toolbar")
-        XCTAssertFalse(app.buttons.matching(identifier: "worktree.context.open").count > 1, "A second context control remains")
+        XCTAssertEqual(app.buttons.matching(identifier: "worktree.context.open").count, 1, "A second context control remains")
         XCTAssertFalse(app.buttons["terminal.back"].exists, "Back is shown while the sidebar is visible")
-        let drawer = app.buttons["workspace.drawer.toggle"]
-        XCTAssertTrue(drawer.exists)
-        XCTAssertTrue(drawer.label.contains("Terminal"), "Drawer bar is unlabeled: \(drawer.label)")
+        let drawer = navigation.buttons["workspace.drawer.toggle"]
+        XCTAssertTrue(drawer.exists, "The terminal drawer toggle is not in the toolbar group")
+        XCTAssertFalse(app.buttons["workspace.drawer.close"].exists, "A drawer bar shows while the drawer is closed")
+        drawer.tap()
+        XCTAssertTrue(app.buttons["workspace.drawer.close"].waitForExistence(timeout: 5), "The toolbar toggle did not open the drawer")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "iPad workspace identity and controls"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+    }
+
+    /// @spec IPAD-1.32: While an iPad workspace is visible, the application shall show worktree history Back and Forward buttons to the left of the worktree name, enabled only when a visited worktree is available in that direction.
+    func testHistoryButtonsSitLeftOfWorktreeName() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
+        let app = XCUIApplication()
+        app.launchArguments = ["--ipad-workspace-fixture"]
+        app.launch()
+        defer { app.terminate() }
+        let navigation = app.navigationBars["🧭 Workspace"]
+        XCTAssertTrue(navigation.waitForExistence(timeout: 10))
+        let back = navigation.buttons["worktree.history.back"]
+        let forward = navigation.buttons["worktree.history.forward"]
+        let title = navigation.staticTexts["🧭 Workspace"].exists ? navigation.staticTexts["🧭 Workspace"] : navigation.buttons["🧭 Workspace"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5) && forward.exists && title.exists, app.debugDescription)
+        XCTAssertLessThan(back.frame.midX, forward.frame.midX)
+        XCTAssertLessThan(forward.frame.maxX, title.frame.minX + 1, "History buttons are not left of the name")
+        XCTAssertFalse(back.isEnabled, "Back is enabled with no earlier worktree")
+        XCTAssertFalse(forward.isEnabled, "Forward is enabled with no later worktree")
     }
 
     private func checkWorkspaceTabs(orientation: UIDeviceOrientation) {
@@ -53,7 +71,7 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         let beta = app.buttons["workspace.tab.beta"]
         XCTAssertTrue(alpha.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(beta.exists)
-        let navigation = app.navigationBars["Workspace"]
+        let navigation = app.navigationBars["🧭 Workspace"]
         XCTAssertTrue(navigation.waitForExistence(timeout: 5))
         XCTAssertGreaterThanOrEqual(beta.frame.minY, navigation.frame.maxY - 1,
             "Tabs are underneath navigation chrome: \(beta.frame), \(navigation.frame)")
