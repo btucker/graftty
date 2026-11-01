@@ -1517,9 +1517,12 @@ struct IPadDetailColumn: View {
             )
         } else if let host, let worktree = selectedWorktree {
             VStack(spacing: 0) {
+                // IPAD-1.31: on iPadOS 26 the summary is the title's subtitle;
+                // this row then only anchors the wash under the toolbar.
                 IPadWorktreePurposeLine(worktree: worktree,
-                    context: appState.sidebarNavigation.worktreeContext(worktree), theme: appState.theme)
-                    .frame(maxWidth: .infinity, minHeight: 1)
+                    context: appState.sidebarNavigation.worktreeContext(worktree), theme: appState.theme,
+                    usesNavigationSubtitle: IPadWorktreeSubtitle.isAvailable)
+                    .frame(maxWidth: .infinity)
                     .background { Color.clear.worktreeHeaderWash().ignoresSafeArea(edges: .top) }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { identityHeight = $0 }
             MultiPaneDetailView(
@@ -1544,6 +1547,8 @@ struct IPadDetailColumn: View {
             // Inline and centered: a large title would open a scroll-linked
             // gap above the tabs. The watermark already shows the emoji.
             .navigationTitle(worktree.displayName)
+            .modifier(IPadWorktreeSubtitle(text: IPadWorktreeSubtitle.text(for: worktree,
+                context: appState.sidebarNavigation.worktreeContext(worktree))))
             .navigationBarTitleDisplayMode(.inline)
             .toolbarTitleMenu {
                 let overview = MobileWorktreeOverview(worktree: worktree, context: appState.sidebarNavigation.worktreeContext(worktree))

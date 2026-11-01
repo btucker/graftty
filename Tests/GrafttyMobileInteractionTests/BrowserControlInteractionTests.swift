@@ -13,7 +13,7 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         }
     }
 
-    /// @spec IPAD-1.31: While an iPad workspace is visible, the application shall title the navigation bar inline with the worktree's name on its emoji wash, offer its agents from the title menu, keep the summary and tabs directly under the navigation bar, gather Worktree context, previews, the focused pane's browser, the terminal drawer toggle, and split actions in one toolbar group, show no drawer bar while the drawer is closed, and show Back to worktrees only while the sidebar is hidden.
+    /// @spec IPAD-1.31: While an iPad workspace is visible, the application shall title the navigation bar inline with the worktree's name and, on iPadOS 26, its PR and summary as the subtitle, on its emoji wash, offer its agents from the title menu, keep the summary and tabs directly under the navigation bar, gather Worktree context, previews, the focused pane's browser, the terminal drawer toggle, and split actions in one toolbar group, show no drawer bar while the drawer is closed, and show Back to worktrees only while the sidebar is hidden.
     func testWorkspaceLeadsWithIdentityAndOneControlGroup() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
         let app = XCUIApplication()
@@ -26,6 +26,10 @@ final class IPadWorkspaceInteractionTests: XCTestCase {
         let alpha = app.buttons["workspace.tab.alpha"]
         XCTAssertTrue(alpha.waitForExistence(timeout: 5))
         XCTAssertLessThan(navigation.frame.maxY, alpha.frame.minY + 1, "Tabs are not below the titled navigation bar")
+        if #available(iOS 26.0, *) {
+            let subtitle = navigation.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Rethink panes and tabs")).firstMatch
+            XCTAssertTrue(subtitle.exists, "The summary is not the navigation subtitle")
+        }
         XCTAssertLessThan(alpha.frame.minY - navigation.frame.maxY, 30,
             "Empty space pushes the header down: tabs \(alpha.frame) under navigation \(navigation.frame)")
         XCTAssertTrue(navigation.buttons["worktree.context.open"].exists, "Worktree context is not in the toolbar group")
