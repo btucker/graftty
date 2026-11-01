@@ -2,6 +2,50 @@ import UIKit
 import XCTest
 
 @MainActor
+final class IPadWorkspaceInteractionTests: XCTestCase {
+    /// @spec IPAD-2.28: While an iPad workspace is visible, the application shall keep agent tabs below the navigation bar, place pane resource controls alongside the tabs, and allow tab selection to change the focused terminal.
+    func testTabsRemainBelowNavigationAndReceiveTaps() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires iPad navigation chrome")
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for orientation in [UIDeviceOrientation.landscapeLeft, .portrait] {
+            XCUIDevice.shared.orientation = orientation
+            checkWorkspaceTabs(orientation: orientation)
+        }
+    }
+
+    private func checkWorkspaceTabs(orientation: UIDeviceOrientation) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ipad-workspace-fixture"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertEqual(app.frame.width > app.frame.height, orientation.isLandscape)
+        let alpha = app.buttons["workspace.tab.alpha"]
+        let beta = app.buttons["workspace.tab.beta"]
+        XCTAssertTrue(alpha.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(beta.exists)
+        let navigation = app.navigationBars["Workspace"]
+        XCTAssertTrue(navigation.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(beta.frame.minY, navigation.frame.maxY - 1,
+            "Tabs are underneath navigation chrome: \(beta.frame), \(navigation.frame)")
+        beta.tap()
+        XCTAssertEqual(app.staticTexts["workspace.focus"].label, "beta")
+        alpha.tap()
+        XCTAssertEqual(app.staticTexts["workspace.focus"].label, "alpha")
+        let context = app.buttons["worktree.context.open"]
+        XCTAssertTrue(context.waitForExistence(timeout: 5))
+        let header = app.otherElements["workspace.pane.header"]
+        XCTAssertTrue(header.exists)
+        XCTAssertTrue(header.frame.contains(context.frame), "Resource controls cover terminal content")
+        XCTAssertTrue(header.frame.contains(alpha.frame), "Tabs are outside the pane header")
+        XCTAssertGreaterThanOrEqual(context.frame.minY, navigation.frame.maxY - 1)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "iPad workspace chrome and tappable tabs"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+}
+
+@MainActor
 final class RecentPaneInteractionTests: XCTestCase {
     func testBackLongPressJumpsToTheRenderedPaneAndRejectsStaleTargets() {
         let app = XCUIApplication()

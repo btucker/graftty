@@ -106,6 +106,7 @@ struct SingleSessionView: View {
     /// Embedded panes let their shared multi-pane parent manage the keyboard
     /// inset once for the whole split tree.
     let isEmbeddedPane: Bool
+    private let embeddedPaneHeader: AnyView?
     /// Fired from the terminal's UIKit touch observer before focus/input is
     /// attempted, allowing the split tree to select this leaf first.
     let onPaneInteraction: (() -> Void)?
@@ -325,6 +326,7 @@ struct SingleSessionView: View {
         ghosttyCommandContext: MobileGhosttyCommandContext? = nil,
         isPaneFocused: Bool = true,
         isEmbeddedPane: Bool = false,
+        embeddedPaneHeader: AnyView? = nil,
         isTerminalSheet: Bool = false,
         onPaneInteraction: (() -> Void)? = nil,
         onBackToWorktrees: (() -> Void)? = nil,
@@ -348,6 +350,7 @@ struct SingleSessionView: View {
         self.parentPaneFocused = isPaneFocused
         self.isTerminalSheet = isTerminalSheet
         self.isEmbeddedPane = isEmbeddedPane
+        self.embeddedPaneHeader = embeddedPaneHeader
         self.onPaneInteraction = onPaneInteraction
         self.onBackToWorktrees = onBackToWorktrees
         self.fontSizeStore = fontSizeStore
@@ -527,6 +530,17 @@ struct SingleSessionView: View {
 
     private var sessionView: some View {
         VStack(spacing: 0) {
+            if isEmbeddedPane, embeddedPaneHeader != nil || (step.worktreePath != nil && coordinator != nil) {
+                HStack(spacing: 0) {
+                    if let embeddedPaneHeader { embeddedPaneHeader }
+                    else { Spacer(minLength: 0) }
+                    remoteOpenControls
+                }
+                .frame(minHeight: 44)
+                .background(terminalTheme.background)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("workspace.pane.header")
+            }
             if let workspace = compactWorkspace {
                 Text(workspace.displayName).font(.subheadline).lineLimit(1).foregroundStyle(terminalTheme.foreground)
                     .frame(maxWidth: .infinity).padding(.leading, 68).padding(.trailing, 120).frame(height: 64)
@@ -579,16 +593,12 @@ struct SingleSessionView: View {
         // avoidance is unreliable when UITerminalView is the focused
         // responder, so we drive it ourselves.
         .padding(.bottom, isEmbeddedPane ? 0 : max(0, keyboardBottomInset - ((isTerminalSheet || compactWorkspace != nil) ? containerBottomInset : 0)))
-        // IOS-4.8 + IPAD-1.7: fullscreen path bleeds to every edge
-        // (under the notch, home indicator, landscape bands) and hides
-        // the navigation bar so libghostty's background shows through.
-        // The iPad split-column path keeps the navigation bar so its
-        // system sidebar-toggle button stays available, and respects
-        // the column's bounds so the sidebar doesn't visually overlap.
-        .modifier(FullScreenChrome(enabled: isFullScreen, contained: isTerminalSheet || compactWorkspace != nil))
+        // Fullscreen terminals reach the screen edges. Embedded terminals
+        // respect the workspace's header and safe-area boundaries.
+        .modifier(FullScreenChrome(enabled: isFullScreen, contained: isEmbeddedPane || isTerminalSheet || compactWorkspace != nil))
         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { containedContentBottom = $0 }
             .overlay(alignment: .topLeading) {
-                if isFullScreen || (isEmbeddedPane && isPaneFocused && onBackToWorktrees != nil) {
+                if isFullScreen {
                     backButton
                         .modifier(TerminalFloatingControlPlacement())
                 }
@@ -637,20 +647,8 @@ struct SingleSessionView: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if !isTerminalSheet, let worktree = step.worktreePath, let coordinator {
-                    RemoteOpenButton(host: step.host, worktree: worktree, coordinator: coordinator,
-                                     sessionName: step.sessionName,
-                                     ownerDeviceID: client?.isOwner == true ? coordinator.localDeviceID : nil,
-                                     isActive: isPaneFocused && scenePhase == .active && gate?.state == .unlocked && connection == .live,
-                                     managementTransport: previewManagementTransport,
-                                     browserConnectionReady: connection == .live,
-                                     isPaneFocused: isPaneFocused,
-                                     hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
-                                     onOpenTerminal: compactWorkspace.map { workspace in { openCompactTerminal(in: workspace) } },
-                                     isPaneOwner: { client?.isOwner == true },
-                                     canPresentAuthentication: { true },
-                                     terminalRequest: $terminalBrowserRequest)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { floatingControlsHeight = $0 }
+                if !isEmbeddedPane {
+                    remoteOpenControls
                         .modifier(TerminalFloatingControlPlacement())
                         .padding(.trailing, 12)
                 }
@@ -1248,6 +1246,26 @@ struct SingleSessionView: View {
         }
     }
 
+    @ViewBuilder
+    private var remoteOpenControls: some View {
+        if !isTerminalSheet, let worktree = step.worktreePath, let coordinator {
+            RemoteOpenButton(host: step.host, worktree: worktree, coordinator: coordinator,
+                sessionName: step.sessionName,
+                ownerDeviceID: client?.isOwner == true ? coordinator.localDeviceID : nil,
+                isActive: isPaneFocused && scenePhase == .active && gate?.state == .unlocked && connection == .live,
+                managementTransport: previewManagementTransport,
+                browserConnectionReady: connection == .live,
+                isPaneFocused: isPaneFocused,
+                hasOwnershipSnapshot: client?.ownershipSnapshot != nil,
+                onOpenTerminal: compactWorkspace.map { workspace in { openCompactTerminal(in: workspace) } },
+                isPaneOwner: { client?.isOwner == true },
+                canPresentAuthentication: { true },
+                terminalRequest: $terminalBrowserRequest)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { floatingControlsHeight = $0 }
+                .fixedSize(horizontal: isEmbeddedPane, vertical: isEmbeddedPane)
+        }
+    }
+
     /// Followers scale an authoritative canvas; owners use the physical viewport.
     @ViewBuilder
     private var terminalContent: some View {
@@ -1271,7 +1289,7 @@ struct SingleSessionView: View {
             session: client.session,
             controller: controller,
             authoritativeGrid: client.snapshotCanvasGrid,
-            reservesTopChromeSpace: !isTerminalSheet && compactWorkspace == nil,
+            reservesTopChromeSpace: !isEmbeddedPane && !isTerminalSheet && compactWorkspace == nil,
             showsAdditionalHistory: true,
             pendingFocusRequests:
                 max(0, focusRequestCount - consumedFocusRequestCount)
@@ -1521,18 +1539,8 @@ struct SingleSessionView: View {
     }
 }
 
-/// Two distinct chrome behaviors composed into one modifier:
-/// * Edge-to-edge bleed (`.ignoresSafeArea`) is on for BOTH paths — the
-///   terminal fills the entire detail column (and entire screen on
-///   iPhone), matching the Mac sidebar's title-bar-hidden look. Without
-///   this on iPad the nav bar carves ~44pt off the top and the home
-///   indicator carves ~25pt off the bottom, making the terminal short.
-/// * Hiding the navigation bar (`.toolbar(.hidden, …)`) is iPhone-only.
-///   The iPad split-column path keeps the nav bar present but
-///   transparent (`.toolbarBackground(.hidden, …)`) so the system's
-///   sidebar-toggle button floats over the terminal — like the Mac
-///   sidebar toggle floats next to the traffic lights — without
-///   stealing height from the terminal.
+/// Fullscreen routes fill the screen. Contained routes, including embedded
+/// iPad panes, respect the header and safe-area bounds supplied by their parent.
 private struct FullScreenChrome: ViewModifier {
     let enabled: Bool
     var contained = false
@@ -1545,11 +1553,8 @@ private struct FullScreenChrome: ViewModifier {
                 .toolbar(.hidden, for: .navigationBar)
         } else {
             content
-                // IPAD-1.10: top/bottom edges only — the terminal
-                // extends under the navigation bar and home indicator
-                // but stays within the column's horizontal bounds so
-                // the sidebar shifts the terminal rather than
-                // overlapping it.
+                // Standalone regular-width routes keep their edge-to-edge
+                // presentation; embedded workspaces use the contained branch.
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
                 .toolbarBackground(.hidden, for: .navigationBar)
         }

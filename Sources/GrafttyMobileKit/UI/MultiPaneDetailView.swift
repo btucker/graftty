@@ -92,8 +92,8 @@ struct MultiPaneDetailView: View {
             return AnyView(
                 GeometryReader { geometry in
                     VStack(spacing: 0) {
-                        if let group = currentWorkspace.group(containing: sessionName) { tabHeader(group) }
                         if let agent = worktree.agents?.first(where: { $0.presentationSessionName == sessionName && $0.isCompleted }) {
+                            if let group = currentWorkspace.group(containing: sessionName) { tabHeader(group) }
                             MobileAgentConversationView(host: host, worktreePath: worktree.path, agent: agent)
                                 .onTapGesture { onSelectPane(sessionName) }
                         } else {
@@ -113,7 +113,8 @@ struct MultiPaneDetailView: View {
                                 onSelectPane(sessionName)
                             },
                             onBackToWorktrees: onBackToWorktrees,
-                            retainedPanes: retainedPanes
+                            retainedPanes: retainedPanes,
+                            paneHeader: currentWorkspace.group(containing: sessionName).map { AnyView(tabHeader($0)) }
                         )
                         .id(sessionName)
                         }
@@ -192,6 +193,7 @@ struct MultiPaneDetailView: View {
                                     .frame(height: 2)
                             }
                     }.buttonStyle(.plain)
+                        .accessibilityIdentifier("workspace.tab.\(session)")
                         .draggable(WorkspaceTabDrag(session))
                         .modifier(WorkspaceTabDropTarget { source, after in
                             let sameGroup = currentWorkspace.group(containing: source)?.id == group.id
@@ -376,6 +378,7 @@ private struct MultiPaneLeafView: View {
     let onSelect: () -> Void
     let onBackToWorktrees: () -> Void
     let retainedPanes: RetainedPaneClientPool<RetainedMobilePane>?
+    var paneHeader: AnyView? = nil
 
     @State private var unusedNavigationPath = NavigationPath()
 
@@ -394,6 +397,7 @@ private struct MultiPaneLeafView: View {
             ghosttyCommandContext: ghosttyCommandContext,
             isPaneFocused: isFocused,
             isEmbeddedPane: true,
+            embeddedPaneHeader: paneHeader,
             onPaneInteraction: onSelect,
             onBackToWorktrees: onBackToWorktrees,
             retainedPanes: retainedPanes

@@ -341,9 +341,10 @@ struct IPadRootLayoutSelectionTests {
         let split = SingleSessionView(
             step: step,
             navigationPath: .constant(NavigationPath()),
-            isFullScreen: false
+            isFullScreen: false, isEmbeddedPane: true
         )
         #expect(split.isFullScreen == false)
+        #expect(split.isEmbeddedPane)
 
         // iPhone compact path keeps the existing default (fullscreen).
         let compact = SingleSessionView(
@@ -416,20 +417,18 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.10: While `IPadRootLayout` is presented, the detail column's `.ignoresSafeArea(...)` shall be restricted to `[.top, .bottom]` edges so the terminal extends under the navigation bar and home indicator but never bleeds across the leading column boundary into the sidebar's region — the sidebar shifts the terminal horizontally rather than overlapping it.
+@spec IPAD-1.10: While the iPad workspace is presented, the application shall respect the top and horizontal safe-area boundaries, extending only beneath the bottom home indicator so navigation controls cannot cover tabs or overlap the sidebar.
 """)
     func ipad_1_10_terminalRespectsColumnHorizontalBounds() {
-        // The actual edge set lives inside SingleSessionView's
-        // FullScreenChrome modifier; smoke-check the existence of the
-        // isFullScreen=false code path it gates so a future refactor
-        // that flips the default tickles this test.
+        // Embedded panes let their workspace own the container boundaries.
         let host = sampleHost()
         let split = SingleSessionView(
             step: SessionStep(host: host, sessionName: "s", title: "s"),
             navigationPath: .constant(NavigationPath()),
-            isFullScreen: false
+            isFullScreen: false, isEmbeddedPane: true
         )
         #expect(split.isFullScreen == false)
+        #expect(split.isEmbeddedPane)
     }
 
     @Test("""

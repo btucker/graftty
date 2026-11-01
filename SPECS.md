@@ -2570,7 +2570,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.9** The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the shared `WorktreePanes(entry:repo:inputs:)` projection in GrafttyKit, also used by the published Mac and Linux snapshots) and the iPad sidebar (received from the authenticated panes-state channel) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
 
-**IPAD-1.10** While `IPadRootLayout` is presented, the detail column's `.ignoresSafeArea(...)` shall be restricted to `[.top, .bottom]` edges so the terminal extends under the navigation bar and home indicator but never bleeds across the leading column boundary into the sidebar's region — the sidebar shifts the terminal horizontally rather than overlapping it.
+**IPAD-1.10** While the iPad workspace is presented, the application shall respect the top and horizontal safe-area boundaries, extending only beneath the bottom home indicator so navigation controls cannot cover tabs or overlap the sidebar.
 
 **IPAD-1.11** When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, any pane leaf with `attentionText`, or an unseen agent stop), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each authenticated panes-state snapshot.
 
@@ -2628,7 +2628,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.7** When the user drags an iPad workspace divider, the application shall persist the ratio in its device-local split tree without sending an RPC to the host or resetting the ratio when tabs change.
 
-**IPAD-2.8** While the regular-width iPad detail is visible, the application shall extend the terminal tree to the top and bottom detail-column edges beneath transparent navigation chrome, keeping split controls over the panes and respecting the sidebar boundary.
+**IPAD-2.8** While the regular-width iPad detail is visible, the application shall keep workspace tabs and terminals below navigation chrome, extend the terminal tree to the bottom detail-column edge, and respect the sidebar boundary.
 
 **IPAD-2.9** While the iPad detail toolbar offers Split Left, Split Right, Split Up, and Split Down, each button shall use a directional inset-filled rectangle whose filled half indicates where the new pane will be created, matching the Mac terminal context menu rather than using one indistinguishable axis-only icon per opposing pair.
 
@@ -2667,6 +2667,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-2.26** While a compact agent workspace shows the software keyboard, the application shall keep the terminal and its key accessory bar above the keyboard.
 
 **IPAD-2.27** While a compact agent workspace is shown, the application shall open its shells from a Terminal button in the top-right controls instead of a bottom bar.
+
+**IPAD-2.28** While an iPad workspace is visible, the application shall keep agent tabs below the navigation bar, place pane resource controls alongside the tabs, and allow tab selection to change the focused terminal.
 
 ### IPAD-3.x — Focused-Pane Toolbar
 

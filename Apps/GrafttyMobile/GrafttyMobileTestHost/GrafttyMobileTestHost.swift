@@ -23,6 +23,8 @@ struct GrafttyMobileTestHost: App {
             #if GRAFTTY_BROWSER_CONTROL_FIXTURE
             if let endpoint = Self.agentIntegrationEndpoint {
                 AgentIntegrationFixture(endpoint: endpoint).ignoresSafeArea()
+            } else if ProcessInfo.processInfo.arguments.contains("--ipad-workspace-fixture") {
+                IPadWorkspaceFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--recent-panes-fixture") {
                 RecentPaneFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--worktree-overview-fixture") {
@@ -47,7 +49,7 @@ struct GrafttyMobileTestHost: App {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--agent-integration-url"),
               arguments.indices.contains(index + 1) else {
-            if arguments.contains(where: ["--recent-panes-fixture", "--context-fixture", "--worktree-overview-fixture", "--scrollback-fixture",
+            if arguments.contains(where: ["--ipad-workspace-fixture", "--recent-panes-fixture", "--context-fixture", "--worktree-overview-fixture", "--scrollback-fixture",
                 "--image-controls-fixture", "--browser-control-fixture"].contains) { return nil }
             // A notification launches the executable through Springboard,
             // which does not retain XCUIApplication's launch arguments.
@@ -59,6 +61,49 @@ struct GrafttyMobileTestHost: App {
 }
 
 #if GRAFTTY_BROWSER_CONTROL_FIXTURE
+/// Actual iPad workspace chrome and tab routing, without live remote dialing.
+@MainActor
+private struct IPadWorkspaceFixture: View {
+    private let host = Host(label: "Studio", baseURL: URL(string: "https://fixture.invalid")!)
+    @State private var state = IPadAppState(defaults: UserDefaults(suiteName: "ipad-workspace-fixture-\(UUID())")!)
+    @State private var coordinator = RemoteConnectionCoordinator()
+
+    private var row: WorktreePanes {
+        WorktreePanes(path: "/repo/workspace", displayName: "Workspace", repoDisplayName: "Project", displayBranch: "workspace",
+            state: .running, isMainCheckout: false, prBadge: nil, stats: nil, attentionText: nil,
+            layout: .split(direction: .horizontal, ratio: 0.5,
+                left: .leaf(sessionName: "alpha", title: "Agent Alpha", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: .leaf(sessionName: "beta", title: "Agent Beta", attentionText: nil, isBusy: false, attentionSource: nil)),
+            agents: [.init(id: "alpha", name: "Alpha", provider: "codex", status: "running", sessionName: "alpha"),
+                     .init(id: "beta", name: "Beta", provider: "claude", status: "running", sessionName: "beta")])
+    }
+
+    var body: some View {
+        NavigationSplitView(columnVisibility: .constant(.all)) {
+            Text("Worktrees").navigationTitle("Studio")
+        } detail: {
+            IPadDetailColumn(host: host, appState: state, paneEnvironment: .empty,
+                ghosttyCommandContext: .init(keybindingSet: .loading, perform: { _ in }, isEnabled: { _ in false }),
+                onSelectPane: { state.focusedPaneId = $0 }, onBackToWorktrees: {})
+                .navigationTitle("Workspace")
+                .navigationBarTitleDisplayMode(.inline)
+                .overlay(alignment: .bottom) {
+                    Text(state.focusedPaneId ?? "none").accessibilityIdentifier("workspace.focus")
+                        .allowsHitTesting(false)
+                }
+        }
+        .environment(\.remoteConnectionCoordinator, coordinator)
+        .environment(\.scenePhase, .inactive)
+        .preferredColorScheme(state.theme.isDark ? .dark : .light)
+        .onAppear {
+            state.selectedHostId = host.id
+            state.latestWorktrees = [row]
+            state.selectedWorktreePath = row.path
+            state.focusedPaneId = "alpha"
+        }
+    }
+}
+
 /// The phone worktree screen with agents in every state. No live dialing.
 private struct WorktreeOverviewFixture: View {
     private let host = Host(label: "Studio", baseURL: URL(string: "https://fixture.invalid")!)

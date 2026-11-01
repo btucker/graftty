@@ -35,6 +35,7 @@
 		2D3C47A34609032BE35CA28C /* LayoutPassProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = C275A4CDA39513788E94B0D3 /* LayoutPassProbe.swift */; };
 		2E0CFFB9E0E69D41C1FBC731 /* ManualArrowRepeat.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9CEC239FCCBA4AC6A3821EF /* ManualArrowRepeat.swift */; };
 		2E416266017DFF6D47BFED05 /* BiometricGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */; };
+		308DC5C40B4DB2544EE10FA0 /* MobileWorktreeOverviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ADB6337BD3585A404C46BCF /* MobileWorktreeOverviewTests.swift */; };
 		3138F25737D902148EBC6862 /* IPadRootLayoutLandscapeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EBD33190F7D4128236D0E28 /* IPadRootLayoutLandscapeTests.swift */; };
 		31A39FFB7D40A491E8A3C29A /* PanesStateConvergenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA9EBD5ED690FBE824B636C /* PanesStateConvergenceTests.swift */; };
 		36F9EE595E8FE68C58278823 /* NotificationActivationInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0C9F40CA1705BE958A4E12D /* NotificationActivationInteraction.swift */; };
@@ -203,6 +204,7 @@
 		467A322DC90A1B2460F86C93 /* WorktreeListContentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeListContentTests.swift; sourceTree = "<group>"; };
 		4725DB60C50A64BC035E70BB /* IPadRootLayoutSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadRootLayoutSelectionTests.swift; sourceTree = "<group>"; };
 		4A52344F5699042983845BC7 /* MultiPaneDetailViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiPaneDetailViewTests.swift; sourceTree = "<group>"; };
+		4ADB6337BD3585A404C46BCF /* MobileWorktreeOverviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileWorktreeOverviewTests.swift; sourceTree = "<group>"; };
 		4C20F753EEFB0BD18AB559A7 /* AgentIntegrationFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentIntegrationFixture.swift; sourceTree = "<group>"; };
 		4DDBE5B8D50AFB2EA47A9AB0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		51649842CE2E7ACBA47F9ACA /* IPadWorktreeNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadWorktreeNavigationTests.swift; sourceTree = "<group>"; };
@@ -465,6 +467,7 @@
 				863BD16B62BADBF8744D136F /* MobileContextDrawerTests.swift */,
 				E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */,
 				9377D70188ACFF721C4E9E7D /* MobileWorktreeCreationTests.swift */,
+				4ADB6337BD3585A404C46BCF /* MobileWorktreeOverviewTests.swift */,
 				D2375604B734A298A34CED68 /* MobileWorktreePresentationTests.swift */,
 				4A52344F5699042983845BC7 /* MultiPaneDetailViewTests.swift */,
 				C87848F72F811BF6F1CB9191 /* NativeFilePreviewTests.swift */,
@@ -952,6 +955,7 @@
 				F327256B4234BF3007D4CF13 /* MobileStopNotificationTests.swift in Sources */,
 				1151FA2347FE21D01BA9CED4 /* MobileTerminalTeardownTests.swift in Sources */,
 				5C51050F0E3E12F9DD2BB26B /* MobileWorktreeCreationTests.swift in Sources */,
+				308DC5C40B4DB2544EE10FA0 /* MobileWorktreeOverviewTests.swift in Sources */,
 				1369BAD2AA61E6DE756B5A3C /* MobileWorktreePresentationTests.swift in Sources */,
 				FBA39AD9402E9419991768C0 /* MultiPaneDetailViewTests.swift in Sources */,
 				4DEC9D1F8FA408618FE8EFB4 /* NativeFilePreviewTests.swift in Sources */,
@@ -1058,6 +1062,7 @@
 				INFOPLIST_FILE = GrafttyMobileTestHost/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1392,6 +1397,7 @@
 				INFOPLIST_FILE = GrafttyMobileTestHost/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

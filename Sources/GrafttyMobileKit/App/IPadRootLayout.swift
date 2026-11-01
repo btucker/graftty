@@ -1365,12 +1365,11 @@ private struct HostMenu: View {
     }
 }
 
-/// @spec IPAD-2.8: While the regular-width iPad detail is visible, the application shall extend the terminal tree to the top and bottom detail-column edges beneath transparent navigation chrome, keeping split controls over the panes and respecting the sidebar boundary.
+/// @spec IPAD-2.8: While the regular-width iPad detail is visible, the application shall keep workspace tabs and terminals below navigation chrome, extend the terminal tree to the bottom detail-column edge, and respect the sidebar boundary.
 struct IPadTerminalDetailChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .ignoresSafeArea(.container, edges: [.top, .bottom])
-            .toolbarBackground(.hidden, for: .navigationBar)
+            .ignoresSafeArea(.container, edges: .bottom)
     }
 }
 
@@ -1403,6 +1402,13 @@ struct IPadDetailColumn: View {
             }))
             .modifier(IPadTerminalDetailChrome())
             .toolbar {
+                if selectedWorktree != nil {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(action: onBackToWorktrees) { Image(systemName: "chevron.left") }
+                            .accessibilityLabel("Back to worktrees")
+                            .accessibilityIdentifier("terminal.back")
+                    }
+                }
                 if let host, let worktree = selectedWorktree {
                     ToolbarItem(placement: .topBarTrailing) { WorktreePreviewMenu(host: host, worktree: worktree.path) }
                 }
