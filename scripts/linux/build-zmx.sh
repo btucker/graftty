@@ -84,7 +84,7 @@ zig_build_with_download_retry() {
     echo "Zmx compile and test: $((SECONDS - started)) seconds"
     started=$SECONDS
     zig_build_with_download_retry build -j2 "-Dtarget=$arch-linux-musl" -Doptimize=ReleaseSafe \
-        "-Dversion=$version-g${commit:0:7}-graftty8" --prefix "$stage/install" --summary all
+        "-Dversion=$version-g${commit:0:7}-graftty9" --prefix "$stage/install" --summary all
     echo "Zmx ReleaseSafe build: $((SECONDS - started)) seconds"
 )
 mkdir -p "$(dirname "$output")"
