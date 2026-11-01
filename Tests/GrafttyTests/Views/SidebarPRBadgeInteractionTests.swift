@@ -9,6 +9,45 @@ import GrafttyKit
 @Suite("Sidebar PR/MR badge interaction", .serialized)
 @MainActor
 struct SidebarPRBadgeInteractionTests {
+    @Test func mergedRemovalClickUsesOwningWindowWithoutSelectingRow() async throws {
+        let worktree = WorktreeEntry(path: "/repo/.worktrees/merged", branch: "merged", state: .running)
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [worktree])
+        var selections = 0
+        var removalWindow: NSWindow?
+        let hosting = NSHostingView(rootView: WorktreeBlock(
+            worktree: worktree, repoID: repo.id, isActive: false, isDropTarget: false,
+            groupsPanes: false, theme: .fallback, appState: .constant(AppState(repos: [repo])),
+            reorderingEnabled: true, onSelect: { selections += 1 }, onMovePane: { _, _ in },
+            onPaneTargeted: { _ in }, menu: { _ in NSMenu() }
+        ) {
+            WorktreeRow(entry: worktree, isActive: false, displayName: "merged", isMainCheckout: false,
+                theme: .fallback, stats: nil, baseRef: nil,
+                prBadge: .init(number: 806, state: .merged, checks: .success,
+                    url: URL(string: "https://github.com/btucker/graftty/pull/806")!),
+                attentionStyle: nil, onRemove: { removalWindow = $0 })
+        } panes: { EmptyView() })
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 320, height: 44),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(100))
+        hosting.layoutSubtreeIfNeeded()
+        func findButton(_ view: NSView) -> SidebarRemoveWorktreeButtonView? {
+            if let button = view as? SidebarRemoveWorktreeButtonView { return button }
+            return view.subviews.lazy.compactMap(findButton).first
+        }
+        let button = try #require(findButton(hosting))
+        let overlay = try #require(findDragView(in: hosting))
+        let location = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        let point = try #require(overlay.superview).convert(location, from: nil)
+        let event = try NSEvent.syntheticClick(.leftMouseDown, at: location, in: window)
+        #expect(overlay.hitTest(point, event: event) == nil, "Removal must bypass the worktree selection overlay")
+        button.performClick(nil)
+        #expect(removalWindow === window)
+        #expect(selections == 0)
+    }
+
     @Test("@spec PR-3.3: When the user clicks a forge-specific PR/MR reference sidebar badge, the application shall open its URL in the system browser without triggering the row's worktree-selection action.", arguments: [
         "https://github.com/btucker/graftty/pull/5000",
         "https://gitlab.corp.example/team/graftty/-/merge_requests/5000"

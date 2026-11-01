@@ -536,7 +536,8 @@ struct RemoteMacsSection: View {
             attentionCount: max(0, counts.attentionByWorktree[worktree.path, default: 0]
                 - agentLeaves.reduce(0) { $0 + counts.attentionByPane[$1.sessionName, default: 0] }),
             project: project, projectIconData: projectIcons[projectID],
-            brief: context.brief
+            brief: context.brief,
+            onRemove: { _ in onDeleteRemoteWorktree(remoteMac, worktree) }
         )
         .frame(minHeight: 24)
         .contentShape(Rectangle())
@@ -547,7 +548,7 @@ struct RemoteMacsSection: View {
                         onSelectRemoteWorktree(remoteMac, worktree.path)
                     } label: {
                         PaneTitleRow(
-                            title: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.name ?? leaf.title,
+                            title: SidebarAgentTitle.display(terminalTitle: leaf.title, agentName: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.name),
                             isActiveWorktree: isActive,
                             isFocusedPane: false,
                             isBusy: leaf.isBusy,

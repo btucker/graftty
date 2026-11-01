@@ -2,6 +2,15 @@ import Testing
 @testable import GrafttyProtocol
 
 struct SidebarAgentPresentationTests {
+    @Test("@spec LAYOUT-2.188: While a live agent is listed in the sidebar, the application shall use its current terminal title and fall back to its assignment name only when the terminal title is blank.")
+    func liveTitleTakesPrecedence() {
+        #expect(SidebarAgentTitle.display(terminalTitle: "Investigating focus", agentName: "Review") == "Investigating focus")
+        #expect(SidebarAgentTitle.display(terminalTitle: "Tests passing", agentName: "Review") == "Tests passing")
+        #expect(SidebarAgentTitle.display(terminalTitle: "", agentName: "Review") == "Review")
+        #expect(SidebarAgentTitle.display(terminalTitle: " \n", agentName: "Review") == "Review")
+        #expect(SidebarAgentTitle.display(terminalTitle: "Legacy title", agentName: nil) == "Legacy title")
+    }
+
     @Test("@spec LAYOUT-2.178: While a worktree is shown in the sidebar, the application shall list only its live agent sessions with provider identity and retain ordinary terminals in the complete workspace inventory.")
     func sidebarOmitsShellsAndClosedAgents() {
         let leaves: [PaneLayoutNode] = ["shell", "codex", "claude", "closed"].map {

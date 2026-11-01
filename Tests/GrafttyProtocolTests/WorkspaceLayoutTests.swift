@@ -3,6 +3,54 @@ import Testing
 @testable import GrafttyProtocol
 
 struct WorkspaceLayoutTests {
+    @Test("@spec LAYOUT-2.186: When an agent tab is dragged before or after another tab in its group, the application shall persist the new order without changing selected sessions, keyboard focus, or terminal identities.")
+    func reorderTabsKeepsSelection() throws {
+        var layout = WorkspaceLayout<String>()
+        for session in ["a", "b", "c", "other"] { layout.addAgent(session) }
+        let group = try #require(layout.groups.first?.id)
+        layout.split("other", beside: group, edge: .right)
+        layout.select("b")
+        layout.addTerminal("shell"); layout.select("shell")
+        let before = layout
+        let movedLast = layout.moveTab("a", relativeTo: "c", after: true)
+        #expect(movedLast)
+        #expect(layout.group(containing: "a")?.sessions == ["b", "c", "a"])
+        let movedFirst = layout.moveTab("a", relativeTo: "b", after: false)
+        #expect(movedFirst)
+        #expect(layout.group(containing: "a")?.sessions == ["a", "b", "c"])
+        let movedSelected = layout.moveTab("b", relativeTo: "c", after: true)
+        #expect(movedSelected)
+        #expect(layout.group(containing: "a")?.sessions == ["a", "c", "b"])
+        #expect(layout.groups.map(\.selected) == before.groups.map(\.selected))
+        #expect(layout.focusedSession == before.focusedSession)
+        #expect(layout.lastAgent == before.lastAgent)
+        #expect(layout.terminals == before.terminals)
+        #expect(layout.selectedTerminal == before.selectedTerminal)
+        #expect(layout.root == before.root)
+        layout.reconcile(live: ["a", "b", "c", "other", "shell"], agents: ["a", "b", "c", "other"], preservingSelection: true)
+        let restored = try JSONDecoder().decode(WorkspaceLayout<String>.self, from: JSONEncoder().encode(layout))
+        #expect(restored == layout)
+        #expect(restored.group(containing: "b")?.sessions == ["a", "c", "b"])
+    }
+
+    @Test func tabDropTransfersAcrossGroupsAndRejectsStaleTargets() throws {
+        var layout = WorkspaceLayout<String>()
+        for session in ["a", "b", "c"] { layout.addAgent(session) }
+        let group = try #require(layout.groups.first?.id)
+        layout.split("c", beside: group, edge: .right)
+        let transferred = layout.moveTab("c", relativeTo: "b", after: false)
+        #expect(transferred)
+        #expect(layout.groups.count == 1)
+        #expect(layout.groups[0].sessions == ["a", "c", "b"])
+        #expect(layout.groups[0].selected == "c")
+        let before = layout
+        let missingSource = layout.moveTab("absent", relativeTo: "a", after: true)
+        let missingTarget = layout.moveTab("a", relativeTo: "absent", after: true)
+        let sameTab = layout.moveTab("a", relativeTo: "a", after: true)
+        #expect(!missingSource && !missingTarget && !sameTab)
+        #expect(layout == before)
+    }
+
     @Test("@spec AGENT-6.142: When a completed tab is dismissed before its terminal is cleaned up, the application shall preserve that dismissal across inventory updates and allow explicit reopening.")
     func dismissedCompletionStaysDismissed() throws {
         var layout = WorkspaceLayout<String>()

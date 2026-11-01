@@ -55,19 +55,25 @@ struct RemoteWorkspaceContentView: View {
                     }, onResizeEnd: { drawerResizeStart = nil })
                 }
                 HStack {
-                    Button(action: toggleDrawer) { Label("Terminal", systemImage: "terminal") }
+                    Button(action: toggleDrawer) { Label("Terminal", systemImage: "terminal").labelStyle(.iconOnly) }
+                        .help(layout.drawerVisible ? "Hide terminal" : "Show terminal")
                     if layout.drawerVisible {
-                        Menu(layout.selectedTerminal.map(title) ?? "No terminals") {
-                            ForEach(layout.terminals, id: \.self) { session in
-                                Menu(title(session)) {
-                                    Button("Select") { select(session) }
-                                    ForEach(layout.groups) { group in
-                                        Button("Move to \(title(group.selected)) tabs") { workspace?.move(session, to: group.id); select(session) }
-                                        Button("Split beside \(title(group.selected))") { workspace?.split(session, beside: group.id, edge: .right); select(session) }
-                                    }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 4) {
+                                ForEach(layout.terminals, id: \.self) { session in
+                                    Button { select(session) } label: {
+                                        Text(title(session)).lineLimit(1).padding(.horizontal, 8).frame(height: 30)
+                                            .workspaceTabUnderline(selected: layout.selectedTerminal == session, color: terminalManager.theme.foreground)
+                                    }.draggable(WorkspaceTabDrag(session))
+                                        .contextMenu {
+                                            ForEach(layout.groups) { group in
+                                                Button("Move to \(title(group.selected)) tabs") { workspace?.move(session, to: group.id); select(session) }
+                                                Button("Split beside \(title(group.selected))") { workspace?.split(session, beside: group.id, edge: .right); select(session) }
+                                            }
+                                        }
                                 }
                             }
-                        }.menuStyle(.borderlessButton).fixedSize().draggable(layout.selectedTerminal ?? "")
+                        }.fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                     Button(action: newTerminal) { Image(systemName: "plus") }.help("New terminal")
@@ -217,8 +223,8 @@ struct RemoteWorkspaceContentView: View {
 
     private func dropTarget(_ id: PaneSlotID, content: AnyView) -> some View {
         GeometryReader { geometry in
-            content.dropDestination(for: String.self) { sessions, location in
-                guard let session = sessions.first, layout.sessions.contains(session),
+            content.dropDestination(for: WorkspaceTabDrag.self) { sessions, location in
+                guard let session = sessions.first?.session, layout.sessions.contains(session),
                       let group = layout.groups.first(where: { slot($0.selected) == id }) else { return false }
                 if let edge = WorkspaceLayout<String>.dropEdge(x: location.x, y: location.y,
                     width: geometry.size.width, height: geometry.size.height) {
@@ -253,7 +259,11 @@ struct RemoteWorkspaceContentView: View {
                                     Rectangle().fill(group.selected == session ? terminalManager.theme.foreground.opacity(0.55) : .clear)
                                         .frame(height: 2)
                                 }
-                        }.buttonStyle(.plain).draggable(session)
+                        }.buttonStyle(.plain).draggable(WorkspaceTabDrag(session))
+                            .modifier(WorkspaceTabDropTarget { source, after in
+                                let sameGroup = layout.group(containing: source)?.id == group.id
+                                if workspace?.moveTab(source, relativeTo: session, after: after) == true && !sameGroup { select(source) }
+                            })
                             .contextMenu {
                                 ForEach(WorkspaceLayout<String>.Edge.allCases, id: \.rawValue) { edge in
                                     Button("Split \(edge.rawValue)") { workspace?.split(session, beside: group.id, edge: edge); select(session) }
@@ -277,8 +287,8 @@ struct RemoteWorkspaceContentView: View {
                     }
                 }
             }.font(.system(size: 13))
-                .dropDestination(for: String.self) { sessions, _ in
-                    guard let session = sessions.first, layout.sessions.contains(session) else { return false }
+                .dropDestination(for: WorkspaceTabDrag.self) { sessions, _ in
+                    guard let session = sessions.first?.session, layout.sessions.contains(session) else { return false }
                     workspace?.move(session, to: group.id); select(session); return true
                 }
         }

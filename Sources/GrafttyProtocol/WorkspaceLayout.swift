@@ -146,6 +146,20 @@ public struct WorkspaceLayout<Session: Hashable & Codable & Sendable>: Codable, 
         lastAgent = session
     }
 
+    @discardableResult
+    public mutating func moveTab(_ session: Session, relativeTo target: Session, after: Bool) -> Bool {
+        guard session != target, sessions.contains(session),
+              let destination = group(containing: target)?.id else { return false }
+        // Reordering inside a group must not select a background tab or
+        // disturb focus in another pane or the terminal drawer.
+        if group(containing: session)?.id != destination { move(session, to: destination) }
+        guard let index = groups.firstIndex(where: { $0.id == destination }) else { return false }
+        groups[index].sessions.removeAll { $0 == session }
+        guard let targetIndex = groups[index].sessions.firstIndex(of: target) else { return false }
+        groups[index].sessions.insert(session, at: targetIndex + (after ? 1 : 0))
+        return true
+    }
+
     public mutating func moveToDrawer(_ session: Session) {
         guard sessions.contains(session) else { return }
         remove(session)

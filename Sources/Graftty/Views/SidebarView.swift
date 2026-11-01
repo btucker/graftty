@@ -830,7 +830,8 @@ struct SidebarView: View {
                 WorktreeEmojiMenu.build(hasEmoji: worktree.emoji != nil,
                                         onChange: { editWorktreeEmoji(worktree, anchoredTo: anchor) },
                                         onClear: { SidebarHostNavigation.clearEmoji(worktreeID: worktree.id, in: &appState.repos) })
-            }
+            },
+            onRemove: { window in onDeleteWorktree(worktree.path, window) }
         )
         .frame(minHeight: 24)
         .overlay(alignment: .trailing) {
@@ -841,7 +842,8 @@ struct SidebarView: View {
             let sessionName = worktree.paneSessions[terminalID]
                 .map(ZmxLauncher.sessionName(for:))
             return PaneTitleRow(
-                title: worktree.agents.first { $0.presentationSlotID == terminalID }?.name ?? terminalManager.displayTitle(for: terminalID),
+                title: SidebarAgentTitle.display(terminalTitle: terminalManager.displayTitle(for: terminalID),
+                    agentName: worktree.agents.first { $0.presentationSlotID == terminalID }?.name),
                 isActiveWorktree: isActive,
                 isFocusedPane: false,
                 isBusy: AgentLivenessMerge.isPaneBusy(

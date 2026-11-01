@@ -14,8 +14,14 @@ public struct AgentStatusBadge: View {
     }
 
     public var body: some View {
-        Label(status.label, systemImage: failure == nil ? status.systemImage : "exclamationmark.triangle")
-            .labelStyle(.iconOnly)
+        Group {
+            if status == .running && failure == nil {
+                ProgressView().controlSize(.mini).frame(width: 12, height: 12)
+            } else {
+                Label(status.label, systemImage: failure == nil ? status.systemImage : "exclamationmark.triangle")
+                    .labelStyle(.iconOnly)
+            }
+        }
             .foregroundStyle(status == .failed || status == .waiting || failure != nil ? Color.orange : Color.secondary)
             .help(failure.map { "\(status.label): \($0)" } ?? status.label)
             .accessibilityLabel(failure.map { "\(status.label): \($0)" } ?? status.label)

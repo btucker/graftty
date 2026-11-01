@@ -24,6 +24,7 @@ struct WorktreeBlock: View {
     let onSelect: () -> Void
     let onSelectPane: (PaneLayoutNode.Leaf) -> Void
     let onReport: () -> Void
+    var onRemove: (() -> Void)? = nil
 
     var body: some View {
         // IPAD-1.13: pack the worktree row + its pane rows into a
@@ -92,9 +93,18 @@ struct WorktreeBlock: View {
         } else {
             HStack(spacing: 0) {
                 MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) { rowIdentity }
-                MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
-                    DivergenceGutter(stats: worktree.stats, theme: theme)
-                        .frame(minHeight: 24)
+                if let onRemove, SidebarMergedWorktreeRemoval.isAvailable(
+                    prState: worktree.prBadge?.state, isMainCheckout: worktree.isMainCheckout, state: worktree.state) {
+                    Button(action: onRemove) {
+                        Image(systemName: "trash").frame(width: 44, height: 44)
+                    }.buttonStyle(.borderless)
+                        .foregroundStyle(theme?.sidebarSecondaryText ?? .secondary)
+                        .accessibilityLabel("Remove worktree \(worktree.displayName)")
+                } else {
+                    MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
+                        DivergenceGutter(stats: worktree.stats, theme: theme)
+                            .frame(minHeight: 24)
+                    }
                 }
             }
             .disabled(isOpening)
@@ -120,7 +130,7 @@ struct WorktreeBlock: View {
             }
             MobileWorktreeReportTarget(onOpen: onSelect, onReport: onReport) {
                 VStack(alignment: .leading, spacing: 4) {
-                    SidebarPaneTitleRow(title: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.name ?? leaf.title,
+                    SidebarPaneTitleRow(title: SidebarAgentTitle.display(terminalTitle: leaf.title, agentName: worktree.agents?.first { $0.sessionName == leaf.sessionName }?.name),
                         isFocusedPane: false, isActiveWorktree: isActive,
                         isBusy: leaf.isBusy, attentionStyle: style,
                         attentionCount: context.pending.filter { $0.paneID == leaf.sessionName }.count,

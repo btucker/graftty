@@ -1,5 +1,11 @@
 import Foundation
 
+public enum SidebarAgentTitle {
+    public static func display(terminalTitle: String, agentName: String?) -> String {
+        terminalTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? agentName ?? "" : terminalTitle
+    }
+}
+
 public extension WorktreePanes {
     var sidebarAgentLeaves: [PaneLayoutNode.Leaf] {
         guard state == .running, !showsCreationProgress else { return [] }

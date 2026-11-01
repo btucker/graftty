@@ -121,7 +121,15 @@ struct WorkspaceContentView: View {
                                     }
                             }.buttonStyle(.plain)
                                 .accessibilityAddTraits(group?.selected == tab ? .isSelected : [])
-                                .draggable(tab.id.uuidString)
+                                .draggable(WorkspaceTabDrag(tab.id.uuidString))
+                                .modifier(WorkspaceTabDropTarget { value, after in
+                                    guard let id = UUID(uuidString: value) else { return }
+                                    let source = PaneSlotID(id: id)
+                                    let sameGroup = layout.group(containing: source)?.id == group?.id
+                                    var moved = false
+                                    mutate { moved = $0.moveTab(source, relativeTo: tab, after: after) }
+                                    if moved && !sameGroup { focus(source) }
+                                })
                                 .contextMenu { tabMenu(tab, group: group?.id) }
                         }
                         newAgentMenu
@@ -129,7 +137,7 @@ struct WorkspaceContentView: View {
                 }
             }.font(.system(size: 13))
                 .overlay(alignment: .bottom) { theme.foreground.opacity(0.08).frame(height: 1) }
-                .onDrop(of: [UTType.text], isTargeted: nil) { providers in
+                .onDrop(of: [WorkspaceTabDrag.contentType], isTargeted: nil) { providers in
                     receive(providers) { session in if let id = group?.id { mutate { $0.move(session, to: id) }; focus(session) } }
                 }
 
@@ -148,9 +156,9 @@ struct WorkspaceContentView: View {
                         }.allowsHitTesting(false)
                     }
                 }
-                .dropDestination(for: String.self) { items, location in
+                .dropDestination(for: WorkspaceTabDrag.self) { items, location in
                     defer { dropTarget = nil }
-                    guard let item = items.first, let uuid = UUID(uuidString: item),
+                    guard let item = items.first?.session, let uuid = UUID(uuidString: item),
                           let group = layout.group(containing: slot) else { return false }
                     let session = PaneSlotID(id: uuid)
                     guard layout.sessions.contains(session) else { return false }
@@ -209,13 +217,18 @@ struct WorkspaceContentView: View {
     private var drawerHeader: some View {
         HStack(spacing: 10) {
             Button(action: toggleDrawer) {
-                Label(layout.terminals.isEmpty ? "Terminal" : "Terminal · \(layout.terminals.count)", systemImage: "terminal")
+                Label("Terminal", systemImage: "terminal").labelStyle(.iconOnly)
             }.buttonStyle(.plain).help(layout.drawerVisible ? "Hide terminal" : "Show terminal")
             if layout.drawerVisible {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) {
                 ForEach(layout.terminals, id: \.self) { slot in
-                    Button(title(slot)) { focus(slot) }.buttonStyle(.plain)
+                    Button { focus(slot) } label: {
+                        Text(title(slot)).lineLimit(1).padding(.horizontal, 8).frame(height: 30)
+                            .workspaceTabUnderline(selected: layout.selectedTerminal == slot, color: theme.foreground)
+                    }.buttonStyle(.plain)
                         .fontWeight(layout.selectedTerminal == slot ? .semibold : .regular)
-                        .draggable(slot.id.uuidString)
+                        .draggable(WorkspaceTabDrag(slot.id.uuidString))
                         .contextMenu {
                             ForEach(layout.groups) { group in
                                 Button("Move to \(title(group.selected)) tabs") { mutate { $0.move(slot, to: group.id) }; focus(slot) }
@@ -224,6 +237,8 @@ struct WorkspaceContentView: View {
                             Button("Close terminal", role: .destructive) { onCloseTerminal(slot) }
                         }
                 }
+                    }
+                }.fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
             Button(action: onNewTerminal) { Image(systemName: "plus") }.buttonStyle(.plain).help("New terminal")
@@ -309,8 +324,8 @@ struct WorkspaceContentView: View {
     }
     private func receive(_ providers: [NSItemProvider], action: @escaping @MainActor (PaneSlotID) -> Void) -> Bool {
         guard let provider = providers.first else { return false }
-        _ = provider.loadObject(ofClass: NSString.self) { object, _ in
-            guard let value = object as? String, let id = UUID(uuidString: value) else { return }
+        _ = provider.loadTransferable(type: WorkspaceTabDrag.self) { result in
+            guard case .success(let payload) = result, let id = UUID(uuidString: payload.session) else { return }
             Task { @MainActor in
                 let slot = PaneSlotID(id: id)
                 guard layout.sessions.contains(slot) else { return }

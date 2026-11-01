@@ -376,6 +376,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.185** When a user adjusts a native horizontal divider through accessibility, the application shall resize by twenty points and commit the adjustment.
 
+**LAYOUT-2.186** When an agent tab is dragged before or after another tab in its group, the application shall persist the new order without changing selected sessions, keyboard focus, or terminal identities.
+
+**LAYOUT-2.187** While an agent is running without a failure or input request, its shared tab and sidebar status badge shall display an indeterminate progress indicator; waiting, completed, failed, and disconnected agents shall display their corresponding static status symbols.
+
+**LAYOUT-2.188** While a live agent is listed in the sidebar, the application shall use its current terminal title and fall back to its assignment name only when the terminal title is blank.
+
+**LAYOUT-2.189** When a removable linked worktree has a merged PR or MR, the sidebar shall replace its Git divergence counts with a remove button that invokes the existing worktree deletion flow.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

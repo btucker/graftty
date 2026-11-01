@@ -190,6 +190,7 @@ struct WorktreeRow: View {
     /// whose identity is not editable.
     var identityMenu: ((NSView) -> NSMenu)? = nil
     var brief: WorktreeBrief? = nil
+    var onRemove: ((NSWindow) -> Void)? = nil
 
     enum LeadingItem: Hashable {
         case projectIcon, emoji, typeIcon, prBadge, label
@@ -239,11 +240,18 @@ struct WorktreeRow: View {
             if let attentionStyle {
                 AttentionCapsule(style: attentionStyle)
             }
-            WorktreeRowGutter(
-                stats: entry.state.hasOnDiskWorktree ? stats : nil,
-                baseRef: baseRef,
-                theme: theme
-            ).fixedSize()
+            if let onRemove, SidebarMergedWorktreeRemoval.isAvailable(
+                prState: prBadge?.state, isMainCheckout: isMainCheckout, state: entry.state.wireState) {
+                SidebarRemoveWorktreeButton(name: displayName, color: theme.sidebarSecondaryText, onRemove: onRemove)
+                    .frame(width: 24, height: 20)
+                    .anchorPreference(key: WorktreeControlAnchors.self, value: .bounds) { [.removeWorktree: $0] }
+            } else {
+                WorktreeRowGutter(
+                    stats: entry.state.hasOnDiskWorktree ? stats : nil,
+                    baseRef: baseRef,
+                    theme: theme
+                ).fixedSize()
+            }
         }
         .font(.system(size: 11))
         .padding(.vertical, 4)

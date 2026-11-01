@@ -574,7 +574,7 @@ struct SingleSessionView: View {
                     Task { await terminalSheet.open(in: workspace, create: createCompactTerminal) }
                 } label: {
                     HStack {
-                        Label("Terminal", systemImage: "terminal")
+                        Label("Terminal", systemImage: "terminal").labelStyle(.iconOnly)
                         Spacer()
                         Image(systemName: "chevron.up").font(.caption)
                     }.padding(.horizontal, 16).frame(minHeight: 44).contentShape(Rectangle())

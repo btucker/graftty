@@ -119,9 +119,11 @@ Keep destructive Close agent or Close terminal separate from Hide view. Existing
 
 Validation: tab/split transitions, drag destinations, menu equivalence, session identity preservation, focus, window resizing, hidden-process survival, drawer empty state, and legacy split migration.
 
+Agent tabs support dragging before or after another tab, with an insertion marker. Reordering within a group preserves selection and keyboard focus, including focus in another pane or the drawer. Persist the new device-local order. Terminal drawers use horizontally scrolling tabs with the same selected underline and an icon-only toggle with an accessibility label.
+
 ## 6. Update sidebar, Context, and completion presentation
 
-Select whole worktrees in the sidebar. Use compact uppercase worktree headings with PR/MR and Git counts always visible on the same line. Show agent task names underneath with an 18-point indent, no provider icons, and the same status indicators as the tabs. Omit ordinary terminals from sidebar rows and counts. Apply one continuous selection highlight around the heading and all of its agents.
+Select whole worktrees in the sidebar. Use compact uppercase worktree headings with PR/MR and Git counts always visible on the same line. Show live agent terminal titles underneath with an 18-point indent, falling back to the assignment name when no title is available. Use no provider icons and the same native running spinner and status indicators as the tabs. Omit ordinary terminals from sidebar rows and counts. Apply one continuous selection highlight around the heading and all of its agents. For merged PRs or MRs on removable linked worktrees, replace the Git counts with a remove button that enters the existing deletion confirmation flow.
 
 Clicking the heading, an agent line, or the group background selects the worktree and preserves its device-local tab selections, splits, and previous focus. Agent lines are informational children of the worktree, not separate selection or keyboard-navigation targets. Agent selection belongs to the workspace tabs and panes. PR/MR links and explicit action controls retain their own actions. Unassigned reports and reports on hidden shells stay on the worktree heading.
 

@@ -115,8 +115,8 @@ struct MultiPaneDetailView: View {
                         .id(sessionName)
                         }
                     }
-                    .dropDestination(for: String.self) { sessions, location in
-                        guard let session = sessions.first, currentWorkspace.sessions.contains(session),
+                    .dropDestination(for: WorkspaceTabDrag.self) { sessions, location in
+                        guard let session = sessions.first?.session, currentWorkspace.sessions.contains(session),
                               let group = currentWorkspace.group(containing: sessionName) else { return false }
                         if let edge = WorkspaceLayout<String>.dropEdge(x: location.x, y: location.y,
                             width: geometry.size.width, height: geometry.size.height) {
@@ -189,7 +189,13 @@ struct MultiPaneDetailView: View {
                                     .frame(height: 2)
                             }
                     }.buttonStyle(.plain)
-                        .draggable(session)
+                        .draggable(WorkspaceTabDrag(session))
+                        .modifier(WorkspaceTabDropTarget { source, after in
+                            let sameGroup = currentWorkspace.group(containing: source)?.id == group.id
+                            var moved = false
+                            mutate { moved = $0.moveTab(source, relativeTo: session, after: after) }
+                            if moved && !sameGroup { selectSession(source) }
+                        })
                         .contextMenu {
                             Menu("Split into pane") {
                                 ForEach(WorkspaceLayout<String>.Edge.allCases, id: \.rawValue) { edge in
@@ -218,40 +224,41 @@ struct MultiPaneDetailView: View {
                 }
             }
         }.font(.caption).foregroundStyle(theme.foreground)
-            .dropDestination(for: String.self) { sessions, _ in
-                guard let session = sessions.first, currentWorkspace.sessions.contains(session) else { return false }
+            .dropDestination(for: WorkspaceTabDrag.self) { sessions, _ in
+                guard let session = sessions.first?.session, currentWorkspace.sessions.contains(session) else { return false }
                 mutate { $0.move(session, to: group.id) }; onSelectPane(session); return true
             }
     }
     private var terminalDrawerHeader: some View {
         HStack {
             Button(action: toggleDrawer) {
-                Label(currentWorkspace.terminals.isEmpty ? "Terminal" : "Terminal · \(currentWorkspace.terminals.count)", systemImage: "terminal")
+                Label("Terminal", systemImage: "terminal").labelStyle(.iconOnly)
             }
             if currentWorkspace.drawerVisible {
-                Menu {
-                    ForEach(currentWorkspace.terminals, id: \.self) { session in
-                        Menu(sessionTitle(session)) {
-                            Button("Show terminal") { selectSession(session) }
-                            ForEach(currentWorkspace.groups) { group in
-                                Button("Move to \(sessionTitle(group.selected)) tabs") {
-                                    mutate { $0.move(session, to: group.id) }; selectSession(session)
-                                }
-                                Menu("Split beside \(sessionTitle(group.selected))") {
-                                    ForEach(WorkspaceLayout<String>.Edge.allCases, id: \.rawValue) { edge in
-                                        Button(edge.rawValue.capitalized) {
-                                            mutate { $0.split(session, beside: group.id, edge: edge) }; selectSession(session)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(currentWorkspace.terminals, id: \.self) { session in
+                            Button { selectSession(session) } label: {
+                                Text(sessionTitle(session)).lineLimit(1).padding(.horizontal, 8).frame(minHeight: 44)
+                                    .workspaceTabUnderline(selected: currentWorkspace.selectedTerminal == session, color: theme.foreground)
+                            }.draggable(WorkspaceTabDrag(session))
+                                .contextMenu {
+                                    ForEach(currentWorkspace.groups) { group in
+                                        Button("Move to \(sessionTitle(group.selected)) tabs") {
+                                            mutate { $0.move(session, to: group.id) }; selectSession(session)
+                                        }
+                                        Menu("Split beside \(sessionTitle(group.selected))") {
+                                            ForEach(WorkspaceLayout<String>.Edge.allCases, id: \.rawValue) { edge in
+                                                Button(edge.rawValue.capitalized) {
+                                                    mutate { $0.split(session, beside: group.id, edge: edge) }; selectSession(session)
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                            }
                         }
                     }
-                } label: {
-                    if let session = currentWorkspace.selectedTerminal {
-                        Text(sessionTitle(session)).draggable(session)
-                    } else { Text("No terminals") }
-                }
+                }.fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             Button {
