@@ -17,8 +17,9 @@ struct CompactTerminalSheet<Content: View>: View {
                         Button(terminal.displayTitle) { presentation.select(terminal.sessionName, in: worktree) }
                     }
                 } label: {
-                    Label(worktree.layout?.title(for: presentation.selectedSession ?? "") ?? "Terminal", systemImage: "terminal")
-                        .lineLimit(1)
+                    Label("Choose terminal", systemImage: "terminal")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 44, height: 44)
                 }.disabled(CompactTerminalPresentation.terminals(in: worktree).isEmpty)
                 Spacer(minLength: 0)
                 Button { Task { await presentation.newTerminal(create: create) } } label: {
@@ -37,7 +38,11 @@ struct CompactTerminalSheet<Content: View>: View {
             } else if presentation.isCreating || presentation.pendingUntil != nil {
                 ProgressView("Opening terminal…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ContentUnavailableView("Terminal", systemImage: "terminal", description: Text("Use + to open a terminal in this worktree."))
+                ContentUnavailableView {
+                    Image(systemName: "terminal").accessibilityLabel("No open terminals")
+                } description: {
+                    Text("Use + to open a terminal in this worktree.")
+                }
             }
         }
         .onChange(of: worktree, initial: true) { _, current in presentation.reconcile(in: current) }
