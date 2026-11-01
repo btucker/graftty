@@ -29,6 +29,7 @@
 		25E291BD6878283DECF2801B /* GrafttyMobileTestHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E2D199D4324F6F86505317 /* GrafttyMobileTestHost.swift */; };
 		260F499C5621E4995F3E56C4 /* SurfaceProxyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91C85B2EFEF3B277843C1777 /* SurfaceProxyTests.swift */; };
 		2760CBF4B4B65ABE23AD181A /* GrafttyMobileKit in Frameworks */ = {isa = PBXBuildFile; productRef = F6C115ADD238F68F472FDEB4 /* GrafttyMobileKit */; };
+		29987FD0B480991982FC9728 /* CompactTerminalPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16F12B95289D15F9E6665C1 /* CompactTerminalPresentationTests.swift */; };
 		2AE3E873CEBC645A93D9D3EF /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1B4204CA01B233B9F19E518B /* Assets.xcassets */; };
 		2C255FE368B4B692B456569E /* InMemorySSHLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 941BD8F4F584D4EB519D37D9 /* InMemorySSHLink.swift */; };
 		2D3C47A34609032BE35CA28C /* LayoutPassProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = C275A4CDA39513788E94B0D3 /* LayoutPassProbe.swift */; };
@@ -270,6 +271,7 @@
 		DE2551EB151BA762B2AF7663 /* GhosttyConfigFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyConfigFetcherTests.swift; sourceTree = "<group>"; };
 		DEAFDCA2135A779F886374A3 /* GrafttyMobileTestHost.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GrafttyMobileTestHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E0006D42603096AE4265AD38 /* WakeOnLANClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeOnLANClientTests.swift; sourceTree = "<group>"; };
+		E16F12B95289D15F9E6665C1 /* CompactTerminalPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompactTerminalPresentationTests.swift; sourceTree = "<group>"; };
 		E3E2D199D4324F6F86505317 /* GrafttyMobileTestHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrafttyMobileTestHost.swift; sourceTree = "<group>"; };
 		E5EF30684C54B14430657AE2 /* MobileRecentPanesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRecentPanesTests.swift; sourceTree = "<group>"; };
 		E9253D88D71A6DBEE9A8146C /* SSHTerminalLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalLoopbackTests.swift; sourceTree = "<group>"; };
@@ -457,6 +459,7 @@
 			isa = PBXGroup;
 			children = (
 				10B4031DF4D165C5521C42B4 /* AddWorktreeSheetViewTests.swift */,
+				E16F12B95289D15F9E6665C1 /* CompactTerminalPresentationTests.swift */,
 				51649842CE2E7ACBA47F9ACA /* IPadWorktreeNavigationTests.swift */,
 				EB85606774D95FFBD85C5576 /* MobileAttentionPaneTests.swift */,
 				863BD16B62BADBF8744D136F /* MobileContextDrawerTests.swift */,
@@ -918,6 +921,7 @@
 				2E416266017DFF6D47BFED05 /* BiometricGateTests.swift in Sources */,
 				4D8D21035BA80B090DB04260 /* ClockTests.swift in Sources */,
 				A818F76D3AA390AF60A7F46C /* CompactSelectionFocusTests.swift in Sources */,
+				29987FD0B480991982FC9728 /* CompactTerminalPresentationTests.swift in Sources */,
 				0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */,
 				23013C727DA7ACAAE5DC93B3 /* FilePreviewDownloadTests.swift in Sources */,
 				F1265680A75FBC8FC81FC5E8 /* GhosttyConfigFetcherTests.swift in Sources */,

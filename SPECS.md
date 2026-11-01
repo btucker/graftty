@@ -34,6 +34,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-1.13** While agent tabs are visible, the application shall keep Back, Forward, the repository/worktree breadcrumb, and Context visible and clickable in the window header above the tabs.
 
+**LAYOUT-1.14** While a worktree preview is open, the header shall name that preview and allow its primary control to hide it without deleting its history.
+
 ### LAYOUT-2.x — Sidebar — Repository List
 
 **LAYOUT-2.1** While project navigation is visible, the application shall display an ordered project rail beside the selected project's worktrees and offer a global attention queue.
@@ -2629,6 +2631,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-2.20** While an iPad workspace is selected, the application shall retain every visited live tab's renderer beyond the recent-pane cache limit and release closed sessions and inactive workspace retention.
 
 **IPAD-2.21** When switching iPad workspaces, the application shall release excess cached clients from the inactive workspace even when the new workspace contains unvisited tabs.
+
+**IPAD-2.22** When a compact workspace opens Terminal, the application shall present its shells separately from the selected agent, reuse the selected live shell, and create one shell only when none exists.
+
+**IPAD-2.23** When a user dismisses Terminal during shell creation, the application shall retain the resulting shell without reopening the sheet or launching a duplicate.
+
+**IPAD-2.24** While a compact Terminal sheet is visible, the application shall reserve only the keyboard overlap within its safe content bounds.
 
 ### IPAD-3.x — Focused-Pane Toolbar
 

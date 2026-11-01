@@ -15,7 +15,7 @@ struct BreadcrumbBarTests {
                 historyItems: [], currentTarget: nil, onGoBack: {}, onGoForward: {}, onSelectHistory: { _ in }, onRefreshPR: {})
         }
         func render(_ bar: BreadcrumbBar) throws -> Data {
-            let image = try #require(ImageRenderer(content: bar.frame(width: 900, height: 44)).cgImage)
+            let image = try #require(ImageRenderer(content: bar.breadcrumbLabel.frame(width: 900, height: 44)).cgImage)
             var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
             try pixels.withUnsafeMutableBytes { buffer in
                 let context = try #require(CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
@@ -31,6 +31,7 @@ struct BreadcrumbBarTests {
         }
         let baseline = try render(bar("main"))
         let withLongBranch = try render(bar("CARP-5794-launch-kpis-traffic-by-source"))
+        // Compare the identity label; native glass controls vary with their backdrop.
         // CoreGraphics can round an antialiased channel by one level between renders.
         #expect(baseline.count == withLongBranch.count)
         #expect(zip(baseline, withLongBranch).allSatisfy { abs(Int($0) - Int($1)) <= 1 })

@@ -9,6 +9,50 @@ struct FilePreviewWindowTests {
         [try FilePreviewFile(.init(filename: name, bytes: Data(name.utf8)))]
     }
 
+    @Test("@spec LAYOUT-1.14: While a worktree preview is open, the header shall name that preview and allow its primary control to hide it without deleting its history.")
+    func toolbarNamesAndTogglesCurrentPreview() throws {
+        _ = NSApplication.shared
+        let history = FilePreviewHistory(), inline = ImagePreviewStore()
+        let windows = FilePreviewWindows(history: history, inline: inline)
+        defer { windows.closeAll() }
+        let pane = PaneSlotID()
+        let entry = history.record(files: try files("plan.md"), pane: pane, worktreePath: "/a")
+        let button = FilePreviewToolbarButton(worktreePath: "/a", inlinePane: pane,
+            history: history, windows: windows, inline: inline)
+        #expect(button.displayTitle == "plan.md")
+        windows.showInline(entry)
+        #expect(button.isPreviewOpen)
+        button.togglePreview()
+        #expect(!button.isPreviewOpen)
+        #expect(button.entries.first?.id == entry.id)
+        _ = history.record(files: try files("newer.md"), pane: pane, worktreePath: "/a")
+        #expect(button.displayTitle == "plan.md")
+        button.togglePreview()
+        #expect(inline.previews[pane]?.id == entry.preview.id)
+        #expect(windows.window(for: "/a") == nil)
+    }
+
+    @Test("The preview toggle targets the focused pane and honors reassigned worktree ownership.")
+    func toolbarTargetsFocusedPreview() throws {
+        let history = FilePreviewHistory(), inline = ImagePreviewStore()
+        let windows = FilePreviewWindows(history: history, inline: inline)
+        let first = PaneSlotID(), second = PaneSlotID()
+        let a = history.record(files: try files("a.md"), pane: first, worktreePath: "/a")
+        let b = history.record(files: try files("b.md"), pane: second, worktreePath: "/a")
+        windows.showInline(a)
+        windows.showInline(b)
+        let button = FilePreviewToolbarButton(worktreePath: "/a", inlinePane: second,
+            history: history, windows: windows, inline: inline)
+        #expect(button.displayTitle == "b.md")
+        button.togglePreview()
+        #expect(inline.previews[first]?.id == a.preview.id)
+        #expect(inline.previews[second] == nil)
+        #expect(!button.isPreviewOpen)
+        let moved = FilePreviewToolbarButton(worktreePath: "/a", inlinePane: first, resolveInlineWorktree: { _ in "/b" },
+            history: history, windows: windows, inline: inline)
+        #expect(!moved.isPreviewOpen)
+    }
+
     @Test("@spec PREVIEW-1.6: When a Mac preview arrives, the application shall retain the latest 32 requests as immutable session history grouped by worktree, including replaced and closed previews.")
     func retainsBoundedWorktreeHistory() throws {
         let history = FilePreviewHistory()

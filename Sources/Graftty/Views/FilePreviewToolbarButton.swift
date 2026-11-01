@@ -38,11 +38,34 @@ struct FilePreviewToolbarButton: View {
         if let open = windows.selectedEntry(for: worktreePath) {
             active.append(open)
         }
+        if let hidden = windows.hiddenEntry(for: worktreePath) { active.append(hidden) }
         return history.entries(for: worktreePath, including: active)
     }
 
+    private var activeInline: (key: PaneSlotID, value: ImagePreviewStore.Preview)? {
+        guard let pane = inlinePane, let preview = inline.previews[pane] else { return nil }
+        if let resolveInlineWorktree {
+            guard resolveInlineWorktree(pane) == worktreePath else { return nil }
+        } else if inline.previews(forWorktreePath: worktreePath)[pane] == nil { return nil }
+        return (pane, preview)
+    }
+    var isPreviewOpen: Bool { activeInline != nil || windows.selectedEntry(for: worktreePath) != nil }
+    var displayTitle: String {
+        activeInline?.value.filename ?? windows.selectedEntry(for: worktreePath)?.title
+            ?? windows.hiddenEntry(for: worktreePath)?.title ?? entries.first?.title ?? "Preview"
+    }
+    func togglePreview() {
+        if let activeInline {
+            windows.hide(.init(preview: activeInline.value, pane: activeInline.key, worktreePath: worktreePath), inlinePane: activeInline.key)
+        } else if let entry = windows.selectedEntry(for: worktreePath) {
+            windows.hide(entry, inlinePane: nil)
+        } else if !windows.restoreHidden(for: worktreePath, inlinePane: inlinePane, resolveWorktree: resolveInlineWorktree), let latest = entries.first {
+            show(latest)
+        }
+    }
+
     var body: some View {
-        if let latest = entries.first {
+        if !entries.isEmpty {
             Menu {
                 ForEach(entries) { entry in
                     Button {
@@ -52,14 +75,17 @@ struct FilePreviewToolbarButton: View {
                     }
                 }
             } label: {
-                Label("Preview", systemImage: "doc.richtext")
-                    .labelStyle(.iconOnly)
+                ViewThatFits(in: .horizontal) {
+                    Label(displayTitle, systemImage: "doc.richtext").lineLimit(1).frame(maxWidth: 140)
+                    Image(systemName: "doc.richtext")
+                }.padding(.horizontal, 7).frame(height: 28)
+                    .background(isPreviewOpen ? Color.primary.opacity(0.12) : .clear, in: Capsule())
             } primaryAction: {
-                show(latest)
+                togglePreview()
             }
             .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Open latest preview; use the menu for recent previews")
+            .fixedSize(horizontal: false, vertical: true)
+            .help("\(displayTitle). Click to toggle; use the menu for recent previews.")
             .accessibilityLabel("Preview")
             .accessibilityValue("\(entries.count) recent previews")
         }

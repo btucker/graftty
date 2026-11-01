@@ -3,21 +3,14 @@ import SwiftUI
 import GrafttyProtocol
 import GrafttyCommandUI
 
-/// Compact workspaces open the selected terminal full-height. Switching only
-/// changes this device's navigation; the host keeps every session alive.
+/// The compact agent switcher stays above live, loading, and completed content.
 struct CompactAgentBar: View {
     let worktree: WorktreePanes
     let session: String
     let onSelect: (String) -> Void
-    let lastAgent: String?
-    var onNewTerminal: (() -> Void)?
     var hostID: UUID? = nil
 
     private var agents: [AgentSessionInfo] { worktree.agents?.filter { $0.presentationSessionName != nil } ?? [] }
-    private var terminals: [PaneLayoutNode.Leaf] {
-        let agentSessions = Set(agents.compactMap(\.presentationSessionName))
-        return worktree.layout?.leaves.filter { !agentSessions.contains($0.sessionName) } ?? []
-    }
     private var selectedAgent: AgentSessionInfo? { agents.first { $0.presentationSessionName == session } }
 
     var body: some View {
@@ -45,19 +38,6 @@ struct CompactAgentBar: View {
                 }
             }.disabled(agents.isEmpty)
             Spacer(minLength: 0)
-            if selectedAgent == nil, let target = MobileWorkspaceStore.previousAgent(lastAgent, in: worktree) {
-                Button { onSelect(target) } label: { Label("Back to agent", systemImage: "arrow.uturn.backward") }
-            } else if terminals.isEmpty, let onNewTerminal {
-                Button(action: onNewTerminal) { Label("Terminal", systemImage: "terminal") }
-            } else {
-                Menu {
-                    ForEach(terminals, id: \.sessionName) { terminal in
-                        Button(terminal.displayTitle) { onSelect(terminal.sessionName) }
-                    }
-                    if let onNewTerminal { Button("New terminal", action: onNewTerminal) }
-                } label: { Label("Terminal", systemImage: "terminal") }
-                    .disabled(terminals.isEmpty && onNewTerminal == nil)
-            }
         }.font(.callout).buttonStyle(.plain).padding(.horizontal, 14).frame(minHeight: 44)
             .background(.bar)
     }

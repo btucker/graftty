@@ -188,6 +188,32 @@ struct RenderedTerminalViewportTests {
         #expect(fixture.window.bounds.contains(backFrame))
     }
 
+    @Test("@spec IPAD-2.24: While a compact Terminal sheet is visible, the application shall reserve only the keyboard overlap within its safe content bounds.", arguments: [CGFloat(0), CGFloat(300)])
+    func sheetKeyboardClearance(keyboardInset: CGFloat) async throws {
+        let client = SessionClient(sessionName: "sheet", webSocketFactory: { ViewportLegacySocket() })
+        client.start()
+        defer { client.stop() }
+        try await waitForLayout("local owner") { client.isOwner }
+        let terminal = SingleSessionView(step: SessionStep(host: Host(label: "Mac", baseURL: URL(string: "https://mac.local")!),
+            sessionName: "sheet", title: "Shell"), navigationPath: .constant(NavigationPath()),
+            isFullScreen: false, isTerminalSheet: true, initialClient: client,
+            initialController: MobileTerminalControllerFactory.make(configText: "font-size = 14"),
+            initialKeyboardBottomInset: keyboardInset)
+        let fixture = makeHostingFixture(content: AnyView(VStack(spacing: 0) {
+            Text("Terminal").frame(height: 44)
+            terminal
+        }.ignoresSafeArea(.keyboard)))
+        defer { fixture.window.isHidden = true }
+        let container = try await renderedContainer(in: fixture.host.view)
+        try await Task.sleep(for: .milliseconds(150))
+        fixture.host.view.layoutIfNeeded()
+        let frame = container.convert(container.bounds, to: fixture.window)
+        let bottomInset = fixture.host.view.safeAreaInsets.bottom
+        let expectedBottom = fixture.window.bounds.maxY - max(bottomInset, keyboardInset) - (keyboardInset > 0 ? 58 : 0)
+        #expect(abs(frame.maxY - expectedBottom) < 1)
+        #expect(frame.minY >= fixture.host.view.safeAreaInsets.top + 44)
+    }
+
     private func makeFixture(client: SessionClient, keyboardInset: CGFloat = 0, embedded: Bool = false,
                              sharedKeyboard: KeyboardFrameObservation? = nil) -> (window: UIWindow, host: UIHostingController<AnyView>) {
         let terminal = SingleSessionView(

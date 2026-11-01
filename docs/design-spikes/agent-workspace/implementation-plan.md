@@ -141,7 +141,7 @@ Validation: whole-worktree selection from headings and agent lines without chang
 
 Publish additive agent/session metadata while preserving the complete legacy pane inventory. Negotiate lifecycle control capabilities and keep each viewer's workspace layout local. Share lifecycle state across clients while keeping selection and view layout local to each device. Opening an agent on iPhone must not rearrange the Mac.
 
-On iPhone, use an agent picker and a bottom Terminal control above keyboard accessories and safe areas. Terminals open full-height with Back to agent. On iPad, use tab groups and a lower drawer when space allows. Retain menus for actions that also support drag or pointer gestures.
+On iPhone, keep the agent picker above live, loading, and completed content. A bottom Terminal bar opens a large native sheet with its own shell picker and New terminal action. Dismissing it preserves the underlying agent route and retained session. Create the first shell when none exists. On iPad, use tab groups and a lower drawer when space allows. Retain menus for actions that also support drag or pointer gestures.
 
 Older clients need a documented fallback inventory of sessions or an explicit unsupported-feature response; hidden tab sessions must not become unreachable. Audit the web client's exhaustive layout switches and retain its existing functionality even though this redesign primarily targets Mac and mobile. Ensure a legacy remote close cannot accidentally reinterpret a view operation as closing a different agent.
 
@@ -181,6 +181,6 @@ Observer devices retain their own selected tabs.
 
 ### Header and mobile design follow-up
 
-The user requested a Liquid Glass direction for the header and another look at how tabs and a separate Terminal translate to mobile. [header-glass-mobile.html](header-glass-mobile.html) proposes grouped native glass controls, a quiet breadcrumb/PR identity, iPad tabs with a lower drawer, and an iPhone agent switcher with a nearly full-height Terminal sheet. The sheet is compared with an expandable phone drawer. These material and phone-presentation choices remain design proposals; the implemented compact layout currently switches between agent and terminal sessions full-height.
+The user requested a Liquid Glass direction for the header and another look at how tabs and a separate Terminal translate to mobile. [header-glass-mobile.html](header-glass-mobile.html) proposes grouped native glass controls, a quiet breadcrumb/PR identity, iPad tabs with a lower drawer, and an iPhone agent switcher with a nearly full-height Terminal sheet. The sheet is compared with an expandable phone drawer. The user approved grouped native glass controls and the phone Terminal sheet. The expandable phone drawer remains an alternative study, not an implementation requirement.
 
-The header material and phone-presentation choices still need design approval and native-device evaluation. Validation results for the implementation are recorded in PR #806.
+Use native Liquid Glass on macOS/iOS 26, with system material on older releases. Keep PR conflict and CI state discoverable in the compact control, and make the preview toggle restore its selected document and presentation. Native-device evaluation remains part of validation. Validation results for the implementation are recorded in PR #806.

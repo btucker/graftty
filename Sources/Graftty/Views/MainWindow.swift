@@ -206,11 +206,14 @@ struct MainWindow: View {
                     onRefreshPR: refreshPR,
                     project: selectedIdentityProject, projectIconData: selectedProjectIconData,
                     previewWorktreePath: selectedRemoteIdentity == nil ? selectedWorktree?.path : nil,
-                    previewInlinePane: selectedWorktree.flatMap {
-                        ImagePreviewLayout.visiblePane(tree: $0.splitTree, focused: $0.focusedPaneSlotID)
+                    previewInlinePane: selectedWorktree.flatMap { worktree in
+                        worktree.presentationPane.flatMap { slot in
+                            worktree.visiblePaneSlots.contains(slot) && !worktree.hasCompletedContent(in: slot) ? slot : nil
+                        }
                     },
                     previewWorktreeForPane: { [weak terminalManager] pane in terminalManager?.worktreePath(for: pane) },
-                    onToggleContext: selectedWorktree != nil || selectedRemoteWorktreeSnapshot != nil ? { showsWorktreeContext.toggle() } : nil
+                    onToggleContext: selectedWorktree != nil || selectedRemoteWorktreeSnapshot != nil ? { showsWorktreeContext.toggle() } : nil,
+                    showsContext: showsWorktreeContext
                 )
             } content: {
                 if let selectedRemoteMac {
