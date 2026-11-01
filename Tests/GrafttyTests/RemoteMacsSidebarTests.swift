@@ -100,7 +100,7 @@ struct RemoteMacsSidebarTests {
                     statsByWorktreePath: [:], theme: .fallback, projectColumn: true) { entry, name in
                     WorktreeRow(entry: entry, isActive: true, displayName: name, isMainCheckout: false,
                         theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil, attentionCount: 1)
-                        .frame(minHeight: 44)
+                        .frame(minHeight: 24)
                         .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
                 }.modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: true))
                 SidebarWorktreeNodeRow(node: .folder(path: "topic", name: "topic", children: [node]), depth: 0,
@@ -108,7 +108,7 @@ struct RemoteMacsSidebarTests {
                     projectColumn: true) { entry, name in
                     WorktreeRow(entry: entry, isActive: false, displayName: name, isMainCheckout: false,
                         theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
-                        .frame(minHeight: 44)
+                        .frame(minHeight: 24)
                 }
             }.frame(width: 260)
         }.frame(height: 400).background(Color(red: 0.13, green: 0.14, blue: 0.16)).environment(\.colorScheme, .dark)
@@ -127,13 +127,21 @@ struct RemoteMacsSidebarTests {
         let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
         let scale = CGFloat(bitmap.pixelsWide) / hosting.bounds.width
+        var highlightHeights: [Int] = []
         for columnStart in [197, 458] {
             let firstHighlight = try #require((0..<260).first { x in
-                let color = bitmap.colorAt(x: Int(CGFloat(columnStart + x) * scale), y: Int(23 * scale))?.usingColorSpace(.deviceRGB)
+                // Sample the compact heading's center, away from its rounded corners.
+                let color = bitmap.colorAt(x: Int(CGFloat(columnStart + x) * scale), y: Int(12 * scale))?.usingColorSpace(.deviceRGB)
                 return (color?.redComponent ?? 0) > 0.2
             })
             #expect(abs(firstHighlight - 6) <= 1)
+            let highlightHeight = try #require((0..<100).first { y in
+                let color = bitmap.colorAt(x: Int(CGFloat(columnStart + 14) * scale), y: Int(CGFloat(y) * scale))?.usingColorSpace(.deviceRGB)
+                return (color?.redComponent ?? 0) <= 0.2
+            })
+            highlightHeights.append(highlightHeight)
         }
+        #expect(abs(highlightHeights[0] - highlightHeights[1]) <= 1)
         if let path = ProcessInfo.processInfo.environment["GRAFTTY_SIDEBAR_RENDER_DIR"] {
             let url = URL(fileURLWithPath: path, isDirectory: true)
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
