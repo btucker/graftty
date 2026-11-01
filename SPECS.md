@@ -1536,6 +1536,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TECH-6.7** When the native sidebar test fixture creates a window, the fixture shall disable native window animations before displaying the window.
 
+**TECH-6.8** When an iOS CI shard runs in a results directory containing earlier bundles, the workflow shall use distinct result paths for the new invocation, execute every selected batch, and preserve the earlier evidence.
+
 ## ZMX — zmx Session Backing
 
 ### ZMX-1.x — Bundling
