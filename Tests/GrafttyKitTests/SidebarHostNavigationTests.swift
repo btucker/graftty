@@ -124,11 +124,12 @@ struct SidebarHostNavigationTests {
     }
 
     @Test("""
-@spec LAYOUT-2.51: When an agent stops in a worktree, the application shall retain its latest unseen stop across relaunches and include it in Attention until that agent resumes or the user visits the worktree.
+@spec LAYOUT-2.51: When an agent requests user input in a stopped-turn recap, the application shall retain its latest unseen request across relaunches and include it in Attention until that agent resumes or the user visits the worktree.
 """)
     func unseenStopSurvivesUntilVisit() throws {
         var worktree = WorktreeEntry(path: "/repo/w", branch: "feature")
         let stop = SidebarAgentStop(agentName: "Codex", stoppedAt: Date(timeIntervalSince1970: 100),
+                                    recap: .init(title: "Review changes", completed: "Checked changes", next: "Apply fixes", need: "Approve the fixes?"),
                                     providerSessionKey: "codex:session:one")
         worktree.unseenAgentStop = stop
         worktree.clearAgentStopAttention(providerSessionKey: "codex:session:other")
@@ -141,6 +142,7 @@ struct SidebarHostNavigationTests {
         let queue = SidebarActivityFilter.needsYou.apply(to: SidebarProjection.activity([row]))
         #expect(queue.count == 1)
         #expect(queue.first?.title == "Codex stopped")
+        #expect(queue.first?.agentStop?.recap?.need == "Approve the fixes?")
         #expect(queue.first?.occurrence?.timestamp == stop.stoppedAt)
         worktree.clearAgentStopAttention(providerSessionKey: "codex:session:one")
         #expect(worktree.unseenAgentStop == nil)

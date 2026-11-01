@@ -75,10 +75,13 @@ struct RemoteMacsSidebarTests {
         try store.add(remote)
         let model = RemoteMacsModel(store: store)
         await model.loadSavedRemotes()
+        // Match the local heading below: shells have no sidebar child rows,
+        // and neither worktree has an inline input request.
         let row = makeWorktreePanes(path: "/repo/feature", displayName: "feature",
             layout: .split(direction: .horizontal, ratio: 0.5,
-                left: .leaf(sessionName: "codex", title: "Codex", attentionText: nil, isBusy: true, attentionSource: nil),
-                right: .leaf(sessionName: "claude", title: "Claude", attentionText: "Claude needs input", isBusy: false, attentionSource: .agentStop)))
+                left: .leaf(sessionName: "shell-a", title: "Terminal A", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: .leaf(sessionName: "shell-b", title: "Terminal B", attentionText: nil, isBusy: false, attentionSource: nil)))
+        #expect(row.sidebarAgentLeaves.isEmpty)
         let project = SidebarProject(id: "p", repositoryID: "r", name: "graftty",
             owner: .init(deviceID: remote.id, deviceLabel: remote.label, relayDepth: 0))
         let content = HStack(spacing: 0) {
@@ -99,7 +102,7 @@ struct RemoteMacsSidebarTests {
                 SidebarWorktreeNodeRow(node: node, depth: 0, repositoryID: UUID(), expansion: .constant(.init()),
                     statsByWorktreePath: [:], theme: .fallback, projectColumn: true) { entry, name in
                     WorktreeRow(entry: entry, isActive: true, displayName: name, isMainCheckout: false,
-                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil, attentionCount: 1)
+                        theme: .fallback, stats: nil, baseRef: nil, prBadge: nil, attentionStyle: nil)
                         .frame(minHeight: 24)
                         .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
                 }.modifier(SidebarWorktreeRowInsets(node: node, depth: 0, projectColumn: true))

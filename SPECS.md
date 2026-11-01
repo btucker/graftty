@@ -134,7 +134,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.50** While the project rail setting is disabled, the application shall show all projects together in the worktree sidebar without applying the previously selected project's filter.
 
-**LAYOUT-2.51** When an agent stops in a worktree, the application shall retain its latest unseen stop across relaunches and include it in Attention until that agent resumes or the user visits the worktree.
+**LAYOUT-2.51** When an agent requests user input in a stopped-turn recap, the application shall retain its latest unseen request across relaunches and include it in Attention until that agent resumes or the user visits the worktree.
 
 **LAYOUT-2.52** While an unseen stopped turn appears in Attention, the application shall show elapsed time from its recorded stop timestamp and refresh that age as time passes.
 
@@ -190,7 +190,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.83** While worktree rows show pane children, the application shall align their titles in one column regardless of PR/MR badges or attention counts and keep each row within the available width.
 
-**LAYOUT-2.84** When an agent resumes, the application shall retain its latest report as previous context and replace it when a newer stopped report arrives.
+**LAYOUT-2.84** When an agent resumes after requesting user input, the application shall retain its latest request report as previous context and replace it when a newer request arrives.
 
 **LAYOUT-2.85** While agent request context is retained, the application shall preserve it across acknowledgement, navigation, and relaunch without the recent-history limit; explicit dismissal shall hide the current request until a later request arrives.
 
