@@ -101,7 +101,7 @@ Migrate recognized legacy Claude/Codex commands conservatively. Preserve the ori
 
 Keep provider plugin installation and per-event prompts intact. Report a missing chosen provider rather than silently switching harnesses. Existing running agents are unaffected by changing the default.
 
-Package monochrome assets once for shared Mac/mobile use. Record asset provenance in the repository and avoid depending on files in installed apps. Use semantic tint, task labels, and accessible provider names in settings, tabs, sidebar agent rows, and pickers.
+Package monochrome assets once for shared Mac/mobile use. Record asset provenance in the repository and avoid depending on files in installed apps. Use semantic tint, task labels, and accessible provider names in settings, tabs, and pickers. Sidebar agent rows use shared status indicators without provider marks.
 
 Validation: migration fixtures including commands with flags and arbitrary scripts, unset defaults, unavailable providers, explicit overrides, restore without double launch, and accessible light/dark rendering.
 
@@ -121,13 +121,17 @@ Validation: tab/split transitions, drag destinations, menu equivalence, session 
 
 ## 6. Update sidebar, Context, and completion presentation
 
-Keep worktrees as the primary sidebar navigation. Show aggregate agent counts and attention, with direct navigation to an agent that needs input. Avoid repeating a full agent inventory in both the sidebar and tab strip by default; preserve an explicit expanded agent inventory where useful. Omit ordinary terminals from sidebar rows and counts. Keep provider marks visible beside agent names even when they have attention badges. Unassigned reports and reports on hidden shells stay on the worktree heading.
+Select whole worktrees in the sidebar. Use compact uppercase worktree headings with PR/MR and Git counts always visible on the same line. Show agent task names underneath with an 18-point indent, no provider icons, and the same status indicators as the tabs. Omit ordinary terminals from sidebar rows and counts. Apply one continuous selection highlight around the heading and all of its agents.
+
+Clicking the heading, an agent line, or the group background selects the worktree and preserves its device-local tab selections, splits, and previous focus. Agent lines are informational children of the worktree, not separate selection or keyboard-navigation targets. Agent selection belongs to the workspace tabs and panes. PR/MR links and explicit action controls retain their own actions. Unassigned reports and reports on hidden shells stay on the worktree heading.
+
+The accepted hierarchy and selection behavior are shown in [sidebar-worktree-selection.html](sidebar-worktree-selection.html). Earlier studies that select individual sidebar agents are superseded. An output-driven activity arc and folding after three agents remain proposals, not accepted implementation requirements.
 
 After the parent closes an agent, remove its active tab/row and retain the result and transcript reference in Context. If the user is reading that transcript, preserve a read-only completed view until they leave or dismiss it, without stealing focus or rearranging their active split unexpectedly.
 
 Keep waiting for input, disconnected, failed, and finished awaiting cleanup distinct. Viewing a result must not acknowledge cleanup. Resume availability should reflect actual provider support; do not promise a resumable session if only a transcript remains.
 
-Validation: attention on hidden tabs, completion while focused, archived-result retrieval, pending cleanup visibility, failed close, and reopening a worktree with no active agents.
+Validation: whole-worktree selection from headings and agent lines without changing tab focus, narrow-width PR/Git visibility, attention on hidden tabs, completion while focused, archived-result retrieval, pending cleanup visibility, failed close, and reopening a worktree with no active agents.
 
 ## 7. Extend remote and mobile presentation
 
