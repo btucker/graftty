@@ -274,12 +274,15 @@ struct RenderedTerminalViewportTests {
         [root] + root.subviews.flatMap { descendants(of: $0) }
     }
 
-    private func waitForLayout(_ stage: String, condition: () -> Bool) async throws {
+    private func waitForLayout(_ stage: String, sourceLocation: SourceLocation = #_sourceLocation,
+                               condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
-        while !condition(), ContinuousClock.now < deadline {
+        // The predicate can advance UIKit layout. Finish on the ready frame
+        // already observed instead of evaluating it again after the loop.
+        while !condition() {
+            try #require(ContinuousClock.now < deadline, "Timed out waiting for \(stage)", sourceLocation: sourceLocation)
             try await Task.sleep(for: .milliseconds(20))
         }
-        try #require(condition(), "Timed out waiting for \(stage)")
     }
 }
 
