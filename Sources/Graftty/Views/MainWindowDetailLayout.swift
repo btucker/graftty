@@ -1,3 +1,4 @@
+import GrafttyCommandUI
 import SwiftUI
 
 /// The selected worktree detail keeps the breadcrumb above its content row.

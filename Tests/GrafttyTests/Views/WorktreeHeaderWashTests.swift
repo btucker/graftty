@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+import GrafttyCommandUI
 import GrafttyProtocol
 @testable import Graftty
 

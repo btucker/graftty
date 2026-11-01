@@ -2286,6 +2286,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.54** If a pulled worktree list completes after a newer pushed panes-state frame was applied, then the application shall keep the pushed frame rather than replace it with the pulled rows.
 
+**IOS-4.55** When the phone shows a worktree with agents, the application shall list agent cards ordered by waiting for the user, working, idle, failed, then finished, each titled by its live terminal title and showing its question or result, followed by the worktree's shells and a one-line purpose from its brief.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.

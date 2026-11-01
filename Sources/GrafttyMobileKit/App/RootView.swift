@@ -412,7 +412,8 @@ public struct RootView: View {
                 .navigationDestination(for: WorktreeStep.self) { step in
                     WorktreeDetailView(
                         host: step.host,
-                        worktree: step.worktree
+                        worktree: step.worktree,
+                        sidebarNavigation: iPadAppState.sidebarNavigation
                     ) { sessionName in
                         let session = SessionStep(
                             host: step.host,

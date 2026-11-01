@@ -25,6 +25,8 @@ struct GrafttyMobileTestHost: App {
                 AgentIntegrationFixture(endpoint: endpoint).ignoresSafeArea()
             } else if ProcessInfo.processInfo.arguments.contains("--recent-panes-fixture") {
                 RecentPaneFixture()
+            } else if ProcessInfo.processInfo.arguments.contains("--worktree-overview-fixture") {
+                WorktreeOverviewFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--context-fixture") {
                 WorktreeContextFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--scrollback-fixture") {
@@ -45,7 +47,7 @@ struct GrafttyMobileTestHost: App {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--agent-integration-url"),
               arguments.indices.contains(index + 1) else {
-            if arguments.contains(where: ["--recent-panes-fixture", "--context-fixture", "--scrollback-fixture",
+            if arguments.contains(where: ["--recent-panes-fixture", "--context-fixture", "--worktree-overview-fixture", "--scrollback-fixture",
                 "--image-controls-fixture", "--browser-control-fixture"].contains) { return nil }
             // A notification launches the executable through Springboard,
             // which does not retain XCUIApplication's launch arguments.
@@ -57,6 +59,42 @@ struct GrafttyMobileTestHost: App {
 }
 
 #if GRAFTTY_BROWSER_CONTROL_FIXTURE
+/// The phone worktree screen with agents in every state. No live dialing.
+private struct WorktreeOverviewFixture: View {
+    private let host = Host(label: "Studio", baseURL: URL(string: "https://fixture.invalid")!)
+    private let row: WorktreePanes = {
+        func leaf(_ session: String, _ title: String, busy: Bool = true, stop: String? = nil) -> PaneLayoutNode {
+            .leaf(sessionName: session, title: title, attentionText: stop, isBusy: busy, attentionSource: stop == nil ? nil : .agentStop)
+        }
+        let leaves = [leaf("claude", "Mobile regressions in branch",
+                           stop: "The shared Mac test run passed all 43 tests in 7 suites. Should I push PR 806 now?"),
+                      leaf("codex", "Reimagine agent-centric UI"), leaf("old", "Fix sidebar fixtures"),
+                      leaf("shell", "./scripts/bundle.sh install")]
+        let layout = leaves.dropFirst().reduce(leaves[0]) { PaneLayoutNode.split(direction: .horizontal, ratio: 0.5, left: $0, right: $1) }
+        let brief = WorktreeBrief(recap: AttentionRecap(title: "Agent workspaces, tabs and sidebar",
+            context: "Make the current worktree recognizable at a glance", completed: "", next: ""), at: Date())
+        return WorktreePanes(path: "/repo/reconsider-pans-tabs-sidebar", displayName: "reconsider-pans-tabs-sidebar",
+            repoDisplayName: "graftty", displayBranch: "reconsider-pans-tabs-sidebar", state: .running, isMainCheckout: false,
+            prBadge: nil, stats: nil, attentionText: nil, layout: layout,
+            sidebar: .init(id: "wt", projectID: "graftty", brief: brief, emoji: "🧭"),
+            agents: [
+                .init(id: "1", name: "Codex", provider: "codex", status: "running", sessionName: "codex"),
+                .init(id: "2", name: "Claude", provider: "claude", status: "running", sessionName: "claude"),
+                .init(id: "3", name: "Codex", provider: "codex", status: "closed", sessionName: nil, completionID: "c",
+                      result: "Corrected stale sidebar and attention fixtures; 2,261 Mac tests pass.", retainedSessionName: "old"),
+            ])
+    }()
+    @State private var selected = "none"
+
+    var body: some View {
+        NavigationStack {
+            WorktreeDetailView(host: host, worktree: row) { selected = $0 }
+                .overlay(alignment: .bottom) { Text("Selected \(selected)").font(.caption2).accessibilityIdentifier("Overview selection") }
+        }
+        .environment(\.scenePhase, .inactive)
+    }
+}
+
 private struct WorktreeContextFixture: View {
     @State private var mounts = 0
     @State private var coordinator = RemoteConnectionCoordinator()
